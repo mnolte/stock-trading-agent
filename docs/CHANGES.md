@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-10-15 — Application timezone
+
+- Overview: new "Timezone" paragraph. The application timezone is Europe/Amsterdam (GUI, logs, alerts, daily jobs); timestamps stay stored in UTC and decision cycles stay on the New York exchange clock.
+- `config.example.yaml`: `app.timezone: Europe/Amsterdam`; `schedule.timezone` renamed to `schedule.market_timezone`.
+
+## 2026-10-15 — Trading currency
+
+- Overview: new "Currency" paragraph. All trading, risk limits and stored money values are in US dollars; euro amounts are display only and never used in decisions or risk checks.
+
 ## 2026-10-15 — First handoff
 
 SPEC.md v0.1 as exported on 15 October 2026. It includes:
