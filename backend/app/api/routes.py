@@ -1,11 +1,22 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from app.config import get_config
-from app.market.clock import SessionClock, make_clock
+from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
+from app.market.clock import SessionClock, SessionState, make_clock
 
 router = APIRouter()
+
+
+def _calendar(request: Request) -> CalendarProvider:
+    store = getattr(request.app.state, "calendar_store", None)
+    return store if store is not None else WeekdayCalendarProvider()
+
+
+def _session_state(request: Request) -> SessionState:
+    clock = SessionClock(make_clock(), calendar=_calendar(request))
+    return clock.state()
 
 
 @router.get("/health")
@@ -14,9 +25,8 @@ def health() -> dict[str, str]:
 
 
 @router.get("/session")
-def session_state() -> dict[str, object]:
-    clock = SessionClock(make_clock())
-    state = clock.state()
+def session_state(request: Request) -> dict[str, object]:
+    state = _session_state(request)
     return {
         "state": state.state,
         "next_cycle": state.next_cycle.isoformat() if state.next_cycle else None,
@@ -27,10 +37,9 @@ def session_state() -> dict[str, object]:
 
 
 @router.get("/header")
-def header_state() -> dict[str, object]:
+def header_state(request: Request) -> dict[str, object]:
     """Skeleton header payload: PAPER badge plus placeholders for equity/P&L/regime."""
-    clock = SessionClock(make_clock())
-    session = clock.state()
+    session = _session_state(request)
     return {
         "paper": True,
         "mode": get_config().env.mode,

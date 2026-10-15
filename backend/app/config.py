@@ -48,8 +48,13 @@ class AppConfig:
         self._yaml = self._load_yaml()
 
     def _load_yaml(self) -> dict[str, Any]:
-        for name in ("config.yaml", "config.example.yaml"):
-            path = ROOT / name
+        candidates = (
+            ROOT / "backend" / "config.yaml",
+            ROOT / "config.yaml",
+            ROOT / "backend" / "config.example.yaml",
+            ROOT / "config.example.yaml",
+        )
+        for path in candidates:
             if path.exists():
                 with path.open("r", encoding="utf-8") as fh:
                     return yaml.safe_load(fh) or {}

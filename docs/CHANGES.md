@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-10-15 — PR 2: Market and data
+
+- Data-source interfaces with fakes for 5m bars, IEX quotes, Alpaca news, Finnhub earnings, ECB EUR/USD and Alpaca corporate actions.
+- `AlpacaDataClient`: trading client always `paper=True`; startup check rejects non-paper accounts (account numbers must start with `PA`); shared rate limiter caps Alpaca calls at `alpaca.max_calls_per_minute` (150) with read-only exponential backoff.
+- `CalendarStore` loads the Alpaca trading calendar at startup and again daily at 08:00 New York via APScheduler; `SessionClock` now handles holidays, weekends, early closes and the DST-difference week.
+- `BarCache` caches 5-minute SIP bars in SQLite (`bars_5m`); `aggregate_1h` builds the session-aligned 1-hour bars including the final partial bar.
+- `MarketDataService` fills 60 sessions of history per symbol at startup and refreshes earnings and corporate actions into the database.
+- `config.example.yaml`: new `alpaca.max_calls_per_minute`.
+- New dependencies: `alpaca-py`, `finnhub-python`, `pandas`, `apscheduler`.
+
 ## 2026-10-15 — PR 1: Skeleton
 
 - Repo layout per SPEC.md → Architecture and stack.

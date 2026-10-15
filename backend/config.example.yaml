@@ -24,6 +24,9 @@ schedule:
   calendar_refresh: "08:00"
   history_sessions: 60
 
+alpaca:
+  max_calls_per_minute: 150
+
 execution:
   mode: automatic            # automatic | supervised
   entry_limit_offset_pct: 0.05
