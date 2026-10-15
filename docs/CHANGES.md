@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-10-15 — PR 4: decision layer details
+
+- Decision layer: an empty `outcomes` row is created with every decision so the outcome worker (PR 7) only has to fill in prices.
+- Decisions: a model call that fails (timeout, API error) is stored with `final_action = "no_call"` and the error text; no output is counted and nothing is retried. The same value marks candidates/held symbols that never reached the model (missing quote, call cap reached).
+- Environment variables: `SA_SIM_NOW` pins the frozen clock in simulated mode (ISO 8601); `OPENAI_API_KEY` is required unless `MODE=simulated`.
+- `config.example.yaml`: `decision.timeout_seconds`, `decision.input_cost_per_mtok`, `decision.output_cost_per_mtok` (cost tracking only).
+
 ## 2026-10-15 — Answers from the PR 3 review
 
 - Market, schedule and data: daily indicators use Alpaca daily bars, 260 sessions per symbol, refreshed daily at 08:00 New York; computed on completed sessions only. All bar requests are split-adjusted. (60 sessions of 5-minute bars could not give SMA 200 or the 60-session ATR percentile.)

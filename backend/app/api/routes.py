@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from datetime import datetime, timedelta
+from datetime import time as dtime
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import select
 
 from app.config import get_config
+from app.db.base import get_session_maker
+from app.db.models import Cycle, Decision, Outcome
+from app.decide.prompt import load_prompt
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
-from app.market.clock import SessionClock, SessionState, make_clock
+from app.market.clock import UTC, SessionClock, SessionState, make_clock
 from app.signals.service import SignalService
 
 router = APIRouter()
@@ -140,4 +149,142 @@ def watchlist(request: Request) -> dict[str, object]:
             }
             for row in result.rows
         ],
+    }
+
+
+# ----------------------------------------------------------------------
+# Decisions / LLM inspector
+
+
+def _decision_summary(
+    request: Request, rows: list[tuple[Decision, datetime]]
+) -> dict[str, object]:
+    """The inspector's status strip: calls, cost, changed count, prompt, model."""
+    runner = getattr(request.app.state, "cycle_runner", None)
+    prompt = runner.decide.prompt if runner is not None else None
+    config = get_config()
+    changed = 0
+    cost = Decimal(0)
+    for decision, _ in rows:
+        cost += decision.cost or Decimal(0)
+        validation = decision.validation_result or {}
+        if validation.get("changed_by_code"):
+            changed += 1
+    return {
+        "calls": len(rows),
+        "cost": str(cost.quantize(Decimal("0.0000001"))),
+        "changed_by_code": changed,
+        "prompt_version": prompt.version if prompt else None,
+        "prompt_hash": (prompt.short_hash if prompt else None),
+        "model": config.get("decision", "model", default=None),
+        "temperature": config.get("decision", "temperature", default=None),
+    }
+
+
+def _decision_item(decision: Decision, scheduled: datetime) -> dict[str, object]:
+    validation = decision.validation_result or {}
+    return {
+        "id": decision.id,
+        "cycle_time": scheduled.replace(tzinfo=UTC).isoformat(),
+        "symbol": decision.symbol,
+        "context": decision.context,
+        "model_action": validation.get("model_action"),
+        "final_action": decision.final_action,
+        "changed_by_code": bool(validation.get("changed_by_code")),
+        "valid": validation.get("valid"),
+    }
+
+
+@router.get("/decisions")
+def list_decisions(request: Request) -> dict[str, object]:
+    """Today's decisions (Amsterdam day) for the LLM inspector list."""
+    app_tz = ZoneInfo(str(get_config().get("app", "timezone", default="Europe/Amsterdam")))
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    today = clock.now().astimezone(app_tz).date()
+    day_start = datetime.combine(today, dtime.min, tzinfo=app_tz)
+    day_end = day_start + timedelta(days=1)
+    start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
+    end_utc = day_end.astimezone(UTC).replace(tzinfo=None)
+
+    with get_session_maker()() as session:
+        rows: list[tuple[Decision, datetime]] = [
+            (decision, scheduled)
+            for decision, scheduled in session.execute(
+                select(Decision, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .where(
+                    Cycle.scheduled_time >= start_utc,
+                    Cycle.scheduled_time < end_utc,
+                )
+                .order_by(Cycle.scheduled_time.desc(), Decision.id.desc())
+            ).all()
+        ]
+    return {
+        "summary": _decision_summary(request, rows),
+        "items": [_decision_item(d, t) for d, t in rows],
+    }
+
+
+@router.get("/decisions/{decision_id}")
+def decision_detail(decision_id: int) -> dict[str, object]:
+    """One stored decision with its prompt, output, checks and raw response."""
+    with get_session_maker()() as session:
+        row = session.execute(
+            select(Decision, Cycle.scheduled_time)
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .where(Decision.id == decision_id)
+        ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="decision not found")
+    decision, scheduled = row
+    with get_session_maker()() as session:
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision_id)
+        ).scalar_one_or_none()
+    try:
+        prompt_text = load_prompt(decision.prompt_version).text
+    except OSError:
+        prompt_text = None
+    return {
+        "id": decision.id,
+        "cycle_time": scheduled.replace(tzinfo=UTC).isoformat(),
+        "symbol": decision.symbol,
+        "context": decision.context,
+        "final_action": decision.final_action,
+        "input_snapshot": decision.input_snapshot,
+        "rules_result": decision.rules_result,
+        "model_output": decision.model_output,
+        "validation_result": decision.validation_result,
+        "gates_result": decision.gates_result,
+        "outcome": (
+            {
+                "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
+                "price_1session": (
+                    str(outcome.price_1session) if outcome.price_1session else None
+                ),
+                "price_5sessions": (
+                    str(outcome.price_5sessions)
+                    if outcome.price_5sessions
+                    else None
+                ),
+                "best_price": (
+                    str(outcome.best_price) if outcome.best_price else None
+                ),
+                "worst_price": (
+                    str(outcome.worst_price) if outcome.worst_price else None
+                ),
+            }
+            if outcome is not None
+            else None
+        ),
+        "prompt_version": decision.prompt_version,
+        "prompt_hash": decision.prompt_hash,
+        "prompt_text": prompt_text,
+        "model": decision.model,
+        "tokens_in": decision.tokens_in,
+        "tokens_out": decision.tokens_out,
+        "tokens": decision.tokens,
+        "cost": str(decision.cost) if decision.cost is not None else None,
+        "latency_ms": decision.latency_ms,
+        "raw_response": decision.raw_response,
     }
