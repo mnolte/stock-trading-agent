@@ -41,6 +41,14 @@ def test_session_last_cycle_done() -> None:
     assert state.state == "last_cycle_done"
 
 
+def test_session_clock_uses_configured_timezones() -> None:
+    # app.timezone drives the GUI display; schedule.market_timezone the market.
+    config = AppConfig()
+    clock = SessionClock(FakeClock(datetime(2026, 10, 15, 14, 0, tzinfo=UTC)), config)
+    assert str(clock.market_tz) == "America/New_York"
+    assert str(clock.display_tz) == "Europe/Amsterdam"
+
+
 def test_simulated_mode_uses_fake_clock() -> None:
     from app.market.clock import make_clock
 

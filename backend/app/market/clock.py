@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import datetime, time, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from app.config import AppConfig, get_config
+from app.data.models import CalendarDay
+from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 
 NY_TZ = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
@@ -63,13 +65,28 @@ class SessionState:
 
 
 class SessionClock:
-    """Computes market session state from a configurable clock."""
+    """Computes market session state from a configurable clock and calendar."""
 
-    def __init__(self, clock: Clock, config: AppConfig | None = None) -> None:
+    # Cycles run 16 minutes after the corresponding session-aligned 1h bar
+    # closes (15-minute SIP delay plus one minute of slack).
+    BAR_DELAY = timedelta(minutes=16)
+
+    def __init__(
+        self,
+        clock: Clock,
+        config: AppConfig | None = None,
+        calendar: CalendarProvider | None = None,
+    ) -> None:
         self.clock = clock
         self.config = config or get_config()
         self.cycle_times = self._parse_cycles()
-        self.display_tz = ZoneInfo(self.config.get("app", "timezone", default="Europe/Amsterdam"))
+        self.calendar = calendar or WeekdayCalendarProvider()
+        self.market_tz = ZoneInfo(
+            self.config.get("schedule", "market_timezone", default="America/New_York")
+        )
+        self.display_tz = ZoneInfo(
+            self.config.get("app", "timezone", default="Europe/Amsterdam")
+        )
 
     def _parse_cycles(self) -> list[time]:
         raw = self.config.get(
@@ -80,58 +97,79 @@ class SessionClock:
     def now(self) -> datetime:
         return self.clock.now()
 
+    def active_cycles(self, session: CalendarDay) -> list[datetime]:
+        """Cycles whose 1h bar closes before the session close."""
+        result: list[datetime] = []
+        for cycle in sorted(self.cycle_times):
+            cycle_dt = datetime.combine(session.date, cycle, tzinfo=self.market_tz)
+            bar_close = cycle_dt - self.BAR_DELAY
+            if bar_close < session.close and session.open <= cycle_dt <= session.close:
+                result.append(cycle_dt)
+        return result
+
     def state(self) -> SessionState:
         now = self.clock.now()
-        ny_now = self.clock.to_zone(now, NY_TZ)
+        ny_now = self.clock.to_zone(now, self.market_tz)
         today = ny_now.date()
-        current_time = ny_now.time()
+        session = self.calendar.session_for(today)
 
-        open_dt = datetime.combine(today, SESSION_OPEN, tzinfo=NY_TZ)
-        close_dt = datetime.combine(today, SESSION_CLOSE, tzinfo=NY_TZ)
+        if session is None:
+            # Holiday or weekend: next open/close come from the next trading day.
+            next_session = self.calendar.next_trading_day(today)
+            return self._closed(None, next_session)
 
-        last_cycle = max(self.cycle_times)
+        if ny_now < session.open:
+            return self._closed(session, None)
 
-        if current_time < SESSION_OPEN:
-            session_state = "closed"
-            next_cycle = self._next_cycle_after(ny_now, today)
-            next_open = open_dt
-            next_close = close_dt
-        elif current_time >= SESSION_CLOSE:
-            session_state = "closed"
-            next_cycle = self._next_cycle_after(ny_now, today)
-            next_open = open_dt + timedelta(days=1)
-            next_close = close_dt + timedelta(days=1)
-        elif current_time >= last_cycle:
-            session_state = "last_cycle_done"
-            next_cycle = None
-            next_open = None
-            next_close = close_dt
+        if ny_now >= session.close:
+            next_session = self.calendar.next_trading_day(today)
+            return self._closed(None, next_session)
+
+        cycles = self.active_cycles(session)
+        next_cycle = next((c for c in cycles if c > ny_now), None)
+
+        if next_cycle is None:
+            state = "last_cycle_done"
+        elif session.close.time() < SESSION_CLOSE:
+            state = "early_close"
         else:
-            session_state = "open"
-            next_cycle = self._next_cycle_after(ny_now, today)
-            next_open = None
-            next_close = close_dt
-
-        display_now = self.clock.to_zone(now, self.display_tz)
-        display_time = display_now.strftime("%A %d %B · %H:%M Amsterdam")
+            state = "open"
 
         return SessionState(
-            state=session_state,
+            state=state,
+            next_cycle=next_cycle.astimezone(UTC) if next_cycle else None,
+            next_open=None,
+            next_close=session.close.astimezone(UTC),
+            display_time=self._display_time(now),
+        )
+
+    def _closed(
+        self,
+        today_session: CalendarDay | None,
+        next_session: CalendarDay | None,
+    ) -> SessionState:
+        now = self.clock.now()
+        next_open: datetime | None = None
+        next_close: datetime | None = None
+        next_cycle: datetime | None = None
+        shown_session = today_session or next_session
+        if shown_session is not None:
+            next_open = shown_session.open
+            next_close = shown_session.close
+            cycles = self.active_cycles(shown_session)
+            next_cycle = cycles[0] if cycles else None
+
+        return SessionState(
+            state="closed",
             next_cycle=next_cycle.astimezone(UTC) if next_cycle else None,
             next_open=next_open.astimezone(UTC) if next_open else None,
             next_close=next_close.astimezone(UTC) if next_close else None,
-            display_time=display_time,
+            display_time=self._display_time(now),
         )
 
-    def _next_cycle_after(self, ny_now: datetime, today: date) -> datetime | None:
-        for cycle in sorted(self.cycle_times):
-            cycle_dt = datetime.combine(today, cycle, tzinfo=NY_TZ)
-            if cycle_dt > ny_now and cycle >= SESSION_OPEN and cycle <= SESSION_CLOSE:
-                return cycle_dt
-        # Look at tomorrow (no holiday calendar yet)
-        tomorrow = today + timedelta(days=1)
-        first_cycle = min(self.cycle_times)
-        return datetime.combine(tomorrow, first_cycle, tzinfo=NY_TZ)
+    def _display_time(self, now: datetime) -> str:
+        display_now = self.clock.to_zone(now, self.display_tz)
+        return display_now.strftime("%A %d %B · %H:%M Amsterdam")
 
 
 def make_clock(config: AppConfig | None = None) -> Clock:

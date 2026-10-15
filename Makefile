@@ -1,4 +1,4 @@
-.PHONY: install run lint test run-backend run-frontend
+.PHONY: install run lint test run-backend run-frontend smoke-data
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -36,3 +36,6 @@ lint:
 test:
 	cd backend && ../$(PYTEST) -v
 	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) test
+
+smoke-data:
+	cd backend && ../$(PYTHON) -m app.smoke_data

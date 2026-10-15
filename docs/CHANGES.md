@@ -2,14 +2,26 @@
 
 Newest first.
 
-## 2026-10-15 — PR 1: Skeleton
+## 2026-10-15 — PR 2: Market and data (built)
 
-- Repo layout per SPEC.md → Architecture and stack.
-- FastAPI app with `/api/health`, `/api/session`, `/api/header`; config loading from `.env` and `backend/config.example.yaml`.
-- SQLite with SQLAlchemy 2.x and Alembic; initial migration with all tables from SPEC.md → Data model.
-- Injected clock object (`RealClock` / `FakeClock`) and session-state calculator.
-- React + TypeScript + Vite shell: sidebar, header with PAPER badge and fake-clock session state, empty screens, and shared components on `/dev/components`.
-- Makefile (`install`, `run`, `lint`, `test`), GitHub Actions CI, and pytest with sockets blocked.
+- Implemented "Market, schedule and data" and the paper-only Alpaca reads: 5m SIP bar download with SQLite cache, session-aligned 1h aggregation, IEX latest quote, news (one row per article × symbol, Alpaca article id), Finnhub earnings, ECB EUR/USD, corporate actions, trading calendar and `/v2/clock`. Fakes behind every interface.
+- Applied the "Answers to PR 2 questions" decisions: SIP requests capped at `now - 16 min`, early-close state until the last cycle, `earnings.hour_raw` plus normalised `time_of_day` (new migration), calendar-unavailable = closed with a 5-minute retry job, `eur.available`/`rate` in the API instead of a stale or zero rate.
+- Config moved to `app.timezone` and `schedule.market_timezone`; `alpaca.max_calls_per_minute` kept.
+- `make smoke-data`: read-only check that fills the bar cache and does one read per source. No orders.
+- PR 1 fixes needed to get a fresh database running: Alembic owns the schema (`create_all` removed), `AppConfig` finds `backend/config.example.yaml`, tests use a temp database.
+
+## 2026-10-15 — Answers to PR 2 questions
+
+- Market, schedule and data: Early close shows for the whole early-close session until its last cycle has run, then Last cycle done.
+- SIP bar requests always end at least 16 minutes in the past (free-plan limit).
+- Trading calendar unavailable: market treated as closed, retry every 5 minutes. EUR/USD unavailable: GUI shows USD only, marked "EUR unavailable".
+- Data model `earnings`: time of day normalised to before_open, after_close, during_market or unknown (from Finnhub bmo, amc, dmh), raw value kept. Risk: an unknown time of day counts as before the open for the earnings exit.
+
+## 2026-10-15 — 15-minute position check
+
+- Market, schedule and data: new "Position check" between the hourly cycles, at 09:46, 10:01, 10:16, 10:31, then :01, :16 and :31 past each hour until 15:31 New York time. No model calls and no trades; it reconciles with Alpaca, makes sure every position has a stop, updates the since-open shock brake, daily loss limit and drawdown kill, and cancels stale entries.
+- Decisions: the Cycle row mentions the check. Data model: `cycles.kind` (cycle or position check). Build plan: part of PR 5.
+- `config.example.yaml`: `schedule.position_checks`, `schedule.position_check_failures_alert`.
 
 ## 2026-10-15 — Application timezone
 

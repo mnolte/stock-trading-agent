@@ -31,7 +31,7 @@ These defaults are set so Devin can start. Items marked **(review)** are Marc's 
 | Universe **(review)** | SPY, QQQ, AAPL, MSFT, NVDA, AMZN, GOOGL, META, JPM, XOM | Very liquid, spread across sectors |
 | Direction | Long only, no shorting, no options, no margin use | Keeps v0.1 simple and bounded |
 | Timeframe | 1-hour bars, regular trading hours only | Matches Trading Agent's lesson that short timeframes don't pay |
-| Cycle | Six cycles per full session at 10:46, 11:46, 12:46, 13:46, 14:46 and 15:46 New York time | Runs on each session-aligned 1h bar once the 15-min SIP delay has passed |
+| Cycle | Six cycles per full session at 10:46, 11:46, 12:46, 13:46, 14:46 and 15:46 New York time, plus a position check every 15 minutes in between (no trades, no model calls) | Runs on each session-aligned 1h bar once the 15-min SIP delay has passed |
 | Paper balance **(review)** | $10,000, set via Alpaca paper account reset | Close to a realistic first live size |
 | Account currency | USD; EUR equivalent shown everywhere using the ECB daily rate | Alpaca accounts are USD |
 | Shares | Whole shares only | Bracket and stop orders need whole shares |
@@ -94,15 +94,26 @@ The agent only acts during regular US trading hours (09:30 to 16:00 New York tim
 - Load the trading calendar from Alpaca (`/v2/calendar`) at startup and daily at 08:00 New York time. It covers holidays and early closes (13:00 days).
 - Use Alpaca's `/v2/clock` as the single source of truth for "is the market open now".
 - All scheduling uses `zoneinfo` with `America/New_York`. The GUI shows Amsterdam time. Never hard-code the 6-hour offset: the US and EU change clocks on different dates (2026: EU on 25 October, US on 1 November), so the offset is 5 hours for that week.
-- Session states shown in the GUI: Closed, Open, Last cycle done, Early close.
+- Session states shown in the GUI: Closed, Open, Last cycle done, Early close. Early close shows for the whole early-close session until its last cycle has run; after that Last cycle done shows, as on a normal day.
 
 **Bars and cycle timing**
 
 - Build session-aligned 1h bars (09:30, 10:30, ... 14:30, plus the final 15:30 to 16:00 half bar) by aggregating 5-minute SIP bars. Do not use Alpaca's clock-hour bars: their first bar mixes pre-market and the open.
-- Free SIP data is 15 minutes delayed, so each cycle runs 16 minutes after its bar closes: 10:46, 11:46, 12:46, 13:46, 14:46, 15:46.
+- Free SIP data is 15 minutes delayed, so each cycle runs 16 minutes after its bar closes: 10:46, 11:46, 12:46, 13:46, 14:46, 15:46. Every SIP bar request sets its end time at least 16 minutes in the past, because the free plan rejects requests for more recent SIP data.
 - On early-close days, run only the cycles whose bar closes before the close; the last one is the exit-check.
 - History needed at startup: 60 sessions of 5-minute bars per symbol, cached in SQLite and topped up each cycle.
 - Use the real-time IEX quote (latest trade, bid, ask) only for sizing and the spread check at order time.
+
+**Position check (every 15 minutes)**
+
+Between the hourly cycles a lighter position check runs at 09:46, 10:01, 10:16 and 10:31, then at :01, :16 and :31 past every hour until 15:31 New York time. It makes no model calls, opens no positions, sells nothing and moves no stops. It only:
+
+- Reconciles Alpaca positions and open orders with the database, with the same rules as a full cycle.
+- Confirms every position has a live stop order at Alpaca; if one is missing, it places a protective stop at the stored stop price and alerts.
+- Updates the safety brakes from the real-time IEX quote and the Alpaca account: the since-open part of the shock brake (SPY down more than 2.5%), the daily loss limit and the drawdown kill. The 1h part of the shock brake stays on the hourly cycle.
+- Cancels entry orders still unfilled after 10 minutes.
+
+A check takes a few seconds. A failed check is logged; three failed checks in a row show an error banner but do not turn on the kill switch. The header shows the next check alongside the next cycle.
 
 **Other data**
 
@@ -115,7 +126,7 @@ The agent only acts during regular US trading hours (09:30 to 16:00 New York tim
 | ECB EUR/USD reference rate | EUR display only | Daily |
 | Alpaca corporate actions | Detect splits and dividends on held symbols | Daily |
 
-If any source fails, the cycle records it. Missing bars or quotes mean no new entries that cycle (stops at Alpaca still protect open positions). Missing news or earnings data is passed to the model as "unavailable", never as "none"; missing earnings data also blocks new entries for that symbol.
+If any source fails, the cycle records it. Missing bars or quotes mean no new entries that cycle (stops at Alpaca still protect open positions). Missing news or earnings data is passed to the model as "unavailable", never as "none"; missing earnings data also blocks new entries for that symbol. If the trading calendar can't be loaded, the agent treats the market as closed (no cycles, no new entries) and retries every 5 minutes; stops at Alpaca keep working. If the EUR/USD rate is unavailable, the GUI shows USD only, marked "EUR unavailable".
 
 ## Alpaca integration
 
@@ -244,7 +255,7 @@ Risk gates run in code after the model answers, in the order below; the first ga
 | Losing streak | 3 losing trades in a row | Risk per trade halved until the next winning trade |
 | Shock brake | SPY down more than 1.5% in the last 1h bar, or more than 2.5% since the open | No new entries this session |
 | Earnings blackout | Earnings within the next 3 trading days | No new entry |
-| Earnings exit | Held symbol reports before the next session's close | Exit in the 15:46 cycle the day before (setting "Hold through earnings": off) |
+| Earnings exit | Held symbol reports before the next session's close (an unknown time of day counts as before the open) | Exit in the 15:46 cycle the day before (setting "Hold through earnings": off) |
 | PDT guard | 3 day trades in the last 5 trading days | No new entries |
 | Drawdown kill | Equity 8% below its peak | Kill switch turns on automatically |
 | Order sanity | No single order above 25% of equity; at most 6 orders per cycle | Block and alert |
@@ -280,7 +291,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | Table | Holds |
 | --- | --- |
 | `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start) |
-| `cycles` | scheduled time, started, finished, status, errors, data-source health |
+| `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health |
 | `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
@@ -288,7 +299,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `outcomes` | decision, price after 1h, 1 session and 5 sessions; best and worst price while open |
 | `equity_snapshots` | time, equity, cash, SPY benchmark value, EUR/USD rate |
 | `day_trades` | date, symbol, order ids |
-| `earnings` | symbol, date, time of day (before open or after close), fetched at |
+| `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON |
@@ -317,7 +328,7 @@ Eight PRs, each reviewable on its own. Paper orders are first sent in PR 5; ever
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
 3. **Signals, regime and rules.** Indicators, regime, rules pre-filter, shared risk-math function. *Done when:* indicator tests match hand-checked values and the dashboard shows rules status per symbol.
 4. **Decision layer.** Prompt v1, input snapshot builder, OpenAI client, output validation, decision storage, LLM inspector screen. *Done when:* simulated cycles produce stored decisions; invalid outputs are handled per spec.
-5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, PDT guard, risk gates, kill switch. *Done when:* a simulated session and one real paper session both run with every position protected by a stop.
+5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard, risk gates, kill switch. *Done when:* a simulated session and one real paper session both run with every position protected by a stop.
 6. **GUI.** Dashboard, decision detail, positions and orders, settings, states and dialogs, WebSocket updates, phone-width layout.
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* the 4-week paper run can start.
