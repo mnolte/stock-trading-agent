@@ -81,8 +81,11 @@ class SessionClock:
         self.config = config or get_config()
         self.cycle_times = self._parse_cycles()
         self.calendar = calendar or WeekdayCalendarProvider()
+        self.market_tz = ZoneInfo(
+            self.config.get("schedule", "market_timezone", default="America/New_York")
+        )
         self.display_tz = ZoneInfo(
-            self.config.get("schedule", "display_timezone", default="Europe/Amsterdam")
+            self.config.get("app", "timezone", default="Europe/Amsterdam")
         )
 
     def _parse_cycles(self) -> list[time]:
@@ -98,7 +101,7 @@ class SessionClock:
         """Cycles whose 1h bar closes before the session close."""
         result: list[datetime] = []
         for cycle in sorted(self.cycle_times):
-            cycle_dt = datetime.combine(session.date, cycle, tzinfo=NY_TZ)
+            cycle_dt = datetime.combine(session.date, cycle, tzinfo=self.market_tz)
             bar_close = cycle_dt - self.BAR_DELAY
             if bar_close < session.close and session.open <= cycle_dt <= session.close:
                 result.append(cycle_dt)
@@ -106,7 +109,7 @@ class SessionClock:
 
     def state(self) -> SessionState:
         now = self.clock.now()
-        ny_now = self.clock.to_zone(now, NY_TZ)
+        ny_now = self.clock.to_zone(now, self.market_tz)
         today = ny_now.date()
         session = self.calendar.session_for(today)
 
@@ -125,10 +128,10 @@ class SessionClock:
         cycles = self.active_cycles(session)
         next_cycle = next((c for c in cycles if c > ny_now), None)
 
-        if session.close.time() < SESSION_CLOSE:
-            state = "early_close"
-        elif next_cycle is None:
+        if next_cycle is None:
             state = "last_cycle_done"
+        elif session.close.time() < SESSION_CLOSE:
+            state = "early_close"
         else:
             state = "open"
 

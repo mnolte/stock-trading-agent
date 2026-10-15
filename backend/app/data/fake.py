@@ -85,15 +85,21 @@ class FakeCalendarSource:
         self,
         holidays: set[date] | None = None,
         early_closes: dict[date, time] | None = None,
+        fail_remaining: int = 0,
     ) -> None:
         self.holidays = holidays or set()
         self.early_closes = early_closes or {}
+        # Number of fetches that fail before succeeding (retry tests).
+        self.fail_remaining = fail_remaining
 
     async def fetch_calendar(
         self,
         start: date,
         end: date,
     ) -> DataResult[list[CalendarDay]]:
+        if self.fail_remaining > 0:
+            self.fail_remaining -= 1
+            return DataResult(data=[], error="calendar unavailable", source="fake")
         days: list[CalendarDay] = []
         current = start
         while current <= end:

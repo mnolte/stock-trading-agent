@@ -1,12 +1,17 @@
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
+import pytest
+from app.api.main import retry_calendar_load
 from app.config import AppConfig
 from app.data.fake import FakeCalendarSource
+from app.market.calendar import CalendarStore
 from app.market.clock import UTC, FakeClock, SessionClock
 
 NY = ZoneInfo("America/New_York")
 AMS = ZoneInfo("Europe/Amsterdam")
+
+pytestmark = pytest.mark.anyio
 
 
 def _clock(ny_dt: datetime, calendar: FakeCalendarSource) -> SessionClock:
@@ -32,6 +37,17 @@ def test_early_close_active_cycles() -> None:
     cycles = clock.active_cycles(session)
     # Only cycles whose bar closes before the 13:00 close run.
     assert [c.strftime("%H:%M") for c in cycles] == ["10:46", "11:46", "12:46"]
+
+
+def test_early_close_until_last_cycle_then_last_cycle_done() -> None:
+    # Early close shows for the whole session until its last cycle has run.
+    early = {date(2026, 11, 27): time(13, 0)}
+    calendar = FakeCalendarSource(early_closes=early)
+    clock = _clock(datetime(2026, 11, 27, 12, 0, tzinfo=NY), calendar)
+    assert clock.state().state == "early_close"
+    # After the 12:46 cycle the state is last_cycle_done, like a normal day.
+    clock = _clock(datetime(2026, 11, 27, 12, 50, tzinfo=NY), calendar)
+    assert clock.state().state == "last_cycle_done"
 
 
 def test_early_close_closed_after_close() -> None:
@@ -102,3 +118,48 @@ def test_after_close_next_cycle_is_next_session() -> None:
     state = clock.state()
     assert state.state == "closed"
     assert state.next_cycle == datetime(2026, 10, 19, 10, 46, tzinfo=NY).astimezone(UTC)
+
+
+async def test_calendar_load_failure_means_market_closed() -> None:
+    # If the calendar can't be loaded the market is treated as closed: no
+    # sessions, no cycles, no next open.
+    source = FakeCalendarSource(fail_remaining=1)
+    store = CalendarStore(source)
+    result = await store.load(date(2026, 10, 1), date(2026, 12, 31))
+    assert result.error is not None
+    assert not store.is_loaded
+    clock = SessionClock(
+        FakeClock(datetime(2026, 10, 15, 14, 0, tzinfo=UTC)), AppConfig(), store
+    )
+    state = clock.state()
+    assert state.state == "closed"
+    assert state.next_open is None
+    assert state.next_cycle is None
+
+
+async def test_calendar_retry_recovers_market() -> None:
+    # The 5-minute retry job loads the calendar once the source recovers.
+    source = FakeCalendarSource(fail_remaining=1)
+    store = CalendarStore(source)
+    config = AppConfig()
+    clock = FakeClock(datetime(2026, 10, 15, 14, 0, tzinfo=UTC))  # 10:00 NY
+    await retry_calendar_load(store, config, clock)
+    loaded_after_failure = store.is_loaded
+    assert not loaded_after_failure
+    await retry_calendar_load(store, config, clock)
+    assert store.is_loaded
+    state = SessionClock(clock, config, store).state()
+    assert state.state == "open"
+
+
+async def test_calendar_retry_skips_when_loaded() -> None:
+    source = FakeCalendarSource()
+    store = CalendarStore(source)
+    config = AppConfig()
+    clock = FakeClock(datetime(2026, 10, 15, 14, 0, tzinfo=UTC))
+    await retry_calendar_load(store, config, clock)
+    assert store.is_loaded
+    source.fail_remaining = 1
+    # Already loaded: the retry job is a no-op, no fetch happens.
+    await retry_calendar_load(store, config, clock)
+    assert source.fail_remaining == 1

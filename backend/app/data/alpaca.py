@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -185,6 +185,10 @@ def parse_corporate_actions(
 class AlpacaDataClient:
     """Alpaca market data client. Always created with ``paper=True``."""
 
+    # The free plan rejects SIP bar requests for the last ~15 minutes, so
+    # every request ends at least this far in the past.
+    SIP_MIN_AGE = timedelta(minutes=16)
+
     def __init__(
         self,
         api_key: str,
@@ -251,6 +255,9 @@ class AlpacaDataClient:
         self, symbol: str, start: datetime, end: datetime
     ) -> DataResult[list[Bar5m]]:
         try:
+            end = min(end, self.clock.now() - self.SIP_MIN_AGE)
+            if end <= start:
+                return DataResult(data=[], source="alpaca")
             request = StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame(5, TimeFrameUnit.Minute),

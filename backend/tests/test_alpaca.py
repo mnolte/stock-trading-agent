@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import pytest
 from alpaca.common.enums import BaseURL
+from alpaca.data.requests import StockBarsRequest
 from app.data.alpaca import (
     AlpacaDataClient,
     parse_bars,
@@ -13,7 +14,7 @@ from app.data.alpaca import (
     parse_news,
     parse_quotes,
 )
-from app.market.clock import NY_TZ, UTC
+from app.market.clock import NY_TZ, UTC, FakeClock
 
 pytestmark = pytest.mark.anyio
 
@@ -173,6 +174,57 @@ def test_parse_corporate_actions_dividend_and_split() -> None:
     assert dividend.amount_or_ratio == Decimal("1.03")
     assert split.symbol == "NVDA"
     assert split.amount_or_ratio == Decimal("4.0")
+
+
+async def test_sip_bar_request_ends_at_least_16_minutes_ago() -> None:
+    # The free plan rejects recent SIP data: every request end must be at
+    # least 16 minutes in the past, even when the caller asks for "now".
+    now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    client = AlpacaDataClient("test-key", "test-secret", clock=FakeClock(now))
+    captured: dict[str, StockBarsRequest] = {}
+
+    def fake_get_stock_bars(request: StockBarsRequest) -> dict[str, Any]:
+        captured["request"] = request
+        return {"AAPL": []}
+
+    client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
+    await client.fetch_5m_bars("AAPL", now - timedelta(hours=1), now)
+    # The SDK request model stores naive datetimes; compare in UTC.
+    end = captured["request"].end
+    assert end is not None
+    assert end.replace(tzinfo=UTC) == now - AlpacaDataClient.SIP_MIN_AGE
+
+
+async def test_sip_bar_request_keeps_older_end() -> None:
+    # An end that is already old enough is sent unchanged.
+    now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    client = AlpacaDataClient("test-key", "test-secret", clock=FakeClock(now))
+    captured: dict[str, StockBarsRequest] = {}
+    old_end = now - timedelta(hours=2)
+
+    def fake_get_stock_bars(request: StockBarsRequest) -> dict[str, Any]:
+        captured["request"] = request
+        return {"AAPL": []}
+
+    client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
+    await client.fetch_5m_bars("AAPL", now - timedelta(hours=3), old_end)
+    end = captured["request"].end
+    assert end is not None
+    assert end.replace(tzinfo=UTC) == old_end
+
+
+async def test_sip_bar_request_empty_when_range_too_recent() -> None:
+    # A range fully inside the last 16 minutes becomes empty without a call.
+    now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    client = AlpacaDataClient("test-key", "test-secret", clock=FakeClock(now))
+
+    def boom(request: StockBarsRequest) -> dict[str, Any]:
+        raise AssertionError("should not be called")
+
+    client.market_data.get_stock_bars = boom  # type: ignore[assignment]
+    result = await client.fetch_5m_bars("AAPL", now - timedelta(minutes=5), now)
+    assert result.error is None
+    assert result.data == []
 
 
 def test_parse_clock() -> None:

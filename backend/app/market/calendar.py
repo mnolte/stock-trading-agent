@@ -81,6 +81,7 @@ class CalendarStore:
         self.source = source
         self._provider = StaticCalendarProvider()
         self._loaded_range: tuple[date, date] | None = None
+        self.last_error: str | None = None
 
     async def load(self, start: date, end: date) -> DataResult[list[CalendarDay]]:
         result = await self.source.fetch_calendar(start, end)
@@ -90,6 +91,9 @@ class CalendarStore:
                 merged[day.date] = day
             self._provider = StaticCalendarProvider(list(merged.values()))
             self._loaded_range = (start, end)
+            self.last_error = None
+        else:
+            self.last_error = result.error
         return result
 
     def session_for(self, day: date) -> CalendarDay | None:
@@ -104,3 +108,8 @@ class CalendarStore:
     @property
     def loaded_range(self) -> tuple[date, date] | None:
         return self._loaded_range
+
+    @property
+    def is_loaded(self) -> bool:
+        """True once at least one calendar load has succeeded."""
+        return self._loaded_range is not None

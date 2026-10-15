@@ -58,13 +58,31 @@ class NewsItem:
     created_at: datetime
 
 
+_EARNINGS_HOUR_MAP = {
+    "bmo": "before_open",
+    "amc": "after_close",
+    "dmh": "during_market",
+}
+
+
+def normalise_earnings_hour(raw: str) -> str:
+    """Map Finnhub's bmo/amc/dmh hour to a normalised time of day."""
+    return _EARNINGS_HOUR_MAP.get(raw.strip().lower(), "unknown")
+
+
+def earnings_counts_as_before_open(time_of_day: str) -> bool:
+    """For the earnings-exit rule, an unknown time of day counts as before the open."""
+    return time_of_day in ("before_open", "unknown")
+
+
 @dataclass(frozen=True)
 class EarningsEvent:
     """One Finnhub earnings calendar event."""
 
     symbol: str
     date: date
-    time_of_day: str  # bmo | amc
+    time_of_day: str  # before_open | after_close | during_market | unknown
+    hour_raw: str  # Finnhub's raw hour value, e.g. bmo | amc | dmh
     fetched_at: datetime
 
 

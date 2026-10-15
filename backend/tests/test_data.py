@@ -14,11 +14,17 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import CorporateActionEvent, EarningsEvent
+from app.data.models import (
+    CorporateActionEvent,
+    EarningsEvent,
+    earnings_counts_as_before_open,
+    normalise_earnings_hour,
+)
 from app.data.service import MarketDataService
 from app.db.base import Base
+from app.db.models import Earning as EarningRow
 from app.market.clock import UTC
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -96,11 +102,28 @@ async def test_fake_quote_source() -> None:
     assert quote.ask > quote.bid
 
 
+def test_normalise_earnings_hour() -> None:
+    assert normalise_earnings_hour("bmo") == "before_open"
+    assert normalise_earnings_hour("amc") == "after_close"
+    assert normalise_earnings_hour("dmh") == "during_market"
+    assert normalise_earnings_hour("") == "unknown"
+    assert normalise_earnings_hour("nonsense") == "unknown"
+
+
+def test_earnings_unknown_counts_as_before_open() -> None:
+    # For the earnings exit, an unknown time of day counts as before the open.
+    assert earnings_counts_as_before_open("before_open")
+    assert earnings_counts_as_before_open("unknown")
+    assert not earnings_counts_as_before_open("after_close")
+    assert not earnings_counts_as_before_open("during_market")
+
+
 async def test_fake_earnings_filter() -> None:
     event = EarningsEvent(
         symbol="AAPL",
         date=date(2026, 10, 30),
-        time_of_day="amc",
+        time_of_day="after_close",
+        hour_raw="amc",
         fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
     )
     source = FakeEarningsSource([event])
@@ -182,7 +205,8 @@ async def test_refresh_earnings_stores_rows(
     event = EarningsEvent(
         symbol="AAPL",
         date=date(2026, 10, 30),
-        time_of_day="amc",
+        time_of_day="after_close",
+        hour_raw="amc",
         fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
     )
     calendar = FakeCalendarSource()
@@ -199,6 +223,11 @@ async def test_refresh_earnings_stores_rows(
     service = MarketDataService(sources, calendar, AppConfig(), session_factory=session_factory)
     result = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
     assert result.data == 1
+    with session_factory() as session:
+        row = session.execute(select(EarningRow)).scalars().one()
+    assert row.symbol == "AAPL"
+    assert row.time_of_day == "after_close"
+    assert row.hour_raw == "amc"
     # Refreshing again is idempotent.
     again = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
     assert again.data == 0

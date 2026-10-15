@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-10-15 — PR 2: Market and data (built)
+
+- Implemented "Market, schedule and data" and the paper-only Alpaca reads: 5m SIP bar download with SQLite cache, session-aligned 1h aggregation, IEX latest quote, news (one row per article × symbol, Alpaca article id), Finnhub earnings, ECB EUR/USD, corporate actions, trading calendar and `/v2/clock`. Fakes behind every interface.
+- Applied the "Answers to PR 2 questions" decisions: SIP requests capped at `now - 16 min`, early-close state until the last cycle, `earnings.hour_raw` plus normalised `time_of_day` (new migration), calendar-unavailable = closed with a 5-minute retry job, `eur.available`/`rate` in the API instead of a stale or zero rate.
+- Config moved to `app.timezone` and `schedule.market_timezone`; `alpaca.max_calls_per_minute` kept.
+- `make smoke-data`: read-only check that fills the bar cache and does one read per source. No orders.
+- PR 1 fixes needed to get a fresh database running: Alembic owns the schema (`create_all` removed), `AppConfig` finds `backend/config.example.yaml`, tests use a temp database.
+
 ## 2026-10-15 — Answers to PR 2 questions
 
 - Market, schedule and data: Early close shows for the whole early-close session until its last cycle has run, then Last cycle done.

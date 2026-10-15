@@ -101,6 +101,7 @@ class MarketDataService:
                             symbol=event.symbol,
                             date=datetime.combine(event.date, time.min),
                             time_of_day=event.time_of_day,
+                            hour_raw=event.hour_raw,
                             fetched_at=_naive_utc(event.fetched_at),
                         )
                     )

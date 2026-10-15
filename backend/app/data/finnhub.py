@@ -6,7 +6,7 @@ from typing import Any
 
 import finnhub
 
-from app.data.models import DataResult, EarningsEvent
+from app.data.models import DataResult, EarningsEvent, normalise_earnings_hour
 from app.market.clock import Clock, RealClock
 
 
@@ -37,11 +37,13 @@ class FinnhubEarningsSource:
                     day = row.get("date")
                     if isinstance(day, str):
                         day = date.fromisoformat(day)
+                    hour_raw = str(row.get("hour") or "")
                     events.append(
                         EarningsEvent(
                             symbol=str(row.get("symbol") or symbol),
                             date=day,
-                            time_of_day=str(row.get("hour") or ""),
+                            time_of_day=normalise_earnings_hour(hour_raw),
+                            hour_raw=hour_raw,
                             fetched_at=fetched_at,
                         )
                     )

@@ -161,7 +161,8 @@ class Earning(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     date: Mapped[datetime] = mapped_column(nullable=False)
-    time_of_day: Mapped[str] = mapped_column(String(16), nullable=False)  # bmo | amc
+    time_of_day: Mapped[str] = mapped_column(String(16), nullable=False)  # normalised
+    hour_raw: Mapped[str] = mapped_column(String(16), nullable=False)  # Finnhub raw value
     fetched_at: Mapped[datetime] = mapped_column(nullable=False)
 
 

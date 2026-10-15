@@ -16,11 +16,15 @@ universe:
     JPM: Financials
     XOM: Energy
 
+app:
+  timezone: Europe/Amsterdam   # GUI, logs, alerts, daily jobs; timestamps are stored in UTC
+
 schedule:
-  timezone: America/New_York
-  display_timezone: Europe/Amsterdam
+  market_timezone: America/New_York   # cycles follow the exchange clock
   cycles: ["10:46", "11:46", "12:46", "13:46", "14:46", "15:46"]
   last_cycle_no_entries: true
+  position_checks: ["09:46", "10:01", "10:16", "10:31", "11:01", "11:16", "11:31", "12:01", "12:16", "12:31", "13:01", "13:16", "13:31", "14:01", "14:16", "14:31", "15:01", "15:16", "15:31"]
+  position_check_failures_alert: 3
   calendar_refresh: "08:00"
   history_sessions: 60
 
