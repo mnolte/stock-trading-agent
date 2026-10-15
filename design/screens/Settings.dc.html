@@ -274,7 +274,7 @@ class Component extends DCLogic {
       autoOn: String(!sup), supOn: String(sup),
       autoStyle: seg + (sup ? 'background:transparent;color:#98A2AF' : 'background:#2E3643;color:#E7EAEE'),
       supStyle: seg + (sup ? 'background:#2E3643;color:#E7EAEE' : 'background:transparent;color:#98A2AF'),
-      modeText: sup ? 'Every entry and exit waits for your approval on the Dashboard. Stops and targets at Alpaca keep working without approval.' : 'Orders that pass every check and gate are sent to Alpaca straight away. You can still use the kill switch at any time.',
+      modeText: sup ? 'Every entry waits for your approval on the Dashboard. An approval expires at the next cycle and is checked again when you approve. Exits, stops and targets keep working without approval.' : 'Orders that pass every check and gate are sent to Alpaca straight away. You can still use the kill switch at any time.',
       setAuto: function () { self.setState({ mode: 'automatic' }); },
       setSup: function () { self.setState({ mode: 'supervised' }); }
     };

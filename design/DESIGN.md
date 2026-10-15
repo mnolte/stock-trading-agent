@@ -68,12 +68,11 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 
 `Main-390.png` shows the dashboard at 390 px. Cards stack and wide tables scroll inside their card. The sidebar stacks above the content, as in Trading Agent; turning it into a menu button on phones is an acceptable improvement in PR 6.
 
-## Open questions for Marc
+## Open question for Marc
 
-These show up in the designs but the spec doesn't settle them:
+This shows up in the designs but the spec doesn't settle it:
 
-1. **Pending approval (supervised mode):** the design says size and gates are checked again when you approve. Should an approval also expire at the next cycle?
-2. **Stop & flatten on a position bought today** counts as a day trade. The dialog warns about it. Should it also refuse when that would be the 4th day trade?
+1. **Stop & flatten on a position bought today** counts as a day trade. The dialog warns about it. Should it also refuse when that would be the 4th day trade?
 
 ## Screenshot check in every UI PR
 

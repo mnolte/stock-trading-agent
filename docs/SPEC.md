@@ -37,7 +37,7 @@ These defaults are set so Devin can start. Items marked **(review)** are Marc's 
 | Shares | Whole shares only | Bracket and stop orders need whole shares |
 | Stops | Broker-side stop-loss on every position (bracket orders) | Protects positions between cycles and if the app is down |
 | Model | gpt-4o-mini, temperature 0, JSON output | Same as Trading Agent during development |
-| Execution mode **(review)** | Automatic; supervised mode available in settings | Same as Trading Agent |
+| Execution mode **(review)** | Automatic. Supervised mode is built together with its screen in PR 6; until then the app refuses to start when the mode is set to supervised | Same as Trading Agent |
 | Earnings data | Finnhub free earnings calendar | Alpaca has no earnings calendar |
 | News | Alpaca News API | Included with the Alpaca account |
 | Benchmark | SPY buy-and-hold from day one | Honest comparison against doing nothing |
@@ -155,14 +155,14 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 
 - Subscribe to Alpaca's trade-updates stream for fills, cancels and rejects.
 - At startup and at the start of every cycle, compare Alpaca positions and open orders with the database.
-- On any mismatch: record it, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it.
+- On any mismatch: record it, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
 - A position without a live stop order is a critical error: place a protective stop at the stored stop price immediately, then alert.
 
 **Pattern day trading (PDT)**
 
 The $10,000 paper account is below the $25,000 PDT threshold, and Alpaca checks the PDT rule on every order. To stay safe:
 
-- The agent never closes a position on the day it opened it. Only the broker-side stop or target can do that. A same-day exit decision is deferred to the next session's first cycle.
+- The agent never closes a position on the day it opened it. Only the broker-side stop or target can do that. A same-day exit decision is not carried out: it is recorded as deferred, and at the next session's first cycle the position is reviewed again as usual. That cycle's input snapshot includes the deferred exit (time and reason), and the dashboard shows "Exit deferred (day-trade rule)" on the position.
 - Count day trades over the last 5 trading days. At 3, no new entries until the count drops.
 - Check Alpaca's current PDT documentation before PR 5; the rule has been under revision.
 
@@ -264,6 +264,8 @@ Risk gates run in code after the model answers, in the order below; the first ga
 
 **Errors.** Three failed cycles in a row (any unhandled error) turn the kill switch on. A failed model call is never retried with a different model silently.
 
+**Supervised mode** (built in PR 6). Every entry waits for Marc's approval on the Dashboard. A pending approval expires at the next full cycle. Approving re-checks the risk gates, the size and the spread, and sets a new entry limit from the current price; if any check fails, the approval is rejected with the reason shown. Agent exits, stops and targets at Alpaca, earnings exits and the kill switch never wait for approval.
+
 ## GUI
 
 The GUI reuses Trading Agent's visual language: the dark "instrument panel" style, IBM Plex type and the design tokens from its DESIGN.md. Copy the tokens file into this repo; do not import from the other project. Money is shown in USD with the EUR equivalent beside it; times are in Amsterdam time with New York time on hover.
@@ -295,7 +297,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
-| `positions` | symbol, entry decision, qty, avg entry, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason |
+| `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason |
 | `outcomes` | decision, price after 1h, 1 session and 5 sessions; best and worst price while open |
 | `equity_snapshots` | time, equity, cash, SPY benchmark value, EUR/USD rate |
 | `day_trades` | date, symbol, order ids |
@@ -328,8 +330,8 @@ Eight PRs, each reviewable on its own. Paper orders are first sent in PR 5; ever
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
 3. **Signals, regime and rules.** Indicators, regime, rules pre-filter, shared risk-math function. *Done when:* indicator tests match hand-checked values and the dashboard shows rules status per symbol.
 4. **Decision layer.** Prompt v1, input snapshot builder, OpenAI client, output validation, decision storage, LLM inspector screen. *Done when:* simulated cycles produce stored decisions; invalid outputs are handled per spec.
-5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard, risk gates, kill switch. *Done when:* a simulated session and one real paper session both run with every position protected by a stop.
-6. **GUI.** Dashboard, decision detail, positions and orders, settings, states and dialogs, WebSocket updates, phone-width layout.
+5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard, risk gates, kill switch. *Done when:* a simulated session runs with every position protected by a stop, and startup, the paper-account check and reconciliation are verified read-only against the real paper account. Marc runs the first real paper session himself after review, with the paper account reset to $10,000.
+6. **GUI.** Dashboard, decision detail, positions and orders, settings, states and dialogs, supervised-mode approvals, WebSocket updates, phone-width layout.
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* the 4-week paper run can start.
 

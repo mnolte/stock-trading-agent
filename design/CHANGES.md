@@ -2,11 +2,9 @@
 
 Newest first. Each entry names the screens it touches.
 
-## 2026-10-15 — PR 1: shared components and shell
+## 2026-10-15 — Supervised mode wording
 
-- Copied `tokens.css` to `frontend/src/styles/tokens.css`.
-- Built header (PAPER badge, session pill, equity, today, regime, kill switch), sidebar, card, stat card, chip, action badge, check row, banner, button, segmented control, toggle, number field, table and dialog on the `/dev/components` page.
-- Empty screens routed: Dashboard, Positions & orders, Performance, LLM inspector, Settings, States and dialogs.
+Settings: the supervised-mode text now matches the spec — entries only wait for approval, an approval expires at the next cycle and is checked again on approval. DESIGN.md: the approval-expiry question is answered.
 
 ## 2026-10-15 — First handoff
 

@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-10-15 — Answers to PR 5 questions
+
+- Day-trade rule: a same-day exit is recorded as deferred, not carried out. The next session's first cycle reviews the position again with the deferred exit in its input snapshot; the dashboard shows "Exit deferred (day-trade rule)".
+- Execution mode: automatic only in PR 5; the app refuses to start with mode supervised until PR 6. Supervised mode: entries only; an approval expires at the next full cycle; approving re-checks gates, size and spread and sets a new limit from the current price.
+- Reconciliation: a position found at Alpaca that the agent never recorded gets a protective stop at current price − 3 × 1h ATR (3% if ATR is unavailable), no target; no model calls or exits until acknowledged; marked as adopted, P&L shown apart. Data model: `positions.origin`.
+- PR 5 done-when: read-only checks against the real paper account; Marc runs the first real paper session after review.
+- `config.example.yaml`: `risk.adopted_stop_atr: 3`, `risk.protective_stop_fallback_pct: 3`.
+
 ## 2026-10-15 — Answers from the PR 4 review
 
 - Decision layer: held positions are called first when the 10-call cap applies.
@@ -9,13 +17,6 @@ Newest first.
 - `no_call` is an official final action, with a reason: `rules`, `call_cap`, `quote_missing` or `model_error`. Model calls time out after 30 s and are not retried; for a held position `no_call` leaves it as it is.
 - Schedule: missed cycles are never run late (misfire grace 2 minutes); only simulated mode may run a cycle at startup.
 - `config.example.yaml`: `decision.call_timeout_seconds: 30`, `schedule.misfire_grace_seconds: 120`.
-
-## 2026-10-15 — PR 4 review follow-ups
-
-- Data model: `decisions.no_call_reason` (`rules`, `call_cap`, `quote_missing`, `model_error`); symbols the rules reject are now stored as `no_call` decisions, so the inspector shows why they were skipped.
-- Commands: `make smoke-decision SYMBOL=MSFT` makes one real OpenAI call against cached data and prints validation, tokens, cost and latency; it stores nothing and never places an order.
-- Screenshots move to `docs/screenshots/pr-4/`; `design/screenshots/` holds the design references only.
-- `config.example.yaml`: the `indicators`, `alpaca.max_calls_per_minute` and `decision.*_cost_per_mtok` keys stay — the code still reads them.
 
 ## 2026-10-15 — Answers from the PR 3 review
 
