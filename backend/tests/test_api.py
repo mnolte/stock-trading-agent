@@ -41,7 +41,7 @@ def _request_with_fx(latest_fx: DataResult[FXRate | None] | None) -> SimpleNames
 
 
 def test_eur_available_when_rate_fetched() -> None:
-    from datetime import datetime
+    from datetime import date, datetime
     from decimal import Decimal
 
     from app.market.clock import UTC
@@ -50,6 +50,7 @@ def test_eur_available_when_rate_fetched() -> None:
         base="EUR",
         quote="USD",
         usd_per_eur=Decimal("1.1200"),
+        for_date=date(2026, 10, 15),
         fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
     )
     request = cast(Request, _request_with_fx(DataResult(data=fx, source="fake")))

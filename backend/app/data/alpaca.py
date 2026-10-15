@@ -300,7 +300,7 @@ class AlpacaDataClient:
         try:
             raw = await self.limiter.run_read(
                 self.news.get_news,
-                NewsRequest(symbols=symbols, start=start, end=end, limit=50),
+                NewsRequest(symbols=",".join(symbols), start=start, end=end, limit=50),
             )
             news_raw = dict(raw) if isinstance(raw, dict) else {}
             return DataResult(

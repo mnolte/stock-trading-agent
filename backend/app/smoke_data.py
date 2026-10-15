@@ -61,11 +61,12 @@ async def run(config: AppConfig, clock: Clock) -> int:
     universe = market_data.universe()
 
     bars = await market_data.refresh_history(today)
-    total = sum(result.data for result in bars.values())
+    inserted = sum(result.data for result in bars.values())
+    cached = sum(market_data.bars_cache.count(symbol) for symbol in bars)
     bar_errors = [f"{s}: {r.error}" for s, r in bars.items() if r.error]
     failures += _line(
         "bars_5m",
-        f"{total} bars cached across {len(bars)} symbols",
+        f"{cached} bars in cache across {len(bars)} symbols ({inserted} new)",
         "; ".join(bar_errors) or None,
     )
 
@@ -91,7 +92,9 @@ async def run(config: AppConfig, clock: Clock) -> int:
 
     fx = await sources.fx.fetch_fx(today)
     if fx.error is None and fx.data is not None:
-        failures += _line("fx", f"EUR/USD {fx.data.usd_per_eur}")
+        failures += _line(
+            "fx", f"EUR/USD {fx.data.usd_per_eur} (ECB {fx.data.for_date})"
+        )
     else:
         failures += _line("fx", "", fx.error or "no rate returned")
 

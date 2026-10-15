@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data.models import Bar5m
@@ -62,6 +62,15 @@ class BarCache:
             session.add_all(new_rows)
             session.commit()
             return len(new_rows)
+
+    def count(self, symbol: str) -> int:
+        """Total cached bars for a symbol."""
+        with self._session_factory() as session:
+            return session.execute(
+                select(func.count())
+                .select_from(Bar5mRow)
+                .where(Bar5mRow.symbol == symbol)
+            ).scalar_one()
 
     def get(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
         """Return cached bars for a symbol in [start, end], sorted by start."""

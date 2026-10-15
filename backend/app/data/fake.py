@@ -239,6 +239,7 @@ class FakeFXSource:
                 base="EUR",
                 quote="USD",
                 usd_per_eur=Decimal("1.1200"),
+                for_date=for_date,
                 fetched_at=datetime.combine(for_date, time.min, tzinfo=UTC),
             ),
             source="fake",

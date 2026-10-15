@@ -104,6 +104,7 @@ class FXRate:
     base: str  # EUR
     quote: str  # USD
     usd_per_eur: Decimal
+    for_date: date  # the ECB observation date
     fetched_at: datetime
 
 
