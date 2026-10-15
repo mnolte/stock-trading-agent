@@ -29,6 +29,7 @@ class EnvSettings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     finnhub_api_key: str = Field(default="", alias="FINNHUB_API_KEY")
     mode: str = Field(default="paper", alias="MODE")
+    sa_sim_now: str = Field(default="", alias="SA_SIM_NOW")
     sa_host: str = Field(default="127.0.0.1", alias="SA_HOST")
     sa_port: int = Field(default=8000, alias="SA_PORT")
     sa_data_dir: str = Field(default="./data", alias="SA_DATA_DIR")

@@ -43,11 +43,12 @@ class Bar1d(Base):
 
 
 class Cycle(Base):
-    """One decision cycle."""
+    """One decision cycle or position check."""
 
     __tablename__ = "cycles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="cycle")
     scheduled_time: Mapped[datetime] = mapped_column(nullable=False, index=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -71,11 +72,17 @@ class Decision(Base):
     validation_result: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     gates_result: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     final_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Why no model answer counts: rules | call_cap | quote_missing | model_error
+    no_call_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(16), nullable=False)
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(32), nullable=False)
     tokens: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Order(Base):

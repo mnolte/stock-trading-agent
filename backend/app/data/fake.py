@@ -34,6 +34,16 @@ _BASE_PRICES: dict[str, Decimal] = {
     "XOM": Decimal("120"),
 }
 
+# Slow per-bar drift (~30% over 60 sessions). It keeps these symbols in a
+# gentle uptrend so simulated mode always has rules-passing candidates, and
+# keeps SPY out of the Down + High regime that blocks all entries.
+_DRIFT_PER_BAR: dict[str, float] = {
+    "SPY": 0.00006,
+    "AAPL": 0.00006,
+    "MSFT": 0.00006,
+    "JPM": 0.00006,
+}
+
 
 def _to_decimal(value: float) -> Decimal:
     return Decimal(str(round(value, 4)))
@@ -44,6 +54,7 @@ def _bars_for_session(
     day: date,
     session_open: datetime,
     session_close: datetime,
+    drift: float = 0.0,
 ) -> list[Bar5m]:
     """Generate deterministic 5-minute bars for one session."""
     seed = f"{symbol}:{day.isoformat()}"
@@ -59,7 +70,7 @@ def _bars_for_session(
             nxt = session_close
         open_p = previous_close
         noise = rng.uniform(-0.002, 0.002)
-        close_p = open_p * (1 + noise)
+        close_p = open_p * (1 + noise + drift)
         high_p = max(open_p, close_p) * (1 + abs(rng.uniform(0, 0.001)))
         low_p = min(open_p, close_p) * (1 - abs(rng.uniform(0, 0.001)))
         volume = rng.randint(1_000, 50_000)
@@ -143,8 +154,13 @@ class FakeCalendarSource:
 class FakeBarSource:
     """Deterministic 5-minute bars for all configured sessions in the range."""
 
-    def __init__(self, calendar: FakeCalendarSource | None = None) -> None:
+    def __init__(
+        self,
+        calendar: FakeCalendarSource | None = None,
+        drift: dict[str, float] | None = None,
+    ) -> None:
         self.calendar = calendar or FakeCalendarSource()
+        self.drift = _DRIFT_PER_BAR if drift is None else drift
 
     async def fetch_5m_bars(
         self,
@@ -160,7 +176,11 @@ class FakeBarSource:
             # Skip sessions fully outside the requested UTC interval.
             if day.close < start or day.open > end:
                 continue
-            bars.extend(_bars_for_session(symbol, day.date, day.open, day.close))
+            bars.extend(
+                _bars_for_session(
+                    symbol, day.date, day.open, day.close, self.drift.get(symbol, 0.0)
+                )
+            )
         return DataResult(data=bars, source="fake")
 
     async def fetch_daily_bars(
@@ -177,7 +197,9 @@ class FakeBarSource:
                 continue
             bar = aggregate_daily(
                 symbol,
-                _bars_for_session(symbol, day.date, day.open, day.close),
+                _bars_for_session(
+                    symbol, day.date, day.open, day.close, self.drift.get(symbol, 0.0)
+                ),
                 day,
             )
             if bar is not None:

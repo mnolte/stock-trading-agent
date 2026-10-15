@@ -75,6 +75,30 @@ class Watchlist:
     rows: list[WatchlistRow]
 
 
+@dataclass(frozen=True)
+class SymbolEval:
+    """Everything the decision cycle needs for one symbol."""
+
+    symbol: str
+    snapshot: IndicatorSnapshot
+    rules: RulesResult
+    bars_1h: list[Bar1h]
+    price: Decimal | None
+    day_change_pct: Decimal | None
+
+
+@dataclass(frozen=True)
+class Evaluation:
+    """One pass over the universe: snapshots, rules, regime, held symbols."""
+
+    computed_at: datetime
+    regime: MarketRegime
+    held: set[str]
+    pending: set[str]
+    earnings_next: dict[str, date]
+    items: list[SymbolEval]
+
+
 class SignalService:
     """Reads the bar cache and the database; computes snapshots and rules."""
 
@@ -107,6 +131,16 @@ class SignalService:
         keeps them off the event loop.
         """
         self._latest = await asyncio.to_thread(self.watchlist, self.clock.now())
+
+    async def refresh_eval(self) -> Evaluation:
+        """Evaluate once, store the watchlist snapshot and return the eval.
+
+        The decision cycle calls this: the same pass feeds the stored GUI
+        snapshot and the cycle's per-symbol model inputs.
+        """
+        result = await asyncio.to_thread(self.evaluate, self.clock.now())
+        self._latest = self._to_watchlist(result)
+        return result
 
     def hourly_bars(
         self, symbol: str, sessions: list[CalendarDay], now: datetime
@@ -281,7 +315,8 @@ class SignalService:
                     result[symbol] = (row[0], row[1].replace(tzinfo=UTC))
         return result
 
-    def watchlist(self, now: datetime) -> Watchlist:
+    def evaluate(self, now: datetime) -> Evaluation:
+        """Snapshots, rules results and regime for the whole universe."""
         today = now.astimezone(NY_TZ).date()
         sessions = self._sessions_for(today)
         daily_sessions = self._daily_sessions_for(today)
@@ -297,9 +332,8 @@ class SignalService:
             earnings_status is not None and earnings_status.error is None
         )
         last_cycle = self.is_last_cycle(today, now.astimezone(NY_TZ))
-        last_actions = self._last_actions(symbols)
 
-        rows: list[WatchlistRow] = []
+        items: list[SymbolEval] = []
         for symbol in symbols:
             bars_1h, daily, todays = self._symbol_bars(
                 symbol, sessions, daily_sessions, today, now
@@ -324,7 +358,7 @@ class SignalService:
                 config=self.config,
             )
             price: Decimal | None
-            change: Decimal | None
+            base: Decimal | None
             if todays:
                 price = todays[-1].close
                 base = daily[-1].close if daily else None
@@ -336,16 +370,44 @@ class SignalService:
                 if price is not None and base is not None
                 else None
             )
-            action, action_time = last_actions.get(symbol, (None, None))
-            rows.append(
-                WatchlistRow(
+            items.append(
+                SymbolEval(
                     symbol=symbol,
+                    snapshot=snap,
+                    rules=rules,
+                    bars_1h=bars_1h,
                     price=price,
                     day_change_pct=change,
-                    rules=rules,
-                    earnings_date=earnings_next.get(symbol),
-                    last_action=action,
-                    last_action_time=action_time,
                 )
             )
-        return Watchlist(computed_at=now, regime=regime, rows=rows)
+        return Evaluation(
+            computed_at=now,
+            regime=regime,
+            held=held,
+            pending=pending,
+            earnings_next=earnings_next,
+            items=items,
+        )
+
+    def _to_watchlist(self, evaluation: Evaluation) -> Watchlist:
+        last_actions = self._last_actions([item.symbol for item in evaluation.items])
+        rows = [
+            WatchlistRow(
+                symbol=item.symbol,
+                price=item.price,
+                day_change_pct=item.day_change_pct,
+                rules=item.rules,
+                earnings_date=evaluation.earnings_next.get(item.symbol),
+                last_action=last_actions.get(item.symbol, (None, None))[0],
+                last_action_time=last_actions.get(item.symbol, (None, None))[1],
+            )
+            for item in evaluation.items
+        ]
+        return Watchlist(
+            computed_at=evaluation.computed_at,
+            regime=evaluation.regime,
+            rows=rows,
+        )
+
+    def watchlist(self, now: datetime) -> Watchlist:
+        return self._to_watchlist(self.evaluate(now))

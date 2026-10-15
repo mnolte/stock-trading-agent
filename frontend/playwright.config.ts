@@ -14,7 +14,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `cd ../backend && MODE=simulated ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
+      command: `cd ../backend && MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: true,
       timeout: 120_000,

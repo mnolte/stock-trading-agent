@@ -100,7 +100,7 @@ The agent only acts during regular US trading hours (09:30 to 16:00 New York tim
 
 - Build session-aligned 1h bars (09:30, 10:30, ... 14:30, plus the final 15:30 to 16:00 half bar) by aggregating 5-minute SIP bars. Do not use Alpaca's clock-hour bars: their first bar mixes pre-market and the open.
 - Free SIP data is 15 minutes delayed, so each cycle runs 16 minutes after its bar closes: 10:46, 11:46, 12:46, 13:46, 14:46, 15:46. Every SIP bar request sets its end time at least 16 minutes in the past, because the free plan rejects requests for more recent SIP data.
-- On early-close days, run only the cycles whose bar closes before the close; the last one is the exit-check.
+- On early-close days, run only the cycles whose bar closes before the close; the last one is the exit-check. Missed cycles are never run late: if the app was down at a cycle time, it waits for the next scheduled cycle (scheduler misfire grace 2 minutes). Only simulated mode may run a cycle at startup.
 - History needed at startup: 60 sessions of 5-minute bars per symbol, cached in SQLite and topped up each cycle. Daily indicators use Alpaca daily bars instead: 260 sessions per symbol (enough for SMA 200 and a 60-session ATR percentile), loaded at startup and refreshed daily at 08:00 New York time. They are computed on completed sessions only, so they don't change during the day; the opening gap compares today's open with the previous close. All bar requests use split-adjusted prices (adjustment=split).
 - Use the real-time IEX quote (latest trade, bid, ask) only for sizing and the spread check at order time.
 
@@ -184,7 +184,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 2. Update data: 5-min bars, quotes, news, positions.
 3. Compute indicators per symbol and the market regime, and store the snapshot. The GUI reads this stored snapshot; it never recomputes signals per request.
 4. Rules pre-filter: pick entry candidates; every held position is always reviewed.
-5. One model call per candidate or held symbol (at most 10 per cycle).
+5. One model call per candidate or held symbol (at most 10 per cycle; held positions are called first).
 6. Validate the output, apply risk gates, size and place orders.
 7. Store the full decision record; the outcome worker fills in results later.
 
@@ -211,7 +211,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 
 All thresholds live in `config.yaml`.
 
-**Model output.** Strict JSON, validated with Pydantic. Allowed actions depend on context: for a candidate `enter` or `skip`; for a held position `hold`, `tighten_stop` or `exit`.
+**Model output.** Strict JSON through OpenAI structured outputs (a strict JSON schema), validated again with Pydantic. Allowed actions depend on context: for a candidate `enter` or `skip`; for a held position `hold`, `tighten_stop` or `exit`.
 
 ```json
 {
@@ -233,7 +233,7 @@ Code checks after the model answers:
 - Reward to risk, computed by code from entry, stop and target, is at least 1.5.
 - `confidence` is at least 0.55 for `enter`.
 - A `tighten_stop` only raises the stop.
-- Invalid or unparseable output counts as `skip` (or `hold` for a position) and is stored with the raw text.
+- Invalid or unparseable output counts as `skip` (or `hold` for a position) and is stored with the raw text. When no model call is made or the call fails, the decision is stored with final action `no_call` and a reason: `rules`, `call_cap`, `quote_missing` or `model_error`. A model call times out after 30 seconds and is not retried; for a held position `no_call` means the position is left as it is.
 
 **Prompt.** `prompts/decision.v1.md`, versioned; each decision stores the prompt version and hash, the model name and the token cost. The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
 

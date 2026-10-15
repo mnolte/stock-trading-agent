@@ -175,6 +175,12 @@ class SessionClock:
 def make_clock(config: AppConfig | None = None) -> Clock:
     cfg = config or get_config()
     if cfg.env.mode == "simulated":
-        # Simulated mode starts at a fixed session-open time for determinism.
+        # Simulated mode runs on a frozen clock for determinism; SA_SIM_NOW
+        # pins it (ISO 8601), otherwise it sits at the 2026-10-15 open.
+        if cfg.env.sa_sim_now:
+            parsed = datetime.fromisoformat(cfg.env.sa_sim_now)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return FakeClock(parsed.astimezone(UTC))
         return FakeClock(datetime(2026, 10, 15, 13, 30, tzinfo=UTC))
     return RealClock()
