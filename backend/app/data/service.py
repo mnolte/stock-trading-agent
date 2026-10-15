@@ -7,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h
+from app.data.aggregate import aggregate_1h, aggregate_daily, bars_per_session
 from app.data.cache import BarCache, _naive_utc
 from app.data.factory import DataSources
-from app.data.models import Bar1h, Bar5m, CalendarDay, DataResult, FXRate
+from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar, DataResult, FXRate
 from app.db.base import get_session_maker
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
@@ -36,9 +36,24 @@ class MarketDataService:
         self._session_factory = session_factory or get_session_maker()
         self.bars_cache = bar_cache or BarCache(self._session_factory)
         self.latest_fx: DataResult[FXRate | None] | None = None
+        self.latest_earnings: DataResult[int] | None = None
 
     def universe(self) -> list[str]:
         return list(self.config.get("universe", "symbols", default=[]))
+
+    def recent_sessions(self, today: date, count: int) -> list[CalendarDay]:
+        """The ``count`` most recent trading sessions ending at ``today``."""
+        days: list[CalendarDay] = []
+        cursor = today
+        while len(days) < count:
+            session = self.calendar.session_for(cursor)
+            if session is not None:
+                days.append(session)
+            prev = self.calendar.previous_trading_day(cursor)
+            if prev is None:
+                break
+            cursor = prev.date
+        return sorted(days, key=lambda d: d.date)
 
     async def refresh_bars(self, start: datetime, end: datetime) -> dict[str, DataResult[int]]:
         """Fetch and cache 5-minute bars for every symbol in the universe."""
@@ -55,17 +70,8 @@ class MarketDataService:
     async def refresh_history(self, today: date) -> dict[str, DataResult[int]]:
         """Fill the cache with ``history_sessions`` sessions of 5-minute bars."""
         sessions = int(self.config.get("schedule", "history_sessions", default=60))
-        days: list[CalendarDay] = []
-        cursor = today
         # Walk back through the trading calendar until we have enough sessions.
-        while len(days) < sessions:
-            session = self.calendar.session_for(cursor)
-            if session is not None:
-                days.append(session)
-            prev = self.calendar.previous_trading_day(cursor)
-            if prev is None:
-                break
-            cursor = prev.date
+        days = self.recent_sessions(today, sessions)
         if not days:
             return {
                 symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
@@ -82,10 +88,50 @@ class MarketDataService:
         bars_5m = self.get_5m_bars(symbol, session.open, session.close)
         return aggregate_1h(symbol, bars_5m, session)
 
+    def get_5m_bars_sessions(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> list[Bar5m]:
+        """One cache read covering the whole span of the given sessions."""
+        if not sessions:
+            return []
+        start = min(s.open for s in sessions)
+        end = max(s.close for s in sessions)
+        return self.get_5m_bars(symbol, start, end)
+
+    def get_1h_bars_range(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> list[Bar1h]:
+        """Session-aligned 1h bars across several sessions, in order."""
+        per_session = bars_per_session(
+            self.get_5m_bars_sessions(symbol, sessions), sessions
+        )
+        return [
+            bar
+            for session in sessions
+            for bar in aggregate_1h(symbol, per_session[session.date], session)
+        ]
+
+    def get_daily_bars(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> list[DailyBar]:
+        """One daily bar per session, aggregated from the cached 5m bars."""
+        per_session = bars_per_session(
+            self.get_5m_bars_sessions(symbol, sessions), sessions
+        )
+        return [
+            bar
+            for session in sessions
+            if (bar := aggregate_daily(symbol, per_session[session.date], session))
+            is not None
+        ]
+
     async def refresh_earnings(self, start: date, end: date) -> DataResult[int]:
         result = await self.sources.earnings.fetch_earnings(self.universe(), start, end)
         if result.error is not None:
-            return DataResult(data=0, error=result.error, source=result.source)
+            self.latest_earnings = DataResult(
+                data=0, error=result.error, source=result.source
+            )
+            return self.latest_earnings
         stored = 0
         with self._session_factory() as session:
             for event in result.data:
@@ -107,7 +153,8 @@ class MarketDataService:
                     )
                     stored += 1
             session.commit()
-        return DataResult(data=stored, source=result.source)
+        self.latest_earnings = DataResult(data=stored, source=result.source)
+        return self.latest_earnings
 
     async def refresh_corporate_actions(self, start: date, end: date) -> DataResult[int]:
         result = await self.sources.corporate_actions.fetch_corporate_actions(

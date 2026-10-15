@@ -18,6 +18,7 @@ from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
+from app.signals.service import SignalService
 
 
 def run_migrations() -> None:
@@ -93,6 +94,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.calendar_store = calendar_store
     app.state.data_sources = sources
     app.state.market_data = market_data
+    app.state.signal_service = SignalService(
+        market_data, calendar_store, config, clock
+    )
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     scheduler.add_job(

@@ -36,6 +36,19 @@ class Bar1h:
 
 
 @dataclass(frozen=True)
+class DailyBar:
+    """One daily bar for a single trading session, aggregated from 5m bars."""
+
+    symbol: str
+    date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+
+@dataclass(frozen=True)
 class Quote:
     """Latest IEX quote plus last trade for a symbol."""
 

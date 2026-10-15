@@ -38,6 +38,17 @@ execution:
   max_spread_pct: 0.15
   time_in_force: gtc
 
+indicators:
+  ema_fast: 20
+  ema_slow: 50
+  rsi_period: 14
+  atr_period: 14             # used on 1h bars and daily bars
+  obv_lookback: 20
+  rs_lookback: 20
+  daily_sma_fast: 50
+  daily_sma_slow: 200
+  atr_percentile_sessions: 60
+
 rules:
   rsi_min: 40
   rsi_max: 70

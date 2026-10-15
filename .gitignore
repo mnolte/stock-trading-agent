@@ -19,6 +19,8 @@ htmlcov/
 node_modules/
 dist/
 *.local
+frontend/test-results/
+frontend/playwright-report/
 
 # Local config / data
 backend/config.yaml

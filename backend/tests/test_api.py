@@ -33,6 +33,23 @@ def test_header_is_paper(client: TestClient) -> None:
     assert data["eur"]["available"] is True
 
 
+def test_watchlist_returns_rules_status_per_symbol(client: TestClient) -> None:
+    response = client.get("/api/watchlist")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["computed_at"] is not None
+    assert data["regime"]["trend"] in {"up", "down", "sideways"}
+    rows = {row["symbol"]: row for row in data["rows"]}
+    assert set(rows) == {
+        "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"
+    }
+    for row in rows.values():
+        assert row["rules"]["status"] in {"pass", "fail", "held"}
+        assert row["rules"]["checks"]
+        if row["rules"]["status"] == "fail":
+            assert row["rules"]["reason"]
+
+
 def _request_with_fx(latest_fx: DataResult[FXRate | None] | None) -> SimpleNamespace:
     market_data = SimpleNamespace(latest_fx=latest_fx)
     return SimpleNamespace(
