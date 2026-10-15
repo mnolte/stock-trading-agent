@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
@@ -24,6 +24,22 @@ class Bar5m(Base):
     close: Mapped[Decimal] = mapped_column(Money, nullable=False)
     volume: Mapped[int] = mapped_column(nullable=False)
     feed: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class Bar1d(Base):
+    """Daily SIP bars (one per trading session), cached locally."""
+
+    __tablename__ = "bars_1d"
+    __table_args__ = (UniqueConstraint("symbol", "date", name="uq_bars_1d_symbol_date"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    date: Mapped[date] = mapped_column(nullable=False)
+    open: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    high: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    low: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    close: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    volume: Mapped[int] = mapped_column(nullable=False)
 
 
 class Cycle(Base):

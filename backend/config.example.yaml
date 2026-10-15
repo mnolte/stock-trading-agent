@@ -26,7 +26,9 @@ schedule:
   position_checks: ["09:46", "10:01", "10:16", "10:31", "11:01", "11:16", "11:31", "12:01", "12:16", "12:31", "13:01", "13:16", "13:31", "14:01", "14:16", "14:31", "15:01", "15:16", "15:31"]
   position_check_failures_alert: 3
   calendar_refresh: "08:00"
-  history_sessions: 60
+  history_sessions: 60          # 5-minute bars
+  daily_history_sessions: 260   # daily bars: SMA 200 + 60-session ATR percentile
+  bar_adjustment: split
 
 alpaca:
   max_calls_per_minute: 150
@@ -37,6 +39,17 @@ execution:
   entry_timeout_minutes: 10
   max_spread_pct: 0.15
   time_in_force: gtc
+
+indicators:
+  ema_fast: 20
+  ema_slow: 50
+  rsi_period: 14
+  atr_period: 14             # used on 1h bars and daily bars
+  obv_lookback: 20
+  rs_lookback: 20
+  daily_sma_fast: 50
+  daily_sma_slow: 200
+  atr_percentile_sessions: 60
 
 rules:
   rsi_min: 40

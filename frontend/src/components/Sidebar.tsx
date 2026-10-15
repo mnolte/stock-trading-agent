@@ -130,7 +130,6 @@ export function Sidebar() {
       style={{
         width,
         flex: `0 0 ${width}`,
-        minHeight: '100%',
         background: 'var(--sa-chrome)',
         borderRight: '1px solid var(--sa-border)',
         display: 'flex',

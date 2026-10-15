@@ -18,6 +18,7 @@ from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
+from app.signals.service import SignalService
 
 
 def run_migrations() -> None:
@@ -30,7 +31,11 @@ def run_migrations() -> None:
 
 def calendar_load_range(config: AppConfig, today: date) -> tuple[date, date]:
     history_sessions = int(config.get("schedule", "history_sessions", default=60))
-    return today - timedelta(days=history_sessions * 2), today + timedelta(days=30)
+    daily_sessions = int(
+        config.get("schedule", "daily_history_sessions", default=260)
+    )
+    lookback = max(history_sessions, daily_sessions) * 2
+    return today - timedelta(days=lookback), today + timedelta(days=30)
 
 
 async def refresh_calendar_and_daily_data(
@@ -40,7 +45,7 @@ async def refresh_calendar_and_daily_data(
     config: AppConfig,
     clock: Clock,
 ) -> None:
-    """Daily 08:00 NY refresh: calendar, earnings, corporate actions, FX rate."""
+    """Daily refresh: calendar, earnings, corporate actions, FX, daily bars."""
     today = clock.now().astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
@@ -48,8 +53,24 @@ async def refresh_calendar_and_daily_data(
     await market_data.refresh_corporate_actions(
         today - timedelta(days=30), today + timedelta(days=90)
     )
+    await market_data.refresh_daily(today)
     fx = await sources.fx.fetch_fx(today)
     market_data.latest_fx = fx
+
+
+async def refresh_daily_data_and_signals(
+    calendar_store: CalendarStore,
+    market_data: MarketDataService,
+    sources: DataSources,
+    config: AppConfig,
+    clock: Clock,
+    signals: SignalService,
+) -> None:
+    """The scheduled daily refresh, followed by a stored-snapshot refresh."""
+    await refresh_calendar_and_daily_data(
+        calendar_store, market_data, sources, config, clock
+    )
+    await signals.refresh()
 
 
 async def retry_calendar_load(
@@ -84,21 +105,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     clock = make_clock(config)
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
+    signal_service = SignalService(market_data, calendar_store, config, clock)
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
+    await signal_service.refresh()
 
     app.state.calendar_store = calendar_store
     app.state.data_sources = sources
     app.state.market_data = market_data
+    app.state.signal_service = signal_service
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
+    refresh_at = str(config.get("schedule", "calendar_refresh", default="08:00"))
+    refresh_hour, refresh_minute = (int(p) for p in refresh_at.split(":")[:2])
     scheduler.add_job(
-        refresh_calendar_and_daily_data,
-        CronTrigger(hour=8, minute=0, timezone=NY_TZ),
-        args=[calendar_store, market_data, sources, config, clock],
+        refresh_daily_data_and_signals,
+        CronTrigger(hour=refresh_hour, minute=refresh_minute, timezone=NY_TZ),
+        args=[calendar_store, market_data, sources, config, clock, signal_service],
         id="daily-data-refresh",
     )
     scheduler.add_job(
@@ -107,6 +133,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         args=[calendar_store, config, clock],
         id="calendar-retry",
     )
+    # Recompute the stored snapshot at every configured cycle time.
+    for cycle_at in config.get("schedule", "cycles", default=[]) or []:
+        hour, minute = (int(p) for p in str(cycle_at).split(":")[:2])
+        scheduler.add_job(
+            signal_service.refresh,
+            CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
+            id=f"signal-refresh-{cycle_at}",
+        )
     scheduler.start()
     try:
         yield

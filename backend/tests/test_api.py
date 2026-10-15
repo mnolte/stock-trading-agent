@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 from app.api.routes import _eur_rate
 from app.data.models import DataResult, FXRate
@@ -31,6 +31,37 @@ def test_header_is_paper(client: TestClient) -> None:
     assert data["mode"] == "simulated"
     assert data["session"]["state"] in {"open", "closed", "last_cycle_done", "early_close"}
     assert data["eur"]["available"] is True
+
+
+def test_watchlist_returns_rules_status_per_symbol(client: TestClient) -> None:
+    response = client.get("/api/watchlist")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["computed_at"] is not None
+    assert data["regime"]["trend"] in {"up", "down", "sideways"}
+    rows = {row["symbol"]: row for row in data["rows"]}
+    assert set(rows) == {
+        "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"
+    }
+    for row in rows.values():
+        assert row["rules"]["status"] in {"pass", "fail", "held"}
+        assert row["rules"]["checks"]
+        if row["rules"]["status"] == "fail":
+            assert row["rules"]["reason"]
+
+
+def test_watchlist_serves_stored_snapshot(client: TestClient) -> None:
+    # The endpoint must never recompute per request: the stored snapshot is
+    # computed at startup/cycle time, so breaking recompute must not matter.
+    service = cast(Any, client.app).state.signal_service
+
+    def boom(now: object) -> None:
+        raise AssertionError("watchlist recomputed per request")
+
+    service.watchlist = boom
+    response = client.get("/api/watchlist")
+    assert response.status_code == 200
+    assert len(response.json()["rows"]) == 10
 
 
 def _request_with_fx(latest_fx: DataResult[FXRate | None] | None) -> SimpleNamespace:

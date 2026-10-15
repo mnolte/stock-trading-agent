@@ -7,6 +7,7 @@ from app.data.models import (
     Bar5m,
     CalendarDay,
     CorporateActionEvent,
+    DailyBar,
     DataResult,
     EarningsEvent,
     FXRate,
@@ -23,6 +24,15 @@ class BarSource(Protocol):
         end: datetime,
     ) -> DataResult[list[Bar5m]]:
         """Fetch 5-minute bars for one symbol in [start, end]."""
+        ...
+
+    async def fetch_daily_bars(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> DataResult[list[DailyBar]]:
+        """Fetch daily bars (one per session) for one symbol in [start, end]."""
         ...
 
 

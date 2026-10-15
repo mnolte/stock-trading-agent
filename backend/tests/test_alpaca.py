@@ -1,16 +1,19 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
 import pytest
 from alpaca.common.enums import BaseURL
+from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from app.data.alpaca import (
     AlpacaDataClient,
     parse_bars,
     parse_calendar,
     parse_clock,
     parse_corporate_actions,
+    parse_daily_bars,
     parse_news,
     parse_quotes,
 )
@@ -211,6 +214,65 @@ async def test_sip_bar_request_keeps_older_end() -> None:
     end = captured["request"].end
     assert end is not None
     assert end.replace(tzinfo=UTC) == old_end
+
+
+async def test_5m_bar_request_is_split_adjusted() -> None:
+    # Spec: every bar request uses adjustment=split.
+    now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    client = AlpacaDataClient("test-key", "test-secret", clock=FakeClock(now))
+    captured: dict[str, StockBarsRequest] = {}
+
+    def fake_get_stock_bars(request: StockBarsRequest) -> dict[str, Any]:
+        captured["request"] = request
+        return {"AAPL": []}
+
+    client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
+    await client.fetch_5m_bars("AAPL", now - timedelta(hours=3), now)
+    request = captured["request"]
+    assert request.adjustment == Adjustment.SPLIT
+    assert request.feed == DataFeed.SIP
+    assert request.timeframe.amount == 5
+    assert request.timeframe.unit == TimeFrameUnit.Minute
+
+
+async def test_daily_bar_request_params() -> None:
+    # Daily bars: 1Day timeframe, SIP feed, split adjustment, and the same
+    # 16-minute SIP end cap as 5-minute requests.
+    now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)
+    client = AlpacaDataClient("test-key", "test-secret", clock=FakeClock(now))
+    captured: dict[str, StockBarsRequest] = {}
+
+    def fake_get_stock_bars(request: StockBarsRequest) -> dict[str, Any]:
+        captured["request"] = request
+        return {"AAPL": []}
+
+    client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
+    await client.fetch_daily_bars("AAPL", date(2025, 10, 1), date(2026, 10, 15))
+    request = captured["request"]
+    assert request.timeframe.amount == TimeFrame.Day.amount
+    assert request.timeframe.unit == TimeFrame.Day.unit
+    assert request.feed == DataFeed.SIP
+    assert request.adjustment == Adjustment.SPLIT
+    end = request.end
+    assert end is not None
+    assert end.replace(tzinfo=UTC) == now - AlpacaDataClient.SIP_MIN_AGE
+
+
+def test_parse_daily_bars() -> None:
+    raw = {
+        "AAPL": [
+            {"t": "2026-10-14T04:00:00Z", "o": 218.0, "h": 221.0,
+             "l": 217.5, "c": 220.4, "v": 5_000_000},
+            {"t": "2026-10-15T04:00:00Z", "o": 220.5, "h": 222.0,
+             "l": 219.8, "c": 221.1, "v": 4_800_000},
+        ]
+    }
+    bars = parse_daily_bars(raw, "AAPL")
+    assert len(bars) == 2
+    # Daily bar timestamps map to the New York session date.
+    assert bars[0].date == date(2026, 10, 14)
+    assert bars[1].date == date(2026, 10, 15)
+    assert bars[0].close == Decimal("220.4")
 
 
 async def test_sip_bar_request_empty_when_range_too_recent() -> None:

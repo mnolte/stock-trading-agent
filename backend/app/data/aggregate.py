@@ -1,8 +1,28 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
-from app.data.models import Bar1h, Bar5m, CalendarDay
+from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
+
+
+def bars_per_session(
+    bars_5m: list[Bar5m], sessions: list[CalendarDay]
+) -> dict[date, list[Bar5m]]:
+    """Bucket 5-minute bars into their trading session in one pass.
+
+    ``bars_5m`` and ``sessions`` are sorted by time; sessions never overlap.
+    Bars outside every session window are dropped.
+    """
+    result: dict[date, list[Bar5m]] = {s.date: [] for s in sessions}
+    idx = 0
+    for bar in sorted(bars_5m, key=lambda b: b.start):
+        while idx < len(sessions) and bar.start >= sessions[idx].close:
+            idx += 1
+        if idx == len(sessions):
+            break
+        if bar.start >= sessions[idx].open:
+            result[sessions[idx].date].append(bar)
+    return result
 
 
 def session_1h_windows(session: CalendarDay) -> list[tuple[datetime, datetime]]:
@@ -45,3 +65,23 @@ def aggregate_1h(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> lis
             )
         )
     return result
+
+
+def aggregate_daily(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> DailyBar | None:
+    """Aggregate a session's 5-minute bars into one daily bar."""
+    tz = session.open.tzinfo
+    matched = sorted(
+        (b for b in bars_5m if session.open <= b.start.astimezone(tz) < session.close),
+        key=lambda b: b.start,
+    )
+    if not matched:
+        return None
+    return DailyBar(
+        symbol=symbol,
+        date=session.date,
+        open=matched[0].open,
+        high=max(b.high for b in matched),
+        low=min(b.low for b in matched),
+        close=matched[-1].close,
+        volume=sum(b.volume for b in matched),
+    )

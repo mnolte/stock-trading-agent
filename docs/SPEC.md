@@ -101,7 +101,7 @@ The agent only acts during regular US trading hours (09:30 to 16:00 New York tim
 - Build session-aligned 1h bars (09:30, 10:30, ... 14:30, plus the final 15:30 to 16:00 half bar) by aggregating 5-minute SIP bars. Do not use Alpaca's clock-hour bars: their first bar mixes pre-market and the open.
 - Free SIP data is 15 minutes delayed, so each cycle runs 16 minutes after its bar closes: 10:46, 11:46, 12:46, 13:46, 14:46, 15:46. Every SIP bar request sets its end time at least 16 minutes in the past, because the free plan rejects requests for more recent SIP data.
 - On early-close days, run only the cycles whose bar closes before the close; the last one is the exit-check.
-- History needed at startup: 60 sessions of 5-minute bars per symbol, cached in SQLite and topped up each cycle.
+- History needed at startup: 60 sessions of 5-minute bars per symbol, cached in SQLite and topped up each cycle. Daily indicators use Alpaca daily bars instead: 260 sessions per symbol (enough for SMA 200 and a 60-session ATR percentile), loaded at startup and refreshed daily at 08:00 New York time. They are computed on completed sessions only, so they don't change during the day; the opening gap compares today's open with the previous close. All bar requests use split-adjusted prices (adjustment=split).
 - Use the real-time IEX quote (latest trade, bid, ask) only for sizing and the spread check at order time.
 
 **Position check (every 15 minutes)**
@@ -182,7 +182,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 
 1. Pre-checks: market open per Alpaca clock, kill switch off, reconciliation clean.
 2. Update data: 5-min bars, quotes, news, positions.
-3. Compute indicators per symbol and the market regime.
+3. Compute indicators per symbol and the market regime, and store the snapshot. The GUI reads this stored snapshot; it never recomputes signals per request.
 4. Rules pre-filter: pick entry candidates; every held position is always reviewed.
 5. One model call per candidate or held symbol (at most 10 per cycle).
 6. Validate the output, apply risk gates, size and place orders.
@@ -204,7 +204,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - Not held, and no open entry order for it.
 - Daily close above its SMA 50.
 - 1h EMA 20 above EMA 50.
-- RSI between 40 and 70.
+- RSI between 40 and 70, inclusive.
 - Outside the earnings blackout (see Risk).
 - Regime is not Down + High.
 - Not the 15:46 cycle (no new entries in the last cycle of a session).
@@ -290,7 +290,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 
 | Table | Holds |
 | --- | --- |
-| `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start) |
+| `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start). Daily bars live in `bars_1d` (symbol, session date, OHLCV), unique on (symbol, date) |
 | `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health |
 | `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |

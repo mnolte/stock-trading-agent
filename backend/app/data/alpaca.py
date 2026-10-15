@@ -4,7 +4,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
 
-from alpaca.data.enums import DataFeed
+from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
@@ -23,6 +23,7 @@ from app.data.models import (
     Bar5m,
     CalendarDay,
     CorporateActionEvent,
+    DailyBar,
     DataResult,
     MarketClock,
     NewsItem,
@@ -84,6 +85,24 @@ def parse_bars(raw: dict[str, Any], symbol: str) -> list[Bar5m]:
                 close=Decimal(str(bar["c"])),
                 volume=int(bar["v"]),
                 feed="sip",
+            )
+        )
+    return bars
+
+
+def parse_daily_bars(raw: dict[str, Any], symbol: str) -> list[DailyBar]:
+    """Alpaca daily bars response -> DailyBar list (date = NY session date)."""
+    bars: list[DailyBar] = []
+    for bar in raw.get(symbol, []):
+        bars.append(
+            DailyBar(
+                symbol=symbol,
+                date=_parse_timestamp(bar["t"]).astimezone(NY_TZ).date(),
+                open=Decimal(str(bar["o"])),
+                high=Decimal(str(bar["h"])),
+                low=Decimal(str(bar["l"])),
+                close=Decimal(str(bar["c"])),
+                volume=int(bar["v"]),
             )
         )
     return bars
@@ -195,9 +214,12 @@ class AlpacaDataClient:
         secret_key: str,
         rate_limiter: RateLimiter | None = None,
         clock: Clock | None = None,
+        adjustment: str = "split",
     ) -> None:
         self.limiter = rate_limiter or RateLimiter()
         self.clock = clock or RealClock()
+        # All bar requests use the configured price adjustment (spec: split).
+        self.adjustment = Adjustment(adjustment)
         self.trading = TradingClient(api_key, secret_key, paper=True, raw_data=True)
         self.market_data = StockHistoricalDataClient(api_key, secret_key, raw_data=True)
         self.news = NewsClient(api_key, secret_key, raw_data=True)
@@ -264,12 +286,40 @@ class AlpacaDataClient:
                 start=start,
                 end=end,
                 feed=DataFeed.SIP,
+                adjustment=self.adjustment,
             )
             raw = await self.limiter.run_read(
                 self.market_data.get_stock_bars, request
             )
             raw_bars = dict(raw) if isinstance(raw, dict) else {}
             return DataResult(data=parse_bars(raw_bars, symbol), source="alpaca")
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(data=[], error=str(exc), source="alpaca")
+
+    async def fetch_daily_bars(
+        self, symbol: str, start: date, end: date
+    ) -> DataResult[list[DailyBar]]:
+        try:
+            end_dt = min(
+                datetime.combine(end, time.max, tzinfo=NY_TZ),
+                self.clock.now() - self.SIP_MIN_AGE,
+            )
+            start_dt = datetime.combine(start, time.min, tzinfo=NY_TZ)
+            if end_dt <= start_dt:
+                return DataResult(data=[], source="alpaca")
+            request = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=TimeFrame.Day,
+                start=start_dt,
+                end=end_dt,
+                feed=DataFeed.SIP,
+                adjustment=self.adjustment,
+            )
+            raw = await self.limiter.run_read(
+                self.market_data.get_stock_bars, request
+            )
+            raw_bars = dict(raw) if isinstance(raw, dict) else {}
+            return DataResult(data=parse_daily_bars(raw_bars, symbol), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=[], error=str(exc), source="alpaca")
 

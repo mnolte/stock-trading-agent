@@ -14,9 +14,17 @@ export function Layout() {
   }, []);
 
   return (
-    <div style={{ display: 'flex', minHeight: '100%', background: 'var(--sa-bg)' }}>
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'stretch',
+        minHeight: '100%',
+        background: 'var(--sa-bg)',
+      }}
+    >
       <Sidebar />
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Header state={state} />
         <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>
           <Outlet />
