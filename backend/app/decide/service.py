@@ -19,11 +19,18 @@ from app.config import AppConfig
 from app.db.base import get_session_maker
 from app.db.models import Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
-from app.decide.output import ModelOutput, ValidationResult, validate_model_output
+from app.decide.output import (
+    NO_CALL_REASONS,
+    ModelOutput,
+    ValidationResult,
+    validate_model_output,
+)
 from app.decide.prompt import Prompt, cached_prompt
 from app.rules.prefilter import RulesResult
 
-# Final action recorded when the model call itself failed (no output to count).
+# Final action recorded when no usable model answer exists (no call made,
+# or the call failed). ``no_call_reason`` says why: rules, call_cap,
+# quote_missing or model_error.
 NO_CALL = "no_call"
 
 
@@ -122,9 +129,7 @@ class DecisionService:
             config=self.config,
         )
         # A failed call left no output to fall back on; "no_call" says so.
-        final_action = (
-            NO_CALL if response.error is not None else validation.final_action
-        )
+        failed = response.error is not None
         decision = self._store(
             session,
             cycle_id=cycle_id,
@@ -134,7 +139,8 @@ class DecisionService:
             rules=rules,
             response=response,
             validation=validation,
-            final_action=final_action,
+            final_action=NO_CALL if failed else validation.final_action,
+            no_call_reason="model_error" if failed else None,
         )
         return decision
 
@@ -148,15 +154,18 @@ class DecisionService:
         snapshot_json: dict[str, Any],
         rules: RulesResult | None,
         reason: str,
+        detail: str | None = None,
     ) -> Decision:
         """Store a decision row when code blocked the call before it happened."""
+        if reason not in NO_CALL_REASONS:
+            raise ValueError(f"unknown no_call reason {reason!r}")
         validation = ValidationResult(
             valid=False,
             output=None,
             model_action=None,
             final_action=NO_CALL,
-            error=reason,
-            note=f"No call — {reason}",
+            error=detail or reason,
+            note=f"No call — {detail or reason}",
         )
         return self._store(
             session,
@@ -168,6 +177,7 @@ class DecisionService:
             response=None,
             validation=validation,
             final_action=NO_CALL,
+            no_call_reason=reason,
         )
 
     def _store(
@@ -182,6 +192,7 @@ class DecisionService:
         response: ModelResponse | None,
         validation: ValidationResult,
         final_action: str,
+        no_call_reason: str | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -195,6 +206,7 @@ class DecisionService:
             validation_result=validation_result_json(validation),
             gates_result=None,
             final_action=final_action,
+            no_call_reason=no_call_reason,
             prompt_version=self._prompt.version,
             prompt_hash=self._prompt.sha256,
             model=response.model if response else "none",

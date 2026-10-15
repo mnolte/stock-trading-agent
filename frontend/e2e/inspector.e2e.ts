@@ -3,17 +3,18 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR 4 screenshots land in design/screenshots/ next to the matching design
-// reference (Inspector.png, Decision.png). Suffixes keep the viewports apart.
+// PR 4 screenshots land in docs/screenshots/pr-4/, matching the PR 3
+// convention; design/screenshots/ holds the design references only.
 const outDir =
   process.env.SCREENSHOT_DIR ??
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    '../../design/screenshots'
+    '../../docs/screenshots/pr-4'
   );
 
 test('LLM inspector and decision detail', async ({ page }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
+  const name = (base: string) => `${base}-${suffix}.png`;
 
   await page.goto('/inspector');
 
@@ -27,7 +28,7 @@ test('LLM inspector and decision detail', async ({ page }, testInfo) => {
   ).toBeVisible();
 
   await page.screenshot({
-    path: path.join(outDir, `Inspector-${suffix}.png`),
+    path: path.join(outDir, name('inspector')),
     fullPage: true,
   });
 
@@ -48,7 +49,7 @@ test('LLM inspector and decision detail', async ({ page }, testInfo) => {
   ).toBeVisible();
 
   await page.screenshot({
-    path: path.join(outDir, `Decision-${suffix}.png`),
+    path: path.join(outDir, name('decision')),
     fullPage: true,
   });
 });

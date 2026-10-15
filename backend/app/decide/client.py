@@ -13,7 +13,9 @@ import json
 import time
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+from app.decide.output import DECISION_JSON_SCHEMA
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -62,7 +64,7 @@ def token_cost(response: ModelResponse, config: AppConfig) -> Decimal | None:
 
 
 class OpenAIDecisionClient:
-    """gpt-4o-mini (or configured model) via the OpenAI SDK, JSON output."""
+    """gpt-4o-mini (or configured model) via the OpenAI SDK, strict JSON schema."""
 
     def __init__(self, config: AppConfig) -> None:
         from openai import AsyncOpenAI
@@ -71,18 +73,26 @@ class OpenAIDecisionClient:
         self.temperature = float(
             config.get("decision", "temperature", default=0)
         )
-        timeout = float(config.get("decision", "timeout_seconds", default=60))
+        timeout = float(config.get("decision", "call_timeout_seconds", default=30))
         self._client = AsyncOpenAI(
             api_key=config.env.openai_api_key, timeout=timeout
         )
 
     async def complete(self, *, system: str, user: str) -> ModelResponse:
+        from openai.types.chat.completion_create_params import ResponseFormat
+
         started = time.monotonic()
         try:
             completion = await self._client.chat.completions.create(
                 model=self.model,
                 temperature=self.temperature,
-                response_format={"type": "json_object"},
+                response_format=cast(
+                    ResponseFormat,
+                    {
+                        "type": "json_schema",
+                        "json_schema": DECISION_JSON_SCHEMA,
+                    },
+                ),
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},

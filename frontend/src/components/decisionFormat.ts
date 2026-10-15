@@ -40,6 +40,11 @@ export function actionLabel(action: string): string {
   }
 }
 
+/** Why a decision recorded no call: rules, call cap, quote missing, model error. */
+export function noCallReasonLabel(reason: string): string {
+  return reason.replace(/_/g, ' ');
+}
+
 export function formatAmsTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', {
     hour: '2-digit',

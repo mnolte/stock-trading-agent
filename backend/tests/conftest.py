@@ -8,6 +8,8 @@ import pytest
 os.environ.setdefault(
     "SA_DB_PATH", str(Path(tempfile.gettempdir()) / "stock-agent-test.db")
 )
+# Tests always run against the fakes, whatever .env says — sockets are blocked.
+os.environ["MODE"] = "simulated"
 
 from app.api.main import create_app
 from fastapi.testclient import TestClient

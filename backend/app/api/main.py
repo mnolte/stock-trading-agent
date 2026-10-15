@@ -87,6 +87,12 @@ async def run_scheduled_cycle(
     await runner.run(scheduled)
 
 
+def startup_catch_up_allowed(config: AppConfig) -> bool:
+    """Missed cycles are never run late in paper mode; only the frozen
+    simulated clock may run one catch-up cycle at startup."""
+    return config.env.mode == "simulated"
+
+
 async def retry_calendar_load(
     calendar_store: CalendarStore,
     config: AppConfig,
@@ -135,7 +141,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
-    if config.env.mode == "simulated":
+    if startup_catch_up_allowed(config):
         # Frozen clock: run today's latest due cycle once so a simulated
         # session produces stored decisions.
         await cycle_runner.run_due()
@@ -164,7 +170,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="calendar-retry",
     )
     # Run the decision cycle at every configured cycle time; the runner
-    # refreshes the stored signal snapshot as part of the cycle.
+    # refreshes the stored signal snapshot as part of the cycle. Missed
+    # cycles may run late by at most misfire_grace_seconds, and several
+    # misses coalesce into one run — never into a queue of catch-ups.
+    misfire_grace = int(
+        config.get("schedule", "misfire_grace_seconds", default=120)
+    )
     for cycle_at in config.get("schedule", "cycles", default=[]) or []:
         hour, minute = (int(p) for p in str(cycle_at).split(":")[:2])
         scheduler.add_job(
@@ -172,8 +183,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
             args=[cycle_runner, clock, str(cycle_at)],
             id=f"cycle-{cycle_at}",
+            misfire_grace_time=misfire_grace,
+            coalesce=True,
         )
     scheduler.start()
+    app.state.scheduler = scheduler
     try:
         yield
     finally:

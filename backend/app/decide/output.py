@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -25,6 +25,45 @@ CANDIDATE_ACTIONS = {"enter", "skip"}
 HELD_ACTIONS = {"hold", "tighten_stop", "exit"}
 
 FALLBACK = {"candidate": "skip", "held": "hold"}
+
+# Reasons a decision was stored without a usable model answer.
+NO_CALL_REASONS = {"rules", "call_cap", "quote_missing", "model_error"}
+
+# OpenAI structured-outputs schema for the decision object (strict mode).
+# Mirrors ModelOutput; Pydantic still validates the returned JSON.
+DECISION_JSON_SCHEMA: dict[str, Any] = {
+    "name": "decision",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "symbol": {"type": "string"},
+            "action": {
+                "type": "string",
+                "enum": ["enter", "skip", "hold", "tighten_stop", "exit"],
+            },
+            "confidence": {"type": "number"},
+            "stop_price": {"type": ["number", "null"]},
+            "target_price": {"type": ["number", "null"]},
+            "thesis": {"type": "string"},
+            "invalidation": {"type": ["string", "null"]},
+            "risks": {"type": "array", "items": {"type": "string"}},
+            "news_used": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "symbol",
+            "action",
+            "confidence",
+            "stop_price",
+            "target_price",
+            "thesis",
+            "invalidation",
+            "risks",
+            "news_used",
+        ],
+    },
+}
 
 
 class ModelOutput(BaseModel):

@@ -31,12 +31,26 @@ schedule:
   daily_history_sessions: 260   # daily bars: SMA 200 + 60-session ATR percentile
   bar_adjustment: split
 
+alpaca:
+  max_calls_per_minute: 150
+
 execution:
   mode: automatic            # automatic | supervised
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
   max_spread_pct: 0.15
   time_in_force: gtc
+
+indicators:
+  ema_fast: 20
+  ema_slow: 50
+  rsi_period: 14
+  atr_period: 14             # used on 1h bars and daily bars
+  obv_lookback: 20
+  rs_lookback: 20
+  daily_sma_fast: 50
+  daily_sma_slow: 200
+  atr_percentile_sessions: 60
 
 rules:
   rsi_min: 40
@@ -59,6 +73,8 @@ decision:
   min_reward_risk: 1.5
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
+  input_cost_per_mtok: 0.15    # USD per 1M input tokens; cost tracking only
+  output_cost_per_mtok: 0.60   # USD per 1M output tokens; cost tracking only
 
 risk:
   risk_per_trade_pct: 0.5

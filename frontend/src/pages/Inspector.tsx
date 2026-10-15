@@ -15,6 +15,7 @@ import {
   formatCost,
   formatLatency,
   formatNyTitle,
+  noCallReasonLabel,
   splitNote,
 } from '../components/decisionFormat';
 
@@ -42,6 +43,7 @@ function SummaryStrip({ summary }: { summary: DecisionsResponse['summary'] }) {
         </b>{' '}
         calls
       </span>
+      <span>{summary.no_calls} no calls</span>
       <span>
         cost{' '}
         <b style={{ fontFamily: 'var(--sa-font-mono)', fontWeight: 500 }}>
@@ -127,11 +129,18 @@ function CallRow({
       <span
         style={{
           fontSize: 'var(--sa-text-xs)',
-          color: 'var(--sa-warning-text)',
+          color:
+            item.final_action === 'no_call'
+              ? 'var(--sa-text-muted)'
+              : 'var(--sa-warning-text)',
           textAlign: 'right',
         }}
       >
-        {item.changed_by_code ? 'changed by code' : ''}
+        {item.final_action === 'no_call' && item.no_call_reason
+          ? noCallReasonLabel(item.no_call_reason)
+          : item.changed_by_code
+            ? 'changed by code'
+            : ''}
       </span>
     </button>
   );

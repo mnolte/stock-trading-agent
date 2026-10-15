@@ -525,7 +525,9 @@ export default function Decision() {
           }}
         >
           <Chip variant={actionChipVariant(decision.final_action)}>
-            {decision.final_action.replace('_', ' ')}
+            {decision.final_action === 'no_call' && decision.no_call_reason
+              ? `no call · ${decision.no_call_reason.replace(/_/g, ' ')}`
+              : decision.final_action.replace('_', ' ')}
           </Chip>
           {validation?.changed_by_code && (
             <Chip variant="warning">

@@ -120,6 +120,62 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
     assert outcome.price_1h is None
 
 
+def test_decisions_list_shows_no_call_reason(client: TestClient) -> None:
+    decision_id = _seed_no_call()
+    response = client.get("/api/decisions")
+    assert response.status_code == 200
+    data = response.json()
+    # no_call rows are not model calls.
+    assert data["summary"]["calls"] == 0
+    assert data["summary"]["no_calls"] == 1
+    (item,) = data["items"]
+    assert item["final_action"] == "no_call"
+    assert item["no_call_reason"] == "rules"
+
+    detail = client.get(f"/api/decisions/{decision_id}").json()
+    assert detail["no_call_reason"] == "rules"
+    assert detail["model"] == "none"
+
+
+def _seed_no_call() -> int:
+    """Insert one no_call decision (rules-rejected); return the decision id."""
+    with get_session_maker()() as session:
+        cycle = Cycle(
+            kind="cycle",
+            scheduled_time=datetime(2026, 10, 15, 16, 46),
+            started_at=datetime(2026, 10, 15, 16, 46),
+            finished_at=datetime(2026, 10, 15, 16, 47),
+            status="done",
+        )
+        session.add(cycle)
+        session.flush()
+        decision = Decision(
+            cycle_id=cycle.id,
+            symbol="XOM",
+            context="candidate",
+            input_snapshot={"symbol": "XOM"},
+            rules_result={"status": "fail", "reason": "RSI below range", "checks": []},
+            validation_result={
+                "valid": False,
+                "model_action": None,
+                "final_action": "no_call",
+                "changed_by_code": False,
+                "error": "rules: fail",
+                "note": "No call — rules: fail",
+            },
+            final_action="no_call",
+            no_call_reason="rules",
+            prompt_version="decision.v1",
+            prompt_hash="abc123",
+            model="none",
+        )
+        session.add(decision)
+        session.flush()
+        session.add(Outcome(decision_id=decision.id))
+        session.commit()
+        return decision.id
+
+
 def test_decision_detail_404(client: TestClient) -> None:
     assert client.get("/api/decisions/9999").status_code == 404
 

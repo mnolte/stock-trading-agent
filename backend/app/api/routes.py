@@ -165,13 +165,17 @@ def _decision_summary(
     config = get_config()
     changed = 0
     cost = Decimal(0)
+    calls = 0
     for decision, _ in rows:
-        cost += decision.cost or Decimal(0)
+        if decision.model != "none":
+            calls += 1
+            cost += decision.cost or Decimal(0)
         validation = decision.validation_result or {}
         if validation.get("changed_by_code"):
             changed += 1
     return {
-        "calls": len(rows),
+        "calls": calls,
+        "no_calls": len(rows) - calls,
         "cost": str(cost.quantize(Decimal("0.0000001"))),
         "changed_by_code": changed,
         "prompt_version": prompt.version if prompt else None,
@@ -190,6 +194,7 @@ def _decision_item(decision: Decision, scheduled: datetime) -> dict[str, object]
         "context": decision.context,
         "model_action": validation.get("model_action"),
         "final_action": decision.final_action,
+        "no_call_reason": decision.no_call_reason,
         "changed_by_code": bool(validation.get("changed_by_code")),
         "valid": validation.get("valid"),
     }
@@ -251,6 +256,7 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "symbol": decision.symbol,
         "context": decision.context,
         "final_action": decision.final_action,
+        "no_call_reason": decision.no_call_reason,
         "input_snapshot": decision.input_snapshot,
         "rules_result": decision.rules_result,
         "model_output": decision.model_output,

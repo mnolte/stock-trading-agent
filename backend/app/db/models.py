@@ -72,6 +72,8 @@ class Decision(Base):
     validation_result: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     gates_result: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     final_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Why no model answer counts: rules | call_cap | quote_missing | model_error
+    no_call_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(16), nullable=False)
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     model: Mapped[str] = mapped_column(String(32), nullable=False)

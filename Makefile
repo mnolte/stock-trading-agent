@@ -1,4 +1,4 @@
-.PHONY: install run lint test run-backend run-frontend smoke-data
+.PHONY: install run lint test run-backend run-frontend smoke-data smoke-decision
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -39,3 +39,6 @@ test:
 
 smoke-data:
 	cd backend && ../$(PYTHON) -m app.smoke_data
+
+smoke-decision:
+	cd backend && ../$(PYTHON) -m app.smoke_decision $(SYMBOL)

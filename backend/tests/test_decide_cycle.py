@@ -195,7 +195,7 @@ async def test_cycle_stores_decisions_for_candidates_and_held(
     report = await runner.run(CYCLE_1246)
     assert report.status == "done"
     decisions = {d.symbol: d for d in _decisions(session_factory)}
-    assert set(decisions) == {"MSFT", "JPM"}
+    assert set(decisions) == {"MSFT", "JPM", "XOM"}
     msft = decisions["MSFT"]
     assert msft.context == "candidate"
     assert msft.final_action == "enter"  # fake enters MSFT
@@ -208,6 +208,12 @@ async def test_cycle_stores_decisions_for_candidates_and_held(
     jpm = decisions["JPM"]
     assert jpm.context == "held"
     assert jpm.final_action == "hold"
+    # A symbol the rules reject is stored as no_call, reason "rules".
+    xom = decisions["XOM"]
+    assert xom.final_action == "no_call"
+    assert xom.no_call_reason == "rules"
+    assert xom.model == "none"
+    assert xom.input_snapshot is not None
     with session_factory() as session:
         outcomes = session.execute(select(Outcome)).scalars().all()
         cycles = session.execute(select(Cycle)).scalars().all()
@@ -249,6 +255,7 @@ async def test_cycle_failed_call_records_no_call(
     await runner.run(CYCLE_1246)
     (decision,) = _decisions(session_factory)
     assert decision.final_action == "no_call"
+    assert decision.no_call_reason == "model_error"
     assert decision.validation_result is not None
     assert "timeout" in str(decision.validation_result["error"])
 
@@ -272,6 +279,7 @@ async def test_cycle_candidate_without_quote_gets_no_call(
     assert "failed" not in report.data_source_health["quotes"]
     (decision,) = _decisions(session_factory)
     assert decision.final_action == "no_call"
+    assert decision.no_call_reason == "quote_missing"
 
 
 async def test_cycle_skips_when_market_closed(
@@ -385,6 +393,46 @@ async def test_held_position_uses_position_stop_for_tighten_check(
     await runner.run(CYCLE_1246)
     (decision,) = _decisions(session_factory)
     assert decision.final_action == "tighten_stop"
+
+
+async def test_call_cap_reviews_held_positions_before_candidates(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Held positions take the first call slots; candidates get no_call."""
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="JPM",
+                qty=4,
+                avg_entry_price=Decimal("230.00"),
+                current_stop_price=Decimal("224.00"),
+                target_price=Decimal("242.00"),
+                opened_at=datetime(2026, 10, 14, 15, 0),
+            )
+        )
+        session.commit()
+    runner = _runner(
+        session_factory,
+        _evaluation(
+            _item("MSFT", "pass"),
+            _item("AAPL", "pass"),
+            _item("JPM", "held"),
+            held={"JPM"},
+        ),
+        universe=["MSFT", "AAPL", "JPM"],
+    )
+    runner.config.yaml["decision"]["max_calls_per_cycle"] = 1
+    report = await runner.run(CYCLE_1246)
+    assert report.calls == 1
+    decisions = {d.symbol: d for d in _decisions(session_factory)}
+    # JPM is listed last in the evaluation but is called first as a held
+    # position; both candidates are recorded as no_call / call_cap.
+    assert decisions["JPM"].context == "held"
+    assert decisions["JPM"].model != "none"
+    for symbol in ("MSFT", "AAPL"):
+        assert decisions[symbol].final_action == "no_call"
+        assert decisions[symbol].no_call_reason == "call_cap"
+        assert decisions[symbol].model == "none"
 
 
 async def test_run_due_respects_early_close(

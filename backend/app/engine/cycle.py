@@ -206,6 +206,8 @@ class CycleRunner:
         }
 
         # Held positions are always reviewed; candidates passed the rules.
+        # Held symbols come first so they take call slots before candidates
+        # when the per-cycle cap binds.
         reviews = [
             item
             for item in evaluation.items
@@ -215,6 +217,35 @@ class CycleRunner:
             for item in evaluation.items
             if item.rules.status == STATUS_PASS
         ]
+
+        # Symbols the rules reject still get a stored decision — "no_call"
+        # with reason "rules" — so the inspector shows why they were skipped.
+        review_symbols = {item.symbol for item in reviews}
+        for item in evaluation.items:
+            if item.symbol in review_symbols:
+                continue
+            snapshot_json = build_input_snapshot(
+                symbol=item.symbol,
+                context="candidate",
+                cycle_time_ny=scheduled_ny,
+                price=item.price,
+                regime=evaluation.regime,
+                snapshot=item.snapshot,
+                bars_1h=item.bars_1h,
+                position=None,
+                news=None,
+            )
+            decision = self.decide.record_no_call(
+                session,
+                cycle_id=cycle_id,
+                symbol=item.symbol,
+                context="candidate",
+                snapshot_json=snapshot_json,
+                rules=item.rules,
+                reason="rules",
+                detail=f"rules: {item.rules.status}",
+            )
+            report.decisions.append(decision.id)
         max_calls = int(
             self.config.get("decision", "max_calls_per_cycle", default=10)
         )
@@ -246,7 +277,8 @@ class CycleRunner:
                     context=context,
                     snapshot_json=snapshot_json,
                     rules=item.rules,
-                    reason="quote unavailable",
+                    reason="quote_missing",
+                    detail="quote unavailable",
                 )
             else:
                 decision = await self.decide.decide(
@@ -285,7 +317,8 @@ class CycleRunner:
                     news=None,
                 ),
                 rules=item.rules,
-                reason="call cap reached",
+                reason="call_cap",
+                detail="call cap reached",
             )
             report.decisions.append(decision.id)
         session.commit()

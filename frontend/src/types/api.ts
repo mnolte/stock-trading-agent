@@ -51,6 +51,7 @@ export interface WatchlistResponse {
 
 export interface DecisionSummary {
   calls: number;
+  no_calls: number;
   cost: string;
   changed_by_code: number;
   prompt_version: string | null;
@@ -66,6 +67,7 @@ export interface DecisionListItem {
   context: string;
   model_action: string | null;
   final_action: string;
+  no_call_reason: string | null;
   changed_by_code: boolean;
   valid: boolean | null;
 }
@@ -118,6 +120,7 @@ export interface DecisionDetail {
   symbol: string;
   context: string;
   final_action: string;
+  no_call_reason: string | null;
   input_snapshot: Record<string, unknown> | null;
   rules_result: RulesStatus | null;
   model_output: ModelOutput | null;

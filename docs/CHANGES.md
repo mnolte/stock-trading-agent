@@ -10,6 +10,13 @@ Newest first.
 - Schedule: missed cycles are never run late (misfire grace 2 minutes); only simulated mode may run a cycle at startup.
 - `config.example.yaml`: `decision.call_timeout_seconds: 30`, `schedule.misfire_grace_seconds: 120`.
 
+## 2026-10-15 — PR 4 review follow-ups
+
+- Data model: `decisions.no_call_reason` (`rules`, `call_cap`, `quote_missing`, `model_error`); symbols the rules reject are now stored as `no_call` decisions, so the inspector shows why they were skipped.
+- Commands: `make smoke-decision SYMBOL=MSFT` makes one real OpenAI call against cached data and prints validation, tokens, cost and latency; it stores nothing and never places an order.
+- Screenshots move to `docs/screenshots/pr-4/`; `design/screenshots/` holds the design references only.
+- `config.example.yaml`: the `indicators`, `alpaca.max_calls_per_minute` and `decision.*_cost_per_mtok` keys stay — the code still reads them.
+
 ## 2026-10-15 — Answers from the PR 3 review
 
 - Market, schedule and data: daily indicators use Alpaca daily bars, 260 sessions per symbol, refreshed daily at 08:00 New York; computed on completed sessions only. All bar requests are split-adjusted. (60 sessions of 5-minute bars could not give SMA 200 or the 60-session ATR percentile.)
