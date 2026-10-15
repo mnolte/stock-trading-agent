@@ -2,23 +2,13 @@
 
 Newest first.
 
-## 2026-10-15 — PR 3: Signals, regime and rules (built)
+## 2026-10-15 — Answers from the PR 3 review
 
-- Indicators on session-aligned 1h bars and completed-session daily bars (`app/signals/`): EMA 20/50 (SMA-seeded), RSI 14 and ATR 14 (Wilder), session VWAP anchored at the open, OBV trend over 20 bars, relative strength vs SPY, daily SMA 50/200, daily ATR percentile over the configured session window, opening gap, trading days to next earnings.
-- Market regime from SPY daily bars: trend up/down/sideways, volatility low/normal/high by ATR percentile; Down + High blocks new entries. `indicators.*` periods added to `config.example.yaml`.
-- Rules pre-filter (`app/rules/`): held / open order, daily close vs SMA 50, EMA 20 > EMA 50, RSI range, earnings blackout (unavailable data blocks), regime block, last-cycle rule — every threshold from config.
-- Shared risk math (`app/risk/math.py`): one `trade_risk` function for stop distance, risk and reward to risk; whole-share sizing under the risk-per-trade, max-position, open-risk and cash limits.
-- `/api/watchlist` serves per-symbol rules status, price, day change, next earnings and last action; `/api/header` now reports the real regime label. Dashboard shows the watchlist table with the Rules column per the Main design.
-- Bar cache reads per symbol are single range queries (`get_5m_bars_sessions` + `bars_per_session`) instead of one query per session.
-- Playwright e2e (`pnpm test:e2e`, `frontend/e2e/`) opens the Dashboard against a simulated backend and saves `docs/screenshots/pr-3/main-1440.png` and `main-390.png` (1440×900 and 390×844). App shell now wraps the sidebar above the content under ~792 px, matching `Main-390.png`.
-
-## 2026-10-15 — PR 2: Market and data (built)
-
-- Implemented "Market, schedule and data" and the paper-only Alpaca reads: 5m SIP bar download with SQLite cache, session-aligned 1h aggregation, IEX latest quote, news (one row per article × symbol, Alpaca article id), Finnhub earnings, ECB EUR/USD, corporate actions, trading calendar and `/v2/clock`. Fakes behind every interface.
-- Applied the "Answers to PR 2 questions" decisions: SIP requests capped at `now - 16 min`, early-close state until the last cycle, `earnings.hour_raw` plus normalised `time_of_day` (new migration), calendar-unavailable = closed with a 5-minute retry job, `eur.available`/`rate` in the API instead of a stale or zero rate.
-- Config moved to `app.timezone` and `schedule.market_timezone`; `alpaca.max_calls_per_minute` kept.
-- `make smoke-data`: read-only check that fills the bar cache and does one read per source. No orders.
-- PR 1 fixes needed to get a fresh database running: Alembic owns the schema (`create_all` removed), `AppConfig` finds `backend/config.example.yaml`, tests use a temp database.
+- Market, schedule and data: daily indicators use Alpaca daily bars, 260 sessions per symbol, refreshed daily at 08:00 New York; computed on completed sessions only. All bar requests are split-adjusted. (60 sessions of 5-minute bars could not give SMA 200 or the 60-session ATR percentile.)
+- Data model: new `bars_1d` table.
+- Rules pre-filter: RSI 40–70 is inclusive.
+- One cycle, step 3: the signal snapshot is stored; the GUI reads it and never recomputes per request.
+- `config.example.yaml`: `schedule.daily_history_sessions: 260`, `schedule.bar_adjustment: split`.
 
 ## 2026-10-15 — Answers to PR 2 questions
 
