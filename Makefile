@@ -16,14 +16,14 @@ install:
 	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) install --allow-build=esbuild
 
 run-backend:
-	$(UVICORN) app.api.main:app --host 127.0.0.1 --port 8000 --reload
+	$(UVICORN) app.api.main:app --host 127.0.0.1 --port 8001 --reload
 
 run-frontend:
 	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev
 
 run:
 	@trap 'kill $$(jobs -p) 2>/dev/null' EXIT; \
-	$(UVICORN) app.api.main:app --host 127.0.0.1 --port 8000 --reload & \
+	$(UVICORN) app.api.main:app --host 127.0.0.1 --port 8001 --reload & \
 	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev & \
 	wait
 
