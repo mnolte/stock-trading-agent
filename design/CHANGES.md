@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-15 — PR 1: shared components and shell
+
+- Copied `tokens.css` to `frontend/src/styles/tokens.css`.
+- Built header (PAPER badge, session pill, equity, today, regime, kill switch), sidebar, card, stat card, chip, action badge, check row, banner, button, segmented control, toggle, number field, table and dialog on the `/dev/components` page.
+- Empty screens routed: Dashboard, Positions & orders, Performance, LLM inspector, Settings, States and dialogs.
+
 ## 2026-10-15 — First handoff
 
 All 7 screens: Dashboard, Decision detail, Positions & orders, Performance, LLM inspector, Settings, States and dialogs.

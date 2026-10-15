@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-10-15 — PR 1: Skeleton
+
+- Repo layout per SPEC.md → Architecture and stack.
+- FastAPI app with `/api/health`, `/api/session`, `/api/header`; config loading from `.env` and `backend/config.example.yaml`.
+- SQLite with SQLAlchemy 2.x and Alembic; initial migration with all tables from SPEC.md → Data model.
+- Injected clock object (`RealClock` / `FakeClock`) and session-state calculator.
+- React + TypeScript + Vite shell: sidebar, header with PAPER badge and fake-clock session state, empty screens, and shared components on `/dev/components`.
+- Makefile (`install`, `run`, `lint`, `test`), GitHub Actions CI, and pytest with sockets blocked.
+
 ## 2026-10-15 — Application timezone
 
 - Overview: new "Timezone" paragraph. The application timezone is Europe/Amsterdam (GUI, logs, alerts, daily jobs); timestamps stay stored in UTC and decision cycles stay on the New York exchange clock.

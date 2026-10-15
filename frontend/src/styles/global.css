@@ -1,0 +1,37 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--sa-bg);
+  color: var(--sa-text);
+  font-family: var(--sa-font-sans);
+  font-size: var(--sa-text-base);
+  line-height: 1.4;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+a {
+  color: var(--sa-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--sa-accent-hover);
+}
+
+table {
+  border-collapse: collapse;
+}

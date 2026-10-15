@@ -1,0 +1,76 @@
+/* Stock Agent design tokens. Same palette as Trading Agent.
+   Use these variables for every colour, size and font; never hard-code a value. */
+:root {
+  /* surfaces, text, status */
+  --sa-bg: #0B0E13;
+  --sa-chrome: #0F131A;
+  --sa-panel: #12161D;
+  --sa-raised: #171C24;
+  --sa-subtle: #1C222C;
+  --sa-border: #232A35;
+  --sa-border-strong: #2E3643;
+  --sa-text: #E7EAEE;
+  --sa-text-2: #C9CFD6;
+  --sa-text-muted: #98A2AF;
+  --sa-text-faint: #8A94A1;
+  --sa-text-disabled: #6B7480;
+  --sa-accent: #F2B94B;
+  --sa-accent-hover: #FFD58A;
+  --sa-accent-bg: #211C10;
+  --sa-accent-border: #4A3A16;
+  --sa-positive: #3DD68C;
+  --sa-positive-bg: #123A27;
+  --sa-positive-border: #1E5A3E;
+  --sa-negative: #FF6369;
+  --sa-negative-text: #FF8A8F;
+  --sa-negative-soft: #FFB3B6;
+  --sa-negative-bg: #3A1416;
+  --sa-negative-border: #7A2A2E;
+  --sa-warning-text: #FFD58A;
+  --sa-warning-bg: #3A2A0E;
+  --sa-warning-border: #6B4E17;
+  --sa-info: #7FB8FF;
+  --sa-info-bg: #13202F;
+  --sa-info-border: #24405F;
+  --sa-neutral-chip: #9FB4CC;
+  --sa-neutral-chip-bg: #1A2230;
+  --sa-neutral-chip-border: #2E3B4E;
+  --sa-chart-ema20: #7FB8FF;
+  --sa-chart-ema50: #C792EA;
+  --sa-chart-vwap: #F2B94B;
+  /* chart: candles use --sa-positive / --sa-negative; entry --sa-text-2 dashed; stop --sa-negative; target --sa-positive */
+
+  /* type */
+  --sa-font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --sa-font-mono: 'IBM Plex Mono', monospace;  /* all numbers, prices, times, codes */
+  --sa-text-xs: 11px;   /* axis labels, group labels */
+  --sa-text-sm: 12px;   /* captions, chips, table headers */
+  --sa-text-md: 13px;   /* table cells, secondary text */
+  --sa-text-base: 14px; /* body, buttons */
+  --sa-text-lg: 16px;
+  --sa-text-xl: 18px;   /* page titles */
+  --sa-text-stat: 22px; /* stat card values */
+  --sa-text-price: 24px;
+  --sa-weight-regular: 400;
+  --sa-weight-medium: 500;
+  --sa-weight-semibold: 600;
+  --sa-label-tracking: 0.06em; /* uppercase section labels */
+
+  /* spacing and shape */
+  --sa-space-1: 4px;
+  --sa-space-2: 8px;
+  --sa-space-3: 12px;
+  --sa-space-4: 16px;
+  --sa-space-5: 20px;
+  --sa-space-6: 24px;
+  --sa-radius-sm: 6px;   /* chips */
+  --sa-radius-md: 8px;   /* buttons, inputs */
+  --sa-radius-lg: 10px;  /* cards */
+  --sa-radius-xl: 12px;  /* dialogs */
+  --sa-control-height: 44px;   /* buttons, nav items, clickable rows */
+  --sa-input-height: 40px;
+  --sa-sidebar-width: 232px;
+  --sa-sidebar-collapsed: 72px;
+  --sa-page-max: 1440px;
+  --sa-drawer-width: 560px;
+}
