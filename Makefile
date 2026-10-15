@@ -7,7 +7,7 @@ ALEMBIC := .venv/bin/alembic
 RUFF := .venv/bin/ruff
 MYPY := .venv/bin/mypy
 PYTEST := .venv/bin/pytest
-PNPM := $(HOME)/.local/bin/pnpm
+PNPM := $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 
 install:
 	python3 -m venv .venv
