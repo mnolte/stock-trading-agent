@@ -75,13 +75,16 @@ def position_size(
     cash: Decimal,
     current_open_risk: Decimal,
     config: AppConfig,
+    risk_factor: Decimal = Decimal(1),
 ) -> Sizing:
     """Whole-share size after the spec's sizing limits, each named in ``limited_by``.
 
     Shares = risk budget / (entry - stop), rounded down, then reduced to fit
     the max position size, the remaining open-risk budget and the cash.
+    ``risk_factor`` shrinks the risk budget after a losing streak.
     """
     risk_pct = Decimal(str(config.get("risk", "risk_per_trade_pct", default=0.5)))
+    risk_pct = risk_pct * risk_factor
     max_position_pct = Decimal(
         str(config.get("risk", "max_position_pct", default=20))
     )

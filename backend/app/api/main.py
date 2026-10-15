@@ -14,12 +14,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router as api_router
 from app.api.websocket import router as ws_router
+from app.broker.base import Broker
 from app.config import AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.decide.client import make_decision_client
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
+from app.engine.executor import Executor
+from app.engine.position_check import PositionChecker
+from app.engine.state import load_execution_state
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
 from app.signals.service import SignalService
@@ -87,6 +91,44 @@ async def run_scheduled_cycle(
     await runner.run(scheduled)
 
 
+async def run_scheduled_check(checker: PositionChecker) -> None:
+    """Scheduler entry point for the 15-minute position check."""
+    await checker.run()
+
+
+def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker:
+    """The trading broker for the mode: fake in simulated, Alpaca paper else.
+
+    The Alpaca client is created with ``paper=True`` and shares the read
+    limiter with the data client so all calls stay under the cap.
+    """
+    if config.env.mode == "simulated":
+        from app.broker.fake import FakeBroker
+
+        return FakeBroker(clock)
+    if sources.alpaca is None:  # pragma: no cover - guarded by factory
+        raise RuntimeError("paper mode needs the Alpaca data client")
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    return AlpacaPaperBroker(
+        config.env.alpaca_api_key,
+        config.env.alpaca_secret_key,
+        rate_limiter=sources.alpaca.limiter,
+    )
+
+
+def check_execution_mode(config: AppConfig) -> None:
+    """Supervised mode is PR 6: refuse to start rather than fall back."""
+    mode = str(config.get("execution", "mode", default="automatic"))
+    if mode == "supervised":
+        raise RuntimeError(
+            "Refusing to start: supervised mode arrives in PR 6 "
+            "(set execution.mode: automatic)"
+        )
+    if mode != "automatic":
+        raise RuntimeError(f"Refusing to start: unknown execution.mode {mode!r}")
+
+
 def startup_catch_up_allowed(config: AppConfig) -> bool:
     """Missed cycles are never run late in paper mode; only the frozen
     simulated clock may run one catch-up cycle at startup."""
@@ -113,20 +155,35 @@ async def retry_calendar_load(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_config()
+    check_execution_mode(config)
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
 
+    clock = make_clock(config)
     sources = make_data_sources(config)
     if sources.alpaca is not None:
         paper = await sources.alpaca.check_paper_account()
         if paper.error is not None:
             raise RuntimeError(f"Refusing to start: {paper.error}")
 
-    clock = make_clock(config)
+    broker = make_broker(config, sources, clock)
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
     decision_service = DecisionService(make_decision_client(config), config)
+    exec_state = load_execution_state(clock, config)
+    executor = Executor(
+        broker=broker,
+        market_data=market_data,
+        signals=signal_service,
+        calendar=calendar_store,
+        config=config,
+        clock=clock,
+        state=exec_state,
+    )
+    position_checker = PositionChecker(
+        executor=executor, state=exec_state, config=config, clock=clock
+    )
     cycle_runner = CycleRunner(
         market_data=market_data,
         signals=signal_service,
@@ -135,12 +192,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         calendar=calendar_store,
         config=config,
         clock=clock,
+        executor=executor,
     )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
+
+    # Trade updates → ledger; then reconcile once so the database starts
+    # as a mirror of the broker (adopted positions get their stop here).
+    broker.subscribe_trade_updates(executor.on_trade_update)
+    await broker.start_stream()
+    await executor.reconcile()
+    if exec_state.account is None:
+        await executor.refresh_account()
+
     if startup_catch_up_allowed(config):
         # Frozen clock: run today's latest due cycle once so a simulated
         # session produces stored decisions.
@@ -153,6 +220,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.market_data = market_data
     app.state.signal_service = signal_service
     app.state.cycle_runner = cycle_runner
+    app.state.broker = broker
+    app.state.executor = executor
+    app.state.exec_state = exec_state
+    app.state.position_checker = position_checker
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     refresh_at = str(config.get("schedule", "calendar_refresh", default="08:00"))
@@ -186,12 +257,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             misfire_grace_time=misfire_grace,
             coalesce=True,
         )
+    for check_at in config.get("schedule", "position_checks", default=[]) or []:
+        hour, minute = (int(p) for p in str(check_at).split(":")[:2])
+        scheduler.add_job(
+            run_scheduled_check,
+            CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
+            args=[position_checker],
+            id=f"position-check-{check_at}",
+            misfire_grace_time=misfire_grace,
+            coalesce=True,
+        )
     scheduler.start()
     app.state.scheduler = scheduler
     try:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        await broker.stop_stream()
 
 
 def create_app() -> FastAPI:

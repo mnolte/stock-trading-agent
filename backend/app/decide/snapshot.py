@@ -82,7 +82,7 @@ def _position_block(
         risk = position.avg_entry_price - (position.current_stop_price or Decimal(0))
         if risk > 0:
             r_so_far = float(round((price - position.avg_entry_price) / risk, 2))
-    return {
+    block: dict[str, Any] = {
         "entry": _num(position.avg_entry_price, 2),
         "qty": position.qty,
         "stop": _num(position.current_stop_price, 2),
@@ -90,6 +90,11 @@ def _position_block(
         "opened_at": _ny_iso(position.opened_at),
         "r_so_far": r_so_far,
     }
+    # A same-day exit deferred by the day-trade rule is shown to the model
+    # when the position is re-reviewed at the next session's first cycle.
+    if position.deferred_exit:
+        block["deferred_exit"] = position.deferred_exit
+    return block
 
 
 def _headlines_block(news: list[NewsItem] | None) -> list[dict[str, Any]] | str:

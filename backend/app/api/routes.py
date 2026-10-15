@@ -6,14 +6,17 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app.config import get_config
+from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, Outcome
+from app.db.models import Cycle, DayTrade, Decision, Event, Order, Outcome, Position
 from app.decide.prompt import load_prompt
+from app.engine.executor import Executor
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
-from app.market.clock import UTC, SessionClock, SessionState, make_clock
+from app.market.clock import NY_TZ, UTC, SessionClock, SessionState, make_clock
 from app.signals.service import SignalService
 
 router = APIRouter()
@@ -78,10 +81,51 @@ def session_state(request: Request) -> dict[str, object]:
     }
 
 
+def _fmt_money(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:,.2f}"
+
+
+def _fmt_signed(value: Decimal | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:+,.2f}"
+
+
+def _account_snapshot(request: Request) -> dict[str, Decimal | None]:
+    """Equity, cash and previous-close equity from the executor's cache."""
+    state = getattr(request.app.state, "exec_state", None)
+    account = getattr(state, "account", None) if state is not None else None
+    if account is None:
+        return {"equity": None, "cash": None, "today": None}
+    return {
+        "equity": account.equity,
+        "cash": account.cash,
+        "today": (
+            account.equity - account.last_equity
+            if account.last_equity
+            else None
+        ),
+    }
+
+
+def _eur(value: Decimal | None, request: Request) -> Decimal | None:
+    market_data = getattr(request.app.state, "market_data", None)
+    result = getattr(market_data, "latest_fx", None) if market_data else None
+    rate = result.data if result is not None and result.error is None else None
+    if value is None or rate is None:
+        return None
+    return Decimal(value / rate.usd_per_eur)
+
+
 @router.get("/header")
 def header_state(request: Request) -> dict[str, object]:
-    """Skeleton header payload: PAPER badge plus placeholders for equity/P&L/regime."""
+    """PAPER badge, session state, real equity/P&L, regime and kill switch."""
     session = _session_state(request)
+    account = _account_snapshot(request)
+    state = getattr(request.app.state, "exec_state", None)
+    kill_on = bool(getattr(state, "kill_switch_on", False))
     return {
         "paper": True,
         "mode": get_config().env.mode,
@@ -91,12 +135,12 @@ def header_state(request: Request) -> dict[str, object]:
             "next_cycle": session.next_cycle.isoformat() if session.next_cycle else None,
             "calendar_loaded": _calendar_loaded(request),
         },
-        "equity_usd": "10,184.30",
-        "equity_eur": "8,749.40",
-        "today_usd": "+42.10",
-        "today_eur": "+36.17",
+        "equity_usd": _fmt_money(account["equity"]),
+        "equity_eur": _fmt_money(_eur(account["equity"], request)),
+        "today_usd": _fmt_signed(account["today"]),
+        "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
-        "kill_switch": False,
+        "kill_switch": kill_on,
         "eur": _eur_rate(request),
     }
 
@@ -294,3 +338,317 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "latency_ms": decision.latency_ms,
         "raw_response": decision.raw_response,
     }
+
+
+# ----------------------------------------------------------------------
+# Execution: kill switch, positions, orders, banners, acknowledgments
+
+
+def _executor(request: Request) -> Executor:
+    executor = getattr(request.app.state, "executor", None)
+    if executor is None:
+        raise HTTPException(status_code=503, detail="executor unavailable")
+    return executor  # type: ignore[no-any-return]
+
+
+@router.post("/kill-switch")
+async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, object]:
+    """Turn the kill switch on, or stop & flatten everything."""
+    executor = _executor(request)
+    action = str(body.get("action", "entries"))
+    if action == "flatten":
+        result = await executor.flatten()
+        return {"kill_switch": True, **result}
+    reason = str(body.get("reason") or "manual")
+    await executor.activate_kill_switch(reason=reason, automatic=False)
+    return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
+
+
+@router.post("/kill-switch/resume")
+async def kill_switch_resume(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Resume after a kill switch; the typed reason is stored in the log."""
+    executor = _executor(request)
+    reason = str(body.get("reason") or "")
+    try:
+        await executor.resume(reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"kill_switch": False}
+
+
+@router.post("/positions/{position_id}/acknowledge")
+def acknowledge_position(request: Request, position_id: int) -> dict[str, object]:
+    executor = _executor(request)
+    if not executor.acknowledge_position(position_id):
+        raise HTTPException(status_code=404, detail="position not found")
+    return {"acknowledged": True}
+
+
+@router.post("/events/{event_id}/acknowledge")
+def acknowledge_event(request: Request, event_id: int) -> dict[str, object]:
+    executor = _executor(request)
+    if not executor.acknowledge_event(event_id):
+        raise HTTPException(status_code=404, detail="event not found")
+    return {"acknowledged": True}
+
+
+def _position_json(
+    position: Position, market_value: Decimal | None = None
+) -> dict[str, object]:
+    return {
+        "id": position.id,
+        "symbol": position.symbol,
+        "qty": position.qty,
+        "avg_entry_price": str(position.avg_entry_price),
+        "market_value": str(market_value) if market_value is not None else None,
+        "current_stop_price": (
+            str(position.current_stop_price)
+            if position.current_stop_price is not None
+            else None
+        ),
+        "target_price": (
+            str(position.target_price) if position.target_price is not None else None
+        ),
+        "origin": position.origin,
+        "pending_ack": position.pending_ack,
+        "deferred_exit": position.deferred_exit,
+        "opened_at": position.opened_at.replace(tzinfo=UTC).isoformat(),
+        "closed_at": (
+            position.closed_at.replace(tzinfo=UTC).isoformat()
+            if position.closed_at
+            else None
+        ),
+        "realized_pnl_raw": (
+            str(position.realized_pnl_raw)
+            if position.realized_pnl_raw is not None
+            else None
+        ),
+        "exit_reason": position.exit_reason,
+    }
+
+
+@router.get("/positions")
+async def positions(request: Request) -> dict[str, object]:
+    """Open positions plus today's closed ones; adopted P&L stays apart."""
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    today_ny = clock.now().astimezone(NY_TZ).date()
+    market_data = getattr(request.app.state, "market_data", None)
+    sessions = (
+        market_data.recent_sessions(today_ny, 5) if market_data is not None else []
+    )
+    marks: dict[str, Decimal | None] = {}
+    broker = getattr(request.app.state, "broker", None)
+    if broker is not None:
+        broker_positions = await broker.get_positions()
+        if broker_positions.error is None:
+            marks = {p.symbol: p.market_value for p in broker_positions.data}
+    with get_session_maker()() as session:
+        open_rows = session.execute(
+            select(Position).where(Position.closed_at.is_(None))
+        ).scalars().all()
+        today = clock.now().astimezone(UTC).date()
+        closed_rows = session.execute(
+            select(Position).where(Position.closed_at.is_not(None))
+        ).scalars().all()
+        closed_today = [
+            p
+            for p in closed_rows
+            if p.closed_at and p.closed_at.date() == today
+        ]
+        day_trades = 0
+        if sessions:
+            day_trades = session.execute(
+                select(func.count(DayTrade.id)).where(
+                    DayTrade.date >= _naive_utc(sessions[0].open)
+                )
+            ).scalar_one()
+    return {
+        "open": [_position_json(p, marks.get(p.symbol)) for p in open_rows],
+        "closed_today": [_position_json(p) for p in closed_today],
+        "day_trades_5d": day_trades,
+    }
+
+
+@router.get("/orders")
+def orders(request: Request) -> dict[str, object]:
+    """Latest order rows with leg and status."""
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(Order).order_by(Order.id.desc()).limit(100)
+        ).scalars().all()
+    return {
+        "orders": [
+            {
+                "id": row.id,
+                "alpaca_order_id": row.alpaca_order_id,
+                "client_order_id": row.client_order_id,
+                "symbol": row.symbol,
+                "leg": row.leg,
+                "side": row.side,
+                "type": row.order_type,
+                "qty": row.qty,
+                "limit_price": (
+                    str(row.limit_price) if row.limit_price is not None else None
+                ),
+                "stop_price": (
+                    str(row.stop_price) if row.stop_price is not None else None
+                ),
+                "status": row.status,
+                "created_at": row.created_at.replace(tzinfo=UTC).isoformat(),
+                "filled_at": (
+                    row.filled_at.replace(tzinfo=UTC).isoformat()
+                    if row.filled_at
+                    else None
+                ),
+            }
+            for row in rows
+        ]
+    }
+
+
+@router.get("/banners")
+def banners(request: Request) -> dict[str, object]:
+    """The banner strip under the header: kill switch, mismatches, brakes."""
+    state = getattr(request.app.state, "exec_state", None)
+    items: list[dict[str, object]] = []
+    with get_session_maker()() as session:
+        unacked = session.execute(
+            select(Event)
+            .where(
+                Event.acknowledged_at.is_(None),
+                Event.event_type.in_(
+                    ["reconciliation", "protective_stop", "position_check_failed"]
+                ),
+            )
+            .order_by(Event.id.desc())
+            .limit(20)
+        ).scalars().all()
+        for event in unacked:
+            details = event.details or {}
+            if event.event_type == "reconciliation":
+                kind = str(details.get("kind", "mismatch"))
+                if kind == "adopted_position":
+                    message = (
+                        f"Alpaca shows {details.get('qty')} "
+                        f"{event_symbol(details)} shares the agent never "
+                        "opened. A protective stop was placed; new entries "
+                        "are blocked until you acknowledge."
+                    )
+                elif kind == "qty_mismatch":
+                    message = (
+                        f"Alpaca shows {details.get('broker_qty')} "
+                        f"{event_symbol(details)} shares; the agent recorded "
+                        f"{details.get('db_qty')}. Alpaca's numbers are now "
+                        "used. New entries are blocked until you acknowledge."
+                    )
+                else:
+                    message = (
+                        f"Alpaca shows an order the agent never recorded "
+                        f"({event_symbol(details)}). New entries are blocked "
+                        "until you acknowledge."
+                    )
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "reconciliation",
+                        "level": event.level,
+                        "message": message,
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "position_id": _pending_position_id(
+                            session, event_symbol(details)
+                        ),
+                        "actions": ["review", "acknowledge"],
+                    }
+                )
+            elif event.event_type == "protective_stop":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "protective_stop",
+                        "level": "critical",
+                        "message": (
+                            f"{event_symbol(details)} had no stop order at "
+                            f"Alpaca. A protective stop at "
+                            f"{details.get('stop')} was placed. Check the "
+                            "order history to see why the stop was missing."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["open_orders", "acknowledge"],
+                    }
+                )
+            else:
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": event.event_type,
+                        "level": "critical",
+                        "message": "Position checks are failing. "
+                        "Stops at Alpaca stay in place.",
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": [],
+                    }
+                )
+
+    if state is not None and state.kill_switch_on:
+        since = (
+            state.kill_switch_since.astimezone(UTC).isoformat()
+            if state.kill_switch_since
+            else None
+        )
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "kill_switch",
+                "level": "critical",
+                "automatic": state.kill_switch_auto,
+                "reason": state.kill_switch_reason,
+                "since": since,
+                "message": (
+                    "No new entries. Stops and targets at Alpaca stay in place."
+                ),
+                "actions": ["resume", "flatten"],
+            },
+        )
+    if state is not None and state.shock_brake_1h:
+        items.append(
+            {
+                "id": None,
+                "kind": "shock_brake",
+                "level": "warning",
+                "message": "Shock brake on: SPY fell hard in the last hour. "
+                "No new entries for the rest of this session.",
+                "actions": [],
+            }
+        )
+    if state is not None and state.daily_loss_hit:
+        items.append(
+            {
+                "id": None,
+                "kind": "daily_loss",
+                "level": "warning",
+                "message": "Daily loss limit reached. "
+                "No new entries until tomorrow's first cycle.",
+                "actions": [],
+            }
+        )
+    return {"items": items}
+
+
+def event_symbol(details: dict[str, object]) -> str:
+    return str(details.get("symbol", "?"))
+
+
+def _pending_position_id(session: Session, symbol: str) -> int | None:
+    row = session.execute(
+        select(Position.id).where(
+            Position.symbol == symbol,
+            Position.closed_at.is_(None),
+            Position.pending_ack.is_(True),
+        )
+    ).scalar_one_or_none()
+    return row
