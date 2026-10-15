@@ -1,0 +1,80 @@
+# Stock Agent configuration. Copy to config.yaml.
+# Every value here is a default from docs/SPEC.md. Change behaviour here, not in code.
+# Secrets never go in this file; they live in .env.
+
+universe:
+  symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, GOOGL, META, JPM, XOM]
+  sectors:
+    SPY: Index
+    QQQ: Technology
+    AAPL: Technology
+    MSFT: Technology
+    NVDA: Technology
+    AMZN: Consumer Discretionary
+    GOOGL: Communication Services
+    META: Communication Services
+    JPM: Financials
+    XOM: Energy
+
+schedule:
+  timezone: America/New_York
+  display_timezone: Europe/Amsterdam
+  cycles: ["10:46", "11:46", "12:46", "13:46", "14:46", "15:46"]
+  last_cycle_no_entries: true
+  calendar_refresh: "08:00"
+  history_sessions: 60
+
+execution:
+  mode: automatic            # automatic | supervised
+  entry_limit_offset_pct: 0.05
+  entry_timeout_minutes: 10
+  max_spread_pct: 0.15
+  time_in_force: gtc
+
+rules:
+  rsi_min: 40
+  rsi_max: 70
+  require_daily_above_sma50: true
+  require_ema20_above_ema50: true
+
+regime:
+  vol_low_below_pct: 30
+  vol_high_above_pct: 70
+  block_entries_in: [down_high]
+
+decision:
+  model: gpt-4o-mini
+  temperature: 0
+  prompt: decision.v1
+  min_confidence_enter: 0.55
+  stop_atr_min: 1.5
+  stop_atr_max: 4.0
+  min_reward_risk: 1.5
+  max_calls_per_cycle: 10
+
+risk:
+  risk_per_trade_pct: 0.5
+  max_position_pct: 20
+  max_open_risk_pct: 2.5
+  max_open_positions: 4
+  max_per_sector: 2
+  cash_only: true
+  daily_loss_limit_pct: 2.0
+  losing_streak: 3
+  losing_streak_risk_factor: 0.5
+  shock_brake_1h_pct: 1.5
+  shock_brake_session_pct: 2.5
+  earnings_blackout_days: 3
+  hold_through_earnings: false
+  pdt_max_day_trades: 3
+  drawdown_kill_pct: 8
+  max_order_pct: 25
+  max_orders_per_cycle: 6
+  failed_cycles_kill: 3
+
+performance:
+  slippage_pct_per_side: 0.05
+  benchmark: SPY
+
+storage:
+  backup_days: 14

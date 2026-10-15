@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Agent — Performance</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input,select{font-family:inherit}
+table{border-collapse:collapse}
+</style>
+</helmet>
+<div style="min-height: 1500px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <aside aria-label="Sidebar" style="{{nav.aside}}">
+    <div style="{{nav.brandRow}}">
+      <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
+      <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
+        </div>
+      </sc-if>
+    </div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 2px">
+      <div style="{{nav.group}}">Monitor</div>
+      <a href="Main.dc.html" aria-label="Dashboard" title="Dashboard" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Dashboard</span></sc-if></a>
+      <a href="Positions.dc.html" aria-label="Positions & orders" title="Positions & orders" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Positions & orders</span></sc-if></a>
+      <a href="Performance.dc.html" aria-current="page" aria-label="Performance" title="Performance" style="{{nav.active}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
+      <div style="{{nav.group}}">Learn</div>
+      <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
+      <div style="{{nav.group}}">Control</div>
+      <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
+    </nav>
+    <div style="flex: 1"></div>
+    <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
+    <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
+  </aside>
+
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid #232A35; background: #0F131A">
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 18px; font-weight: 600">Performance</h1><div style="font-size: 13px; color: #98A2AF">Paper run since Monday 5 October · 9 sessions</div></div>
+      <span title="Orders go to Alpaca's paper account. Real-money trading is not built." style="display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+      <div title="New York 12:52 · market closes 16:00 New York (22:00 Amsterdam)" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #171C24; border: 1px solid #232A35; font-size: 13px; white-space: nowrap">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #3DD68C"></span>
+        <span>Market open</span>
+        <span style="color: #98A2AF">· next cycle 19:46 · in 54 min</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Equity</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #E7EAEE; white-space: nowrap">$10,184.30 <span style="color: #98A2AF; font-size: 12px">€8,749.40</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Today</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #3DD68C; white-space: nowrap">+$42.10 <span style="color: #98A2AF; font-size: 12px">+€36.17</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span title="Market regime from SPY: trend × volatility" style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Regime</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Up · normal vol</span>
+      </div>
+      <a href="States.dc.html" title="Stop new entries, or stop and sell everything" style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #7A2A2E; background: #3A1416; color: #FFB3B6; font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="13"></line><line x1="12" y1="17" x2="12" y2="17"></line></svg><span>Kill switch</span></a>
+    </div>
+  </header>
+  <main style="max-width: 1440px; width: 100%; margin: 0 auto; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<section aria-label="Summary" style="display: flex; flex-wrap: wrap; gap: 12px">
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Return</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #3DD68C; white-space: nowrap">+1.84%</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">+$184.30 · +€158.33</div>
+</div>
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div title="Agent return minus the return of buying SPY on 5 Oct and holding it." style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">vs SPY hold</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #3DD68C; white-space: nowrap">+0.63%</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">SPY +1.21% over the same days</div>
+</div>
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div title="Paper fills ignore slippage and fees. This subtracts the assumed slippage on every fill and adds dividends received." style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Adjusted P&L</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">+$171.86</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">0.05% slippage per side · no dividends yet</div>
+</div>
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Win rate</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">67%</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">4 of 6 closed trades</div>
+</div>
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Average R</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">+0.78R</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">per closed trade</div>
+</div>
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Max drawdown</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #FF8A8F; white-space: nowrap">−0.49%</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">close to close · kill at −8%</div>
+</div>
+</section>
+<section aria-label="Equity curve" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px">
+  <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px">
+    <h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Equity vs SPY buy-and-hold</h2>
+    <span style="flex: 1"></span>
+    <div role="group" aria-label="Currency" style="display: flex; padding: 3px; background: #171C24; border: 1px solid #232A35; border-radius: 8px">
+      <button type="button" onClick="{{setUsd}}" aria-pressed="{{usdOn}}" style="{{usdStyle}}">USD</button>
+      <button type="button" onClick="{{setEur}}" aria-pressed="{{eurOn}}" style="{{eurStyle}}">EUR</button>
+    </div>
+  </div>
+  <div style="display: flex; gap: 8px">
+    <div style="position: relative; flex: 1; height: 300px; border-bottom: 1px solid #232A35">
+      <sc-for list="{{grid}}" as="g" hint-placeholder-count="4"><div style="{{g.style}}"></div></sc-for>
+      <svg viewBox="0 0 1000 300" preserveAspectRatio="none" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible">
+        <polyline points="{{bench}}" fill="none" stroke="#98A2AF" stroke-width="1.5" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></polyline>
+        <polyline points="{{eq}}" fill="none" stroke="#F2B94B" stroke-width="2" vector-effect="non-scaling-stroke"></polyline>
+      </svg>
+      <sc-for list="{{dots}}" as="d" hint-placeholder-count="9"><div title="{{d.title}}" style="{{d.style}}"></div></sc-for>
+      <sc-for list="{{xl}}" as="x" hint-placeholder-count="9"><span style="{{x.style}}">{{x.label}}</span></sc-for>
+    </div>
+    <div style="position: relative; width: 72px; height: 300px"><sc-for list="{{grid}}" as="g" hint-placeholder-count="4"><span style="{{g.labelStyle}}">{{g.label}}</span></sc-for></div>
+  </div>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 16px; font-size: 12px; color: #98A2AF">
+    <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 16px; height: 2px; background: #F2B94B"></span>Agent equity <span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">{{lastEq}}</span></span>
+    <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 16px; height: 0; border-top: 2px dashed #98A2AF"></span>SPY bought 5 Oct <span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">{{lastBench}}</span></span>
+    <span style="flex: 1"></span><span>{{note}}</span>
+  </div>
+</section>
+<div style="display: flex; flex-wrap: wrap; gap: 20px">
+<section aria-label="By regime" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 440px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">By regime</h2></div>
+<div style="overflow-x: auto"><table style="width: 100%; min-width: 420px">
+<thead><tr><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Regime</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Trades</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Won</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">P&L</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Avg R</th></tr></thead>
+<tbody><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Up · normal vol</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">5</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">4</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$207.60</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">+1.14R</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Up · high vol</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">1</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">0</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">−$49.30</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">−1.00R</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Sideways · any</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">0</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Down · normal or low</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">0</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td></tr></tbody>
+</table></div><div style="font-size: 12px; color: #98A2AF">Down + high vol blocks new entries, so it never has trades. Six trades is far too few to judge any regime.</div>
+</section>
+<section aria-label="Decisions and outcomes" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 460px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Decisions and outcomes</h2></div>
+<div style="overflow-x: auto"><table style="width: 100%; min-width: 520px">
+<thead><tr><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Decision</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Count</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Price after 1 session</th><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Read</th></tr></thead>
+<tbody><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Enter</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">9</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+0.62% avg</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">entries moved the right way on average · 1 not filled</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Skip (model)</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">21</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#98A2AF">+0.08% avg</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">skipped setups went nowhere</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Held by rules</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">214</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#98A2AF">+0.11% avg</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">no model call</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Invalid output</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">1</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">—</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">treated as skip</td></tr></tbody>
+</table></div><div style="font-size: 12px; color: #98A2AF">Every decision is scored, skips included, so you can see whether the agent passes on good trades.</div>
+</section>
+</div>
+<section aria-label="Closed trades" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Closed trades</h2><div style="font-size: 13px; color: #98A2AF">6 closed · 2 open (MSFT, JPM: +$26.00 unrealized)</div></div>
+<div style="overflow-x: auto"><table style="width: 100%; min-width: 900px">
+<thead><tr><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Dates</th><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Symbol</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Qty</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Entry</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Exit</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">P&L</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Adjusted</th><th scope="col" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">R</th><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Exit</th><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Regime at entry</th></tr></thead>
+<tbody><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">13 Oct → 14 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">QQQ</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">3</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">585.10</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">600.30</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$45.60</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$43.82</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+1.6R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">target</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · normal</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">12 Oct → 13 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">GOOGL</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">8</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">240.10</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">245.60</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$44.00</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$42.06</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+0.9R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">agent exit</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · normal</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">9 Oct → 12 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">NVDA</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">10</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">183.40</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">178.50</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">−$49.00</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">−$50.81</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">-1.0R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">stop</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · normal</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">8 Oct → 9 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">META</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">2</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">698.20</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">741.10</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$85.80</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$84.36</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+2.6R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">target</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · normal</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">6 Oct → 8 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">AAPL</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">7</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">244.80</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">256.40</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$81.20</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+$79.45</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#3DD68C">+1.6R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">target</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · normal</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">6 Oct → 7 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;"><b style="font-family:'IBM Plex Sans', system-ui, sans-serif">XOM</b></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">17</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">115.90</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">113.00</td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">−$49.30</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">−$51.25</span></td><td style="text-align: right; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;"><span style="color:#FF8A8F">-1.0R</span></td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">stop</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">up · high vol</td></tr></tbody>
+</table></div>
+</section>
+
+  </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 1500}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { cur: 'usd' };
+  }
+  renderVals() {
+    var self = this;
+
+    var navCollapsed = !!(this.state && this.state.navCollapsed);
+    var navBase = 'height:44px;display:flex;align-items:center;gap:12px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;box-sizing:border-box;white-space:nowrap;' + (navCollapsed ? 'justify-content:center;padding:0;' : 'padding:0 12px;');
+    var nav = {
+      expanded: !navCollapsed,
+      expandedStr: String(!navCollapsed),
+      toggle: function () { self.setState({ navCollapsed: !navCollapsed }); },
+      toggleLabel: navCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      aside: 'flex:0 0 ' + (navCollapsed ? '72px' : '232px') + ';box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px ' + (navCollapsed ? '12px' : '16px') + ';background:#0F131A;border-right:1px solid #232A35',
+      brandRow: 'display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #232A35;' + (navCollapsed ? 'justify-content:center' : ''),
+      item: navBase + 'color:#98A2AF',
+      active: navBase + 'background:#1C222C;color:#E7EAEE',
+      status: 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#171C24;border:1px solid #232A35;font-size:13px;' + (navCollapsed ? 'justify-content:center' : ''),
+      dot: 'width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#3DD68C',
+      toggleStyle: navBase + 'width:100%;border:1px solid #232A35;background:transparent;color:#98A2AF;cursor:pointer;font-family:inherit'
+    };
+    nav.group = navCollapsed ? 'height:1px;background:#232A35;margin:8px 4px;overflow:hidden;color:transparent;font-size:0' : 'font-size:11px;font-weight:600;color:#8A94A1;text-transform:uppercase;letter-spacing:0.08em;padding:12px 12px 4px';
+
+
+    var D = {"days": ["Start", "5 Oct", "6 Oct", "7 Oct", "8 Oct", "9 Oct", "12 Oct", "13 Oct", "14 Oct", "15 Oct"], "eq": [10000.0, 10012.4, 10031.1, 9981.8, 10063.0, 10148.8, 10099.8, 10143.8, 10142.2, 10184.3], "bench": [10000.0, 10012.11, 10025.74, 9962.14, 10039.37, 10072.68, 10051.48, 10084.8, 10098.43, 10121.14], "fx": [1.158, 1.158, 1.1595, 1.161, 1.1602, 1.1625, 1.163, 1.1648, 1.1655, 1.164]};
+    var eurMode = this.state.cur === 'eur';
+    var eq = D.eq.map(function (v, i) { return eurMode ? v / D.fx[i] : v; });
+    var bench = D.bench.map(function (v, i) { return eurMode ? v / D.fx[i] : v; });
+    var all = eq.concat(bench);
+    var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all), pad = (hi - lo) * 0.15; lo -= pad; hi += pad;
+    var n = eq.length;
+    function X(i) { return (i / (n - 1)) * 1000; }
+    function Y(v) { return (hi - v) / (hi - lo) * 300; }
+    function pts(a) { return a.map(function (v, i) { return X(i).toFixed(1) + ',' + Y(v).toFixed(1); }).join(' '); }
+    var sym = eurMode ? '€' : '$';
+    function money(v) { return sym + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+    var grid = [];
+    for (var g = 0; g < 4; g++) { var p = hi - (hi - lo) * (g + 0.5) / 4; grid.push({ style: 'position:absolute;left:0;right:0;top:' + (Y(p) / 3).toFixed(2) + '%;border-top:1px dashed #1C222C', label: money(p).replace(/\.\d\d$/, ''), labelStyle: 'position:absolute;right:0;top:calc(' + (Y(p) / 3).toFixed(2) + '% - 8px);font-family:IBM Plex Mono,monospace;font-size:11px;color:#98A2AF' }); }
+    var dots = eq.map(function (v, i) { return { title: D.days[i] + ': ' + money(v), style: 'position:absolute;width:8px;height:8px;border-radius:50%;background:#F2B94B;left:calc(' + (X(i) / 10).toFixed(2) + '% - 4px);top:calc(' + (Y(v) / 3).toFixed(2) + '% - 4px)' }; });
+    var xl = D.days.map(function (d, i) { return { label: d, style: 'position:absolute;bottom:-22px;left:calc(' + (X(i) / 10).toFixed(2) + '% - 20px);width:40px;text-align:center;font-size:11px;color:#98A2AF;white-space:nowrap' }; });
+    var seg = 'height:32px;padding:0 14px;border:0;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;';
+    return {
+      nav: nav, eq: pts(eq), bench: pts(bench), grid: grid, dots: dots, xl: xl,
+      lastEq: money(eq[n - 1]), lastBench: money(bench[n - 1]),
+      note: eurMode ? 'EUR at each day’s ECB rate; the account itself is in USD' : 'Start = 5 Oct open, then daily closes · sample data',
+      usdOn: String(!eurMode), eurOn: String(eurMode),
+      usdStyle: seg + (eurMode ? 'background:transparent;color:#98A2AF' : 'background:#2E3643;color:#E7EAEE'),
+      eurStyle: seg + (eurMode ? 'background:#2E3643;color:#E7EAEE' : 'background:transparent;color:#98A2AF'),
+      setUsd: function () { self.setState({ cur: 'usd' }); },
+      setEur: function () { self.setState({ cur: 'eur' }); }
+    };
+
+  }
+}
+</script>
+</body>
+</html>

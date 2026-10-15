@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Agent — LLM inspector</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input,select{font-family:inherit}
+table{border-collapse:collapse}
+</style>
+</helmet>
+<div style="min-height: 1500px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <aside aria-label="Sidebar" style="{{nav.aside}}">
+    <div style="{{nav.brandRow}}">
+      <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
+      <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
+        </div>
+      </sc-if>
+    </div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 2px">
+      <div style="{{nav.group}}">Monitor</div>
+      <a href="Main.dc.html" aria-label="Dashboard" title="Dashboard" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Dashboard</span></sc-if></a>
+      <a href="Positions.dc.html" aria-label="Positions & orders" title="Positions & orders" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Positions & orders</span></sc-if></a>
+      <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
+      <div style="{{nav.group}}">Learn</div>
+      <a href="Inspector.dc.html" aria-current="page" aria-label="LLM inspector" title="LLM inspector" style="{{nav.active}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
+      <div style="{{nav.group}}">Control</div>
+      <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
+    </nav>
+    <div style="flex: 1"></div>
+    <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
+    <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
+  </aside>
+
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid #232A35; background: #0F131A">
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 18px; font-weight: 600">LLM inspector</h1></div>
+      <span title="Orders go to Alpaca's paper account. Real-money trading is not built." style="display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+      <div title="New York 12:52 · market closes 16:00 New York (22:00 Amsterdam)" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #171C24; border: 1px solid #232A35; font-size: 13px; white-space: nowrap">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #3DD68C"></span>
+        <span>Market open</span>
+        <span style="color: #98A2AF">· next cycle 19:46 · in 54 min</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Equity</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #E7EAEE; white-space: nowrap">$10,184.30 <span style="color: #98A2AF; font-size: 12px">€8,749.40</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Today</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #3DD68C; white-space: nowrap">+$42.10 <span style="color: #98A2AF; font-size: 12px">+€36.17</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span title="Market regime from SPY: trend × volatility" style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Regime</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Up · normal vol</span>
+      </div>
+      <a href="States.dc.html" title="Stop new entries, or stop and sell everything" style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #7A2A2E; background: #3A1416; color: #FFB3B6; font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="13"></line><line x1="12" y1="17" x2="12" y2="17"></line></svg><span>Kill switch</span></a>
+    </div>
+  </header>
+  <main style="max-width: 1440px; width: 100%; margin: 0 auto; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<div role="status" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 12px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; font-size: 13px">
+  <span style="color: #C9CFD6">Today: <b style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">12</b> calls</span>
+  <span style="color: #C9CFD6">cost <b style="font-family: 'IBM Plex Mono', monospace; font-weight: 500">$0.0043</b></span>
+  <span style="color: #C9CFD6">2 changed by code</span>
+  <span style="color: #C9CFD6">prompt <span style="font-family: 'IBM Plex Mono', monospace">decision.v1</span> · <span style="font-family: 'IBM Plex Mono', monospace">3f9a1c2e</span></span>
+  <span style="color: #C9CFD6">model <span style="font-family: 'IBM Plex Mono', monospace">gpt-4o-mini</span> · temperature 0</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+  <section aria-label="Model calls" style="flex: 1 1 320px; max-width: 400px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 2px; box-sizing: border-box">
+    <h2 style="margin: 4px 8px 10px; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Calls today</h2>
+    <sc-for list="{{calls}}" as="c" hint-placeholder-count="12">
+      <button type="button" onClick="{{c.pick}}" aria-pressed="{{c.pressed}}" style="{{c.style}}">
+        <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">{{c.time}}</span>
+        <span style="font-weight: 600">{{c.sym}}</span>
+        <span style="{{c.actStyle}}">{{c.act}}</span>
+        <span style="{{c.flagStyle}}">{{c.flag}}</span>
+      </button>
+    </sc-for>
+  </section>
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+    <section aria-label="Call details" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px">
+      <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px">
+        <h2 style="margin: 0; font-size: 18px; font-weight: 600">{{sel.sym}} · {{sel.time}} cycle</h2>
+        <span style="font-size: 13px; color: #98A2AF">{{sel.ctx}} · price {{sel.price}}</span>
+        <span style="flex: 1"></span>
+        <a href="Decision.dc.html" style="font-size: 13px">Open decision</a>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px">
+        <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-size: 12px; color: #98A2AF">Tokens in / out</div><div style="font-family: 'IBM Plex Mono', monospace; margin-top: 4px">{{sel.tokens}}</div></div>
+        <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-size: 12px; color: #98A2AF">Cost</div><div style="font-family: 'IBM Plex Mono', monospace; margin-top: 4px">{{sel.cost}}</div></div>
+        <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-size: 12px; color: #98A2AF">Latency</div><div style="font-family: 'IBM Plex Mono', monospace; margin-top: 4px">{{sel.ms}}</div></div>
+        <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-size: 12px; color: #98A2AF">Prompt</div><div style="font-family: 'IBM Plex Mono', monospace; margin-top: 4px">decision.v1</div></div>
+      </div>
+      <div style="{{sel.validStyle}}"><b style="font-weight: 600">{{sel.valid}}</b><span style="color: #C9CFD6"> {{sel.vnote}}</span></div>
+    </section>
+    <section aria-label="Prompt" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h3 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Prompt</h3>
+      <div style="font-size: 12px; color: #98A2AF">System</div>
+      <pre style="margin: 0; padding: 12px; background: #0B0E13; border: 1px solid #232A35; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.55; color: #C9CFD6; white-space: pre-wrap; overflow-x: auto">You are the decision layer of Stock Agent, a paper-trading agent for liquid US stocks and ETFs. You make one decision for one symbol per call.
+
+## What you decide
+- context "candidate": choose enter or skip.
+- context "held": choose hold, tighten_stop or exit.
+…  (full prompt: backend/prompts/decision.v1.md)</pre>
+      <div style="font-size: 12px; color: #98A2AF">User · input snapshot</div>
+      <pre style="margin: 0; padding: 12px; background: #0B0E13; border: 1px solid #232A35; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.55; color: #C9CFD6; white-space: pre-wrap; overflow-x: auto">{{sel.snapshot}}</pre>
+    </section>
+    <section aria-label="Raw response" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px">
+      <h3 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Raw response</h3>
+      <pre style="margin: 0; padding: 12px; background: #0B0E13; border: 1px solid #232A35; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.55; color: #C9CFD6; white-space: pre-wrap; overflow-x: auto">{{sel.raw}}</pre>
+    </section>
+  </div>
+</div>
+
+  </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 1500}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { call: 'c03' };
+  }
+  renderVals() {
+    var self = this;
+
+    var navCollapsed = !!(this.state && this.state.navCollapsed);
+    var navBase = 'height:44px;display:flex;align-items:center;gap:12px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;box-sizing:border-box;white-space:nowrap;' + (navCollapsed ? 'justify-content:center;padding:0;' : 'padding:0 12px;');
+    var nav = {
+      expanded: !navCollapsed,
+      expandedStr: String(!navCollapsed),
+      toggle: function () { self.setState({ navCollapsed: !navCollapsed }); },
+      toggleLabel: navCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      aside: 'flex:0 0 ' + (navCollapsed ? '72px' : '232px') + ';box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px ' + (navCollapsed ? '12px' : '16px') + ';background:#0F131A;border-right:1px solid #232A35',
+      brandRow: 'display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #232A35;' + (navCollapsed ? 'justify-content:center' : ''),
+      item: navBase + 'color:#98A2AF',
+      active: navBase + 'background:#1C222C;color:#E7EAEE',
+      status: 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#171C24;border:1px solid #232A35;font-size:13px;' + (navCollapsed ? 'justify-content:center' : ''),
+      dot: 'width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#3DD68C',
+      toggleStyle: navBase + 'width:100%;border:1px solid #232A35;background:transparent;color:#98A2AF;cursor:pointer;font-family:inherit'
+    };
+    nav.group = navCollapsed ? 'height:1px;background:#232A35;margin:8px 4px;overflow:hidden;color:transparent;font-size:0' : 'font-size:11px;font-weight:600;color:#8A94A1;text-transform:uppercase;letter-spacing:0.08em;padding:12px 12px 4px';
+
+
+    var CALLS = [{"id": "c12", "time": "18:46", "sym": "AAPL", "ctx": "candidate", "act": "skip", "tin": 1806, "tout": 171, "ms": 1840, "valid": "Valid output \u00b7 code changed enter \u2192 skip", "vok": false, "vnote": "Model chose enter; reward to risk computed by code is 1.3, below 1.5.", "price": 252.1, "raw": "{\n  \"symbol\": \"AAPL\",\n  \"action\": \"enter\",\n  \"confidence\": 0.58,\n  \"stop_price\": 249.25,\n  \"target_price\": 255.8,\n  \"thesis\": \"Pullback to the 1h EMA 20 in an uptrend; buyers stepped in at VWAP.\",\n  \"invalidation\": \"Hourly close below 249.25.\",\n  \"risks\": [\n    \"Resistance at 255.80 close by\"\n  ],\n  \"news_used\": []\n}", "cost": 0.00037}, {"id": "c11", "time": "18:46", "sym": "AMZN", "ctx": "candidate", "act": "skip", "tin": 1794, "tout": 142, "ms": 1610, "valid": "Valid", "vok": true, "vnote": "", "price": 221.8, "raw": "{\n  \"symbol\": \"AMZN\",\n  \"action\": \"skip\",\n  \"confidence\": 0.49,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Daily trend is up but the hourly move is fading below VWAP with falling OBV.\",\n  \"invalidation\": null,\n  \"risks\": [\n    \"Momentum fading\"\n  ],\n  \"news_used\": []\n}", "cost": 0.00035}, {"id": "c10", "time": "18:46", "sym": "GOOGL", "ctx": "candidate", "act": "skip", "tin": 1788, "tout": 139, "ms": 1550, "valid": "Valid", "vok": true, "vnote": "", "price": 247.6, "raw": "{\n  \"symbol\": \"GOOGL\",\n  \"action\": \"skip\",\n  \"confidence\": 0.52,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Flat session around VWAP. Waiting for an hourly close above 249.20.\",\n  \"invalidation\": null,\n  \"risks\": [\n    \"No trigger yet\"\n  ],\n  \"news_used\": []\n}", "cost": 0.00035}, {"id": "c09", "time": "18:46", "sym": "MSFT", "ctx": "held", "act": "hold", "tin": 1912, "tout": 133, "ms": 1720, "valid": "Valid", "vok": true, "vnote": "", "price": 421.3, "raw": "{\n  \"symbol\": \"MSFT\",\n  \"action\": \"hold\",\n  \"confidence\": 0.66,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Price holds above session VWAP and the 1h EMA 20; the entry reason still stands.\",\n  \"invalidation\": \"Hourly close below 409.60.\",\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00037}, {"id": "c08", "time": "18:46", "sym": "JPM", "ctx": "held", "act": "hold", "tin": 1897, "tout": 128, "ms": 1490, "valid": "Valid", "vok": true, "vnote": "", "price": 233.1, "raw": "{\n  \"symbol\": \"JPM\",\n  \"action\": \"hold\",\n  \"confidence\": 0.61,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Stop is above entry; trend intact. Holding for the 242.00 target.\",\n  \"invalidation\": \"Hourly close below 231.60.\",\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00036}, {"id": "c07", "time": "17:46", "sym": "JPM", "ctx": "held", "act": "tighten_stop", "tin": 1890, "tout": 151, "ms": 1630, "valid": "Valid \u00b7 stop raised 226.10 \u2192 231.60", "vok": true, "vnote": "", "price": 232.8, "raw": "{\n  \"symbol\": \"JPM\",\n  \"action\": \"tighten_stop\",\n  \"confidence\": 0.63,\n  \"stop_price\": 231.6,\n  \"target_price\": null,\n  \"thesis\": \"Price is holding above 232 after a higher low at 231.70. Raising the stop just under that low puts it above entry, so the trade can no longer lose.\",\n  \"invalidation\": \"Hourly close below 231.60.\",\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00037}, {"id": "c06", "time": "17:46", "sym": "MSFT", "ctx": "held", "act": "hold", "tin": 1905, "tout": 129, "ms": 1580, "valid": "Valid", "vok": true, "vnote": "", "price": 420.1, "raw": "{\n  \"symbol\": \"MSFT\",\n  \"action\": \"hold\",\n  \"confidence\": 0.64,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Entered this morning; trend and VWAP still support the trade.\",\n  \"invalidation\": \"Hourly close below 409.60.\",\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00036}, {"id": "c05", "time": "17:46", "sym": "AMZN", "ctx": "candidate", "act": "skip", "tin": 1801, "tout": 166, "ms": 2210, "valid": "Rejected \u00b7 stop too far \u2192 skip", "vok": false, "vnote": "Stop 207.40 is 4.4 \u00d7 ATR (3.30) below 221.90; the limit is 1.5\u20134.", "price": 221.9, "raw": "{\n  \"symbol\": \"AMZN\",\n  \"action\": \"enter\",\n  \"confidence\": 0.57,\n  \"stop_price\": 207.4,\n  \"target_price\": 246.0,\n  \"thesis\": \"Daily uptrend resuming after a three-day pullback.\",\n  \"invalidation\": \"Daily close below 207.40.\",\n  \"risks\": [\n    \"Wide stop\"\n  ],\n  \"news_used\": []\n}", "cost": 0.00037}, {"id": "c04", "time": "17:46", "sym": "AAPL", "ctx": "candidate", "act": "skip", "tin": 1799, "tout": 137, "ms": 1520, "valid": "Valid", "vok": true, "vnote": "", "price": 251.7, "raw": "{\n  \"symbol\": \"AAPL\",\n  \"action\": \"skip\",\n  \"confidence\": 0.51,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Pulling back toward the EMA 20 but not there yet.\",\n  \"invalidation\": null,\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00035}, {"id": "c03", "time": "16:46", "sym": "MSFT", "ctx": "candidate", "act": "enter", "tin": 1842, "tout": 164, "ms": 1930, "valid": "Valid \u00b7 passed all checks and gates (size reduced to 4)", "vok": true, "vnote": "", "price": 418.19, "raw": "{\n  \"symbol\": \"MSFT\",\n  \"action\": \"enter\",\n  \"confidence\": 0.64,\n  \"stop_price\": 409.6,\n  \"target_price\": 435.4,\n  \"thesis\": \"The pullback to the 1h EMA 20 held above session VWAP with rising OBV, and the daily trend and market regime agree.\",\n  \"invalidation\": \"Hourly close below 409.60.\",\n  \"risks\": [\n    \"Earnings in 9 sessions\",\n    \"Tech already strong today\"\n  ],\n  \"news_used\": [\n    \"n_8841203\"\n  ]\n}", "cost": 0.00037}, {"id": "c02", "time": "16:46", "sym": "GOOGL", "ctx": "candidate", "act": "skip", "tin": 1785, "tout": 131, "ms": 1470, "valid": "Valid", "vok": true, "vnote": "", "price": 246.9, "raw": "{\n  \"symbol\": \"GOOGL\",\n  \"action\": \"skip\",\n  \"confidence\": 0.5,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Range-bound open; no clear direction yet.\",\n  \"invalidation\": null,\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00035}, {"id": "c01", "time": "16:46", "sym": "AAPL", "ctx": "candidate", "act": "skip", "tin": 1790, "tout": 135, "ms": 1500, "valid": "Valid", "vok": true, "vnote": "", "price": 250.9, "raw": "{\n  \"symbol\": \"AAPL\",\n  \"action\": \"skip\",\n  \"confidence\": 0.47,\n  \"stop_price\": null,\n  \"target_price\": null,\n  \"thesis\": \"Below VWAP after the open; waiting for the trend to reassert.\",\n  \"invalidation\": null,\n  \"risks\": [],\n  \"news_used\": []\n}", "cost": 0.00035}];
+    var sel = CALLS.filter(function (c) { return c.id === (self.state.call || 'c03'); })[0];
+    var AC = { enter: '#3DD68C', skip: '#F2B94B', hold: '#C9CFD6', tighten_stop: '#7FB8FF', exit: '#FF8A8F' };
+    var calls = CALLS.map(function (c) {
+      var on = c.id === sel.id;
+      return {
+        time: c.time, sym: c.sym, act: c.act.replace('_', ' '), pressed: String(on),
+        actStyle: 'font-family:IBM Plex Mono,monospace;font-size:12px;color:' + AC[c.act],
+        flag: c.vok ? '' : 'changed by code', flagStyle: 'font-size:11px;color:#FFD58A;text-align:right',
+        style: 'display:grid;grid-template-columns:44px 56px 1fr auto;gap:8px;align-items:center;min-height:44px;padding:0 10px;border:0;border-radius:6px;text-align:left;cursor:pointer;font-size:14px;color:#E7EAEE;background:' + (on ? '#211C10' : 'transparent') + ';box-shadow:' + (on ? 'inset 3px 0 0 #F2B94B' : 'none'),
+        pick: function () { self.setState({ call: c.id }); }
+      };
+    });
+    var OVR = {
+      c03: { ema20: 416.90, ema50: 414.30, rsi14: 57, atr14: 3.10, vwap: 417.40, obv: 'rising', rs: '+0.9%', sma50: 402.10, sma200: 381.60, atrPct: 48, gap: '+0.3%' },
+      c05: { atr14: 3.30 }, c12: { atr14: 1.36, rsi14: 54 }
+    };
+    var o = OVR[sel.id] || {};
+    function r2(x) { return Math.round(x * 100) / 100; }
+    var P = sel.price;
+    var snap = {
+      symbol: sel.sym, context: sel.ctx, time_ny: sel.time === '16:46' ? '10:46' : sel.time === '17:46' ? '11:46' : '12:46',
+      price: P, regime: { trend: 'up', volatility: 'normal' },
+      indicators_1h: { ema20: o.ema20 || r2(P * 0.997), ema50: o.ema50 || r2(P * 0.991), rsi14: o.rsi14 || 55, atr14: o.atr14 || r2(P * 0.0074), vwap: o.vwap || r2(P * 0.998), obv_trend: o.obv || 'flat', rs_vs_spy: o.rs || '+0.2%' },
+      indicators_daily: { sma50: o.sma50 || r2(P * 0.965), sma200: o.sma200 || r2(P * 0.91), atr_percentile: o.atrPct || 45, gap: o.gap || '+0.1%' },
+      position: sel.ctx === 'held' ? (sel.sym === 'MSFT' ? { entry: 418.20, qty: 4, stop: 409.60, target: 435.40, opened_at: '2026-10-15T10:48', r_so_far: r2((P - 418.20) / 8.60) } : { entry: 231.40, qty: 8, stop: sel.time === '18:46' ? 231.60 : 226.10, target: 242.00, opened_at: '2026-10-13T11:47', r_so_far: r2((P - 231.40) / 5.30) }) : null,
+      days_to_earnings: { AAPL: 10, AMZN: 10, GOOGL: 8, MSFT: 9, JPM: 61 }[sel.sym],
+      headlines: sel.id === 'c03' ? [{ id: 'n_8841203', time: '07:12', source: 'Benzinga', title: 'Microsoft expands Azure capacity in Europe' }, '… 2 more'] : ['… 3 headlines']
+    };
+    return {
+      nav: nav, calls: calls,
+      sel: {
+        sym: sel.sym, time: sel.time, ctx: sel.ctx === 'held' ? 'Held position' : 'Entry candidate', price: sel.price.toFixed(2),
+        tokens: sel.tin.toLocaleString('en-US') + ' / ' + sel.tout, cost: '$' + sel.cost.toFixed(5), ms: (sel.ms / 1000).toFixed(2) + ' s',
+        valid: sel.valid, vnote: sel.vnote, raw: sel.raw, snapshot: JSON.stringify(snap, null, 2),
+        validStyle: 'padding:10px 12px;border-radius:8px;font-size:13px;border:1px solid ' + (sel.vok ? '#1E5A3E' : '#6B4E17') + ';background:' + (sel.vok ? '#123A27' : '#3A2A0E') + ';color:' + (sel.vok ? '#3DD68C' : '#FFD58A')
+      }
+    };
+
+  }
+}
+</script>
+</body>
+</html>
