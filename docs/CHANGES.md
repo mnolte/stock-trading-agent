@@ -2,12 +2,13 @@
 
 Newest first.
 
-## 2026-10-15 — PR 4: decision layer details
+## 2026-10-15 — Answers from the PR 4 review
 
-- Decision layer: an empty `outcomes` row is created with every decision so the outcome worker (PR 7) only has to fill in prices.
-- Decisions: a model call that fails (timeout, API error) is stored with `final_action = "no_call"` and the error text; no output is counted and nothing is retried. The same value marks candidates/held symbols that never reached the model (missing quote, call cap reached).
-- Environment variables: `SA_SIM_NOW` pins the frozen clock in simulated mode (ISO 8601); `OPENAI_API_KEY` is required unless `MODE=simulated`.
-- `config.example.yaml`: `decision.timeout_seconds`, `decision.input_cost_per_mtok`, `decision.output_cost_per_mtok` (cost tracking only).
+- Decision layer: held positions are called first when the 10-call cap applies.
+- Model output uses OpenAI structured outputs (strict JSON schema), still validated with Pydantic.
+- `no_call` is an official final action, with a reason: `rules`, `call_cap`, `quote_missing` or `model_error`. Model calls time out after 30 s and are not retried; for a held position `no_call` leaves it as it is.
+- Schedule: missed cycles are never run late (misfire grace 2 minutes); only simulated mode may run a cycle at startup.
+- `config.example.yaml`: `decision.call_timeout_seconds: 30`, `schedule.misfire_grace_seconds: 120`.
 
 ## 2026-10-15 — Answers from the PR 3 review
 
