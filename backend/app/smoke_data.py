@@ -70,6 +70,15 @@ async def run(config: AppConfig, clock: Clock) -> int:
         "; ".join(bar_errors) or None,
     )
 
+    daily = await market_data.refresh_daily(today)
+    daily_cached = sum(market_data.bars_cache.count_daily(symbol) for symbol in daily)
+    daily_errors = [f"{s}: {r.error}" for s, r in daily.items() if r.error]
+    failures += _line(
+        "bars_1d",
+        f"{daily_cached} daily bars in cache across {len(daily)} symbols",
+        "; ".join(daily_errors) or None,
+    )
+
     quote = await sources.quotes.fetch_quotes(["AAPL"])
     if quote.error is None and quote.data:
         q = quote.data["AAPL"]

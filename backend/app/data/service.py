@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h, aggregate_daily, bars_per_session
+from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.cache import BarCache, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar, DataResult, FXRate
@@ -111,18 +111,41 @@ class MarketDataService:
             for bar in aggregate_1h(symbol, per_session[session.date], session)
         ]
 
+    async def refresh_daily(self, today: date) -> dict[str, DataResult[int]]:
+        """Fetch and cache daily bars for ``daily_history_sessions`` sessions."""
+        count = int(
+            self.config.get("schedule", "daily_history_sessions", default=260)
+        )
+        sessions = self.recent_sessions(today, count)
+        if not sessions:
+            return {
+                symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
+                for symbol in self.universe()
+            }
+        start, end = sessions[0].date, sessions[-1].date
+        results: dict[str, DataResult[int]] = {}
+        for symbol in self.universe():
+            fetched = await self.sources.bars.fetch_daily_bars(symbol, start, end)
+            if fetched.error is not None:
+                results[symbol] = DataResult(data=0, error=fetched.error, source=fetched.source)
+                continue
+            inserted = self.bars_cache.store_daily(fetched.data)
+            results[symbol] = DataResult(data=inserted, source=fetched.source)
+        return results
+
     def get_daily_bars(
         self, symbol: str, sessions: list[CalendarDay]
     ) -> list[DailyBar]:
-        """One daily bar per session, aggregated from the cached 5m bars."""
-        per_session = bars_per_session(
-            self.get_5m_bars_sessions(symbol, sessions), sessions
-        )
+        """Daily bars from the bars_1d cache, one per given session."""
+        if not sessions:
+            return []
+        wanted = {s.date for s in sessions}
         return [
             bar
-            for session in sessions
-            if (bar := aggregate_daily(symbol, per_session[session.date], session))
-            is not None
+            for bar in self.bars_cache.get_daily(
+                symbol, sessions[0].date, sessions[-1].date
+            )
+            if bar.date in wanted
         ]
 
     async def refresh_earnings(self, start: date, end: date) -> DataResult[int]:

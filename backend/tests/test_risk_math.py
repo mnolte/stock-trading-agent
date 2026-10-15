@@ -120,25 +120,33 @@ def test_open_risk_sums_entry_to_stop() -> None:
 
 
 def test_every_default_symbol_can_trade_at_typical_atr() -> None:
-    # Spec check: each universe symbol can produce a valid trade at a
-    # typical ATR (1% of price, stop at 2 x ATR, target at 3 x ATR).
-    for symbol, price in _BASE_PRICES.items():
+    # Spec check: each default symbol can produce a valid trade at a typical
+    # 1h ATR (1% of price) and $10,000 equity — stop 1.5-4x ATR, R/R >= 1.5,
+    # >= 1 whole share within risk per trade, max position and cash.
+    config = AppConfig()
+    symbols = list(config.get("universe", "symbols"))
+    assert set(symbols) == set(_BASE_PRICES)
+    risk_budget = EQUITY * Decimal("0.005")  # risk_per_trade 0.5%
+    position_cap = EQUITY * Decimal("0.2")  # max_position 20%
+    for symbol in symbols:
+        price = _BASE_PRICES[symbol]
         atr = price * Decimal("0.01")
-        risk = trade_risk(
-            price,
-            price - 2 * atr,
-            price + 3 * atr,
-            atr=atr,
-        )
-        assert risk.valid, symbol
-        assert risk.atr_multiple == Decimal(2), symbol
-        assert risk.reward_to_risk == Decimal("1.5"), symbol
+        stop = price - 2 * atr
+        risk = trade_risk(price, stop, price + 3 * atr, atr=atr)
+        assert risk.valid, f"{symbol} can never trade"
+        assert risk.atr_multiple is not None
+        assert risk.reward_to_risk is not None
+        assert Decimal("1.5") <= risk.atr_multiple <= Decimal("4.0"), symbol
+        assert risk.reward_to_risk >= Decimal("1.5"), symbol
         sizing = position_size(
             EQUITY,
             price,
-            price - 2 * atr,
+            stop,
             cash=CASH,
             current_open_risk=Decimal(0),
-            config=AppConfig(),
+            config=config,
         )
-        assert sizing.shares >= 1, symbol
+        assert sizing.shares >= 1, f"{symbol} can never trade"
+        assert sizing.shares * risk.stop_distance <= risk_budget, symbol
+        assert sizing.shares * price <= position_cap, symbol
+        assert sizing.shares * price <= CASH, symbol

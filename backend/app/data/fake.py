@@ -4,10 +4,12 @@ import random
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
+from app.data.aggregate import aggregate_daily
 from app.data.models import (
     Bar5m,
     CalendarDay,
     CorporateActionEvent,
+    DailyBar,
     DataResult,
     EarningsEvent,
     FXRate,
@@ -159,6 +161,27 @@ class FakeBarSource:
             if day.close < start or day.open > end:
                 continue
             bars.extend(_bars_for_session(symbol, day.date, day.open, day.close))
+        return DataResult(data=bars, source="fake")
+
+    async def fetch_daily_bars(
+        self,
+        symbol: str,
+        start: date,
+        end: date,
+    ) -> DataResult[list[DailyBar]]:
+        """Daily bars rolled up from the same deterministic 5m generator."""
+        calendar = await self.calendar.fetch_calendar(start, end)
+        bars: list[DailyBar] = []
+        for day in calendar.data:
+            if not start <= day.date <= end:
+                continue
+            bar = aggregate_daily(
+                symbol,
+                _bars_for_session(symbol, day.date, day.open, day.close),
+                day,
+            )
+            if bar is not None:
+                bars.append(bar)
         return DataResult(data=bars, source="fake")
 
 

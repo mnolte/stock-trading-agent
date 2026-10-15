@@ -275,3 +275,85 @@ async def test_refresh_history_uses_configured_sessions(
     for symbol in ("SPY", "AAPL"):
         assert results[symbol].error is None
         assert results[symbol].data == 5 * 78
+
+
+async def test_fake_daily_bars_cover_sessions() -> None:
+    calendar = FakeCalendarSource()
+    source = FakeBarSource(calendar)
+    result = await source.fetch_daily_bars(
+        "AAPL", date(2026, 10, 12), date(2026, 10, 16)
+    )
+    assert result.error is None
+    # One bar per weekday session in the range.
+    assert [b.date for b in result.data] == [
+        date(2026, 10, 12),
+        date(2026, 10, 13),
+        date(2026, 10, 14),
+        date(2026, 10, 15),
+        date(2026, 10, 16),
+    ]
+    bar = result.data[0]
+    assert bar.low <= bar.open <= bar.high
+    assert bar.low <= bar.close <= bar.high
+
+
+async def test_fake_daily_bars_match_5m_rollup() -> None:
+    # The fake's daily bars are the same session data aggregated, so the
+    # previous daily close always matches the last 5m close of that session.
+    calendar = FakeCalendarSource()
+    source = FakeBarSource(calendar)
+    day = date(2026, 10, 15)
+    daily = (await source.fetch_daily_bars("AAPL", day, day)).data[0]
+    session = calendar.session_for(day)
+    assert session is not None
+    bars_5m = (
+        await source.fetch_5m_bars(
+            "AAPL", session.open.astimezone(UTC), session.close.astimezone(UTC)
+        )
+    ).data
+    assert daily.open == bars_5m[0].open
+    assert daily.close == bars_5m[-1].close
+
+
+async def test_daily_cache_roundtrip(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), AppConfig(), session_factory=session_factory
+    )
+    bars = (
+        await service.sources.bars.fetch_daily_bars(
+            "AAPL", date(2026, 10, 13), date(2026, 10, 15)
+        )
+    ).data
+    cache = BarCache(session_factory)
+    assert cache.store_daily(bars) == 3
+    # Storing again inserts nothing (unique on symbol+date).
+    assert cache.store_daily(bars) == 0
+    cached = cache.get_daily("AAPL", date(2026, 10, 13), date(2026, 10, 15))
+    assert [b.date for b in cached] == [b.date for b in bars]
+
+
+async def test_refresh_daily_fills_cache(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    calendar = FakeCalendarSource()
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = 5
+    service = MarketDataService(
+        fake_sources, calendar, config, session_factory=session_factory
+    )
+    results = await service.refresh_daily(date(2026, 10, 15))
+    for symbol in ("SPY", "AAPL"):
+        assert results[symbol].error is None
+        assert results[symbol].data == 5
+        sessions = [
+            s
+            for s in (
+                calendar.session_for(date(2026, 10, d)) for d in range(9, 16)
+            )
+            if s is not None
+        ]
+        daily = service.get_daily_bars(symbol, sessions)
+        assert len(daily) == 5
+        assert daily[0].date < daily[-1].date

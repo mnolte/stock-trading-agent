@@ -4,6 +4,7 @@ regime and per-symbol rules results for the watchlist and the cycle runner.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -12,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h, aggregate_daily, bars_per_session
+from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
@@ -91,6 +92,21 @@ class SignalService:
         self.clock = clock
         self.session_clock = SessionClock(clock, config, calendar)
         self._session_factory = session_factory or get_session_maker()
+        # The stored snapshot the GUI serves; refreshed at startup, after each
+        # cycle and after each daily refresh — never recomputed per request.
+        self._latest: Watchlist | None = None
+
+    @property
+    def latest(self) -> Watchlist | None:
+        return self._latest
+
+    async def refresh(self) -> None:
+        """Recompute the stored snapshot in a worker thread.
+
+        Indicator math and cache reads are blocking; ``asyncio.to_thread``
+        keeps them off the event loop.
+        """
+        self._latest = await asyncio.to_thread(self.watchlist, self.clock.now())
 
     def hourly_bars(
         self, symbol: str, sessions: list[CalendarDay], now: datetime
@@ -128,7 +144,12 @@ class SignalService:
         return {symbol: d.date() for symbol, d in rows}
 
     def _symbol_bars(
-        self, symbol: str, sessions: list[CalendarDay], today: date, now: datetime
+        self,
+        symbol: str,
+        sessions: list[CalendarDay],
+        daily_sessions: list[CalendarDay],
+        today: date,
+        now: datetime,
     ) -> tuple[list[Bar1h], list[DailyBar], list[Bar5m]]:
         """One cache read → closed 1h bars, completed daily bars, today's 5m."""
         bars_5m = self.market_data.get_5m_bars_sessions(symbol, sessions)
@@ -139,12 +160,7 @@ class SignalService:
             for b in aggregate_1h(symbol, per[s.date], s)
             if b.end <= now
         ]
-        daily = [
-            bar
-            for s in sessions
-            if s.close <= now
-            and (bar := aggregate_daily(symbol, per[s.date], s)) is not None
-        ]
+        daily = self.daily_bars(symbol, daily_sessions, now)
         todays = [b for b in per.get(today, []) if b.start + BAR_5M <= now]
         return bars_1h, daily, todays
 
@@ -182,11 +198,14 @@ class SignalService:
         now: datetime,
         spy_1h: list[Bar1h],
         sessions: list[CalendarDay],
+        daily_sessions: list[CalendarDay],
         earnings_available: bool,
         earnings_next: dict[str, date],
         today: date,
     ) -> IndicatorSnapshot:
-        bars_1h, daily, todays = self._symbol_bars(symbol, sessions, today, now)
+        bars_1h, daily, todays = self._symbol_bars(
+            symbol, sessions, daily_sessions, today, now
+        )
         return self._snapshot_from_bars(
             symbol,
             bars_1h,
@@ -200,7 +219,7 @@ class SignalService:
 
     def regime(self, now: datetime) -> MarketRegime:
         today = now.astimezone(NY_TZ).date()
-        sessions = self._sessions_for(today)
+        sessions = self._daily_sessions_for(today)
         spy_daily = self.daily_bars("SPY", sessions, now)
         return compute_regime(spy_daily, self.config)
 
@@ -216,6 +235,12 @@ class SignalService:
 
     def _sessions_for(self, today: date) -> list[CalendarDay]:
         count = int(self.config.get("schedule", "history_sessions", default=60))
+        return self.market_data.recent_sessions(today, count)
+
+    def _daily_sessions_for(self, today: date) -> list[CalendarDay]:
+        count = int(
+            self.config.get("schedule", "daily_history_sessions", default=260)
+        )
         return self.market_data.recent_sessions(today, count)
 
     def _held_and_pending(self) -> tuple[set[str], set[str]]:
@@ -259,8 +284,11 @@ class SignalService:
     def watchlist(self, now: datetime) -> Watchlist:
         today = now.astimezone(NY_TZ).date()
         sessions = self._sessions_for(today)
+        daily_sessions = self._daily_sessions_for(today)
         symbols = self.market_data.universe()
-        regime = compute_regime(self.daily_bars("SPY", sessions, now), self.config)
+        regime = compute_regime(
+            self.daily_bars("SPY", daily_sessions, now), self.config
+        )
         spy_1h = self.hourly_bars("SPY", sessions, now)
         held, pending = self._held_and_pending()
         earnings_next = self.next_earnings(symbols, today)
@@ -273,7 +301,9 @@ class SignalService:
 
         rows: list[WatchlistRow] = []
         for symbol in symbols:
-            bars_1h, daily, todays = self._symbol_bars(symbol, sessions, today, now)
+            bars_1h, daily, todays = self._symbol_bars(
+                symbol, sessions, daily_sessions, today, now
+            )
             snap = self._snapshot_from_bars(
                 symbol,
                 bars_1h,

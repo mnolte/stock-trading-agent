@@ -68,8 +68,11 @@ def make_data_sources(config: AppConfig) -> DataSources:
         )
 
     max_calls = int(config.get("alpaca", "max_calls_per_minute", default=150))
+    adjustment = str(config.get("schedule", "bar_adjustment", default="split"))
     limiter = RateLimiter(RateLimitConfig(max_calls=max_calls))
-    alpaca = AlpacaDataClient(api_key, secret_key, rate_limiter=limiter)
+    alpaca = AlpacaDataClient(
+        api_key, secret_key, rate_limiter=limiter, adjustment=adjustment
+    )
     return DataSources(
         bars=alpaca,
         quotes=alpaca,

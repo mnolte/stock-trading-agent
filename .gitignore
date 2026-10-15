@@ -21,6 +21,7 @@ dist/
 *.local
 frontend/test-results/
 frontend/playwright-report/
+docs/screenshots/e2e/
 
 # Local config / data
 backend/config.yaml

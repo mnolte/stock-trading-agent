@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 from app.api.routes import _eur_rate
 from app.data.models import DataResult, FXRate
@@ -48,6 +48,20 @@ def test_watchlist_returns_rules_status_per_symbol(client: TestClient) -> None:
         assert row["rules"]["checks"]
         if row["rules"]["status"] == "fail":
             assert row["rules"]["reason"]
+
+
+def test_watchlist_serves_stored_snapshot(client: TestClient) -> None:
+    # The endpoint must never recompute per request: the stored snapshot is
+    # computed at startup/cycle time, so breaking recompute must not matter.
+    service = cast(Any, client.app).state.signal_service
+
+    def boom(now: object) -> None:
+        raise AssertionError("watchlist recomputed per request")
+
+    service.watchlist = boom
+    response = client.get("/api/watchlist")
+    assert response.status_code == 200
+    assert len(response.json()["rows"]) == 10
 
 
 def _request_with_fx(latest_fx: DataResult[FXRate | None] | None) -> SimpleNamespace:

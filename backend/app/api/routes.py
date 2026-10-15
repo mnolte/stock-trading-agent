@@ -94,11 +94,11 @@ def header_state(request: Request) -> dict[str, object]:
 
 @router.get("/watchlist")
 def watchlist(request: Request) -> dict[str, object]:
-    """Per-symbol rules status for the dashboard watchlist."""
+    """Per-symbol rules status; serves the stored signal snapshot."""
     signals = _signals(request)
-    if signals is None:
+    result = signals.latest if signals is not None else None
+    if result is None:
         return {"computed_at": None, "regime": None, "rows": []}
-    result = signals.watchlist(signals.clock.now())
     return {
         "computed_at": result.computed_at.isoformat(),
         "regime": {
