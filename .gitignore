@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / frontend
+node_modules/
+dist/
+*.local
+
+# Local config / data
+backend/config.yaml
+*.db
+*.sqlite3
+logs/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
