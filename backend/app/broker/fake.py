@@ -80,6 +80,12 @@ class FakeBroker:
         self.place_then_fail = False
         self.fail_reads = False
         self.submit_calls = 0  # counts write attempts (never resent)
+        # symbol -> shares that fill on the next buy tick (partial fill).
+        self.partial_fill: dict[str, int] = {}
+        # symbols whose market sells are rejected (e.g. broker PDT block).
+        self.reject_sells: set[str] = set()
+        # cancel_order reports success but the order stays open at the broker.
+        self.cancel_stuck = False
 
     # ------------------------------------------------------------------
     # helpers
@@ -133,27 +139,34 @@ class FakeBroker:
             await handler(update)
 
     def _fill(self, rec: _OrderRec, price: Decimal) -> None:
-        rec.status = "filled"
-        rec.filled_qty = rec.qty
+        fill_qty = rec.qty
+        if rec.side == "buy" and rec.symbol in self.partial_fill:
+            fill_qty = min(rec.qty - rec.filled_qty, self.partial_fill[rec.symbol])
+            if rec.filled_qty + fill_qty >= rec.qty:
+                del self.partial_fill[rec.symbol]
+        rec.filled_qty += fill_qty
         rec.filled_avg_price = price
         rec.filled_at = self._now()
         rec.updated_at = self._now()
+        rec.status = "filled" if rec.filled_qty >= rec.qty else "partially_filled"
         if rec.side == "buy":
             pos = self.positions.get(rec.symbol)
             if pos is None:
-                self.positions[rec.symbol] = _PosRec(rec.qty, price)
+                self.positions[rec.symbol] = _PosRec(fill_qty, price)
             else:
-                total = pos.qty + rec.qty
+                total = pos.qty + fill_qty
                 pos.avg_entry_price = (
-                    pos.avg_entry_price * pos.qty + price * rec.qty
+                    pos.avg_entry_price * pos.qty + price * fill_qty
                 ) / total
                 pos.qty = total
-            self.cash -= price * rec.qty
-            # The bracket's protective legs go live once the parent fills.
+            self.cash -= price * fill_qty
+            # The bracket's protective legs go live once the parent fills;
+            # they cover only the filled qty, like Alpaca's bracket legs.
             for leg_id in rec.legs:
                 leg = self.orders[leg_id]
                 if leg.status in ("held", "accepted"):
                     leg.status = "new"
+                leg.qty = rec.filled_qty
         else:
             pos = self.positions.get(rec.symbol)
             if pos is not None:
@@ -368,11 +381,20 @@ class FakeBroker:
             filled_at=None,
             time_in_force="opg" if market_on_open else "day",
         )
+        if symbol in self.reject_sells:
+            return DataResult(
+                data=None,  # type: ignore[arg-type]
+                error="sale rejected (e.g. broker day-trade protection)",
+                source="fake",
+            )
         self.orders[rec.id] = rec
         if self.place_then_fail:
             return self._write_error()
-        # Paper-style: a market order fills immediately at the current mark,
-        # even when queued as MOO (the fake opens at the same price).
+        if market_on_open:
+            # Queued for the open like Alpaca's MOO orders: it stays
+            # "accepted" until the next tick opens the session.
+            rec.status = "accepted"
+            return DataResult(data=self._to_broker_order(rec), source="fake")
         price = self.prices.get(symbol, Decimal("0"))
         self._fill(rec, price)
         await self._emit(rec, "fill")
@@ -427,9 +449,10 @@ class FakeBroker:
         rec = self.orders.get(order_id)
         if rec is None:
             return DataResult(data=None, error="unknown order", source="fake")
-        rec.status = "canceled"
-        rec.updated_at = self._now()
-        await self._emit(rec, "canceled")
+        if not self.cancel_stuck:
+            rec.status = "canceled"
+            rec.updated_at = self._now()
+            await self._emit(rec, "canceled")
         return DataResult(data=None, source="fake")
 
     async def cancel_all_orders(self) -> DataResult[int]:
@@ -461,7 +484,12 @@ class FakeBroker:
         """Move a mark; fills any order whose price is now crossed."""
         self.prices[symbol] = price
         for rec in list(self.orders.values()):
-            if rec.symbol != symbol or rec.status != "new":
+            if rec.symbol != symbol or rec.status not in ("new", "accepted"):
+                continue
+            if rec.order_type == "market" and rec.side == "sell":
+                # A queued market(-on-open) sell fills at the next tick.
+                self._fill(rec, price)
+                await self._emit(rec, "fill")
                 continue
             if rec.side == "buy" and rec.order_type == "limit":
                 if rec.limit_price is not None and price <= rec.limit_price:

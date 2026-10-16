@@ -519,7 +519,12 @@ def banners(request: Request) -> dict[str, object]:
             .where(
                 Event.acknowledged_at.is_(None),
                 Event.event_type.in_(
-                    ["reconciliation", "protective_stop", "position_check_failed"]
+                    [
+                        "reconciliation",
+                        "protective_stop",
+                        "position_check_failed",
+                        "flatten_sell_rejected",
+                    ]
                 ),
             )
             .order_by(Event.id.desc())
@@ -578,6 +583,23 @@ def banners(request: Request) -> dict[str, object]:
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
                         "actions": ["open_orders", "acknowledge"],
+                    }
+                )
+            elif event.event_type == "flatten_sell_rejected":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "flatten_sell_rejected",
+                        "level": "critical",
+                        "message": (
+                            f"Alpaca rejected the sale of "
+                            f"{event_symbol(details)} during stop & flatten "
+                            f"({details.get('error')}). The position keeps "
+                            "its stop."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
                     }
                 )
             else:

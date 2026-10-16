@@ -123,6 +123,16 @@ def test_sector_cap_passes_below_limit() -> None:
     assert check.passed
 
 
+def test_sector_cap_qqq_is_technology_spy_is_index() -> None:
+    # Two Technology names open: QQQ (Technology) is blocked by the cap,
+    # SPY (Index) is not — the ETF mappings come from config.sectors.
+    positions = [_position("AAPL"), _position("NVDA")]
+    assert _run(_ctx(symbol="QQQ", open_positions=positions)).blocked_by == "sector_cap"
+    spy = _run(_ctx(symbol="SPY", open_positions=positions))
+    check = next(c for c in spy.checks if c.name == "sector_cap")
+    assert check.passed
+
+
 def test_daily_loss_limit_blocks() -> None:
     # −2.5% session P&L vs the previous close's equity.
     result = _run(_ctx(equity=Decimal("9750"), last_equity=Decimal("10000")))

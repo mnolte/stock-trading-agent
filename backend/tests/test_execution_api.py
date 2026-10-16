@@ -125,3 +125,26 @@ def test_acknowledge_unknown_position_404s(client: TestClient) -> None:
     response = client.post("/api/positions/99999/acknowledge")
     assert response.status_code == 404
     assert client.post("/api/events/99999/acknowledge").status_code == 404
+
+
+def test_flatten_sell_rejected_shows_critical_banner(client: TestClient) -> None:
+    """A rejected flatten sale is a critical, ack-able banner."""
+    from app.db.base import get_session_maker
+    from app.db.models import Event
+
+    with get_session_maker()() as session:
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 17, 0),
+                level="critical",
+                event_type="flatten_sell_rejected",
+                details={"symbol": "MSFT", "error": "403: rejected"},
+            )
+        )
+        session.commit()
+
+    banners = client.get("/api/banners").json()["items"]
+    item = next(b for b in banners if b["kind"] == "flatten_sell_rejected")
+    assert item["level"] == "critical"
+    assert "MSFT" in item["message"] and "stop" in item["message"]
+    assert item["actions"] == ["acknowledge"]

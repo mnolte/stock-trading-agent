@@ -238,6 +238,8 @@ class Executor:
         )
         sold: list[str] = []
         errors: list[str] = []
+        rejected: list[str] = []
+        day_trade_warnings: list[str] = []
         positions = await self.broker.get_positions()
         if positions.error is None:
             for pos in positions.data:
@@ -248,14 +250,46 @@ class Executor:
                     market_on_open=not regular_hours,
                     client_order_id=self._client_id("flat", 0, pos.symbol),
                 )
-                if result.error is not None:
+                if result.error is not None or result.data is None:
                     errors.append(f"{pos.symbol}: {result.error}")
+                    rejected.append(pos.symbol)
+                    # Never refused, never retried: the position keeps its
+                    # stop (re-placed by the reconcile below) and the
+                    # rejection shows as a critical banner.
+                    with self._session_factory() as session:
+                        record_event(
+                            session,
+                            self.clock,
+                            level="critical",
+                            event_type="flatten_sell_rejected",
+                            details={
+                                "symbol": pos.symbol,
+                                "qty": pos.qty,
+                                "error": result.error,
+                                "market_on_open": not regular_hours,
+                            },
+                        )
+                        session.commit()
                 else:
                     sold.append(pos.symbol)
                     with self._session_factory() as session:
                         self._store_broker_order(
                             session, result.data, None, leg="exit"
                         )
+                        # Flatten never refuses on the day-trade rule, but a
+                        # same-day sale still counts toward the PDT limit —
+                        # warn about it in the flatten event.
+                        opened_today = session.execute(
+                            select(Position).where(
+                                Position.symbol == pos.symbol,
+                                Position.closed_at.is_(None),
+                            )
+                        ).scalar_one_or_none()
+                        if (
+                            opened_today is not None
+                            and _ny_date(opened_today.opened_at) == _ny_date(now)
+                        ):
+                            day_trade_warnings.append(pos.symbol)
                         session.commit()
         with self._session_factory() as session:
             record_event(
@@ -266,6 +300,8 @@ class Executor:
                 details={
                     "cancelled_orders": cancelled.data,
                     "sold": sold,
+                    "rejected": rejected,
+                    "day_trade_warnings": day_trade_warnings,
                     "market_on_open": not regular_hours,
                     "errors": errors,
                 },

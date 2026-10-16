@@ -451,3 +451,116 @@ async def test_run_due_respects_early_close(
     due = runner.due_cycle(runner.clock.now())
     # On a 13:00 close only the 10:46, 11:46 and 12:46 cycles run.
     assert due == CYCLE_1246
+
+
+# ----------------------------------------------------------------------
+# earnings exit timing (15:46 NY cycle the day before the report)
+
+
+LAST_CYCLE = datetime(2026, 10, 15, 15, 46, tzinfo=NY_TZ)  # Thursday
+MID_CYCLE = datetime(2026, 10, 15, 12, 46, tzinfo=NY_TZ)
+NEXT_SESSION = date(2026, 10, 16)  # Friday, no holidays in the fake
+
+
+def _held(symbol: str = "MSFT") -> Position:
+    return Position(
+        symbol=symbol,
+        qty=4,
+        avg_entry_price=Decimal("415"),
+        current_stop_price=Decimal("410"),
+        opened_at=datetime(2026, 10, 14, 15, 0),
+    )
+
+
+def test_last_cycle_detection(session_factory: sessionmaker[Session]) -> None:
+    runner = _runner(session_factory, _evaluation())
+    assert runner._is_last_cycle(LAST_CYCLE)
+    assert not runner._is_last_cycle(MID_CYCLE)
+
+
+def test_earnings_before_next_open_exits_at_last_cycle(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (NEXT_SESSION, "before_open")}
+    assert runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+    assert not runner._earnings_exit_due(
+        _held(), earnings, MID_CYCLE, last_cycle=False
+    )
+
+
+def test_earnings_unknown_time_counts_as_before_open(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (NEXT_SESSION, "unknown")}
+    assert runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_earnings_during_market_next_day_exits_day_before(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (NEXT_SESSION, "during_market")}
+    assert runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_earnings_after_next_close_stays_held_today(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A report after Friday's close is exited at Friday's last cycle."""
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (NEXT_SESSION, "after_close")}
+    assert not runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_earnings_after_todays_close_exits_at_last_cycle(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Reporting after today's close still means held through the report if
+    we wait — sell at today's last cycle."""
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (date(2026, 10, 15), "after_close")}
+    assert runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_earnings_today_before_open_no_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A report this morning can no longer be front-run — not our rule."""
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (date(2026, 10, 15), "before_open")}
+    assert not runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_earnings_weeks_away_no_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation())
+    earnings = {"MSFT": (date(2026, 10, 22), "before_open")}
+    assert not runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )
+
+
+def test_hold_through_earnings_disables_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation())
+    runner.config.yaml["risk"]["hold_through_earnings"] = True
+    earnings = {"MSFT": (NEXT_SESSION, "before_open")}
+    assert not runner._earnings_exit_due(
+        _held(), earnings, LAST_CYCLE, last_cycle=True
+    )

@@ -197,6 +197,11 @@ class CycleRunner:
             return False
         event_date, time_of_day = info
         today = now.astimezone(NY_TZ).date()
+        # A report after today's close still counts as "before the next
+        # session's close": sell in this last cycle so the position is never
+        # held through the release.
+        if event_date == today:
+            return time_of_day == "after_close"
         next_day = self.calendar.next_trading_day(today)
         if next_day is None or event_date != next_day.date:
             return False

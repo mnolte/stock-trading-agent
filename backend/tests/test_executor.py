@@ -566,6 +566,89 @@ async def test_entry_timeout_cancels_and_records(
         assert events and "entry not filled" in str(events[0].details)
 
 
+async def test_partial_entry_fill_then_timeout_uses_filled_qty(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A partially filled entry cancelled on timeout keeps the filled qty.
+
+    Position qty, the stop/target legs and the stored risk all track the
+    2 filled shares, not the 4 that were ordered.
+    """
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.partial_fill["MSFT"] = 2
+    submitted = await broker.submit_bracket_entry(
+        symbol="MSFT",
+        qty=4,
+        limit_price=Decimal("421"),
+        stop_price=Decimal("410"),
+        target_price=Decimal("435"),
+        client_order_id="sa-entry-1-MSFT-1",
+    )
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        session.add(
+            Order(
+                alpaca_order_id=submitted.data.id,
+                client_order_id=submitted.data.client_order_id,
+                symbol="MSFT",
+                decision_id=None,
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=4,
+                limit_price=Decimal("421"),
+                status="new",
+                created_at=NOW.replace(tzinfo=None),
+            )
+        )
+        session.commit()
+
+    # The limit crosses: 2 of 4 shares fill.
+    await broker.tick("MSFT", Decimal("420"))
+    await executor.reconcile()
+
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.qty == 2
+        assert position.avg_entry_price == Decimal("420")
+        assert position.current_stop_price == Decimal("410")
+        assert position.target_price == Decimal("435")
+        # Stored risk is based on the 2 filled shares.
+        assert position.qty * (
+            position.avg_entry_price - position.current_stop_price
+        ) == Decimal("20")
+
+    # The broker legs cover 2 shares, not 4.
+    legs = [
+        o for o in broker.orders.values()
+        if o.symbol == "MSFT" and o.side == "sell" and o.status == "new"
+    ]
+    assert {leg.qty for leg in legs} == {2}
+    assert len(legs) == 2
+
+    # The entry times out: the parent is cancelled, the position stays.
+    clock.advance(timedelta(minutes=11))
+    report = await executor.reconcile()
+
+    assert "MSFT" in report.entries_cancelled
+    parent = broker.orders[submitted.data.id]
+    assert parent.status == "canceled" and parent.filled_qty == 2
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.qty == 2 and position.closed_at is None
+        for leg in session.execute(
+            select(Order).where(
+                Order.symbol == "MSFT", Order.side == "sell"
+            )
+        ).scalars():
+            assert leg.qty == 2 and leg.status == "new"
+
+
 async def test_recent_entry_is_not_timed_out(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -686,6 +769,192 @@ async def test_next_day_exit_cancels_legs_then_sells(
         assert exit_order.status == "filled"
 
 
+async def test_exit_aborted_when_leg_cancel_fails(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A failed leg cancel means no market sell and the stop stays live."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+        broker.fail_writes = True
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        events = _events(session, "order_submit_failed")
+        assert events and events[0].level == "critical"
+        assert position.closed_at is None
+    # No market sell was ever attempted; the stop leg stayed live.
+    assert list(broker.orders) == [stop.data.id]
+    assert broker.orders[stop.data.id].status == "new"
+
+
+async def test_exit_aborted_when_cancel_unconfirmed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A cancel that leaves the leg open means no market sell."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    broker.cancel_stuck = True  # cancel answers 200 but the leg stays open
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        events = _events(session, "leg_cancel_unconfirmed")
+        assert events and events[0].level == "critical"
+        assert position.closed_at is None
+    assert list(broker.orders) == [stop.data.id]
+    assert broker.orders[stop.data.id].status == "new"
+
+
+async def test_earnings_exit_sells_held_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The earnings exit is a forced exit: legs cancelled, then market sell."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        decision = _decision(session, "MSFT", "hold")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+            force_exit_reason="earnings_exit",
+        )
+        session.commit()
+        assert broker.orders[stop.data.id].status == "canceled"
+        assert session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one().status == "filled"
+
+
+async def test_earnings_exit_runs_for_acknowledged_adopted_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """After acknowledgment an adopted position exits like an agent one."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"XYZ": Decimal("50")})
+    broker.positions["XYZ"] = _PosRec(qty=12, avg_entry_price=Decimal("48"))
+    executor = _executor(session_factory, broker, clock)
+
+    await executor.reconcile()
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "XYZ")
+        ).scalar_one()
+        assert position.origin == "adopted" and position.pending_ack
+        position_id = position.id
+    assert executor.acknowledge_position(position_id)
+
+    # Next session: an acknowledged position is a normal one — forced exits
+    # (earnings exit) cancel its protective stop and sell at market.
+    clock.advance(timedelta(days=1))
+    with session_factory() as session:
+        adopted = session.get(Position, position_id)
+        assert adopted is not None
+        decision = _decision(session, "XYZ", "hold")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("XYZ"),
+            adopted,
+            _quote("XYZ", ask="50.10", bid="50.00"),
+            clock.now(),
+            account=_account(),
+            earnings_known=True,
+            force_exit_reason="earnings_exit",
+        )
+        session.commit()
+        assert session.execute(
+            select(Order).where(Order.leg == "exit", Order.symbol == "XYZ")
+        ).scalar_one().status == "filled"
+    assert "XYZ" not in broker.positions
+
+
 async def test_tighten_stop_moves_only_upward(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -792,6 +1061,89 @@ async def test_flatten_cancels_orders_and_sells_positions(
     with session_factory() as session:
         assert _events(session, "flatten")
         assert _events(session, "kill_switch")
+
+
+async def test_flatten_never_refuses_same_day_positions(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Flatten sells positions opened today; the day-trade rule only warns."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", opened_at=NOW.replace(tzinfo=None))
+        session.commit()
+
+    result = await executor.flatten()
+
+    assert result["sold"] == ["MSFT"]
+    assert (await broker.get_positions()).data == []
+    # The sale counted as a day trade — a warning goes into the event.
+    with session_factory() as session:
+        events = _events(session, "flatten")
+        assert events[0].details is not None
+        assert events[0].details["day_trade_warnings"] == ["MSFT"]
+
+
+async def test_flatten_outside_hours_queues_market_on_open(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """After the close the flatten sell is queued for the open."""
+    # 18:00 New York — regular hours are over.
+    clock = FakeClock(datetime(2026, 10, 15, 22, 0, tzinfo=UTC))
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker, clock)
+
+    result = await executor.flatten()
+
+    assert result["market_on_open"] is True
+    sell = next(
+        o for o in broker.orders.values()
+        if o.symbol == "MSFT" and o.order_type == "market"
+    )
+    assert sell.time_in_force == "opg" and sell.status == "accepted"
+    # The position is still at the broker until the next open...
+    positions = (await broker.get_positions()).data
+    assert [p.symbol for p in positions] == ["MSFT"]
+    # ...and the queued order fills when the market opens.
+    await broker.tick("MSFT", Decimal("420"))
+    assert (await broker.get_positions()).data == []
+
+
+async def test_flatten_rejected_sell_keeps_stop_and_alerts(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A rejected flatten sale leaves the position protected and alerts."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    broker.reject_sells.add("MSFT")
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.commit()
+
+    result = await executor.flatten()
+
+    assert result["sold"] == []
+    errors = result["errors"]
+    assert isinstance(errors, list) and "MSFT" in errors[0]
+    # The position keeps its stop: reconciliation re-armed a protective one.
+    stops = [
+        o for o in broker.orders.values()
+        if o.symbol == "MSFT" and o.order_type == "stop" and o.status == "new"
+    ]
+    assert len(stops) == 1 and stops[0].qty == 4
+    with session_factory() as session:
+        events = _events(session, "flatten_sell_rejected")
+        assert events and events[0].level == "critical"
+        assert _events(session, "protective_stop")
 
 
 async def test_resume_requires_a_reason(
