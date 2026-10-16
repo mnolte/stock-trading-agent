@@ -15,11 +15,11 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.anyio
 
 
-def test_supervised_mode_refuses_to_start() -> None:
+def test_supervised_mode_starts() -> None:
+    """PR 6: supervised mode is a real mode — startup allows it."""
     config = AppConfig()
     config.yaml["execution"]["mode"] = "supervised"
-    with pytest.raises(RuntimeError, match="supervised mode arrives in PR 6"):
-        check_execution_mode(config)
+    check_execution_mode(config)  # no raise
 
 
 def test_unknown_execution_mode_refuses_to_start() -> None:
@@ -115,7 +115,14 @@ def test_kill_switch_api_flow(client: TestClient) -> None:
 
 def test_positions_and_orders_endpoints(client: TestClient) -> None:
     positions = client.get("/api/positions").json()
-    assert set(positions) == {"open", "closed_today", "day_trades_5d"}
+    assert {
+        "open",
+        "closed_today",
+        "day_trades_5d",
+        "day_trades",
+        "account",
+        "reconciliation",
+    } <= set(positions)
     assert positions["day_trades_5d"] == 0
     orders = client.get("/api/orders").json()
     assert "orders" in orders

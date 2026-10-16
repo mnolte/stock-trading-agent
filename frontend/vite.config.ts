@@ -8,7 +8,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': `http://127.0.0.1:${process.env.VITE_API_PORT ?? 8000}`,
-      '/ws': `http://127.0.0.1:${process.env.VITE_API_PORT ?? 8000}`,
+      '/ws': {
+        target: `http://127.0.0.1:${process.env.VITE_API_PORT ?? 8000}`,
+        ws: true,
+      },
     },
   },
 });

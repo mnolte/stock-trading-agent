@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 
+import { LiveUpdatesProvider } from './api/live';
 import { Layout } from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Decision from './pages/Decision';
@@ -13,8 +14,9 @@ import States from './pages/States';
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Layout />}>
+      <LiveUpdatesProvider>
+        <Routes>
+          <Route path="/" element={<Layout />}>
           <Route index element={<Dashboard />} />
           <Route path="positions" element={<Positions />} />
           <Route path="performance" element={<Performance />} />
@@ -24,8 +26,9 @@ function App() {
           <Route path="states" element={<States />} />
           <Route path="dev/components" element={<DevComponents />} />
           <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+          </Route>
+        </Routes>
+      </LiveUpdatesProvider>
     </BrowserRouter>
   );
 }

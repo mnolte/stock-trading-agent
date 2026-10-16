@@ -20,7 +20,12 @@ from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Earning, Order, Position
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock, SessionClock
-from app.rules.prefilter import RulesResult, evaluate_entry_rules
+from app.rules.prefilter import (
+    STATUS_FAIL,
+    RuleCheck,
+    RulesResult,
+    evaluate_entry_rules,
+)
 from app.signals.indicators import opening_gap_pct
 from app.signals.regime import MarketRegime, compute_regime
 from app.signals.snapshot import IndicatorSnapshot, compute_snapshot
@@ -66,6 +71,7 @@ class WatchlistRow:
     earnings_date: date | None
     last_action: str | None
     last_action_time: datetime | None
+    warming_up: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,6 +91,7 @@ class SymbolEval:
     bars_1h: list[Bar1h]
     price: Decimal | None
     day_change_pct: Decimal | None
+    warming_up: bool = False
 
 
 @dataclass(frozen=True)
@@ -267,6 +274,41 @@ class SignalService:
             return True
         return now >= cycles[-1]
 
+    def _warming_detail(
+        self,
+        symbol: str,
+        bars_1h: list[Bar1h],
+        daily: list[DailyBar],
+        sessions: list[CalendarDay],
+        daily_sessions: list[CalendarDay],
+        now: datetime,
+    ) -> str | None:
+        """None when the history needed for signals is loaded (docs/SPEC.md).
+
+        A new symbol shows "Warming up" until its ``daily_history_sessions``
+        daily bars and ``history_sessions`` sessions of 5-minute bars are in
+        the cache; while warming it gets no entries.
+        """
+        needed_daily = int(
+            self.config.get("schedule", "daily_history_sessions", default=260)
+        )
+        needed_5m = int(
+            self.config.get("schedule", "history_sessions", default=60)
+        )
+        started_sessions = [s for s in sessions if s.open <= now]
+        completed = [s for s in daily_sessions if s.close <= now]
+        covered_sessions = {
+            bar.start.astimezone(NY_TZ).date() for bar in bars_1h
+        } & {s.date for s in sessions}
+        want_daily = min(needed_daily, len(completed))
+        want_5m = min(needed_5m, len(started_sessions))
+        if len(daily) >= want_daily and len(covered_sessions) >= want_5m:
+            return None
+        return (
+            f"Warming up: {len(daily)} of {needed_daily} daily bars · "
+            f"{len(covered_sessions)} of {needed_5m} sessions"
+        )
+
     def _sessions_for(self, today: date) -> list[CalendarDay]:
         count = int(self.config.get("schedule", "history_sessions", default=60))
         return self.market_data.recent_sessions(today, count)
@@ -348,15 +390,27 @@ class SignalService:
                 earnings_next,
                 today,
             )
-            rules = evaluate_entry_rules(
-                symbol,
-                snapshot=snap,
-                regime=regime,
-                held=symbol in held,
-                open_entry_order=symbol in pending,
-                is_last_cycle=last_cycle,
-                config=self.config,
+            warming = self._warming_detail(
+                symbol, bars_1h, daily, sessions, daily_sessions, now
             )
+            if warming is not None and symbol not in held:
+                rules = RulesResult(
+                    symbol,
+                    STATUS_FAIL,
+                    warming,
+                    [RuleCheck("Warming up", False, warming)],
+                )
+            else:
+                warming = warming if symbol not in held else None
+                rules = evaluate_entry_rules(
+                    symbol,
+                    snapshot=snap,
+                    regime=regime,
+                    held=symbol in held,
+                    open_entry_order=symbol in pending,
+                    is_last_cycle=last_cycle,
+                    config=self.config,
+                )
             price: Decimal | None
             base: Decimal | None
             if todays:
@@ -378,6 +432,7 @@ class SignalService:
                     bars_1h=bars_1h,
                     price=price,
                     day_change_pct=change,
+                    warming_up=warming is not None,
                 )
             )
         return Evaluation(
@@ -400,6 +455,7 @@ class SignalService:
                 earnings_date=evaluation.earnings_next.get(item.symbol),
                 last_action=last_actions.get(item.symbol, (None, None))[0],
                 last_action_time=last_actions.get(item.symbol, (None, None))[1],
+                warming_up=item.warming_up,
             )
             for item in evaluation.items
         ]

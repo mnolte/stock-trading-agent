@@ -56,7 +56,7 @@ One Python backend process runs the scheduler, the agent and the API; a React ap
 | Storage | SQLite via SQLAlchemy 2.x, Alembic migrations |
 | Indicators | pandas + own implementations (no TA-Lib dependency) |
 | Frontend | React + TypeScript + Vite; Lightweight Charts for price charts |
-| Live updates | WebSocket from backend to GUI |
+| Live updates | WebSocket from backend to GUI sending `{"type": "update", "topics": [...]}` (header, positions, orders, decisions, banners, watchlist, performance, approvals); the GUI refetches those REST endpoints, debounced 300 ms, refetches everything after a reconnect, and polls every 60 s with a "live updates paused" note while the socket is down |
 | Config | `.env` for secrets, `config.yaml` for everything else |
 
 Repo layout:
@@ -264,7 +264,11 @@ Risk gates run in code after the model answers, in the order below; the first ga
 
 **Errors.** Three failed cycles in a row (any unhandled error) turn the kill switch on. A failed model call is never retried with a different model silently.
 
-**Supervised mode** (built in PR 6). Every entry waits for Marc's approval on the Dashboard. A pending approval expires at the next full cycle. Approving re-checks the risk gates, the size and the spread, and sets a new entry limit from the current price; if any check fails, the approval is rejected with the reason shown. Agent exits, stops and targets at Alpaca, earnings exits and the kill switch never wait for approval.
+**Supervised mode** (built in PR 6). Every entry waits for Marc's approval on the Dashboard. A pending approval expires at the next full cycle. Approving re-checks the risk gates, the size and the spread, and sets a new entry limit from the current price; the new limit must also pass the original code checks (stop 1.5–4 × ATR away, reward to risk at least 1.5, using the model's stop and target). If any check fails, the approval is rejected with the reason shown. There is at most one pending approval per symbol; a newer one replaces it. Approving is disabled while the kill switch is on. Each approval is stored in an `approvals` table (decision, status pending, approved, rejected or expired, reason, created and resolved times) and its outcome shows on the decision. Agent exits, stops and targets at Alpaca, earnings exits and the kill switch never wait for approval.
+
+**Reset paper account.** Alpaca's API can't restore the balance, so a reset has two steps. The Settings button turns the kill switch on, closes all positions and cancels all orders at Alpaca, records a `paper_reset` event, and tells Marc to reset the balance in the Alpaca dashboard. "Start new run" then checks that there are no positions or open orders and that equity equals the starting balance (`performance.starting_equity`, ±1%); if not, it says which check failed. A new run is stored in a `runs` table and restarts the SPY benchmark, the peak equity for the drawdown kill, the losing streak and the daily loss baseline. Earlier runs stay viewable in Performance and past decisions stay in the log. Trading resumes only through the normal kill-switch resume.
+
+**Adding a symbol.** Settings requires a sector from a fixed list (the 11 GICS sectors plus Index) when adding a symbol. The symbol must be an active, tradable US stock or ETF at Alpaca. A new symbol shows "Warming up" and gets no entries until its 260 daily bars and 60 sessions of 5-minute bars are loaded.
 
 ## GUI
 

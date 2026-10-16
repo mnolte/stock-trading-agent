@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
+from typing import cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
@@ -12,14 +14,50 @@ from sqlalchemy.orm import Session
 from app.config import get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import Cycle, DayTrade, Decision, Event, Order, Outcome, Position
-from app.decide.prompt import load_prompt
+from app.db.models import (
+    Approval,
+    Cycle,
+    DayTrade,
+    Decision,
+    Earning,
+    Event,
+    Fill,
+    Order,
+    Outcome,
+    Position,
+    Run,
+    SettingsVersion,
+)
+from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
-from app.market.clock import NY_TZ, UTC, SessionClock, SessionState, make_clock
+from app.market.clock import (
+    NY_TZ,
+    UTC,
+    Clock,
+    SessionClock,
+    SessionState,
+    make_clock,
+)
+from app.settings_service import (
+    SettingsError,
+    _deep_merge,
+    _nested_get,
+    save_version,
+    schedule_table,
+    validate_settings,
+    version_change_summary,
+)
+from app.signals.indicators import ema_series
 from app.signals.service import SignalService
 
 router = APIRouter()
+
+
+def _notify(request: Request, *topics: str) -> None:
+    bus = getattr(request.app.state, "update_bus", None)
+    if bus is not None:
+        bus.publish(*topics)
 
 
 def _calendar(request: Request) -> CalendarProvider:
@@ -44,8 +82,8 @@ def _eur_rate(request: Request) -> dict[str, object]:
 
 
 def _session_state(request: Request) -> SessionState:
-    clock = SessionClock(make_clock(), calendar=_calendar(request))
-    return clock.state()
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    return SessionClock(clock, calendar=_calendar(request)).state()
 
 
 def _signals(request: Request) -> SignalService | None:
@@ -71,12 +109,23 @@ def health() -> dict[str, str]:
 @router.get("/session")
 def session_state(request: Request) -> dict[str, object]:
     state = _session_state(request)
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    session_clock = SessionClock(clock, get_config(), _calendar(request))
+    today_session = _calendar(request).session_for(
+        clock.now().astimezone(NY_TZ).date()
+    )
+    cycles_today = (
+        len(session_clock.active_cycles(today_session))
+        if today_session is not None
+        else 0
+    )
     return {
         "state": state.state,
         "next_cycle": state.next_cycle.isoformat() if state.next_cycle else None,
         "next_open": state.next_open.isoformat() if state.next_open else None,
         "next_close": state.next_close.isoformat() if state.next_close else None,
         "display_time": state.display_time,
+        "cycles_today": cycles_today,
         "calendar_loaded": _calendar_loaded(request),
     }
 
@@ -132,7 +181,10 @@ def header_state(request: Request) -> dict[str, object]:
         "session": {
             "state": session.state,
             "display_time": session.display_time,
+            "now": _clock(request).now().astimezone(UTC).isoformat(),
             "next_cycle": session.next_cycle.isoformat() if session.next_cycle else None,
+            "next_open": session.next_open.isoformat() if session.next_open else None,
+            "next_close": session.next_close.isoformat() if session.next_close else None,
             "calendar_loaded": _calendar_loaded(request),
         },
         "equity_usd": _fmt_money(account["equity"]),
@@ -184,6 +236,7 @@ def watchlist(request: Request) -> dict[str, object]:
                 "earnings_date": (
                     row.earnings_date.isoformat() if row.earnings_date else None
                 ),
+                "warming_up": row.warming_up,
                 "last_action": row.last_action,
                 "last_action_time": (
                     row.last_action_time.isoformat()
@@ -290,6 +343,23 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         outcome = session.execute(
             select(Outcome).where(Outcome.decision_id == decision_id)
         ).scalar_one_or_none()
+        order_rows = session.execute(
+            select(Order)
+            .where(Order.decision_id == decision_id)
+            .order_by(Order.id)
+        ).scalars().all()
+        fills = {
+            row.id: session.execute(
+                select(Fill).where(Fill.order_id == row.id)
+            ).scalars().all()
+            for row in order_rows
+        }
+        approval_row = session.execute(
+            select(Approval)
+            .where(Approval.decision_id == decision_id)
+            .order_by(Approval.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
     try:
         prompt_text = load_prompt(decision.prompt_version).text
     except OSError:
@@ -337,6 +407,28 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "cost": str(decision.cost) if decision.cost is not None else None,
         "latency_ms": decision.latency_ms,
         "raw_response": decision.raw_response,
+        "orders": [
+            _order_json(row, fills[row.id]) for row in order_rows
+        ],
+        "approval": (
+            {
+                "id": approval_row.id,
+                "status": approval_row.status,
+                "reason": approval_row.reason,
+                "qty": approval_row.qty,
+                "limit_price": str(approval_row.limit_price),
+                "created_at": approval_row.created_at.replace(
+                    tzinfo=UTC
+                ).isoformat(),
+                "resolved_at": (
+                    approval_row.resolved_at.replace(tzinfo=UTC).isoformat()
+                    if approval_row.resolved_at
+                    else None
+                ),
+            }
+            if approval_row is not None
+            else None
+        ),
     }
 
 
@@ -429,9 +521,120 @@ def _position_json(
     }
 
 
+def _order_json(row: Order, fills: Sequence[Fill]) -> dict[str, object]:
+    filled_qty = sum(f.qty for f in fills)
+    filled_avg = (
+        sum(f.price * f.qty for f in fills) / filled_qty if filled_qty else None
+    )
+    return {
+        "id": row.id,
+        "alpaca_order_id": row.alpaca_order_id,
+        "client_order_id": row.client_order_id,
+        "parent_alpaca_order_id": row.parent_alpaca_order_id,
+        "symbol": row.symbol,
+        "leg": row.leg,
+        "side": row.side,
+        "type": row.order_type,
+        "qty": row.qty,
+        "limit_price": (
+            str(row.limit_price) if row.limit_price is not None else None
+        ),
+        "stop_price": (
+            str(row.stop_price) if row.stop_price is not None else None
+        ),
+        "status": row.status,
+        "created_at": row.created_at.replace(tzinfo=UTC).isoformat(),
+        "filled_at": (
+            row.filled_at.replace(tzinfo=UTC).isoformat() if row.filled_at else None
+        ),
+        "filled_avg_price": str(filled_avg) if filled_avg is not None else None,
+        "fills": [
+            {
+                "qty": f.qty,
+                "price": str(f.price),
+                "slippage": str(f.slippage) if f.slippage is not None else None,
+                "filled_at": f.filled_at.replace(tzinfo=UTC).isoformat(),
+            }
+            for f in fills
+        ],
+    }
+
+
+def _position_legs(session: Session, position: Position) -> list[dict[str, object]]:
+    """Entry + open stop/target legs for one position (design: Positions)."""
+    rows = session.execute(
+        select(Order)
+        .where(Order.symbol == position.symbol)
+        .order_by(Order.id.desc())
+        .limit(30)
+    ).scalars().all()
+    entry = next(
+        (
+            row
+            for row in rows
+            if row.leg == "entry"
+            and row.created_at <= position.opened_at + timedelta(minutes=5)
+            and row.status == "filled"
+        ),
+        None,
+    )
+    legs = [
+        row
+        for row in rows
+        if row.leg in ("stop", "target") and row.status in OPEN_LIKE_STATUSES
+    ]
+    out: list[dict[str, object]] = []
+    if entry is not None:
+        fills = session.execute(
+            select(Fill).where(Fill.order_id == entry.id)
+        ).scalars().all()
+        out.append(_order_json(entry, fills) | {"label": "Entry"})
+    for leg in legs:
+        fills = session.execute(
+            select(Fill).where(Fill.order_id == leg.id)
+        ).scalars().all()
+        item = _order_json(leg, fills) | {
+            "label": "Stop leg" if leg.leg == "stop" else "Target leg"
+        }
+        if leg.leg == "stop" and leg.parent_alpaca_order_id:
+            # A replaced stop shows what it replaced (design chip text).
+            replaced = session.execute(
+                select(Order)
+                .where(
+                    Order.symbol == position.symbol,
+                    Order.leg == "stop",
+                    Order.status == "replaced",
+                )
+                .order_by(Order.id.desc())
+            ).scalars().all()
+            prev = next(
+                (
+                    r
+                    for r in replaced
+                    if r.id < leg.id
+                    and (r.stop_price or Decimal(0)) < (leg.stop_price or Decimal(0))
+                ),
+                None,
+            )
+            if prev is not None:
+                item["replaced_from"] = str(prev.stop_price)
+        out.append(item)
+    return out
+
+
+OPEN_LIKE_STATUSES = (
+    "new",
+    "accepted",
+    "pending_new",
+    "partially_filled",
+    "held",
+    "open",
+)
+
+
 @router.get("/positions")
 async def positions(request: Request) -> dict[str, object]:
-    """Open positions plus today's closed ones; adopted P&L stays apart."""
+    """Open positions with legs, marks, account and day-trade boxes."""
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today_ny = clock.now().astimezone(NY_TZ).date()
     market_data = getattr(request.app.state, "market_data", None)
@@ -439,73 +642,169 @@ async def positions(request: Request) -> dict[str, object]:
         market_data.recent_sessions(today_ny, 5) if market_data is not None else []
     )
     marks: dict[str, Decimal | None] = {}
+    last_prices: dict[str, Decimal | None] = {}
     broker = getattr(request.app.state, "broker", None)
     if broker is not None:
         broker_positions = await broker.get_positions()
         if broker_positions.error is None:
             marks = {p.symbol: p.market_value for p in broker_positions.data}
+            last_prices = {
+                p.symbol: p.current_price for p in broker_positions.data
+            }
+    state = getattr(request.app.state, "exec_state", None)
+    account = getattr(state, "account", None) if state is not None else None
+
+    fx = getattr(market_data, "latest_fx", None) if market_data else None
+    fx_rate = fx.data if fx is not None and fx.error is None else None
     with get_session_maker()() as session:
         open_rows = session.execute(
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
-        today = clock.now().astimezone(UTC).date()
-        closed_rows = session.execute(
-            select(Position).where(Position.closed_at.is_not(None))
+        legs = {p.id: _position_legs(session, p) for p in open_rows}
+        earnings_next = session.execute(
+            select(Earning.symbol, func.min(Earning.date))
+            .where(Earning.symbol.in_([p.symbol for p in open_rows] or [""]))
+            .group_by(Earning.symbol)
+        ).all()
+        earnings_map = {symbol: d.date() for symbol, d in earnings_next}
+        closed_today = session.execute(
+            select(Position)
+            .where(Position.closed_at.is_not(None))
+            .order_by(Position.closed_at.desc())
         ).scalars().all()
         closed_today = [
             p
-            for p in closed_rows
-            if p.closed_at and p.closed_at.date() == today
+            for p in closed_today
+            if p.closed_at and _ny_date(p.closed_at) == today_ny
         ]
+        day_rows: list[dict[str, object]] = []
         day_trades = 0
         if sessions:
-            day_trades = session.execute(
-                select(func.count(DayTrade.id)).where(
-                    DayTrade.date >= _naive_utc(sessions[0].open)
-                )
-            ).scalar_one()
+            for day in sessions:
+                count = session.execute(
+                    select(func.count(DayTrade.id)).where(
+                        DayTrade.date >= _naive_utc(day.open),
+                        DayTrade.date <= _naive_utc(day.close),
+                    )
+                ).scalar_one()
+                day_rows.append({"date": day.date.isoformat(), "count": count})
+                day_trades += int(count)
+
+    max_day_trades = int(
+        get_config().get("risk", "pdt_max_day_trades", default=3)
+    )
+    max_positions = int(
+        get_config().get("risk", "max_open_positions", default=4)
+    )
+    positions_value = sum(
+        (m for m in marks.values() if m is not None), Decimal(0)
+    )
+
+    out_open = []
+    for p in open_rows:
+        item = _position_json(p, marks.get(p.symbol))
+        item["legs"] = legs[p.id]
+        item["last_price"] = (
+            str(last_prices.get(p.symbol))
+            if last_prices.get(p.symbol) is not None
+            else None
+        )
+        market_value = marks.get(p.symbol)
+        if market_value is not None:
+            item["unrealized_pnl"] = str(
+                market_value - p.avg_entry_price * p.qty
+            )
+            item["unrealized_pnl_eur"] = (
+                str((market_value - p.avg_entry_price * p.qty) / fx_rate.usd_per_eur)
+                if fx_rate is not None
+                else None
+            )
+            if p.current_stop_price is not None and p.avg_entry_price > 0:
+                r_dist = p.avg_entry_price - p.current_stop_price
+                if r_dist <= 0:
+                    item["stop_distance_label"] = "stop above entry"
+                else:
+                    risk_per_share = p.avg_entry_price - (
+                        p.current_stop_price or Decimal(0)
+                    )
+                    unrealized = market_value - p.avg_entry_price * p.qty
+                    item["r_multiple"] = str(
+                        (unrealized / (risk_per_share * p.qty)).quantize(
+                            Decimal("0.01")
+                        )
+                        if risk_per_share > 0
+                        else None
+                    )
+        earnings_date = earnings_map.get(p.symbol)
+        item["earnings_date"] = (
+            earnings_date.isoformat() if earnings_date is not None else None
+        )
+        opened_today = _ny_date(p.opened_at) == today_ny
+        item["opened_today"] = opened_today
+        out_open.append(item)
+
     return {
-        "open": [_position_json(p, marks.get(p.symbol)) for p in open_rows],
+        "open": out_open,
         "closed_today": [_position_json(p) for p in closed_today],
         "day_trades_5d": day_trades,
+        "day_trades": {
+            "days": day_rows,
+            "count": day_trades,
+            "max": max_day_trades,
+        },
+        "account": {
+            "equity": _fmt_money(account.equity if account else None),
+            "cash": _fmt_money(account.cash if account else None),
+            "positions_value": _fmt_money(positions_value),
+            "equity_eur": _fmt_money(
+                account.equity / fx_rate.usd_per_eur
+                if account and fx_rate
+                else None
+            ),
+            "eur_usd_rate": (
+                str(fx_rate.usd_per_eur) if fx_rate is not None else None
+            ),
+            "eur_usd_date": (
+                fx_rate.for_date.isoformat() if fx_rate is not None else None
+            ),
+            "margin": "none · cash only",
+            "account_number": account.account_number if account else None,
+        },
+        "reconciliation": {
+            "ok": getattr(state, "last_reconcile_ok", True),
+            "checked_at": (
+                state.last_reconcile_at.astimezone(UTC).isoformat()
+                if state is not None and state.last_reconcile_at is not None
+                else None
+            ),
+            "stream_connected": (
+                broker.stream_connected() if broker is not None else None
+            ),
+            "account_number": account.account_number if account else None,
+        },
+        "max_open_positions": max_positions,
     }
+
+
+def _ny_date(dt: datetime) -> object:
+    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+    return aware.astimezone(NY_TZ).date()
 
 
 @router.get("/orders")
 def orders(request: Request) -> dict[str, object]:
-    """Latest order rows with leg and status."""
+    """Latest order rows with leg, fills and slippage."""
     with get_session_maker()() as session:
         rows = session.execute(
             select(Order).order_by(Order.id.desc()).limit(100)
         ).scalars().all()
-    return {
-        "orders": [
-            {
-                "id": row.id,
-                "alpaca_order_id": row.alpaca_order_id,
-                "client_order_id": row.client_order_id,
-                "symbol": row.symbol,
-                "leg": row.leg,
-                "side": row.side,
-                "type": row.order_type,
-                "qty": row.qty,
-                "limit_price": (
-                    str(row.limit_price) if row.limit_price is not None else None
-                ),
-                "stop_price": (
-                    str(row.stop_price) if row.stop_price is not None else None
-                ),
-                "status": row.status,
-                "created_at": row.created_at.replace(tzinfo=UTC).isoformat(),
-                "filled_at": (
-                    row.filled_at.replace(tzinfo=UTC).isoformat()
-                    if row.filled_at
-                    else None
-                ),
-            }
+        fills = {
+            row.id: session.execute(
+                select(Fill).where(Fill.order_id == row.id)
+            ).scalars().all()
             for row in rows
-        ]
-    }
+        }
+    return {"orders": [_order_json(row, fills[row.id]) for row in rows]}
 
 
 @router.get("/banners")
@@ -658,6 +957,124 @@ def banners(request: Request) -> dict[str, object]:
                 "actions": [],
             }
         )
+    market_data = getattr(request.app.state, "market_data", None)
+    earnings_status = (
+        getattr(market_data, "latest_earnings", None) if market_data else None
+    )
+    if earnings_status is not None and earnings_status.error is not None:
+        items.append(
+            {
+                "id": None,
+                "kind": "earnings_down",
+                "level": "warning",
+                "message": (
+                    "Earnings calendar unavailable. New entries are blocked "
+                    "on every symbol until it is back. Open positions are "
+                    "unaffected."
+                ),
+                "actions": ["connections"],
+            }
+        )
+    # Bars missing in the last run cycle → market data down banner.
+    with get_session_maker()() as session:
+        last_cycle = session.execute(
+            select(Cycle)
+            .where(Cycle.kind == "cycle", Cycle.status == "done")
+            .order_by(Cycle.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    health = (last_cycle.data_source_health or {}) if last_cycle else {}
+    bars_health = str(health.get("bars", ""))
+    if bars_health.startswith("failed"):
+        items.append(
+            {
+                "id": None,
+                "kind": "market_data_down",
+                "level": "warning",
+                "message": (
+                    f"No new 5-minute bars for {bars_health[8:]}. Entries "
+                    "stop until market data is back; stops at Alpaca still "
+                    "protect open positions."
+                ),
+                "actions": [],
+            }
+        )
+    # Day-trade guard and losing-streak info from the gate inputs.
+    if state is not None and state.account is not None:
+        config = get_config()
+        clock = getattr(request.app.state, "clock", None) or make_clock()
+        today_ny = clock.now().astimezone(NY_TZ).date()
+        market = getattr(request.app.state, "market_data", None)
+        sessions = (
+            market.recent_sessions(today_ny, 5) if market is not None else []
+        )
+        if sessions:
+            with get_session_maker()() as session:
+                day_trades = session.execute(
+                    select(func.count(DayTrade.id)).where(
+                        DayTrade.date >= _naive_utc(sessions[0].open)
+                    )
+                ).scalar_one()
+                closed_query = (
+                    select(Position)
+                    .where(
+                        Position.closed_at.is_not(None),
+                        Position.realized_pnl_raw.is_not(None),
+                    )
+                    .order_by(Position.closed_at.desc())
+                )
+                run_started = getattr(state, "run_started_at", None)
+                if run_started is not None:
+                    closed_query = closed_query.where(
+                        Position.closed_at >= run_started
+                    )
+                closed = session.execute(closed_query).scalars().all()
+            max_dt = int(config.get("risk", "pdt_max_day_trades", default=3))
+            if day_trades >= max_dt:
+                items.append(
+                    {
+                        "id": None,
+                        "kind": "day_trade_guard",
+                        "level": "warning",
+                        "message": (
+                            f"{day_trades} day trades in the last 5 trading "
+                            "days. No new entries until the count drops."
+                        ),
+                        "actions": [],
+                    }
+                )
+            streak = 0
+            for p in closed:
+                if (p.realized_pnl_raw or Decimal(0)) < 0:
+                    streak += 1
+                else:
+                    break
+            threshold = int(config.get("risk", "losing_streak", default=3))
+            if threshold > 0 and streak >= threshold:
+                factor = Decimal(
+                    str(
+                        config.get(
+                            "risk", "losing_streak_risk_factor", default=0.5
+                        )
+                    )
+                )
+                halved = Decimal(
+                    str(config.get("risk", "risk_per_trade_pct", default=0.5))
+                ) * factor
+                items.append(
+                    {
+                        "id": None,
+                        "kind": "losing_streak",
+                        "level": "info",
+                        "message": (
+                            f"Risk per trade cut to {halved}% after "
+                            f"{streak} losing trades in a row. Back to "
+                            f"{config.get('risk', 'risk_per_trade_pct', default=0.5)}% "
+                            "after the next winning trade."
+                        ),
+                        "actions": [],
+                    }
+                )
     return {"items": items}
 
 
@@ -674,3 +1091,927 @@ def _pending_position_id(session: Session, symbol: str) -> int | None:
         )
     ).scalar_one_or_none()
     return row
+
+
+# ----------------------------------------------------------------------
+# Supervised-mode approvals
+
+
+def _approval_json(approval: Approval, decision: Decision | None) -> dict[str, object]:
+    output = (decision.model_output or {}) if decision else {}
+    return {
+        "id": approval.id,
+        "decision_id": approval.decision_id,
+        "symbol": approval.symbol,
+        "qty": approval.qty,
+        "limit_price": str(approval.limit_price),
+        "stop_price": str(approval.stop_price),
+        "target_price": str(approval.target_price),
+        "status": approval.status,
+        "reason": approval.reason,
+        "created_at": approval.created_at.replace(tzinfo=UTC).isoformat(),
+        "resolved_at": (
+            approval.resolved_at.replace(tzinfo=UTC).isoformat()
+            if approval.resolved_at
+            else None
+        ),
+        "confidence": output.get("confidence"),
+        "action": output.get("action"),
+        "thesis": output.get("thesis"),
+    }
+
+
+@router.get("/approvals")
+def approvals(request: Request) -> dict[str, object]:
+    """Pending supervised-mode approvals plus the last resolved ones."""
+    state = getattr(request.app.state, "exec_state", None)
+    with get_session_maker()() as session:
+        pending = session.execute(
+            select(Approval).where(Approval.status == "pending")
+        ).scalars().all()
+        decisions = {
+            row.id: row
+            for row in session.execute(
+                select(Decision).where(
+                    Decision.id.in_([a.decision_id for a in pending] or [0])
+                )
+            ).scalars()
+        }
+        recent = session.execute(
+            select(Approval)
+            .where(Approval.status != "pending")
+            .order_by(Approval.id.desc())
+            .limit(10)
+        ).scalars().all()
+    return {
+        "mode": get_config().get("execution", "mode", default="automatic"),
+        "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
+        "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
+        "recent": [_approval_json(a, None) for a in recent],
+    }
+
+
+@router.post("/approvals/{approval_id}/approve")
+async def approve_approval(request: Request, approval_id: int) -> dict[str, object]:
+    """Approve an entry: re-checks gates/code checks on a fresh quote."""
+    executor = _executor(request)
+    result = await executor.approve(approval_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result.get("error"))
+    return result
+
+
+@router.post("/approvals/{approval_id}/reject")
+def reject_approval(
+    request: Request,
+    approval_id: int,
+    body: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Reject a pending approval; the reason is stored and shown."""
+    executor = _executor(request)
+    reason = str((body or {}).get("reason") or "") or None
+    if not executor.reject_approval(approval_id, reason):
+        raise HTTPException(status_code=404, detail="approval is not pending")
+    return {"rejected": True}
+
+
+# ----------------------------------------------------------------------
+# Settings (versioned, effective next cycle)
+
+
+def _held_symbols() -> set[str]:
+    with get_session_maker()() as session:
+        held = {
+            row[0]
+            for row in session.execute(
+                select(Position.symbol).where(Position.closed_at.is_(None))
+            ).all()
+        }
+        pending = {
+            row[0]
+            for row in session.execute(
+                select(Order.symbol).where(
+                    Order.leg == "entry",
+                    Order.status.in_(OPEN_LIKE_STATUSES),
+                )
+            ).all()
+        }
+    return held | pending
+
+
+def _settings_form(config: object) -> dict[str, object]:
+    """Current effective values in the shape the settings form expects."""
+    get = config.get  # type: ignore[attr-defined]
+    return {
+        "execution": {
+            "mode": get("execution", "mode", default="automatic"),
+            "entry_limit_offset_pct": get(
+                "execution", "entry_limit_offset_pct", default=0.05
+            ),
+            "entry_timeout_minutes": get(
+                "execution", "entry_timeout_minutes", default=10
+            ),
+            "max_spread_pct": get("execution", "max_spread_pct", default=0.15),
+        },
+        "rules": {
+            "rsi_min": get("rules", "rsi_min", default=40),
+            "rsi_max": get("rules", "rsi_max", default=70),
+        },
+        "decision": {
+            "model": get("decision", "model", default="gpt-4o-mini"),
+            "temperature": get("decision", "temperature", default=0),
+            "prompt": get("decision", "prompt", default="decision.v1"),
+            "min_confidence_enter": get(
+                "decision", "min_confidence_enter", default=0.55
+            ),
+            "stop_atr_min": get("decision", "stop_atr_min", default=1.5),
+            "stop_atr_max": get("decision", "stop_atr_max", default=4.0),
+            "min_reward_risk": get("decision", "min_reward_risk", default=1.5),
+            "max_calls_per_cycle": get(
+                "decision", "max_calls_per_cycle", default=10
+            ),
+        },
+        "risk": {
+            "risk_per_trade_pct": get("risk", "risk_per_trade_pct", default=0.5),
+            "max_position_pct": get("risk", "max_position_pct", default=20),
+            "max_open_risk_pct": get("risk", "max_open_risk_pct", default=2.5),
+            "max_open_positions": get("risk", "max_open_positions", default=4),
+            "max_per_sector": get("risk", "max_per_sector", default=2),
+            "daily_loss_limit_pct": get(
+                "risk", "daily_loss_limit_pct", default=2.0
+            ),
+            "losing_streak": get("risk", "losing_streak", default=3),
+            "shock_brake_1h_pct": get("risk", "shock_brake_1h_pct", default=1.5),
+            "shock_brake_session_pct": get(
+                "risk", "shock_brake_session_pct", default=2.5
+            ),
+            "earnings_blackout_days": get(
+                "risk", "earnings_blackout_days", default=3
+            ),
+            "hold_through_earnings": get(
+                "risk", "hold_through_earnings", default=False
+            ),
+            "drawdown_kill_pct": get("risk", "drawdown_kill_pct", default=8),
+            "max_order_pct": get("risk", "max_order_pct", default=25),
+            "max_orders_per_cycle": get(
+                "risk", "max_orders_per_cycle", default=6
+            ),
+        },
+        "performance": {
+            "slippage_pct_per_side": get(
+                "performance", "slippage_pct_per_side", default=0.05
+            ),
+            "starting_equity": get(
+                "performance", "starting_equity", default=10000
+            ),
+        },
+        "schedule": {
+            "cycles": get("schedule", "cycles", default=[]),
+        },
+        "universe": {
+            "symbols": get("universe", "symbols", default=[]),
+            "sectors": get("universe", "sectors", default={}),
+            "allowed_sectors": get("universe", "allowed_sectors", default=[]),
+        },
+    }
+
+
+def _prompt_options() -> list[dict[str, str]]:
+    out = []
+    for path in sorted(PROMPTS_DIR.glob("decision.*.md")):
+        version = path.stem
+        try:
+            prompt = load_prompt(version)
+        except OSError:
+            continue
+        out.append({"version": version, "hash": prompt.short_hash})
+    return out
+
+
+def _connections(request: Request) -> list[dict[str, object]]:
+    config = get_config()
+    mode = config.env.mode
+    simulated = mode == "simulated"
+    state = getattr(request.app.state, "exec_state", None)
+    account = getattr(state, "account", None) if state is not None else None
+    broker = getattr(request.app.state, "broker", None)
+    market_data = getattr(request.app.state, "market_data", None)
+    rows: list[dict[str, object]] = []
+    account_num = account.account_number if account else None
+    masked = (
+        f"{account_num[:4]}…{account_num[-4:]}" if account_num else None
+    )
+    rows.append(
+        {
+            "source": "Alpaca trading",
+            "status": (
+                "simulated"
+                if simulated
+                else ("connected · paper" if account is not None else "error")
+            ),
+            "detail": (
+                f"account {masked} · keys from .env"
+                if masked
+                else ("fake broker" if simulated else "account unread")
+            ),
+        }
+    )
+    rows.append(
+        {
+            "source": "Alpaca market data",
+            "status": "simulated" if simulated else "ok",
+            "detail": (
+                "Basic plan: IEX real-time quotes, SIP bars 15 min delayed"
+                if not simulated
+                else "fake bars and quotes"
+            ),
+        }
+    )
+    rows.append(
+        {
+            "source": "Alpaca news",
+            "status": "simulated" if simulated else "ok",
+            "detail": "fake news" if simulated else "latest 24 h",
+        }
+    )
+    earnings = (
+        getattr(market_data, "latest_earnings", None) if market_data else None
+    )
+    rows.append(
+        {
+            "source": "Finnhub earnings",
+            "status": (
+                "simulated"
+                if simulated
+                else ("ok" if earnings and earnings.error is None else "error")
+            ),
+            "detail": (
+                str(earnings.error)
+                if earnings is not None and earnings.error is not None
+                else ("fake calendar" if simulated else "next 90 days")
+            ),
+        }
+    )
+    fx = getattr(market_data, "latest_fx", None) if market_data else None
+    rows.append(
+        {
+            "source": "ECB FX (EUR/USD)",
+            "status": (
+                "simulated"
+                if simulated
+                else ("ok" if fx and fx.error is None else "error")
+            ),
+            "detail": (
+                f"{fx.data.usd_per_eur} · {fx.data.for_date.isoformat()}"
+                if fx is not None and fx.error is None and fx.data is not None
+                else ("fake rate" if simulated else "unavailable")
+            ),
+        }
+    )
+    stream = broker.stream_connected() if broker is not None else None
+    rows.append(
+        {
+            "source": "Trade updates stream",
+            "status": (
+                "connected" if stream else ("simulated" if simulated else "down")
+            ),
+            "detail": "fill, cancel and reject events",
+        }
+    )
+    return rows
+
+
+@router.get("/settings")
+def settings(request: Request) -> dict[str, object]:
+    """The Settings form, schedule table, connections and version history."""
+    config = get_config()
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(SettingsVersion).order_by(SettingsVersion.version.desc()).limit(20)
+        ).scalars().all()
+    history = []
+    for index, row in enumerate(rows):
+        prev = rows[index + 1].settings if index + 1 < len(rows) else None
+        history.append(
+            {
+                "version": row.version,
+                "changed_at": row.changed_at.replace(tzinfo=UTC).isoformat(),
+                "change": version_change_summary(prev, row.settings),
+                "reason": row.reason,
+            }
+        )
+    return {
+        "settings": _settings_form(config),
+        "active_version": config.active_version,
+        "pending_version": config.pending_version,
+        "next_version": (rows[0].version + 1) if rows else 1,
+        "held_symbols": sorted(_held_symbols()),
+        "prompt_options": _prompt_options(),
+        "schedule": schedule_table(config, clock, _calendar(request)),
+        "connections": _connections(request),
+        "history": history,
+        "mode": config.env.mode,
+    }
+
+
+@router.post("/settings")
+async def update_settings(request: Request, body: dict[str, object]) -> dict[str, object]:
+    """Validate and save a new settings version; applies at the next cycle."""
+    config = get_config()
+    submitted = body.get("settings")
+    if not isinstance(submitted, dict):
+        raise HTTPException(status_code=422, detail="settings object required")
+    reason = str(body.get("reason") or "")
+    broker = getattr(request.app.state, "broker", None)
+    if broker is None:
+        raise HTTPException(status_code=503, detail="broker unavailable")
+    active = config.effective()
+    try:
+        cleaned, changes = await validate_settings(
+            submitted,
+            active,
+            broker=broker,
+            held_symbols=_held_symbols(),
+        )
+    except SettingsError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors) from exc
+    new_tree = _deep_merge(active, cleaned)
+    with get_session_maker()() as session:
+        row = save_version(
+            session, _clock(request), settings=new_tree, reason=reason
+        )
+        session.commit()
+        version = row.version
+    config.set_pending(cleaned, version)
+    schedule = cleaned.get("schedule")
+    if isinstance(schedule, dict) and "cycles" in schedule and (
+        schedule["cycles"] != _nested_get(active, "schedule", "cycles")
+    ):
+        config.reschedule_cycles = True
+    _notify(request, "header")
+    return {
+        "version": version,
+        "changes": changes,
+        "effective_from": "next cycle",
+    }
+
+
+def _clock(request: Request) -> Clock:
+    clock = getattr(request.app.state, "clock", None)
+    return clock if clock is not None else make_clock()
+
+
+# ----------------------------------------------------------------------
+# Paper account reset + runs
+
+
+@router.post("/paper-reset")
+async def paper_reset(request: Request) -> dict[str, object]:
+    """Step 1: kill switch on, close all positions, cancel all orders."""
+    executor = _executor(request)
+    return await executor.paper_reset()
+
+
+@router.post("/runs")
+async def start_new_run(request: Request) -> dict[str, object]:
+    """Step 2: verify the reset balance, then start a new performance run."""
+    executor = _executor(request)
+    result = await executor.start_new_run()
+    if not result.get("ok"):
+        raise HTTPException(status_code=422, detail=result.get("failed"))
+    return result
+
+
+@router.get("/runs")
+def list_runs(request: Request) -> dict[str, object]:
+    """All performance runs, newest first (earlier runs stay viewable)."""
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(Run).order_by(Run.id.desc())
+        ).scalars().all()
+    return {
+        "runs": [
+            {
+                "id": row.id,
+                "started_at": row.started_at.replace(tzinfo=UTC).isoformat(),
+                "starting_equity": str(row.starting_equity),
+                "spy_close": (
+                    str(row.spy_close) if row.spy_close is not None else None
+                ),
+            }
+            for row in rows
+        ]
+    }
+
+
+# ----------------------------------------------------------------------
+# Dashboard + chart
+
+
+@router.get("/dashboard")
+def dashboard(request: Request) -> dict[str, object]:
+    """The Main screen: cycle line, stat cards, latest decision, feed."""
+    config = get_config()
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    state = getattr(request.app.state, "exec_state", None)
+    account = getattr(state, "account", None) if state is not None else None
+    session_state = _session_state(request)
+    app_tz = ZoneInfo(
+        str(config.get("app", "timezone", default="Europe/Amsterdam"))
+    )
+    today_ny = clock.now().astimezone(NY_TZ).date()
+    today = clock.now().astimezone(app_tz).date()
+    day_start = datetime.combine(today, dtime.min, tzinfo=app_tz)
+    start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
+    market_data = getattr(request.app.state, "market_data", None)
+    day_sessions = (
+        market_data.recent_sessions(today_ny, 5)
+        if market_data is not None
+        else []
+    )
+
+    with get_session_maker()() as session:
+        cycles = session.execute(
+            select(Cycle)
+            .where(Cycle.kind == "cycle")
+            .order_by(Cycle.scheduled_time.desc())
+            .limit(10)
+        ).scalars().all()
+        last_cycle = cycles[0] if cycles else None
+        today_decisions = (
+            session.execute(
+                select(Decision, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .where(Cycle.scheduled_time >= start_utc)
+                .order_by(Decision.id.desc())
+            ).all()
+            if last_cycle is not None
+            else []
+        )
+        cycle_decisions = (
+            session.execute(
+                select(Decision).where(Decision.cycle_id == last_cycle.id)
+            ).scalars().all()
+            if last_cycle is not None
+            else []
+        )
+        open_rows = session.execute(
+            select(Position).where(Position.closed_at.is_(None))
+        ).scalars().all()
+        pending = session.execute(
+            select(Approval).where(Approval.status == "pending")
+        ).scalars().all()
+        run = session.execute(
+            select(Run).order_by(Run.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        day_trades = (
+            session.execute(
+                select(func.count(DayTrade.id)).where(
+                    DayTrade.date >= _naive_utc(day_sessions[0].open)
+                )
+            ).scalar_one()
+            if day_sessions
+            else 0
+        )
+
+    # Stat cards.
+    open_risk = Decimal(0)
+    for p in open_rows:
+        if p.current_stop_price is not None:
+            open_risk += p.qty * max(
+                Decimal(0), p.avg_entry_price - p.current_stop_price
+            )
+    equity = account.equity if account else None
+    open_risk_pct = (
+        (open_risk / equity * 100) if equity and equity > 0 else None
+    )
+    since_start_pct = None
+    spy_pct = None
+    since_label = "since start"
+    if run is not None and equity is not None:
+        since_start_pct = (
+            (equity - run.starting_equity) / run.starting_equity * 100
+        )
+        if run.spy_close:
+            signals = _signals(request)
+            if signals is not None and signals.latest is not None:
+                spy_row = next(
+                    (r for r in signals.latest.rows if r.symbol == "SPY"), None
+                )
+                if spy_row is not None and spy_row.price is not None:
+                    spy_pct = (
+                        (spy_row.price - run.spy_close)
+                        / run.spy_close
+                        * 100
+                    )
+        since_label = f"since {run.started_at.astimezone(app_tz).strftime('%d %b')}"
+
+    # Latest decision card.
+    latest = today_decisions[0] if today_decisions else None
+    latest_card = None
+    if latest is not None:
+        d, scheduled = latest
+        validation = d.validation_result or {}
+        checks = cast("list[dict[str, object]]", validation.get("checks") or [])
+        output = d.model_output or {}
+        snapshot = d.input_snapshot or {}
+        latest_card = {
+            "id": d.id,
+            "symbol": d.symbol,
+            "context": d.context,
+            "model_action": validation.get("model_action"),
+            "final_action": d.final_action,
+            "no_call_reason": d.no_call_reason,
+            "confidence": output.get("confidence"),
+            "why": (
+                output.get("thesis")
+                or validation.get("note")
+                or validation.get("error")
+                or d.no_call_reason
+            ),
+            "checks": [
+                {
+                    "name": c.get("name"),
+                    "passed": c.get("passed"),
+                    "detail": c.get("detail"),
+                }
+                for c in checks[:4]
+            ],
+            "price": snapshot.get("price"),
+            "time": scheduled.replace(tzinfo=UTC).isoformat(),
+        }
+
+    # Cycle line (design: "5 of 8 symbols not held failed the pre-filter.
+    # 3 reached the model: all skipped. Both open positions held.
+    # 5 model calls · $0.002." + "Cycle 3 of 6 today").
+    cycle_line = None
+    if last_cycle is not None:
+        scheduled_ny = last_cycle.scheduled_time.replace(tzinfo=UTC)
+        held_ctx = sum(1 for d in cycle_decisions if d.context == "held")
+        not_held = len(cycle_decisions) - held_ctx
+        prefilter_failed = sum(
+            1 for d in cycle_decisions if d.no_call_reason == "rules"
+        )
+        calls = sum(1 for d in cycle_decisions if d.model != "none")
+        cost = sum(
+            (d.cost or Decimal(0)) for d in cycle_decisions
+        )
+        entered = sum(1 for d in cycle_decisions if d.final_action == "enter")
+        blocked = sum(1 for d in cycle_decisions if d.final_action == "blocked")
+        skipped = sum(1 for d in cycle_decisions if d.final_action == "skip")
+        approved_count = sum(
+            1
+            for d in cycle_decisions
+            if (d.gates_result or {}).get("pending_approval")
+        )
+        sentences: list[str] = []
+        if not_held:
+            if prefilter_failed:
+                sentences.append(
+                    f"{prefilter_failed} of {not_held} symbols not held "
+                    "failed the pre-filter."
+                )
+            outcomes = []
+            if skipped:
+                outcomes.append(
+                    "all skipped"
+                    if skipped == calls
+                    else f"{skipped} skipped"
+                )
+            if entered:
+                outcomes.append(
+                    f"{entered} ent{'ry' if entered == 1 else 'ries'}"
+                )
+            if approved_count:
+                outcomes.append(
+                    f"{approved_count} awaiting approval"
+                )
+            if blocked:
+                outcomes.append(f"{blocked} blocked")
+            if calls:
+                sentences.append(
+                    f"{calls} reached the model: "
+                    + (", ".join(outcomes) if outcomes else "no change")
+                    + "."
+                )
+        if held_ctx:
+            if held_ctx == 2:
+                sentences.append("Both open positions held.")
+            else:
+                sentences.append(
+                    f"{held_ctx} open position"
+                    f"{'s' if held_ctx != 1 else ''} held."
+                )
+        if calls:
+            sentences.append(
+                f"{calls} model call{'s' if calls != 1 else ''} · "
+                f"${cost:.3f}."
+            )
+        # "Cycle N of M today" counts today's run cycles so far.
+        today_cycles = [
+            c for c in cycles if _ny_date(c.scheduled_time) == today_ny
+        ]
+        total_today = int(
+            len(
+                get_config().get("schedule", "cycles", default=[]) or []
+            )
+        )
+        cycle_index = len(today_cycles)
+        ams_time = scheduled_ny.astimezone(app_tz).strftime("%H:%M")
+        cycle_line = {
+            "label": f"{ams_time} cycle",
+            "status": last_cycle.status,
+            "text": " ".join(sentences),
+            "cycle_index": cycle_index,
+            "cycles_today": total_today,
+        }
+
+    # Decisions feed, grouped client-side by cycle.
+    feed = [
+        {
+            "id": d.id,
+            "time": t.replace(tzinfo=UTC).isoformat(),
+            "symbol": d.symbol,
+            "context": d.context,
+            "action": d.final_action,
+            "model_action": (d.validation_result or {}).get("model_action"),
+            "no_call_reason": d.no_call_reason,
+            "reason": _feed_reason(d),
+        }
+        for d, t in today_decisions
+    ]
+
+    # Market-closed card data.
+    market_closed = None
+    if session_state.state == "closed":
+        stops = [
+            {"symbol": p.symbol, "stop": str(p.current_stop_price)}
+            for p in open_rows
+            if p.current_stop_price is not None
+        ]
+        entered_today = sum(1 for d, _ in today_decisions if d.final_action == "enter")
+        tightened = sum(
+            1 for d, _ in today_decisions if d.final_action == "tighten_stop"
+        )
+        summary_parts = []
+        if entered_today:
+            summary_parts.append(
+                f"{entered_today} entr{'y' if entered_today == 1 else 'ies'}"
+            )
+        if tightened:
+            summary_parts.append(
+                f"{tightened} stop{'s' if tightened != 1 else ''} raised"
+            )
+        market_closed = {
+            "next_open": (
+                session_state.next_open.isoformat()
+                if session_state.next_open
+                else None
+            ),
+            "first_cycle": (
+                session_state.next_cycle.isoformat()
+                if session_state.next_cycle
+                else None
+            ),
+            "stops": stops,
+            "open_count": len(open_rows),
+            "today_summary": ", ".join(summary_parts) or "quiet day",
+        }
+
+    return {
+        "session": {
+            "state": session_state.state,
+            "next_cycle": (
+                session_state.next_cycle.isoformat()
+                if session_state.next_cycle
+                else None
+            ),
+            "next_open": (
+                session_state.next_open.isoformat()
+                if session_state.next_open
+                else None
+            ),
+            "next_close": (
+                session_state.next_close.isoformat()
+                if session_state.next_close
+                else None
+            ),
+        },
+        "cycle_line": cycle_line,
+        "stats": {
+            "open_risk_pct": str(open_risk_pct) if open_risk_pct is not None else None,
+            "open_risk_usd": _fmt_money(open_risk),
+            "open_risk_cap_pct": config.get(
+                "risk", "max_open_risk_pct", default=2.5
+            ),
+            "positions": len(open_rows),
+            "positions_cap": config.get("risk", "max_open_positions", default=4),
+            "day_trades": day_trades,
+            "day_trades_max": config.get("risk", "pdt_max_day_trades", default=3),
+            "cash": _fmt_money(account.cash if account else None),
+            "since_start_pct": (
+                f"{since_start_pct:+.2f}" if since_start_pct is not None else None
+            ),
+            "since_label": since_label,
+            "spy_pct": f"{spy_pct:+.2f}" if spy_pct is not None else None,
+            "execution_mode": config.get(
+                "execution", "mode", default="automatic"
+            ),
+        },
+        "latest_decision": latest_card,
+        "approvals_pending": len(pending),
+        "market_closed": market_closed,
+        "feed": feed,
+    }
+
+
+def _feed_reason(decision: Decision) -> str | None:
+    """One-line reason for the feed row."""
+    validation = decision.validation_result or {}
+    output = decision.model_output or {}
+    if decision.final_action == "enter":
+        conf = output.get("confidence")
+        return f"ENTER {conf}" if conf is not None else "ENTER"
+    if decision.final_action == "blocked":
+        gates = decision.gates_result or {}
+        return f"blocked: {gates.get('blocked_by', 'gate')}"
+    if decision.final_action == "skip":
+        conf = output.get("confidence")
+        return f"SKIP {conf}" if conf is not None else "SKIP"
+    if decision.final_action == "deferred":
+        return "exit deferred (day-trade rule)"
+    if decision.no_call_reason:
+        return str(validation.get("error") or decision.no_call_reason)
+    return decision.final_action
+
+
+@router.get("/chart/{symbol}")
+def chart(request: Request, symbol: str) -> dict[str, object]:
+    """Session-aligned 1h candles + VWAP + EMAs + level lines for the chart."""
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    now = clock.now()
+    market_data = getattr(request.app.state, "market_data", None)
+    if market_data is None:
+        raise HTTPException(status_code=503, detail="market data unavailable")
+    today_ny = now.astimezone(NY_TZ).date()
+    # Extra sessions warm up the EMAs; only the last 5 are returned.
+    display_sessions = market_data.recent_sessions(today_ny, 5)
+    warm_sessions = market_data.recent_sessions(today_ny, 20)
+    if not display_sessions:
+        raise HTTPException(status_code=404, detail="no sessions loaded")
+    bars_1h_all = market_data.get_1h_bars_range(symbol, warm_sessions)
+    bars_1h_all = [b for b in bars_1h_all if b.end <= now]
+    closes = [b.close for b in bars_1h_all]
+    ema20 = ema_series(closes, 20)
+    ema50 = ema_series(closes, 50)
+
+    # Per-session VWAP from 5m bars, sampled at each 1h bar end.
+    bars_5m = market_data.get_5m_bars_sessions(symbol, display_sessions)
+    vwap_by_session: dict[object, list[tuple[datetime, Decimal]]] = {}
+    cum_pv: dict[object, Decimal] = {}
+    cum_v: dict[object, Decimal] = {}
+    for bar in bars_5m:
+        day = bar.start.astimezone(NY_TZ).date()
+        typical = (bar.high + bar.low + bar.close) / 3
+        cum_pv[day] = cum_pv.get(day, Decimal(0)) + typical * bar.volume
+        cum_v[day] = cum_v.get(day, Decimal(0)) + bar.volume
+        if cum_v[day] > 0:
+            vwap_by_session.setdefault(day, []).append(
+                (bar.start, cum_pv[day] / cum_v[day])
+            )
+
+    display_dates = {s.date for s in display_sessions}
+    out_bars = []
+    for index, bar in enumerate(bars_1h_all):
+        day = bar.start.astimezone(NY_TZ).date()
+        if day not in display_dates:
+            continue
+        vwap_series = vwap_by_session.get(day, [])
+        vwap = next(
+            (
+                v
+                for t, v in reversed(vwap_series)
+                if t <= bar.end - timedelta(minutes=5)
+            ),
+            vwap_series[-1][1] if vwap_series else None,
+        )
+        out_bars.append(
+            {
+                "time": bar.start.replace(tzinfo=UTC).isoformat()
+                if bar.start.tzinfo is None
+                else bar.start.astimezone(UTC).isoformat(),
+                "session": day.isoformat(),
+                "open": str(bar.open),
+                "high": str(bar.high),
+                "low": str(bar.low),
+                "close": str(bar.close),
+                "volume": bar.volume,
+                "ema20": str(ema20[index]) if ema20[index] is not None else None,
+                "ema50": str(ema50[index]) if ema50[index] is not None else None,
+                "vwap": str(vwap) if vwap is not None else None,
+            }
+        )
+
+    # Level lines from the open position or open entry order.
+    levels: dict[str, object] = {"kind": None}
+    with get_session_maker()() as session:
+        position = session.execute(
+            select(Position).where(
+                Position.symbol == symbol, Position.closed_at.is_(None)
+            )
+        ).scalar_one_or_none()
+        if position is not None:
+            levels = {
+                "kind": "position",
+                "entry": str(position.avg_entry_price),
+                "stop": (
+                    str(position.current_stop_price)
+                    if position.current_stop_price is not None
+                    else None
+                ),
+                "target": (
+                    str(position.target_price)
+                    if position.target_price is not None
+                    else None
+                ),
+                "opened_at": position.opened_at.replace(tzinfo=UTC).isoformat(),
+            }
+        else:
+            order = session.execute(
+                select(Order).where(
+                    Order.symbol == symbol,
+                    Order.leg == "entry",
+                    Order.status.in_(OPEN_LIKE_STATUSES),
+                )
+            ).scalar_one_or_none()
+            if order is not None:
+                legs = session.execute(
+                    select(Order).where(
+                        Order.parent_alpaca_order_id == order.alpaca_order_id
+                    )
+                ).scalars().all()
+                stop_leg = next(
+                    (leg for leg in legs if leg.leg == "stop"), None
+                )
+                target_leg = next(
+                    (leg for leg in legs if leg.leg == "target"), None
+                )
+                levels = {
+                    "kind": "order",
+                    "entry": (
+                        str(order.limit_price)
+                        if order.limit_price is not None
+                        else None
+                    ),
+                    "stop": (
+                        str(stop_leg.stop_price) if stop_leg is not None else None
+                    ),
+                    "target": (
+                        str(target_leg.limit_price)
+                        if target_leg is not None
+                        else None
+                    ),
+                }
+            else:
+                approval = session.execute(
+                    select(Approval).where(
+                        Approval.symbol == symbol, Approval.status == "pending"
+                    )
+                ).scalar_one_or_none()
+                if approval is not None:
+                    levels = {
+                        "kind": "approval",
+                        "entry": str(approval.limit_price),
+                        "stop": str(approval.stop_price),
+                        "target": str(approval.target_price),
+                    }
+
+    signals = _signals(request)
+    warming = False
+    price = None
+    change = None
+    if signals is not None and signals.latest is not None:
+        row = next(
+            (r for r in signals.latest.rows if r.symbol == symbol), None
+        )
+        if row is not None:
+            warming = row.warming_up
+            price = str(row.price) if row.price is not None else None
+            change = (
+                str(row.day_change_pct)
+                if row.day_change_pct is not None
+                else None
+            )
+    sessions = sorted(
+        {day.isoformat() for day in display_dates},
+    )
+    return {
+        "symbol": symbol,
+        "sessions": sessions,
+        "bars": out_bars,
+        "levels": levels,
+        "warming_up": warming,
+        "price": price,
+        "day_change_pct": change,
+    }

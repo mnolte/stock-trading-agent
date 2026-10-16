@@ -24,7 +24,7 @@ test('kill switch flow and positions page', async ({ page }, testInfo) => {
   // Positions & orders page, while the session is still open.
   await page.goto('/positions');
   await expect(page.getByRole('heading', { name: /open positions/i })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /^orders$/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /order history/i })).toBeVisible();
   await page.screenshot({ path: path.join(outDir, name('positions')), fullPage: true });
   await page.goto('/');
 

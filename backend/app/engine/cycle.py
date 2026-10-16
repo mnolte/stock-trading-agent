@@ -8,6 +8,7 @@ Reconciliation against the broker runs at the start of every cycle.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
@@ -61,6 +62,8 @@ class CycleRunner:
         clock: Clock,
         executor: Executor | None = None,
         session_factory: sessionmaker[Session] | None = None,
+        notify: Callable[[set[str]], None] | None = None,
+        on_settings_promoted: Callable[[], None] | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -71,6 +74,9 @@ class CycleRunner:
         self.clock = clock
         self.executor = executor
         self._session_factory = session_factory or get_session_maker()
+        self._notify = notify or (lambda topics: None)
+        # Reschedules cron jobs when promoted settings move cycle times.
+        self._on_settings_promoted = on_settings_promoted or (lambda: None)
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -284,6 +290,18 @@ class CycleRunner:
             report.errors.append("market not open")
             return
 
+        # A full cycle starts here: pending approvals expire and saved
+        # settings promote to active (docs/SPEC.md, Settings, Supervised).
+        if self.executor is not None:
+            self.executor.expire_pending_approvals()
+        promoted = self.config.promote_pending()
+        if promoted is not None:
+            self.decide.reload()
+            if self.config.reschedule_cycles:
+                self.config.reschedule_cycles = False
+                self._on_settings_promoted()
+            self._notify({"watchlist", "header", "decisions"})
+
         account = None
         if self.executor is not None:
             self.executor.begin_cycle()
@@ -460,6 +478,7 @@ class CycleRunner:
             )
             report.decisions.append(decision.id)
         session.commit()
+        self._notify({"decisions", "watchlist", "header", "banners"})
 
     async def run_due(self) -> CycleReport | None:
         """Catch-up: run today's latest due cycle once, if it has not run.

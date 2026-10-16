@@ -15,6 +15,7 @@ universe:
     META: Communication Services
     JPM: Financials
     XOM: Energy
+  allowed_sectors: [Communication Services, Consumer Discretionary, Consumer Staples, Energy, Financials, Health Care, Industrials, Materials, Real Estate, Technology, Utilities, Index]   # 11 GICS sectors (Information Technology written as Technology) + Index
 
 app:
   timezone: Europe/Amsterdam   # GUI, logs, alerts, daily jobs; timestamps are stored in UTC
@@ -83,6 +84,7 @@ risk:
   failed_cycles_kill: 3
 
 performance:
+  starting_equity: 10000          # checked by "Start new run" after a paper reset (±1%)
   slippage_pct_per_side: 0.05
   benchmark: SPY
 

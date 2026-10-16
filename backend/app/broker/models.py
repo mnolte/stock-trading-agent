@@ -81,6 +81,18 @@ class BrokerOrder:
 
 
 @dataclass(frozen=True)
+class BrokerAsset:
+    """Tradability info for one symbol; used by Settings validation."""
+
+    symbol: str
+    status: str  # active | inactive
+    tradable: bool
+    asset_class: str  # us_equity | crypto | ...
+    exchange: str | None
+    shortable: bool
+
+
+@dataclass(frozen=True)
 class TradeUpdateInfo:
     """One trade-updates stream event (fill, cancel, reject, ...)."""
 

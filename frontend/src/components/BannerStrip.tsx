@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
+import { useLiveUpdates } from '../api/liveContext';
 import { getBanners, postAcknowledgeEvent, postAcknowledgePosition } from '../api/state';
 import type { BannerItem } from '../types/api';
 import { displayTime } from '../format';
@@ -34,6 +36,7 @@ export function BannerStrip({
 }) {
   const [items, setItems] = useState<BannerItem[]>([]);
   const [pending, setPending] = useState(false);
+  const navigate = useNavigate();
 
   const refresh = useCallback(() => {
     getBanners()
@@ -43,9 +46,8 @@ export function BannerStrip({
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 10_000);
-    return () => clearInterval(timer);
   }, [refresh, refreshKey]);
+  useLiveUpdates(['banners'], refresh);
 
   const acknowledge = (item: BannerItem) => {
     setPending(true);
@@ -72,6 +74,15 @@ export function BannerStrip({
         const actions: { label: string; onClick: () => void }[] = [];
         if (item.actions.includes('resume')) {
           actions.push({ label: 'Resume', onClick: () => onResumeRequest(item) });
+        }
+        if (item.actions.includes('review') || item.actions.includes('open_orders')) {
+          actions.push({
+            label: item.actions.includes('review') ? 'Review' : 'Open orders',
+            onClick: () => navigate('/positions'),
+          });
+        }
+        if (item.actions.includes('connections')) {
+          actions.push({ label: 'Connections', onClick: () => navigate('/settings') });
         }
         if (item.actions.includes('acknowledge')) {
           actions.push({ label: 'Acknowledge', onClick: () => acknowledge(item) });

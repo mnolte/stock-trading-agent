@@ -10,6 +10,7 @@ error reconciliation decides what happened), and all money is Decimal.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -30,11 +31,21 @@ from app.data.cache import _naive_utc
 from app.data.models import Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
-from app.db.models import DayTrade, Decision, Event, Fill, Order, Position
+from app.db.models import (
+    Approval,
+    DayTrade,
+    Decision,
+    Event,
+    Fill,
+    Order,
+    Position,
+    Run,
+)
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.risk.gates import GateContext, evaluate_entry_gates
+from app.risk.math import trade_risk
 from app.signals.indicators import atr
 from app.signals.service import SignalService, SymbolEval
 
@@ -81,6 +92,7 @@ class Executor:
         clock: Clock,
         state: ExecutionState,
         session_factory: sessionmaker[Session] | None = None,
+        notify: Callable[[set[str]], None] | None = None,
     ) -> None:
         self.broker = broker
         self.market_data = market_data
@@ -90,6 +102,8 @@ class Executor:
         self.clock = clock
         self.state = state
         self._session_factory = session_factory or get_session_maker()
+        # Pushes WebSocket update topics to the GUI; a no-op in tests.
+        self._notify = notify or (lambda topics: None)
         self._orders_this_cycle = 0
         self._order_seq = 0
         self._reconcile_failed = False
@@ -201,6 +215,7 @@ class Executor:
                 },
             )
             session.commit()
+        self._notify({"banners", "header", "approvals"})
 
     async def resume(self, reason: str) -> None:
         """Resume after a kill switch. The typed reason is stored."""
@@ -219,6 +234,7 @@ class Executor:
                 details={"on": False, "reason": reason.strip()},
             )
             session.commit()
+        self._notify({"banners", "header"})
 
     async def flatten(self) -> dict[str, object]:
         """Stop & flatten: kill switch on, cancel all orders, sell everything.
@@ -308,12 +324,362 @@ class Executor:
             )
             session.commit()
         await self.reconcile()
+        self._notify({"banners", "header", "positions", "orders"})
         return {
             "cancelled_orders": cancelled.data,
             "sold": sold,
             "market_on_open": not regular_hours,
             "errors": errors,
         }
+
+    # ------------------------------------------------------------------
+    # supervised-mode approvals
+
+    def pending_approvals(self, session: Session) -> list[Approval]:
+        return list(
+            session.execute(
+                select(Approval)
+                .where(Approval.status == "pending")
+                .order_by(Approval.id)
+            ).scalars().all()
+        )
+
+    def _supersede_pending(self, session: Session, symbol: str) -> None:
+        """At most one pending approval per symbol: a newer one replaces it."""
+        for old in self.pending_approvals(session):
+            if old.symbol == symbol:
+                old.status = "expired"
+                old.reason = "replaced by a newer approval"
+                old.resolved_at = _naive_utc(self.clock.now())
+
+    def expire_pending_approvals(self) -> int:
+        """Pending approvals die at the start of the next full cycle."""
+        with self._session_factory() as session:
+            pending = self.pending_approvals(session)
+            now = _naive_utc(self.clock.now())
+            for approval in pending:
+                approval.status = "expired"
+                approval.reason = "expired at the next cycle"
+                approval.resolved_at = now
+            session.commit()
+            count = len(pending)
+        if count:
+            self._notify({"approvals", "decisions"})
+        return count
+
+    def reject_approval(self, approval_id: int, reason: str | None) -> bool:
+        with self._session_factory() as session:
+            approval = session.get(Approval, approval_id)
+            if approval is None or approval.status != "pending":
+                return False
+            approval.status = "rejected"
+            approval.reason = reason or "rejected"
+            approval.resolved_at = _naive_utc(self.clock.now())
+            session.commit()
+        self._notify({"approvals", "decisions"})
+        return True
+
+    def _resolve_approval(
+        self, approval: Approval, status: str, reason: str | None
+    ) -> None:
+        approval.status = status
+        approval.reason = reason
+        approval.resolved_at = _naive_utc(self.clock.now())
+
+    def _code_check_failure(
+        self,
+        *,
+        atr_multiple: Decimal | None,
+        reward_to_risk: Decimal | None,
+    ) -> str | None:
+        """The stop-ATR and reward-to-risk checks from the decision validator."""
+        atr_min = Decimal(
+            str(self.config.get("decision", "stop_atr_min", default=1.5))
+        )
+        atr_max = Decimal(
+            str(self.config.get("decision", "stop_atr_max", default=4.0))
+        )
+        min_rr = Decimal(
+            str(self.config.get("decision", "min_reward_risk", default=1.5))
+        )
+        if atr_multiple is None:
+            return "stop distance vs ATR unavailable"
+        if atr_multiple < atr_min or atr_multiple > atr_max:
+            return (
+                f"stop {atr_multiple:.2f} × ATR outside "
+                f"{atr_min}–{atr_max} × ATR"
+            )
+        if reward_to_risk is None or reward_to_risk < min_rr:
+            return f"reward to risk {reward_to_risk or 0:.2f} below {min_rr}"
+        return None
+
+    async def approve(self, approval_id: int) -> dict[str, object]:
+        """Re-check gates, code checks and spread on a fresh quote, then submit.
+
+        Every check runs again in code at approve time; a failure rejects the
+        approval with the reason stored and returned.
+        """
+        if self.state.kill_switch_on:
+            return {"ok": False, "error": "kill switch is on"}
+        with self._session_factory() as session:
+            approval = session.get(Approval, approval_id)
+            if approval is None or approval.status != "pending":
+                return {"ok": False, "error": "approval is not pending"}
+            decision = session.get(Decision, approval.decision_id)
+
+            quotes = await self.market_data.sources.quotes.fetch_quotes(
+                [approval.symbol]
+            )
+            quote = (
+                quotes.data.get(approval.symbol)
+                if quotes.error is None and quotes.data
+                else None
+            )
+            if quote is None:
+                self._resolve_approval(
+                    approval, "rejected", "no quote at approve time"
+                )
+                session.commit()
+                self._notify({"approvals", "decisions"})
+                return {"ok": False, "error": "no quote at approve time"}
+
+            # Code checks on the fresh limit with the model's stop and target.
+            offset = Decimal(
+                str(
+                    self.config.get(
+                        "execution", "entry_limit_offset_pct", default=0.05
+                    )
+                )
+            )
+            limit = _cents(quote.ask * (1 + offset / 100))
+            atr_1h = self._atr_1h(approval.symbol)
+            risk = trade_risk(
+                limit, approval.stop_price, approval.target_price, atr_1h
+            )
+            fail = self._code_check_failure(
+                atr_multiple=risk.atr_multiple,
+                reward_to_risk=risk.reward_to_risk,
+            )
+            if fail is None:
+                # Spread on the fresh quote.
+                max_spread = Decimal(
+                    str(
+                        self.config.get(
+                            "execution", "max_spread_pct", default=0.15
+                        )
+                    )
+                )
+                mid = (quote.ask + quote.bid) / 2
+                spread_pct = (quote.ask - quote.bid) / mid * 100
+                if spread_pct > max_spread:
+                    fail = f"spread {spread_pct:.3f}% > {max_spread}%"
+
+            result = None
+            qty = 0
+            if fail is None:
+                # All risk gates again with fresh equity + the fresh ask.
+                account = await self.refresh_account()
+                earnings_known = (
+                    self.market_data.latest_earnings is None
+                    or self.market_data.latest_earnings.error is None
+                )
+                snapshot = (decision.input_snapshot or {}) if decision else {}
+                days_to_earnings = snapshot.get("days_to_earnings")
+                ctx = self._gate_context(
+                    session,
+                    account,
+                    approval.symbol,
+                    days_to_earnings if isinstance(days_to_earnings, int) else None,
+                    earnings_known,
+                )
+                result = evaluate_entry_gates(
+                    ctx,
+                    entry=quote.ask,
+                    stop=approval.stop_price,
+                    config=self.config,
+                )
+                if not result.allowed:
+                    blocked = result.blocked_by or "gate"
+                    detail = next(
+                        (c.detail for c in result.checks if not c.passed), ""
+                    )
+                    fail = f"{blocked}: {detail}".rstrip(": ")
+                else:
+                    assert result.sizing is not None
+                    qty = result.sizing.shares
+
+            if fail is not None:
+                self._resolve_approval(approval, "rejected", fail)
+                session.commit()
+                self._notify({"approvals", "decisions"})
+                return {"ok": False, "error": fail}
+
+            self._orders_this_cycle += 1
+            client_id = self._client_id(
+                "entry", approval.decision_id, approval.symbol
+            )
+            submitted = await self.broker.submit_bracket_entry(
+                symbol=approval.symbol,
+                qty=qty,
+                limit_price=limit,
+                stop_price=approval.stop_price,
+                target_price=approval.target_price,
+                client_order_id=client_id,
+            )
+            if submitted.error is not None or submitted.data is None:
+                # Never resent; reconciliation decides what Alpaca did.
+                recovered = await self.broker.get_order_by_client_id(client_id)
+                if recovered.error is None and recovered.data is not None:
+                    self._store_broker_order(
+                        session, recovered.data, approval.decision_id
+                    )
+                self._resolve_approval(
+                    approval,
+                    "rejected",
+                    f"order submit failed: {submitted.error}",
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="order_submit_failed",
+                    details={
+                        "symbol": approval.symbol,
+                        "client_order_id": client_id,
+                        "error": submitted.error,
+                    },
+                )
+                session.commit()
+                self._notify({"approvals", "decisions", "banners"})
+                return {
+                    "ok": False,
+                    "error": f"order submit failed: {submitted.error}",
+                }
+            self._store_broker_order(
+                session, submitted.data, approval.decision_id
+            )
+            approval.qty = qty
+            approval.limit_price = limit
+            self._resolve_approval(approval, "approved", None)
+            session.commit()
+        self._notify({"approvals", "decisions", "positions", "orders", "header"})
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # paper account reset
+
+    async def paper_reset(self) -> dict[str, object]:
+        """Step 1 of the reset: kill switch on, close all, cancel all."""
+        await self.activate_kill_switch(
+            reason="paper reset", automatic=False, flatten=True
+        )
+        result = await self.broker.close_all_positions(cancel_orders=True)
+        closed: list[str] = []
+        errors: list[str] = []
+        if result.error is not None:
+            errors.append(str(result.error))
+        else:
+            closed = [o.symbol for o in (result.data or [])]
+        with self._session_factory() as session:
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="paper_reset",
+                details={
+                    "closed": closed,
+                    "errors": errors,
+                },
+            )
+            session.commit()
+        await self.reconcile()
+        self._notify(
+            {"banners", "header", "positions", "orders", "watchlist", "decisions"}
+        )
+        starting = Decimal(
+            str(self.config.get("performance", "starting_equity", default=10000))
+        )
+        return {
+            "closed": closed,
+            "errors": errors,
+            "message": (
+                f"Positions closed. Now reset the balance to "
+                f"${starting:,.0f} in the Alpaca dashboard, "
+                "then press Start new run."
+            ),
+        }
+
+    async def start_new_run(self) -> dict[str, object]:
+        """Step 2 of the reset: verify the account, then start a new run."""
+        target = Decimal(
+            str(
+                self.config.get(
+                    "performance", "starting_equity", default=10000
+                )
+            )
+        )
+        checks: list[str] = []
+        positions = await self.broker.get_positions()
+        if positions.error is not None:
+            checks.append(f"could not read positions: {positions.error}")
+        elif positions.data:
+            checks.append(
+                "open positions: "
+                + ", ".join(p.symbol for p in positions.data)
+            )
+        open_orders = await self.broker.get_open_orders()
+        if open_orders.error is not None:
+            checks.append(f"could not read orders: {open_orders.error}")
+        elif open_orders.data:
+            checks.append(f"{len(open_orders.data)} open order(s) at Alpaca")
+        account = await self.broker.get_account()
+        equity = account.data.equity if account.data is not None else None
+        if account.error is not None:
+            checks.append(f"could not read the account: {account.error}")
+        elif equity is not None:
+            tolerance = target * Decimal("0.01")
+            if abs(equity - target) > tolerance:
+                checks.append(
+                    f"equity {equity} is not {target} (±1%); "
+                    "reset the balance in the Alpaca dashboard first"
+                )
+        if checks:
+            return {"ok": False, "failed": checks}
+        assert equity is not None
+        spy_close = self._latest_spy_close()
+        with self._session_factory() as session:
+            run = Run(
+                started_at=_naive_utc(self.clock.now()),
+                starting_equity=equity,
+                spy_close=spy_close,
+            )
+            session.add(run)
+            session.flush()
+            run_id = run.id
+            record_event(
+                session,
+                self.clock,
+                level="info",
+                event_type="run_started",
+                details={
+                    "run_id": run_id,
+                    "starting_equity": str(equity),
+                    "spy_close": str(spy_close) if spy_close else None,
+                },
+            )
+            session.commit()
+        # Restart peak equity, losing streak and the daily loss baseline.
+        self.state.peak_equity = equity
+        self.state.daily_loss_hit = False
+        self.state.run_started_at = _naive_utc(self.clock.now())
+        self._notify({"header", "performance", "banners"})
+        return {"ok": True, "run_id": run_id}
+
+    def _latest_spy_close(self) -> Decimal | None:
+        today = self.clock.now().astimezone(NY_TZ).date()
+        sessions = self.market_data.recent_sessions(today, 2)
+        bars = self.market_data.get_daily_bars("SPY", sessions)
+        return bars[-1].close if bars else None
 
     # ------------------------------------------------------------------
     # acknowledgment
@@ -456,12 +822,16 @@ class Executor:
                     row.filled_at = _naive_utc(update.order.filled_at)
                 self._record_fills(session, row, update.order)
                 session.commit()
+        self._notify({"positions", "orders", "header"})
         await self.reconcile()
 
     async def reconcile(self) -> ReconcileReport:
         """Compare broker state with the database; Alpaca wins on mismatch."""
         async with self._reconcile_lock:
-            return await self._reconcile()
+            report = await self._reconcile()
+        self.state.last_reconcile_at = self.clock.now()
+        self.state.last_reconcile_ok = report.ok and not report.mismatches
+        return report
 
     async def _reconcile(self) -> ReconcileReport:
         report = ReconcileReport()
@@ -644,6 +1014,7 @@ class Executor:
                         f"cancel {row.alpaca_order_id}: {result.error}"
                     )
             session.commit()
+        self._notify({"positions", "orders", "banners", "header"})
         return report
 
     def _open_positions_from_fills(self, session: Session) -> int:
@@ -966,14 +1337,20 @@ class Executor:
             ).scalar_one()
         else:
             day_trades = 0
-        closed = session.execute(
+        closed_query = (
             select(Position)
             .where(
                 Position.closed_at.is_not(None),
                 Position.realized_pnl_raw.is_not(None),
             )
             .order_by(Position.closed_at.desc())
-        ).scalars().all()
+        )
+        if self.state.run_started_at is not None:
+            # A paper reset restarts the losing streak.
+            closed_query = closed_query.where(
+                Position.closed_at >= self.state.run_started_at
+            )
+        closed = session.execute(closed_query).scalars().all()
         streak = 0
         for p in closed:
             if (p.realized_pnl_raw or Decimal(0)) < 0:
@@ -1115,6 +1492,32 @@ class Executor:
             return
         limit = _cents(quote.ask * (1 + offset / 100))  # type: ignore[union-attr]
 
+        if str(self.config.get("execution", "mode", default="automatic")) == (
+            "supervised"
+        ):
+            # Supervised mode: the entry waits for Marc's approval instead
+            # of going to Alpaca (docs/SPEC.md, Supervised mode).
+            self._supersede_pending(session, decision.symbol)
+            approval = Approval(
+                decision_id=decision.id,
+                symbol=decision.symbol,
+                qty=qty,
+                limit_price=limit,
+                stop_price=_cents(Decimal(str(stop))),
+                target_price=_cents(Decimal(str(target))),
+                status="pending",
+                created_at=_naive_utc(self.clock.now()),
+            )
+            session.add(approval)
+            session.flush()
+            decision.gates_result = result.to_json() | {
+                "pending_approval": True,
+                "approval_id": approval.id,
+            }
+            session.flush()
+            self._notify({"approvals", "decisions"})
+            return
+
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
         submitted = await self.broker.submit_bracket_entry(
@@ -1157,6 +1560,7 @@ class Executor:
             session.flush()
             return
         self._store_broker_order(session, submitted.data, decision.id)
+        self._notify({"positions", "orders", "decisions", "header"})
 
     async def _tighten(
         self,
@@ -1204,6 +1608,7 @@ class Executor:
         self._store_broker_order(session, result.data, stop_row.decision_id, leg="stop")
         position.current_stop_price = _cents(new_stop)
         session.flush()
+        self._notify({"positions", "orders"})
 
     async def _exit(
         self,
@@ -1311,3 +1716,4 @@ class Executor:
             return
         self._store_broker_order(session, sold.data, decision.id, leg="exit")
         session.flush()
+        self._notify({"positions", "orders"})

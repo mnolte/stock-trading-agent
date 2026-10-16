@@ -1,11 +1,23 @@
 import { useState } from 'react';
 
-export function Toggle({ label }: { label: string }) {
-  const [on, setOn] = useState(false);
+export function Toggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked?: boolean;
+  onChange?: (value: boolean) => void;
+}) {
+  const [inner, setInner] = useState(false);
+  const on = checked ?? inner;
   return (
     <button
       type="button"
-      onClick={() => setOn((v) => !v)}
+      onClick={() => {
+        setInner(!on);
+        onChange?.(!on);
+      }}
       aria-pressed={on}
       style={{
         display: 'inline-flex',

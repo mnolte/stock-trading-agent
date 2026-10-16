@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import BrokerAccount
 from app.db.base import get_session_maker
-from app.db.models import EquitySnapshot, Event, Position
+from app.db.models import EquitySnapshot, Event, Position, Run
 from app.market.clock import NY_TZ
 
 if TYPE_CHECKING:
@@ -52,6 +52,11 @@ class ExecutionState:
     account: BrokerAccount | None = None
     # Highest equity ever seen; drawdown kill is measured from it.
     peak_equity: Decimal = Decimal(0)
+    # Start of the current run (paper resets restart peak + losing streak).
+    run_started_at: datetime | None = None
+    # Last broker reconciliation, for the Positions sync strip.
+    last_reconcile_at: datetime | None = None
+    last_reconcile_ok: bool = True
 
     def _today_ny(self) -> date:
         return self.clock.now().astimezone(NY_TZ).date()
@@ -111,11 +116,19 @@ def load_execution_state(
     factory = session_factory or get_session_maker()
     state = ExecutionState(clock=clock)
     with factory() as session:
-        peak = session.execute(
-            select(func.max(EquitySnapshot.equity))
-        ).scalar_one()
+        latest_run = session.execute(
+            select(Run).order_by(Run.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        run_start = latest_run.started_at if latest_run is not None else None
+        state.run_started_at = run_start
+        peak_query = select(func.max(EquitySnapshot.equity))
+        if run_start is not None:
+            peak_query = peak_query.where(EquitySnapshot.time >= run_start)
+        peak: Decimal | None = session.execute(peak_query).scalar()
         if peak is not None:
             state.peak_equity = Decimal(str(peak))
+        elif latest_run is not None:
+            state.peak_equity = Decimal(str(latest_run.starting_equity))
         last_kill = session.execute(
             select(Event)
             .where(Event.event_type.in_(("kill_switch", "kill_switch_resume")))

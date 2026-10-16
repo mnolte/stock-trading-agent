@@ -18,7 +18,12 @@ from app.api.main import (
     run_migrations,
 )
 from app.broker.base import Broker, TradeUpdateHandler
-from app.broker.models import BrokerAccount, BrokerOrder, BrokerPosition
+from app.broker.models import (
+    BrokerAccount,
+    BrokerAsset,
+    BrokerOrder,
+    BrokerPosition,
+)
 from app.config import get_config
 from app.data.factory import make_data_sources
 from app.data.models import DataResult
@@ -98,6 +103,17 @@ class ReadOnlyBroker:
 
     async def cancel_all_orders(self) -> DataResult[int]:
         return DataResult(data=0, error=BLOCKED, source="read-only")
+
+    async def close_all_positions(
+        self, *, cancel_orders: bool = True
+    ) -> DataResult[list[BrokerOrder] | None]:
+        return DataResult(data=[], error=BLOCKED, source="read-only")
+
+    async def get_asset(self, symbol: str) -> DataResult[BrokerAsset | None]:
+        return await self._inner.get_asset(symbol)
+
+    def stream_connected(self) -> bool:
+        return self._inner.stream_connected()
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         return None

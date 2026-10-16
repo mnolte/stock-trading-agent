@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react';
+
 import type { HeaderState } from '../types/api';
+import { sessionLabel, sessionTail } from './sessionText';
 
 function sessionDot(state: string) {
   switch (state) {
@@ -11,36 +14,25 @@ function sessionDot(state: string) {
   }
 }
 
-function sessionLabel(state: string) {
-  switch (state) {
-    case 'open':
-      return 'Market open';
-    case 'last_cycle_done':
-      return 'Last cycle done';
-    case 'early_close':
-      return 'Early close';
-    case 'closed':
-      return 'Market closed';
-    default:
-      return state;
-  }
-}
-
-function formatCycle(iso: string | null) {
-  if (!iso) return null;
-  const d = new Date(iso);
-  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
-}
-
 export function Header({
   state,
+  title,
   onKillSwitch,
+  onMenu,
 }: {
   state: HeaderState | null;
+  title: string;
   onKillSwitch: () => void;
+  onMenu?: () => void;
 }) {
-  const next = state?.session.next_cycle ?? null;
-  const nextLabel = next ? ` · next cycle ${formatCycle(next)}` : '';
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => forceTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const sessionState = state?.session.state ?? 'closed';
+  const tail = state ? sessionTail(sessionState, state.session) : '';
 
   return (
     <header
@@ -54,6 +46,31 @@ export function Header({
         background: 'var(--sa-chrome)',
       }}
     >
+      {onMenu && (
+        <button
+          type="button"
+          aria-label="Menu"
+          onClick={onMenu}
+          style={{
+            height: 'var(--sa-control-height)',
+            width: 'var(--sa-control-height)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 'var(--sa-radius-md)',
+            border: '1px solid var(--sa-border)',
+            background: 'transparent',
+            color: 'var(--sa-text-2)',
+            cursor: 'pointer',
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+            <line x1="4" y1="17" x2="20" y2="17" />
+          </svg>
+        </button>
+      )}
       <div
         style={{
           display: 'flex',
@@ -65,7 +82,7 @@ export function Header({
         }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <h1 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>Dashboard</h1>
+          <h1 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>{title}</h1>
           <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
             {state?.session.display_time ?? '—'}
           </div>
@@ -92,7 +109,7 @@ export function Header({
         </span>
 
         <div
-          title="Session state from the fake clock"
+          title="Market session state"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -111,11 +128,13 @@ export function Header({
               width: 8,
               height: 8,
               borderRadius: '50%',
-              background: sessionDot(state?.session.state ?? 'closed'),
+              background: sessionDot(sessionState),
             }}
           />
-          <span>{sessionLabel(state?.session.state ?? 'closed')}</span>
-          <span style={{ color: 'var(--sa-text-muted)' }}>{nextLabel}</span>
+          <span>
+            {sessionLabel(sessionState)}
+            <span style={{ color: 'var(--sa-text-muted)' }}>{tail}</span>
+          </span>
         </div>
       </div>
 
