@@ -1,25 +1,12 @@
 """Decisions API: inspector list and detail endpoints."""
 
-from collections.abc import Generator
 from datetime import datetime
 
-import pytest
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.market.clock import UTC
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
-
-
-@pytest.fixture(autouse=True)
-def clean_decisions() -> Generator[None, None, None]:
-    """The shared test DB keeps rows between runs; start each test empty."""
-    with get_session_maker()() as session:
-        session.execute(delete(Outcome))
-        session.execute(delete(Decision))
-        session.execute(delete(Cycle))
-        session.commit()
-    yield
+from sqlalchemy import select
 
 
 def _seed_decision() -> int:

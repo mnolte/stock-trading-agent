@@ -11,6 +11,15 @@ Newest first.
 - Outcome tracking: "1 session" = same New York time on the next trading session; "5 sessions" = same time on the 5th trading session after the decision; clamped to the close on early-close days. Price = last closed 5-minute bar at or before the target time, stored with the bar's timestamp.
 - GUI: Performance shows results by symbol (new "By symbol" card in the design); the day-trade counter belongs on Positions & orders, not Performance.
 
+## 2026-10-16 — PR 7: performance and outcomes
+
+- Data model: `outcomes` gains the 5-minute bar's timestamp next to every recorded price (`price_1h_at`, `price_1session_at`, `price_5sessions_at`, `best_price_at`, `worst_price_at`); the decision detail API returns them and the GUI shows the bar time under each outcome tile.
+- Data model: `positions.qty` now keeps the closed size after a position closes instead of going to zero, so Performance can show the shares traded.
+- GUI: `performance` added to the WebSocket topics; published after cycles and position checks.
+- API: `GET /api/performance` (`?run=<id>` for an earlier run) serves the Performance screen: summary cards, equity curve with SPY benchmark and EUR/USD, by regime, by symbol, decision outcomes, closed trades.
+- The SIP delay for outcome filling reuses the data client's `SIP_MIN_AGE` (16 min) instead of a new config key.
+- Tests: each test gets its own database file (conftest resets `SA_DB_PATH` and the config cache); no test can leave state for another test or the next app boot.
+
 ## 2026-10-16 — Answers to PR 6 questions
 
 - Reset paper account: two steps. The button turns the kill switch on, closes positions, cancels orders and records `paper_reset`; Marc resets the balance in the Alpaca dashboard; "Start new run" checks no positions/orders and equity = `performance.starting_equity` ±1%, then starts a new run (`runs` table) that restarts the SPY benchmark, drawdown peak, losing streak and daily loss baseline. Resume via the normal kill-switch resume.

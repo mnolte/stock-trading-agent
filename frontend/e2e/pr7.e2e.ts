@@ -3,14 +3,13 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR 7 screenshots land in design/screenshots/ next to the design
-// references, named performance-1440/-390 so they never overwrite
-// Performance.png.
+// PR screenshots land in docs/screenshots/pr-<n>/ (design/ stays untouched),
+// named performance-1440/-390 next to the design reference Performance.png.
 const outDir =
   process.env.SCREENSHOT_DIR ??
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    '../../design/screenshots'
+    '../../docs/screenshots/pr-7'
   );
 
 const shot = (project: string) =>

@@ -36,22 +36,18 @@ _PERF_TABLES = (
 
 @pytest.fixture
 def clean_performance(client: TestClient) -> Generator[None, None, None]:
-    """Seed a controlled two-run history on the shared test DB.
+    """Seed a controlled two-run history on this test's own database.
 
     Depends on ``client`` so the app has started (and possibly created its
-    own run/cycle) before the tables are reset. Tears down afterwards: the
-    DB file persists across pytest runs, so an open position left behind
-    would be closed by the next boot's reconcile as a same-day round trip.
+    own run/cycle) before the tables are reset. No teardown: each test gets
+    a fresh database file, so nothing can leak into another test or the
+    next app boot.
     """
     with get_session_maker()() as session:
         for table in _PERF_TABLES:
             session.execute(delete(table))
         session.commit()
     yield
-    with get_session_maker()() as session:
-        for table in _PERF_TABLES:
-            session.execute(delete(table))
-        session.commit()
 
 
 def _add_decision(

@@ -425,6 +425,9 @@ export default function Performance() {
                     : `Start = ${dayLabel(curve.start_label)} open, then daily closes`}
                 </span>
               </div>
+              <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
+                {curve.benchmark} price only, dividends excluded
+              </div>
             </Card>
           )}
 
