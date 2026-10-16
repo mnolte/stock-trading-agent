@@ -37,6 +37,7 @@ anything in the spec is unclear.
 ```
 PR <n> (<step name>) is next. Read the sections listed for it in
 docs/README.md and follow AGENTS.md. Build only this step. Use the PR
-template, attach screenshots for any UI next to the matching file in
-design/screenshots/, and ask before guessing.
+template, save screenshots for any UI in docs/screenshots/pr-<n>/ (never in
+design/), show them in the PR next to the matching design reference PNG, and
+ask before guessing.
 ```

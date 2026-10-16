@@ -2,12 +2,9 @@
 
 Newest first.
 
-## 2026-10-16 — PR 7: performance and outcomes
+## 2026-10-16 — Screenshot location made explicit
 
-- Data model: `outcomes` gains the 5-minute bar's timestamp next to every recorded price (`price_1h_at`, `price_1session_at`, `price_5sessions_at`, `best_price_at`, `worst_price_at`); the decision detail API returns them and the GUI shows the bar time under each outcome tile.
-- Data model: `positions.qty` now keeps the closed size after a position closes instead of going to zero, so Performance can show the shares traded.
-- GUI: `performance` added to the WebSocket topics; published after cycles and position checks.
-- API: `GET /api/performance` (`?run=<id>` for an earlier run) serves the Performance screen: summary cards, equity curve with SPY benchmark and EUR/USD, by regime, by symbol, decision outcomes, closed trades.
+- AGENTS.md, docs/DEVIN_KICKOFF.md and design/DESIGN.md: PR screenshots are saved in `docs/screenshots/pr-<n>/` and never in `design/`; the PR shows them next to the reference PNG. (The old wording "next to the matching file in design/screenshots/" read as "save them there".)
 
 ## 2026-10-16 — Answers to PR 7 questions
 
