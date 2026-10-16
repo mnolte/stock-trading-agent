@@ -14,6 +14,7 @@ from typing import Protocol
 
 from app.broker.models import (
     BrokerAccount,
+    BrokerAsset,
     BrokerOrder,
     BrokerPosition,
     TradeUpdateInfo,
@@ -95,6 +96,20 @@ class Broker(Protocol):
 
     async def cancel_all_orders(self) -> DataResult[int]:
         """Cancel every open order; returns how many were cancelled."""
+        ...
+
+    async def close_all_positions(
+        self, *, cancel_orders: bool = True
+    ) -> DataResult[list[BrokerOrder] | None]:
+        """Liquidate every position (paper reset); optionally cancel orders."""
+        ...
+
+    async def get_asset(self, symbol: str) -> DataResult[BrokerAsset | None]:
+        """Tradability info for one symbol; None when unknown at the broker."""
+        ...
+
+    def stream_connected(self) -> bool:
+        """Whether the trade-updates stream is live (Settings → Connections)."""
         ...
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:

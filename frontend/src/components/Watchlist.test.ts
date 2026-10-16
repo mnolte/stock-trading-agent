@@ -30,6 +30,10 @@ describe('rulesLabel', () => {
   it('shows the failing reason for fail', () => {
     expect(rulesLabel(row('fail', 'RSI 71 > 70'))).toBe('RSI 71 > 70');
   });
+  it('shows Warming up for symbols still loading history', () => {
+    const warming = { ...row('pass', null), warming_up: true };
+    expect(rulesLabel(warming)).toBe('Warming up');
+  });
 });
 
 describe('formatting', () => {

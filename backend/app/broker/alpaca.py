@@ -35,6 +35,7 @@ from alpaca.trading.stream import TradingStream
 from app.broker.base import TradeUpdateHandler
 from app.broker.models import (
     BrokerAccount,
+    BrokerAsset,
     BrokerOrder,
     BrokerPosition,
     TradeUpdateInfo,
@@ -309,8 +310,41 @@ class AlpacaPaperBroker:
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=0, error=str(exc), source="alpaca")
 
+    async def close_all_positions(
+        self, *, cancel_orders: bool = True
+    ) -> DataResult[list[BrokerOrder] | None]:
+        try:
+            raw = await self.limiter.run_write(
+                self.trading.close_all_positions, cancel_orders
+            )
+            orders = [parse_order(o) for o in (list(raw) if raw else [])]
+            return DataResult(data=orders, source="alpaca")
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(data=None, error=str(exc), source="alpaca")
+
+    async def get_asset(self, symbol: str) -> DataResult[BrokerAsset | None]:
+        try:
+            raw = await self.limiter.run_read(self.trading.get_asset, symbol)
+            item = _raw(raw)
+            asset = BrokerAsset(
+                symbol=str(item.get("symbol", symbol)),
+                status=str(item.get("status", "")),
+                tradable=bool(item.get("tradable", False)),
+                asset_class=str(item.get("asset_class", "")),
+                exchange=(
+                    str(item.get("exchange")) if item.get("exchange") else None
+                ),
+                shortable=bool(item.get("shortable", False)),
+            )
+            return DataResult(data=asset, source="alpaca")
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(data=None, error=str(exc), source="alpaca")
+
     # ------------------------------------------------------------------
     # trade-updates stream
+
+    def stream_connected(self) -> bool:
+        return self._stream_started
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         self._handlers.append(handler)

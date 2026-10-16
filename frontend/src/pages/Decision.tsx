@@ -4,10 +4,12 @@ import { Link, useParams } from 'react-router-dom';
 import { getDecision } from '../api/state';
 import { Chip } from '../components/Chip';
 import type { ChipVariant } from '../components/Chip';
+import { displayTime } from '../format';
 import type {
   CodeCheck,
   DecisionDetail,
   DecisionOutcome,
+  OrderRow,
   RulesStatus,
 } from '../types/api';
 import {
@@ -408,6 +410,134 @@ function ModelOutputSection({ decision }: { decision: DecisionDetail }) {
   );
 }
 
+interface GatesResult {
+  allowed?: boolean;
+  blocked_by?: string | null;
+  risk_factor?: string;
+  sizing?: { shares?: number; risk_budget?: string; limited_by?: string[] } | null;
+  checks?: { name: string; passed: boolean; detail: string }[];
+  pending_approval?: boolean;
+}
+
+function GatesSection({ gates }: { gates: GatesResult | null }) {
+  if (!gates || !Array.isArray(gates.checks) || gates.checks.length === 0) {
+    return (
+      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+        {gates?.blocked_by
+          ? `Blocked: ${String(gates.blocked_by).replace(/_/g, ' ')}`
+          : 'Risk gates run with order placement in the execution step.'}
+      </div>
+    );
+  }
+  const checks: CodeCheck[] = gates.checks.map((c) => ({
+    name: c.name.replace(/_/g, ' '),
+    passed: c.passed,
+    detail: c.detail,
+    value: null,
+  }));
+  return (
+    <>
+      {gates.pending_approval && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-accent)' }}>
+          Passed the gates — waiting for approval (supervised mode).
+        </div>
+      )}
+      <CheckList checks={checks} />
+      {gates.sizing && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          Sized to {gates.sizing.shares} shares
+          {gates.sizing.limited_by?.length
+            ? ` · limited by ${gates.sizing.limited_by.join(', ')}`
+            : ''}
+          {gates.blocked_by && ` · blocked by ${String(gates.blocked_by).replace(/_/g, ' ')}`}
+        </div>
+      )}
+    </>
+  );
+}
+
+function shortId(id: string | null): string {
+  if (!id) return '—';
+  return `${id.slice(0, 4)}…${id.slice(-4)}`;
+}
+
+function OrderSection({ orders }: { orders: OrderRow[] }) {
+  const entry = orders.find((o) => o.leg === 'entry');
+  const legs = orders.filter((o) => o.leg !== 'entry');
+  const stop = legs.find((o) => o.leg === 'stop');
+  const target = legs.find((o) => o.leg === 'target');
+  const fill = entry?.fills[0];
+  return (
+    <Section label="Order at Alpaca">
+      <FieldGrid>
+        <Field label="Type" value="Bracket · gtc" />
+        <Field
+          label="Entry"
+          value={`limit ${entry?.limit_price ?? '—'} · ${entry?.status ?? '—'}`}
+        />
+        <Field
+          label="Stop leg"
+          value={stop ? `stop ${stop.stop_price ?? '—'} · ${stop.status}` : '—'}
+        />
+        <Field
+          label="Target leg"
+          value={target ? `limit ${target.limit_price ?? '—'} · ${target.status}` : '—'}
+        />
+        <Field label="Quantity" value={`${entry?.qty ?? '—'} shares`} />
+        <Field label="Sent" value={displayTime(entry?.created_at ?? null)} />
+        <Field
+          label="Filled"
+          value={
+            fill
+              ? `${displayTime(fill.filled_at)} @ ${fill.price}`
+              : '—'
+          }
+        />
+        {fill?.slippage != null && (
+          <Field
+            label="Slippage vs limit"
+            value={`${Number(fill.slippage) <= 0 ? '−' : '+'}$${Math.abs(Number(fill.slippage)).toFixed(2)} / share (${Number(fill.slippage) <= 0 ? 'better' : 'worse'})`}
+          />
+        )}
+      </FieldGrid>
+      <div style={{ fontSize: 'var(--sa-text-sm)', fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }}>
+        Alpaca order {shortId(entry?.alpaca_order_id ?? null)}
+        {legs.length > 0 && ` · legs ${legs.map((l) => shortId(l.alpaca_order_id)).join(', ')}`}
+      </div>
+    </Section>
+  );
+}
+
+function ApprovalSection({ decision }: { decision: DecisionDetail }) {
+  const approval = decision.approval;
+  if (!approval) return null;
+  const variant: ChipVariant =
+    approval.status === 'approved'
+      ? 'positive'
+      : approval.status === 'pending'
+        ? 'warning'
+        : 'negative';
+  return (
+    <Section label="Approval" right="supervised mode">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
+        <Chip variant={variant}>{approval.status}</Chip>
+        <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)' }}>
+          {approval.qty} shares · limit {approval.limit_price}
+        </span>
+      </div>
+      {approval.reason && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+          {approval.reason}
+        </div>
+      )}
+      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+        created {displayTime(approval.created_at)}
+        {approval.resolved_at && ` · resolved ${displayTime(approval.resolved_at)}`}
+      </div>
+    </Section>
+  );
+}
+
 export default function Decision() {
   const { id } = useParams<{ id: string }>();
   const [decision, setDecision] = useState<DecisionDetail | null>(null);
@@ -558,12 +688,14 @@ export default function Decision() {
         </Section>
 
         <Section label="Risk gates" right="in order; first failure blocks">
-          <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-            {decision.gates_result
-              ? JSON.stringify(decision.gates_result)
-              : 'Risk gates run with order placement in the execution step.'}
-          </div>
+          <GatesSection gates={decision.gates_result as GatesResult | null} />
         </Section>
+
+        {decision.approval && <ApprovalSection decision={decision} />}
+
+        {decision.orders && decision.orders.length > 0 && (
+          <OrderSection orders={decision.orders} />
+        )}
 
         {decision.rules_result && <RulesSection rules={decision.rules_result} />}
 

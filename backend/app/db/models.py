@@ -227,6 +227,46 @@ class SettingsVersion(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Approval(Base):
+    """A supervised-mode entry waiting for Marc's decision (docs/SPEC.md).
+
+    Created when the execution mode is ``supervised`` and an entry passes
+    the gates; expires at the next full cycle or is replaced by a newer
+    pending approval for the same symbol.
+    """
+
+    __tablename__ = "approvals"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_id: Mapped[int] = mapped_column(ForeignKey("decisions.id"), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    qty: Mapped[int] = mapped_column(nullable=False)
+    limit_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    stop_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    target_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    # pending | approved | rejected | expired
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class Run(Base):
+    """One performance run between paper-account resets (docs/SPEC.md).
+
+    Created by "Start new run" after a paper reset; restarts the SPY
+    benchmark, the drawdown-kill peak, the losing streak and the daily
+    loss baseline. PR 7 lets Performance pick earlier runs.
+    """
+
+    __tablename__ = "runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(nullable=False)
+    starting_equity: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    spy_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+
+
 class Event(Base):
     """Reconciliation, kill switch, error and acknowledgment events."""
 

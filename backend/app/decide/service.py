@@ -101,6 +101,14 @@ class DecisionService:
     def prompt(self) -> Prompt:
         return self._prompt
 
+    def reload(self) -> None:
+        """Pick up promoted settings: new prompt version and/or model."""
+        from app.decide.client import make_decision_client
+
+        self.client = make_decision_client(self.config)
+        version = str(self.config.get("decision", "prompt", default="decision.v1"))
+        self._prompt = cached_prompt(version)
+
     async def decide(
         self,
         session: Session,

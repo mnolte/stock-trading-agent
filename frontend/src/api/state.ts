@@ -1,12 +1,22 @@
 import { get, post } from './client';
 import type {
+  ApprovalsResponse,
+  ApproveResult,
   BannersResponse,
+  ChartResponse,
+  DashboardResponse,
   DecisionDetail,
   DecisionsResponse,
   HeaderState,
   KillSwitchResponse,
   OrdersResponse,
+  PaperResetResult,
   PositionsResponse,
+  RunsResponse,
+  SaveSettingsResult,
+  SettingsForm,
+  SettingsResponse,
+  StartRunResult,
   WatchlistResponse,
 } from '../types/api';
 
@@ -52,4 +62,47 @@ export function postAcknowledgeEvent(id: number): Promise<{ acknowledged: boolea
 
 export function postAcknowledgePosition(id: number): Promise<{ acknowledged: boolean }> {
   return post(`/api/positions/${id}/acknowledge`, {});
+}
+
+export function getDashboard(): Promise<DashboardResponse> {
+  return get<DashboardResponse>('/api/dashboard');
+}
+
+export function getChart(symbol: string): Promise<ChartResponse> {
+  return get<ChartResponse>(`/api/chart/${symbol}`);
+}
+
+export function getApprovals(): Promise<ApprovalsResponse> {
+  return get<ApprovalsResponse>('/api/approvals');
+}
+
+export function postApprove(id: number): Promise<ApproveResult> {
+  return post<ApproveResult>(`/api/approvals/${id}/approve`, {});
+}
+
+export function postRejectApproval(id: number): Promise<{ rejected: boolean }> {
+  return post(`/api/approvals/${id}/reject`, {});
+}
+
+export function getSettings(): Promise<SettingsResponse> {
+  return get<SettingsResponse>('/api/settings');
+}
+
+export function postSettings(
+  settings: SettingsForm,
+  reason: string,
+): Promise<SaveSettingsResult> {
+  return post<SaveSettingsResult>('/api/settings', { settings, reason });
+}
+
+export function postPaperReset(): Promise<PaperResetResult> {
+  return post<PaperResetResult>('/api/paper-reset', {});
+}
+
+export function postStartRun(): Promise<StartRunResult> {
+  return post<StartRunResult>('/api/runs', {});
+}
+
+export function getRuns(): Promise<RunsResponse> {
+  return get<RunsResponse>('/api/runs');
 }

@@ -93,11 +93,20 @@ function NavGroup({ label, expanded }: { label: string; expanded: boolean }) {
   );
 }
 
-function NavLinkItem({ item, expanded }: { item: NavItem; expanded: boolean }) {
+function NavLinkItem({
+  item,
+  expanded,
+  onNavigate,
+}: {
+  item: NavItem;
+  expanded: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <NavLink
       to={item.to}
       title={item.label}
+      onClick={onNavigate}
       style={({ isActive }) => ({
         display: 'flex',
         alignItems: 'center',
@@ -120,23 +129,31 @@ function NavLinkItem({ item, expanded }: { item: NavItem; expanded: boolean }) {
   );
 }
 
-export function Sidebar() {
-  const [expanded, setExpanded] = useState(true);
+export function Sidebar({
+  overlay = false,
+  onNavigate,
+}: {
+  overlay?: boolean;
+  onNavigate?: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const expanded = overlay ? true : !collapsed;
   const width = expanded ? 'var(--sa-sidebar-width)' : 'var(--sa-sidebar-collapsed)';
 
-  return (
+  const panel = (
     <aside
       aria-label="Sidebar"
       style={{
         width,
-        flex: `0 0 ${width}`,
+        flex: overlay ? undefined : `0 0 ${width}`,
+        height: overlay ? '100%' : undefined,
         background: 'var(--sa-chrome)',
         borderRight: '1px solid var(--sa-border)',
         display: 'flex',
         flexDirection: 'column',
         padding: 'var(--sa-space-4)',
         gap: 'var(--sa-space-2)',
-        transition: 'width 0.2s ease',
+        transition: overlay ? undefined : 'width 0.2s ease',
       }}
     >
       <div
@@ -180,15 +197,15 @@ export function Sidebar() {
       <nav aria-label="Main" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
         <NavGroup label="Monitor" expanded={expanded} />
         {monitor.map((item) => (
-          <NavLinkItem key={item.to} item={item} expanded={expanded} />
+          <NavLinkItem key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} />
         ))}
         <NavGroup label="Learn" expanded={expanded} />
         {learn.map((item) => (
-          <NavLinkItem key={item.to} item={item} expanded={expanded} />
+          <NavLinkItem key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} />
         ))}
         <NavGroup label="Control" expanded={expanded} />
         {control.map((item) => (
-          <NavLinkItem key={item.to} item={item} expanded={expanded} />
+          <NavLinkItem key={item.to} item={item} expanded={expanded} onNavigate={onNavigate} />
         ))}
       </nav>
 
@@ -217,33 +234,55 @@ export function Sidebar() {
         {expanded && <span>Running · paper</span>}
       </div>
 
-      <button
-        type="button"
-        onClick={() => setExpanded((v) => !v)}
-        aria-label={expanded ? 'Collapse' : 'Expand'}
-        aria-expanded={expanded}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--sa-space-3)',
-          height: 'var(--sa-control-height)',
-          padding: expanded ? '0 var(--sa-space-4)' : '0 calc(var(--sa-sidebar-collapsed) / 2 - 9px)',
-          borderRadius: 'var(--sa-radius-md)',
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--sa-text-2)',
-          cursor: 'pointer',
-          fontSize: 'var(--sa-text-base)',
-          fontWeight: 500,
-          justifyContent: expanded ? 'flex-start' : 'center',
-        }}
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <line x1="9" y1="4" x2="9" y2="20" />
-        </svg>
-        {expanded && <span>Collapse</span>}
-      </button>
+      {!overlay && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((v) => !v)}
+          aria-label={expanded ? 'Collapse' : 'Expand'}
+          aria-expanded={expanded}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--sa-space-3)',
+            height: 'var(--sa-control-height)',
+            padding: expanded ? '0 var(--sa-space-4)' : '0 calc(var(--sa-sidebar-collapsed) / 2 - 9px)',
+            borderRadius: 'var(--sa-radius-md)',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--sa-text-2)',
+            cursor: 'pointer',
+            fontSize: 'var(--sa-text-base)',
+            fontWeight: 500,
+            justifyContent: expanded ? 'flex-start' : 'center',
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <line x1="9" y1="4" x2="9" y2="20" />
+          </svg>
+          {expanded && <span>Collapse</span>}
+        </button>
+      )}
     </aside>
+  );
+
+  if (!overlay) return panel;
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Menu"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 90,
+        background: 'rgba(0,0,0,0.55)',
+      }}
+      onClick={onNavigate}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ height: '100%', width: 'fit-content' }}>
+        {panel}
+      </div>
+    </div>
   );
 }

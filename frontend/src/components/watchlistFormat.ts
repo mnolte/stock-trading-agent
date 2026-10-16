@@ -1,12 +1,14 @@
 import type { WatchlistRow } from '../types/api';
 
 export function rulesLabel(row: WatchlistRow): string {
+  if (row.warming_up) return 'Warming up';
   if (row.rules.status === 'pass') return 'Passed';
   if (row.rules.status === 'held') return 'Held · reviewed each cycle';
   return row.rules.reason ?? 'Failed';
 }
 
 export function rulesColor(row: WatchlistRow): string {
+  if (row.warming_up) return 'var(--sa-info)';
   if (row.rules.status === 'pass') return 'var(--sa-positive)';
   if (row.rules.status === 'held') return 'var(--sa-info)';
   return 'var(--sa-text-muted)';

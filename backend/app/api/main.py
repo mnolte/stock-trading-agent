@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
+from decimal import Decimal
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -11,8 +12,10 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, select
 
 from app.api.routes import router as api_router
+from app.api.websocket import UpdateBus
 from app.api.websocket import router as ws_router
 from app.broker.base import Broker
 from app.config import AppConfig, get_config
@@ -73,12 +76,15 @@ async def refresh_daily_data_and_signals(
     config: AppConfig,
     clock: Clock,
     signals: SignalService,
+    bus: UpdateBus | None = None,
 ) -> None:
     """The scheduled daily refresh, followed by a stored-snapshot refresh."""
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
     )
     await signals.refresh()
+    if bus is not None:
+        bus.publish("watchlist", "header", "banners", "performance")
 
 
 async def run_scheduled_cycle(
@@ -91,9 +97,13 @@ async def run_scheduled_cycle(
     await runner.run(scheduled)
 
 
-async def run_scheduled_check(checker: PositionChecker) -> None:
+async def run_scheduled_check(
+    checker: PositionChecker, bus: UpdateBus | None = None
+) -> None:
     """Scheduler entry point for the 15-minute position check."""
     await checker.run()
+    if bus is not None:
+        bus.publish("positions", "orders", "banners", "header")
 
 
 def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker:
@@ -118,15 +128,75 @@ def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker
 
 
 def check_execution_mode(config: AppConfig) -> None:
-    """Supervised mode is PR 6: refuse to start rather than fall back."""
+    """Only automatic and supervised exist; refuse to start on anything else."""
     mode = str(config.get("execution", "mode", default="automatic"))
-    if mode == "supervised":
-        raise RuntimeError(
-            "Refusing to start: supervised mode arrives in PR 6 "
-            "(set execution.mode: automatic)"
-        )
-    if mode != "automatic":
+    if mode not in ("automatic", "supervised"):
         raise RuntimeError(f"Refusing to start: unknown execution.mode {mode!r}")
+
+
+def schedule_cycle_jobs(
+    scheduler: AsyncIOScheduler,
+    runner: CycleRunner,
+    config: AppConfig,
+    clock: Clock,
+) -> None:
+    """(Re)build the cron jobs for the configured cycle times.
+
+    Called at startup and again when promoted settings change the cycle
+    times — the new schedule applies to the cycles after that.
+    """
+    for job in scheduler.get_jobs():
+        if job.id.startswith("cycle-"):
+            scheduler.remove_job(job.id)
+    misfire_grace = int(
+        config.get("schedule", "misfire_grace_seconds", default=120)
+    )
+    for cycle_at in config.get("schedule", "cycles", default=[]) or []:
+        hour, minute = (int(p) for p in str(cycle_at).split(":")[:2])
+        scheduler.add_job(
+            run_scheduled_cycle,
+            CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
+            args=[runner, clock, str(cycle_at)],
+            id=f"cycle-{cycle_at}",
+            misfire_grace_time=misfire_grace,
+            coalesce=True,
+        )
+
+
+def load_saved_settings(config: AppConfig) -> None:
+    """Apply the newest settings_versions row over the YAML defaults."""
+    from app.db.base import get_session_maker
+    from app.settings_service import latest_version
+
+    with get_session_maker()() as session:
+        row = latest_version(session)
+        if row is not None:
+            config.apply_saved(dict(row.settings), row.version)
+
+
+def ensure_run_row(broker: Broker, clock: Clock, config: AppConfig) -> None:
+    """The first run anchors the benchmark and the "since start" numbers."""
+    from app.data.cache import _naive_utc
+    from app.db.base import get_session_maker
+    from app.db.models import Run
+
+    with get_session_maker()() as session:
+        exists = session.execute(
+            select(func.count(Run.id))
+        ).scalar_one()
+        if exists:
+            return
+        starting = Decimal(
+            str(config.get("performance", "starting_equity", default=10000))
+        )
+        session.add(
+            Run(
+                started_at=_naive_utc(clock.now()),
+                starting_equity=starting,
+                spy_close=None,
+            )
+        )
+        session.commit()
 
 
 def startup_catch_up_allowed(config: AppConfig) -> bool:
@@ -155,11 +225,15 @@ async def retry_calendar_load(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_config()
-    check_execution_mode(config)
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
+    # Versioned GUI settings sit on top of the YAML before anything reads
+    # them; the execution-mode check sees the effective mode.
+    load_saved_settings(config)
+    check_execution_mode(config)
 
     clock = make_clock(config)
+    bus = UpdateBus()
     sources = make_data_sources(config)
     if sources.alpaca is not None:
         paper = await sources.alpaca.check_paper_account()
@@ -180,6 +254,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
         state=exec_state,
+        notify=lambda topics: bus.publish(*topics),
     )
     position_checker = PositionChecker(
         executor=executor, state=exec_state, config=config, clock=clock
@@ -193,6 +268,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
         executor=executor,
+        notify=lambda topics: bus.publish(*topics),
     )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
@@ -207,6 +283,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await executor.reconcile()
     if exec_state.account is None:
         await executor.refresh_account()
+    ensure_run_row(broker, clock, config)
 
     if startup_catch_up_allowed(config):
         # Frozen clock: run today's latest due cycle once so a simulated
@@ -224,14 +301,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.executor = executor
     app.state.exec_state = exec_state
     app.state.position_checker = position_checker
+    app.state.update_bus = bus
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
+    # When promoted settings move cycle times the cron jobs are rebuilt.
+    cycle_runner._on_settings_promoted = (
+        lambda: schedule_cycle_jobs(scheduler, cycle_runner, config, clock)
+    )
     refresh_at = str(config.get("schedule", "calendar_refresh", default="08:00"))
     refresh_hour, refresh_minute = (int(p) for p in refresh_at.split(":")[:2])
     scheduler.add_job(
         refresh_daily_data_and_signals,
         CronTrigger(hour=refresh_hour, minute=refresh_minute, timezone=NY_TZ),
-        args=[calendar_store, market_data, sources, config, clock, signal_service],
+        args=[
+            calendar_store,
+            market_data,
+            sources,
+            config,
+            clock,
+            signal_service,
+            bus,
+        ],
         id="daily-data-refresh",
     )
     scheduler.add_job(
@@ -244,25 +334,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # refreshes the stored signal snapshot as part of the cycle. Missed
     # cycles may run late by at most misfire_grace_seconds, and several
     # misses coalesce into one run — never into a queue of catch-ups.
+    schedule_cycle_jobs(scheduler, cycle_runner, config, clock)
     misfire_grace = int(
         config.get("schedule", "misfire_grace_seconds", default=120)
     )
-    for cycle_at in config.get("schedule", "cycles", default=[]) or []:
-        hour, minute = (int(p) for p in str(cycle_at).split(":")[:2])
-        scheduler.add_job(
-            run_scheduled_cycle,
-            CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[cycle_runner, clock, str(cycle_at)],
-            id=f"cycle-{cycle_at}",
-            misfire_grace_time=misfire_grace,
-            coalesce=True,
-        )
     for check_at in config.get("schedule", "position_checks", default=[]) or []:
         hour, minute = (int(p) for p in str(check_at).split(":")[:2])
         scheduler.add_job(
             run_scheduled_check,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[position_checker],
+            args=[position_checker, bus],
             id=f"position-check-{check_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,

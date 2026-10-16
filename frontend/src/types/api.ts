@@ -1,7 +1,10 @@
 export interface SessionState {
   state: string;
   display_time: string;
+  now?: string;
   next_cycle: string | null;
+  next_open?: string | null;
+  next_close?: string | null;
   calendar_loaded?: boolean;
 }
 
@@ -35,6 +38,7 @@ export interface WatchlistRow {
   day_change_pct: string | null;
   rules: RulesStatus;
   earnings_date: string | null;
+  warming_up?: boolean;
   last_action: string | null;
   last_action_time: string | null;
 }
@@ -133,6 +137,42 @@ export interface BannersResponse {
   items: BannerItem[];
 }
 
+export interface OrderFill {
+  qty: number;
+  price: string;
+  slippage: string | null;
+  filled_at: string;
+}
+
+export interface OrderRow {
+  id: number;
+  alpaca_order_id: string;
+  client_order_id: string | null;
+  parent_alpaca_order_id: string | null;
+  symbol: string;
+  leg: string;
+  side: string;
+  type: string;
+  qty: number;
+  limit_price: string | null;
+  stop_price: string | null;
+  status: string;
+  created_at: string;
+  filled_at: string | null;
+  filled_avg_price: string | null;
+  fills: OrderFill[];
+  label?: string;
+  replaced_from?: string;
+}
+
+export interface OrdersResponse {
+  orders: OrderRow[];
+}
+
+export interface PositionLeg extends OrderRow {
+  label: string;
+}
+
 export interface PositionRow {
   id: number;
   symbol: string;
@@ -148,32 +188,47 @@ export interface PositionRow {
   closed_at: string | null;
   realized_pnl_raw: string | null;
   exit_reason: string | null;
+  legs?: PositionLeg[];
+  last_price?: string | null;
+  unrealized_pnl?: string | null;
+  unrealized_pnl_eur?: string | null;
+  r_multiple?: string | null;
+  stop_distance_label?: string;
+  earnings_date?: string | null;
+  opened_today?: boolean;
+}
+
+export interface DayTradeDay {
+  date: string;
+  count: number;
+}
+
+export interface AccountSummary {
+  equity: string | null;
+  cash: string | null;
+  positions_value: string | null;
+  equity_eur: string | null;
+  eur_usd_rate: string | null;
+  eur_usd_date: string | null;
+  margin: string;
+  account_number: string | null;
+}
+
+export interface ReconciliationSummary {
+  ok: boolean;
+  checked_at: string | null;
+  stream_connected: boolean | null;
+  account_number: string | null;
 }
 
 export interface PositionsResponse {
   open: PositionRow[];
   closed_today: PositionRow[];
   day_trades_5d: number;
-}
-
-export interface OrderRow {
-  id: number;
-  alpaca_order_id: string;
-  client_order_id: string | null;
-  symbol: string;
-  leg: string;
-  side: string;
-  type: string;
-  qty: number;
-  limit_price: string | null;
-  stop_price: string | null;
-  status: string;
-  created_at: string;
-  filled_at: string | null;
-}
-
-export interface OrdersResponse {
-  orders: OrderRow[];
+  day_trades?: { days: DayTradeDay[]; count: number; max: number };
+  account?: AccountSummary;
+  reconciliation?: ReconciliationSummary;
+  max_open_positions?: number;
 }
 
 export interface KillSwitchResponse {
@@ -207,4 +262,278 @@ export interface DecisionDetail {
   cost: string | null;
   latency_ms: number | null;
   raw_response: string | null;
+  orders?: OrderRow[];
+  approval?: DecisionApproval | null;
+}
+
+export interface DecisionApproval {
+  id: number;
+  status: ApprovalStatus;
+  reason: string | null;
+  qty: number;
+  limit_price: string;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface Approval {
+  id: number;
+  decision_id: number;
+  symbol: string;
+  qty: number;
+  limit_price: string;
+  stop_price: string;
+  target_price: string;
+  status: ApprovalStatus;
+  reason: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  confidence: number | null;
+  action: string | null;
+  thesis: string | null;
+}
+
+export interface ApprovalsResponse {
+  mode: string;
+  kill_switch_on: boolean;
+  items: Approval[];
+  recent: Approval[];
+}
+
+export interface ApproveResult {
+  ok?: boolean;
+  status?: string;
+  error?: string;
+  [key: string]: unknown;
+}
+
+// ---- Settings -------------------------------------------------------------
+
+export interface SettingsForm {
+  execution: {
+    mode: string;
+    entry_limit_offset_pct: number;
+    entry_timeout_minutes: number;
+    max_spread_pct: number;
+  };
+  rules: { rsi_min: number; rsi_max: number };
+  decision: {
+    model: string;
+    temperature: number;
+    prompt: string;
+    min_confidence_enter: number;
+    stop_atr_min: number;
+    stop_atr_max: number;
+    min_reward_risk: number;
+    max_calls_per_cycle: number;
+  };
+  risk: {
+    risk_per_trade_pct: number;
+    max_position_pct: number;
+    max_open_risk_pct: number;
+    max_open_positions: number;
+    max_per_sector: number;
+    daily_loss_limit_pct: number;
+    losing_streak: number;
+    shock_brake_1h_pct: number;
+    shock_brake_session_pct: number;
+    earnings_blackout_days: number;
+    hold_through_earnings: boolean;
+    drawdown_kill_pct: number;
+    max_order_pct: number;
+    max_orders_per_cycle: number;
+  };
+  performance: { slippage_pct_per_side: number; starting_equity: number };
+  schedule: { cycles: string[] };
+  universe: {
+    symbols: string[];
+    sectors: Record<string, string>;
+    allowed_sectors: string[];
+  };
+}
+
+export interface ScheduleRow {
+  index: number;
+  ny: string;
+  amsterdam: string;
+  amsterdam_shifted: string | null;
+  bar_used: string;
+  entries: string;
+  runs_today: boolean | null;
+}
+
+export interface ConnectionRow {
+  source: string;
+  status: string;
+  detail: string;
+}
+
+export interface SettingsHistoryRow {
+  version: number;
+  changed_at: string;
+  change: string;
+  reason: string;
+}
+
+export interface SettingsResponse {
+  settings: SettingsForm;
+  active_version: number;
+  pending_version: number | null;
+  next_version: number;
+  held_symbols: string[];
+  prompt_options: { version: string; hash: string }[];
+  schedule: {
+    rows: ScheduleRow[];
+    shifted_label: string | null;
+    cycles_per_session: number;
+  };
+  connections: ConnectionRow[];
+  history: SettingsHistoryRow[];
+  mode: string;
+}
+
+export interface SettingsError {
+  detail: Record<string, string> | string;
+}
+
+export interface SaveSettingsResult {
+  version: number;
+  changes: Record<string, { from: unknown; to: unknown }> | string[];
+  effective_from: string;
+}
+
+// ---- Paper reset + runs ----------------------------------------------------
+
+export interface PaperResetResult {
+  ok: boolean;
+  message: string;
+  closed?: number;
+  cancelled?: number;
+  errors?: string[];
+  [key: string]: unknown;
+}
+
+export interface StartRunResult {
+  ok: boolean;
+  run_id?: number;
+  failed?: string[];
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface Run {
+  id: number;
+  started_at: string;
+  starting_equity: string;
+  spy_close: string | null;
+}
+
+export interface RunsResponse {
+  runs: Run[];
+}
+
+// ---- Dashboard + chart -----------------------------------------------------
+
+export interface DashboardCycleLine {
+  label: string;
+  status: string;
+  text: string;
+  cycle_index: number;
+  cycles_today: number;
+}
+
+export interface DashboardStats {
+  open_risk_pct: string | null;
+  open_risk_usd: string | null;
+  open_risk_cap_pct: number;
+  positions: number;
+  positions_cap: number;
+  day_trades: number;
+  day_trades_max: number;
+  cash: string | null;
+  since_start_pct: string | null;
+  since_label: string;
+  spy_pct: string | null;
+  execution_mode: string;
+}
+
+export interface DashboardLatestDecision {
+  id: number;
+  symbol: string;
+  context: string;
+  model_action: string | null;
+  final_action: string;
+  no_call_reason: string | null;
+  confidence: number | null;
+  why: string | null;
+  checks: { name: string; passed: boolean; detail: string }[];
+  price: string | null;
+  time: string;
+}
+
+export interface DashboardFeedItem {
+  id: number;
+  time: string;
+  symbol: string;
+  context: string;
+  action: string;
+  model_action: string | null;
+  no_call_reason: string | null;
+  reason: string | null;
+}
+
+export interface MarketClosedCard {
+  next_open: string | null;
+  first_cycle: string | null;
+  stops: { symbol: string; stop: string }[];
+  open_count: number;
+  today_summary: string;
+}
+
+export interface DashboardResponse {
+  session: {
+    state: string;
+    next_cycle: string | null;
+    next_open: string | null;
+    next_close: string | null;
+  };
+  cycle_line: DashboardCycleLine | null;
+  stats: DashboardStats;
+  latest_decision: DashboardLatestDecision | null;
+  approvals_pending: number;
+  market_closed: MarketClosedCard | null;
+  feed: DashboardFeedItem[];
+}
+
+export interface ChartBar {
+  time: string;
+  session: string;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: number;
+  ema20: string | null;
+  ema50: string | null;
+  vwap: string | null;
+}
+
+export interface ChartLevels {
+  kind: 'position' | 'order' | 'approval' | null;
+  entry?: string | null;
+  stop?: string | null;
+  target?: string | null;
+  opened_at?: string;
+}
+
+export interface ChartResponse {
+  symbol: string;
+  sessions: string[];
+  bars: ChartBar[];
+  levels: ChartLevels;
+  warming_up: boolean;
+  price: string | null;
+  day_change_pct: string | null;
 }

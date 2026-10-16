@@ -21,6 +21,7 @@ from app.broker.base import TradeUpdateHandler
 from app.broker.models import (
     OPEN_ORDER_STATUSES,
     BrokerAccount,
+    BrokerAsset,
     BrokerOrder,
     BrokerPosition,
     TradeUpdateInfo,
@@ -86,6 +87,11 @@ class FakeBroker:
         self.reject_sells: set[str] = set()
         # cancel_order reports success but the order stays open at the broker.
         self.cancel_stuck = False
+        # get_asset reports these symbols as unknown to the broker.
+        self.untradable: set[str] = set()
+        # get_asset finds these but reports tradable=False / wrong class.
+        self.non_tradable: set[str] = set()
+        self._stream_started = False
 
     # ------------------------------------------------------------------
     # helpers
@@ -468,17 +474,89 @@ class FakeBroker:
                 await self._emit(rec, "canceled")
         return DataResult(data=cancelled, source="fake")
 
+    async def close_all_positions(
+        self, *, cancel_orders: bool = True
+    ) -> DataResult[list[BrokerOrder] | None]:
+        self.submit_calls += 1
+        if self.fail_writes:
+            return DataResult(data=None, error="fake write failure", source="fake")
+        if cancel_orders:
+            for rec in self.orders.values():
+                if rec.status in OPEN_ORDER_STATUSES:
+                    rec.status = "canceled"
+                    rec.updated_at = self._now()
+        sold: list[BrokerOrder] = []
+        for symbol, pos in list(self.positions.items()):
+            if pos.qty <= 0:
+                continue
+            price = self.prices.get(symbol, pos.avg_entry_price)
+            self.cash += price * pos.qty
+            del self.positions[symbol]
+            self._seq += 1
+            sold.append(
+                BrokerOrder(
+                    id=f"fake-liquidate-{self._seq}",
+                    client_order_id=None,
+                    symbol=symbol,
+                    side="sell",
+                    order_type="market",
+                    order_class="simple",
+                    status="filled",
+                    qty=pos.qty,
+                    filled_qty=pos.qty,
+                    filled_avg_price=price,
+                    limit_price=None,
+                    stop_price=None,
+                    created_at=self._now(),
+                    updated_at=self._now(),
+                    filled_at=self._now(),
+                )
+            )
+        return DataResult(data=sold, source="fake")
+
+    async def get_asset(self, symbol: str) -> DataResult[BrokerAsset | None]:
+        if self.fail_reads:
+            return DataResult(data=None, error="fake read failure", source="fake")
+        if symbol in self.untradable:
+            return DataResult(data=None, error="asset not found", source="fake")
+        if symbol in self.non_tradable:
+            return DataResult(
+                data=BrokerAsset(
+                    symbol=symbol,
+                    status="inactive",
+                    tradable=False,
+                    asset_class="us_equity",
+                    exchange="NASDAQ",
+                    shortable=False,
+                ),
+                source="fake",
+            )
+        return DataResult(
+            data=BrokerAsset(
+                symbol=symbol,
+                status="active",
+                tradable=True,
+                asset_class="us_equity",
+                exchange="NASDAQ",
+                shortable=False,
+            ),
+            source="fake",
+        )
+
     # ------------------------------------------------------------------
     # stream + simulation
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         self._handlers.append(handler)
 
+    def stream_connected(self) -> bool:
+        return self._stream_started
+
     async def start_stream(self) -> None:
-        return None
+        self._stream_started = True
 
     async def stop_stream(self) -> None:
-        return None
+        self._stream_started = False
 
     async def tick(self, symbol: str, price: Decimal) -> None:
         """Move a mark; fills any order whose price is now crossed."""
