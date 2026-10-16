@@ -68,9 +68,9 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 
 `Main-390.png` shows the dashboard at 390 px. Cards stack and wide tables scroll inside their card. The sidebar stacks above the content, as in Trading Agent; turning it into a menu button on phones is an acceptable improvement in PR 6.
 
-## Open question for Marc
+## Answered questions
 
-This shows up in the designs but the spec doesn't settle it:
+Both questions from the first handoff are now settled in `docs/SPEC.md` (supervised approvals; Stop & flatten never refuses, it warns). Kept for reference:
 
 1. **Stop & flatten on a position bought today** counts as a day trade. The dialog warns about it. Should it also refuse when that would be the 4th day trade?
 

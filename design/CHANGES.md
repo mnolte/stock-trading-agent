@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-15 — Flatten question answered
+
+DESIGN.md: Stop & flatten never refuses because of the day-trade rule; the existing warning in the dialog stays. No screen changes.
+
 ## 2026-10-15 — Supervised mode wording
 
 Settings: the supervised-mode text now matches the spec — entries only wait for approval, an approval expires at the next cycle and is checked again on approval. DESIGN.md: the approval-expiry question is answered.

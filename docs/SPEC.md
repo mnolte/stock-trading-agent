@@ -260,7 +260,7 @@ Risk gates run in code after the model answers, in the order below; the first ga
 | Drawdown kill | Equity 8% below its peak | Kill switch turns on automatically |
 | Order sanity | No single order above 25% of equity; at most 6 orders per cycle | Block and alert |
 
-**Kill switch.** Manual (header button) or automatic (drawdown kill, repeated errors). It stops all new entries and leaves existing stops in place. "Stop & flatten" also cancels all open orders and sells every position at market; outside regular hours the sells are queued as market-on-open orders. Resuming requires an explicit acknowledgment with a typed reason, which is stored.
+**Kill switch.** Manual (header button) or automatic (drawdown kill, repeated errors). It stops all new entries and leaves existing stops in place. "Stop & flatten" also cancels all open orders and sells every position at market; outside regular hours the sells are queued as market-on-open orders. Stop & flatten never refuses because of the day-trade rule: it warns when a sale would count as a day trade, and if Alpaca rejects a sale (for example under its own day-trade protection), that position keeps its stop and the rejection shows as a critical banner. Resuming requires an explicit acknowledgment with a typed reason, which is stored.
 
 **Errors.** Three failed cycles in a row (any unhandled error) turn the kill switch on. A failed model call is never retried with a different model silently.
 

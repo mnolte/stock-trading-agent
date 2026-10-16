@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-15 — Answers from the PR 5 review
+
+- Risk management, kill switch: Stop & flatten never refuses because of the day-trade rule. It warns; if Alpaca rejects a sale, the position keeps its stop and a critical banner shows the rejection. (Closes the open question in design/DESIGN.md.)
+
 ## 2026-10-15 — Answers to PR 5 questions
 
 - Day-trade rule: a same-day exit is recorded as deferred, not carried out. The next session's first cycle reviews the position again with the deferred exit in its input snapshot; the dashboard shows "Exit deferred (day-trade rule)".
