@@ -103,10 +103,15 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
     assert body["latency_ms"] == 900
     assert body["outcome"] == {
         "price_1h": None,
+        "price_1h_at": None,
         "price_1session": None,
+        "price_1session_at": None,
         "price_5sessions": None,
+        "price_5sessions_at": None,
         "best_price": None,
+        "best_price_at": None,
         "worst_price": None,
+        "worst_price_at": None,
     }
     # The versioned prompt file ships with the repo, so text resolves.
     assert body["prompt_version"] == "decision.v1"

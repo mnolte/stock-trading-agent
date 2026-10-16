@@ -12,6 +12,19 @@ export function displayTime(iso: string | null | undefined): string {
   });
 }
 
+/** "16 Oct 20:35" — compact date + time in Amsterdam time. */
+export function displayDayTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: DISPLAY_TZ });
+  const time = d.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: DISPLAY_TZ,
+  });
+  return `${date} ${time}`;
+}
+
 export function displayDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);

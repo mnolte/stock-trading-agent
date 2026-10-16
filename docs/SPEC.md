@@ -237,7 +237,7 @@ Code checks after the model answers:
 
 **Prompt.** `prompts/decision.v1.md`, versioned; each decision stores the prompt version and hash, the model name and the token cost. The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
 
-**Outcome tracking.** For every decision, including skips, record the price after 1 hour, 1 session and 5 sessions. For trades, also record the best and worst price reached while open. This feeds the Performance screen and later prompt reviews.
+**Outcome tracking.** For every decision, including skips, record the price after 1 hour, 1 session and 5 sessions. 1 session means the same New York time on the next trading session; 5 sessions means the same time on the 5th trading session after the decision (weekends and holidays don't count). If that time falls after the session's close (early-close days), the close is used. The price is the last closed 5-minute bar at or before the target time, stored with that bar's timestamp. For trades, also record the best and worst price reached while open. This feeds the Performance screen and later prompt reviews.
 
 ## Risk management
 
@@ -280,8 +280,8 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | --- | --- |
 | Dashboard | Price chart for the selected symbol (1h bars, VWAP, EMAs, entry, stop and target lines); watchlist with price, day change, rules status and earnings date; open positions with unrealized P&L and stop distance; latest decisions feed; next-cycle timer |
 | Decision detail | Input snapshot, rules results, model output, each risk gate with pass or fail, resulting order, and the outcome after 1h, 1 session and 5 sessions |
-| Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status |
-| Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime, day-trade counter |
+| Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
+| Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime |
 | LLM inspector | Every model call: prompt version, full prompt, raw response, tokens, cost, latency, validation result |
 | Settings | Universe, risk values, cycle times, execution mode, earnings handling, model, slippage assumption; changes are versioned and take effect next cycle |
 | States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode); confirm dialogs for Stop & flatten, reset paper account and settings changes |

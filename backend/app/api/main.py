@@ -25,6 +25,7 @@ from app.decide.client import make_decision_client
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
+from app.engine.outcomes import OutcomeWorker
 from app.engine.position_check import PositionChecker
 from app.engine.state import load_execution_state
 from app.market.calendar import CalendarStore
@@ -103,7 +104,7 @@ async def run_scheduled_check(
     """Scheduler entry point for the 15-minute position check."""
     await checker.run()
     if bus is not None:
-        bus.publish("positions", "orders", "banners", "header")
+        bus.publish("positions", "orders", "banners", "header", "performance")
 
 
 def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker:
@@ -256,8 +257,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
     )
+    outcome_worker = OutcomeWorker(
+        market_data=market_data,
+        calendar=calendar_store,
+        config=config,
+        clock=clock,
+    )
     position_checker = PositionChecker(
-        executor=executor, state=exec_state, config=config, clock=clock
+        executor=executor,
+        state=exec_state,
+        config=config,
+        clock=clock,
+        outcomes=outcome_worker,
     )
     cycle_runner = CycleRunner(
         market_data=market_data,
@@ -268,6 +279,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
         executor=executor,
+        outcomes=outcome_worker,
         notify=lambda topics: bus.publish(*topics),
     )
     await refresh_calendar_and_daily_data(
@@ -290,6 +302,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # session produces stored decisions.
         await cycle_runner.run_due()
     await signal_service.refresh()
+
+    # Fill any outcome targets that were due while the app was down, and
+    # record the startup equity point.
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        outcome_worker.fill(session, clock.now())
+        if exec_state.account is not None:
+            outcome_worker.write_equity_snapshot(
+                session,
+                equity=exec_state.account.equity,
+                cash=exec_state.account.cash,
+            )
+        session.commit()
 
     app.state.clock = clock
     app.state.calendar_store = calendar_store

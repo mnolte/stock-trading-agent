@@ -1,11 +1,14 @@
+import type { ReactNode } from 'react';
+
 export interface StatCardProps {
-  label: string;
+  label: ReactNode;
   value: string;
+  valueColor?: string;
   sub?: string;
   bar?: { width: string; color: string };
 }
 
-export function StatCard({ label, value, sub, bar }: StatCardProps) {
+export function StatCard({ label, value, valueColor, sub, bar }: StatCardProps) {
   return (
     <div
       style={{
@@ -35,7 +38,7 @@ export function StatCard({ label, value, sub, bar }: StatCardProps) {
           fontFamily: 'var(--sa-font-mono)',
           fontSize: 'var(--sa-text-stat)',
           fontWeight: 500,
-          color: 'var(--sa-text)',
+          color: valueColor ?? 'var(--sa-text)',
           whiteSpace: 'nowrap',
         }}
       >

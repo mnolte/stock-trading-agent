@@ -153,17 +153,26 @@ class Position(Base):
 
 
 class Outcome(Base):
-    """Post-decision price outcomes."""
+    """Post-decision price outcomes (docs/SPEC.md, Outcome tracking).
+
+    Each price stores the timestamp of the 5-minute bar it came from, so
+    clamped (early close) or late measurements stay visible.
+    """
 
     __tablename__ = "outcomes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     decision_id: Mapped[int] = mapped_column(ForeignKey("decisions.id"), nullable=False)
     price_1h: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    price_1h_at: Mapped[datetime | None] = mapped_column(nullable=True)
     price_1session: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    price_1session_at: Mapped[datetime | None] = mapped_column(nullable=True)
     price_5sessions: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    price_5sessions_at: Mapped[datetime | None] = mapped_column(nullable=True)
     best_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    best_price_at: Mapped[datetime | None] = mapped_column(nullable=True)
     worst_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    worst_price_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class EquitySnapshot(Base):

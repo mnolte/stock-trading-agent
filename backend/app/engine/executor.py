@@ -1145,7 +1145,7 @@ class Executor:
         position.realized_pnl_adjusted = adjusted
         position.exit_reason = exit_reason
         position.closed_at = _naive_utc(self.clock.now())
-        position.qty = 0
+        # Keep qty at the closed size: Performance shows the shares traded.
         position.deferred_exit = None
         report.mismatches.append(f"{position.symbol}: closed at broker")
         self._record_day_trade(session, position, self.clock.now())

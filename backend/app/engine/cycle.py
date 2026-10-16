@@ -25,6 +25,7 @@ from app.db.models import Cycle, Earning, Position
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.engine.executor import Executor
+from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
@@ -61,6 +62,7 @@ class CycleRunner:
         config: AppConfig,
         clock: Clock,
         executor: Executor | None = None,
+        outcomes: OutcomeWorker | None = None,
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
         on_settings_promoted: Callable[[], None] | None = None,
@@ -73,6 +75,7 @@ class CycleRunner:
         self.config = config
         self.clock = clock
         self.executor = executor
+        self.outcomes = outcomes
         self._session_factory = session_factory or get_session_maker()
         self._notify = notify or (lambda topics: None)
         # Reschedules cron jobs when promoted settings move cycle times.
@@ -238,6 +241,20 @@ class CycleRunner:
             except Exception as exc:  # noqa: BLE001
                 report.status = "error"
                 report.errors.append(str(exc))
+
+            # Post-decision outcomes and the equity snapshot are part of
+            # every cycle, whatever the decision stage produced.
+            if self.outcomes is not None:
+                self.outcomes.fill(session, self.clock.now())
+                account = (
+                    self.executor.state.account
+                    if self.executor is not None
+                    else None
+                )
+                if account is not None:
+                    self.outcomes.write_equity_snapshot(
+                        session, equity=account.equity, cash=account.cash
+                    )
 
             cycle.status = report.status
             cycle.finished_at = _naive_utc(self.clock.now())
@@ -478,7 +495,7 @@ class CycleRunner:
             )
             report.decisions.append(decision.id)
         session.commit()
-        self._notify({"decisions", "watchlist", "header", "banners"})
+        self._notify({"decisions", "watchlist", "header", "banners", "performance"})
 
     async def run_due(self) -> CycleReport | None:
         """Catch-up: run today's latest due cycle once, if it has not run.

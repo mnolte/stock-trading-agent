@@ -30,6 +30,7 @@ from app.db.models import (
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor
+from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
     NY_TZ,
@@ -128,6 +129,11 @@ def session_state(request: Request) -> dict[str, object]:
         "cycles_today": cycles_today,
         "calendar_loaded": _calendar_loaded(request),
     }
+
+
+def _iso(dt: datetime | None) -> str | None:
+    """Naive stored UTC → ISO with offset."""
+    return dt.replace(tzinfo=UTC).isoformat() if dt is not None else None
 
 
 def _fmt_money(value: Decimal | None) -> str | None:
@@ -379,20 +385,25 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "outcome": (
             {
                 "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
+                "price_1h_at": _iso(outcome.price_1h_at),
                 "price_1session": (
                     str(outcome.price_1session) if outcome.price_1session else None
                 ),
+                "price_1session_at": _iso(outcome.price_1session_at),
                 "price_5sessions": (
                     str(outcome.price_5sessions)
                     if outcome.price_5sessions
                     else None
                 ),
+                "price_5sessions_at": _iso(outcome.price_5sessions_at),
                 "best_price": (
                     str(outcome.best_price) if outcome.best_price else None
                 ),
+                "best_price_at": _iso(outcome.best_price_at),
                 "worst_price": (
                     str(outcome.worst_price) if outcome.worst_price else None
                 ),
+                "worst_price_at": _iso(outcome.worst_price_at),
             }
             if outcome is not None
             else None
@@ -1503,6 +1514,36 @@ def list_runs(request: Request) -> dict[str, object]:
             for row in rows
         ]
     }
+
+
+@router.get("/performance")
+def performance(request: Request, run: int | None = None) -> dict[str, object]:
+    """Performance screen: equity vs SPY, outcomes, closed trades.
+
+    ``run`` selects an earlier run; the default is the current one.
+    """
+    config = get_config()
+    clock = _clock(request)
+    market_data = getattr(request.app.state, "market_data", None)
+    state = getattr(request.app.state, "exec_state", None)
+    live_equity = (
+        state.account.equity
+        if state is not None and state.account is not None
+        else None
+    )
+    with get_session_maker()() as session:
+        payload = compute_performance(
+            session,
+            config=config,
+            market_data=market_data,
+            calendar=_calendar(request),
+            clock=clock,
+            live_equity=live_equity if run is None else None,
+            run_id=run,
+        )
+    if payload.get("empty") and run is not None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return payload
 
 
 # ----------------------------------------------------------------------
