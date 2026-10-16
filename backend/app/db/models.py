@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, Money
@@ -92,6 +92,12 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     alpaca_order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # Orders carry our client id from before submit, so a timed-out write can
+    # still be found by reconciliation instead of resent.
+    client_order_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
     parent_alpaca_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     decision_id: Mapped[int | None] = mapped_column(ForeignKey("decisions.id"), nullable=True)
     side: Mapped[str] = mapped_column(String(8), nullable=False)
@@ -126,11 +132,19 @@ class Position(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # agent = opened by a stored decision; adopted = found at the broker and
+    # acknowledged later. Adopted P&L is reported apart from agent trades.
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="agent")
+    # Adopted positions get no model calls and no exits until acknowledged.
+    pending_ack: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     entry_decision_id: Mapped[int | None] = mapped_column(ForeignKey("decisions.id"), nullable=True)
     qty: Mapped[int] = mapped_column(nullable=False)
     avg_entry_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
     current_stop_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     target_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # A same-day exit decision deferred by the day-trade rule: {at, reason}.
+    # Shown on the position and included in the next session's first snapshot.
+    deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
@@ -223,3 +237,5 @@ class Event(Base):
     level: Mapped[str] = mapped_column(String(16), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     details: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    # Blocking events (reconciliation mismatches) hold new entries until set.
+    acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)

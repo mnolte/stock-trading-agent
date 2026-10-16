@@ -2,16 +2,14 @@
 
 Steps per spec: pre-checks → update data → compute indicators and the stored
 snapshot → rules pre-filter → one model call per candidate or held symbol →
-validate → store the decision record. Risk gates, sizing and order placement
-land in PR 5; reconciliation against the broker lands with it. What remains
-here is everything the spec needs so simulated cycles produce stored
-decisions.
+validate → risk gates → size and place orders → store the decision record.
+Reconciliation against the broker runs at the start of every cycle.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,9 +20,10 @@ from app.data.factory import DataSources
 from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Position
+from app.db.models import Cycle, Earning, Position
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
+from app.engine.executor import Executor
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
@@ -60,6 +59,7 @@ class CycleRunner:
         calendar: CalendarProvider,
         config: AppConfig,
         clock: Clock,
+        executor: Executor | None = None,
         session_factory: sessionmaker[Session] | None = None,
     ) -> None:
         self.market_data = market_data
@@ -69,6 +69,7 @@ class CycleRunner:
         self.calendar = calendar
         self.config = config
         self.clock = clock
+        self.executor = executor
         self._session_factory = session_factory or get_session_maker()
 
     # ------------------------------------------------------------------
@@ -145,6 +146,70 @@ class CycleRunner:
         return quotes, news
 
     # ------------------------------------------------------------------
+    # earnings exits
+
+    def _is_last_cycle(self, now: datetime) -> bool:
+        """True when ``now`` is at/past the session's last active cycle."""
+        today = now.astimezone(NY_TZ).date()
+        session = self.calendar.session_for(today)
+        if session is None:
+            return False
+        cycles = SessionClock(self.clock, self.config, self.calendar).active_cycles(
+            session
+        )
+        if not cycles:
+            return True
+        return now.astimezone(NY_TZ) >= cycles[-1]
+
+    def _earnings_map(
+        self, session: Session, symbols: list[str], now: datetime
+    ) -> dict[str, tuple[date, str]]:
+        """Next earnings (date, time_of_day) per symbol, today or later."""
+        today = now.astimezone(NY_TZ).date()
+        rows = session.execute(
+            select(Earning.symbol, Earning.date, Earning.time_of_day)
+            .where(
+                Earning.symbol.in_(symbols),
+                Earning.date >= datetime.combine(today, datetime.min.time()),
+            )
+            .order_by(Earning.date)
+        ).all()
+        result: dict[str, tuple[date, str]] = {}
+        for symbol, day, tod in rows:
+            result.setdefault(symbol, (day.date(), tod))
+        return result
+
+    def _earnings_exit_due(
+        self,
+        position: Position,
+        earnings: dict[str, tuple[date, str]],
+        now: datetime,
+        last_cycle: bool,
+    ) -> bool:
+        """Held symbol reports before the next session's close → exit in the
+        last cycle the day before. Unknown time of day counts as before open."""
+        if not last_cycle:
+            return False
+        if self.config.get("risk", "hold_through_earnings", default=False):
+            return False
+        info = earnings.get(position.symbol)
+        if info is None:
+            return False
+        event_date, time_of_day = info
+        today = now.astimezone(NY_TZ).date()
+        # A report after today's close still counts as "before the next
+        # session's close": sell in this last cycle so the position is never
+        # held through the release.
+        if event_date == today:
+            return time_of_day == "after_close"
+        next_day = self.calendar.next_trading_day(today)
+        if next_day is None or event_date != next_day.date:
+            return False
+        # Reports at next close (after_close) are handled at that session's
+        # last cycle, not today's; an unknown time counts as before open.
+        return time_of_day != "after_close"
+
+    # ------------------------------------------------------------------
     # the cycle
 
     async def run(self, scheduled_ny: datetime) -> CycleReport:
@@ -173,7 +238,32 @@ class CycleRunner:
             cycle.errors = report.errors or None
             cycle.data_source_health = report.data_source_health or None
             session.commit()
+        await self._count_cycle_outcome(report)
         return report
+
+    async def _count_cycle_outcome(self, report: CycleReport) -> None:
+        """Three failed cycles in a row turn the kill switch on."""
+        if self.executor is None:
+            return
+        state = self.executor.state
+        if report.status == "error":
+            state.failed_cycles += 1
+            kill_after = int(
+                self.config.get("risk", "failed_cycles_kill", default=3)
+            )
+            if (
+                state.failed_cycles >= kill_after
+                and not state.kill_switch_on
+            ):
+                await self.executor.activate_kill_switch(
+                    reason=(
+                        f"{state.failed_cycles} cycles failed in a row: "
+                        f"{report.errors[0] if report.errors else 'unknown'}"
+                    ),
+                    automatic=True,
+                )
+        elif report.status == "done":
+            state.failed_cycles = 0
 
     async def _run(
         self,
@@ -183,8 +273,8 @@ class CycleRunner:
         now: datetime,
         report: CycleReport,
     ) -> None:
-        # Pre-checks: calendar loaded, market open. Kill-switch and
-        # reconciliation checks arrive with the broker in PR 5.
+        # Pre-checks: calendar loaded, market open, then reconcile with the
+        # broker. A failed reconciliation blocks entries through the gates.
         if not getattr(self.calendar, "is_loaded", True):
             report.status = "skipped"
             report.errors.append("trading calendar unavailable")
@@ -193,6 +283,18 @@ class CycleRunner:
             report.status = "skipped"
             report.errors.append("market not open")
             return
+
+        account = None
+        if self.executor is not None:
+            self.executor.begin_cycle()
+            rec = await self.executor.reconcile()
+            report.data_source_health["broker"] = (
+                "ok" if rec.ok else f"failed: {'; '.join(rec.errors)}"
+            )
+            account = await self.executor.refresh_account()
+            if account is None:
+                report.data_source_health["account"] = "error"
+            await self.executor.update_session_brakes()
 
         symbols = self.market_data.universe()
         quotes, news = await self._update_data(symbols, now, report)
@@ -205,18 +307,32 @@ class CycleRunner:
             ).scalars()
         }
 
-        # Held positions are always reviewed; candidates passed the rules.
-        # Held symbols come first so they take call slots before candidates
-        # when the per-cycle cap binds.
+        # Held positions are always reviewed — except adopted/mismatched
+        # ones awaiting acknowledgment, which get no model call and no
+        # exits. Candidates passed the rules. Held symbols come first so
+        # they take call slots before candidates when the cap binds.
         reviews = [
             item
             for item in evaluation.items
             if item.rules.status == STATUS_HELD
+            and not (
+                positions.get(item.symbol) is not None
+                and positions[item.symbol].pending_ack
+            )
         ] + [
             item
             for item in evaluation.items
             if item.rules.status == STATUS_PASS
         ]
+
+        earnings = self._earnings_map(
+            session, [item.symbol for item in reviews], now
+        )
+        last_cycle = self._is_last_cycle(now)
+        earnings_known = (
+            self.market_data.latest_earnings is None
+            or self.market_data.latest_earnings.error is None
+        )
 
         # Symbols the rules reject still get a stored decision — "no_call"
         # with reason "rules" — so the inspector shows why they were skipped.
@@ -293,6 +409,28 @@ class CycleRunner:
                     current_stop=(
                         position.current_stop_price if position else None
                     ),
+                )
+            if self.executor is not None:
+                force_exit = (
+                    "earnings_exit"
+                    if (
+                        position is not None
+                        and self._earnings_exit_due(
+                            position, earnings, now, last_cycle
+                        )
+                    )
+                    else None
+                )
+                await self.executor.apply_decision(
+                    session,
+                    decision,
+                    item,
+                    position,
+                    quote,
+                    scheduled_ny,
+                    account=account,
+                    earnings_known=earnings_known,
+                    force_exit_reason=force_exit,
                 )
             session.commit()
             report.decisions.append(decision.id)

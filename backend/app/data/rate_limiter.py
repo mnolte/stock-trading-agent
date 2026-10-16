@@ -44,13 +44,16 @@ class RateLimiter:
         self._calls.append(time.monotonic())
 
     @asynccontextmanager
-    async def read_call(self) -> AsyncIterator[None]:
+    async def call_slot(self) -> AsyncIterator[None]:
         async with self._lock:
             await self._acquire()
         try:
             yield
         finally:
             pass
+
+    # Backwards-compatible alias used by the data client.
+    read_call = call_slot
 
     async def run_read(
         self,
@@ -61,7 +64,7 @@ class RateLimiter:
         """Run a synchronous SDK read call under the rate limit, retrying on failure."""
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
-            async with self.read_call():
+            async with self.call_slot():
                 try:
                     return await asyncio.to_thread(fn, *args, **kwargs)
                 except Exception as exc:  # noqa: BLE001
@@ -71,3 +74,15 @@ class RateLimiter:
                     delay = self.config.backoff_base_seconds * (2**attempt)
                     await asyncio.sleep(delay)
         raise last_error or RuntimeError("rate limiter exhausted retries")
+
+    async def run_write(
+        self,
+        fn: Callable[..., T],
+        *args: object,
+        **kwargs: object,
+    ) -> T:
+        """Run one order call under the rate limit. Never retried: after a
+        timeout or error, reconciliation decides what happened (spec: an
+        order is never resent automatically)."""
+        async with self.call_slot():
+            return await asyncio.to_thread(fn, *args, **kwargs)

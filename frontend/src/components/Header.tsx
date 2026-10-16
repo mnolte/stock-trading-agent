@@ -32,7 +32,13 @@ function formatCycle(iso: string | null) {
   return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`;
 }
 
-export function Header({ state }: { state: HeaderState | null }) {
+export function Header({
+  state,
+  onKillSwitch,
+}: {
+  state: HeaderState | null;
+  onKillSwitch: () => void;
+}) {
   const next = state?.session.next_cycle ?? null;
   const nextLabel = next ? ` · next cycle ${formatCycle(next)}` : '';
 
@@ -204,7 +210,8 @@ export function Header({ state }: { state: HeaderState | null }) {
 
         <button
           type="button"
-          title="Stop new entries, or stop and sell everything"
+          onClick={onKillSwitch}
+          title={state?.kill_switch ? 'Resume trading' : 'Stop new entries, or stop and sell everything'}
           style={{
             height: 'var(--sa-control-height)',
             padding: '0 var(--sa-space-4)',
@@ -226,7 +233,7 @@ export function Header({ state }: { state: HeaderState | null }) {
             <line x1="12" y1="7" x2="12" y2="13" />
             <line x1="12" y1="17" x2="12" y2="17" />
           </svg>
-          <span>Kill switch</span>
+          <span>{state?.kill_switch ? 'Trading halted' : 'Kill switch'}</span>
         </button>
       </div>
     </header>

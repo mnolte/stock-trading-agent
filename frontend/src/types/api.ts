@@ -2,16 +2,17 @@ export interface SessionState {
   state: string;
   display_time: string;
   next_cycle: string | null;
+  calendar_loaded?: boolean;
 }
 
 export interface HeaderState {
   paper: boolean;
   mode: string;
   session: SessionState;
-  equity_usd: string;
-  equity_eur: string;
-  today_usd: string;
-  today_eur: string;
+  equity_usd: string | null;
+  equity_eur: string | null;
+  today_usd: string | null;
+  today_eur: string | null;
   regime: string;
   kill_switch: boolean;
 }
@@ -112,6 +113,75 @@ export interface DecisionOutcome {
   price_5sessions: string | null;
   best_price: string | null;
   worst_price: string | null;
+}
+
+export interface BannerItem {
+  id: number | null;
+  kind: string;
+  level: string;
+  message: string;
+  details?: Record<string, unknown> | null;
+  time?: string | null;
+  position_id?: number | null;
+  automatic?: boolean;
+  reason?: string | null;
+  since?: string | null;
+  actions: string[];
+}
+
+export interface BannersResponse {
+  items: BannerItem[];
+}
+
+export interface PositionRow {
+  id: number;
+  symbol: string;
+  qty: number;
+  avg_entry_price: string;
+  market_value: string | null;
+  current_stop_price: string | null;
+  target_price: string | null;
+  origin: string;
+  pending_ack: boolean;
+  deferred_exit: { at: string; reason: string; detail?: string } | null;
+  opened_at: string;
+  closed_at: string | null;
+  realized_pnl_raw: string | null;
+  exit_reason: string | null;
+}
+
+export interface PositionsResponse {
+  open: PositionRow[];
+  closed_today: PositionRow[];
+  day_trades_5d: number;
+}
+
+export interface OrderRow {
+  id: number;
+  alpaca_order_id: string;
+  client_order_id: string | null;
+  symbol: string;
+  leg: string;
+  side: string;
+  type: string;
+  qty: number;
+  limit_price: string | null;
+  stop_price: string | null;
+  status: string;
+  created_at: string;
+  filled_at: string | null;
+}
+
+export interface OrdersResponse {
+  orders: OrderRow[];
+}
+
+export interface KillSwitchResponse {
+  kill_switch: boolean;
+  sold?: string[];
+  cancelled_orders?: number;
+  market_on_open?: boolean;
+  errors?: string[];
 }
 
 export interface DecisionDetail {

@@ -42,3 +42,6 @@ smoke-data:
 
 smoke-decision:
 	cd backend && ../$(PYTHON) -m app.smoke_decision $(SYMBOL)
+
+smoke-execution:
+	cd backend && ../$(PYTHON) -m app.smoke_execution
