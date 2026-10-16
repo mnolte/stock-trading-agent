@@ -173,11 +173,11 @@ export default function Settings() {
             </button>
           ))}
         </div>
-        {s.execution.mode === 'supervised' && (
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            Every entry waits for your approval on the Dashboard. Exits, stops and the kill switch never wait.
-          </div>
-        )}
+        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          {s.execution.mode === 'supervised'
+            ? 'Every entry waits for your approval on the Dashboard. An approval expires at the next cycle and is checked again when you approve. Exits, stops and targets keep working without approval.'
+            : 'Orders that pass every check and gate are sent to Alpaca straight away. You can still use the kill switch at any time.'}
+        </div>
       </Card>
 
       <Card label="Universe" right={`${s.universe.symbols.length} symbols · long only`}>
@@ -254,7 +254,7 @@ export default function Settings() {
           </Button>
         </div>
         <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-          A new symbol is checked at Alpaca (active, tradable, US stock or ETF) when you save, then shows “Warming up” until its history loads.
+          US stocks and ETFs tradable at Alpaca. A symbol you hold can't be removed until it is closed.
         </div>
       </Card>
 

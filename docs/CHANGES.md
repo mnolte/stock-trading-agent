@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-10-16 — PR 6 completion
+
+- Header session pill shows the next position check alongside the next cycle (`next_check` on `/api/session` and `/api/header`, plus `cycles_today` on the header for the early-close tail). Position checks come from `schedule.position_checks` in config; checks after the session close do not run.
+- EUR figure shows "EUR unavailable" when the ECB rate is missing, instead of a bare euro symbol. Today is green or red by its sign.
+- Decision feed distinguishes RULES (pre-filter hold) from NO CALL (`call_cap`, `quote_missing`, `model_error`); open positions show an "exit deferred" marker on the dashboard.
+- Session pill wording follows the design: "stops stay active" after the last cycle, weekday in "opens Fri 15:30", "closes 19:00 · 3 cycles today" on early-close days.
+- PR screenshots now live in `docs/screenshots/pr-6/`; earlier shots were wrongly kept under `design/screenshots/`.
+
 ## 2026-10-16 — Answers to PR 6 questions
 
 - Reset paper account: two steps. The button turns the kill switch on, closes positions, cancels orders and records `paper_reset`; Marc resets the balance in the Alpaca dashboard; "Start new run" checks no positions/orders and equity = `performance.starting_equity` ±1%, then starts a new run (`runs` table) that restarts the SPY benchmark, drawdown peak, losing streak and daily loss baseline. Resume via the normal kill-switch resume.

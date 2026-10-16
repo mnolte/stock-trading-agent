@@ -14,6 +14,7 @@ import type {
   ChartResponse,
   DashboardFeedItem,
   DashboardResponse,
+  MarketClosedCard,
   PositionsResponse,
   WatchlistResponse,
 } from '../types/api';
@@ -24,31 +25,8 @@ import { PriceChart } from '../components/PriceChart';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
-import { displayTime } from '../format';
-
-const FEED_CHIP: Record<string, { label: string; variant: 'positive' | 'warning' | 'negative' | 'info' | 'neutral' }> = {
-  enter: { label: 'ENTER', variant: 'positive' },
-  skip: { label: 'SKIP', variant: 'warning' },
-  hold: { label: 'HOLD', variant: 'neutral' },
-  blocked: { label: 'BLOCKED', variant: 'negative' },
-  exit: { label: 'EXIT', variant: 'negative' },
-  tighten_stop: { label: 'TIGHTEN STOP', variant: 'info' },
-  no_call: { label: 'RULES', variant: 'neutral' },
-  deferred: { label: 'DEFERRED', variant: 'warning' },
-};
-
-function feedChip(item: DashboardFeedItem) {
-  const key = item.action === 'no_call' ? 'no_call' : item.action;
-  return FEED_CHIP[key] ?? { label: item.action.toUpperCase().replace(/_/g, ' '), variant: 'neutral' as const };
-}
-
-function feedText(item: DashboardFeedItem): string {
-  if (item.action === 'no_call') {
-    return `${item.symbol} held by pre-filter`;
-  }
-  const reason = item.reason ?? item.no_call_reason ?? '';
-  return `${item.symbol}${reason ? ` · ${reason}` : ''}`;
-}
+import { displayFullDate, displayTime, nyTime } from '../format';
+import { actionChip, feedText } from './dashboardFeed';
 
 function Feed({ items }: { items: DashboardFeedItem[] }) {
   // Group by cycle time like the design's "Today's decisions".
@@ -91,7 +69,7 @@ function Feed({ items }: { items: DashboardFeedItem[] }) {
           </span>
           <span style={{ display: 'flex', flexWrap: 'wrap', gap: '6px var(--sa-space-3)' }}>
             {rows.map((row) => {
-              const chip = feedChip(row);
+              const chip = actionChip(row.action, row.no_call_reason);
               return (
                 <Link
                   key={row.id}
@@ -121,7 +99,7 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
       </Card>
     );
   }
-  const chip = FEED_CHIP[d.final_action] ?? FEED_CHIP.no_call;
+  const chip = actionChip(d.final_action, d.no_call_reason);
   return (
     <Card
       label="Latest decision"
@@ -188,6 +166,11 @@ function OpenPositionsMini({ positions }: { positions: PositionsResponse | null 
                     {p.opened_today && (
                       <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}> · today</span>
                     )}
+                    {p.deferred_exit && (
+                      <span style={{ marginLeft: 'var(--sa-space-2)' }}>
+                        <Chip variant="warning">exit deferred</Chip>
+                      </span>
+                    )}
                   </td>
                   {[
                     String(p.qty),
@@ -225,20 +208,42 @@ function OpenPositionsMini({ positions }: { positions: PositionsResponse | null 
   );
 }
 
-function MarketClosed({ dashboard }: { dashboard: DashboardResponse }) {
-  const mc = dashboard.market_closed;
-  if (!mc) return null;
+export function MarketClosed({ mc }: { mc: MarketClosedCard }) {
   return (
-    <Card label="Market closed">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', fontSize: 'var(--sa-text-md)' }}>
-        {mc.next_open && <span>Opens {displayTime(mc.next_open)}</span>}
-        {mc.first_cycle && <span>First cycle {displayTime(mc.first_cycle)}</span>}
-        {mc.stops.map((s) => (
-          <span key={s.symbol} style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
-            {s.symbol} stop {s.stop}
-          </span>
-        ))}
-        <span style={{ color: 'var(--sa-text-muted)' }}>today: {mc.today_summary}</span>
+    <Card>
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          gap: 'var(--sa-space-3)',
+          maxWidth: '760px',
+        }}
+      >
+        <span style={{ color: 'var(--sa-text-muted)' }}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="12 7 12 12 15 14" />
+          </svg>
+        </span>
+        <h3 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>Market closed</h3>
+        <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+          {mc.next_open
+            ? `The next session opens ${displayFullDate(mc.next_open)} at ${displayTime(mc.next_open)} Amsterdam (${nyTime(mc.next_open)} New York). `
+            : 'The next session is not on the calendar yet. '}
+          {mc.first_cycle && `The first cycle runs at ${displayTime(mc.first_cycle)}. `}
+          {mc.open_count > 0
+            ? `All ${mc.open_count} position${mc.open_count === 1 ? ' is' : 's are'} protected by stops at Alpaca overnight; a stop only triggers once trading opens.`
+            : 'No open positions.'}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
+          {mc.stops.map((s) => (
+            <Chip key={s.symbol} variant="neutral">
+              {s.symbol} stop {s.stop}
+            </Chip>
+          ))}
+          {mc.today_summary && <Chip variant="info">today: {mc.today_summary}</Chip>}
+        </div>
       </div>
     </Card>
   );
@@ -372,7 +377,7 @@ export default function Dashboard() {
       </div>
 
       {dashboard?.market_closed ? (
-        <MarketClosed dashboard={dashboard} />
+        <MarketClosed mc={dashboard.market_closed} />
       ) : (
         <div
           style={{
