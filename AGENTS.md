@@ -23,10 +23,10 @@ Run before every commit:
 
 ```bash
 make lint        # ruff + mypy (backend), pnpm lint + pnpm typecheck (frontend)
-make test        # pytest with sockets blocked, vitest
+make test        # pytest with sockets blocked, vitest, playwright e2e when browsers are installed
 ```
 
-`make run` starts backend and GUI; `MODE=simulated make run` runs without network.
+`make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
 
 ## Hard rules
 

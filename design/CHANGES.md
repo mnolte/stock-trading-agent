@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-17 — Paused at startup
+
+- Header (every screen): Pause button left of Kill switch; it becomes an amber Resume button while paused.
+- States: new "Paused" session state with the Resume button, and a blue "Started paused" banner shown after every start until Resume.
+- All screenshots re-rendered.
+
 ## 2026-10-17 — Decision card and drawer like Trading Agent
 
 - Dashboard: the Latest decision card adds a market-regime chip and an earnings chip, and always shows a three-line summary box (skip: failed check and proposed stop/target; held: position, stop/target, when an agent exit is allowed; no model call: the pre-filter reason). Button renamed "Open full decision".

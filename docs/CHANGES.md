@@ -2,10 +2,10 @@
 
 Newest first.
 
-## 2026-10-17 — Makefile like Trading Agent
+## 2026-10-17 — Paused at startup
 
-- Commands: `make dev` is now the two-server mode (uvicorn --reload + Vite dev server, Ctrl-C stops both). `make run` builds the GUI once and serves everything from the backend on 127.0.0.1:SA_PORT; the FastAPI app mounts `frontend/dist` with an index.html fallback for client-side routes.
-- `make test` splits into `test-backend`, `test-frontend` and `test-e2e` (Playwright skipped when browsers are not installed).
+- Risk management: new "Paused at startup" paragraph. The agent always starts with new entries paused; reconciliation, position checks, broker-side stops, earnings exits, outcome tracking and reviews of held positions keep running. Resume is one click in the header (no reason). Pause and the kill switch are separate states; both are stored, and a kill switch that was on stays on after a restart.
+- GUI header: Pause/Resume button next to the kill switch. README: quick start says the agent starts paused.
 
 ## 2026-10-17 — Decision card and drawer like Trading Agent
 

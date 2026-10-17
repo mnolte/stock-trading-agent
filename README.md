@@ -26,14 +26,14 @@ A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca
 cp .env.example .env            # fill in the keys
 cp backend/config.example.yaml backend/config.yaml
 make install
-make dev                         # backend on 127.0.0.1:SA_PORT, GUI on 127.0.0.1:5173
+make run                         # builds the GUI, serves everything on 127.0.0.1:SA_PORT
 ```
 
-Open the GUI and check the header says PAPER. The agent runs its first cycle at 10:46 New York time (16:46 in Amsterdam most of the year).
+The agent starts **paused**: it reconciles with Alpaca and watches open positions, but places no new entries. Open the GUI, check the header says PAPER, then press Resume. The first cycle runs at 10:46 New York time (16:46 in Amsterdam most of the year).
 
-`make run` instead builds the GUI once and serves everything from the backend on 127.0.0.1:SA_PORT.
+For development, `make dev` runs the backend with auto-reload on 127.0.0.1:SA_PORT and the Vite dev server on 127.0.0.1:5173; Ctrl-C stops both.
 
-Without keys, run `MODE=simulated make run`: recorded bars and a fake broker, no network.
+Without keys, run `MODE=simulated make run` (or `make dev`): recorded bars and a fake broker, no network.
 
 Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the first run.
 
