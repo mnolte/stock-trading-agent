@@ -23,6 +23,7 @@
 | 6 | GUI | GUI | `Main`, `Decision`, `Positions`, `Settings`, `States` |
 | 7 | Performance and outcomes | Decision layer (outcome tracking); Alpaca integration (paper realism) | `Performance` |
 | 8 | Hardening | Risk management (errors); Data model (backups) | `States` (error states) |
+| 9 | Reviews | Reviews; Data model | `Reviews`, verdict in `Decision` |
 
 ## PR description template
 

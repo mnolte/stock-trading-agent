@@ -459,6 +459,7 @@ export default function Dashboard() {
               key={a.id}
               approval={a}
               killSwitchOn={approvals.kill_switch_on}
+              paused={approvals.paused}
               onResolved={() => {
                 refreshApprovals();
                 refreshDashboard();

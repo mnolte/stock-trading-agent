@@ -248,3 +248,59 @@ def test_load_state_restores_consecutive_check_errors(
 
     assert state.failed_checks == 2
     assert state.failed_cycles == 1
+
+
+def test_restart_always_pauses_and_keeps_kill_switch(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Paused at startup: a kill switch that was on stays on after a
+    restart, and startup always comes up paused — even when trading was
+    running (never paused) before the restart."""
+    from app.engine.state import record_event
+
+    with session_factory() as session:
+        record_event(
+            session,
+            clock,
+            level="warning",
+            event_type="kill_switch",
+            details={"on": True, "reason": "testing", "automatic": False},
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.kill_switch_on
+    assert state.paused
+    assert state.paused_at_startup
+    assert state.paused_since is not None
+
+
+def test_restart_after_resume_is_paused_again(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A pause resumed before shutdown still comes back paused."""
+    from app.engine.state import record_event
+
+    with session_factory() as session:
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type="pause",
+            details={"on": True, "reason": "startup"},
+        )
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type="pause",
+            details={"on": False, "reason": "manual"},
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert not state.kill_switch_on
+    assert state.paused
+    assert state.paused_at_startup

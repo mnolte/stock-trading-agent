@@ -47,6 +47,7 @@ class GateContext:
     days_to_earnings: int | None  # None = no known earnings ahead
     earnings_known: bool  # False = the earnings source is down
     kill_switch_on: bool
+    paused: bool  # new entries paused (startup pause or header Pause)
     pending_ack: bool  # unacknowledged reconciliation/adoption blockers
     orders_this_cycle: int  # orders already submitted in this cycle
 
@@ -111,6 +112,11 @@ def evaluate_entry_gates(
     if ctx.kill_switch_on:
         return block("kill_switch", "kill switch is on; no new entries")
     ok("kill_switch", "off")
+    if ctx.paused:
+        return block(
+            "paused", "new entries are paused; press Resume in the header"
+        )
+    ok("paused", "entries active")
     if ctx.pending_ack:
         return block(
             "reconciliation",

@@ -10,6 +10,7 @@ A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca
 - Runs six decision cycles per US session (10:46 to 15:46 New York time) on 1-hour bars.
 - A rules pre-filter picks candidates; the model chooses enter or skip (or hold, tighten stop, exit for open positions); risk gates size and block trades.
 - Every entry is a bracket order at Alpaca with a broker-side stop, so positions stay protected when the app is down.
+- Checks positions every 15 minutes between cycles: every position has a stop, the safety brakes are up to date.
 - Records every decision, including skips, and what the price did afterwards.
 - Compares its results with simply holding SPY.
 
@@ -37,6 +38,8 @@ Without keys, run `MODE=simulated make run` (or `make dev`): recorded bars and a
 
 Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the first run.
 
+Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily at 03:00 Amsterdam time to `data/backups/` (14 days). On a VPS, run the app with `TZ=Europe/Amsterdam` so log rotation follows Amsterdam time.
+
 ## Configuration
 
 | Where | What |
@@ -57,9 +60,9 @@ Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the fir
 ## Safety
 
 - Paper endpoint only; the live URL does not exist in the code.
-- A stop order at Alpaca on every position, checked every cycle.
+- A stop order at Alpaca on every position, checked every cycle and every 15 minutes.
+- Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
 - Daily loss limit, drawdown kill switch, PDT guard, earnings blackout.
-- Kill switch and "Stop & flatten" in the header.
 - Keys stay in `.env`; they are never logged or sent to the GUI.
 
 ## Build plan
@@ -73,4 +76,4 @@ Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the fir
 7. Performance and outcomes
 8. Hardening
 
-Details per step are in `docs/SPEC.md` → Build plan.
+All eight steps are built. Next is the 4-week run on the paper account. Details per step are in `docs/SPEC.md` → Build plan.

@@ -222,6 +222,47 @@ class Executor:
             session.commit()
         self._notify({"banners", "header", "approvals"})
 
+    async def pause(self) -> None:
+        """Pause new entries (docs/SPEC.md, Paused at startup).
+
+        Positions keep being reviewed and their stops stay in place; only
+        entries are blocked. Manual pauses clear the startup flag, so the
+        blue "Started paused" banner only ever marks a fresh start.
+        """
+        if self.state.paused:
+            return
+        self.state.paused = True
+        self.state.paused_at_startup = False
+        self.state.paused_since = self.clock.now()
+        with self._session_factory() as session:
+            record_event(
+                session,
+                self.clock,
+                level="info",
+                event_type="pause",
+                details={"on": True, "reason": "manual"},
+            )
+            session.commit()
+        self._notify({"banners", "header"})
+
+    async def resume_from_pause(self) -> None:
+        """Resume entries after a pause: one click, no reason needed."""
+        if not self.state.paused:
+            return
+        self.state.paused = False
+        self.state.paused_at_startup = False
+        self.state.paused_since = None
+        with self._session_factory() as session:
+            record_event(
+                session,
+                self.clock,
+                level="info",
+                event_type="pause",
+                details={"on": False, "reason": "manual"},
+            )
+            session.commit()
+        self._notify({"banners", "header", "approvals"})
+
     async def resume(self, reason: str) -> None:
         """Resume after a kill switch. The typed reason is stored."""
         if not reason.strip():
@@ -430,6 +471,8 @@ class Executor:
             approval = session.get(Approval, approval_id)
             if approval is None or approval.status != "pending":
                 return {"ok": False, "error": "approval is not pending"}
+            if self.state.paused:
+                return {"ok": False, "error": "new entries are paused"}
             decision = session.get(Decision, approval.decision_id)
 
             quotes = await self.market_data.sources.quotes.fetch_quotes(
@@ -1410,6 +1453,7 @@ class Executor:
             days_to_earnings=days_to_earnings,
             earnings_known=earnings_known,
             kill_switch_on=self.state.kill_switch_on,
+            paused=self.state.paused,
             pending_ack=self.state.pending_ack(session) or self._reconcile_failed,
             orders_this_cycle=self._orders_this_cycle,
         )

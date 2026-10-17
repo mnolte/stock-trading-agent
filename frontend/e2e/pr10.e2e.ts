@@ -1,0 +1,89 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { expect, test } from '@playwright/test';
+
+// PR screenshots land in docs/screenshots/pr-10/ (design/ stays untouched):
+// the paused-at-startup header state and the "Started paused" banner.
+const outDir =
+  process.env.SCREENSHOT_DIR ??
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../docs/screenshots/pr-10'
+  );
+
+test('paused at startup: banner, paused pill, one-click resume', async ({
+  page,
+}, testInfo) => {
+  const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
+
+  await page.goto('/');
+
+  // The e2e backend is shared across projects: only the first project to
+  // run still finds the app in its startup-paused state.
+  const banners = await page.evaluate(async () => {
+    const res = await fetch('/api/banners');
+    const body = await res.json();
+    return body.items as { kind: string }[];
+  });
+  test.skip(
+    !banners.some((b) => b.kind === 'paused'),
+    'app already resumed by an earlier project'
+  );
+
+  // The app always starts paused: an amber Resume in the header, the
+  // paused session pill and the blue "Started paused" banner.
+  await expect(page.getByRole('button', { name: 'Resume' }).first()).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByText('Started paused', { exact: false })).toBeVisible();
+  await expect(
+    page.getByText('no new entries · stops active', { exact: false })
+  ).toBeVisible();
+  await page.screenshot({
+    path: path.join(outDir, `started-paused-${suffix}.png`),
+    fullPage: true,
+  });
+
+  // Resume is one click, no reason: banner goes, Pause comes back.
+  await page.getByRole('button', { name: 'Resume' }).first().click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await expect(
+    page.getByText('Started paused', { exact: false })
+  ).toHaveCount(0);
+});
+
+test('pause and resume any time, no reason', async ({ page }, testInfo) => {
+  const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
+
+  await page.goto('/');
+
+  // Reach a known unpaused state first (the previous test may have left
+  // the app paused if it ran before the startup-pause test consumed it).
+  const header = await page.evaluate(async () => {
+    const res = await fetch('/api/header');
+    return res.json();
+  });
+  if (header.paused) {
+    await page.getByRole('button', { name: 'Resume' }).first().click();
+  }
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible({
+    timeout: 60_000,
+  });
+
+  // Pause is the same button in reverse — one click, any time. A manual
+  // pause shows the paused pill but no "Started paused" banner.
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await expect(page.getByRole('button', { name: 'Resume' }).first()).toBeVisible();
+  await expect(
+    page.getByText('Started paused', { exact: false })
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: path.join(outDir, `paused-${suffix}.png`),
+    fullPage: true,
+  });
+
+  // Resume again leaves the app running for the next test file.
+  await page.getByRole('button', { name: 'Resume' }).first().click();
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+});

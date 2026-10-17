@@ -29,6 +29,7 @@ def _ctx(**overrides: object) -> GateContext:
         "days_to_earnings": 10,
         "earnings_known": True,
         "kill_switch_on": False,
+        "paused": False,
         "pending_ack": False,
         "orders_this_cycle": 0,
     }
@@ -73,6 +74,19 @@ def test_kill_switch_blocks() -> None:
     result = _run(_ctx(kill_switch_on=True))
     assert not result.allowed
     assert result.blocked_by == "kill_switch"
+
+
+def test_paused_blocks() -> None:
+    result = _run(_ctx(paused=True))
+    assert not result.allowed
+    assert result.blocked_by == "paused"
+
+
+def test_paused_passes_when_resumed() -> None:
+    result = _run(_ctx(paused=False))
+    assert result.allowed
+    check = next(c for c in result.checks if c.name == "paused")
+    assert check.passed
 
 
 def test_pending_reconciliation_blocks() -> None:

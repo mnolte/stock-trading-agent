@@ -51,15 +51,16 @@ test('kill switch flow and positions page', async ({ page }, testInfo) => {
   await expect(page.getByRole('button', { name: 'Trading halted' })).toBeVisible();
   await page.screenshot({ path: path.join(outDir, name('kill-switch-on')), fullPage: true });
 
-  // Resume dialog.
-  await page.getByRole('button', { name: 'Resume' }).first().click();
+  // Resume dialog — the "Trading halted" header button is unambiguous:
+  // the pause feature has its own one-click Resume buttons elsewhere.
+  await page.getByRole('button', { name: 'Trading halted' }).click();
   const resumeDialog = page.getByRole('dialog', { name: 'Resume trading?' });
   await expect(resumeDialog).toBeVisible();
   await page.screenshot({ path: path.join(outDir, name('resume')) });
   await resumeDialog.getByRole('button', { name: 'Cancel' }).click();
 
   // Resume for real so the test leaves the app in a clean state.
-  await page.getByRole('button', { name: 'Resume' }).first().click();
+  await page.getByRole('button', { name: 'Trading halted' }).click();
   await page.getByPlaceholder(/checked the reconciliation/).fill('e2e done');
   await page
     .getByRole('dialog', { name: 'Resume trading?' })

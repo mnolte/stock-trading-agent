@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
+from typing import cast
 
 import pytest
 from app.api.main import check_execution_mode
@@ -10,6 +11,7 @@ from app.db.models import Position
 from app.decide.snapshot import build_input_snapshot
 from app.signals.regime import MarketRegime
 from app.signals.snapshot import IndicatorSnapshot
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.anyio
@@ -111,6 +113,65 @@ def test_kill_switch_api_flow(client: TestClient) -> None:
     ).json()
     assert off["kill_switch"] is False
     assert client.get("/api/header").json()["kill_switch"] is False
+
+
+def test_app_starts_paused_and_resume_needs_no_reason(
+    client: TestClient,
+) -> None:
+    """Paused at startup: header + blue banner; resume is one click."""
+    header = client.get("/api/header").json()
+    assert header["paused"] is True
+    assert header["paused_since"] is not None
+
+    banners = client.get("/api/banners").json()["items"]
+    paused = next(b for b in banners if b["kind"] == "paused")
+    assert paused["level"] == "info"
+    assert "Started paused" in paused["message"]
+    assert paused["actions"] == ["resume_pause"]
+
+    # Resume from pause takes no body and no typed reason.
+    off = client.post("/api/pause/resume", json={}).json()
+    assert off["paused"] is False
+    assert client.get("/api/header").json()["paused"] is False
+    items = client.get("/api/banners").json()["items"]
+    assert not any(b["kind"] == "paused" for b in items)
+
+    # Pause can be used any time — also one click.
+    assert client.post("/api/pause", json={}).json()["paused"] is True
+    assert client.get("/api/header").json()["paused"] is True
+    # A manual pause shows no "Started paused" banner.
+    items = client.get("/api/banners").json()["items"]
+    assert not any(b["kind"] == "paused" for b in items)
+    assert client.post("/api/pause/resume", json={}).json()["paused"] is False
+
+
+def test_paused_banner_claims_reconcile_only_after_a_good_pass(
+    client: TestClient,
+) -> None:
+    """A failed startup reconcile must not produce "Reconciled with Alpaca"."""
+    state = cast(FastAPI, client.app).state.exec_state
+    assert state.last_reconcile_at is not None  # lifespan ran reconcile
+    assert state.last_reconcile_ok is True
+
+    banners = client.get("/api/banners").json()["items"]
+    paused = next(b for b in banners if b["kind"] == "paused")
+    assert "Reconciled with Alpaca" in paused["message"]
+
+    state.last_reconcile_ok = False
+    banners = client.get("/api/banners").json()["items"]
+    paused = next(b for b in banners if b["kind"] == "paused")
+    assert "Started paused" in paused["message"]
+    assert "Reconciled" not in paused["message"]
+
+
+def test_approve_unknown_id_reports_not_pending_while_paused(
+    client: TestClient,
+) -> None:
+    """Paused startup: a bad id gets "not pending", not the pause error."""
+    assert client.get("/api/header").json()["paused"] is True
+    response = client.post("/api/approvals/99999/approve")
+    assert response.status_code == 422
+    assert response.json()["detail"] == "approval is not pending"
 
 
 def test_positions_and_orders_endpoints(client: TestClient) -> None:

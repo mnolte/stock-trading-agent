@@ -38,6 +38,7 @@ from app.engine.position_check import PositionChecker
 from app.engine.state import (
     finalize_interrupted_cycles,
     load_execution_state,
+    record_event,
     recover_interrupted_cycles,
 )
 from app.logging_config import setup_logging
@@ -358,6 +359,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         recovered = recover_interrupted_cycles(session, exec_state, clock)
         if recovered:
             session.commit()
+        # Paused at startup (docs/SPEC.md, Risk management): the state was
+        # set by load_execution_state; log it like every other state change.
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type="pause",
+            details={"on": True, "reason": "startup"},
+        )
+        session.commit()
         # Repeated failures reach the same kill-switch threshold at startup
         # as they do at runtime (docs/SPEC.md, Risk management, Errors). The
         # reason names the newest failure — an interruption or a real error.

@@ -57,6 +57,14 @@ export function postKillSwitchResume(reason: string): Promise<KillSwitchResponse
   return post<KillSwitchResponse>('/api/kill-switch/resume', { reason });
 }
 
+export function postPause(): Promise<{ paused: boolean }> {
+  return post<{ paused: boolean }>('/api/pause', {});
+}
+
+export function postPauseResume(): Promise<{ paused: boolean }> {
+  return post<{ paused: boolean }>('/api/pause/resume', {});
+}
+
 export function postAcknowledgeEvent(id: number): Promise<{ acknowledged: boolean }> {
   return post(`/api/events/${id}/acknowledge`, {});
 }

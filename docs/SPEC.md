@@ -341,13 +341,33 @@ Eight PRs, each reviewable on its own. Paper orders are first sent in PR 5; ever
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* the 4-week paper run can start.
 
+## Reviews
+
+The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
+
+| Feature | When | Content |
+| --- | --- | --- |
+| Weekly review | Saturday 10:00 Amsterdam, covering Monday to Friday | Return, difference with SPY, trades won and lost, average R, max drawdown, model cost, best and worst trades, what skipped setups did after 5 sessions, confirmed verdicts, results by regime and symbol. Model text: a summary of at most 120 words, up to 3 observations and at most 1 suggestion, marked "not applied" |
+| Daily briefing | Trading days, 09:00 New York (15:00 Amsterdam most of the year); can be turned off | Open positions with stop distance, earnings today or tomorrow for held and watched symbols, market regime, yesterday's result, active banners. At most 80 words |
+| Decision verdict | Once a decision's 5-session outcome is in | For every enter and model skip (not rules no_calls): a draft verdict of good call, bad call or unclear, with a one-line reason. Marc confirms or changes it; only confirmed verdicts count in reviews |
+
+**Number check.** Every number in the model's text must match a fact it was given (after rounding). If one doesn't, or there is no OpenAI key, the call fails or the review cost cap is reached, the app shows a plain template built from the facts instead, labelled with the reason (for example "Plain review: number check failed"). The failure is logged.
+
+**Model and cost.** Same model as decisions (gpt-4o-mini), temperature 0.2, with versioned prompts (`weekly.v1`, `briefing.v1`, `verdict.v1`) that are never edited once used. Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions.
+
+**Missed runs.** Unlike cycles, a review or briefing missed while the app was down is written at the next start, labelled with its original date. A briefing older than its trading day is skipped.
+
+**Storage.** A `reviews` table (kind, period, facts JSON, text, source model or template, reason, model, prompt version, tokens, cost, created at) and a `verdicts` table (decision, verdict, reason, source draft or Marc, created and updated at).
+
+**GUI.** A Reviews screen in the Learn group with Weekly and Briefings tabs and a "Verdicts to confirm" list. The decision drawer shows the verdict with Confirm and Change. The Dashboard is unchanged.
+
 ## Out of scope and later versions
 
 Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login.
 
 Likely v0.2+, in rough order:
 
-- Ask the agent, daily briefing and weekly review (as in Trading Agent).
+- Ask the agent (as in Trading Agent). Briefings and reviews moved forward to PR 9 (see Reviews).
 - Shadow strategies: run a second prompt or model on the same inputs without trading, and compare outcomes.
 - Backtest mode on the cached 5-min bars.
 - Larger universe with a liquidity screen.

@@ -140,6 +140,11 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.replace(tzinfo=UTC).isoformat() if dt is not None else None
 
 
+def _aware(dt: datetime) -> datetime:
+    """An in-memory timestamp that may be naive; treated as UTC."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 def _fmt_money(value: Decimal | None) -> str | None:
     if value is None:
         return None
@@ -205,6 +210,14 @@ def header_state(request: Request) -> dict[str, object]:
         "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
         "kill_switch": kill_on,
+        "paused": bool(getattr(state, "paused", False)),
+        "paused_since": (
+            _aware(state.paused_since).astimezone(UTC).isoformat()
+            if state is not None
+            and getattr(state, "paused", False)
+            and state.paused_since is not None
+            else None
+        ),
         "eur": _eur_rate(request),
     }
 
@@ -607,6 +620,22 @@ async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, ob
     reason = str(body.get("reason") or "manual")
     await executor.activate_kill_switch(reason=reason, automatic=False)
     return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
+
+
+@router.post("/pause")
+async def pause(request: Request) -> dict[str, object]:
+    """Pause new entries; positions keep being reviewed and protected."""
+    executor = _executor(request)
+    await executor.pause()
+    return {"paused": True}
+
+
+@router.post("/pause/resume")
+async def pause_resume(request: Request) -> dict[str, object]:
+    """Resume entries after a pause. One click, no reason needed."""
+    executor = _executor(request)
+    await executor.resume_from_pause()
+    return {"paused": False}
 
 
 @router.post("/kill-switch/resume")
@@ -1067,6 +1096,64 @@ def banners(request: Request) -> dict[str, object]:
                     }
                 )
 
+    if (
+        state is not None
+        and getattr(state, "paused", False)
+        and getattr(state, "paused_at_startup", False)
+    ):
+        app_tz = ZoneInfo(
+            str(get_config().get("app", "timezone", default="Europe/Amsterdam"))
+        )
+        at = (
+            _aware(state.paused_since).astimezone(app_tz).strftime("%H:%M")
+            if state.paused_since is not None
+            else "—"
+        )
+        with get_session_maker()() as session:
+            open_positions = session.execute(
+                select(Position).where(Position.closed_at.is_(None))
+            ).scalars().all()
+        # Only claim broker state after a successful reconcile: a failed
+        # pass leaves the stored stops unverified (last_reconcile_ok).
+        if getattr(state, "last_reconcile_at", None) is None or not getattr(
+            state, "last_reconcile_ok", False
+        ):
+            reconciled = ""
+        elif not open_positions:
+            reconciled = "Reconciled with Alpaca: no open positions. "
+        else:
+            covered = sum(
+                1 for p in open_positions if p.current_stop_price is not None
+            )
+            count = len(open_positions)
+            detail = (
+                "all with a stop"
+                if covered == count
+                else f"{covered} of {count} with a stop"
+            )
+            reconciled = (
+                f"Reconciled with Alpaca: {count} "
+                f"position{'s' if count != 1 else ''}, {detail}. "
+            )
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "paused",
+                "level": "info",
+                "since": (
+                    _aware(state.paused_since).astimezone(UTC).isoformat()
+                    if state.paused_since
+                    else None
+                ),
+                "message": (
+                    f"Started paused at {at}. {reconciled}Held positions "
+                    "are still reviewed each cycle; no new entries until "
+                    "you resume."
+                ),
+                "actions": ["resume_pause"],
+            },
+        )
     if state is not None and state.kill_switch_on:
         since = (
             state.kill_switch_since.astimezone(UTC).isoformat()
@@ -1299,6 +1386,7 @@ def approvals(request: Request) -> dict[str, object]:
     return {
         "mode": get_config().get("execution", "mode", default="automatic"),
         "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
+        "paused": bool(getattr(state, "paused", False)),
         "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
         "recent": [_approval_json(a, None) for a in recent],
     }

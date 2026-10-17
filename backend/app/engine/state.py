@@ -39,6 +39,12 @@ class ExecutionState:
     kill_switch_since: datetime | None = None
     kill_switch_reason: str | None = None
     kill_switch_auto: bool = False
+    # New entries paused (docs/SPEC.md, Paused at startup). Separate from
+    # the kill switch: positions keep being reviewed, stops stay active.
+    paused: bool = False
+    paused_since: datetime | None = None
+    # True while this pause is the startup one — drives the blue banner.
+    paused_at_startup: bool = False
     # Consecutive failed decision cycles; 3 in a row turn the switch on.
     failed_cycles: int = 0
     # Consecutive failed position checks; alert at the configured threshold.
@@ -248,4 +254,11 @@ def load_execution_state(
             details = last_kill.details or {}
             state.kill_switch_reason = str(details.get("reason", ""))
             state.kill_switch_auto = bool(details.get("automatic"))
+    # Paused at startup (docs/SPEC.md, Risk management): every start comes
+    # up with new entries paused, even when trading was running before.
+    # Unlike the kill switch, pause is not rebuilt from the events log —
+    # it is always on at startup, so "pause" events are audit trail only.
+    state.paused = True
+    state.paused_at_startup = True
+    state.paused_since = clock.now()
     return state

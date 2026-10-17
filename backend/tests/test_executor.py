@@ -1278,3 +1278,95 @@ async def test_trade_update_updates_order_and_reconciles(
     with session_factory() as session:
         row = session.execute(select(Order)).scalar_one()
         assert row.status == "canceled"
+
+
+# ----------------------------------------------------------------------
+# paused (docs/SPEC.md, Risk management, Paused at startup)
+
+
+async def test_paused_blocks_new_entry(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """While paused the model's enter becomes blocked — nothing is sent."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    executor.state.paused = True
+    with session_factory() as session:
+        decision = _decision(
+            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "paused"
+    assert broker.orders == {}
+    assert broker.submit_calls == 0
+
+
+async def test_paused_position_can_still_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Held positions keep working while paused: a model exit sells."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    executor.state.paused = True
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "exit"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.side == "sell"
+
+
+async def test_pause_and_resume_record_events(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Pause and resume are stored; resume needs no reason."""
+    broker = FakeBroker(FakeClock(NOW))
+    executor = _executor(session_factory, broker)
+    state = executor.state
+
+    paused = state.paused
+    assert not paused
+
+    await executor.pause()
+    paused = state.paused
+    paused_since = state.paused_since
+    at_startup = state.paused_at_startup
+    assert paused
+    assert paused_since is not None
+    assert not at_startup  # a manual pause
+
+    await executor.resume_from_pause()  # one click, no reason
+    paused = state.paused
+    paused_since = state.paused_since
+    assert not paused
+    assert paused_since is None
+
+    with session_factory() as session:
+        events = _events(session, "pause")
+    assert [e.details["on"] for e in events if e.details] == [True, False]

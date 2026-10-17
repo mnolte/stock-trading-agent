@@ -4,7 +4,7 @@ import json
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from app.config import AppConfig
@@ -21,7 +21,7 @@ from app.data.fake import (
 from app.data.models import DataResult, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Cycle, Decision, Event, Outcome, Position
+from app.db.models import Cycle, Decision, Event, Order, Outcome, Position
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleReport, CycleRunner
@@ -646,3 +646,79 @@ async def test_a_successful_cycle_resets_the_failure_streak(
     await runner.run(CYCLE_1246)
     assert runner.executor.state.failed_cycles == 2
     assert not runner.executor.state.kill_switch_on
+
+
+async def test_paused_cycle_reviews_held_and_blocks_entries(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Paused at startup (docs/SPEC.md, Risk management): the cycle still
+    reviews held positions — a model exit sells — but the same cycle's
+    candidate entry is blocked by the paused gate."""
+    from app.broker.fake import _PosRec
+
+    exit_raw = json.dumps(
+        {
+            "symbol": "MSFT",
+            "action": "exit",
+            "confidence": 0.8,
+            "stop_price": None,
+            "target_price": None,
+            "thesis": "thesis broken",
+            "invalidation": None,
+            "risks": [],
+            "news_used": [],
+        }
+    )
+    client = FakeDecisionClient(
+        responses={("MSFT", "held"): exit_raw},
+        enter_symbols={"AAPL"},
+    )
+    runner = _runner(
+        session_factory,
+        _evaluation(
+            _item("MSFT", "held"),
+            _item("AAPL", "pass"),
+            held={"MSFT"},
+        ),
+        client=client,
+        universe=["MSFT", "AAPL"],
+        with_executor=True,
+    )
+    assert runner.executor is not None
+    runner.executor.state.paused = True
+    executor = runner.executor
+    broker = cast(Any, executor.broker)
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="MSFT",
+                qty=4,
+                avg_entry_price=Decimal("415.00"),
+                current_stop_price=Decimal("410.00"),
+                target_price=Decimal("435.00"),
+                opened_at=datetime(2026, 10, 14, 15, 0),
+            )
+        )
+        session.commit()
+
+    report = await runner.run(CYCLE_1246)
+
+    assert report.status == "done"
+    decisions = {d.symbol: d for d in _decisions(session_factory)}
+    # The held position was still reviewed and its exit went out.
+    assert decisions["MSFT"].context == "held"
+    assert decisions["MSFT"].final_action == "exit"
+    # The candidate's enter is blocked by the paused gate — no order sent.
+    assert decisions["AAPL"].final_action == "blocked"
+    assert decisions["AAPL"].gates_result is not None
+    assert decisions["AAPL"].gates_result["blocked_by"] == "paused"
+    with session_factory() as session:
+        orders = session.execute(
+            select(Order).where(Order.symbol == "AAPL")
+        ).scalars().all()
+        sells = session.execute(
+            select(Order).where(Order.symbol == "MSFT", Order.side == "sell")
+        ).scalars().all()
+    assert orders == []
+    assert any(o.leg == "exit" for o in sells)

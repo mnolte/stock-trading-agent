@@ -7,6 +7,8 @@ import {
   getPositions,
   postKillSwitch,
   postKillSwitchResume,
+  postPause,
+  postPauseResume,
 } from '../api/state';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { HeaderState, PositionsResponse } from '../types/api';
@@ -92,6 +94,14 @@ export function Layout() {
       .catch((e: Error) => setError(e.message));
   };
 
+  // Pause/Resume is one click in both directions — no dialog, no reason.
+  const onPauseToggle = () => {
+    const call = state?.paused ? postPauseResume : postPause;
+    call()
+      .then(() => refreshAll())
+      .catch((e: Error) => setError(e.message));
+  };
+
   const onResumeConfirm = (reason: string) => {
     postKillSwitchResume(reason)
       .then(() => {
@@ -120,6 +130,7 @@ export function Layout() {
           state={state}
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
+          onPauseToggle={onPauseToggle}
           onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>

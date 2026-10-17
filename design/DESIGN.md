@@ -34,6 +34,7 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, decisions and outcomes, closed trades | PR 7 |
 | `Inspector.dc.html` | LLM inspector: calls today, metadata, validation result, prompt, raw response | PR 4 |
 | `Settings.dc.html` | Settings: execution mode, universe, risk limits, entry rules, earnings, schedule, model, slippage, connections, history, paper reset | PR 6 |
+| `Reviews.dc.html` | Reviews: weekly review with stats, closed trades, skipped setups after 5 sessions, observations, suggestion (not applied), verdicts to confirm; Briefings tab | PR 9 |
 | `States.dc.html` | Session states, all banners, market-closed dashboard, pending approval, and 5 dialogs | PR 5 (kill switch), PR 6, PR 8 (error states) |
 
 ## Shared components

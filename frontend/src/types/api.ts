@@ -20,6 +20,8 @@ export interface HeaderState {
   today_eur: string | null;
   regime: string;
   kill_switch: boolean;
+  paused: boolean;
+  paused_since: string | null;
 }
 
 export interface RuleCheck {
@@ -332,6 +334,7 @@ export interface Approval {
 export interface ApprovalsResponse {
   mode: string;
   kill_switch_on: boolean;
+  paused: boolean;
   items: Approval[];
   recent: Approval[];
 }

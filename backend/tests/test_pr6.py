@@ -438,6 +438,28 @@ async def test_approve_refused_while_kill_switch_on(
         assert stored.status == "pending"
 
 
+async def test_approve_refused_while_paused(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Approve is unavailable while paused; the approval stays pending."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    executor = _executor(session_factory, broker, config=config)
+    await executor.reconcile()
+    approval_id = await _pending_approval_id(session_factory, executor)
+    await executor.pause()
+
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is False
+    assert "paused" in str(result["error"])
+    with session_factory() as session:
+        stored = session.get(Approval, approval_id)
+        assert stored is not None
+        assert stored.status == "pending"
+
+
 async def test_reject_stores_reason_and_is_final(
     session_factory: sessionmaker[Session],
 ) -> None:

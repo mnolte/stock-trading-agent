@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-17 — Reviews
+
+- New screen `Reviews.dc.html` in the Learn group of the sidebar (every screen's sidebar updated): Weekly and Briefings tabs, Week 41 review with six stat tiles, closed trades, skipped setups after 5 sessions, observations, a "Suggestion · not applied" box and "Verdicts to confirm" with Good call / Bad call / Unclear.
+- Decision: verdict chip under the outcome ("Verdict: draft after 22 Oct") with a link to Reviews.
+- All screenshots re-rendered.
+
 ## 2026-10-17 — Paused at startup
 
 - Header (every screen): Pause button left of Kill switch; it becomes an amber Resume button while paused.

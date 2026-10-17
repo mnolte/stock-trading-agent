@@ -57,10 +57,10 @@ test('decision detail: sections render', async ({ page }, testInfo) => {
   test.skip(items.length === 0, 'no decisions recorded in this run');
 
   await page.goto(`/decisions/${items[0].id}`);
-  await expect(page.getByRole('heading', { name: 'Code checks' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Risk gates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Safety gates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Signal stack' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agent reasoning' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Outcome', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Input snapshot' })).toBeVisible();
 
   await page.screenshot({ path: shot('decision', testInfo.project.name), fullPage: true });
 });
