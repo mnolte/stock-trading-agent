@@ -14,13 +14,17 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
+from starlette.types import Scope
 
 from app.api.routes import router as api_router
 from app.api.websocket import UpdateBus
 from app.api.websocket import router as ws_router
 from app.broker.base import Broker
-from app.config import AppConfig, get_config
+from app.config import ROOT, AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
@@ -42,6 +46,8 @@ from app.market.clock import NY_TZ, Clock, make_clock
 from app.signals.service import SignalService
 
 logger = logging.getLogger(__name__)
+
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 
 def run_migrations() -> None:
@@ -490,7 +496,21 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
+    if FRONTEND_DIST.is_dir():
+        app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")
     return app
+
+
+class SpaStaticFiles(StaticFiles):
+    """Serve the built Vite app; unknown paths fall back to index.html."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 app = create_app()

@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-17 — Makefile like Trading Agent
+
+- Commands: `make dev` is now the two-server mode (uvicorn --reload + Vite dev server, Ctrl-C stops both). `make run` builds the GUI once and serves everything from the backend on 127.0.0.1:SA_PORT; the FastAPI app mounts `frontend/dist` with an index.html fallback for client-side routes.
+- `make test` splits into `test-backend`, `test-frontend` and `test-e2e` (Playwright skipped when browsers are not installed).
+
 ## 2026-10-17 — Decision card and drawer like Trading Agent
 
 - GUI, Dashboard: the latest-decision card now always shows the market regime, the earnings date and a three-line summary (failed check and proposed levels for a skip, position and levels for a held symbol, pre-filter reason when no model call was made).
