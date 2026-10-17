@@ -89,5 +89,6 @@ performance:
   benchmark: SPY
 
 storage:
+  backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
   backup_days: 14
-  backup_time: "03:00"        # daily database copy, app timezone (Amsterdam)
+  shutdown_grace_seconds: 60     # wait for a running cycle/check on normal shutdown

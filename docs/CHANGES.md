@@ -2,12 +2,12 @@
 
 Newest first.
 
-## 2026-10-17 — PR 8: hardening
+## 2026-10-17 — Answers from the PR 8 review
 
-- Logging: rotating file log at `data/logs/stock-agent.log` (daily rotation, 30 days retained); timestamps in the app timezone (Europe/Amsterdam). Cycle failures are logged with a traceback.
-- Daily database copy: a dated copy of the database is written to `data/backups/` every day at 03:00 app time via the sqlite3 backup API (consistent while the app keeps writing); the last `storage.backup_days` (14) days are kept, today included. A failed copy is logged and recorded as a `backup_failed` event.
-- Startup recovery: a cycle or position check left `running` when the app stopped is finalised as `error` ("interrupted by app shutdown" appended to any errors it already recorded) and counts toward `failed_cycles`/`failed_checks`; both consecutive-error streaks are rebuilt on startup, so reaching `risk.failed_cycles_kill` turns the kill switch on at startup with the newest failure in the reason.
-- `config.example.yaml`: `storage.backup_time: "03:00"` (app timezone, per "daily jobs use Amsterdam time").
+- Data model: the daily backup at 03:00 uses SQLite's online backup API and `PRAGMA integrity_check`, never a plain file copy. Migrations are immutable once merged; startup refuses to run if the schema doesn't match the models.
+- Errors: on a normal shutdown, wait up to 60 s for a running cycle or check; if it's still running it is marked interrupted and does not count as a failure. Only rows still running at the next startup (a real crash) count. Startup reconciles with Alpaca before anything else.
+- AGENTS.md: new hard rule 11, migrations are immutable once merged.
+- `config.example.yaml`: `storage.backup_time`, `storage.shutdown_grace_seconds`.
 
 ## 2026-10-16 — Screenshot location made explicit
 
@@ -17,22 +17,6 @@ Newest first.
 
 - Outcome tracking: "1 session" = same New York time on the next trading session; "5 sessions" = same time on the 5th trading session after the decision; clamped to the close on early-close days. Price = last closed 5-minute bar at or before the target time, stored with the bar's timestamp.
 - GUI: Performance shows results by symbol (new "By symbol" card in the design); the day-trade counter belongs on Positions & orders, not Performance.
-
-## 2026-10-16 — PR 7: performance and outcomes
-
-- Data model: `outcomes` gains the 5-minute bar's timestamp next to every recorded price (`price_1h_at`, `price_1session_at`, `price_5sessions_at`, `best_price_at`, `worst_price_at`); the decision detail API returns them and the GUI shows the bar time under each outcome tile.
-- Data model: `positions.qty` now keeps the closed size after a position closes instead of going to zero, so Performance can show the shares traded.
-- GUI: `performance` added to the WebSocket topics; published after cycles and position checks.
-- API: `GET /api/performance` (`?run=<id>` for an earlier run) serves the Performance screen: summary cards, equity curve with SPY benchmark and EUR/USD, by regime, by symbol, decision outcomes, closed trades.
-- The SIP delay for outcome filling reuses the data client's `SIP_MIN_AGE` (16 min) instead of a new config key.
-- Tests: each test gets its own database file (conftest resets `SA_DB_PATH` and the config cache); no test can leave state for another test or the next app boot.
-## 2026-10-16 — PR 6 completion
-
-- Header session pill shows the next position check alongside the next cycle (`next_check` on `/api/session` and `/api/header`, plus `cycles_today` on the header for the early-close tail). Position checks come from `schedule.position_checks` in config; checks after the session close do not run.
-- EUR figure shows "EUR unavailable" when the ECB rate is missing, instead of a bare euro symbol. Today is green or red by its sign.
-- Decision feed distinguishes RULES (pre-filter hold) from NO CALL (`call_cap`, `quote_missing`, `model_error`); open positions show an "exit deferred" marker on the dashboard.
-- Session pill wording follows the design: "stops stay active" after the last cycle, weekday in "opens Fri 15:30", "closes 19:00 · 3 cycles today" on early-close days.
-- PR screenshots now live in `docs/screenshots/pr-6/`; earlier shots were wrongly kept under `design/screenshots/`.
 
 ## 2026-10-16 — Answers to PR 6 questions
 
