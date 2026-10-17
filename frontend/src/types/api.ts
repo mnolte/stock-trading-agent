@@ -3,8 +3,10 @@ export interface SessionState {
   display_time: string;
   now?: string;
   next_cycle: string | null;
+  next_check?: string | null;
   next_open?: string | null;
   next_close?: string | null;
+  cycles_today?: number;
   calendar_loaded?: boolean;
 }
 

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 export interface CardProps {
-  label: string;
+  label?: string;
   right?: ReactNode;
   children?: ReactNode;
 }
@@ -19,21 +19,23 @@ export function Card({ label, right, children }: CardProps) {
         gap: 'var(--sa-space-3)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
-        <h2
-          style={{
-            margin: 0,
-            fontSize: 'var(--sa-text-sm)',
-            fontWeight: 600,
-            color: 'var(--sa-text-2)',
-            textTransform: 'uppercase',
-            letterSpacing: 'var(--sa-label-tracking)',
-          }}
-        >
-          {label}
-        </h2>
-        {right}
-      </div>
+      {(label || right) && (
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 'var(--sa-text-sm)',
+              fontWeight: 600,
+              color: 'var(--sa-text-2)',
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--sa-label-tracking)',
+            }}
+          >
+            {label}
+          </h2>
+          {right}
+        </div>
+      )}
       {children}
     </section>
   );

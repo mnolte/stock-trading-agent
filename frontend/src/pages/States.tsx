@@ -1,17 +1,18 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { ApprovalCard } from '../components/ApprovalCard';
-import { Banner } from '../components/Banner';
+import { Banner, type BannerVariant } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
-import { sessionTail } from '../components/sessionText';
+import { sessionLabel, sessionTail } from '../components/sessionText';
 import {
   FlattenConfirmDialog,
   KillSwitchDialog,
   ResumeDialog,
 } from '../components/KillSwitchDialogs';
 import { ResetAccountDialog, SaveSettingsDialog } from '../components/SettingsDialogs';
-import type { Approval, PositionRow, SessionState } from '../types/api';
+import { MarketClosed } from './Dashboard';
+import type { Approval, MarketClosedCard, PositionRow, SessionState } from '../types/api';
 
 const samplePositions: PositionRow[] = [
   {
@@ -81,7 +82,30 @@ const sessionSamples: { label: string; state: string; session: SessionState }[] 
       next_open: new Date(Date.now() + 16.5 * 3600_000).toISOString(),
     } as SessionState,
   },
+  {
+    label: 'Early close · e.g. 27 Nov, the day after Thanksgiving',
+    state: 'early_close',
+    session: {
+      state: 'early_close',
+      display_time: '',
+      now: new Date().toISOString(),
+      next_cycle: new Date(Date.now() + 40 * 60_000).toISOString(),
+      next_close: new Date(Date.now() + 3 * 3600_000).toISOString(),
+      cycles_today: 3,
+    } as SessionState,
+  },
 ];
+
+const sampleMarketClosed: MarketClosedCard = {
+  next_open: new Date(Date.now() + 16.5 * 3600_000).toISOString(),
+  first_cycle: new Date(Date.now() + 17.75 * 3600_000).toISOString(),
+  stops: [
+    { symbol: 'MSFT', stop: '409.60' },
+    { symbol: 'JPM', stop: '231.60' },
+  ],
+  open_count: 2,
+  today_summary: '1 entry, 1 stop raised',
+};
 
 const sampleApproval: Approval = {
   id: 0,
@@ -102,20 +126,44 @@ const sampleApproval: Approval = {
 
 type DemoDialog = 'menu' | 'flatten' | 'resume' | 'reset' | 'save' | null;
 
-function sessionLabel(state: string) {
-  switch (state) {
-    case 'open':
-      return 'Market open';
-    case 'last_cycle_done':
-      return 'Last cycle done';
-    case 'early_close':
-      return 'Early close';
-    case 'closed':
-      return 'Market closed';
-    default:
-      return state;
-  }
+function DemoBanner({
+  label,
+  sub,
+  variant,
+  children,
+  actions,
+}: {
+  label: string;
+  sub?: string;
+  variant: BannerVariant;
+  children: ReactNode;
+  actions?: ReactNode;
+}) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 'var(--sa-text-xs)',
+          fontWeight: 600,
+          color: 'var(--sa-warning)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+          marginBottom: '4px',
+        }}
+      >
+        {label}
+      </div>
+      {sub && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginBottom: '4px' }}>{sub}</div>
+      )}
+      <Banner variant={variant} actions={actions}>
+        {children}
+      </Banner>
+    </div>
+  );
 }
+
+const bannerButtonStyle = { height: '36px', padding: '0 12px', fontSize: 'var(--sa-text-sm)' } as const;
 
 /** Gallery of the execution states and dialogs (design/screens/States.dc.html). */
 export default function States() {
@@ -154,37 +202,88 @@ export default function States() {
       </Card>
 
       <Card label="Banners">
-        <Banner variant="negative" actions={<Button style={{ height: '30px', padding: '0 12px', fontSize: 'var(--sa-text-sm)' }}>Resume</Button>}>
-          Kill switch on since 19:02.
-        </Banner>
-        <Banner variant="negative">
-          Kill switch turned on automatically at 20:46: equity is 8.1% below its peak of $10,184.30. No new entries until you resume.
-        </Banner>
-        <Banner variant="negative" actions={<Button style={{ height: '30px', padding: '0 12px', fontSize: 'var(--sa-text-sm)' }}>Acknowledge</Button>}>
-          JPM had no stop order at Alpaca.
-        </Banner>
-        <Banner variant="warning" actions={<Button style={{ height: '30px', padding: '0 12px', fontSize: 'var(--sa-text-sm)' }}>Review</Button>}>
-          Alpaca shows 6 MSFT shares; the agent recorded 4. Alpaca's numbers are now used. New entries are blocked until you acknowledge.
-        </Banner>
-        <Banner variant="warning" actions={<Button style={{ height: '30px', padding: '0 12px', fontSize: 'var(--sa-text-sm)' }}>Connections</Button>}>
-          Earnings calendar unavailable since 14:00.
-        </Banner>
-        <Banner variant="warning">
-          No new 5-minute bars since 18:15. This cycle made no new entries. Stops at Alpaca still protect open positions.
-        </Banner>
-        <Banner variant="info">
-          Shock brake on: SPY fell 1.7% in the last hour. No new entries for the rest of this session.
-        </Banner>
-        <Banner variant="info">
-          Daily loss limit reached: −2.0% this session. No new entries until tomorrow's first cycle.
-        </Banner>
-        <Banner variant="info">
-          3 day trades in the last 5 trading days. No new entries until the count drops on 20 Oct.
-        </Banner>
-        <Banner variant="info">
-          Risk per trade halved to 0.25% after 3 losing trades in a row. Back to 0.5% after the next winning trade.
-        </Banner>
+        <DemoBanner
+          label="Kill switch on · manual"
+          variant="negative"
+          actions={
+            <>
+              <Button style={bannerButtonStyle}>Resume…</Button>
+              <Button style={bannerButtonStyle}>Stop &amp; flatten…</Button>
+            </>
+          }
+        >
+          <b>Kill switch on since 19:02.</b> No new entries. Stops and targets at Alpaca stay in place. Reason: “testing the flow”.
+        </DemoBanner>
+        <DemoBanner
+          label="Kill switch on · automatic"
+          variant="negative"
+          actions={<Button style={bannerButtonStyle}>Resume…</Button>}
+        >
+          <b>Kill switch turned on automatically at 20:46:</b> equity is 8.1% below its peak of $10,184.30. No new entries until you resume.
+        </DemoBanner>
+        <DemoBanner
+          label="Position without a stop"
+          sub="Critical; shown until acknowledged"
+          variant="negative"
+          actions={
+            <>
+              <Button style={bannerButtonStyle}>Open orders</Button>
+              <Button style={bannerButtonStyle}>Acknowledge</Button>
+            </>
+          }
+        >
+          <b>JPM had no stop order at Alpaca.</b> A protective stop at 231.60 was placed at 18:46:04. Check the order history to see why the stop was missing.
+        </DemoBanner>
+        <DemoBanner
+          label="Reconciliation mismatch"
+          variant="warning"
+          actions={
+            <>
+              <Button style={bannerButtonStyle}>Review</Button>
+              <Button style={bannerButtonStyle}>Acknowledge</Button>
+            </>
+          }
+        >
+          <b>Alpaca shows 6 MSFT shares; the agent recorded 4.</b> Alpaca’s numbers are now used. New entries are blocked until you acknowledge.
+        </DemoBanner>
+        <DemoBanner
+          label="Data source down"
+          variant="warning"
+          actions={<Button style={bannerButtonStyle}>Connections</Button>}
+        >
+          <b>Earnings calendar unavailable since 14:00.</b> New entries are blocked on every symbol until it is back. Open positions are unaffected.
+        </DemoBanner>
+        <DemoBanner label="Market data missing" variant="warning">
+          <b>No new 5-minute bars since 18:15.</b> This cycle made no new entries. Stops at Alpaca still protect open positions.
+        </DemoBanner>
+        <DemoBanner label="Shock brake" variant="warning">
+          <b>Shock brake on:</b> SPY fell 1.7% in the last hour. No new entries for the rest of this session.
+        </DemoBanner>
+        <DemoBanner label="Daily loss limit" variant="warning">
+          <b>Daily loss limit reached:</b> −2.0% this session. No new entries until tomorrow’s first cycle.
+        </DemoBanner>
+        <DemoBanner label="Day-trade guard" variant="warning">
+          <b>3 day trades in the last 5 trading days.</b> No new entries until the count drops on 20 Oct.
+        </DemoBanner>
+        <DemoBanner label="Losing streak" variant="info">
+          <b>Risk per trade halved to 0.25%</b> after 3 losing trades in a row. Back to 0.5% after the next winning trade.
+        </DemoBanner>
       </Card>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
+        <span
+          style={{
+            fontSize: 'var(--sa-text-sm)',
+            fontWeight: 600,
+            color: 'var(--sa-text-2)',
+            textTransform: 'uppercase',
+            letterSpacing: 'var(--sa-label-tracking)',
+          }}
+        >
+          Market closed · Dashboard
+        </span>
+        <MarketClosed mc={sampleMarketClosed} />
+      </div>
 
       <Card label="Pending approval · supervised mode">
         <ApprovalCard

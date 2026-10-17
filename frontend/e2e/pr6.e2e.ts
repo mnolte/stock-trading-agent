@@ -3,22 +3,17 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR 6 screenshots land in design/screenshots/ next to the design
-// references, named <Screen>-1440/-390 so they never overwrite the refs.
+// PR 6 screenshots land in docs/screenshots/pr-6/, matching earlier PRs;
+// design/screenshots/ holds the design references only.
 const outDir =
   process.env.SCREENSHOT_DIR ??
   path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
-    '../../design/screenshots'
+    '../../docs/screenshots/pr-6'
   );
 
 const shot = (base: string, project: string) =>
-  path.join(
-    outDir,
-    base === 'main' && project === 'mobile'
-      ? 'main-pr6-390.png' // Main-390.png is a design reference
-      : `${base}-${project === 'mobile' ? '390' : '1440'}.png`
-  );
+  path.join(outDir, `${base}-${project === 'mobile' ? '390' : '1440'}.png`);
 
 test('dashboard: cycle line, stat cards, chart, feed', async ({ page }, testInfo) => {
   await page.goto('/');

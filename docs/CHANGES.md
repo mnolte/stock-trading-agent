@@ -19,6 +19,13 @@ Newest first.
 - API: `GET /api/performance` (`?run=<id>` for an earlier run) serves the Performance screen: summary cards, equity curve with SPY benchmark and EUR/USD, by regime, by symbol, decision outcomes, closed trades.
 - The SIP delay for outcome filling reuses the data client's `SIP_MIN_AGE` (16 min) instead of a new config key.
 - Tests: each test gets its own database file (conftest resets `SA_DB_PATH` and the config cache); no test can leave state for another test or the next app boot.
+## 2026-10-16 — PR 6 completion
+
+- Header session pill shows the next position check alongside the next cycle (`next_check` on `/api/session` and `/api/header`, plus `cycles_today` on the header for the early-close tail). Position checks come from `schedule.position_checks` in config; checks after the session close do not run.
+- EUR figure shows "EUR unavailable" when the ECB rate is missing, instead of a bare euro symbol. Today is green or red by its sign.
+- Decision feed distinguishes RULES (pre-filter hold) from NO CALL (`call_cap`, `quote_missing`, `model_error`); open positions show an "exit deferred" marker on the dashboard.
+- Session pill wording follows the design: "stops stay active" after the last cycle, weekday in "opens Fri 15:30", "closes 19:00 · 3 cycles today" on early-close days.
+- PR screenshots now live in `docs/screenshots/pr-6/`; earlier shots were wrongly kept under `design/screenshots/`.
 
 ## 2026-10-16 — Answers to PR 6 questions
 

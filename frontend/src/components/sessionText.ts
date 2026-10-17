@@ -1,5 +1,5 @@
 import type { HeaderState } from '../types/api';
-import { displayTime } from '../format';
+import { displayTime, displayWeekdayTime } from '../format';
 
 /** "in 54 min" / "in 2 h 10 min" / "in 16 h 30 min" — server-clock based. */
 export function countdown(fromIso: string, toIso: string): string {
@@ -29,13 +29,39 @@ export function sessionLabel(state: string): string {
 /** The session pill text, from design/screens (States + Main). */
 export function sessionTail(state: string, session: HeaderState['session']): string {
   const now = session.now;
-  const target =
-    state === 'closed'
-      ? (session.next_open ?? null)
-      : (session.next_cycle ?? session.next_close ?? null);
-  if (!target) return '';
-  const verb = state === 'closed' ? 'opens' : state === 'last_cycle_done' ? 'closes' : 'next cycle';
-  const tail = `${verb} ${displayTime(target)}`;
-  if (!now) return ` · ${tail}`;
-  return ` · ${tail} · ${countdown(now, target)}`;
+  const check = session.next_check ? `next check ${displayTime(session.next_check)}` : null;
+
+  switch (state) {
+    case 'open': {
+      const parts: string[] = [];
+      if (check) parts.push(check);
+      if (session.next_cycle) {
+        parts.push(`next cycle ${displayTime(session.next_cycle)}`);
+        if (now) parts.push(countdown(now, session.next_cycle));
+      }
+      return parts.length ? ` · ${parts.join(' · ')}` : '';
+    }
+    case 'early_close': {
+      const parts: string[] = [];
+      if (check) parts.push(check);
+      if (session.next_close) parts.push(`closes ${displayTime(session.next_close)}`);
+      const n = session.cycles_today ?? 0;
+      if (n > 0) parts.push(`${n} cycle${n === 1 ? '' : 's'} today`);
+      return parts.length ? ` · ${parts.join(' · ')}` : '';
+    }
+    case 'last_cycle_done': {
+      const parts: string[] = [];
+      if (check) parts.push(check);
+      if (session.next_close) parts.push(`closes ${displayTime(session.next_close)}`);
+      parts.push('stops stay active');
+      return ` · ${parts.join(' · ')}`;
+    }
+    case 'closed': {
+      if (!session.next_open) return '';
+      const open = `opens ${displayWeekdayTime(session.next_open)}`;
+      return now ? ` · ${open} · ${countdown(now, session.next_open)}` : ` · ${open}`;
+    }
+    default:
+      return '';
+  }
 }

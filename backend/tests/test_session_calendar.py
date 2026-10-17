@@ -120,6 +120,44 @@ def test_after_close_next_cycle_is_next_session() -> None:
     assert state.next_cycle == datetime(2026, 10, 19, 10, 46, tzinfo=NY).astimezone(UTC)
 
 
+def test_next_check_during_session() -> None:
+    # Position checks run between cycles (config: every ~15 minutes).
+    calendar = FakeCalendarSource()
+    clock = _clock(datetime(2026, 10, 15, 10, 0, tzinfo=NY), calendar)
+    state = clock.state()
+    assert state.state == "open"
+    assert state.next_check == datetime(2026, 10, 15, 10, 1, tzinfo=NY).astimezone(UTC)
+
+
+def test_next_check_none_after_last_check() -> None:
+    # The last scheduled check is 15:31 New York; after it there is none today.
+    calendar = FakeCalendarSource()
+    clock = _clock(datetime(2026, 10, 15, 15, 40, tzinfo=NY), calendar)
+    state = clock.state()
+    assert state.state == "open"  # the 15:46 cycle is still pending
+    assert state.next_check is None
+
+
+def test_next_check_stops_at_early_close() -> None:
+    # Checks at 13:01+ fall outside a 13:00 close; 12:31 is the last one.
+    early = {date(2026, 11, 27): time(13, 0)}
+    calendar = FakeCalendarSource(early_closes=early)
+    clock = _clock(datetime(2026, 11, 27, 12, 20, tzinfo=NY), calendar)
+    state = clock.state()
+    assert state.state == "early_close"
+    assert state.next_check == datetime(2026, 11, 27, 12, 31, tzinfo=NY).astimezone(UTC)
+    clock = _clock(datetime(2026, 11, 27, 12, 45, tzinfo=NY), calendar)
+    assert clock.state().next_check is None
+
+
+def test_next_check_on_closed_day_is_next_session_first() -> None:
+    calendar = FakeCalendarSource()
+    clock = _clock(datetime(2026, 10, 17, 12, 0, tzinfo=NY), calendar)  # Saturday
+    state = clock.state()
+    assert state.state == "closed"
+    assert state.next_check == datetime(2026, 10, 19, 9, 46, tzinfo=NY).astimezone(UTC)
+
+
 async def test_calendar_load_failure_means_market_closed() -> None:
     # If the calendar can't be loaded the market is treated as closed: no
     # sessions, no cycles, no next open.
