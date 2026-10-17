@@ -30,7 +30,10 @@ def clock() -> Clock:
 
 
 def _insert_cycle(
-    session_factory: sessionmaker[Session], status: str, kind: str = "cycle"
+    session_factory: sessionmaker[Session],
+    status: str,
+    kind: str = "cycle",
+    errors: list[str] | None = None,
 ) -> int:
     with session_factory() as session:
         cycle = Cycle(
@@ -38,6 +41,7 @@ def _insert_cycle(
             scheduled_time=datetime.now(UTC) - timedelta(minutes=5),
             started_at=datetime.now(UTC) - timedelta(minutes=5),
             status=status,
+            errors=errors,
         )
         session.add(cycle)
         session.commit()
@@ -122,4 +126,37 @@ def test_load_state_streak_stops_at_a_success(
 
     state = load_execution_state(clock, get_config(), session_factory)
 
+    assert state.failed_cycles == 1
+
+
+def test_recovery_keeps_errors_recorded_before_the_crash(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Recovery appends to a crashed cycle's errors instead of replacing."""
+    cycle_id = _insert_cycle(
+        session_factory, "running", errors=["data source down"]
+    )
+    state = ExecutionState(clock=clock)
+
+    with session_factory() as session:
+        recover_interrupted_cycles(session, state, clock)
+        session.commit()
+
+    with session_factory() as session:
+        row = session.execute(select(Cycle).where(Cycle.id == cycle_id)).scalar_one()
+        assert row.errors == ["data source down", "interrupted by app shutdown"]
+
+
+def test_load_state_restores_consecutive_check_errors(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Errored position checks keep their own streak across a restart."""
+    _insert_cycle(session_factory, "done", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_checks == 2
     assert state.failed_cycles == 1

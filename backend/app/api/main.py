@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -34,6 +35,8 @@ from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
 from app.signals.service import SignalService
+
+logger = logging.getLogger(__name__)
 
 
 def run_migrations() -> None:
@@ -91,9 +94,29 @@ async def refresh_daily_data_and_signals(
         bus.publish("watchlist", "header", "banners", "performance")
 
 
-def run_daily_backup() -> None:
-    """Daily job (app timezone): copy the database and prune old copies."""
-    create_backup()
+def run_daily_backup(clock: Clock) -> None:
+    """Daily job (app timezone): copy the database and prune old copies.
+
+    A failed copy is logged and recorded as an event so a missed backup is
+    not silent; if the event write also fails, the job exception is left
+    for the scheduler log.
+    """
+    try:
+        create_backup()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("daily database copy failed")
+        from app.db.base import get_session_maker
+        from app.engine.state import record_event
+
+        with get_session_maker()() as session:
+            record_event(
+                session,
+                clock,
+                level="warning",
+                event_type="backup_failed",
+                details={"error": str(exc)},
+            )
+            session.commit()
 
 
 async def run_scheduled_cycle(
@@ -315,23 +338,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Fill any outcome targets that were due while the app was down, and
     # record the startup equity point.
     from app.db.base import get_session_maker
+    from app.db.models import Cycle
 
     with get_session_maker()() as session:
         recovered = recover_interrupted_cycles(session, exec_state, clock)
         if recovered:
             session.commit()
-        # Repeated crashes reach the same kill-switch threshold as
-        # consecutive failed cycles at runtime (docs/SPEC.md, Risk
-        # management, Errors).
+        # Repeated failures reach the same kill-switch threshold at startup
+        # as they do at runtime (docs/SPEC.md, Risk management, Errors). The
+        # reason names the newest failure — an interruption or a real error.
         kill_after = int(config.get("risk", "failed_cycles_kill", default=3))
         if (
             exec_state.failed_cycles >= kill_after
             and not exec_state.kill_switch_on
         ):
+            last_failed = session.execute(
+                select(Cycle)
+                .where(Cycle.kind == "cycle", Cycle.status == "error")
+                .order_by(Cycle.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            detail = (
+                (last_failed.errors or ["unknown"])[0]
+                if last_failed is not None
+                else "unknown"
+            )
             await executor.activate_kill_switch(
                 reason=(
                     f"{exec_state.failed_cycles} cycles failed in a row: "
-                    "interrupted by app shutdown"
+                    f"{detail}"
                 ),
                 automatic=True,
             )
@@ -391,6 +426,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         run_daily_backup,
         CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
+        args=[clock],
         id="daily-db-backup",
     )
     # Run the decision cycle at every configured cycle time; the runner

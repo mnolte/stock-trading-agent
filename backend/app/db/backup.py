@@ -1,12 +1,13 @@
 """Daily database copy (docs/SPEC.md, Data model; Build plan, PR 8).
 
-A copy of the SQLite file is kept per day — 14 days retained. The job runs
-on the app timezone (Amsterdam per spec) and filenames carry the local date.
+A copy of the SQLite file is kept per day — ``storage.backup_days`` days
+retained, today included. The job runs on the app timezone (Amsterdam per
+spec) and filenames carry the local date.
 """
 
 from __future__ import annotations
 
-import shutil
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -22,19 +23,28 @@ def create_backup() -> None:
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    # Dated backup: stock-agent.db.YYYY-MM-DD (app-timezone date).
+    # Dated backup: stock-agent.db.YYYY-MM-DD (app-timezone date). The
+    # sqlite3 backup API copies consistently while the app keeps writing;
+    # a plain file copy could capture a torn page or miss WAL contents.
     today = datetime.now(tz=app_tz).date()
     backup_path = backup_dir / f"{db_path.name}.{today.isoformat()}"
+    source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        with sqlite3.connect(backup_path) as target:
+            source.backup(target)
+    finally:
+        source.close()
 
-    shutil.copy2(db_path, backup_path)
-
-    # Prune backups older than the retention window.
+    # Prune backups outside the retention window: the last
+    # ``storage.backup_days`` days including today.
     retention_days = int(cfg.get("storage", "backup_days", default=14))
-    cutoff = today - timedelta(days=retention_days)
+    cutoff = today - timedelta(days=retention_days - 1)
     for backup in backup_dir.glob(f"{db_path.name}.*"):
         try:
-            backup_date = datetime.strptime(backup.name.rsplit(".", 1)[-1], "%Y-%m-%d").date()
-        except (ValueError, IndexError):
+            backup_date = datetime.strptime(
+                backup.name.rsplit(".", 1)[-1], "%Y-%m-%d"
+            ).date()
+        except ValueError:
             continue  # Not a dated backup of this database.
         if backup_date < cutoff:
             backup.unlink()

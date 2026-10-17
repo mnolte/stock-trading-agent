@@ -124,7 +124,7 @@ def recover_interrupted_cycles(
     ).scalars().all()
     for cycle in running:
         cycle.status = "error"
-        cycle.errors = ["interrupted by app shutdown"]
+        cycle.errors = [*(cycle.errors or []), "interrupted by app shutdown"]
         cycle.finished_at = _naive_utc(clock.now())
         if cycle.kind == "cycle":
             state.failed_cycles += 1
@@ -153,6 +153,19 @@ def load_execution_state(
         for status in tail_statuses:
             if status == "error":
                 state.failed_cycles += 1
+            elif status != "running":
+                break
+        # Same tail scan for position checks, whose consecutive failures
+        # feed the failed-checks alert (schedule.position_check_failures_alert).
+        tail_checks = session.execute(
+            select(Cycle.status)
+            .where(Cycle.kind == "position_check")
+            .order_by(Cycle.id.desc())
+            .limit(20)
+        ).scalars().all()
+        for status in tail_checks:
+            if status == "error":
+                state.failed_checks += 1
             elif status != "running":
                 break
         latest_run = session.execute(

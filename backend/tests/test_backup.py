@@ -1,48 +1,82 @@
 """Tests for the daily database copy (docs/SPEC.md, Data model)."""
 
-from datetime import date, timedelta
+import sqlite3
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.config import get_config
 from app.db.backup import create_backup
+
+APP_TZ = ZoneInfo("Europe/Amsterdam")
 
 
 def _db_path() -> Path:
     return Path(get_config().env.sa_db_path)
 
 
+def _today() -> date:
+    """The date the backup code stamps: today in the app timezone."""
+    return datetime.now(tz=APP_TZ).date()
+
+
+def _write_db(db_path: Path) -> None:
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE t (v TEXT)")
+        conn.execute("INSERT INTO t VALUES ('test data')")
+
+
 def test_create_backup_creates_dated_copy() -> None:
     db_path = _db_path()
-    db_path.write_text("test data")
+    _write_db(db_path)
 
     create_backup()
 
-    backups = list((db_path.parent / "backups").glob(f"{db_path.name}.*"))
-    assert len(backups) == 1
-    assert backups[0].read_text() == "test data"
-    today = date.today().isoformat()
-    assert backups[0].name == f"{db_path.name}.{today}"
+    backup_path = db_path.parent / "backups" / f"{db_path.name}.{_today().isoformat()}"
+    with sqlite3.connect(backup_path) as conn:
+        row = conn.execute("SELECT v FROM t").fetchone()
+    assert row == ("test data",)
 
 
 def test_create_backup_prunes_old_copies() -> None:
     db_path = _db_path()
-    db_path.write_text("test data")
+    _write_db(db_path)
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
-    for days_ago in (15, 16, 20):
-        old = date.today() - timedelta(days=days_ago)
+    for days_ago in (14, 15, 20):
+        old = _today() - timedelta(days=days_ago)
         (backup_dir / f"{db_path.name}.{old.isoformat()}").write_text("old")
 
     create_backup()
 
     backups = list(backup_dir.glob(f"{db_path.name}.*"))
-    assert len(backups) == 1
-    assert backups[0].read_text() == "test data"
+    assert [b.name for b in backups] == [
+        f"{db_path.name}.{_today().isoformat()}"
+    ]
+
+
+def test_create_backup_keeps_the_retention_boundary() -> None:
+    """backup_days days are kept including today; the day before is pruned."""
+    db_path = _db_path()
+    _write_db(db_path)
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    boundary = _today() - timedelta(days=13)  # oldest kept copy (14 days incl. today)
+    outside = _today() - timedelta(days=14)
+    kept = backup_dir / f"{db_path.name}.{boundary.isoformat()}"
+    pruned = backup_dir / f"{db_path.name}.{outside.isoformat()}"
+    kept.write_text("keep")
+    pruned.write_text("prune")
+
+    create_backup()
+
+    assert kept.exists()
+    assert not pruned.exists()
 
 
 def test_create_backup_ignores_unrelated_files() -> None:
     db_path = _db_path()
-    db_path.write_text("test data")
+    _write_db(db_path)
     backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     (backup_dir / f"{db_path.name}.not-a-date").write_text("keep")

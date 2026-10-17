@@ -5,8 +5,8 @@ Newest first.
 ## 2026-10-17 — PR 8: hardening
 
 - Logging: rotating file log at `data/logs/stock-agent.log` (daily rotation, 30 days retained); timestamps in the app timezone (Europe/Amsterdam). Cycle failures are logged with a traceback.
-- Daily database copy: a dated copy of the SQLite file is written to `data/backups/` every day at 03:00 app time; the last `storage.backup_days` (14) are kept.
-- Startup recovery: a cycle or position check left `running` when the app stopped is finalised as `error` ("interrupted by app shutdown") and counts toward `failed_cycles`/`failed_checks`; the consecutive-error streak at the tail of `cycles` is rebuilt on startup, so reaching `risk.failed_cycles_kill` turns the kill switch on at startup.
+- Daily database copy: a dated copy of the database is written to `data/backups/` every day at 03:00 app time via the sqlite3 backup API (consistent while the app keeps writing); the last `storage.backup_days` (14) days are kept, today included. A failed copy is logged and recorded as a `backup_failed` event.
+- Startup recovery: a cycle or position check left `running` when the app stopped is finalised as `error` ("interrupted by app shutdown" appended to any errors it already recorded) and counts toward `failed_cycles`/`failed_checks`; both consecutive-error streaks are rebuilt on startup, so reaching `risk.failed_cycles_kill` turns the kill switch on at startup with the newest failure in the reason.
 - `config.example.yaml`: `storage.backup_time: "03:00"` (app timezone, per "daily jobs use Amsterdam time").
 
 ## 2026-10-16 — Screenshot location made explicit

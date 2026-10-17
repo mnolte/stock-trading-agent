@@ -30,31 +30,39 @@ class _AppTimeFormatter(logging.Formatter):
 
 
 def setup_logging() -> None:
-    """Configure rotating file logs in the data directory."""
+    """Configure rotating file logs in the data directory. Safe to call
+    twice — a second lifespan in the same process adds no extra handler."""
     cfg = get_config()
     app_tz = ZoneInfo(str(cfg.get("app", "timezone", default="Europe/Amsterdam")))
     log_dir = Path(cfg.env.sa_data_dir) / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-
     log_file = log_dir / "stock-agent.log"
-    handler = logging.handlers.TimedRotatingFileHandler(
-        log_file,
-        when="midnight",
-        interval=1,
-        backupCount=LOG_RETENTION_DAYS,
-        encoding="utf-8",
-    )
-    handler.suffix = "%Y-%m-%d"
-    handler.setFormatter(
-        _AppTimeFormatter(
-            "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-            tz=app_tz,
-        )
-    )
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    root.addHandler(handler)
+    already = any(
+        isinstance(h, logging.handlers.TimedRotatingFileHandler)
+        and Path(h.baseFilename) == log_file
+        for h in root.handlers
+    )
+    if not already:
+        # Rollover happens at system-local midnight; the machine is expected
+        # to run in the app timezone, matching the stamped times.
+        handler = logging.handlers.TimedRotatingFileHandler(
+            log_file,
+            when="midnight",
+            interval=1,
+            backupCount=LOG_RETENTION_DAYS,
+            encoding="utf-8",
+        )
+        handler.suffix = "%Y-%m-%d"
+        handler.setFormatter(
+            _AppTimeFormatter(
+                "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+                tz=app_tz,
+            )
+        )
+        root.addHandler(handler)
 
     # Reduce noisy third-party loggers
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
