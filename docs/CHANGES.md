@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-17 — Adopted positions keep an existing broker stop
+
+- Reconciliation: a position adopted at Alpaca that is already covered by an open sell stop there (e.g. one placed before the database was rebuilt) keeps that stop — no second stop order is placed for the same shares. The position records the existing stop's price as its stop.
+- Order ids: `client_order_id` gains a per-process nonce (`sa-<kind>-<id>-<symbol>-<nonce>-<seq>`). Alpaca enforces uniqueness account-wide forever, so ids must not collide after a restart or a database rebuild.
+
 ## 2026-10-17 — Answers from the PR 8 review
 
 - Data model: the daily backup at 03:00 uses SQLite's online backup API and `PRAGMA integrity_check`, never a plain file copy. Migrations are immutable once merged; startup refuses to run if the schema doesn't match the models.
