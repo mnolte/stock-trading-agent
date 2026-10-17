@@ -124,6 +124,28 @@ export interface DecisionOutcome {
   best_price_at: string | null;
   worst_price: string | null;
   worst_price_at: string | null;
+  first_touch: 'stop' | 'target' | 'neither' | null;
+  r_1h: string | null;
+  r_1session: string | null;
+  r_5sessions: string | null;
+  best_r: string | null;
+  worst_r: string | null;
+}
+
+/** The levels a decision traded at: position, order legs or proposed. */
+export interface DecisionTrade {
+  qty: number | null;
+  entry: string | null;
+  stop: string | null;
+  target: string | null;
+  status: string;
+}
+
+/** Earnings chip data: next report date + trading sessions seen at decision time. */
+export interface DecisionEarnings {
+  date: string | null;
+  sessions: number | null;
+  unavailable: boolean;
 }
 
 export interface BannerItem {
@@ -258,7 +280,12 @@ export interface DecisionDetail {
   model_output: ModelOutput | null;
   validation_result: ValidationResult | null;
   gates_result: Record<string, unknown> | null;
+  trade: DecisionTrade | null;
   outcome: DecisionOutcome | null;
+  next_outcome_due: string | null;
+  earnings: DecisionEarnings | null;
+  execution_mode: string | null;
+  eur_usd_rate: string | null;
   prompt_version: string | null;
   prompt_hash: string | null;
   prompt_text: string | null;
@@ -554,6 +581,17 @@ export interface DashboardStats {
   execution_mode: string;
 }
 
+export interface DashboardSigChip {
+  text: string;
+  tone: number;
+}
+
+export interface DashboardBoxRow {
+  label: string;
+  value: string;
+  tone: number;
+}
+
 export interface DashboardLatestDecision {
   id: number;
   symbol: string;
@@ -563,6 +601,11 @@ export interface DashboardLatestDecision {
   no_call_reason: string | null;
   confidence: number | null;
   why: string | null;
+  model: string | null;
+  regime: { trend: string; volatility: string } | null;
+  earnings: DecisionEarnings | null;
+  sig: DashboardSigChip[];
+  box: DashboardBoxRow[];
   checks: { name: string; passed: boolean; detail: string }[];
   price: string | null;
   time: string;

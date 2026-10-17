@@ -32,24 +32,18 @@ test('LLM inspector and decision detail', async ({ page }, testInfo) => {
     fullPage: true,
   });
 
-  // Open the stored decision behind the selected call.
+  // Open the stored decision behind the selected call. The drawer layout
+  // (PR 9) shows the raw input snapshot in this inspector only.
   await page.getByRole('link', { name: 'Open decision' }).click();
   await expect(page).toHaveURL(/\/decisions\/\d+/);
   await expect(
-    page.getByRole('heading', { name: 'Model output', exact: true })
-  ).toBeVisible();
-  await expect(
-    page.getByRole('heading', { name: 'Code checks', exact: true })
-  ).toBeVisible();
-  await expect(
-    page.getByRole('heading', { name: 'Rules pre-filter', exact: true })
+    page.getByRole('heading', { name: 'Safety gates', exact: true })
   ).toBeVisible();
   await expect(
     page.getByRole('heading', { name: 'Input snapshot', exact: true })
-  ).toBeVisible();
+  ).not.toBeVisible();
 
-  await page.screenshot({
-    path: path.join(outDir, name('decision')),
-    fullPage: true,
-  });
+  // The raw input snapshot itself stays here, in the call details.
+  await page.goBack();
+  await expect(page.getByText('User · input snapshot')).toBeVisible();
 });

@@ -173,6 +173,9 @@ class Outcome(Base):
     best_price_at: Mapped[datetime | None] = mapped_column(nullable=True)
     worst_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     worst_price_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # For trades: which of the stop or target levels price touched first
+    # ("stop" | "target" | "neither"). None until a trade's bars were read.
+    first_touch: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class EquitySnapshot(Base):

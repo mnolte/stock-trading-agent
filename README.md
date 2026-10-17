@@ -42,20 +42,6 @@ Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the fir
 | `.env` | Secrets and paths: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `OPENAI_API_KEY`, `FINNHUB_API_KEY`, `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
 | `backend/config.yaml` | Everything else: universe, cycle times, rules, risk limits, model, slippage assumption. Settings changed in the GUI are saved as new versions. |
 
-## Running locally
-
-The backend writes logs to `data/logs/stock-agent.log` (or `$SA_DATA_DIR/logs/` when `SA_DATA_DIR` is set), rotated daily with 30 days retained. Timestamps are in Amsterdam time; rotation itself follows the machine's local clock — run a VPS with `TZ=Europe/Amsterdam` so the rollover boundary matches the stamped times.
-
-A dated copy of the database is written to `data/backups/` every day at 03:00 Amsterdam time (`storage.backup_time`), via SQLite's online backup API with an `integrity_check` on the copy; the last 14 days are kept (`storage.backup_days`).
-
-On shutdown the backend waits up to `storage.shutdown_grace_seconds` (60) for a running cycle or check to finish; leftovers are marked `interrupted` and do not count as failures. Rows still `running` at the next startup mean a crash and do count.
-
-To run in the background for long sessions:
-
-```bash
-make run &> /dev/null &
-```
-
 ## Project layout
 
 | Path | Contents |

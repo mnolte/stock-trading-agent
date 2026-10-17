@@ -44,6 +44,11 @@ from app.market.clock import NY_TZ, UTC, Clock
 # A price target needs this much new data either side of the target.
 _PRICE_WINDOW = timedelta(days=2)
 
+# First-touch results recorded on a trade's outcome row.
+_TOUCH_STOP = "stop"
+_TOUCH_TARGET = "target"
+_TOUCH_NEITHER = "neither"
+
 
 @dataclass
 class OutcomeReport:
@@ -56,6 +61,25 @@ class OutcomeReport:
 
 def _aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _first_touch(bars: list[Bar5m], position: Position) -> str:
+    """Which of the position's stop or target the 5m bars touched first.
+
+    Compared against the position's current levels: a tightened stop is the
+    level that would actually fire. A bar that touches both counts as a stop
+    touch — intrabar order is unknowable, so the pessimistic read wins.
+    """
+    stop = position.current_stop_price
+    target = position.target_price
+    for bar in sorted(bars, key=lambda b: b.start):
+        stop_hit = stop is not None and bar.low <= stop
+        target_hit = target is not None and bar.high >= target
+        if stop_hit:
+            return _TOUCH_STOP
+        if target_hit:
+            return _TOUCH_TARGET
+    return _TOUCH_NEITHER
 
 
 class OutcomeWorker:
@@ -123,6 +147,17 @@ class OutcomeWorker:
                 (fields[0], fields[1], min(target_ny, later.close).astimezone(UTC))
             )
         return targets
+
+    def next_due(
+        self, decision_time: datetime, outcome: Outcome
+    ) -> datetime | None:
+        """Earliest unfilled price target (aware UTC); None when all filled."""
+        pending = [
+            target
+            for field, _at, target in self._targets(_aware_utc(decision_time))
+            if getattr(outcome, field) is None
+        ]
+        return min(pending) if pending else None
 
     # ------------------------------------------------------------------
     # prices
@@ -227,6 +262,7 @@ class OutcomeWorker:
                 outcome is not None
                 and outcome.best_price is not None
                 and outcome.worst_price is not None
+                and outcome.first_touch is not None
             ):
                 return False
         bars = self.market_data.get_5m_bars(position.symbol, opened, end)
@@ -247,6 +283,13 @@ class OutcomeWorker:
         if outcome.worst_price is None or worst.low < outcome.worst_price:
             outcome.worst_price = worst.low
             outcome.worst_price_at = _naive_utc(worst.start)
+            changed = True
+        touch = _first_touch(bars, position)
+        if (
+            outcome.first_touch not in (_TOUCH_STOP, _TOUCH_TARGET)
+            and outcome.first_touch != touch
+        ):
+            outcome.first_touch = touch
             changed = True
         return changed
 

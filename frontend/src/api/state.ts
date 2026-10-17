@@ -65,8 +65,9 @@ export function postAcknowledgePosition(id: number): Promise<{ acknowledged: boo
   return post(`/api/positions/${id}/acknowledge`, {});
 }
 
-export function getDashboard(): Promise<DashboardResponse> {
-  return get<DashboardResponse>('/api/dashboard');
+export function getDashboard(symbol?: string): Promise<DashboardResponse> {
+  const query = symbol === undefined ? '' : `?symbol=${encodeURIComponent(symbol)}`;
+  return get<DashboardResponse>(`/api/dashboard${query}`);
 }
 
 export function getChart(symbol: string): Promise<ChartResponse> {

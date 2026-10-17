@@ -26,7 +26,17 @@ from app.data.fake import (
 from app.data.models import Bar5m
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Cycle, Decision, EquitySnapshot, Outcome, Position, Run
+from app.db.models import (
+    Bar5m as Bar5mRow,
+)
+from app.db.models import (
+    Cycle,
+    Decision,
+    EquitySnapshot,
+    Outcome,
+    Position,
+    Run,
+)
 from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
@@ -431,6 +441,171 @@ async def test_best_worst_not_tracked_for_skips(
     assert outcome.price_1h is not None
     assert outcome.best_price is None
     assert outcome.worst_price is None
+
+
+# ----------------------------------------------------------------------
+# first touch: stop vs target
+
+
+def _seed_position(
+    session_factory: sessionmaker[Session],
+    decision_id: int,
+    opened: datetime,
+    *,
+    stop: float = 410,
+    target: float | None = 435,
+) -> None:
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="MSFT",
+                origin="agent",
+                entry_decision_id=decision_id,
+                qty=3,
+                avg_entry_price=420,
+                current_stop_price=stop,
+                target_price=target,
+                opened_at=_naive(opened),
+            )
+        )
+        session.commit()
+
+
+def _seed_bars(
+    session_factory: sessionmaker[Session],
+    bars: list[tuple[datetime, float, float, float, float]],
+) -> None:
+    """Insert cached 5m bars directly: (start, open, high, low, close)."""
+    with session_factory() as session:
+        for start, open_, high, low, close in bars:
+            session.add(
+                Bar5mRow(
+                    symbol="MSFT",
+                    start=_naive(start),
+                    open=open_,
+                    high=high,
+                    low=low,
+                    close=close,
+                    volume=1000,
+                    feed="test",
+                )
+            )
+        session.commit()
+
+
+async def test_first_touch_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The bar that dips to the stop first wins over a later target touch."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 15, 0, tzinfo=UTC), 420, 421, 409.5, 415),
+            # Later bar reaches the target — the stop still counts as first.
+            (datetime(2026, 10, 15, 16, 0, tzinfo=UTC), 415, 436, 414, 435),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "stop"
+
+
+async def test_first_touch_target(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A bar reaching the target before any stop touch records 'target'."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 15, 0, tzinfo=UTC), 420, 436, 419, 435),
+            (datetime(2026, 10, 15, 16, 0, tzinfo=UTC), 415, 420, 409.5, 411),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "target"
+
+
+async def test_first_touch_neither(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Bars that stay inside the stop/target range record 'neither'."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 15, 0, tzinfo=UTC), 420, 424, 416, 422),
+            (datetime(2026, 10, 15, 16, 0, tzinfo=UTC), 422, 430, 418, 429),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "neither"
+
+
+async def test_first_touch_same_bar_counts_as_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A bar touching both levels counts as a stop touch."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    _seed_bars(
+        session_factory,
+        [(datetime(2026, 10, 15, 15, 0, tzinfo=UTC), 420, 440, 405, 425)],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "stop"
+
+
+async def test_first_touch_none_for_skips(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A decision without a position keeps first_touch NULL."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    clock = FakeClock(decision_time + timedelta(hours=2))
+    worker, market_data = _worker(session_factory, clock)
+    await _cache_bars(market_data, decision_time, clock.now())
+
+    decision_id = _seed_decision(session_factory, decision_time)
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch is None
 
 
 # ----------------------------------------------------------------------

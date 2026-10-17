@@ -21,6 +21,25 @@ export function contextLabel(context: string): string {
   return context === 'held' ? 'Held position' : 'Entry candidate';
 }
 
+/** Big action badge colours (Latest decision card, decision drawer). */
+export function actionBadgeStyle(action: string): { bg: string; color: string } {
+  switch (action) {
+    case 'enter':
+      return { bg: 'var(--sa-positive-bg)', color: 'var(--sa-positive)' };
+    case 'exit':
+      return { bg: 'var(--sa-negative-bg)', color: 'var(--sa-negative-text)' };
+    case 'skip':
+    case 'deferred':
+      return { bg: 'var(--sa-warning-bg)', color: 'var(--sa-warning-text)' };
+    case 'tighten_stop':
+      return { bg: 'var(--sa-info-bg)', color: 'var(--sa-info)' };
+    case 'blocked':
+      return { bg: 'var(--sa-negative-bg)', color: 'var(--sa-negative-text)' };
+    default:
+      return { bg: 'var(--sa-raised)', color: 'var(--sa-text-2)' };
+  }
+}
+
 export function actionLabel(action: string): string {
   switch (action) {
     case 'enter':

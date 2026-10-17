@@ -1,40 +1,31 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { getDecision } from '../api/state';
 import { Chip } from '../components/Chip';
-import type { ChipVariant } from '../components/Chip';
-import { displayDayTime, displayTime } from '../format';
-import type {
-  CodeCheck,
-  DecisionDetail,
-  DecisionOutcome,
-  OrderRow,
-  RulesStatus,
-} from '../types/api';
+import { displayDayTime, nyTime } from '../format';
+import type { DecisionDetail } from '../types/api';
 import {
+  actionBadgeStyle,
   actionLabel,
+  contextLabel,
   formatAmsDateTime,
-  formatAmsTime,
   formatConfidence,
-  formatNumber,
   formatNyTitle,
 } from '../components/decisionFormat';
+import { actionChip } from './dashboardFeed';
+import {
+  firstTouchLabel,
+  gateRows,
+  num,
+  orderStatusText,
+  signalRows,
+  signedPct,
+  sipBarEnd,
+} from './decisionDetail';
 
-function actionChipVariant(action: string): ChipVariant {
-  switch (action) {
-    case 'enter':
-      return 'positive';
-    case 'skip':
-      return 'warning';
-    case 'exit':
-      return 'negative';
-    case 'tighten_stop':
-      return 'info';
-    default:
-      return 'neutral';
-  }
-}
+// ---------------------------------------------------------------------------
+// shared bits
 
 function SectionHeader({
   label,
@@ -73,7 +64,15 @@ function SectionHeader({
   );
 }
 
-function Section({ label, right, children }: { label: string; right?: React.ReactNode; children: React.ReactNode }) {
+function Section({
+  label,
+  right,
+  children,
+}: {
+  label: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <section
       aria-label={label}
@@ -91,330 +90,28 @@ function Section({ label, right, children }: { label: string; right?: React.Reac
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function muted(text: React.ReactNode) {
   return (
-    <>
-      <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>
-      <span
-        style={{
-          fontFamily: 'var(--sa-font-mono)',
-          textAlign: 'right',
-          color: 'var(--sa-text-2)',
-        }}
-      >
-        {value}
-      </span>
-    </>
-  );
-}
-
-function FieldGrid({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) auto',
-        gap: '6px var(--sa-space-4)',
-        fontSize: 'var(--sa-text-md)',
-      }}
-    >
-      {children}
+    <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+      {text}
     </div>
   );
 }
 
-function OutcomeTiles({ outcome }: { outcome: DecisionOutcome | null }) {
-  const tiles: { label: string; price: string | null; at: string | null }[] = [
-    { label: 'After 1h', price: outcome?.price_1h ?? null, at: outcome?.price_1h_at ?? null },
-    { label: 'After 1 session', price: outcome?.price_1session ?? null, at: outcome?.price_1session_at ?? null },
-    { label: 'After 5 sessions', price: outcome?.price_5sessions ?? null, at: outcome?.price_5sessions_at ?? null },
-  ];
-  return (
-    <>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-          gap: 'var(--sa-space-2)',
-        }}
-      >
-        {tiles.map((tile) => (
-          <div
-            key={tile.label}
-            style={{
-              padding: '10px',
-              border: `1px ${tile.price ? 'solid var(--sa-border)' : 'dashed var(--sa-border-strong)'}`,
-              borderRadius: 'var(--sa-radius-md)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px',
-            }}
-          >
-            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              {tile.label}
-            </span>
-            <span
-              style={{
-                fontFamily: 'var(--sa-font-mono)',
-                color: tile.price ? 'var(--sa-text)' : 'var(--sa-text-muted)',
-              }}
-            >
-              {tile.price ?? 'pending'}
-            </span>
-            {tile.at && (
-              <span
-                title="Timestamp of the 5-minute bar the price was taken from"
-                style={{ fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)' }}
-              >
-                bar {displayDayTime(tile.at)}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-      {outcome?.best_price && outcome.worst_price && (
-        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-          While open: best {outcome.best_price} · worst {outcome.worst_price}
-        </div>
-      )}
-    </>
-  );
-}
+// ---------------------------------------------------------------------------
+// header + action row
 
-function CheckList({ checks }: { checks: CodeCheck[] }) {
+function RegimeChip({ regime }: { regime: unknown }) {
+  const r = regime as { trend?: string; volatility?: string } | null;
+  if (!r?.trend) return null;
+  const variant =
+    r.trend === 'up' ? 'positive' : r.trend === 'down' ? 'negative' : 'neutral';
   return (
-    <div>
-      {checks.map((check, i) => (
-        <div
-          key={i}
-          style={{
-            display: 'flex',
-            gap: '10px',
-            alignItems: 'flex-start',
-            padding: 'var(--sa-space-2) 0',
-            borderBottom:
-              i < checks.length - 1 ? '1px solid var(--sa-border)' : 'none',
-          }}
-        >
-          <span
-            style={{
-              color: check.passed ? 'var(--sa-positive)' : 'var(--sa-negative)',
-              marginTop: '1px',
-            }}
-            aria-hidden="true"
-          >
-            {check.passed ? '✓' : '✕'}
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 'var(--sa-text-md)' }}>{check.name}</div>
-            {check.detail && (
-              <div
-                style={{
-                  fontSize: 'var(--sa-text-sm)',
-                  color: 'var(--sa-text-muted)',
-                  marginTop: '2px',
-                }}
-              >
-                {check.detail}
-              </div>
-            )}
-          </div>
-          <div
-            style={{
-              fontFamily: 'var(--sa-font-mono)',
-              fontSize: 'var(--sa-text-sm)',
-              color: 'var(--sa-text-2)',
-              textAlign: 'right',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {check.value ?? ''}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RulesSection({ rules }: { rules: RulesStatus }) {
-  const checks: CodeCheck[] = rules.checks.map((check) => ({
-    name: check.name,
-    passed: check.passed,
-    detail: check.detail,
-    value: null,
-  }));
-  const passed = checks.filter((check) => check.passed).length;
-  return (
-    <Section label="Rules pre-filter" right={`${passed} of ${checks.length} passed`}>
-      <CheckList checks={checks} />
-      {rules.reason && (
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {rules.reason}
-        </div>
-      )}
-    </Section>
-  );
-}
-
-function InputSnapshot({ snapshot }: { snapshot: Record<string, unknown> }) {
-  const ind1h = (snapshot.indicators_1h ?? {}) as Record<string, unknown>;
-  const daily = (snapshot.indicators_daily ?? {}) as Record<string, unknown>;
-  const regime = (snapshot.regime ?? {}) as Record<string, unknown>;
-  const price = snapshot.price;
-  const vwap = ind1h.vwap;
-  const vwapNote =
-    typeof price === 'number' && typeof vwap === 'number'
-      ? ` · price ${price >= vwap ? 'above' : 'below'}`
-      : '';
-  const close = daily.close;
-  const sma50 = daily.sma50;
-  const sma200 = daily.sma200;
-  const smaNote =
-    typeof close === 'number'
-      ? `${typeof sma50 === 'number' && close > sma50 ? 'above' : 'below'} / ${
-          typeof sma200 === 'number' && close > sma200 ? 'above' : 'below'
-        }`
-      : '—';
-  const headlines = snapshot.headlines;
-  const headlineCount = Array.isArray(headlines) ? headlines.length : null;
-  const days = snapshot.days_to_earnings;
-
-  return (
-    <FieldGrid>
-      <Field label="Price (ask)" value={formatNumber(price)} />
-      <Field
-        label="Regime (SPY)"
-        value={
-          typeof regime.trend === 'string'
-            ? `${regime.trend} · ${regime.volatility}`
-            : '—'
-        }
-      />
-      <Field
-        label="EMA 20 / EMA 50 (1h)"
-        value={`${formatNumber(ind1h.ema20)} / ${formatNumber(ind1h.ema50)}`}
-      />
-      <Field label="RSI 14 (1h)" value={formatNumber(ind1h.rsi14, 1)} />
-      <Field label="ATR 14 (1h)" value={formatNumber(ind1h.atr14)} />
-      <Field
-        label="Session VWAP"
-        value={`${formatNumber(vwap)}${vwapNote}`}
-      />
-      <Field label="OBV trend (20 bars)" value={String(ind1h.obv_trend ?? '—')} />
-      <Field
-        label="RS vs SPY (20 bars)"
-        value={
-          typeof ind1h.rs_vs_spy_pct === 'number'
-            ? `${ind1h.rs_vs_spy_pct >= 0 ? '+' : ''}${ind1h.rs_vs_spy_pct}%`
-            : '—'
-        }
-      />
-      <Field label="Daily vs SMA 50 / 200" value={smaNote} />
-      <Field
-        label="Opening gap"
-        value={
-          typeof daily.gap_pct === 'number'
-            ? `${daily.gap_pct >= 0 ? '+' : ''}${daily.gap_pct}%`
-            : '—'
-        }
-      />
-      <Field
-        label="Next earnings"
-        value={typeof days === 'number' ? `${days} sessions` : String(days ?? '—')}
-      />
-      <Field
-        label="Headlines (24h)"
-        value={headlineCount === null ? String(headlines ?? '—') : headlineCount}
-      />
-    </FieldGrid>
-  );
-}
-
-function ModelOutputSection({ decision }: { decision: DecisionDetail }) {
-  const output = decision.model_output;
-  const validation = decision.validation_result;
-  if (output === null) {
-    return (
-      <Section
-        label="Model output"
-        right={<Link to="/inspector" style={{ color: 'var(--sa-accent)' }}>View model call</Link>}
-      >
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {validation?.error
-            ? `No usable output — ${validation.error}`
-            : 'No model output stored for this decision.'}
-        </div>
-      </Section>
-    );
-  }
-  return (
-    <Section
-      label="Model output"
-      right={<Link to="/inspector" style={{ color: 'var(--sa-accent)' }}>View model call</Link>}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
-        <div
-          style={{
-            minWidth: '88px',
-            height: '48px',
-            padding: '0 14px',
-            borderRadius: 'var(--sa-radius-md)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontFamily: 'var(--sa-font-mono)',
-            fontWeight: 600,
-            fontSize: 'var(--sa-text-lg)',
-            background:
-              output.action === 'enter'
-                ? 'var(--sa-positive-bg)'
-                : output.action === 'exit'
-                  ? 'var(--sa-negative-bg)'
-                  : 'var(--sa-raised)',
-            color:
-              output.action === 'enter'
-                ? 'var(--sa-positive)'
-                : output.action === 'exit'
-                  ? 'var(--sa-negative-text)'
-                  : 'var(--sa-text-2)',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {output.action.replace('_', ' ').toUpperCase()}
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <span style={{ fontWeight: 600 }}>{actionLabel(output.action)}</span>
-          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-            confidence{' '}
-            <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
-              {formatConfidence(output.confidence)}
-            </span>
-          </span>
-        </div>
-      </div>
-      {output.thesis && (
-        <p style={{ margin: '4px 0 0', lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
-          {output.thesis}
-        </p>
-      )}
-      <FieldGrid>
-        <Field label="Stop" value={formatNumber(output.stop_price)} />
-        <Field label="Target" value={formatNumber(output.target_price)} />
-        <Field label="Invalidation" value={output.invalidation ?? '—'} />
-      </FieldGrid>
-      {output.risks.length > 0 && (
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          Risks named:{' '}
-          <span style={{ color: 'var(--sa-text-2)' }}>{output.risks.join('; ')}</span>
-        </div>
-      )}
-      {output.news_used.length > 0 && (
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          News used:{' '}
-          <span style={{ color: 'var(--sa-text-2)' }}>{output.news_used.join(' · ')}</span>
-        </div>
-      )}
-    </Section>
+    <span title="SPY regime: trend × volatility">
+      <Chip variant={variant}>
+        market {r.trend} · {r.volatility} vol
+      </Chip>
+    </span>
   );
 }
 
@@ -427,124 +124,402 @@ interface GatesResult {
   pending_approval?: boolean;
 }
 
-function GatesSection({ gates }: { gates: GatesResult | null }) {
-  if (!gates || !Array.isArray(gates.checks) || gates.checks.length === 0) {
-    return (
-      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-        {gates?.blocked_by
-          ? `Blocked: ${String(gates.blocked_by).replace(/_/g, ' ')}`
-          : 'Risk gates run with order placement in the execution step.'}
-      </div>
+// ---------------------------------------------------------------------------
+// safety gates
+
+function gateStateColor(state: 'pass' | 'fail' | 'reduced'): string {
+  return state === 'pass'
+    ? 'var(--sa-positive)'
+    : state === 'fail'
+      ? 'var(--sa-negative-text)'
+      : 'var(--sa-warning-text)';
+}
+
+function SafetyGates({ decision }: { decision: DecisionDetail }) {
+  const rows = gateRows(decision);
+  return (
+    <Section label="Safety gates" right="code checks, then risk gates in order">
+      {rows.length === 0 ? (
+        muted(
+          decision.rules_result?.reason ??
+            decision.validation_result?.error ??
+            'No checks recorded — the model was not asked this cycle.',
+        )
+      ) : (
+        <div
+          style={{
+            border: '1px solid var(--sa-border)',
+            borderRadius: 'var(--sa-radius-md)',
+            padding: '0 var(--sa-space-3)',
+          }}
+        >
+          {rows.map((row, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 'var(--sa-space-3)',
+                padding: '7px 0',
+                fontSize: 'var(--sa-text-md)',
+                borderBottom:
+                  i < rows.length - 1 ? '1px solid var(--sa-border)' : 'none',
+              }}
+            >
+              <span style={{ color: 'var(--sa-text-2)' }}>{row.name}</span>
+              <span
+                style={{
+                  fontFamily: 'var(--sa-font-mono)',
+                  fontSize: 'var(--sa-text-sm)',
+                  textAlign: 'right',
+                  color: gateStateColor(row.state),
+                }}
+              >
+                {row.detail ? `${row.detail} · ` : ''}
+                {row.state}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {(decision.gates_result as GatesResult | null)?.pending_approval && (
+        muted('Passed the gates — waiting for approval (supervised mode).')
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// signal stack
+
+function SignalStack({ decision }: { decision: DecisionDetail }) {
+  const snapshot = decision.input_snapshot ?? {};
+  const daily = (snapshot.indicators_daily ?? {}) as Record<string, unknown>;
+  const levels = snapshot.levels as
+    | { swing_highs?: number[]; swing_lows?: number[] }
+    | string
+    | undefined;
+  const rows = signalRows(snapshot);
+
+  const chips: string[] = [];
+  const gap = num(daily.gap_pct);
+  if (gap !== null) chips.push(`Gap ${signedPct(gap)}`);
+  if (levels && typeof levels === 'object') {
+    const high = levels.swing_highs?.length
+      ? Math.max(...levels.swing_highs)
+      : null;
+    const low = levels.swing_lows?.length ? Math.min(...levels.swing_lows) : null;
+    if (high !== null || low !== null) {
+      chips.push(`Swing high ${high ?? '—'} · low ${low ?? '—'}`);
+    }
+  }
+  const earnings = decision.earnings;
+  if (earnings?.date) {
+    const date = new Date(`${earnings.date}T00:00:00Z`).toLocaleDateString(
+      'en-GB',
+      { day: 'numeric', month: 'short', timeZone: 'UTC' },
+    );
+    chips.push(
+      `Earnings ${date}${
+        earnings.sessions !== null ? ` · ${earnings.sessions} sessions` : ''
+      }`,
     );
   }
-  const checks: CodeCheck[] = gates.checks.map((c) => ({
-    name: c.name.replace(/_/g, ' '),
-    passed: c.passed,
-    detail: c.detail,
-    value: null,
-  }));
+
   return (
-    <>
-      {gates.pending_approval && (
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-accent)' }}>
-          Passed the gates — waiting for approval (supervised mode).
+    <Section label="Signal stack" right={`SIP bars to ${sipBarEnd(decision.cycle_time)} NY`}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr)',
+          gap: '4px var(--sa-space-3)',
+          fontSize: 'var(--sa-text-md)',
+        }}
+      >
+        {['Signal', '1h', 'Daily'].map((head, i) => (
+          <span
+            key={head}
+            style={{
+              fontSize: 'var(--sa-text-sm)',
+              color: 'var(--sa-text-muted)',
+              textAlign: i === 0 ? 'left' : 'right',
+              paddingBottom: '4px',
+              borderBottom: '1px solid var(--sa-border)',
+            }}
+          >
+            {head}
+          </span>
+        ))}
+        {rows.map(([name, h1, d1]) => (
+          <Fragment key={name}>
+            <span style={{ color: 'var(--sa-text-2)', padding: '4px 0' }}>
+              {name}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--sa-font-mono)',
+                textAlign: 'right',
+                color: 'var(--sa-text-2)',
+                padding: '4px 0',
+              }}
+            >
+              {h1}
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--sa-font-mono)',
+                textAlign: 'right',
+                color: 'var(--sa-text-2)',
+                padding: '4px 0',
+              }}
+            >
+              {d1}
+            </span>
+          </Fragment>
+        ))}
+      </div>
+      {chips.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {chips.map((text) => (
+            <Chip key={text} variant="neutral">
+              {text}
+            </Chip>
+          ))}
         </div>
       )}
-      <CheckList checks={checks} />
-      {gates.sizing && (
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// reasoning
+
+interface Headline {
+  id?: string;
+  time?: string;
+  source?: string;
+  title?: string;
+}
+
+function Reasoning({ decision }: { decision: DecisionDetail }) {
+  const output = decision.model_output;
+  const rulesReason = decision.rules_result?.reason;
+  const error = decision.validation_result?.error;
+  const thesis = output?.thesis || rulesReason || error || null;
+
+  const headlines = Array.isArray(decision.input_snapshot?.headlines)
+    ? (decision.input_snapshot?.headlines as Headline[])
+    : [];
+  const news = (output?.news_used ?? [])
+    .map((id) => {
+      const found = headlines.find((h) => h.id === id);
+      return found
+        ? `“${found.title}” · ${found.source} · ${nyTime(found.time)}`
+        : id;
+    })
+    .filter(Boolean);
+
+  return (
+    <Section label="Agent reasoning">
+      {thesis ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 'var(--sa-text-md)',
+            color: 'var(--sa-text-2)',
+            lineHeight: 1.55,
+          }}
+        >
+          {thesis}
+        </p>
+      ) : (
+        muted('No model reasoning recorded.')
+      )}
+      {output && output.risks.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {output.risks.map((risk) => (
+            <Chip key={risk} variant="warning">
+              Risk: {risk}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {news.length > 0 && (
         <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          Sized to {gates.sizing.shares} shares
-          {gates.sizing.limited_by?.length
-            ? ` · limited by ${gates.sizing.limited_by.join(', ')}`
-            : ''}
-          {gates.blocked_by && ` · blocked by ${String(gates.blocked_by).replace(/_/g, ' ')}`}
+          News used: <span style={{ color: 'var(--sa-text-2)' }}>{news.join(' · ')}</span>
         </div>
       )}
-    </>
-  );
-}
-
-function shortId(id: string | null): string {
-  if (!id) return '—';
-  return `${id.slice(0, 4)}…${id.slice(-4)}`;
-}
-
-function OrderSection({ orders }: { orders: OrderRow[] }) {
-  const entry = orders.find((o) => o.leg === 'entry');
-  const legs = orders.filter((o) => o.leg !== 'entry');
-  const stop = legs.find((o) => o.leg === 'stop');
-  const target = legs.find((o) => o.leg === 'target');
-  const fill = entry?.fills[0];
-  return (
-    <Section label="Order at Alpaca">
-      <FieldGrid>
-        <Field label="Type" value="Bracket · gtc" />
-        <Field
-          label="Entry"
-          value={`limit ${entry?.limit_price ?? '—'} · ${entry?.status ?? '—'}`}
-        />
-        <Field
-          label="Stop leg"
-          value={stop ? `stop ${stop.stop_price ?? '—'} · ${stop.status}` : '—'}
-        />
-        <Field
-          label="Target leg"
-          value={target ? `limit ${target.limit_price ?? '—'} · ${target.status}` : '—'}
-        />
-        <Field label="Quantity" value={`${entry?.qty ?? '—'} shares`} />
-        <Field label="Sent" value={displayTime(entry?.created_at ?? null)} />
-        <Field
-          label="Filled"
-          value={
-            fill
-              ? `${displayTime(fill.filled_at)} @ ${fill.price}`
-              : '—'
-          }
-        />
-        {fill?.slippage != null && (
-          <Field
-            label="Slippage vs limit"
-            value={`${Number(fill.slippage) <= 0 ? '−' : '+'}$${Math.abs(Number(fill.slippage)).toFixed(2)} / share (${Number(fill.slippage) <= 0 ? 'better' : 'worse'})`}
-          />
-        )}
-      </FieldGrid>
-      <div style={{ fontSize: 'var(--sa-text-sm)', fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }}>
-        Alpaca order {shortId(entry?.alpaca_order_id ?? null)}
-        {legs.length > 0 && ` · legs ${legs.map((l) => shortId(l.alpaca_order_id)).join(', ')}`}
-      </div>
     </Section>
   );
 }
 
-function ApprovalSection({ decision }: { decision: DecisionDetail }) {
-  const approval = decision.approval;
-  if (!approval) return null;
-  const variant: ChipVariant =
-    approval.status === 'approved'
-      ? 'positive'
-      : approval.status === 'pending'
-        ? 'warning'
-        : 'negative';
+// ---------------------------------------------------------------------------
+// level tiles + outcome
+
+function LevelTile({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string | null;
+  accent?: string;
+}) {
   return (
-    <Section label="Approval" right="supervised mode">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
-        <Chip variant={variant}>{approval.status}</Chip>
-        <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)' }}>
-          {approval.qty} shares · limit {approval.limit_price}
-        </span>
-      </div>
-      {approval.reason && (
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
-          {approval.reason}
-        </div>
+    <div
+      style={{
+        padding: '10px',
+        border: `1px ${value ? 'solid var(--sa-border)' : 'dashed var(--sa-border-strong)'}`,
+        borderRadius: 'var(--sa-radius-md)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        minWidth: 0,
+      }}
+    >
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--sa-font-mono)',
+          color: value ? (accent ?? 'var(--sa-text)') : 'var(--sa-text-muted)',
+          fontSize: 'var(--sa-text-md)',
+        }}
+      >
+        {value ?? '—'}
+      </span>
+    </div>
+  );
+}
+
+function OutcomeSection({ decision }: { decision: DecisionDetail }) {
+  const outcome = decision.outcome;
+  const hasTrade = decision.trade !== null && decision.trade.status !== 'none';
+  const tiles: {
+    label: string;
+    price: string | null;
+    r: string | null;
+    at: string | null;
+  }[] = [
+    {
+      label: '1h',
+      price: outcome?.price_1h ?? null,
+      r: outcome?.r_1h ?? null,
+      at: outcome?.price_1h_at ?? null,
+    },
+    {
+      label: '1 session',
+      price: outcome?.price_1session ?? null,
+      r: outcome?.r_1session ?? null,
+      at: outcome?.price_1session_at ?? null,
+    },
+    {
+      label: '5 sessions',
+      price: outcome?.price_5sessions ?? null,
+      r: outcome?.r_5sessions ?? null,
+      at: outcome?.price_5sessions_at ?? null,
+    },
+  ];
+  const touchLabel = firstTouchLabel(outcome?.first_touch);
+  const soFar: string[] = [];
+  if (outcome?.best_r) soFar.push(`best ${outcome.best_r}R`);
+  else if (outcome?.best_price) soFar.push(`best ${outcome.best_price}`);
+  if (outcome?.worst_r) soFar.push(`worst ${outcome.worst_r}R`);
+  else if (outcome?.worst_price) soFar.push(`worst ${outcome.worst_price}`);
+  if (touchLabel) soFar.push(`first touch: ${touchLabel}`);
+
+  return (
+    <Section
+      label="Outcome"
+      right={
+        decision.next_outcome_due
+          ? `next result ${displayDayTime(decision.next_outcome_due)}`
+          : 'all results in'
+      }
+    >
+      {outcome === null ? (
+        muted('No outcome row stored for this decision.')
+      ) : (
+        <>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gap: 'var(--sa-space-2)',
+            }}
+          >
+            {tiles.map((tile) => (
+              <div
+                key={tile.label}
+                style={{
+                  padding: '10px',
+                  border: `1px ${
+                    tile.price
+                      ? 'solid var(--sa-border)'
+                      : 'dashed var(--sa-border-strong)'
+                  }`,
+                  borderRadius: 'var(--sa-radius-md)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  {tile.label}
+                </span>
+                <span
+                  style={{
+                    fontFamily: 'var(--sa-font-mono)',
+                    fontSize: 'var(--sa-text-md)',
+                    color: tile.price ? 'var(--sa-text)' : 'var(--sa-text-muted)',
+                  }}
+                >
+                  {tile.price
+                    ? `${tile.price}${tile.r ? ` · ${tile.r}R` : ''}`
+                    : 'pending'}
+                </span>
+                {tile.at && (
+                  <span
+                    title="Timestamp of the 5-minute bar the price was taken from"
+                    style={{
+                      fontSize: 'var(--sa-text-xs)',
+                      color: 'var(--sa-text-muted)',
+                    }}
+                  >
+                    bar {nyTime(tile.at)} NY
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+          {soFar.length > 0 && (
+            <div
+              style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+            >
+              So far: {soFar.join(' · ')}
+            </div>
+          )}
+          {hasTrade && !touchLabel && (
+            <div
+              style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+            >
+              first touch: —
+            </div>
+          )}
+        </>
       )}
-      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-        created {displayTime(approval.created_at)}
-        {approval.resolved_at && ` · resolved ${displayTime(approval.resolved_at)}`}
-      </div>
     </Section>
   );
 }
+
+// ---------------------------------------------------------------------------
+// page
 
 export default function Decision() {
   const { id } = useParams<{ id: string }>();
@@ -570,18 +545,34 @@ export default function Decision() {
             color: 'var(--sa-text-muted)',
           }}
         >
-          {error} <Link to="/inspector" style={{ color: 'var(--sa-accent)' }}>Back to the inspector</Link>
+          {error}{' '}
+          <Link to="/" style={{ color: 'var(--sa-accent)' }}>
+            Back to the dashboard
+          </Link>
         </div>
       </div>
     );
   }
   if (!decision) return null;
 
-  const regime = (decision.input_snapshot?.regime ?? null) as {
-    trend?: string;
-    volatility?: string;
-  } | null;
+  const snapshot = (decision.input_snapshot ?? {}) as Record<string, unknown>;
+  const regime = snapshot.regime;
   const validation = decision.validation_result;
+  const rules = decision.rules_result;
+  const rulesPassed = rules
+    ? `${rules.checks.filter((c) => c.passed).length} of ${rules.checks.length}`
+    : null;
+  const chip = actionChip(decision.final_action, decision.no_call_reason);
+  const badge = actionBadgeStyle(decision.final_action);
+  const trade = decision.trade;
+  const output = decision.model_output;
+  const entryOrder = decision.orders?.find((o) => o.leg === 'entry');
+  const hasOrder = Boolean(entryOrder);
+  const total =
+    trade?.qty && trade.entry ? trade.qty * Number(trade.entry) : null;
+  const eurRate = decision.eur_usd_rate ? Number(decision.eur_usd_rate) : null;
+  const eur = total !== null && eurRate ? total / eurRate : null;
+  const confidence = output?.confidence ?? null;
 
   return (
     <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -594,44 +585,70 @@ export default function Decision() {
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-lg)',
           color: 'var(--sa-text)',
-          padding: 'var(--sa-space-5) var(--sa-space-6)',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
+        {/* header */}
         <div
           style={{
+            padding: 'var(--sa-space-5) var(--sa-space-6) var(--sa-space-4)',
+            borderBottom: '1px solid var(--sa-border)',
             display: 'flex',
-            alignItems: 'flex-start',
             justifyContent: 'space-between',
             gap: 'var(--sa-space-3)',
-            paddingBottom: 'var(--sa-space-4)',
           }}
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <div
-              style={{
-                fontSize: 'var(--sa-text-sm)',
-                color: 'var(--sa-text-muted)',
-                textTransform: 'uppercase',
-                letterSpacing: 'var(--sa-label-tracking)',
-              }}
-            >
-              Decision · {decision.context}
-            </div>
-            <h1 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>
-              {decision.symbol} · {decision.final_action.replace('_', ' ')}
-            </h1>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              minWidth: 0,
+            }}
+          >
             <div
               title={formatNyTitle(decision.cycle_time)}
-              style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}
+              style={{
+                fontFamily: 'var(--sa-font-mono)',
+                fontSize: 'var(--sa-text-sm)',
+                color: 'var(--sa-text-muted)',
+              }}
             >
-              {formatAmsDateTime(decision.cycle_time)} cycle · prompt{' '}
-              {decision.prompt_version ?? '—'} · {decision.model ?? '—'}
+              {formatAmsDateTime(decision.cycle_time)} cycle ·{' '}
+              {decision.model ?? '—'} · {decision.prompt_version ?? '—'}
+            </div>
+            <h1
+              style={{
+                margin: 0,
+                fontSize: 'var(--sa-text-xl)',
+                fontWeight: 600,
+              }}
+            >
+              {decision.symbol} decision
+            </h1>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 'var(--sa-space-2)',
+              }}
+            >
+              <RegimeChip regime={regime} />
+              <span
+                style={{
+                  fontSize: 'var(--sa-text-sm)',
+                  color: 'var(--sa-text-muted)',
+                }}
+              >
+                {contextLabel(decision.context)}
+                {rulesPassed ? ` · pre-filter ${rulesPassed} passed` : ''}
+              </span>
             </div>
           </div>
           <Link
-            to="/inspector"
+            to="/"
             aria-label="Close"
             title="Close"
             style={{
@@ -642,80 +659,219 @@ export default function Decision() {
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: 'var(--sa-radius-md)',
-              border: '1px solid var(--sa-border)',
+              border: '1px solid var(--sa-border-strong)',
               color: 'var(--sa-text-muted)',
               textDecoration: 'none',
             }}
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />
             </svg>
           </Link>
         </div>
 
+        {/* body */}
         <div
           style={{
+            padding: '0 var(--sa-space-6) var(--sa-space-6)',
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: '6px',
-            paddingBottom: 'var(--sa-space-4)',
+            flexDirection: 'column',
           }}
         >
-          <Chip variant={actionChipVariant(decision.final_action)}>
-            {decision.final_action === 'no_call' && decision.no_call_reason
-              ? `no call · ${decision.no_call_reason.replace(/_/g, ' ')}`
-              : decision.final_action.replace('_', ' ')}
-          </Chip>
-          {validation?.changed_by_code && (
-            <Chip variant="warning">
-              model said {validation.model_action?.replace('_', ' ')} — code changed it
-            </Chip>
-          )}
-          {regime?.trend && (
-            <Chip variant="neutral">
-              regime {regime.trend} · {regime.volatility}
-            </Chip>
-          )}
+          {/* action row */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--sa-space-4)',
+              padding: 'var(--sa-space-5) 0 var(--sa-space-4)',
+            }}
+          >
+            <div
+              style={{
+                minWidth: '88px',
+                height: '56px',
+                padding: '0 16px',
+                borderRadius: 'var(--sa-radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontFamily: 'var(--sa-font-mono)',
+                fontWeight: 600,
+                fontSize: 'var(--sa-text-xl)',
+                background: badge.bg,
+                color: badge.color,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {chip.label}
+            </div>
+            <div
+              style={{
+                flex: 1,
+                minWidth: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '6px',
+              }}
+            >
+              {trade && trade.qty && trade.entry ? (
+                <div
+                  style={{
+                    fontFamily: 'var(--sa-font-mono)',
+                    fontSize: 'var(--sa-text-md)',
+                  }}
+                >
+                  {trade.qty} sh @ {trade.entry}
+                  {hasOrder ? ' limit' : ''}
+                  {total !== null && (
+                    <>
+                      {' '}
+                      ≈ ${Math.round(total).toLocaleString('en-US')}
+                      {eur !== null && (
+                        <span
+                          style={{
+                            color: 'var(--sa-text-muted)',
+                            fontSize: 'var(--sa-text-sm)',
+                          }}
+                        >
+                          {' '}
+                          €{Math.round(eur).toLocaleString('en-US')}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 'var(--sa-text-md)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  {validation?.changed_by_code
+                    ? `model said ${validation.model_action?.replace('_', ' ')} — code changed it`
+                    : decision.final_action === 'no_call'
+                      ? 'the model was not asked this cycle'
+                      : actionLabel(decision.final_action)}
+                </div>
+              )}
+              {confidence !== null && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--sa-space-2)',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  confidence
+                  <div
+                    style={{
+                      flex: 1,
+                      maxWidth: '140px',
+                      height: '4px',
+                      borderRadius: '2px',
+                      background: 'var(--sa-raised)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${Math.round(confidence * 100)}%`,
+                        height: '100%',
+                        background: 'var(--sa-accent)',
+                      }}
+                    />
+                  </div>
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      color: 'var(--sa-text-2)',
+                    }}
+                  >
+                    {formatConfidence(confidence)}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <SafetyGates decision={decision} />
+          <SignalStack decision={decision} />
+          <Reasoning decision={decision} />
+
+          {/* level tiles */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+              gap: 'var(--sa-space-2)',
+              padding: 'var(--sa-space-4) 0 0',
+              borderTop: '1px solid var(--sa-border)',
+            }}
+          >
+            <LevelTile label="Entry" value={trade?.entry ?? null} />
+            <LevelTile
+              label="Stop"
+              value={trade?.stop ?? null}
+              accent="var(--sa-negative-text)"
+            />
+            <LevelTile
+              label="Target"
+              value={trade?.target ?? null}
+              accent="var(--sa-positive)"
+            />
+            <LevelTile
+              label="Invalidation · 1h close"
+              value={output?.invalidation ?? null}
+            />
+          </div>
+
+          <OutcomeSection decision={decision} />
         </div>
 
-        <Section label="Outcome" right="every decision is tracked, skips too">
-          <OutcomeTiles outcome={decision.outcome} />
-        </Section>
-
-        <ModelOutputSection decision={decision} />
-
-        <Section label="Code checks">
-          {validation && validation.checks.length > 0 ? (
-            <CheckList checks={validation.checks} />
-          ) : (
-            <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-              {validation?.note ?? 'No checks recorded.'}
-            </div>
-          )}
-        </Section>
-
-        <Section label="Risk gates" right="in order; first failure blocks">
-          <GatesSection gates={decision.gates_result as GatesResult | null} />
-        </Section>
-
-        {decision.approval && <ApprovalSection decision={decision} />}
-
-        {decision.orders && decision.orders.length > 0 && (
-          <OrderSection orders={decision.orders} />
-        )}
-
-        {decision.rules_result && <RulesSection rules={decision.rules_result} />}
-
-        <Section label="Input snapshot" right={`bars to ${formatAmsTime(decision.cycle_time)}`}>
-          {decision.input_snapshot ? (
-            <InputSnapshot snapshot={decision.input_snapshot} />
-          ) : (
-            <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-              No snapshot stored.
-            </div>
-          )}
-        </Section>
+        {/* footer */}
+        <div
+          style={{
+            padding: 'var(--sa-space-4) var(--sa-space-6)',
+            borderTop: '1px solid var(--sa-border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--sa-space-3)',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 'var(--sa-text-sm)',
+              color: 'var(--sa-text-muted)',
+            }}
+          >
+            {orderStatusText(decision)}
+          </div>
+          <div style={{ display: 'flex', gap: 'var(--sa-space-4)' }}>
+            <Link to="/positions" style={{ color: 'var(--sa-accent)' }}>
+              Open position &amp; orders
+            </Link>
+            <Link
+              to={`/inspector?call=${decision.id}`}
+              style={{ color: 'var(--sa-accent)' }}
+            >
+              Open model call
+            </Link>
+          </div>
+        </div>
       </div>
     </div>
   );

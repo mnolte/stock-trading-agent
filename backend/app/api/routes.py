@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import get_config
+from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import (
@@ -30,6 +30,7 @@ from app.db.models import (
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor
+from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
@@ -338,8 +339,111 @@ def list_decisions(request: Request) -> dict[str, object]:
     }
 
 
+def _decision_earnings(
+    session: Session, decision: Decision, scheduled: datetime
+) -> dict[str, object]:
+    """Earnings chip data: the next report at decision time + sessions seen."""
+    snapshot = decision.input_snapshot or {}
+    days = snapshot.get("days_to_earnings")
+    scheduled_day = scheduled.replace(tzinfo=UTC).astimezone(NY_TZ).date()
+    next_date = session.execute(
+        select(func.min(Earning.date)).where(
+            Earning.symbol == decision.symbol,
+            Earning.date >= datetime.combine(scheduled_day, dtime.min),
+        )
+    ).scalar_one_or_none()
+    return {
+        "date": next_date.date().isoformat() if next_date is not None else None,
+        "sessions": days if isinstance(days, int) else None,
+        "unavailable": days == "unavailable",
+    }
+
+
+def _r_multiple(
+    price: Decimal | None, entry: Decimal | None, stop: Decimal | None
+) -> str | None:
+    """Return on risk, e.g. '+0.22'; None when the inputs can't make one."""
+    if price is None or entry is None or stop is None:
+        return None
+    risk = entry - stop
+    if risk <= 0:
+        return None
+    return f"{(price - entry) / risk:+.2f}"
+
+
+def _trade_block(
+    position: Position | None,
+    orders: Sequence[Order],
+    fills: dict[int, Sequence[Fill]],
+    approval: Approval | None,
+    output: dict[str, object],
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    """The levels the decision traded at, for the tiles and R multiples.
+
+    Filled position first, then the order legs, then the approval or the
+    model's proposed levels.
+    """
+    entry: Decimal | None = None
+    stop: Decimal | None = None
+    target: Decimal | None = None
+    qty: int | None = None
+    status = "none"
+    if position is not None:
+        qty = position.qty
+        entry = position.avg_entry_price
+        stop = position.current_stop_price
+        target = position.target_price
+        status = "closed" if position.closed_at else "open"
+    entry_order = next((o for o in orders if o.leg == "entry"), None)
+    stop_order = next((o for o in orders if o.leg == "stop"), None)
+    target_order = next((o for o in orders if o.leg == "target"), None)
+    if entry is None and entry_order is not None:
+        qty = qty or entry_order.qty
+        order_fills = fills.get(entry_order.id, [])
+        filled_qty = sum(f.qty for f in order_fills)
+        if filled_qty:
+            entry = (
+                sum((f.price * f.qty for f in order_fills), Decimal(0))
+                / filled_qty
+            )
+        else:
+            entry = entry_order.limit_price
+    if stop is None and stop_order is not None:
+        stop = stop_order.stop_price or stop_order.limit_price
+    if target is None and target_order is not None:
+        target = target_order.limit_price or target_order.stop_price
+    if qty is None and approval is not None:
+        qty = approval.qty
+    if entry is None and approval is not None:
+        entry = approval.limit_price
+    if stop is None and isinstance(output.get("stop_price"), int | float):
+        stop = Decimal(str(output["stop_price"]))
+    if target is None and isinstance(output.get("target_price"), int | float):
+        target = Decimal(str(output["target_price"]))
+    if entry is None and isinstance(snapshot.get("price"), int | float):
+        entry = Decimal(str(snapshot["price"]))
+    if position is None:
+        status = (
+            "filled"
+            if entry_order is not None and entry_order.status == "filled"
+            else "open"
+            if entry_order is not None
+            else "approval"
+            if approval is not None and approval.status == "pending"
+            else "none"
+        )
+    return {
+        "qty": qty,
+        "entry": str(entry) if entry is not None else None,
+        "stop": str(stop) if stop is not None else None,
+        "target": str(target) if target is not None else None,
+        "status": status,
+    }
+
+
 @router.get("/decisions/{decision_id}")
-def decision_detail(decision_id: int) -> dict[str, object]:
+def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     """One stored decision with its prompt, output, checks and raw response."""
     with get_session_maker()() as session:
         row = session.execute(
@@ -371,10 +475,30 @@ def decision_detail(decision_id: int) -> dict[str, object]:
             .order_by(Approval.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+        position_row = session.execute(
+            select(Position).where(Position.entry_decision_id == decision_id)
+        ).scalar_one_or_none()
+        earnings = _decision_earnings(session, decision, scheduled)
+    output = decision.model_output or {}
+    snapshot = decision.input_snapshot or {}
+    trade = _trade_block(
+        position_row, order_rows, fills, approval_row, output, snapshot
+    )
+    entry = Decimal(trade["entry"]) if isinstance(trade["entry"], str) else None
+    stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
     except OSError:
         prompt_text = None
+    next_due = None
+    if outcome is not None:
+        worker = OutcomeWorker(
+            market_data=None,
+            calendar=_calendar(request),
+            config=get_config(),
+            clock=make_clock(),
+        )
+        next_due = worker.next_due(scheduled.replace(tzinfo=UTC), outcome)
     return {
         "id": decision.id,
         "cycle_time": scheduled.replace(tzinfo=UTC).isoformat(),
@@ -387,6 +511,7 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "model_output": decision.model_output,
         "validation_result": decision.validation_result,
         "gates_result": decision.gates_result,
+        "trade": trade,
         "outcome": (
             {
                 "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
@@ -409,10 +534,22 @@ def decision_detail(decision_id: int) -> dict[str, object]:
                     str(outcome.worst_price) if outcome.worst_price else None
                 ),
                 "worst_price_at": _iso(outcome.worst_price_at),
+                "first_touch": outcome.first_touch,
+                "r_1h": _r_multiple(outcome.price_1h, entry, stop),
+                "r_1session": _r_multiple(outcome.price_1session, entry, stop),
+                "r_5sessions": _r_multiple(outcome.price_5sessions, entry, stop),
+                "best_r": _r_multiple(outcome.best_price, entry, stop),
+                "worst_r": _r_multiple(outcome.worst_price, entry, stop),
             }
             if outcome is not None
             else None
         ),
+        "next_outcome_due": _iso(next_due),
+        "earnings": earnings,
+        "execution_mode": get_config().get(
+            "execution", "mode", default="automatic"
+        ),
+        "eur_usd_rate": _eur_rate(request)["rate"],
         "prompt_version": decision.prompt_version,
         "prompt_hash": decision.prompt_hash,
         "prompt_text": prompt_text,
@@ -1555,8 +1692,212 @@ def performance(request: Request, run: int | None = None) -> dict[str, object]:
 # Dashboard + chart
 
 
+def _f(value: object) -> float | None:
+    """JSON number or None; 'unavailable' strings read as None."""
+    return value if isinstance(value, int | float) else None
+
+
+def _fmt_price2(value: object) -> str:
+    f = _f(value)
+    return f"{f:.2f}" if f is not None else "—"
+
+
+def _sig_chips(
+    snapshot: dict[str, object], config: AppConfig
+) -> list[dict[str, object]]:
+    """Signal chips under the card's reasoning line (design: Main)."""
+    chips: list[dict[str, object]] = []
+    ind1h = cast("dict[str, object]", snapshot.get("indicators_1h") or {})
+    daily = cast("dict[str, object]", snapshot.get("indicators_daily") or {})
+
+    rsi = _f(ind1h.get("rsi14"))
+    if rsi is not None:
+        rsi_min = float(config.get("rules", "rsi_min", default=40))
+        rsi_max = float(config.get("rules", "rsi_max", default=70))
+        chips.append(
+            {
+                "text": f"RSI {rsi:.0f}",
+                "tone": -1 if rsi < rsi_min or rsi > rsi_max else 0,
+            }
+        )
+
+    price, vwap = _f(snapshot.get("price")), _f(ind1h.get("vwap"))
+    if price is not None and vwap:
+        rel = (price - vwap) / vwap * 100
+        chips.append(
+            {
+                "text": (
+                    "> VWAP" if rel > 0.05 else "< VWAP" if rel < -0.05 else "≈ VWAP"
+                ),
+                "tone": 1 if rel > 0.05 else -1 if rel < -0.05 else 0,
+            }
+        )
+
+    ema20, ema50 = _f(ind1h.get("ema20")), _f(ind1h.get("ema50"))
+    if ema20 is not None and ema50 is not None:
+        chips.append(
+            {
+                "text": "EMA 20 > 50" if ema20 > ema50 else "EMA 20 < 50",
+                "tone": 1 if ema20 > ema50 else -1,
+            }
+        )
+
+    close, sma50 = _f(daily.get("close")), _f(daily.get("sma50"))
+    if close is not None and sma50 is not None:
+        chips.append(
+            {
+                "text": "Daily > SMA 50" if close > sma50 else "Daily < SMA 50",
+                "tone": 1 if close > sma50 else -1,
+            }
+        )
+
+    obv = ind1h.get("obv_trend")
+    if obv in ("up", "down", "flat"):
+        chips.append(
+            {
+                "text": {"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV flat"}[obv],
+                "tone": {"up": 1, "down": -1, "flat": 0}[obv],
+            }
+        )
+
+    rs = _f(ind1h.get("rs_vs_spy_pct"))
+    if rs is not None:
+        chips.append(
+            {
+                "text": f"RS vs SPY {rs:+.1f}%",
+                "tone": 1 if rs > 0 else -1 if rs < 0 else 0,
+            }
+        )
+
+    gap = _f(daily.get("gap_pct"))
+    if gap is not None:
+        chips.append({"text": f"Gap {gap:+.1f}%", "tone": 0})
+    return chips
+
+
+def _box_row(label: str, value: str, tone: int = 0) -> dict[str, object]:
+    return {"label": label, "value": value, "tone": tone}
+
+
+def _check_row(check: dict[str, object]) -> dict[str, object]:
+    """One check → a summary-box line (name / value with a pass mark)."""
+    passed = bool(check.get("passed"))
+    value = check.get("value") or check.get("detail") or "—"
+    return _box_row(
+        str(check.get("name")),
+        f"{value} {'✓' if passed else '✗'}",
+        1 if passed else -1,
+    )
+
+
+def _latest_box(
+    decision: Decision,
+    snapshot: dict[str, object],
+    session_state: SessionState,
+    app_tz: ZoneInfo,
+) -> list[dict[str, object]]:
+    """The card's three-line summary box (design: skip / held / no-call)."""
+    output = decision.model_output or {}
+    validation = decision.validation_result or {}
+    rules = decision.rules_result or {}
+
+    if decision.final_action == "no_call":
+        reason = decision.no_call_reason or "rules"
+        rule_checks = cast(
+            "list[dict[str, object]]", rules.get("checks") or []
+        )
+        failed = next((c for c in rule_checks if not c.get("passed")), None)
+        if reason == "rules":
+            label, tone = "Pre-filter", -1
+            detail = str(
+                (failed or {}).get("detail") or rules.get("reason") or "failed"
+            )
+        elif reason == "call_cap":
+            label, tone, detail = "Call cap", 0, "reached"
+        elif reason == "quote_missing":
+            label, tone, detail = "Quote", -1, "unavailable"
+        else:
+            label, tone = "Model call", -1
+            detail = str(validation.get("error") or "failed")
+        nxt = session_state.next_cycle
+        look = (
+            f"{nxt.astimezone(app_tz).strftime('%H:%M')} cycle"
+            if nxt is not None
+            else "next session"
+        )
+        return [
+            _box_row(label, detail, tone),
+            _box_row("Model call", "none this cycle"),
+            _box_row("Next look", look),
+        ]
+
+    if decision.context == "held":
+        pos = cast("dict[str, object]", snapshot.get("position") or {})
+        rows: list[dict[str, object]] = []
+        if pos:
+            r = _f(pos.get("r_so_far"))
+            value = f"{pos.get('qty')} sh @ {_fmt_price2(pos.get('entry'))}"
+            if r is not None:
+                value += f" · {r:+.2f}R"
+            rows.append(_box_row("Position", value, 1 if (r or 0) >= 0 else -1))
+            rows.append(
+                _box_row(
+                    "Stop / target",
+                    f"{_fmt_price2(pos.get('stop'))} / "
+                    f"{_fmt_price2(pos.get('target'))}",
+                )
+            )
+        else:
+            rows += [
+                _box_row("Position", "—"),
+                _box_row("Stop / target", "—"),
+            ]
+        # An agent exit on a same-day-opened position waits for the next
+        # session (day-trade guard), as do exits already deferred.
+        opened = str(pos.get("opened_at") or "")
+        decided = str(snapshot.get("time_ny") or "")
+        same_day = bool(opened) and opened[:10] == decided[:10]
+        exit_from = (
+            "tomorrow"
+            if same_day
+            or decision.final_action == "deferred"
+            or pos.get("deferred_exit")
+            else "now"
+        )
+        rows.append(_box_row("Agent exit from", exit_from))
+        return rows[:3]
+
+    # Candidate decisions: failed check first, then a pass, then the
+    # proposed stop and target.
+    checks = cast("list[dict[str, object]]", validation.get("checks") or [])
+    gates = decision.gates_result or {}
+    gate_checks = cast(
+        "list[dict[str, object]]", gates.get("checks") or []
+    )
+    ordered = [c for c in checks + gate_checks if not c.get("passed")] + [
+        c for c in checks + gate_checks if c.get("passed")
+    ]
+    rows = [_check_row(c) for c in ordered[:2]]
+    while len(rows) < 2:
+        rows.append(
+            _box_row(
+                "Model action",
+                str(validation.get("model_action") or decision.final_action),
+            )
+        )
+    stop = _fmt_price2(output.get("stop_price"))
+    target = _fmt_price2(output.get("target_price"))
+    label = (
+        "Stop / target"
+        if decision.final_action == "enter"
+        else "Proposed stop / target"
+    )
+    rows.append(_box_row(label, f"{stop} / {target}"))
+    return rows[:3]
+
+
 @router.get("/dashboard")
-def dashboard(request: Request) -> dict[str, object]:
+def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
     config = get_config()
     clock = getattr(request.app.state, "clock", None) or make_clock()
@@ -1620,6 +1961,21 @@ def dashboard(request: Request) -> dict[str, object]:
             if day_sessions
             else 0
         )
+        # Latest decision for the card: today's newest for the selected
+        # symbol (or the newest overall when no symbol is given).
+        latest = next(
+            (
+                row
+                for row in today_decisions
+                if symbol is None or row[0].symbol == symbol.upper()
+            ),
+            None,
+        )
+        latest_earnings = (
+            _decision_earnings(session, latest[0], latest[1])
+            if latest is not None
+            else None
+        )
 
     # Stat cards.
     open_risk = Decimal(0)
@@ -1654,14 +2010,24 @@ def dashboard(request: Request) -> dict[str, object]:
         since_label = f"since {run.started_at.astimezone(app_tz).strftime('%d %b')}"
 
     # Latest decision card.
-    latest = today_decisions[0] if today_decisions else None
     latest_card = None
     if latest is not None:
         d, scheduled = latest
         validation = d.validation_result or {}
         checks = cast("list[dict[str, object]]", validation.get("checks") or [])
         output = d.model_output or {}
+        rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
+        if d.final_action == "no_call":
+            why = (
+                rules.get("reason") or validation.get("error") or d.no_call_reason
+            )
+        else:
+            why = (
+                output.get("thesis")
+                or validation.get("note")
+                or validation.get("error")
+            )
         latest_card = {
             "id": d.id,
             "symbol": d.symbol,
@@ -1670,12 +2036,12 @@ def dashboard(request: Request) -> dict[str, object]:
             "final_action": d.final_action,
             "no_call_reason": d.no_call_reason,
             "confidence": output.get("confidence"),
-            "why": (
-                output.get("thesis")
-                or validation.get("note")
-                or validation.get("error")
-                or d.no_call_reason
-            ),
+            "why": why,
+            "model": d.model,
+            "regime": snapshot.get("regime"),
+            "earnings": latest_earnings,
+            "sig": _sig_chips(snapshot, config),
+            "box": _latest_box(d, snapshot, session_state, app_tz),
             "checks": [
                 {
                     "name": c.get("name"),

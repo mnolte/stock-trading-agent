@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import pytest
 from alpaca.common.enums import BaseURL
@@ -34,9 +35,9 @@ async def test_get_asset_reads_raw_class_field() -> None:
 
     broker = AlpacaPaperBroker("test-key", "test-secret")
 
-    def fake_asset(symbol: str) -> dict[str, Any]:
+    def fake_asset(symbol_or_asset_id: str | UUID) -> dict[str, Any]:
         return {
-            "symbol": symbol,
+            "symbol": str(symbol_or_asset_id),
             "class": "us_equity",
             "status": "active",
             "tradable": True,
