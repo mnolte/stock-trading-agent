@@ -42,6 +42,20 @@ Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the fir
 | `.env` | Secrets and paths: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `OPENAI_API_KEY`, `FINNHUB_API_KEY`, `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
 | `backend/config.yaml` | Everything else: universe, cycle times, rules, risk limits, model, slippage assumption. Settings changed in the GUI are saved as new versions. |
 
+## Running locally
+
+The backend writes logs to `data/logs/stock-agent.log` (or `$SA_DATA_DIR/logs/` when `SA_DATA_DIR` is set), rotated daily with 30 days retained. Timestamps are in Amsterdam time.
+
+A dated copy of the database is written to `data/backups/` every day at 03:00 Amsterdam time (`storage.backup_time` in `config.yaml`); the last 14 days are kept (`storage.backup_days`).
+
+To run in the background for long sessions:
+
+```bash
+make run &> /dev/null &
+```
+
+Or use a process manager like systemd or supervisord for production-like setups.
+
 ## Project layout
 
 | Path | Contents |

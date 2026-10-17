@@ -90,3 +90,4 @@ performance:
 
 storage:
   backup_days: 14
+  backup_time: "03:00"        # daily database copy, app timezone (Amsterdam)

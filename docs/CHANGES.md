@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-10-17 — PR 8: hardening
+
+- Logging: rotating file log at `data/logs/stock-agent.log` (daily rotation, 30 days retained); timestamps in the app timezone (Europe/Amsterdam). Cycle failures are logged with a traceback.
+- Daily database copy: a dated copy of the SQLite file is written to `data/backups/` every day at 03:00 app time; the last `storage.backup_days` (14) are kept.
+- Startup recovery: a cycle or position check left `running` when the app stopped is finalised as `error` ("interrupted by app shutdown") and counts toward `failed_cycles`/`failed_checks`; the consecutive-error streak at the tail of `cycles` is rebuilt on startup, so reaching `risk.failed_cycles_kill` turns the kill switch on at startup.
+- `config.example.yaml`: `storage.backup_time: "03:00"` (app timezone, per "daily jobs use Amsterdam time").
+
 ## 2026-10-16 — Screenshot location made explicit
 
 - AGENTS.md, docs/DEVIN_KICKOFF.md and design/DESIGN.md: PR screenshots are saved in `docs/screenshots/pr-<n>/` and never in `design/`; the PR shows them next to the reference PNG. (The old wording "next to the matching file in design/screenshots/" read as "save them there".)

@@ -1,0 +1,125 @@
+"""Tests for startup recovery after a crash mid-cycle (Build plan, PR 8)."""
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+from app.config import get_config
+from app.db.base import Base
+from app.db.models import Cycle
+from app.engine.state import (
+    ExecutionState,
+    load_execution_state,
+    recover_interrupted_cycles,
+)
+from app.market.clock import Clock, FakeClock
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+
+
+@pytest.fixture
+def session_factory(tmp_path: Path) -> sessionmaker[Session]:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+@pytest.fixture
+def clock() -> Clock:
+    return FakeClock(datetime(2026, 10, 15, 18, 0, tzinfo=UTC))
+
+
+def _insert_cycle(
+    session_factory: sessionmaker[Session], status: str, kind: str = "cycle"
+) -> int:
+    with session_factory() as session:
+        cycle = Cycle(
+            kind=kind,
+            scheduled_time=datetime.now(UTC) - timedelta(minutes=5),
+            started_at=datetime.now(UTC) - timedelta(minutes=5),
+            status=status,
+        )
+        session.add(cycle)
+        session.commit()
+        return cycle.id
+
+
+def test_running_cycle_is_recovered_as_error(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A cycle left 'running' by a crash is finalised as a failed cycle."""
+    cycle_id = _insert_cycle(session_factory, "running")
+    state = ExecutionState(clock=clock)
+
+    with session_factory() as session:
+        recovered = recover_interrupted_cycles(session, state, clock)
+        session.commit()
+
+    assert recovered == 1
+    assert state.failed_cycles == 1
+    assert state.failed_checks == 0
+    with session_factory() as session:
+        row = session.execute(select(Cycle).where(Cycle.id == cycle_id)).scalar_one()
+        assert row.status == "error"
+        assert row.errors == ["interrupted by app shutdown"]
+        assert row.finished_at is not None
+
+
+def test_running_position_check_counts_as_failed_check(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A crashed position check feeds the check counter, not the cycle one."""
+    _insert_cycle(session_factory, "running", kind="position_check")
+    state = ExecutionState(clock=clock)
+
+    with session_factory() as session:
+        recovered = recover_interrupted_cycles(session, state, clock)
+        session.commit()
+
+    assert recovered == 1
+    assert state.failed_cycles == 0
+    assert state.failed_checks == 1
+
+
+def test_finished_cycle_is_not_touched(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A cycle that finished normally stays as it was."""
+    cycle_id = _insert_cycle(session_factory, "done")
+    state = ExecutionState(clock=clock)
+
+    with session_factory() as session:
+        recovered = recover_interrupted_cycles(session, state, clock)
+        session.commit()
+
+    assert recovered == 0
+    assert state.failed_cycles == 0
+    with session_factory() as session:
+        row = session.execute(select(Cycle).where(Cycle.id == cycle_id)).scalar_one()
+        assert row.status == "done"
+
+
+def test_load_state_restores_consecutive_error_count(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Errored cycles at the tail keep counting across a restart."""
+    _insert_cycle(session_factory, "done")
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 2
+
+
+def test_load_state_streak_stops_at_a_success(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A non-error row ends the consecutive failure streak."""
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "done")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 1

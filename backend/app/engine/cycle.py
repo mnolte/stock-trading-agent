@@ -8,6 +8,7 @@ Reconciliation against the broker runs at the start of every cycle.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -34,6 +35,8 @@ from app.signals.service import SignalService
 NEWS_WINDOW = timedelta(hours=24)
 # Top-up window for the 5-minute bar cache each cycle.
 BAR_TOPUP = timedelta(days=3)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -241,6 +244,13 @@ class CycleRunner:
             except Exception as exc:  # noqa: BLE001
                 report.status = "error"
                 report.errors.append(str(exc))
+                logger.error(
+                    "Cycle %s failed at %s: %s",
+                    cycle.id,
+                    scheduled_ny,
+                    exc,
+                    exc_info=True,
+                )
 
             # Post-decision outcomes and the equity snapshot are part of
             # every cycle, whatever the decision stage produced.

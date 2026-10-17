@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import BrokerAccount
 from app.db.base import get_session_maker
-from app.db.models import EquitySnapshot, Event, Position, Run
+from app.db.models import Cycle, EquitySnapshot, Event, Position, Run
 from app.market.clock import NY_TZ
 
 if TYPE_CHECKING:
@@ -109,6 +109,30 @@ def record_event(
     return event
 
 
+def recover_interrupted_cycles(
+    session: Session, state: ExecutionState, clock: Clock
+) -> int:
+    """Startup recovery after a crash mid-cycle (docs/SPEC.md, Build plan,
+    PR 8). A cycle left ``running`` never finished, so it counts as a
+    failure: decision cycles toward the failed-cycles kill switch, position
+    checks toward the failed-checks alert. Returns how many were recovered.
+    """
+    from app.data.cache import _naive_utc
+
+    running = session.execute(
+        select(Cycle).where(Cycle.status == "running")
+    ).scalars().all()
+    for cycle in running:
+        cycle.status = "error"
+        cycle.errors = ["interrupted by app shutdown"]
+        cycle.finished_at = _naive_utc(clock.now())
+        if cycle.kind == "cycle":
+            state.failed_cycles += 1
+        else:
+            state.failed_checks += 1
+    return len(running)
+
+
 def load_execution_state(
     clock: Clock, config: AppConfig, session_factory: sessionmaker[Session] | None = None
 ) -> ExecutionState:
@@ -116,6 +140,21 @@ def load_execution_state(
     factory = session_factory or get_session_maker()
     state = ExecutionState(clock=clock)
     with factory() as session:
+        # Consecutive failed decision cycles at the tail of the table keep
+        # counting across restarts (three in a row kill the switch). A row
+        # left "running" is a crashed cycle: it continues the streak here
+        # and is counted by recover_interrupted_cycles, not again here.
+        tail_statuses = session.execute(
+            select(Cycle.status)
+            .where(Cycle.kind == "cycle")
+            .order_by(Cycle.id.desc())
+            .limit(20)
+        ).scalars().all()
+        for status in tail_statuses:
+            if status == "error":
+                state.failed_cycles += 1
+            elif status != "running":
+                break
         latest_run = session.execute(
             select(Run).order_by(Run.id.desc()).limit(1)
         ).scalar_one_or_none()
