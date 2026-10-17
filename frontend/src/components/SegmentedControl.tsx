@@ -1,9 +1,20 @@
 import { useState } from 'react';
 
-export function SegmentedControl({ options }: { options: string[] }) {
-  const [selected, setSelected] = useState(options[0]);
+export interface SegmentedControlProps {
+  options: string[];
+  /** Controlled mode: the parent owns the selection. */
+  value?: string;
+  onChange?: (option: string) => void;
+  label?: string;
+}
+
+export function SegmentedControl({ options, value, onChange, label }: SegmentedControlProps) {
+  const [own, setOwn] = useState(options[0]);
+  const selected = value ?? own;
   return (
     <div
+      role="group"
+      aria-label={label}
       style={{
         display: 'inline-flex',
         background: 'var(--sa-raised)',
@@ -16,7 +27,8 @@ export function SegmentedControl({ options }: { options: string[] }) {
         <button
           key={option}
           type="button"
-          onClick={() => setSelected(option)}
+          aria-pressed={option === selected}
+          onClick={() => (onChange ? onChange(option) : setOwn(option))}
           style={{
             height: '32px',
             padding: '0 var(--sa-space-4)',

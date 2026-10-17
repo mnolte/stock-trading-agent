@@ -2,6 +2,14 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-16 — Screenshot instructions
+
+DESIGN.md: PR screenshots are saved in `docs/screenshots/pr-<n>/`, never in `design/`. No screen changes.
+
+## 2026-10-16 — By symbol card
+
+Performance: new "By symbol" card next to "By regime" (closed trades per symbol, best first: trades, won, P&L, average R). Decisions and outcomes now spans the full width. Screenshot updated.
+
 ## 2026-10-15 — Flatten question answered
 
 DESIGN.md: Stop & flatten never refuses because of the day-trade rule; the existing warning in the dialog stays. No screen changes.

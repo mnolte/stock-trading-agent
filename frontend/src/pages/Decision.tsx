@@ -4,7 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { getDecision } from '../api/state';
 import { Chip } from '../components/Chip';
 import type { ChipVariant } from '../components/Chip';
-import { displayTime } from '../format';
+import { displayDayTime, displayTime } from '../format';
 import type {
   CodeCheck,
   DecisionDetail,
@@ -124,10 +124,10 @@ function FieldGrid({ children }: { children: React.ReactNode }) {
 }
 
 function OutcomeTiles({ outcome }: { outcome: DecisionOutcome | null }) {
-  const tiles: { label: string; price: string | null }[] = [
-    { label: 'After 1h', price: outcome?.price_1h ?? null },
-    { label: 'After 1 session', price: outcome?.price_1session ?? null },
-    { label: 'After 5 sessions', price: outcome?.price_5sessions ?? null },
+  const tiles: { label: string; price: string | null; at: string | null }[] = [
+    { label: 'After 1h', price: outcome?.price_1h ?? null, at: outcome?.price_1h_at ?? null },
+    { label: 'After 1 session', price: outcome?.price_1session ?? null, at: outcome?.price_1session_at ?? null },
+    { label: 'After 5 sessions', price: outcome?.price_5sessions ?? null, at: outcome?.price_5sessions_at ?? null },
   ];
   return (
     <>
@@ -161,6 +161,14 @@ function OutcomeTiles({ outcome }: { outcome: DecisionOutcome | null }) {
             >
               {tile.price ?? 'pending'}
             </span>
+            {tile.at && (
+              <span
+                title="Timestamp of the 5-minute bar the price was taken from"
+                style={{ fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)' }}
+              >
+                bar {displayDayTime(tile.at)}
+              </span>
+            )}
           </div>
         ))}
       </div>

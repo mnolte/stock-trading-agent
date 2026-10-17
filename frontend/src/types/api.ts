@@ -115,10 +115,15 @@ export interface ValidationResult {
 
 export interface DecisionOutcome {
   price_1h: string | null;
+  price_1h_at: string | null;
   price_1session: string | null;
+  price_1session_at: string | null;
   price_5sessions: string | null;
+  price_5sessions_at: string | null;
   best_price: string | null;
+  best_price_at: string | null;
   worst_price: string | null;
+  worst_price_at: string | null;
 }
 
 export interface BannerItem {
@@ -434,6 +439,94 @@ export interface Run {
 
 export interface RunsResponse {
   runs: Run[];
+}
+
+// ---- Performance ---------------------------------------------------------
+
+export interface PerformanceRunInfo {
+  id: number;
+  started_at: string;
+  starting_equity: string;
+}
+
+export interface PerformanceRun extends PerformanceRunInfo {
+  sessions: number;
+  current: boolean;
+}
+
+export interface PerformanceCurvePoint {
+  date: string;
+  equity: string;
+  benchmark: string | null;
+  eur_usd: string | null;
+}
+
+export interface PerformanceSummary {
+  return_pct: string | null;
+  return_usd: string;
+  return_eur: string | null;
+  spy_return_pct: string | null;
+  vs_spy_pct: string | null;
+  adjusted_usd: string;
+  slippage_pct: string;
+  dividends_usd: string;
+  win_rate_pct: string | null;
+  wins: number;
+  closed: number;
+  avg_r: string | null;
+  max_drawdown_pct: string;
+  kill_pct: string;
+}
+
+export interface PerformanceAggRow {
+  label: string;
+  trades: number;
+  won: number | null;
+  pnl: string | null;
+  avg_r: string | null;
+}
+
+export interface DecisionOutcomeRow {
+  key: string;
+  label: string;
+  count: number;
+  avg_1session_pct: string | null;
+  outcomes: number;
+  read: string;
+}
+
+export interface ClosedTradeRow {
+  id: number;
+  symbol: string;
+  qty: number;
+  entry: string;
+  exit: string | null;
+  opened_at: string;
+  closed_at: string;
+  pnl: string | null;
+  adjusted: string | null;
+  r: string | null;
+  exit_reason: string | null;
+  exit_label: string;
+  regime: string | null;
+  origin: string;
+}
+
+export interface PerformanceResponse {
+  empty: boolean;
+  runs: PerformanceRunInfo[];
+  run?: PerformanceRun;
+  summary?: PerformanceSummary;
+  curve?: {
+    benchmark: string;
+    start_label: string;
+    points: PerformanceCurvePoint[];
+  };
+  by_regime?: PerformanceAggRow[];
+  by_symbol?: PerformanceAggRow[];
+  decision_outcomes?: DecisionOutcomeRow[];
+  closed_trades?: ClosedTradeRow[];
+  open?: { count: number; symbols: string[]; unrealized: string };
 }
 
 // ---- Dashboard + chart -----------------------------------------------------

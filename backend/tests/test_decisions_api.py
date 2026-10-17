@@ -1,25 +1,12 @@
 """Decisions API: inspector list and detail endpoints."""
 
-from collections.abc import Generator
 from datetime import datetime
 
-import pytest
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.market.clock import UTC
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, select
-
-
-@pytest.fixture(autouse=True)
-def clean_decisions() -> Generator[None, None, None]:
-    """The shared test DB keeps rows between runs; start each test empty."""
-    with get_session_maker()() as session:
-        session.execute(delete(Outcome))
-        session.execute(delete(Decision))
-        session.execute(delete(Cycle))
-        session.commit()
-    yield
+from sqlalchemy import select
 
 
 def _seed_decision() -> int:
@@ -103,10 +90,15 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
     assert body["latency_ms"] == 900
     assert body["outcome"] == {
         "price_1h": None,
+        "price_1h_at": None,
         "price_1session": None,
+        "price_1session_at": None,
         "price_5sessions": None,
+        "price_5sessions_at": None,
         "best_price": None,
+        "best_price_at": None,
         "worst_price": None,
+        "worst_price_at": None,
     }
     # The versioned prompt file ships with the repo, so text resolves.
     assert body["prompt_version"] == "decision.v1"

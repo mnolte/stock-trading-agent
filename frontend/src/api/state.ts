@@ -11,6 +11,7 @@ import type {
   KillSwitchResponse,
   OrdersResponse,
   PaperResetResult,
+  PerformanceResponse,
   PositionsResponse,
   RunsResponse,
   SaveSettingsResult,
@@ -105,4 +106,9 @@ export function postStartRun(): Promise<StartRunResult> {
 
 export function getRuns(): Promise<RunsResponse> {
   return get<RunsResponse>('/api/runs');
+}
+
+export function getPerformance(runId?: number): Promise<PerformanceResponse> {
+  const query = runId === undefined ? '' : `?run=${runId}`;
+  return get<PerformanceResponse>(`/api/performance${query}`);
 }

@@ -55,4 +55,5 @@ make test        # pytest with sockets blocked, vitest
 - Add shorting, options, margin, fractional shares or extended-hours trading.
 - Use Alpaca's clock-hour bars for signals; build session-aligned 1h bars from 5-minute bars.
 - Edit `docs/SPEC.md` or the design files on your own initiative.
+- Write anything into `design/`. PR screenshots go in `docs/screenshots/pr-<n>/`.
 - Mark a step done while tests fail or are skipped.

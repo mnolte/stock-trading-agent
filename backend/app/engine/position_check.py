@@ -19,6 +19,7 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, EquitySnapshot
 from app.engine.executor import Executor
+from app.engine.outcomes import OutcomeWorker
 from app.engine.state import ExecutionState, record_event
 from app.market.clock import Clock
 
@@ -42,12 +43,14 @@ class PositionChecker:
         state: ExecutionState,
         config: AppConfig,
         clock: Clock,
+        outcomes: OutcomeWorker | None = None,
         session_factory: sessionmaker[Session] | None = None,
     ) -> None:
         self.executor = executor
         self.state = state
         self.config = config
         self.clock = clock
+        self.outcomes = outcomes
         self._session_factory = session_factory or get_session_maker()
 
     async def run(self) -> CheckReport:
@@ -106,10 +109,19 @@ class PositionChecker:
             raise RuntimeError("; ".join(rec.errors))
         await self.executor.update_session_brakes()
         if self.state.account is not None:
-            session.add(
-                EquitySnapshot(
-                    time=_naive_utc(self.clock.now()),
+            if self.outcomes is not None:
+                self.outcomes.write_equity_snapshot(
+                    session,
                     equity=self.state.account.equity,
                     cash=self.state.account.cash,
                 )
-            )
+            else:
+                session.add(
+                    EquitySnapshot(
+                        time=_naive_utc(self.clock.now()),
+                        equity=self.state.account.equity,
+                        cash=self.state.account.cash,
+                    )
+                )
+        if self.outcomes is not None:
+            self.outcomes.fill(session, self.clock.now())

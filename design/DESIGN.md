@@ -77,7 +77,7 @@ Both questions from the first handoff are now settled in `docs/SPEC.md` (supervi
 ## Screenshot check in every UI PR
 
 1. Add a Playwright test that opens each screen the PR touched with the sample data and takes screenshots at 1440 × 900 and 390 × 844.
-2. Attach them to the PR next to the matching file in `screenshots/`.
+2. Save them in `docs/screenshots/pr-<n>/`, never in `design/`, and show each one in the PR description next to the matching reference PNG from `design/screenshots/`.
 3. List deliberate differences under "Design differences".
 
 ## When the design changes
