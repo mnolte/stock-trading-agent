@@ -106,26 +106,29 @@ def health() -> dict[str, str]:
     return {"status": "ok", "mode": get_config().env.mode}
 
 
-@router.get("/session")
-def session_state(request: Request) -> dict[str, object]:
-    state = _session_state(request)
+def _cycles_today(request: Request) -> int:
+    """Cycles that run in today's session (fewer on early-close days)."""
     clock = getattr(request.app.state, "clock", None) or make_clock()
     session_clock = SessionClock(clock, get_config(), _calendar(request))
     today_session = _calendar(request).session_for(
         clock.now().astimezone(NY_TZ).date()
     )
-    cycles_today = (
-        len(session_clock.active_cycles(today_session))
-        if today_session is not None
-        else 0
-    )
+    if today_session is None:
+        return 0
+    return len(session_clock.active_cycles(today_session))
+
+
+@router.get("/session")
+def session_state(request: Request) -> dict[str, object]:
+    state = _session_state(request)
     return {
         "state": state.state,
         "next_cycle": state.next_cycle.isoformat() if state.next_cycle else None,
+        "next_check": state.next_check.isoformat() if state.next_check else None,
         "next_open": state.next_open.isoformat() if state.next_open else None,
         "next_close": state.next_close.isoformat() if state.next_close else None,
         "display_time": state.display_time,
-        "cycles_today": cycles_today,
+        "cycles_today": _cycles_today(request),
         "calendar_loaded": _calendar_loaded(request),
     }
 
@@ -183,8 +186,10 @@ def header_state(request: Request) -> dict[str, object]:
             "display_time": session.display_time,
             "now": _clock(request).now().astimezone(UTC).isoformat(),
             "next_cycle": session.next_cycle.isoformat() if session.next_cycle else None,
+            "next_check": session.next_check.isoformat() if session.next_check else None,
             "next_open": session.next_open.isoformat() if session.next_open else None,
             "next_close": session.next_close.isoformat() if session.next_close else None,
+            "cycles_today": _cycles_today(request),
             "calendar_loaded": _calendar_loaded(request),
         },
         "equity_usd": _fmt_money(account["equity"]),

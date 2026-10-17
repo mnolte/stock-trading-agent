@@ -21,6 +21,8 @@ def test_session_reports_calendar_loaded(client: TestClient) -> None:
     data = response.json()
     assert data["calendar_loaded"] is True
     assert data["state"] in {"open", "closed", "last_cycle_done", "early_close"}
+    assert "next_check" in data
+    assert data["cycles_today"] >= 0
 
 
 def test_header_is_paper(client: TestClient) -> None:
@@ -30,6 +32,8 @@ def test_header_is_paper(client: TestClient) -> None:
     assert data["paper"] is True
     assert data["mode"] == "simulated"
     assert data["session"]["state"] in {"open", "closed", "last_cycle_done", "early_close"}
+    assert "next_check" in data["session"]
+    assert data["session"]["cycles_today"] >= 0
     assert data["eur"]["available"] is True
 
 

@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 
 import type { HeaderState } from '../types/api';
+import { displayTime, nyTime } from '../format';
 import { sessionLabel, sessionTail } from './sessionText';
+
+/** "+42.10" → "+$42.10"; falls back to '—' when there is no figure. */
+function signedMoney(value: string | null, symbol: '$' | '€'): string {
+  if (!value) return '—';
+  const sign = value.startsWith('-') ? '-' : '+';
+  return `${sign}${symbol}${value.replace(/^[-+]/, '')}`;
+}
 
 function sessionDot(state: string) {
   switch (state) {
@@ -33,6 +41,24 @@ export function Header({
 
   const sessionState = state?.session.state ?? 'closed';
   const tail = state ? sessionTail(sessionState, state.session) : '';
+  const sessionTitle = state
+    ? [
+        `New York ${nyTime(state.session.now)}`,
+        state.session.next_close
+          ? `market closes ${nyTime(state.session.next_close)} New York (${displayTime(state.session.next_close)} Amsterdam)`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : undefined;
+  const todayNum = state?.today_usd ? Number(state.today_usd.replace(/,/g, '')) : 0;
+  const todayColor = !state
+    ? 'var(--sa-text)'
+    : todayNum > 0
+      ? 'var(--sa-positive)'
+      : todayNum < 0
+        ? 'var(--sa-negative)'
+        : 'var(--sa-text-muted)';
 
   return (
     <header
@@ -109,7 +135,7 @@ export function Header({
         </span>
 
         <div
-          title="Market session state"
+          title={sessionTitle ?? 'Market session state'}
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -165,7 +191,10 @@ export function Header({
               whiteSpace: 'nowrap',
             }}
           >
-            ${state?.equity_usd ?? '—'} <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>€{state?.equity_eur ?? ''}</span>
+            ${state?.equity_usd ?? '—'}{' '}
+            <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+              {state ? (state.equity_eur ? `€${state.equity_eur}` : 'EUR unavailable') : '—'}
+            </span>
           </span>
         </div>
 
@@ -184,11 +213,14 @@ export function Header({
             style={{
               fontFamily: 'var(--sa-font-mono)',
               fontSize: 'var(--sa-text-base)',
-              color: 'var(--sa-positive)',
+              color: todayColor,
               whiteSpace: 'nowrap',
             }}
           >
-            {state?.today_usd ?? '—'} <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>{state?.today_eur ?? ''}</span>
+            {state ? signedMoney(state.today_usd, '$') : '—'}{' '}
+            <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+              {state ? (state.today_eur ? signedMoney(state.today_eur, '€') : 'EUR unavailable') : '—'}
+            </span>
           </span>
         </div>
 
