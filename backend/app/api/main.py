@@ -24,13 +24,18 @@ from app.config import AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
+from app.db.base import check_schema_matches_models
 from app.decide.client import make_decision_client
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.position_check import PositionChecker
-from app.engine.state import load_execution_state, recover_interrupted_cycles
+from app.engine.state import (
+    finalize_interrupted_cycles,
+    load_execution_state,
+    recover_interrupted_cycles,
+)
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
@@ -260,6 +265,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     config = get_config()
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
+    # Migrations are immutable; a schema that drifted outside them fails
+    # here with the differing table/column instead of a raw SQL error.
+    check_schema_matches_models()
     # Versioned GUI settings sit on top of the YAML before anything reads
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
@@ -453,6 +461,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        # Normal shutdown: give a running cycle or check the grace window
+        # to finish; leftovers become "interrupted" and never count as
+        # failures — only rows still "running" at the next startup (a real
+        # crash) do (docs/SPEC.md, Risk management, Errors).
+        grace = float(
+            config.get("storage", "shutdown_grace_seconds", default=60)
+        )
+        interrupted = await finalize_interrupted_cycles(
+            get_session_maker(), clock, grace
+        )
+        if interrupted:
+            logger.warning(
+                "Shutdown with %d cycle(s) still running; marked interrupted",
+                interrupted,
+            )
         await broker.stop_stream()
 
 

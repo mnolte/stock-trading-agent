@@ -34,6 +34,12 @@ def create_backup() -> None:
             source.backup(target)
     finally:
         source.close()
+    with sqlite3.connect(backup_path) as verify:
+        (integrity,) = verify.execute("PRAGMA integrity_check").fetchone()
+    if integrity != "ok":
+        raise RuntimeError(
+            f"backup {backup_path.name} failed integrity_check: {integrity}"
+        )
 
     # Prune backups outside the retention window: the last
     # ``storage.backup_days`` days including today.

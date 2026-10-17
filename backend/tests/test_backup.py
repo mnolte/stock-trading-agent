@@ -1,5 +1,6 @@
 """Tests for the daily database copy (docs/SPEC.md, Data model)."""
 
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,23 @@ def test_create_backup_keeps_the_retention_boundary() -> None:
 
     assert kept.exists()
     assert not pruned.exists()
+
+
+def test_backup_copy_restores_and_reads() -> None:
+    """A backup file restores to a working database (integrity_check ok)."""
+    db_path = _db_path()
+    _write_db(db_path)
+
+    create_backup()
+
+    backup = db_path.parent / "backups" / f"{db_path.name}.{_today().isoformat()}"
+    restored = db_path.parent / "restored.db"
+    shutil.copy2(backup, restored)
+    with sqlite3.connect(restored) as conn:
+        (integrity,) = conn.execute("PRAGMA integrity_check").fetchone()
+        row = conn.execute("SELECT v FROM t").fetchone()
+    assert integrity == "ok"
+    assert row == ("test data",)
 
 
 def test_create_backup_ignores_unrelated_files() -> None:
