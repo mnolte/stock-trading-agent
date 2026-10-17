@@ -330,7 +330,11 @@ class AlpacaPaperBroker:
                 symbol=str(item.get("symbol", symbol)),
                 status=str(item.get("status", "")),
                 tradable=bool(item.get("tradable", False)),
-                asset_class=str(item.get("asset_class", "")),
+                asset_class=str(
+                    # Raw JSON calls the field "class"; the SDK model
+                    # renames it "asset_class" (alias of class).
+                    item.get("class") or item.get("asset_class") or ""
+                ),
                 exchange=(
                     str(item.get("exchange")) if item.get("exchange") else None
                 ),

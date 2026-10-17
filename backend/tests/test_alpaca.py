@@ -27,6 +27,31 @@ def test_trading_client_is_paper() -> None:
     assert client.trading._base_url == BaseURL.TRADING_PAPER
 
 
+async def test_get_asset_reads_raw_class_field() -> None:
+    """Alpaca's raw JSON calls the field "class", not "asset_class"
+    (raw_data=True on the trading client)."""
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+
+    def fake_asset(symbol: str) -> dict[str, Any]:
+        return {
+            "symbol": symbol,
+            "class": "us_equity",
+            "status": "active",
+            "tradable": True,
+            "exchange": "NASDAQ",
+            "shortable": True,
+        }
+
+    broker.trading.get_asset = fake_asset  # type: ignore[method-assign]
+    result = await broker.get_asset("TSLA")
+    assert result.error is None
+    assert result.data is not None
+    assert result.data.asset_class == "us_equity"
+    assert result.data.tradable is True
+
+
 async def test_check_paper_account_accepts_pa_account() -> None:
     client = AlpacaDataClient("test-key", "test-secret")
 
