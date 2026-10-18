@@ -217,6 +217,51 @@ def test_interrupted_rows_do_not_count_and_do_not_break_the_streak(
     assert state.failed_cycles == 2
 
 
+def test_skipped_rows_do_not_break_the_failed_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Spec: error, skipped, error, error still turns the kill switch on —
+    a skipped cycle (market closed, holiday) is not a completion and does
+    not reset the count."""
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "skipped")
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 3
+
+
+def test_done_between_errors_resets_the_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Only a completed cycle resets: error, done, error, error → 2."""
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "done")
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 2
+
+
+def test_skipped_checks_do_not_break_the_check_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Position checks keep their own count with the same rule."""
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "skipped", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_checks == 3
+    assert state.failed_cycles == 0
+
+
 def test_interrupted_rows_are_not_recovered_as_errors(
     session_factory: sessionmaker[Session], clock: Clock
 ) -> None:

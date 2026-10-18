@@ -115,6 +115,12 @@ class AppConfig:
         """A deep copy of the active settings tree."""
         return _deep_merge(self._active, {})
 
+    def pending(self) -> dict[str, Any] | None:
+        """A deep copy of the pending tree, or None when nothing is saved."""
+        if self._pending is None:
+            return None
+        return _deep_merge(self._pending, {})
+
     def apply_saved(self, settings: dict[str, Any], version: int) -> None:
         """Make a stored settings version active (startup / promotion)."""
         self._active = _deep_merge(self._yaml, settings)

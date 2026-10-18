@@ -119,13 +119,19 @@ export function firstTouchLabel(touch: string | null | undefined): string | null
   return null;
 }
 
+// Alpaca statuses that mean an order is still live at the broker —
+// mirror of backend app.broker.models.OPEN_ORDER_STATUSES.
 const OPEN_LIKE = [
   'new',
   'accepted',
   'pending_new',
+  'accepted_for_bidding',
   'partially_filled',
   'held',
-  'open',
+  'calculated',
+  'pending_cancel',
+  'pending_replace',
+  'pending_review',
 ];
 
 function seconds(iso: string): string {

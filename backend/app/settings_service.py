@@ -269,7 +269,16 @@ def _validate_universe(
     held_symbols: set[str],
 ) -> tuple[dict[str, Any], list[str], list[str]] | str:
     """Returns (cleaned universe dict, changes, symbols needing asset checks)."""
-    if not isinstance(body, dict) or set(body) - UNIVERSE_KEYS:
+    if not isinstance(body, dict):
+        return "universe: only symbols and sectors are editable"
+    active_allowed = active.get("universe", {}).get("allowed_sectors")
+    for key, value in body.items():
+        if key in UNIVERSE_KEYS:
+            continue
+        # The form echoes the read-only sector list back on a full save;
+        # tolerate it unchanged, but never let a client move it.
+        if key == "allowed_sectors" and value == active_allowed:
+            continue
         return "universe: only symbols and sectors are editable"
     symbols = body.get("symbols")
     sectors = body.get("sectors") or {}

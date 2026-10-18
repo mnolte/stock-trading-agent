@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-10-19 — Bug-sweep fixes across execution, reconciliation and settings
+
+- Reconciliation no longer resurrects closed positions: a historical filled buy is matched to its position by `entry_decision_id` (open or closed), extra partial fills grow the open position's quantity and weighted-average price, and an unrecorded fill still lands once for crash recovery.
+- Alpaca trade-update callbacks are dispatched onto the application event loop (`run_coroutine_threadsafe`) instead of running engine handlers on the SDK stream's own loop; handler failures are logged.
+- Stop & flatten now confirms the cancels before selling: after `cancel_all_orders` a symbol whose orders still show open (or whose leg is still open) is not sold, and a critical `flatten_sell_blocked` banner is raised. The market sell never goes past a live stop.
+- Exits also sweep broker-side legs the database never recorded (crash between accept and store): every open sell order for the symbol is cancelled and confirmed before the market sell.
+- Approvals re-check earnings on fresh data — the calendar is refreshed and `days_to_earnings` recomputed at approve time, not read from the stored decision snapshot.
+- Settings: the stored/pending version is always the full merged tree, so a second save can no longer silently revert the first; `allowed_sectors` echoed back unchanged by a client no longer 422s, and is still rejected when changed.
+- `kill_switch_since` in banners treats naive timestamps as UTC (same as `paused_since`).
+- Smaller fixes: negative P&L shows the − sign; the flatten dialog's day-trade counter uses the configured maximum; `FakeClock` converts aware non-UTC datetimes instead of relabelling them; the earnings refresh upserts revised reports and prunes cancelled ones; the daily backup takes an injectable clock; "Cycle N of M" uses the session's active cycle count; the session factory reuses one engine per database path; a zeroed quote blocks an entry instead of dividing by zero; a no-op tighten is marked in `gates_result` instead of implying a stop move.
+
 ## 2026-10-18 — Settings redesign and API keys in Settings (PR 10)
 
 - New "API keys" section: Alpaca paper key ID and secret, OpenAI and Finnhub keys are entered in Settings instead of `.env`. Stored encrypted (Fernet, `data/secret.key`, mode 600), write-only API, only the last 4 characters shown, tested before saving, never logged. Replacing Alpaca keys needs the agent paused with no positions or orders. Missing or failing keys keep Resume disabled. Keys still in `.env` are imported once, then ignored.

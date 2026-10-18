@@ -12,6 +12,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
 from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
@@ -31,16 +32,6 @@ from app.signals.regime import MarketRegime, compute_regime
 from app.signals.snapshot import IndicatorSnapshot, compute_snapshot
 
 BAR_5M = timedelta(minutes=5)
-
-# Alpaca order statuses that mean the order is still live.
-OPEN_ORDER_STATUSES = (
-    "new",
-    "accepted",
-    "pending_new",
-    "partially_filled",
-    "held",
-    "open",
-)
 
 
 def trading_days_until(
@@ -331,9 +322,7 @@ class SignalService:
             pending = {
                 row[0]
                 for row in session.execute(
-                    select(Decision.symbol)
-                    .join(Order, Order.decision_id == Decision.id)
-                    .where(
+                    select(Order.symbol).where(
                         Order.leg == "entry",
                         Order.status.in_(OPEN_ORDER_STATUSES),
                     )

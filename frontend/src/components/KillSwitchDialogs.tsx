@@ -90,12 +90,14 @@ export function FlattenConfirmDialog({
   open,
   positions,
   dayTrades,
+  dayTradesMax,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   positions: PositionRow[];
   dayTrades: number;
+  dayTradesMax: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -167,7 +169,7 @@ export function FlattenConfirmDialog({
       {todayPositions.map((p) => (
         <Banner key={p.symbol} variant="warning">
           {p.symbol} was bought today. Selling it now counts as a day trade (
-          {dayTrades + 1} of 3).
+          {dayTrades + 1} of {dayTradesMax}).
         </Banner>
       ))}
       <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-muted)' }}>

@@ -2,7 +2,7 @@
 versioned settings, warming-up symbols and the WebSocket update bus
 (docs/SPEC.md, GUI)."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import cast
@@ -22,7 +22,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Bar1h, CalendarDay, DailyBar, Quote
+from app.data.models import Bar1h, CalendarDay, DailyBar, EarningsEvent, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Approval, Cycle, Decision, Event, Order, Position, Run
@@ -460,6 +460,45 @@ async def test_approve_refused_while_paused(
         assert stored.status == "pending"
 
 
+async def test_approve_rechecks_earnings_with_fresh_data(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A report announced after the decision still blocks the entry —
+    approve re-checks earnings, it does not reuse the stored snapshot."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    executor = _executor(session_factory, broker, config=config)
+    await executor.reconcile()
+    # The snapshot at decision time showed earnings 9 trading days out.
+    approval_id = await _pending_approval_id(
+        session_factory, executor, stop="410", target="440"
+    )
+    monkeypatch.setattr(executor, "_atr_1h", lambda symbol: Decimal("3"))
+    # ...but the calendar now shows a report tomorrow (inside the blackout).
+    earnings = cast(FakeEarningsSource, executor.market_data.sources.earnings)
+    earnings.events.append(
+        EarningsEvent(
+            symbol="MSFT",
+            date=date(2026, 10, 16),
+            time_of_day="before_open",
+            hour_raw="bmo",
+            fetched_at=NOW,
+        )
+    )
+
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is False
+    assert "earnings" in str(result["error"])
+    with session_factory() as session:
+        stored = session.get(Approval, approval_id)
+        assert stored is not None
+        assert stored.status == "rejected"
+        assert stored.reason and "earnings" in stored.reason
+    assert len(broker.orders) == 0
+
+
 async def test_reject_stores_reason_and_is_final(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -758,6 +797,45 @@ async def test_validate_universe_cannot_remove_held(
         )
 
 
+async def test_validate_universe_tolerates_unchanged_allowed_sectors(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A client echoing the read-only allowed_sectors list back on a save
+    must not 422; a changed list is refused."""
+    broker = FakeBroker(FakeClock(NOW))
+    active = AppConfig().effective()
+    universe = active["universe"]
+
+    cleaned, _ = await validate_settings(
+        {
+            "universe": {
+                "symbols": universe["symbols"],
+                "sectors": universe["sectors"],
+                "allowed_sectors": universe["allowed_sectors"],
+            }
+        },
+        active,
+        broker=broker,
+        held_symbols=set(),
+    )
+    assert cleaned["universe"]["symbols"] == universe["symbols"]
+    assert "allowed_sectors" not in cleaned["universe"]
+
+    with pytest.raises(SettingsError, match="only symbols and sectors"):
+        await validate_settings(
+            {
+                "universe": {
+                    "symbols": universe["symbols"],
+                    "sectors": universe["sectors"],
+                    "allowed_sectors": ["Technology"],
+                }
+            },
+            active,
+            broker=broker,
+            held_symbols=set(),
+        )
+
+
 def test_pending_settings_promote_at_cycle_start() -> None:
     """A save is pending until the next cycle promotes it (spec: Settings)."""
     config = AppConfig()
@@ -774,6 +852,65 @@ def test_pending_settings_promote_at_cycle_start() -> None:
     assert promoted == 7
     assert config.active_version == 7
     assert config.get("risk", "risk_per_trade_pct") == 0.4
+
+
+def test_pending_tree_is_a_full_tree() -> None:
+    """set_pending stores the complete merged tree — promoting it must
+    keep every earlier saved change, not just the last save's subset."""
+    config = AppConfig()
+    tree_v7 = config.effective()
+    tree_v7["risk"]["risk_per_trade_pct"] = 0.4
+    config.apply_saved(tree_v7, 7)
+
+    tree_v8 = config.effective()
+    tree_v8["decision"]["temperature"] = 0.2
+    config.set_pending(tree_v8, 8)
+    config.promote_pending()
+
+    assert config.get("risk", "risk_per_trade_pct") == 0.4
+    assert config.get("decision", "temperature") == 0.2
+
+
+def test_second_save_merges_onto_pending(client: TestClient) -> None:
+    """Two saves before a cycle: the second version's tree keeps the first
+    save's changes — otherwise promotion would silently revert them."""
+    first = client.post(
+        "/api/settings",
+        json={
+            "settings": {"risk": {"risk_per_trade_pct": 0.4}},
+            "reason": "tighter risk",
+        },
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/settings",
+        json={
+            "settings": {"decision": {"temperature": 0.2}},
+            "reason": "cooler model",
+        },
+    )
+    assert second.status_code == 200
+
+    from app.config import get_config
+    from app.db.base import get_session_maker
+    from app.db.models import SettingsVersion
+
+    config = get_config()
+    prev_active = config.effective()
+    prev_version = config.active_version
+    config.promote_pending()
+    assert config.get("risk", "risk_per_trade_pct") == 0.4
+    assert config.get("decision", "temperature") == 0.2
+
+    # Restore shared state and keep the saved versions out of the test db.
+    config._active = prev_active
+    config.active_version = prev_version
+    config._pending = None
+    config.pending_version = None
+    config.reschedule_cycles = False
+    with get_session_maker()() as session:
+        session.query(SettingsVersion).delete()
+        session.commit()
 
 
 # ----------------------------------------------------------------------

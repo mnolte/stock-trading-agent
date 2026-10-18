@@ -196,11 +196,11 @@ def load_execution_state(
     state = ExecutionState(clock=clock)
     with factory() as session:
         # Consecutive failed decision cycles at the tail of the table keep
-        # counting across restarts (three in a row kill the switch). A row
-        # left "running" is a crashed cycle: it continues the streak here
-        # and is counted by recover_interrupted_cycles, not again here.
-        # "interrupted" rows are a clean shutdown's leftovers: like a cycle
-        # that never ran, they neither count nor reset the streak.
+        # counting across restarts (three in a row kill the switch). Only a
+        # completed cycle resets the count (docs/SPEC.md, Errors): "skipped"
+        # (market closed/holiday), "interrupted" (clean shutdown) and
+        # "running" (crash leftover — counted by recover_interrupted_cycles,
+        # not again here) all leave the streak unchanged.
         tail_statuses = session.execute(
             select(Cycle.status)
             .where(Cycle.kind == "cycle")
@@ -210,7 +210,7 @@ def load_execution_state(
         for status in tail_statuses:
             if status == "error":
                 state.failed_cycles += 1
-            elif status not in ("running", "interrupted"):
+            elif status == "done":
                 break
         # Same tail scan for position checks, whose consecutive failures
         # feed the failed-checks alert (schedule.position_check_failures_alert).
@@ -223,7 +223,7 @@ def load_execution_state(
         for status in tail_checks:
             if status == "error":
                 state.failed_checks += 1
-            elif status not in ("running", "interrupted"):
+            elif status == "done":
                 break
         latest_run = session.execute(
             select(Run).order_by(Run.id.desc()).limit(1)

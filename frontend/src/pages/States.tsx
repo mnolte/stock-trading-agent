@@ -330,6 +330,7 @@ export default function States() {
         open={dialog === 'flatten'}
         positions={samplePositions}
         dayTrades={1}
+        dayTradesMax={3}
         onCancel={() => setDialog(null)}
         onConfirm={() => setDialog(null)}
       />

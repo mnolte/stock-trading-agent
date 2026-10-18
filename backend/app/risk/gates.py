@@ -30,6 +30,20 @@ class GateCheck:
 
 
 @dataclass(frozen=True)
+class WorkingEntry:
+    """An entry order still working at the broker: submitted, accepted or
+    partially filled and not yet cancelled, expired or rejected
+    (docs/SPEC.md, Risk management — Working entry orders). Only the
+    unfilled quantity counts; filled shares are a position and are never
+    counted twice."""
+
+    symbol: str
+    unfilled_qty: int
+    limit_price: Decimal | None
+    stop_price: Decimal | None  # bracket stop leg; None → worst case
+
+
+@dataclass(frozen=True)
 class GateContext:
     """Everything the gates need for one candidate decision."""
 
@@ -39,7 +53,7 @@ class GateContext:
     last_equity: Decimal  # equity at the previous session close
     peak_equity: Decimal
     open_positions: list[Position]
-    open_entry_symbols: frozenset[str]  # symbols with a live entry order
+    working_entries: tuple[WorkingEntry, ...]
     day_trades_5d: int
     losing_streak: int
     shock_brake_1h: bool  # SPY fell more than the 1h threshold
@@ -125,12 +139,12 @@ def evaluate_entry_gates(
     ok("reconciliation", "clean")
     if any(p.symbol == ctx.symbol for p in ctx.open_positions):
         return block("already_held", "a position in this symbol is open")
-    if ctx.symbol in ctx.open_entry_symbols:
+    if any(e.symbol == ctx.symbol for e in ctx.working_entries):
         return block("entry_pending", "an entry order for this symbol is open")
     ok("already_held", "no open position or pending entry")
 
     max_positions = int(config.get("risk", "max_open_positions", default=4))
-    open_count = len(ctx.open_positions) + len(ctx.open_entry_symbols)
+    open_count = len(ctx.open_positions) + len(ctx.working_entries)
     if open_count >= max_positions:
         return block(
             "max_open_positions",
@@ -145,9 +159,14 @@ def evaluate_entry_gates(
         in_sector = sum(
             1 for p in ctx.open_positions if sectors.get(p.symbol) == sector
         )
+        in_sector += sum(
+            1 for e in ctx.working_entries if sectors.get(e.symbol) == sector
+        )
         if in_sector >= max_per_sector:
             return block(
-                "sector_cap", f"{in_sector} {sector} positions ≥ {max_per_sector}"
+                "sector_cap",
+                f"{in_sector} {sector} positions or pending entries "
+                f"≥ {max_per_sector}",
             )
         ok("sector_cap", f"{in_sector} of {max_per_sector} in {sector}")
     else:
@@ -244,16 +263,35 @@ def evaluate_entry_gates(
 
     # Sizing gates: risk per trade, max position, open risk, cash. The shared
     # sizing function applies them; a size of zero blocks with the name of
-    # the limit that hit zero.
+    # the limit that hit zero. Working entry orders spend part of the open
+    # risk and cash budgets already (docs/SPEC.md, Working entry orders):
+    # unfilled qty × (limit − stop) counts toward open risk, unfilled qty ×
+    # limit toward cash; an entry whose stop leg is missing counts its full
+    # committed value as risk — the conservative worst case.
+    working_risk = Decimal(0)
+    working_cash = Decimal(0)
+    for e in ctx.working_entries:
+        committed = e.unfilled_qty * (e.limit_price or Decimal(0))
+        working_cash += committed
+        if e.limit_price is not None and e.stop_price is not None:
+            working_risk += e.unfilled_qty * max(
+                Decimal(0), e.limit_price - e.stop_price
+            )
+        else:
+            working_risk += committed
     current_open_risk = open_risk(
         (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
         for p in ctx.open_positions
-    )
+    ) + working_risk
     sizing = position_size(
         ctx.equity,
         entry,
         stop,
-        cash=ctx.cash if config.get("risk", "cash_only", default=True) else ctx.equity,
+        cash=(
+            max(Decimal(0), ctx.cash - working_cash)
+            if config.get("risk", "cash_only", default=True)
+            else ctx.equity
+        ),
         current_open_risk=current_open_risk,
         config=config,
         risk_factor=factor,

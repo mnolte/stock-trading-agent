@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
@@ -853,7 +854,7 @@ def _position_legs(session: Session, position: Position) -> list[dict[str, objec
     legs = [
         row
         for row in rows
-        if row.leg in ("stop", "target") and row.status in OPEN_LIKE_STATUSES
+        if row.leg in ("stop", "target") and row.status in OPEN_ORDER_STATUSES
     ]
     out: list[dict[str, object]] = []
     if entry is not None:
@@ -892,16 +893,6 @@ def _position_legs(session: Session, position: Position) -> list[dict[str, objec
                 item["replaced_from"] = str(prev.stop_price)
         out.append(item)
     return out
-
-
-OPEN_LIKE_STATUSES = (
-    "new",
-    "accepted",
-    "pending_new",
-    "partially_filled",
-    "held",
-    "open",
-)
 
 
 @router.get("/positions")
@@ -1095,6 +1086,7 @@ def banners(request: Request) -> dict[str, object]:
                         "protective_stop",
                         "position_check_failed",
                         "flatten_sell_rejected",
+                        "flatten_sell_blocked",
                     ]
                 ),
             )
@@ -1167,6 +1159,24 @@ def banners(request: Request) -> dict[str, object]:
                             f"{event_symbol(details)} during stop & flatten "
                             f"({details.get('error')}). The position keeps "
                             "its stop."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "flatten_sell_blocked":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "flatten_sell_blocked",
+                        "level": "critical",
+                        "message": (
+                            f"Stop & flatten held back the sale of "
+                            f"{event_symbol(details)}: an order cancel was "
+                            "never confirmed at Alpaca. The position keeps "
+                            "its stop; reconcile or cancel the order before "
+                            "selling."
                         ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
@@ -1281,7 +1291,7 @@ def banners(request: Request) -> dict[str, object]:
         )
     if state is not None and state.kill_switch_on:
         since = (
-            state.kill_switch_since.astimezone(UTC).isoformat()
+            _aware(state.kill_switch_since).astimezone(UTC).isoformat()
             if state.kill_switch_since
             else None
         )
@@ -1558,7 +1568,7 @@ def _held_symbols() -> set[str]:
             for row in session.execute(
                 select(Order.symbol).where(
                     Order.leg == "entry",
-                    Order.status.in_(OPEN_LIKE_STATUSES),
+                    Order.status.in_(OPEN_ORDER_STATUSES),
                 )
             ).all()
         }
@@ -1811,11 +1821,14 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     broker = getattr(request.app.state, "broker", None)
     if broker is None:
         raise HTTPException(status_code=503, detail="broker unavailable")
+    # A still-pending save is the base for the next one — merging onto
+    # ``active`` would drop its changes from the new version's tree.
     active = config.effective()
+    base = config.pending() or active
     try:
         cleaned, changes = await validate_settings(
             submitted,
-            active,
+            base,
             broker=broker,
             held_symbols=_held_symbols(),
         )
@@ -1826,17 +1839,20 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         raise HTTPException(
             status_code=422, detail=["a reason is required"]
         )
-    new_tree = _deep_merge(active, cleaned)
+    new_tree = _deep_merge(base, cleaned)
     with get_session_maker()() as session:
         row = save_version(
             session, _clock(request), settings=new_tree, reason=reason
         )
         session.commit()
         version = row.version
-    config.set_pending(cleaned, version)
+    # The pending version must be the full merged tree, same as the stored
+    # row — passing only ``cleaned`` would silently revert every earlier
+    # saved change at the next cycle's promotion.
+    config.set_pending(new_tree, version)
     schedule = cleaned.get("schedule")
     if isinstance(schedule, dict) and "cycles" in schedule and (
-        schedule["cycles"] != _nested_get(active, "schedule", "cycles")
+        schedule["cycles"] != _nested_get(base, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
     _notify(request, "header", "settings")
@@ -1864,7 +1880,7 @@ def _open_items() -> int:
         ).scalar_one()
         open_orders = session.execute(
             select(func.count(Order.id)).where(
-                Order.status.in_(OPEN_LIKE_STATUSES)
+                Order.status.in_(OPEN_ORDER_STATUSES)
             )
         ).scalar_one()
     return positions + open_orders
@@ -2615,14 +2631,20 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                 f"{calls} model call{'s' if calls != 1 else ''} · "
                 f"${cost:.3f}."
             )
-        # "Cycle N of M today" counts today's run cycles so far.
+        # "Cycle N of M today" counts today's run cycles so far; M is the
+        # session's active count (fewer on early-close days), not the
+        # configured list length.
         today_cycles = [
             c for c in cycles if _ny_date(c.scheduled_time) == today_ny
         ]
-        total_today = int(
+        today_session = _calendar(request).session_for(today_ny)
+        total_today = (
             len(
-                get_config().get("schedule", "cycles", default=[]) or []
+                SessionClock(clock, get_config(), _calendar(request))
+                .active_cycles(today_session)
             )
+            if today_session is not None
+            else 0
         )
         cycle_index = len(today_cycles)
         ams_time = scheduled_ny.astimezone(app_tz).strftime("%H:%M")
@@ -2849,7 +2871,7 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
                 select(Order).where(
                     Order.symbol == symbol,
                     Order.leg == "entry",
-                    Order.status.in_(OPEN_LIKE_STATUSES),
+                    Order.status.in_(OPEN_ORDER_STATUSES),
                 )
             ).scalar_one_or_none()
             if order is not None:

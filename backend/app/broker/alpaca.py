@@ -10,6 +10,8 @@ spins a private event loop) and hands parsed updates to the engine.
 from __future__ import annotations
 
 import asyncio
+import logging
+from concurrent.futures import Future
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -44,6 +46,8 @@ from app.data.alpaca import _parse_timestamp
 from app.data.models import DataResult
 from app.data.rate_limiter import RateLimiter
 
+logger = logging.getLogger(__name__)
+
 
 def _dec(value: Any) -> Decimal | None:
     if value is None:
@@ -55,6 +59,13 @@ def _ts(value: Any) -> datetime | None:
     if value is None:
         return None
     return _parse_timestamp(value)
+
+
+async def _await_handler(
+    handler: TradeUpdateHandler, update: TradeUpdateInfo
+) -> None:
+    """Wrap an Awaitable handler in a coroutine for run_coroutine_threadsafe."""
+    await handler(update)
 
 
 def _raw(item: Any) -> dict[str, Any]:
@@ -149,6 +160,9 @@ class AlpacaPaperBroker:
         self._keyed = keyed
         self._handlers: list[TradeUpdateHandler] = []
         self._stream_started = False
+        # The app event loop the stream hands updates to; captured in
+        # start_stream (the SDK stream runs its own loop on its thread).
+        self._main_loop: asyncio.AbstractEventLoop | None = None
         self._set_credentials(api_key, secret_key)
 
     def _set_credentials(self, api_key: str, secret_key: str) -> None:
@@ -374,15 +388,38 @@ class AlpacaPaperBroker:
         self._handlers.append(handler)
 
     async def _on_trade_update(self, item: Any) -> None:
+        """Runs on the stream thread's private loop: hand work to the app loop.
+
+        Handlers touch the database, the reconcile lock and the update
+        bus — all bound to the application event loop. Awaiting them here
+        would crash on the loop-bound ``asyncio.Lock``, so each handler is
+        scheduled on the main loop with ``run_coroutine_threadsafe``.
+        """
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            return
         update = parse_trade_update(item)
         for handler in self._handlers:
-            await handler(update)
+            future: Future[None] = asyncio.run_coroutine_threadsafe(
+                _await_handler(handler, update), loop
+            )
+            future.add_done_callback(self._log_handler_result)
+
+    @staticmethod
+    def _log_handler_result(future: Future[None]) -> None:
+        """Surface handler failures: the scheduled future is never awaited."""
+        if future.cancelled():
+            return
+        exc = future.exception()
+        if exc is not None:
+            logger.error("trade-update handler failed: %s", exc, exc_info=exc)
 
     async def start_stream(self) -> None:
         """Run the SDK websocket in its own thread (it owns an event loop)."""
         if self._stream_started or not self._keyed:
             return
         self._stream_started = True
+        self._main_loop = asyncio.get_running_loop()
         self._stream.subscribe_trade_updates(self._on_trade_update)
         await asyncio.to_thread(self._run_stream_blocking)
 

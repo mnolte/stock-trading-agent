@@ -157,24 +157,44 @@ class MarketDataService:
             return self.latest_earnings
         stored = 0
         with self._session_factory() as session:
+            # Upsert: a Finnhub revision changes time_of_day in place, and a
+            # report cancelled or moved out of the window is pruned — a stale
+            # row would still trigger blackouts and earnings exits.
+            seen: set[tuple[str, datetime]] = set()
             for event in result.data:
+                day = datetime.combine(event.date, time.min)
+                seen.add((event.symbol, day))
                 exists = session.execute(
                     select(EarningRow).where(
                         EarningRow.symbol == event.symbol,
-                        EarningRow.date == datetime.combine(event.date, time.min),
+                        EarningRow.date == day,
                     )
                 ).scalar_one_or_none()
                 if exists is None:
                     session.add(
                         EarningRow(
                             symbol=event.symbol,
-                            date=datetime.combine(event.date, time.min),
+                            date=day,
                             time_of_day=event.time_of_day,
                             hour_raw=event.hour_raw,
                             fetched_at=_naive_utc(event.fetched_at),
                         )
                     )
                     stored += 1
+                else:
+                    exists.time_of_day = event.time_of_day
+                    exists.hour_raw = event.hour_raw
+                    exists.fetched_at = _naive_utc(event.fetched_at)
+            stale = session.execute(
+                select(EarningRow).where(
+                    EarningRow.symbol.in_(self.universe()),
+                    EarningRow.date >= datetime.combine(start, time.min),
+                    EarningRow.date <= datetime.combine(end, time.max),
+                )
+            ).scalars().all()
+            for row in stale:
+                if (row.symbol, row.date) not in seen:
+                    session.delete(row)
             session.commit()
         self.latest_earnings = DataResult(data=stored, source=result.source)
         return self.latest_earnings

@@ -13,9 +13,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from app.config import get_config
+from app.market.clock import Clock
 
 
-def create_backup() -> None:
+def create_backup(clock: Clock | None = None) -> None:
     """Create a dated copy of the database and prune old backups."""
     cfg = get_config()
     app_tz = ZoneInfo(str(cfg.get("app", "timezone", default="Europe/Amsterdam")))
@@ -26,7 +27,8 @@ def create_backup() -> None:
     # Dated backup: stock-agent.db.YYYY-MM-DD (app-timezone date). The
     # sqlite3 backup API copies consistently while the app keeps writing;
     # a plain file copy could capture a torn page or miss WAL contents.
-    today = datetime.now(tz=app_tz).date()
+    now = clock.now() if clock is not None else datetime.now(tz=ZoneInfo("UTC"))
+    today = now.astimezone(app_tz).date()
     backup_path = backup_dir / f"{db_path.name}.{today.isoformat()}"
     source = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:

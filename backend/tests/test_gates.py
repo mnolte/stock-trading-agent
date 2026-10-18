@@ -6,7 +6,12 @@ from decimal import Decimal
 import pytest
 from app.config import AppConfig
 from app.db.models import Position
-from app.risk.gates import GateContext, GateResult, evaluate_entry_gates
+from app.risk.gates import (
+    GateContext,
+    GateResult,
+    WorkingEntry,
+    evaluate_entry_gates,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -21,7 +26,7 @@ def _ctx(**overrides: object) -> GateContext:
         "last_equity": Decimal("10000"),
         "peak_equity": Decimal("10000"),
         "open_positions": [],
-        "open_entry_symbols": frozenset(),
+        "working_entries": (),
         "day_trades_5d": 0,
         "losing_streak": 0,
         "shock_brake_1h": False,
@@ -44,6 +49,21 @@ def _position(symbol: str, qty: int = 4, entry: str = "100", stop: str = "98") -
         avg_entry_price=Decimal(entry),
         current_stop_price=Decimal(stop),
         opened_at=datetime(2026, 10, 14, 15, 0),
+    )
+
+
+def _entry(
+    symbol: str,
+    unfilled_qty: int = 4,
+    limit: str | None = "100",
+    stop: str | None = "98",
+) -> WorkingEntry:
+    """A working entry order; only the unfilled remainder counts."""
+    return WorkingEntry(
+        symbol=symbol,
+        unfilled_qty=unfilled_qty,
+        limit_price=Decimal(limit) if limit is not None else None,
+        stop_price=Decimal(stop) if stop is not None else None,
     )
 
 
@@ -102,7 +122,7 @@ def test_already_held_blocks() -> None:
 
 
 def test_pending_entry_blocks() -> None:
-    result = _run(_ctx(open_entry_symbols=frozenset({"MSFT"})))
+    result = _run(_ctx(working_entries=(_entry("MSFT"),)))
     assert not result.allowed
     assert result.blocked_by == "entry_pending"
 
@@ -116,9 +136,116 @@ def test_max_open_positions_blocks() -> None:
 
 def test_pending_entries_count_toward_max_positions() -> None:
     positions = [_position(s) for s in ("AAPL", "JPM", "XOM")]
-    result = _run(_ctx(open_positions=positions, open_entry_symbols=frozenset({"NVDA"})))
+    result = _run(_ctx(open_positions=positions, working_entries=(_entry("NVDA"),)))
     assert not result.allowed
     assert result.blocked_by == "max_open_positions"
+
+
+# Working entry orders (docs/SPEC.md, Risk management): a working entry
+# counts as if it were already a position — unfilled qty × (limit − stop)
+# toward open risk, unfilled qty × limit toward cash.
+
+
+def test_working_entry_counts_toward_open_risk() -> None:
+    # 2.5% of 10000 = $250 open-risk budget. The working NVDA entry already
+    # commits 110 × (10 − 8) = $220, leaving $30 → 30 shares at $1 distance
+    # on a cheap candidate so order_sanity stays out of the way.
+    config = AppConfig()
+    config.yaml["risk"]["max_position_pct"] = 100  # isolate open_risk
+    result = _run(
+        _ctx(
+            working_entries=(
+                _entry("NVDA", unfilled_qty=110, limit="10", stop="8"),
+            )
+        ),
+        entry="10",
+        stop="9",
+        config=config,
+    )
+    assert result.allowed
+    assert result.sizing is not None
+    assert result.sizing.shares == 30
+    assert "open_risk" in result.sizing.limited_by
+
+
+def test_working_entry_can_exhaust_open_risk() -> None:
+    # 500 × (1 − 0.5) = $250 committed — the whole budget: the next entry
+    # gets zero shares and the limit is named.
+    config = AppConfig()
+    config.yaml["risk"]["max_position_pct"] = 100  # isolate open_risk
+    result = _run(
+        _ctx(
+            working_entries=(
+                _entry("NVDA", unfilled_qty=500, limit="1", stop="0.5"),
+            )
+        ),
+        entry="100",
+        stop="99",
+        config=config,
+    )
+    assert not result.allowed
+    assert result.blocked_by == "open_risk"
+    assert result.sizing is not None and result.sizing.shares == 0
+
+
+def test_working_entry_counts_toward_cash() -> None:
+    # A working NVDA entry commits 80 × $100 = $8000 of the $10000 cash,
+    # leaving $2000 → 20 shares instead of the 25 risk alone would allow.
+    config = AppConfig()
+    config.yaml["risk"]["max_position_pct"] = 100  # isolate the cash cap
+    result = _run(
+        _ctx(working_entries=(_entry("NVDA", unfilled_qty=80),)),
+        entry="100",
+        stop="98",
+        config=config,
+    )
+    assert result.allowed
+    assert result.sizing is not None
+    assert result.sizing.shares == 20
+    assert "cash" in result.sizing.limited_by
+
+
+def test_working_entry_counts_toward_sector_cap() -> None:
+    # AAPL position + a working NVDA entry are both Technology.
+    result = _run(
+        _ctx(
+            open_positions=[_position("AAPL")],
+            working_entries=(_entry("NVDA"),),
+        )
+    )
+    assert not result.allowed
+    assert result.blocked_by == "sector_cap"
+
+
+def test_working_entry_without_stop_counts_full_value_as_risk() -> None:
+    # No stop leg visible: the whole committed value is the worst case.
+    # 3 × $100 = $300 > the $250 budget → zero room.
+    config = AppConfig()
+    config.yaml["risk"]["max_position_pct"] = 100  # isolate open_risk
+    result = _run(
+        _ctx(working_entries=(_entry("NVDA", unfilled_qty=3, stop=None),)),
+        entry="100",
+        stop="98",
+        config=config,
+    )
+    assert not result.allowed
+    assert result.blocked_by == "open_risk"
+
+
+def test_filled_part_is_never_counted_twice() -> None:
+    # A partially filled entry: 4 filled (a position already) + 2 working.
+    # Risk counts the 2 working only; the filled 4 count once, via the
+    # position. JPM is Financials, so the Technology sector cap stays out.
+    result = _run(
+        _ctx(
+            open_positions=[_position("JPM", qty=4, entry="100", stop="98")],
+            working_entries=(_entry("JPM", unfilled_qty=2),),
+        ),
+        entry="100",
+        stop="98",
+    )
+    assert result.allowed
+    assert result.sizing is not None and result.sizing.shares > 0
 
 
 def test_sector_cap_blocks() -> None:
