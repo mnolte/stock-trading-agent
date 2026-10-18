@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-18 — Cycle counter on the dashboard
+
+- GUI: new "Cycle counter" paragraph. The this-cycle strip ends with the next cycle (Amsterdam and New York time, live countdown), a segment per cycle of today's session, "Cycle n of 6 today", the cycle number in this run and the next position check; states for market closed, kill switch on and a running cycle. Built in PR 10 with the risk budget card.
+
 ## 2026-10-18 — Risk budget card on the dashboard
 
 - GUI: new "Risk budget card" paragraph. Meters for open risk (positions and working entries) vs the 2.5% cap, today's loss vs the 2% daily limit and drawdown vs the 8% kill (amber above 75%, red at the limit), plus room for more trades, sector use, risk per trade with losing streak, shock brake with SPY moves, and day trades. Computed by the risk-gate functions, not in the GUI. Built in PR 10.

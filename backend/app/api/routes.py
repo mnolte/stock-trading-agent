@@ -2613,6 +2613,18 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         run = session.execute(
             select(Run).order_by(Run.id.desc()).limit(1)
         ).scalar_one_or_none()
+        # The counter's "in this run" number: cycles since the run started
+        # (docs/SPEC.md, GUI — Cycle counter).
+        run_cycle_number = (
+            session.execute(
+                select(func.count(Cycle.id)).where(
+                    Cycle.kind == "cycle",
+                    Cycle.scheduled_time >= run.started_at,
+                )
+            ).scalar_one()
+            if run is not None
+            else None
+        )
         # Latest decision for the card: today's newest for the selected
         # symbol (or the newest overall when no symbol is given).
         latest = next(
@@ -2698,6 +2710,21 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "time": scheduled.replace(tzinfo=UTC).isoformat(),
         }
 
+    # Cycle counter and cycle line share the session math. "Cycle N of M
+    # today" counts today's run cycles so far; M is the session's active
+    # count (fewer on early-close days), not the configured list length.
+    session_clock = SessionClock(clock, config, _calendar(request))
+    today_session = _calendar(request).session_for(today_ny)
+    active_today = (
+        session_clock.active_cycles(today_session)
+        if today_session is not None
+        else []
+    )
+    today_cycle_rows = [
+        c for c in cycles if _ny_date(c.scheduled_time) == today_ny
+    ]
+    cycle_index = len(today_cycle_rows)
+
     # Cycle line (design: "5 of 8 symbols not held failed the pre-filter.
     # 3 reached the model: all skipped. Both open positions held.
     # 5 model calls · $0.002." + "Cycle 3 of 6 today").
@@ -2764,30 +2791,68 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                 f"{calls} model call{'s' if calls != 1 else ''} · "
                 f"${cost:.3f}."
             )
-        # "Cycle N of M today" counts today's run cycles so far; M is the
-        # session's active count (fewer on early-close days), not the
-        # configured list length.
-        today_cycles = [
-            c for c in cycles if _ny_date(c.scheduled_time) == today_ny
-        ]
-        today_session = _calendar(request).session_for(today_ny)
-        total_today = (
-            len(
-                SessionClock(clock, get_config(), _calendar(request))
-                .active_cycles(today_session)
-            )
-            if today_session is not None
-            else 0
-        )
-        cycle_index = len(today_cycles)
         ams_time = scheduled_ny.astimezone(app_tz).strftime("%H:%M")
         cycle_line = {
             "label": f"{ams_time} cycle",
             "status": last_cycle.status,
             "text": " ".join(sentences),
             "cycle_index": cycle_index,
-            "cycles_today": total_today,
+            "cycles_today": len(active_today),
         }
+
+    # Cycle counter at the strip's right end (docs/SPEC.md, GUI). The whole
+    # schedule — today's active cycles as done/next/later segments, the
+    # next cycle and the next position check — is computed here from the
+    # trading calendar and config; the GUI only formats and ticks.
+    ny_now = clock.now().astimezone(NY_TZ)
+    next_cycle_utc = session_state.next_cycle
+    if next_cycle_utc is None:
+        # Nothing left today (last cycle done): point at the next
+        # session's first cycle, like the closed state does.
+        next_session = _calendar(request).next_trading_day(today_ny)
+        upcoming = (
+            session_clock.active_cycles(next_session)
+            if next_session is not None
+            else []
+        )
+        next_cycle_utc = upcoming[0].astimezone(UTC) if upcoming else None
+    next_check_utc = session_state.next_check
+    cycle_counter = {
+        "kill_switch": bool(getattr(state, "kill_switch_on", False)),
+        "running": any(c.status == "running" for c in today_cycle_rows),
+        "now": clock.now().astimezone(UTC).isoformat(),
+        "next_cycle": (
+            next_cycle_utc.isoformat() if next_cycle_utc is not None else None
+        ),
+        "next_cycle_today": (
+            next_cycle_utc is not None
+            and next_cycle_utc.astimezone(NY_TZ).date() == today_ny
+        ),
+        "next_check": (
+            next_check_utc.isoformat() if next_check_utc is not None else None
+        ),
+        "next_check_today": (
+            next_check_utc is not None
+            and next_check_utc.astimezone(NY_TZ).date() == today_ny
+        ),
+        "segments": [
+            {
+                "time": t.astimezone(UTC).isoformat(),
+                "status": (
+                    "done"
+                    if t <= ny_now
+                    else "next"
+                    if next_cycle_utc is not None
+                    and t.astimezone(UTC) == next_cycle_utc
+                    else "later"
+                ),
+            }
+            for t in active_today
+        ],
+        "cycle_index": cycle_index,
+        "cycles_today": len(active_today),
+        "run_cycle_number": run_cycle_number,
+    }
 
     # Decisions feed, grouped client-side by cycle.
     feed = [
@@ -2861,6 +2926,7 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
         },
         "cycle_line": cycle_line,
+        "cycle_counter": cycle_counter,
         "stats": {
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),

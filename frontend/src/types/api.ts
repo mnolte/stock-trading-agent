@@ -806,6 +806,31 @@ export interface DashboardCycleLine {
   cycles_today: number;
 }
 
+// Cycle counter at the right end of the this-cycle strip. The schedule is
+// computed by the backend from the trading calendar and config; the GUI
+// only formats it and ticks the countdown (docs/SPEC.md, GUI).
+
+export type CycleSegmentStatus = 'done' | 'next' | 'later';
+
+export interface CycleCounterSegment {
+  time: string; // UTC ISO of the scheduled cycle
+  status: CycleSegmentStatus;
+}
+
+export interface CycleCounter {
+  kill_switch: boolean;
+  running: boolean;
+  now: string | null; // server time, to correct client-clock drift
+  next_cycle: string | null;
+  next_cycle_today: boolean;
+  next_check: string | null;
+  next_check_today: boolean;
+  segments: CycleCounterSegment[];
+  cycle_index: number;
+  cycles_today: number;
+  run_cycle_number: number | null;
+}
+
 export interface DashboardStats {
   positions: number;
   positions_cap: number;
@@ -909,6 +934,7 @@ export interface DashboardResponse {
     next_close: string | null;
   };
   cycle_line: DashboardCycleLine | null;
+  cycle_counter: CycleCounter | null;
   stats: DashboardStats;
   latest_decision: DashboardLatestDecision | null;
   approvals_pending: number;

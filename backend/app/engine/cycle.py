@@ -238,6 +238,9 @@ class CycleRunner:
             session.add(cycle)
             session.commit()
             report.cycle_id = cycle.id
+            # The dashboard's cycle counter switches to "running" on this
+            # push, and back to the countdown on the one after commit.
+            self._notify({"header", "decisions"})
 
             try:
                 await self._run(session, cycle.id, scheduled_ny, now, report)
@@ -271,6 +274,7 @@ class CycleRunner:
             cycle.errors = report.errors or None
             cycle.data_source_health = report.data_source_health or None
             session.commit()
+        self._notify({"header", "decisions"})
         await self._count_cycle_outcome(report)
         return report
 

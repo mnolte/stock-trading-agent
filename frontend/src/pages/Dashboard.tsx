@@ -23,6 +23,7 @@ import type {
 import { ApprovalCard } from '../components/ApprovalCard';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
+import { CycleCounter } from '../components/CycleCounter';
 import { PriceChart } from '../components/PriceChart';
 import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
@@ -481,23 +482,43 @@ export default function Dashboard() {
         </div>
       )}
 
-      {dashboard?.cycle_line && (
+      {(dashboard?.cycle_line || dashboard?.cycle_counter) && (
         <div
+          role="status"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            gap: 'var(--sa-space-2) var(--sa-space-5)',
-            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '10px var(--sa-space-3)',
+            padding: 'var(--sa-space-3) var(--sa-space-4)',
+            background: 'var(--sa-panel)',
+            border: '1px solid var(--sa-border)',
+            borderRadius: 'var(--sa-radius-lg)',
             fontSize: 'var(--sa-text-md)',
           }}
         >
-          <span>
-            <b style={{ fontWeight: 600 }}>{dashboard.cycle_line.label}</b>
-            <span style={{ color: 'var(--sa-text-2)' }}> · {dashboard.cycle_line.text}</span>
-          </span>
-          <span style={{ color: 'var(--sa-text-muted)', fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)' }}>
-            Cycle {dashboard.cycle_line.cycle_index} of {dashboard.cycle_line.cycles_today} today
-          </span>
+          {dashboard?.cycle_line && (
+            <>
+              <span
+                style={{
+                  padding: '3px var(--sa-space-2)',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  background: 'var(--sa-subtle)',
+                  color: 'var(--sa-text-2)',
+                  fontSize: 'var(--sa-text-sm)',
+                  fontWeight: 600,
+                }}
+              >
+                {dashboard.cycle_line.label}
+              </span>
+              <span
+                style={{ flex: '1 1 420px', color: 'var(--sa-text-2)', lineHeight: 1.5 }}
+              >
+                {dashboard.cycle_line.text}
+              </span>
+            </>
+          )}
+          {dashboard?.cycle_counter && <CycleCounter counter={dashboard.cycle_counter} />}
         </div>
       )}
 
