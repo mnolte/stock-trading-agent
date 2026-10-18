@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 
 import type { HeaderState } from '../types/api';
 import { displayTime, nyTime } from '../format';
+import { Chip } from './Chip';
+import { regimeVariant } from './regimeChip';
 import { sessionLabel, sessionTail } from './sessionText';
 
 /** "+42.10" → "+$42.10"; falls back to '—' when there is no figure. */
@@ -244,23 +246,7 @@ export function Header({
           >
             Regime
           </span>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              height: '24px',
-              padding: '0 8px',
-              borderRadius: 'var(--sa-radius-sm)',
-              fontFamily: 'var(--sa-font-mono)',
-              fontSize: 'var(--sa-text-sm)',
-              whiteSpace: 'nowrap',
-              background: 'var(--sa-positive-bg)',
-              color: 'var(--sa-positive)',
-              border: '1px solid var(--sa-positive-border)',
-            }}
-          >
-            {state?.regime ?? '—'}
-          </span>
+          <Chip variant={regimeVariant(state?.regime)}>{state?.regime ?? '—'}</Chip>
         </div>
 
         <button

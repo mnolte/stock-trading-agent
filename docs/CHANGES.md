@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-18 — Header regime chip follows the trend
+
+- The regime chip in the header was always green; it is now green for Up, red for Down and neutral for Sideways or unavailable, matching the Latest decision card.
+
 ## 2026-10-19 — Bug-sweep fixes across execution, reconciliation and settings
 
 - Reconciliation no longer resurrects closed positions: a historical filled buy is matched to its position by `entry_decision_id` (open or closed), extra partial fills grow the open position's quantity and weighted-average price, and an unrecorded fill still lands once for crash recovery.
