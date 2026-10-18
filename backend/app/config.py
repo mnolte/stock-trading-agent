@@ -17,7 +17,12 @@ def _resolve_path(value: str) -> str:
 
 
 class EnvSettings(BaseSettings):
-    """Values that come from .env or the environment."""
+    """Values that come from .env or the environment.
+
+    API keys are not read here: they live encrypted in the secrets table
+    and are entered in Settings. Keys still present in .env are imported
+    once at startup and then ignored (docs/SPEC.md, API keys).
+    """
 
     model_config = SettingsConfigDict(
         env_file=str(ROOT / ".env"),
@@ -25,10 +30,6 @@ class EnvSettings(BaseSettings):
         extra="ignore",
     )
 
-    alpaca_api_key: str = Field(default="", alias="ALPACA_API_KEY")
-    alpaca_secret_key: str = Field(default="", alias="ALPACA_SECRET_KEY")
-    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
-    finnhub_api_key: str = Field(default="", alias="FINNHUB_API_KEY")
     mode: str = Field(default="paper", alias="MODE")
     sa_sim_now: str = Field(default="", alias="SA_SIM_NOW")
     sa_host: str = Field(default="127.0.0.1", alias="SA_HOST")

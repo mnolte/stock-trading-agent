@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, Money
 
@@ -239,6 +240,28 @@ class SettingsVersion(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class Secret(Base):
+    """One API key, Fernet-encrypted (docs/SPEC.md, API keys).
+
+    The plaintext is never stored, logged or returned by the API; reads
+    expose only the last four characters and the test state. The Fernet
+    key lives in ``SA_DATA_DIR/secret.key`` (mode 600), never in the DB.
+    """
+
+    __tablename__ = "secrets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    value_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    last4: Mapped[str] = mapped_column(String(8), nullable=False)
+    saved_at: Mapped[datetime] = mapped_column(nullable=False)
+    tested_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    test_result: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Short non-secret context for the last test (masked account number or
+    # the failure reason); never the key itself.
+    test_detail: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class Approval(Base):
     """A supervised-mode entry waiting for Marc's decision (docs/SPEC.md).
 
@@ -277,6 +300,73 @@ class Run(Base):
     started_at: Mapped[datetime] = mapped_column(nullable=False)
     starting_equity: Mapped[Decimal] = mapped_column(Money, nullable=False)
     spy_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+
+
+class Review(Base):
+    """A written weekly review or daily briefing (docs/SPEC.md, Reviews).
+
+    Code computes the facts; the model only writes the text. ``source`` is
+    "model" when the model's text passed the number check, else "template"
+    with ``reason`` naming the fallback (for example "number check failed",
+    "no OpenAI key", "model call failed", "cost cap reached").
+    """
+
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("kind", "period", name="uq_reviews_kind_period"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # weekly | briefing
+    period: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # "2026-W41" | "2026-10-19"
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Main prose: the weekly summary or the briefing body.
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Structured fields the GUI renders: {observations, suggestion} for weekly.
+    content: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # model | template
+    reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    tokens: Mapped[int | None] = mapped_column(nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    due_at: Mapped[datetime] = mapped_column(
+        nullable=False
+    )  # scheduled instant; a caught-up review keeps its original date
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class Verdict(Base):
+    """Draft or confirmed verdict on one decision (docs/SPEC.md, Reviews).
+
+    Written once the decision's 5-session outcome is in; Marc confirms or
+    changes it. ``source`` is "draft" until then, "marc" after. Only
+    confirmed verdicts count in reviews.
+    """
+
+    __tablename__ = "verdicts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    decision_id: Mapped[int] = mapped_column(
+        ForeignKey("decisions.id"), nullable=False, unique=True
+    )
+    verdict: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # good_call | bad_call | unclear
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # draft | marc
+    # Who wrote the draft: the model or the plain template after a fallback.
+    draft_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="model"
+    )
+    # Draft-call spend; the review monthly cap covers verdict calls too.
+    cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+
+    decision: Mapped[Decision] = relationship()
 
 
 class Event(Base):

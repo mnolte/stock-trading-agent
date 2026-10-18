@@ -220,6 +220,11 @@ class AlpacaDataClient:
         self.clock = clock or RealClock()
         # All bar requests use the configured price adjustment (spec: split).
         self.adjustment = Adjustment(adjustment)
+        self.update_credentials(api_key, secret_key)
+
+    def update_credentials(self, api_key: str, secret_key: str) -> None:
+        """Swap keys in place after a Settings save; callers keep the same
+        client object and the shared rate limiter."""
         self.trading = TradingClient(api_key, secret_key, paper=True, raw_data=True)
         self.market_data = StockHistoricalDataClient(api_key, secret_key, raw_data=True)
         self.news = NewsClient(api_key, secret_key, raw_data=True)

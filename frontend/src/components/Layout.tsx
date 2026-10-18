@@ -24,6 +24,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith('/positions')) return 'Positions & orders';
   if (pathname.startsWith('/performance')) return 'Performance';
   if (pathname.startsWith('/inspector')) return 'LLM inspector';
+  if (pathname.startsWith('/reviews')) return 'Reviews';
   if (pathname.startsWith('/decisions')) return 'Decision detail';
   if (pathname.startsWith('/settings')) return 'Settings';
   if (pathname.startsWith('/states')) return 'States & dialogs';

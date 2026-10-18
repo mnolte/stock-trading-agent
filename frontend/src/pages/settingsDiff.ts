@@ -30,6 +30,8 @@ const FIELD_LABELS: Record<string, string> = {
   'risk.max_order_pct': 'Max single order',
   'risk.max_orders_per_cycle': 'Max orders per cycle',
   'performance.slippage_pct_per_side': 'Assumed slippage',
+  'reviews.briefing_enabled': 'Daily briefing',
+  'reviews.monthly_cost_cap_usd': 'Review cost cap',
   'schedule.cycles': 'Cycle times',
   'universe.symbols': 'Universe',
 };
@@ -80,4 +82,33 @@ export function diffSettings(
     }
   }
   return rows;
+}
+
+/** Same walk as diffSettings, keyed by field path so a changed row can
+ * show "Changed from …" and Reset in place. */
+export function diffMap(
+  current: SettingsForm,
+  edited: SettingsForm,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const [section, body] of Object.entries(edited) as [
+    keyof SettingsForm,
+    object,
+  ][]) {
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+      const path = `${section}.${key}`;
+      if (path === 'universe.sectors') {
+        const cur = (current.universe.sectors ?? {}) as Record<string, string>;
+        const next = value as Record<string, string>;
+        for (const sym of new Set([...Object.keys(cur), ...Object.keys(next)])) {
+          if (cur[sym] !== next[sym]) map[`universe.sector.${sym}`] = cur[sym] ?? '—';
+        }
+        continue;
+      }
+      if (path === 'universe.allowed_sectors') continue;
+      const old = (current[section] as Record<string, unknown>)[key];
+      if (fmtVal(old) !== fmtVal(value)) map[path] = fmtVal(old);
+    }
+  }
+  return map;
 }

@@ -9,7 +9,9 @@ export type Topic =
   | 'banners'
   | 'watchlist'
   | 'performance'
-  | 'approvals';
+  | 'approvals'
+  | 'reviews'
+  | 'settings';
 
 export type LiveStatus = 'live' | 'paused';
 

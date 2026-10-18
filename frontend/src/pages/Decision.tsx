@@ -1,10 +1,16 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
-import { getDecision } from '../api/state';
+import { getDecision, postVerdict } from '../api/state';
 import { Chip } from '../components/Chip';
 import { displayDayTime, nyTime } from '../format';
-import type { DecisionDetail } from '../types/api';
+import type { DecisionDetail, VerdictValue } from '../types/api';
+import { VerdictButtons } from '../components/VerdictButtons';
+import {
+  dueDayLabel,
+  verdictLabel,
+  verdictVariant,
+} from './reviewsFormat';
 import {
   actionBadgeStyle,
   actionLabel,
@@ -393,7 +399,74 @@ function LevelTile({
   );
 }
 
-function OutcomeSection({ decision }: { decision: DecisionDetail }) {
+function VerdictRow({
+  decision,
+  onResolved,
+}: {
+  decision: DecisionDetail;
+  onResolved: () => void;
+}) {
+  const verdict = decision.verdict;
+  if (!decision.verdict_eligible) return null;
+  const pick = (value: VerdictValue) => {
+    if (!verdict) return;
+    postVerdict(verdict.id, value).then(onResolved).catch(console.error);
+  };
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 'var(--sa-space-2)',
+        marginTop: 'var(--sa-space-3)',
+      }}
+    >
+      {verdict ? (
+        <>
+          <span
+            title={
+              verdict.source === 'draft'
+                ? 'A draft verdict — confirm or change it. Only confirmed verdicts count in reviews.'
+                : 'Confirmed by you; counts in reviews.'
+            }
+            style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+          >
+            {verdict.source === 'draft' ? 'Draft verdict:' : 'Verdict:'}
+          </span>
+          <Chip variant={verdictVariant(verdict.verdict)}>
+            {verdictLabel(verdict.verdict)}
+          </Chip>
+          {verdict.reason && (
+            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              {verdict.reason}
+            </span>
+          )}
+          <VerdictButtons current={verdict.verdict} onPick={pick} />
+        </>
+      ) : (
+        <span
+          title="A draft verdict is written once the 5-session result is in; you confirm or change it."
+        >
+          <Chip variant="neutral">
+            Verdict: draft after {dueDayLabel(decision.verdict_due)}
+          </Chip>
+        </span>
+      )}
+      <Link to="/reviews" style={{ fontSize: 'var(--sa-text-sm)' }}>
+        Verdicts in Reviews
+      </Link>
+    </div>
+  );
+}
+
+function OutcomeSection({
+  decision,
+  onVerdictResolved,
+}: {
+  decision: DecisionDetail;
+  onVerdictResolved: () => void;
+}) {
   const outcome = decision.outcome;
   const hasTrade = decision.trade !== null && decision.trade.status !== 'none';
   const tiles: {
@@ -514,6 +587,7 @@ function OutcomeSection({ decision }: { decision: DecisionDetail }) {
           )}
         </>
       )}
+      <VerdictRow decision={decision} onResolved={onVerdictResolved} />
     </Section>
   );
 }
@@ -839,7 +913,15 @@ export default function Decision() {
             />
           </div>
 
-          <OutcomeSection decision={decision} />
+          <OutcomeSection
+            decision={decision}
+            onVerdictResolved={() => {
+              if (id)
+                getDecision(Number(id))
+                  .then(setDecision)
+                  .catch(console.error);
+            }}
+          />
         </div>
 
         {/* footer */}

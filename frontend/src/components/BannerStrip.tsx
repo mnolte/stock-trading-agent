@@ -94,8 +94,11 @@ export function BannerStrip({
           // pause resume is a plain one-click "Resume" (design: States).
           actions.push({ label: 'Resume…', onClick: () => onResumeRequest(item) });
         }
-        if (item.actions.includes('resume_pause')) {
+        if (item.actions.includes('resume_pause') && !item.resume_blocked) {
           actions.push({ label: 'Resume', onClick: resumePause });
+        }
+        if (item.actions.includes('open_settings')) {
+          actions.push({ label: 'Settings', onClick: () => navigate('/settings') });
         }
         if (item.actions.includes('review') || item.actions.includes('open_orders')) {
           actions.push({

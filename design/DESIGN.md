@@ -33,7 +33,7 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 | `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, day trades, account, order history | PR 5 (data), PR 6 |
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, decisions and outcomes, closed trades | PR 7 |
 | `Inspector.dc.html` | LLM inspector: calls today, metadata, validation result, prompt, raw response | PR 4 |
-| `Settings.dc.html` | Settings: execution mode, universe, risk limits, entry rules, earnings, schedule, model, slippage, connections, history, paper reset | PR 6 |
+| `Settings.dc.html` | Settings: section list with filter; API keys (masked, Test, Replace, inline "Test and save" form) and data sources; trading; risk limits in three groups; entry rules; earnings; model and reviews; schedule; history; paper reset. One row per setting with its default, changed rows highlighted with Reset, sticky unsaved-changes bar with reason. `Settings-390.png` shows phone width | PR 6, redesigned in PR 10 |
 | `Reviews.dc.html` | Reviews: weekly review with stats, closed trades, skipped setups after 5 sessions, observations, suggestion (not applied), verdicts to confirm; Briefings tab | PR 9 |
 | `States.dc.html` | Session states, all banners, market-closed dashboard, pending approval, and 5 dialogs | PR 5 (kill switch), PR 6, PR 8 (error states) |
 

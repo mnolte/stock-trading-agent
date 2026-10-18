@@ -44,6 +44,18 @@ from app.engine.state import (
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
+from app.reviews.client import make_review_client
+from app.reviews.service import ReviewService
+from app.secrets_service import (
+    MISSING_KEY,
+    KeyTesters,
+    SecretsStore,
+    install_secret_scrub_filter,
+    make_key_testers,
+    masked_account,
+    read_env_keys,
+    scrub,
+)
 from app.signals.service import SignalService
 
 logger = logging.getLogger(__name__)
@@ -150,11 +162,54 @@ async def run_scheduled_check(
         bus.publish("positions", "orders", "banners", "header", "performance")
 
 
-def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker:
+async def run_weekly_review(service: ReviewService) -> None:
+    """Scheduler entry point for the Saturday weekly review."""
+    try:
+        await service.write_weekly_due()
+    except Exception:  # noqa: BLE001
+        logger.exception("weekly review job failed")
+
+
+async def run_daily_briefing(service: ReviewService) -> None:
+    """Scheduler entry point for the pre-open daily briefing."""
+    try:
+        await service.write_briefing_due()
+    except Exception:  # noqa: BLE001
+        logger.exception("daily briefing job failed")
+
+
+async def run_due_verdicts(service: ReviewService) -> None:
+    """Interval scan: draft verdicts for decisions whose 5-session
+    outcome has landed since the last pass."""
+    try:
+        await service.write_due_verdicts()
+    except Exception:  # noqa: BLE001
+        logger.exception("verdict scan failed")
+
+
+_WEEKDAY_ABBREVS = {
+    "monday": "mon",
+    "tuesday": "tue",
+    "wednesday": "wed",
+    "thursday": "thu",
+    "friday": "fri",
+    "saturday": "sat",
+    "sunday": "sun",
+}
+
+
+def make_broker(
+    config: AppConfig,
+    sources: DataSources,
+    clock: Clock,
+    secrets: SecretsStore | None = None,
+) -> Broker:
     """The trading broker for the mode: fake in simulated, Alpaca paper else.
 
     The Alpaca client is created with ``paper=True`` and shares the read
-    limiter with the data client so all calls stay under the cap.
+    limiter with the data client so all calls stay under the cap. Keys
+    come from the encrypted secrets table; a missing pair keeps the
+    stream off until keys are saved in Settings.
     """
     if config.env.mode == "simulated":
         from app.broker.fake import FakeBroker
@@ -164,11 +219,48 @@ def make_broker(config: AppConfig, sources: DataSources, clock: Clock) -> Broker
         raise RuntimeError("paper mode needs the Alpaca data client")
     from app.broker.alpaca import AlpacaPaperBroker
 
+    key_id, secret = secrets.alpaca_pair() if secrets is not None else (None, None)
     return AlpacaPaperBroker(
-        config.env.alpaca_api_key,
-        config.env.alpaca_secret_key,
+        key_id or MISSING_KEY,
+        secret or MISSING_KEY,
         rate_limiter=sources.alpaca.limiter,
+        keyed=bool(key_id and secret),
     )
+
+
+async def startup_key_checks(
+    secrets: SecretsStore, testers: KeyTesters, sources: DataSources
+) -> None:
+    """Paper mode: refresh each stored key's test state once at startup.
+
+    The Alpaca check doubles as the paper-account check — a non-paper
+    account refuses startup (hard rule). Anything else only marks the
+    key failing; the app still comes up, paused, with the banner.
+    """
+    alpaca = sources.alpaca
+    if alpaca is not None:
+        result = await alpaca.check_paper_account()
+        if result.error == "account is not a paper account":
+            raise RuntimeError(f"Refusing to start: {result.error}")
+        key_id, secret = secrets.alpaca_pair()
+        if key_id and secret:
+            if result.error is None:
+                number = (
+                    str(result.data.get("account_number", ""))
+                    if isinstance(result.data, dict)
+                    else ""
+                )
+                detail = (
+                    f"Account {masked_account(number)}" if number else None
+                )
+                for name in ("alpaca_key_id", "alpaca_secret"):
+                    secrets.record_test(name, True, detail)
+            else:
+                error = scrub(result.error, secrets.scrub_values())
+                for name in ("alpaca_key_id", "alpaca_secret"):
+                    secrets.record_test(name, False, error)
+    for group in ("openai", "finnhub"):
+        await secrets.retest_stored(group, testers, event=False)
 
 
 def check_execution_mode(config: AppConfig) -> None:
@@ -282,17 +374,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     clock = make_clock(config)
     bus = UpdateBus()
-    sources = make_data_sources(config)
-    if sources.alpaca is not None:
-        paper = await sources.alpaca.check_paper_account()
-        if paper.error is not None:
-            raise RuntimeError(f"Refusing to start: {paper.error}")
+    # Encrypted keys come first: a one-time .env import runs before any
+    # client is built, and the scrub filter is in place before anything
+    # can log a value that passed through the environment.
+    secrets_store = SecretsStore(config, clock)
+    key_testers = make_key_testers(config, clock)
+    await secrets_store.import_env_keys(read_env_keys(), key_testers)
+    install_secret_scrub_filter(secrets_store.scrub_values)
 
-    broker = make_broker(config, sources, clock)
+    sources = make_data_sources(config, secrets_store)
+    if config.env.mode != "simulated":
+        await startup_key_checks(secrets_store, key_testers, sources)
+
+    broker = make_broker(config, sources, clock, secrets_store)
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
-    decision_service = DecisionService(make_decision_client(config), config)
+    decision_service = DecisionService(
+        make_decision_client(config, api_key=secrets_store.get("openai")),
+        config,
+        api_key=secrets_store.get("openai"),
+    )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
         broker=broker,
@@ -309,6 +411,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         calendar=calendar_store,
         config=config,
         clock=clock,
+    )
+    # Reviews have their own client and cost cap — they can never use the
+    # budget or rate limits reserved for trading decisions.
+    review_service = ReviewService(
+        client=make_review_client(config, api_key=secrets_store.get("openai")),
+        config=config,
+        clock=clock,
+        calendar=calendar_store,
+        market_data=market_data,
+        signals=signal_service,
+        state=exec_state,
+        notify=lambda topics: bus.publish(*topics),
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -405,9 +519,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
         session.commit()
 
+    # A review missed while the app was down is written now with its
+    # original date; a briefing older than its trading day is skipped.
+    try:
+        caught_up = await review_service.catch_up()
+        if any(caught_up.values()):
+            logger.info("review catch-up wrote %s", caught_up)
+    except Exception:  # noqa: BLE001
+        logger.exception("review catch-up failed")
+
     app.state.clock = clock
     app.state.calendar_store = calendar_store
     app.state.data_sources = sources
+    app.state.secrets_store = secrets_store
+    app.state.key_testers = key_testers
     app.state.market_data = market_data
     app.state.signal_service = signal_service
     app.state.cycle_runner = cycle_runner
@@ -415,6 +540,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.executor = executor
     app.state.exec_state = exec_state
     app.state.position_checker = position_checker
+    app.state.review_service = review_service
     app.state.update_bus = bus
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
@@ -472,6 +598,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             misfire_grace_time=misfire_grace,
             coalesce=True,
         )
+    # Reviews: weekly (Saturday, app timezone), daily briefing (09:00 New
+    # York on trading days) and a light verdict scan. A miss while the app
+    # was down is covered by the startup catch-up above, never by misfires.
+    weekly_day = _WEEKDAY_ABBREVS.get(
+        str(config.get("reviews", "weekly_day", default="saturday"))
+        .strip()
+        .lower(),
+        "sat",
+    )
+    weekly_at = str(config.get("reviews", "weekly_time", default="10:00"))
+    weekly_hour, weekly_minute = (int(p) for p in weekly_at.split(":")[:2])
+    scheduler.add_job(
+        run_weekly_review,
+        CronTrigger(
+            day_of_week=weekly_day,
+            hour=weekly_hour,
+            minute=weekly_minute,
+            timezone=app_tz,
+        ),
+        args=[review_service],
+        id="weekly-review",
+        coalesce=True,
+    )
+    briefing_at = str(config.get("reviews", "briefing_time_ny", default="09:00"))
+    briefing_hour, briefing_minute = (int(p) for p in briefing_at.split(":")[:2])
+    scheduler.add_job(
+        run_daily_briefing,
+        CronTrigger(hour=briefing_hour, minute=briefing_minute, timezone=NY_TZ),
+        args=[review_service],
+        id="daily-briefing",
+        coalesce=True,
+    )
+    scheduler.add_job(
+        run_due_verdicts,
+        IntervalTrigger(minutes=15),
+        args=[review_service],
+        id="verdict-scan",
+        coalesce=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     try:

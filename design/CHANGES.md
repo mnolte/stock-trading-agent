@@ -2,6 +2,13 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-18 — Settings redesign and API keys
+
+- `Settings.dc.html` rebuilt: section list on the left with "Find a setting" and unsaved-change counts (a scrolling row at phone width); larger section titles with a one-line explanation; one row per setting (name, explanation, control with unit, default underneath) instead of four-column field grids; ranges as one row ("40 to 70"); locked values (cash only) marked "fixed by the spec"; held symbols in the universe locked; sector picker when adding a symbol.
+- New "API keys and data" section first: Alpaca paper keys, OpenAI and Finnhub with status, masked key, last test, Test and Replace; Replace for Alpaca disabled while positions are open; inline "Test and save" form with show/hide; data sources as compact tiles. Replaces the Connections table ("keys from .env").
+- Changed values highlighted with "Changed from … · Reset"; sticky bar lists the changes (old → new) with a required reason, Discard and "Save as v4". Reset paper account moved to the last section.
+- New screenshot `Settings-390.png` (phone width).
+
 ## 2026-10-17 — Reviews
 
 - New screen `Reviews.dc.html` in the Learn group of the sidebar (every screen's sidebar updated): Weekly and Briefings tabs, Week 41 review with six stat tiles, closed trades, skipped setups after 5 sessions, observations, a "Suggestion · not applied" box and "Verdicts to confirm" with Good call / Bad call / Unclear.

@@ -43,6 +43,7 @@ from app.decide.snapshot import build_input_snapshot
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, Clock, make_clock
 from app.rules.prefilter import RulesResult
+from app.secrets_service import SecretsStore
 from app.signals.service import SignalService
 
 
@@ -222,12 +223,14 @@ async def run(
 def main() -> int:
     symbol = (sys.argv[1] if len(sys.argv) > 1 else "MSFT").upper()
     config = get_config()
-    if not config.env.openai_api_key:
-        print("smoke-decision needs OPENAI_API_KEY in .env")
-        return 2
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
-    client = OpenAIDecisionClient(config)
+    store = SecretsStore(config, make_clock(config))
+    key = store.get("openai")
+    if not key:
+        print("smoke-decision needs an OpenAI key saved in Settings")
+        return 2
+    client = OpenAIDecisionClient(config, api_key=key)
     try:
         return asyncio.run(run(symbol, config, client, make_clock(config)))
     except ValueError as exc:

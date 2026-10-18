@@ -17,6 +17,10 @@ class FinnhubEarningsSource:
         self._client = finnhub.Client(api_key=api_key)
         self._clock = clock or RealClock()
 
+    def update_key(self, api_key: str) -> None:
+        """Swap the key in place after a Settings save."""
+        self._client = finnhub.Client(api_key=api_key)
+
     async def fetch_earnings(
         self,
         symbols: list[str],

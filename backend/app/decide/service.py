@@ -90,9 +90,13 @@ class DecisionService:
         client: DecisionClient,
         config: AppConfig,
         session_factory: sessionmaker[Session] | None = None,
+        api_key: str | None = None,
     ) -> None:
         self.client = client
         self.config = config
+        # Kept for reload(): a promoted model/prompt rebuilds the client
+        # with the same stored key (keys live in the secrets table).
+        self.api_key = api_key
         self._session_factory = session_factory or get_session_maker()
         version = str(config.get("decision", "prompt", default="decision.v1"))
         self._prompt: Prompt = cached_prompt(version)
@@ -105,7 +109,7 @@ class DecisionService:
         """Pick up promoted settings: new prompt version and/or model."""
         from app.decide.client import make_decision_client
 
-        self.client = make_decision_client(self.config)
+        self.client = make_decision_client(self.config, api_key=self.api_key)
         version = str(self.config.get("decision", "prompt", default="decision.v1"))
         self._prompt = cached_prompt(version)
 

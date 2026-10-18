@@ -25,8 +25,10 @@ from app.db.models import (
     Order,
     Outcome,
     Position,
+    Review,
     Run,
     SettingsVersion,
+    Verdict,
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor
@@ -40,6 +42,16 @@ from app.market.clock import (
     SessionClock,
     SessionState,
     make_clock,
+)
+from app.reviews.facts import verdict_eligible, verdict_facts
+from app.secrets_service import (
+    GROUP_LABELS,
+    GROUP_ORDER,
+    GROUPS,
+    MISSING_KEY,
+    KeyTesters,
+    SecretsStore,
+    scrub,
 )
 from app.settings_service import (
     SettingsError,
@@ -210,6 +222,8 @@ def header_state(request: Request) -> dict[str, object]:
         "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
         "kill_switch": kill_on,
+        "resume_blocked": _keys_issue(request) is not None,
+        "keys_issue": _keys_issue(request),
         "paused": bool(getattr(state, "paused", False)),
         "paused_since": (
             _aware(state.paused_since).astimezone(UTC).isoformat()
@@ -491,6 +505,9 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         position_row = session.execute(
             select(Position).where(Position.entry_decision_id == decision_id)
         ).scalar_one_or_none()
+        verdict_row = session.execute(
+            select(Verdict).where(Verdict.decision_id == decision_id)
+        ).scalar_one_or_none()
         earnings = _decision_earnings(session, decision, scheduled)
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
@@ -504,6 +521,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     except OSError:
         prompt_text = None
     next_due = None
+    verdict_due = None
     if outcome is not None:
         worker = OutcomeWorker(
             market_data=None,
@@ -512,6 +530,14 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             clock=make_clock(),
         )
         next_due = worker.next_due(scheduled.replace(tzinfo=UTC), outcome)
+        # The verdict waits for the 5-session outcome specifically; the
+        # drawer chip shows the date it lands.
+        if outcome.price_5sessions is None:
+            for field, _at, target in worker._targets(
+                scheduled.replace(tzinfo=UTC)
+            ):
+                if field == "price_5sessions":
+                    verdict_due = target
     return {
         "id": decision.id,
         "cycle_time": scheduled.replace(tzinfo=UTC).isoformat(),
@@ -558,6 +584,21 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             else None
         ),
         "next_outcome_due": _iso(next_due),
+        "verdict": (
+            {
+                "id": verdict_row.id,
+                "verdict": verdict_row.verdict,
+                "reason": verdict_row.reason,
+                "source": verdict_row.source,
+                "draft_source": verdict_row.draft_source,
+                "created_at": _iso(verdict_row.created_at),
+                "updated_at": _iso(verdict_row.updated_at),
+            }
+            if verdict_row is not None
+            else None
+        ),
+        "verdict_eligible": verdict_eligible(decision),
+        "verdict_due": _iso(verdict_due),
         "earnings": earnings,
         "execution_mode": get_config().get(
             "execution", "mode", default="automatic"
@@ -609,6 +650,41 @@ def _executor(request: Request) -> Executor:
     return executor  # type: ignore[no-any-return]
 
 
+def _secrets(request: Request) -> SecretsStore | None:
+    return getattr(request.app.state, "secrets_store", None)
+
+
+def _key_testers(request: Request) -> KeyTesters:
+    testers = getattr(request.app.state, "key_testers", None)
+    if testers is None:
+        raise HTTPException(status_code=503, detail="key testers unavailable")
+    return testers  # type: ignore[no-any-return]
+
+
+def _keys_issue(request: Request) -> str | None:
+    """Short text for the missing/failing-key state; None when all pass or
+    in simulated mode (which needs no keys)."""
+    if get_config().env.mode == "simulated":
+        return None
+    store = _secrets(request)
+    missing = store.missing_groups() if store is not None else list(GROUP_ORDER)
+    if not missing:
+        return None
+    parts: list[str] = []
+    for group in missing:
+        status = (
+            store.group_status(group)["status"] if store is not None else "missing"
+        )
+        label = GROUP_LABELS[group]
+        if status == "missing":
+            parts.append(f"no {label} saved")
+        elif status == "failing":
+            parts.append(f"{label} failing the test")
+        else:
+            parts.append(f"{label} saved but untested")
+    return " · ".join(parts)
+
+
 @router.post("/kill-switch")
 async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Turn the kill switch on, or stop & flatten everything."""
@@ -632,8 +708,15 @@ async def pause(request: Request) -> dict[str, object]:
 
 @router.post("/pause/resume")
 async def pause_resume(request: Request) -> dict[str, object]:
-    """Resume entries after a pause. One click, no reason needed."""
+    """Resume entries after a pause. One click, no reason needed — but only
+    when every required key is set and passing (docs/SPEC.md, API keys)."""
     executor = _executor(request)
+    issue = _keys_issue(request)
+    if issue is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Resume needs all three keys set and passing ({issue}).",
+        )
     await executor.resume_from_pause()
     return {"paused": False}
 
@@ -642,8 +725,15 @@ async def pause_resume(request: Request) -> dict[str, object]:
 async def kill_switch_resume(
     request: Request, body: dict[str, object]
 ) -> dict[str, object]:
-    """Resume after a kill switch; the typed reason is stored in the log."""
+    """Resume after a kill switch; the typed reason is stored in the log.
+    Same key gate as a normal resume: nothing works without them."""
     executor = _executor(request)
+    issue = _keys_issue(request)
+    if issue is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Resume needs all three keys set and passing ({issue}).",
+        )
     reason = str(body.get("reason") or "")
     try:
         await executor.resume(reason)
@@ -1151,7 +1241,42 @@ def banners(request: Request) -> dict[str, object]:
                     "are still reviewed each cycle; no new entries until "
                     "you resume."
                 ),
+                "resume_blocked": _keys_issue(request) is not None,
                 "actions": ["resume_pause"],
+            },
+        )
+    keys_issue = _keys_issue(request)
+    if keys_issue is not None:
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "missing_keys",
+                "level": "warning",
+                "message": (
+                    f"{keys_issue} — the agent stays paused until all "
+                    "three keys are set and passing."
+                ),
+                "actions": ["open_settings"],
+            },
+        )
+    store = _secrets(request)
+    if store is not None and store.env_present:
+        message = (
+            "API keys were imported from .env and now live encrypted in "
+            "Settings — remove them from .env."
+            if store.imported
+            else "API keys found in .env are ignored — keys live in "
+            "Settings. Remove them from .env."
+        )
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "env_keys",
+                "level": "info",
+                "message": message,
+                "actions": [],
             },
         )
     if state is not None and state.kill_switch_on:
@@ -1509,6 +1634,14 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "reviews": {
+            "briefing_enabled": get(
+                "reviews", "briefing_enabled", default=True
+            ),
+            "monthly_cost_cap_usd": get(
+                "reviews", "monthly_cost_cap_usd", default=2
+            ),
+        },
         "universe": {
             "symbols": get("universe", "symbols", default=[]),
             "sectors": get("universe", "sectors", default={}),
@@ -1551,7 +1684,7 @@ def _connections(request: Request) -> list[dict[str, object]]:
                 else ("connected · paper" if account is not None else "error")
             ),
             "detail": (
-                f"account {masked} · keys from .env"
+                f"account {masked} · keys stored encrypted"
                 if masked
                 else ("fake broker" if simulated else "account unread")
             ),
@@ -1596,7 +1729,7 @@ def _connections(request: Request) -> list[dict[str, object]]:
     fx = getattr(market_data, "latest_fx", None) if market_data else None
     rows.append(
         {
-            "source": "ECB FX (EUR/USD)",
+            "source": "ECB EUR/USD",
             "status": (
                 "simulated"
                 if simulated
@@ -1620,6 +1753,16 @@ def _connections(request: Request) -> list[dict[str, object]]:
         }
     )
     return rows
+
+
+def _reviews_spend(request: Request) -> str | None:
+    """This month's review-call spend for the cost-cap row (None without
+    a review service — e.g. a bare test app)."""
+    service = getattr(request.app.state, "review_service", None)
+    if service is None:
+        return None
+    with get_session_maker()() as session:
+        return str(service.monthly_spend(session))
 
 
 @router.get("/settings")
@@ -1652,6 +1795,7 @@ def settings(request: Request) -> dict[str, object]:
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
+        "reviews_spend_usd": _reviews_spend(request),
         "mode": config.env.mode,
     }
 
@@ -1677,6 +1821,11 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         )
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=exc.errors) from exc
+    if not reason.strip():
+        # Required and shown in History (docs/SPEC.md, Settings screen).
+        raise HTTPException(
+            status_code=422, detail=["a reason is required"]
+        )
     new_tree = _deep_merge(active, cleaned)
     with get_session_maker()() as session:
         row = save_version(
@@ -1690,7 +1839,7 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         schedule["cycles"] != _nested_get(active, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
-    _notify(request, "header")
+    _notify(request, "header", "settings")
     return {
         "version": version,
         "changes": changes,
@@ -1701,6 +1850,264 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
+
+
+# ----------------------------------------------------------------------
+# API keys (encrypted, write-only, tested before save)
+
+
+def _open_items() -> int:
+    """Open positions plus open orders — the Alpaca-replace guard count."""
+    with get_session_maker()() as session:
+        positions = session.execute(
+            select(func.count(Position.id)).where(Position.closed_at.is_(None))
+        ).scalar_one()
+        open_orders = session.execute(
+            select(func.count(Order.id)).where(
+                Order.status.in_(OPEN_LIKE_STATUSES)
+            )
+        ).scalar_one()
+    return positions + open_orders
+
+
+def _data_source_tiles(request: Request) -> list[dict[str, object]]:
+    """The design's four data-source tiles for the keys section."""
+    wanted = {
+        "Alpaca market data",
+        "Alpaca news",
+        "Finnhub earnings",
+        "ECB EUR/USD",
+    }
+    return [row for row in _connections(request) if row["source"] in wanted]
+
+
+_KEY_ROW_INFO: dict[str, dict[str, str]] = {
+    "alpaca": {
+        "label": "Alpaca paper keys",
+        "hint": "Orders, positions, market data and news",
+    },
+    "openai": {"label": "OpenAI", "hint": "Trading decisions and reviews"},
+    "finnhub": {"label": "Finnhub", "hint": "Earnings calendar (free plan)"},
+}
+
+
+@router.get("/keys")
+def api_keys(request: Request) -> dict[str, object]:
+    """Key metadata for Settings: status, mask and timestamps — never a key."""
+    store = _secrets(request)
+    open_items = _open_items()
+    state = getattr(request.app.state, "exec_state", None)
+    paused_or_kill = bool(
+        state is not None
+        and (getattr(state, "paused", False) or getattr(state, "kill_switch_on", False))
+    )
+    replace_allowed = paused_or_kill and open_items == 0
+    rows = []
+    for group in GROUP_ORDER:
+        status = store.group_status(group) if store is not None else {
+            "name": group,
+            "set": False,
+            "status": "missing",
+            "masked": None,
+            "account": None,
+            "saved_at": None,
+            "tested_at": None,
+            "error": None,
+        }
+        rows.append({**_KEY_ROW_INFO[group], **status})
+    return {
+        "keys": rows,
+        "set_count": sum(1 for row in rows if row["set"]),
+        "all_ready": store.all_ready() if store is not None else False,
+        "open_items": open_items,
+        "paused_or_kill": paused_or_kill,
+        "replace_allowed": replace_allowed,
+        "replace_hint": (
+            "Replacing needs the agent paused with no open positions or "
+            f"orders ({open_items} open). Only paper keys are accepted."
+        ),
+        "env_keys": bool(store is not None and store.env_present),
+        "mode": get_config().env.mode,
+        "data_sources": _data_source_tiles(request),
+    }
+
+
+async def _apply_keys(request: Request, changed: set[str]) -> None:
+    """Point the live clients at newly saved keys — in place, so every
+    service holding the client object keeps working."""
+    store = _secrets(request)
+    if store is None:
+        return
+    config = get_config()
+    sources = getattr(request.app.state, "data_sources", None)
+    if "alpaca" in changed:
+        key_id, secret = store.alpaca_pair()
+        if sources is not None and sources.alpaca is not None:
+            sources.alpaca.update_credentials(
+                key_id or MISSING_KEY, secret or MISSING_KEY
+            )
+        from app.broker.alpaca import AlpacaPaperBroker
+
+        broker = getattr(request.app.state, "broker", None)
+        if isinstance(broker, AlpacaPaperBroker):
+            await broker.update_credentials(
+                key_id or MISSING_KEY,
+                secret or MISSING_KEY,
+                keyed=bool(key_id and secret),
+            )
+        executor = getattr(request.app.state, "executor", None)
+        if executor is not None:
+            await executor.refresh_account()
+    if "finnhub" in changed and sources is not None:
+        update_key = getattr(sources.earnings, "update_key", None)
+        if callable(update_key):
+            update_key(store.get("finnhub") or MISSING_KEY)
+    if "openai" in changed and config.env.mode != "simulated":
+        key = store.get("openai")
+        if key:
+            from app.reviews.client import OpenAIReviewClient
+
+            runner = getattr(request.app.state, "cycle_runner", None)
+            decide = getattr(runner, "decide", None)
+            if decide is not None:
+                decide.api_key = key
+                update_key = getattr(decide.client, "update_key", None)
+                if callable(update_key):
+                    update_key(key)
+                else:
+                    decide.reload()
+            service = getattr(request.app.state, "review_service", None)
+            review_client = getattr(service, "client", None)
+            if service is not None:
+                update_key = getattr(review_client, "update_key", None)
+                if callable(update_key):
+                    update_key(key)
+                else:
+                    service.client = OpenAIReviewClient(config, api_key=key)
+
+
+@router.post("/keys/{group}")
+async def save_api_key(
+    request: Request, group: str, body: dict[str, object]
+) -> dict[str, object]:
+    """Test a candidate key, then save it only when the test passes —
+    the old key keeps working until then. Alpaca has extra guards."""
+    store = _secrets(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="key store unavailable")
+    if group not in GROUPS:
+        raise HTTPException(status_code=404, detail="unknown key")
+    testers = _key_testers(request)
+
+    if group == "alpaca":
+        key_id = str(body.get("key_id") or "").strip()
+        secret = str(body.get("secret") or "").strip()
+        if not key_id or not secret:
+            raise HTTPException(
+                status_code=422,
+                detail="the Alpaca key id and secret are both required",
+            )
+        state = getattr(request.app.state, "exec_state", None)
+        paused_or_kill = bool(
+            state is not None
+            and (
+                getattr(state, "paused", False)
+                or getattr(state, "kill_switch_on", False)
+            )
+        )
+        if not paused_or_kill:
+            raise HTTPException(
+                status_code=422,
+                detail="pause the agent or turn the kill switch on before "
+                "replacing the Alpaca keys",
+            )
+        open_items = _open_items()
+        if open_items:
+            raise HTTPException(
+                status_code=422,
+                detail=f"close all positions and orders first ({open_items} open)",
+            )
+        result = await testers.alpaca(key_id, secret)
+        if not result.ok:
+            # The candidate was never stored, so the store's scrub list
+            # doesn't cover it — strip it here before it can reach the
+            # event log or the response.
+            clean = scrub(result.error or "", [key_id, secret])
+            store.record_event(
+                "alpaca_key_id", "tested", False, clean, last4=key_id[-4:]
+            )
+            raise HTTPException(status_code=422, detail=clean or "test failed")
+        old_account = getattr(
+            getattr(state, "account", None) if state is not None else None,
+            "account_number",
+            None,
+        )
+        account_changed = bool(
+            result.account and old_account and result.account != old_account
+        )
+        for name, value in (
+            ("alpaca_key_id", key_id),
+            ("alpaca_secret", secret),
+        ):
+            store.save(name, value, "ok", result.detail)
+            store.record_event(name, "saved", True, result.detail)
+        await _apply_keys(request, {"alpaca"})
+        if account_changed:
+            executor = _executor(request)
+            await executor.activate_kill_switch(
+                reason=(
+                    "Alpaca keys point at a different paper account — "
+                    "start a new run"
+                ),
+                automatic=True,
+            )
+        _notify(request, "banners", "header", "settings")
+        return {
+            "ok": True,
+            "account_changed": account_changed,
+            "key": store.group_status("alpaca"),
+        }
+
+    value = str(body.get("value") or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="a key is required")
+    result = await (
+        testers.openai(value) if group == "openai" else testers.finnhub(value)
+    )
+    if not result.ok:
+        clean = scrub(result.error or "", [value])
+        store.record_event(group, "tested", False, clean, last4=value[-4:])
+        raise HTTPException(status_code=422, detail=clean or "test failed")
+    store.save(group, value, "ok", result.detail)
+    store.record_event(group, "saved", True, result.detail)
+    await _apply_keys(request, {group})
+    _notify(request, "banners", "header", "settings")
+    return {"ok": True, "key": store.group_status(group)}
+
+
+@router.post("/keys/{group}/test")
+async def test_api_key(request: Request, group: str) -> dict[str, object]:
+    """The separate Test action: re-checks the stored key and updates its
+    result — the value is never returned."""
+    store = _secrets(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="key store unavailable")
+    if group not in GROUPS:
+        raise HTTPException(status_code=404, detail="unknown key")
+    result = await store.retest_stored(group, _key_testers(request))
+    if result is None:
+        raise HTTPException(
+            status_code=422, detail=f"no {GROUP_LABELS[group]} saved yet"
+        )
+    _notify(request, "banners", "header", "settings")
+    return {
+        "ok": result.ok,
+        "error": scrub(result.error or "", store.scrub_values()) or None,
+        "key": store.group_status(group),
+    }
+
+
+
 
 
 # ----------------------------------------------------------------------
@@ -2515,3 +2922,246 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
         "price": price,
         "day_change_pct": change,
     }
+
+
+# ----------------------------------------------------------------------
+# Reviews: weekly review, daily briefing, verdicts (docs/SPEC.md, Reviews)
+
+_VERDICT_VALUES = ("good_call", "bad_call", "unclear")
+_WEEKDAY_NUMBERS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+
+def _week_sub(review: Review) -> str:
+    facts = review.facts or {}
+    period = facts.get("period") or {}
+    start, end = period.get("start"), period.get("end")
+    if isinstance(start, str) and isinstance(end, str):
+        s = datetime.fromisoformat(start).date()
+        e = datetime.fromisoformat(end).date()
+        if s.month == e.month:
+            return f"{s.day} – {e.day} {e.strftime('%b')}"
+        return f"{s.day} {s.strftime('%b')} – {e.day} {e.strftime('%b')}"
+    return review.period
+
+
+def _review_label(review: Review) -> str:
+    facts = review.facts or {}
+    period = facts.get("period") or {}
+    if review.kind == "weekly":
+        return f"Week {period.get('week', review.period)}"
+    try:
+        day = datetime.fromisoformat(review.period).date()
+    except ValueError:
+        return review.period
+    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+
+
+def _review_item(review: Review) -> dict[str, object]:
+    facts = review.facts or {}
+    item: dict[str, object] = {
+        "id": review.id,
+        "kind": review.kind,
+        "period": review.period,
+        "label": _review_label(review),
+        "sub": _week_sub(review),
+        "source": review.source,
+        "reason": review.reason,
+        "due_at": _iso(review.due_at),
+        "created_at": _iso(review.created_at),
+    }
+    if review.kind == "weekly":
+        item["return_pct"] = facts.get("return_pct")
+    else:
+        item["preview"] = review.text[:80]
+    return item
+
+
+def _next_weekly_due(request: Request) -> str | None:
+    """The next weekly-review instant in the future (aware UTC ISO)."""
+    config = get_config()
+    tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
+    weekday = _WEEKDAY_NUMBERS.get(
+        str(config.get("reviews", "weekly_day", default="saturday"))
+        .strip()
+        .lower(),
+        5,
+    )
+    raw = str(config.get("reviews", "weekly_time", default="10:00"))
+    hour, minute = (int(p) for p in raw.split(":")[:2])
+    now = _clock(request).now()
+    local_today = now.astimezone(tz).date()
+    days_ahead = (weekday - local_today.weekday()) % 7
+    candidate = datetime.combine(
+        local_today + timedelta(days=days_ahead), dtime(hour, minute), tzinfo=tz
+    )
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate.astimezone(UTC).isoformat()
+
+
+def _review_schedule(request: Request) -> str:
+    """The subtitle under the page title: the configured schedule, in the
+    app timezone ("Weekly review Saturday 10:00 · briefing trading days
+    15:00 Amsterdam"; "briefing off" when briefings are disabled)."""
+    config = get_config()
+    tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
+    city = str(tz).rsplit("/", 1)[-1]
+    day = str(config.get("reviews", "weekly_day", default="saturday")).capitalize()
+    at = str(config.get("reviews", "weekly_time", default="10:00"))
+    parts = [f"Weekly review {day} {at}"]
+    if not bool(config.get("reviews", "briefing_enabled", default=True)):
+        parts.append("briefing off")
+        return " · ".join(parts)
+    raw = str(config.get("reviews", "briefing_time_ny", default="09:00"))
+    hour, minute = (int(p) for p in raw.split(":")[:2])
+    now_ny = _clock(request).now().astimezone(NY_TZ).date()
+    local = datetime.combine(now_ny, dtime(hour, minute), tzinfo=NY_TZ).astimezone(tz)
+    parts.append(f"briefing trading days {local.strftime('%H:%M')} {city}")
+    return " · ".join(parts)
+
+
+@router.get("/reviews")
+def reviews_list(request: Request, kind: str = "weekly") -> dict[str, object]:
+    """Written weekly reviews or daily briefings, newest first."""
+    if kind not in ("weekly", "briefing"):
+        raise HTTPException(status_code=400, detail="kind must be weekly or briefing")
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(Review)
+            .where(Review.kind == kind)
+            .order_by(Review.due_at.desc())
+            .limit(52)
+        ).scalars().all()
+    return {
+        "items": [_review_item(r) for r in rows],
+        "next_weekly_due": _next_weekly_due(request) if kind == "weekly" else None,
+        "schedule": _review_schedule(request),
+    }
+
+
+@router.get("/reviews/{review_id}")
+def review_detail(review_id: int) -> dict[str, object]:
+    """One review: the facts, the text and where the text came from."""
+    with get_session_maker()() as session:
+        review = session.execute(
+            select(Review).where(Review.id == review_id)
+        ).scalar_one_or_none()
+    if review is None:
+        raise HTTPException(status_code=404, detail="review not found")
+    return {
+        **_review_item(review),
+        "facts": review.facts,
+        "text": review.text,
+        "content": review.content,
+        "model": review.model,
+        "prompt_version": review.prompt_version,
+        "tokens": review.tokens,
+        "cost": str(review.cost) if review.cost is not None else None,
+    }
+
+
+def _verdict_outcome(
+    request: Request,
+    session: Session,
+    decision: Decision,
+    scheduled: datetime,
+    outcome: Outcome | None,
+) -> str | None:
+    """The one-line outcome next to a draft verdict ("target +1.6R")."""
+    if outcome is None or outcome.price_5sessions is None:
+        return None
+    facts = verdict_facts(
+        session,
+        config=get_config(),
+        clock=_clock(request),
+        decision=decision,
+        scheduled=scheduled,
+        outcome=outcome,
+    )
+    n = facts.get("sessions", 5)
+    trade = facts.get("trade")
+    if trade is not None and trade.get("exit") is not None and trade.get("r") is not None:
+        r = float(trade["r"])
+        return f"{trade['exit']} {r:+.1f}R"
+    pct = facts.get("pct_5sessions")
+    if pct is None:
+        return None
+    suffix = " · open" if trade is not None and trade.get("open") else ""
+    return f"{float(pct):+.1f}% after {n} sessions{suffix}"
+
+
+@router.get("/verdicts")
+def verdicts_list(request: Request, status: str = "draft") -> dict[str, object]:
+    """Draft verdicts to confirm (default) or confirmed ones (?status=confirmed|all)."""
+    if status not in ("draft", "confirmed", "all"):
+        raise HTTPException(status_code=400, detail="unknown status")
+    with get_session_maker()() as session:
+        query = (
+            select(Verdict, Decision, Cycle.scheduled_time, Outcome)
+            .join(Decision, Verdict.decision_id == Decision.id)
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .outerjoin(Outcome, Outcome.decision_id == Decision.id)
+            .order_by(Verdict.id)
+        )
+        if status == "draft":
+            query = query.where(Verdict.source == "draft")
+        elif status == "confirmed":
+            query = query.where(Verdict.source == "marc").order_by(
+                Verdict.updated_at.desc()
+            )
+        rows = session.execute(query.limit(100)).all()
+        items = [
+            {
+                "id": verdict.id,
+                "decision_id": decision.id,
+                "symbol": decision.symbol,
+                "final_action": decision.final_action,
+                "decided_at": _aware(scheduled).isoformat(),
+                "outcome": _verdict_outcome(
+                    request, session, decision, scheduled, outcome
+                ),
+                "verdict": verdict.verdict,
+                "reason": verdict.reason,
+                "source": verdict.source,
+                "draft_source": verdict.draft_source,
+                "created_at": _iso(verdict.created_at),
+                "updated_at": _iso(verdict.updated_at),
+            }
+            for verdict, decision, scheduled, outcome in rows
+        ]
+    return {"items": items, "status": status}
+
+
+@router.post("/verdicts/{verdict_id}")
+def verdict_resolve(
+    request: Request, verdict_id: int, body: dict[str, object]
+) -> dict[str, object]:
+    """Confirm a draft verdict (same value) or change it — either way the
+    verdict becomes Marc's and counts in reviews."""
+    value = str(body.get("verdict", ""))
+    if value not in _VERDICT_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"verdict must be one of {', '.join(_VERDICT_VALUES)}",
+        )
+    with get_session_maker()() as session:
+        verdict = session.execute(
+            select(Verdict).where(Verdict.id == verdict_id)
+        ).scalar_one_or_none()
+        if verdict is None:
+            raise HTTPException(status_code=404, detail="verdict not found")
+        verdict.verdict = value
+        verdict.source = "marc"
+        verdict.updated_at = _naive_utc(_clock(request).now())
+        session.commit()
+        resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
+    _notify(request, "reviews", "decisions")
+    return resolved

@@ -24,13 +24,13 @@ A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca
 ## Quick start
 
 ```bash
-cp .env.example .env            # fill in the keys
+cp .env.example .env            # mode, host, port, paths; no keys
 cp backend/config.example.yaml backend/config.yaml
 make install
 make run                         # builds the GUI, serves everything on 127.0.0.1:SA_PORT
 ```
 
-The agent starts **paused**: it reconciles with Alpaca and watches open positions, but places no new entries. Open the GUI, check the header says PAPER, then press Resume. The first cycle runs at 10:46 New York time (16:46 in Amsterdam most of the year).
+The agent starts **paused**: it reconciles with Alpaca and watches open positions, but places no new entries. Open the GUI and enter the Alpaca paper keys, OpenAI key and Finnhub key in Settings → API keys (each is tested before it is saved). Check the header says PAPER, then press Resume. The first cycle runs at 10:46 New York time (16:46 in Amsterdam most of the year).
 
 For development, `make dev` runs the backend with auto-reload on 127.0.0.1:SA_PORT and the Vite dev server on 127.0.0.1:5173; Ctrl-C stops both.
 
@@ -44,7 +44,8 @@ Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily
 
 | Where | What |
 | --- | --- |
-| `.env` | Secrets and paths: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `OPENAI_API_KEY`, `FINNHUB_API_KEY`, `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
+| `.env` | Mode and paths: `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
+| Settings → API keys | Alpaca paper key ID and secret, OpenAI, Finnhub. Stored encrypted in the database with `data/secret.key`; back that file up separately. |
 | `backend/config.yaml` | Everything else: universe, cycle times, rules, risk limits, model, slippage assumption. Settings changed in the GUI are saved as new versions. |
 
 ## Project layout
@@ -63,7 +64,7 @@ Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily
 - A stop order at Alpaca on every position, checked every cycle and every 15 minutes.
 - Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
 - Daily loss limit, drawdown kill switch, PDT guard, earnings blackout.
-- Keys stay in `.env`; they are never logged or sent to the GUI.
+- Keys are stored encrypted, shown only as the last 4 characters, and never logged.
 
 ## Build plan
 

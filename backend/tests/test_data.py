@@ -62,13 +62,15 @@ def test_make_data_sources_simulated_uses_fakes() -> None:
     assert sources.alpaca is None
 
 
-def test_make_data_sources_paper_requires_keys() -> None:
+def test_make_data_sources_paper_without_keys_builds_unkeyed_client() -> None:
+    """Paper mode without stored keys still comes up: the app starts
+    paused and every Alpaca call fails as an ordinary error (docs/SPEC.md,
+    API keys). The clients exist so a Settings save can swap keys in."""
     config = AppConfig()
     config.env.mode = "paper"
-    config.env.alpaca_api_key = ""
-    config.env.alpaca_secret_key = ""
-    with pytest.raises(RuntimeError, match="ALPACA_API_KEY"):
-        make_data_sources(config)
+    sources = make_data_sources(config)
+    assert sources.alpaca is not None
+    assert sources.earnings is not None
 
 
 async def test_fake_bars_cover_regular_session() -> None:

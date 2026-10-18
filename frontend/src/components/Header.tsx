@@ -266,10 +266,13 @@ export function Header({
         <button
           type="button"
           onClick={onPauseToggle}
+          disabled={paused && !!state?.resume_blocked}
           title={
-            paused
-              ? undefined
-              : 'Pause new entries. Stops, targets and position checks keep working.'
+            paused && state?.resume_blocked
+              ? `Resume needs all three keys set and passing — ${state.keys_issue ?? 'open Settings'}`
+              : paused
+                ? undefined
+                : 'Pause new entries. Stops, targets and position checks keep working.'
           }
           style={
             paused
@@ -285,7 +288,8 @@ export function Header({
                   color: 'var(--sa-bg)',
                   fontSize: 'var(--sa-text-base)',
                   fontWeight: 600,
-                  cursor: 'pointer',
+                  cursor: state?.resume_blocked ? 'not-allowed' : 'pointer',
+                  opacity: state?.resume_blocked ? 0.55 : 1,
                   whiteSpace: 'nowrap',
                 }
               : {

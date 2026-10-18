@@ -38,7 +38,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 6. **No network in tests.** Every external service sits behind an interface with a fake. Sockets are blocked in the test setup.
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
 8. **Prompts are immutable once used.** Never edit `backend/prompts/decision.v1.md` after it has made a decision; create `decision.v2.md`.
-9. **Secrets.** Keys come from `.env`. Never print, log, commit or send them to the frontend.
+9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys.
 10. **Local only.** The backend binds to `127.0.0.1` in v0.1.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.

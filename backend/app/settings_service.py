@@ -71,6 +71,10 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "performance": {
         "slippage_pct_per_side": ("number", 0, 10),
     },
+    "reviews": {
+        "briefing_enabled": ("bool", None, None),
+        "monthly_cost_cap_usd": ("number", 0, 100),
+    },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
@@ -110,6 +114,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("risk", "max_order_pct"): "Max single order",
     ("risk", "max_orders_per_cycle"): "Max orders per cycle",
     ("performance", "slippage_pct_per_side"): "Assumed slippage",
+    ("reviews", "briefing_enabled"): "Daily briefing",
+    ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("universe", "symbols"): "Universe",
 }

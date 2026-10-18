@@ -141,12 +141,32 @@ class AlpacaPaperBroker:
         api_key: str,
         secret_key: str,
         rate_limiter: RateLimiter | None = None,
+        keyed: bool = True,
     ) -> None:
         self.limiter = rate_limiter or RateLimiter()
-        self.trading = TradingClient(api_key, secret_key, paper=True, raw_data=True)
-        self._stream = TradingStream(api_key, secret_key, paper=True, raw_data=True)
+        # False when no Alpaca keys are stored: the clients still exist so
+        # calls fail as ordinary errors, but the trade stream stays off.
+        self._keyed = keyed
         self._handlers: list[TradeUpdateHandler] = []
         self._stream_started = False
+        self._set_credentials(api_key, secret_key)
+
+    def _set_credentials(self, api_key: str, secret_key: str) -> None:
+        self.trading = TradingClient(api_key, secret_key, paper=True, raw_data=True)
+        self._stream = TradingStream(api_key, secret_key, paper=True, raw_data=True)
+
+    async def update_credentials(
+        self, api_key: str, secret_key: str, keyed: bool = True
+    ) -> None:
+        """Swap keys after a Settings save; restarts the trade stream so
+        updates flow for the new account."""
+        was_started = self._stream_started
+        if was_started:
+            await self.stop_stream()
+        self._keyed = keyed
+        self._set_credentials(api_key, secret_key)
+        if was_started:
+            await self.start_stream()
 
     # ------------------------------------------------------------------
     # reads (retried with backoff inside run_read)
@@ -360,7 +380,7 @@ class AlpacaPaperBroker:
 
     async def start_stream(self) -> None:
         """Run the SDK websocket in its own thread (it owns an event loop)."""
-        if self._stream_started:
+        if self._stream_started or not self._keyed:
             return
         self._stream_started = True
         self._stream.subscribe_trade_updates(self._on_trade_update)

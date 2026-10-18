@@ -57,7 +57,7 @@ One Python backend process runs the scheduler, the agent and the API; a React ap
 | Indicators | pandas + own implementations (no TA-Lib dependency) |
 | Frontend | React + TypeScript + Vite; Lightweight Charts for price charts |
 | Live updates | WebSocket from backend to GUI sending `{"type": "update", "topics": [...]}` (header, positions, orders, decisions, banners, watchlist, performance, approvals); the GUI refetches those REST endpoints, debounced 300 ms, refetches everything after a reconnect, and polls every 60 s with a "live updates paused" note while the socket is down |
-| Config | `.env` for secrets, `config.yaml` for everything else |
+| Config | `.env` for mode, host, port and paths; `config.yaml` for defaults; API keys entered in Settings and stored encrypted (see API keys) |
 
 Repo layout:
 
@@ -136,7 +136,7 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 
 - The trading client is always created with `paper=True`. The live base URL must not appear anywhere in the code; a test fails the build if it does.
 - At startup, read the account and refuse to start unless it is a paper account. Show "PAPER" permanently in the GUI header.
-- Keys come from `.env` (`ALPACA_API_KEY`, `ALPACA_SECRET_KEY`). They are never logged or sent to the frontend.
+- Keys are entered in Settings and stored encrypted (see API keys). They are never logged or sent to the frontend.
 
 **Entries**
 
@@ -287,12 +287,26 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime |
 | LLM inspector | Every model call: prompt version, full prompt, raw response, tokens, cost, latency, validation result |
-| Settings | Universe, risk values, cycle times, execution mode, earnings handling, model, slippage assumption; changes are versioned and take effect next cycle |
+| Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode); confirm dialogs for Stop & flatten, reset paper account and settings changes |
 
 The layout must also work at phone width, so the VPS version can be checked from a phone.
 
+**Settings screen.** Sections with a section list on the left (a scrolling row on a phone) and a "Find a setting" filter: API keys and data, Trading (execution mode, universe, slippage), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Earnings, Model and reviews, Schedule (read-only), History and Paper account. Each setting is one row: name, one-line explanation, the control with its unit, and its default underneath. Values fixed by the spec (cash only, cycle times) are shown locked. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. Keys are not part of this flow: they are saved per key, straight away (see API keys).
+
 **Design handoff.** The repo has a `design/` folder: `DESIGN.md` (rules, shared components, which PR builds which screen), `tokens.css`, `screens/` (the 7 screens as HTML, the source of exact styles and wording) and `screenshots/`. The spec wins on behaviour, the design on look and wording; differences go in the PR description.
+
+## API keys
+
+API keys are entered in Settings, not in `.env`. There are four: Alpaca key ID and secret (paper), OpenAI, and Finnhub. `.env` keeps only `MODE`, `SA_HOST`, `SA_PORT`, `SA_DATA_DIR` and `SA_DB_PATH`.
+
+- **Storage.** Keys are encrypted with Fernet (`cryptography`) and stored in the `secrets` table. The encryption key is `SA_DATA_DIR/secret.key`, created at first start with file mode 600; it is never stored in the database, so a database backup alone does not reveal the keys. If `secret.key` is lost, the keys must be entered again.
+- **Never shown again.** The API only accepts keys (write-only). Reads return the name, the last 4 characters, saved at, last tested at and the test result; never the key. Keys are never logged, never in error messages, the LLM inspector, events or settings versions; log output is scrubbed for every stored key as a second line of defence.
+- **Test before save.** A new key is saved only after one test call passes: Alpaca `GET account` on the paper endpoint (must report a paper account), OpenAI list models, Finnhub one earnings-calendar request. The old key keeps working until the new one passes. "Test" re-runs the check without changing anything. Every save and test is an event (key name, last 4 characters, result), never the key.
+- **Replacing Alpaca keys** is only allowed while the agent is paused or the kill switch is on, with no open positions or orders. If the new keys belong to a different paper account, the change requires "Start new run".
+- **Missing or failing keys.** The app always starts (paused, as usual) and shows a banner naming the missing or failing key with a link to Settings. Resume stays disabled until the Alpaca, OpenAI and Finnhub keys are all set and passing. Simulated mode needs no keys.
+- **Moving from `.env`.** At startup, a key found in the environment with nothing stored under that name is imported once, tested, and stored; a banner then says "Keys imported from .env — remove them from .env". After that, keys in the environment are ignored with a warning in the log.
+- Settings, keys and the kill switch have no login, so the backend stays bound to `127.0.0.1` (hard rule 10). On a VPS later the GUI is reached over an SSH tunnel until login exists.
 
 ## Data model
 
@@ -312,6 +326,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
+| `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub), encrypted value, last 4 characters, saved at, tested at, test result |
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON |
 
 A daily copy of the database is made at 03:00 Amsterdam time with SQLite's online backup API (never a plain file copy, which can catch a write half-done), checked with `PRAGMA integrity_check`, and kept for 14 days. Migrations are never edited once merged; a schema change is always a new revision. At startup the app compares the schema with the models and refuses to start with a clear message if they differ.
@@ -326,13 +341,13 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 - **Required tests:** every indicator against hand-checked values; every risk gate pass and fail; bar aggregation into session-aligned 1h bars; PDT counting; reconciliation mismatches; a position-without-stop recovery; DST weeks (25 Oct to 1 Nov 2026); an early-close day; invalid model output.
 - **Risk math consistency.** One function computes stop distance, risk and reward to risk; rules, gates and the GUI all call it. A test checks that each default symbol can produce a valid trade at typical ATR values.
 - **Processes.** Never kill processes by name or with broad patterns; stop only the process the task started, by its PID.
-- **Secrets.** Never print, log or commit keys; `.env` stays in `.gitignore`.
+- **Secrets.** Never print, log or commit keys, `secret.key` or the database; `.env` and `data/` stay in `.gitignore`. Tests use fake keys only.
 - **Spec is binding.** If the spec is unclear or contradicts itself, stop and ask in the PR rather than guessing. Every behaviour change updates `SPEC.md` and adds a line to `CHANGES.md`.
 - **PR log.** Each PR ends with what was built, what was tested, what was not, and any deviation from the spec.
 
 ## Build plan
 
-Eight PRs, each reviewable on its own. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
+Ten PRs, each reviewable on its own. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
 
 1. **Skeleton.** Repo layout, FastAPI app, React shell with header and empty screens, config loading, SQLite and migrations, `AGENTS.md`, CI running tests with sockets blocked. *Done when:* app starts, header shows PAPER and a fake clock.
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
@@ -341,7 +356,9 @@ Eight PRs, each reviewable on its own. Paper orders are first sent in PR 5; ever
 5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard, risk gates, kill switch. *Done when:* a simulated session runs with every position protected by a stop, and startup, the paper-account check and reconciliation are verified read-only against the real paper account. Marc runs the first real paper session himself after review, with the paper account reset to $10,000.
 6. **GUI.** Dashboard, decision detail, positions and orders, settings, states and dialogs, supervised-mode approvals, WebSocket updates, phone-width layout.
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
-8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* the 4-week paper run can start.
+8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* a crash mid-cycle recovers cleanly.
+9. **Reviews.** Weekly review, daily briefing and verdicts (see Reviews).
+10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`. *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
 
 ## Reviews
 
