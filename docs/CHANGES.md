@@ -2,20 +2,13 @@
 
 Newest first.
 
-## 2026-10-18 — Header regime chip follows the trend
+## 2026-10-18 — Larger universe (v0.2, PR 11 and 12)
 
-- The regime chip in the header was always green; it is now green for Up, red for Down and neutral for Sideways or unavailable, matching the Latest decision card.
-
-## 2026-10-19 — Bug-sweep fixes across execution, reconciliation and settings
-
-- Reconciliation no longer resurrects closed positions: a historical filled buy is matched to its position by `entry_decision_id` (open or closed), extra partial fills grow the open position's quantity and weighted-average price, and an unrecorded fill still lands once for crash recovery.
-- Alpaca trade-update callbacks are dispatched onto the application event loop (`run_coroutine_threadsafe`) instead of running engine handlers on the SDK stream's own loop; handler failures are logged.
-- Stop & flatten now confirms the cancels before selling: after `cancel_all_orders` a symbol whose orders still show open (or whose leg is still open) is not sold, and a critical `flatten_sell_blocked` banner is raised. The market sell never goes past a live stop.
-- Exits also sweep broker-side legs the database never recorded (crash between accept and store): every open sell order for the symbol is cancelled and confirmed before the market sell.
-- Approvals re-check earnings on fresh data — the calendar is refreshed and `days_to_earnings` recomputed at approve time, not read from the stored decision snapshot.
-- Settings: the stored/pending version is always the full merged tree, so a second save can no longer silently revert the first; `allowed_sectors` echoed back unchanged by a client no longer 422s, and is still rejected when changed.
-- `kill_switch_since` in banners treats naive timestamps as UTC (same as `paused_since`).
-- Smaller fixes: negative P&L shows the − sign; the flatten dialog's day-trade counter uses the configured maximum; `FakeClock` converts aware non-UTC datetimes instead of relabelling them; the earnings refresh upserts revised reports and prunes cancelled ones; the daily backup takes an injectable clock; "Cycle N of M" uses the session's active cycle count; the session factory reuses one engine per database path; a zeroed quote blocks an entry instead of dividing by zero; a no-op tighten is marked in `gates_result` instead of implying a stop move.
+- New "Larger universe (v0.2)" section: `universe.mode` fixed (default, v0.1 unchanged) or screened. Pool of up to 150 symbols, defaults in `backend/universe/pool.csv` (72 symbols). Daily screen at 08:10 New York: history loaded, tradable, price ≥ $10, one share fits in max position, 20-session average dollar volume ≥ $100M; eligible symbols drop out after 3 failed screens in a row; list fixed per session; held symbols always handled. Rank = 20-session return minus SPY's; model calls go to held positions, then rules-passing candidates in rank order, still capped at 10.
+- Cycles at scale: multi-symbol bar requests, quotes and news only for model calls, cycle duration warning at 10 minutes, 5-min bars kept for 120 sessions.
+- Data model: `universe_pool`, `universe_screens`. Config: `universe.mode`, `pool_file`, `max_pool`, `screen.*`, `rank_by`, `watchlist_rows`; `schedule.bars_5m_keep_sessions`, `schedule.cycle_duration_warn_minutes`.
+- GUI: Universe screen; dashboard watchlist filters and search; universe mode and screen thresholds in Settings.
+- Build plan: PR 11 (pool and liquidity screen) and PR 12 (cycles at scale).
 
 ## 2026-10-18 — Settings redesign and API keys in Settings (PR 10)
 

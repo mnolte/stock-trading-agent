@@ -15,6 +15,17 @@ universe:
     META: Communication Services
     JPM: Financials
     XOM: Energy
+  mode: fixed                   # fixed (v0.1 list above) | screened (v0.2: daily screen over the pool)
+  pool_file: backend/universe/pool.csv   # defaults; loaded once into universe_pool
+  max_pool: 150
+  screen:
+    time_ny: "08:10"            # trading days, after the daily bars refresh
+    min_price: 10
+    min_avg_dollar_volume: 100000000
+    lookback_sessions: 20       # dollar volume and rank
+    drop_after_failed_screens: 3
+  rank_by: return_vs_spy        # 20-session return minus SPY's
+  watchlist_rows: 15            # dashboard rows in screened mode before "Show all"
   allowed_sectors: [Communication Services, Consumer Discretionary, Consumer Staples, Energy, Financials, Health Care, Industrials, Materials, Real Estate, Technology, Utilities, Index]   # 11 GICS sectors (Information Technology written as Technology) + Index
 
 app:
@@ -31,6 +42,8 @@ schedule:
   history_sessions: 60          # 5-minute bars
   daily_history_sessions: 260   # daily bars: SMA 200 + 60-session ATR percentile
   bar_adjustment: split
+  bars_5m_keep_sessions: 120   # older 5-min bars deleted after the 03:00 backup
+  cycle_duration_warn_minutes: 10
 
 execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)

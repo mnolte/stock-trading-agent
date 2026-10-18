@@ -25,6 +25,8 @@
 | 8 | Hardening | Risk management (errors); Data model (backups) | `States` (error states) |
 | 9 | Reviews | Reviews; Data model | `Reviews`, verdict in `Decision` |
 | 10 | Settings and API keys | GUI (Settings screen); API keys; Data model | `Settings` |
+| 11 | Pool and liquidity screen (v0.2) | Larger universe (pool, daily screen, rank, GUI); Data model | `Universe`, universe rows in `Settings` |
+| 12 | Cycles at scale (v0.2) | Larger universe (cycles at scale); Decision layer (one cycle) | Watchlist filters in `Main` |
 
 ## PR description template
 

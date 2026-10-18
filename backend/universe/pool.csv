@@ -1,0 +1,73 @@
+symbol,sector
+SPY,Index
+IWM,Index
+DIA,Index
+QQQ,Technology
+AAPL,Technology
+MSFT,Technology
+NVDA,Technology
+AVGO,Technology
+ORCL,Technology
+CRM,Technology
+ADBE,Technology
+AMD,Technology
+CSCO,Technology
+ACN,Technology
+INTU,Technology
+QCOM,Technology
+TXN,Technology
+IBM,Technology
+NOW,Technology
+AMAT,Technology
+MU,Technology
+ANET,Technology
+GOOGL,Communication Services
+META,Communication Services
+NFLX,Communication Services
+DIS,Communication Services
+TMUS,Communication Services
+VZ,Communication Services
+T,Communication Services
+AMZN,Consumer Discretionary
+TSLA,Consumer Discretionary
+HD,Consumer Discretionary
+MCD,Consumer Discretionary
+NKE,Consumer Discretionary
+LOW,Consumer Discretionary
+SBUX,Consumer Discretionary
+BKNG,Consumer Discretionary
+AZO,Consumer Discretionary
+WMT,Consumer Staples
+COST,Consumer Staples
+PG,Consumer Staples
+KO,Consumer Staples
+PEP,Consumer Staples
+JPM,Financials
+BAC,Financials
+WFC,Financials
+GS,Financials
+MS,Financials
+V,Financials
+MA,Financials
+AXP,Financials
+UNH,Health Care
+LLY,Health Care
+JNJ,Health Care
+ABBV,Health Care
+MRK,Health Care
+PFE,Health Care
+TMO,Health Care
+XOM,Energy
+CVX,Energy
+COP,Energy
+CAT,Industrials
+GE,Industrials
+HON,Industrials
+UNP,Industrials
+RTX,Industrials
+BA,Industrials
+LIN,Materials
+SHW,Materials
+NEE,Utilities
+PLD,Real Estate
+AMT,Real Estate
