@@ -19,6 +19,11 @@ from app.data.factory import make_data_sources
 from app.data.service import MarketDataService
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, RealClock
+from app.secrets_service import (
+    SecretsStore,
+    make_key_testers,
+    read_env_keys,
+)
 
 
 def _line(source: str, summary: str, error: str | None = None) -> int:
@@ -32,7 +37,11 @@ def _line(source: str, summary: str, error: str | None = None) -> int:
 async def run(config: AppConfig, clock: Clock) -> int:
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
-    sources = make_data_sources(config)
+    store = SecretsStore(config, clock)
+    await store.import_env_keys(
+        read_env_keys(), make_key_testers(config, clock)
+    )
+    sources = make_data_sources(config, store)
     if sources.alpaca is None:
         _line("account", "", "simulated mode has no Alpaca client")
         return 2
@@ -48,16 +57,16 @@ async def run(config: AppConfig, clock: Clock) -> int:
         return failures
 
     today = clock.now().astimezone(NY_TZ).date()
-    store = CalendarStore(sources.calendar)
+    calendar_store = CalendarStore(sources.calendar)
     start, end = calendar_load_range(config, today)
-    calendar = await store.load(start, end)
+    calendar = await calendar_store.load(start, end)
     failures += _line(
         "calendar",
         f"{len(calendar.data)} trading days loaded ({start}..{end})",
         calendar.error,
     )
 
-    market_data = MarketDataService(sources, store, config)
+    market_data = MarketDataService(sources, calendar_store, config)
     universe = market_data.universe()
 
     bars = await market_data.refresh_history(today)

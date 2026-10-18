@@ -2,10 +2,45 @@
 
 Newest first.
 
-## 2026-10-17 — Adopted positions keep an existing broker stop
+## 2026-10-19 — Bug-sweep fixes across execution, reconciliation and settings
 
-- Reconciliation: a position adopted at Alpaca that is already covered by an open sell stop there (e.g. one placed before the database was rebuilt) keeps that stop — no second stop order is placed for the same shares. The position records the existing stop's price as its stop.
-- Order ids: `client_order_id` gains a per-process nonce (`sa-<kind>-<id>-<symbol>-<nonce>-<seq>`). Alpaca enforces uniqueness account-wide forever, so ids must not collide after a restart or a database rebuild.
+- Reconciliation no longer resurrects closed positions: a historical filled buy is matched to its position by `entry_decision_id` (open or closed), extra partial fills grow the open position's quantity and weighted-average price, and an unrecorded fill still lands once for crash recovery.
+- Alpaca trade-update callbacks are dispatched onto the application event loop (`run_coroutine_threadsafe`) instead of running engine handlers on the SDK stream's own loop; handler failures are logged.
+- Stop & flatten now confirms the cancels before selling: after `cancel_all_orders` a symbol whose orders still show open (or whose leg is still open) is not sold, and a critical `flatten_sell_blocked` banner is raised. The market sell never goes past a live stop.
+- Exits also sweep broker-side legs the database never recorded (crash between accept and store): every open sell order for the symbol is cancelled and confirmed before the market sell.
+- Approvals re-check earnings on fresh data — the calendar is refreshed and `days_to_earnings` recomputed at approve time, not read from the stored decision snapshot.
+- Settings: the stored/pending version is always the full merged tree, so a second save can no longer silently revert the first; `allowed_sectors` echoed back unchanged by a client no longer 422s, and is still rejected when changed.
+- `kill_switch_since` in banners treats naive timestamps as UTC (same as `paused_since`).
+- Smaller fixes: negative P&L shows the − sign; the flatten dialog's day-trade counter uses the configured maximum; `FakeClock` converts aware non-UTC datetimes instead of relabelling them; the earnings refresh upserts revised reports and prunes cancelled ones; the daily backup takes an injectable clock; "Cycle N of M" uses the session's active cycle count; the session factory reuses one engine per database path; a zeroed quote blocks an entry instead of dividing by zero; a no-op tighten is marked in `gates_result` instead of implying a stop move.
+
+## 2026-10-18 — Settings redesign and API keys in Settings (PR 10)
+
+- New "API keys" section: Alpaca paper key ID and secret, OpenAI and Finnhub keys are entered in Settings instead of `.env`. Stored encrypted (Fernet, `data/secret.key`, mode 600), write-only API, only the last 4 characters shown, tested before saving, never logged. Replacing Alpaca keys needs the agent paused with no positions or orders. Missing or failing keys keep Resume disabled. Keys still in `.env` are imported once, then ignored.
+- GUI: new "Settings screen" paragraph: section list and filter, one row per setting with its default, locked values, changed values highlighted with Reset, an unsaved-changes bar with a required reason, inline validation, and a warning before leaving with unsaved changes.
+- Data model: new `secrets` table. `.env.example` no longer has key variables. README and AGENTS.md hard rule 9 updated.
+- Build plan: ten PRs; PR 9 Reviews and PR 10 Settings and API keys listed; PR 10 is the last step before the 4-week paper run.
+
+## 2026-10-18 — Pending entries and failed-cycle streak
+
+- Risk gates: working entry orders (submitted, accepted or partially filled, not yet cancelled, expired or rejected) count toward total open risk, cash, max open positions, sector cap and max position size; filled quantity counts once. Entries in one cycle are gated in submission order. Supervised entries awaiting approval don't count until approved.
+- Errors: only a completed cycle resets the failed-cycles count; skipped, interrupted and running rows leave it unchanged. Position checks keep their own failure count.
+
+## 2026-10-17 — Reviews (PR 9)
+
+- New "Reviews" section: weekly review (Saturday 10:00), daily briefing (09:00 New York, optional) and a draft verdict per enter/skip decision once its 5-session outcome is in, confirmed or changed by Marc. Code computes the facts; every number in the model's text is checked, with a plain template as fallback. Own $2 monthly cost cap; never affects trading. Missed reviews are written at the next start.
+- New tables `reviews` and `verdicts`; new `reviews` block in `config.example.yaml`; prompts weekly.v1, briefing.v1, verdict.v1.
+- Later versions: briefings and reviews moved forward from v0.2 to PR 9.
+
+## 2026-10-17 — Paused at startup
+
+- Risk management: new "Paused at startup" paragraph. The agent always starts with new entries paused; reconciliation, position checks, broker-side stops, earnings exits, outcome tracking and reviews of held positions keep running. Resume is one click in the header (no reason). Pause and the kill switch are separate states; both are stored, and a kill switch that was on stays on after a restart.
+- GUI header: Pause/Resume button next to the kill switch. README: quick start says the agent starts paused.
+
+## 2026-10-17 — Decision card and drawer like Trading Agent
+
+- GUI, Dashboard: the latest-decision card now always shows the market regime, the earnings date and a three-line summary (failed check and proposed levels for a skip, position and levels for a held symbol, pre-filter reason when no model call was made).
+- GUI, Decision detail: rebuilt in Trading Agent's drawer layout (safety gates, signal stack with 1h and daily columns, reasoning with risks and news, entry/stop/target/invalidation tiles, outcome, order status).
+- Outcome tracking: for trades, also record whether the stop or the target was touched first.
 
 ## 2026-10-17 — Answers from the PR 8 review
 

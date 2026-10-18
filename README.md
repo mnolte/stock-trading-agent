@@ -10,6 +10,7 @@ A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca
 - Runs six decision cycles per US session (10:46 to 15:46 New York time) on 1-hour bars.
 - A rules pre-filter picks candidates; the model chooses enter or skip (or hold, tighten stop, exit for open positions); risk gates size and block trades.
 - Every entry is a bracket order at Alpaca with a broker-side stop, so positions stay protected when the app is down.
+- Checks positions every 15 minutes between cycles: every position has a stop, the safety brakes are up to date.
 - Records every decision, including skips, and what the price did afterwards.
 - Compares its results with simply holding SPY.
 
@@ -23,38 +24,29 @@ A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca
 ## Quick start
 
 ```bash
-cp .env.example .env            # fill in the keys
+cp .env.example .env            # mode, host, port, paths; no keys
 cp backend/config.example.yaml backend/config.yaml
 make install
-make run                         # backend on 127.0.0.1:8000, GUI on 127.0.0.1:5173
+make run                         # builds the GUI, serves everything on 127.0.0.1:SA_PORT
 ```
 
-Open the GUI and check the header says PAPER. The agent runs its first cycle at 10:46 New York time (16:46 in Amsterdam most of the year).
+The agent starts **paused**: it reconciles with Alpaca and watches open positions, but places no new entries. Open the GUI and enter the Alpaca paper keys, OpenAI key and Finnhub key in Settings → API keys (each is tested before it is saved). Check the header says PAPER, then press Resume. The first cycle runs at 10:46 New York time (16:46 in Amsterdam most of the year).
 
-Without keys, run `MODE=simulated make run`: recorded bars and a fake broker, no network.
+For development, `make dev` runs the backend with auto-reload on 127.0.0.1:SA_PORT and the Vite dev server on 127.0.0.1:5173; Ctrl-C stops both.
+
+Without keys, run `MODE=simulated make run` (or `make dev`): recorded bars and a fake broker, no network.
 
 Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the first run.
+
+Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily at 03:00 Amsterdam time to `data/backups/` (14 days). On a VPS, run the app with `TZ=Europe/Amsterdam` so log rotation follows Amsterdam time.
 
 ## Configuration
 
 | Where | What |
 | --- | --- |
-| `.env` | Secrets and paths: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `OPENAI_API_KEY`, `FINNHUB_API_KEY`, `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
+| `.env` | Mode and paths: `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
+| Settings → API keys | Alpaca paper key ID and secret, OpenAI, Finnhub. Stored encrypted in the database with `data/secret.key`; back that file up separately. |
 | `backend/config.yaml` | Everything else: universe, cycle times, rules, risk limits, model, slippage assumption. Settings changed in the GUI are saved as new versions. |
-
-## Running locally
-
-The backend writes logs to `data/logs/stock-agent.log` (or `$SA_DATA_DIR/logs/` when `SA_DATA_DIR` is set), rotated daily with 30 days retained. Timestamps are in Amsterdam time; rotation itself follows the machine's local clock — run a VPS with `TZ=Europe/Amsterdam` so the rollover boundary matches the stamped times.
-
-A dated copy of the database is written to `data/backups/` every day at 03:00 Amsterdam time (`storage.backup_time`), via SQLite's online backup API with an `integrity_check` on the copy; the last 14 days are kept (`storage.backup_days`).
-
-On shutdown the backend waits up to `storage.shutdown_grace_seconds` (60) for a running cycle or check to finish; leftovers are marked `interrupted` and do not count as failures. Rows still `running` at the next startup mean a crash and do count.
-
-To run in the background for long sessions:
-
-```bash
-make run &> /dev/null &
-```
 
 ## Project layout
 
@@ -69,10 +61,10 @@ make run &> /dev/null &
 ## Safety
 
 - Paper endpoint only; the live URL does not exist in the code.
-- A stop order at Alpaca on every position, checked every cycle.
+- A stop order at Alpaca on every position, checked every cycle and every 15 minutes.
+- Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
 - Daily loss limit, drawdown kill switch, PDT guard, earnings blackout.
-- Kill switch and "Stop & flatten" in the header.
-- Keys stay in `.env`; they are never logged or sent to the GUI.
+- Keys are stored encrypted, shown only as the last 4 characters, and never logged.
 
 ## Build plan
 
@@ -85,4 +77,4 @@ make run &> /dev/null &
 7. Performance and outcomes
 8. Hardening
 
-Details per step are in `docs/SPEC.md` → Build plan.
+All eight steps are built. Next is the 4-week run on the paper account. Details per step are in `docs/SPEC.md` → Build plan.

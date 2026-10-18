@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Agent — Reviews</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input,select{font-family:inherit}
+table{border-collapse:collapse}
+</style>
+</helmet>
+<div style="min-height: 1700px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <aside aria-label="Sidebar" style="{{nav.aside}}">
+    <div style="{{nav.brandRow}}">
+      <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
+      <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
+        </div>
+      </sc-if>
+    </div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 2px">
+      <div style="{{nav.group}}">Monitor</div>
+      <a href="Main.dc.html" aria-label="Dashboard" title="Dashboard" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Dashboard</span></sc-if></a>
+      <a href="Positions.dc.html" aria-label="Positions & orders" title="Positions & orders" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Positions & orders</span></sc-if></a>
+      <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
+      <div style="{{nav.group}}">Learn</div>
+      <a href="Reviews.dc.html" aria-current="page" aria-label="Reviews" title="Reviews" style="{{nav.active}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="5" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="8" y1="3" x2="8" y2="7"></line><line x1="16" y1="3" x2="16" y2="7"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Reviews</span></sc-if></a>
+      <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
+      <div style="{{nav.group}}">Control</div>
+      <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
+    </nav>
+    <div style="flex: 1"></div>
+    <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
+    <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
+  </aside>
+
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid #232A35; background: #0F131A">
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 18px; font-weight: 600">Reviews</h1><div style="font-size: 13px; color: #98A2AF">Weekly review Saturday 10:00 · briefing trading days 15:00 Amsterdam</div></div>
+      <span title="Orders go to Alpaca's paper account. Real-money trading is not built." style="display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+      <div title="New York 12:52 · market closes 16:00 New York (22:00 Amsterdam)" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #171C24; border: 1px solid #232A35; font-size: 13px; white-space: nowrap">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #3DD68C"></span>
+        <span>Market open</span>
+        <span style="color: #98A2AF">· next cycle 19:46 · in 54 min</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Equity</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #E7EAEE; white-space: nowrap">$10,184.30 <span style="color: #98A2AF; font-size: 12px">€8,749.40</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Today</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #3DD68C; white-space: nowrap">+$42.10 <span style="color: #98A2AF; font-size: 12px">+€36.17</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span title="Market regime from SPY: trend × volatility" style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Regime</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Up · normal vol</span>
+      </div>
+      <a href="States.dc.html" title="Pause new entries. Stops, targets and position checks keep working." style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><line x1="8" y1="5" x2="8" y2="19"></line><line x1="16" y1="5" x2="16" y2="19"></line></svg><span>Pause</span></a>
+      <a href="States.dc.html" title="Stop new entries, or stop and sell everything" style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #7A2A2E; background: #3A1416; color: #FFB3B6; font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="13"></line><line x1="12" y1="17" x2="12" y2="17"></line></svg><span>Kill switch</span></a>
+    </div>
+  </header>
+  <main style="max-width: 1440px; width: 100%; margin: 0 auto; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+  <section aria-label="Reviews list" style="flex: 1 1 260px; max-width: 300px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 4px; box-sizing: border-box">
+    <div role="tablist" style="display: flex; padding: 3px; background: #171C24; border: 1px solid #232A35; border-radius: 8px; margin-bottom: 8px">
+      <button type="button" role="tab" aria-selected="true" style="flex: 1; height: 36px; border: 0; border-radius: 6px; background: #2E3643; color: #E7EAEE; font-size: 13px; font-weight: 600">Weekly</button>
+      <button type="button" role="tab" aria-selected="false" style="flex: 1; height: 36px; border: 0; border-radius: 6px; background: transparent; color: #98A2AF; font-size: 13px; font-weight: 600">Briefings</button>
+    </div>
+    <div style="display: flex; justify-content: space-between; align-items: center; min-height: 52px; padding: 8px 12px; color: #98A2AF; font-size: 13px"><span style="display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600">Week 42</span><span style="font-size: 12px">12 – 16 Oct</span></span><span style="font-size: 12px">due Sat 17 Oct</span></div>
+    <a href="Reviews.dc.html" style="display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 52px; padding: 8px 12px; border-radius: 6px; background: #211C10; box-shadow: inset 3px 0 0 #F2B94B; color: #E7EAEE; text-decoration: none">
+  <span style="display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600; font-size: 14px">Week 41</span><span style="font-size: 12px; color: #98A2AF">5 – 9 Oct</span></span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C">+1.49%</span>
+</a>
+    <div style="padding: 8px 4px 0"><div style="font-size: 12px; color: #98A2AF">Briefings tab: one card per trading day, written 09:00 New York (15:00 Amsterdam) with open positions and stop distance, earnings today or tomorrow, the market regime, yesterday's result and active banners, at most 80 words.</div></div>
+  </section>
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 20px">
+
+<section aria-label="Weekly review" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px">
+  <div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px">
+    <h2 style="margin: 0; font-size: 20px; font-weight: 600">Week 41 · 5 – 9 Oct</h2>
+    <span style="font-size: 12px; color: #98A2AF">Written Sat 10 Oct 10:00 · gpt-4o-mini · weekly.v1 · numbers checked ✓</span>
+  </div>
+  <p style="margin: 0; max-width: 760px; line-height: 1.6; color: #C9CFD6">A good first week. The agent closed 3 trades and finished up 1.49%, while holding SPY gained 0.73%. META and AAPL both reached their targets; XOM was stopped out the day after entry, the only trade opened in high volatility. Most setups were skipped, and the skips mostly went nowhere.</p>
+  <div style="display: flex; flex-wrap: wrap; gap: 8px">
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">Return</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #3DD68C; white-space: nowrap">+1.49%</span>
+  <span style="font-size: 12px; color: #98A2AF">$10,000 → $10,148.80</span>
+</div>
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">vs holding SPY</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #3DD68C; white-space: nowrap">+0.76 pts</span>
+  <span style="font-size: 12px; color: #98A2AF">SPY +0.73%</span>
+</div>
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">Trades closed</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #E7EAEE; white-space: nowrap">3</span>
+  <span style="font-size: 12px; color: #98A2AF">2 won · 1 lost</span>
+</div>
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">Average R</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #3DD68C; white-space: nowrap">+1.07R</span>
+  <span style="font-size: 12px; color: #98A2AF">per closed trade</span>
+</div>
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">Max drawdown</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #FF8A8F; white-space: nowrap">−0.49%</span>
+  <span style="font-size: 12px; color: #98A2AF">close to close</span>
+</div>
+    <div style="flex: 1 1 150px; padding: 12px 14px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0">
+  <span style="font-size: 12px; color: #98A2AF">Model cost</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #E7EAEE; white-space: nowrap">$0.06</span>
+  <span style="font-size: 12px; color: #98A2AF">148 calls · reviews $0.002</span>
+</div>
+  </div>
+</section>
+
+<div style="display: flex; flex-wrap: wrap; gap: 20px">
+<section aria-label="Trades closed" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 380px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Trades closed</h2><div style="font-size: 13px; color: #98A2AF">best first</div></div>
+<div style="display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <b style="font-weight: 600">META</b><span style="color: #C9CFD6">Thu 8 → Fri 9 Oct <span style="color: #98A2AF">· target</span></span><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+2.6R</span>
+</div><div style="display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <b style="font-weight: 600">AAPL</b><span style="color: #C9CFD6">Tue 6 → Thu 8 Oct <span style="color: #98A2AF">· target</span></span><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+1.6R</span>
+</div><div style="display: grid; grid-template-columns: 64px 1fr auto; gap: 10px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <b style="font-weight: 600">XOM</b><span style="color: #C9CFD6">Tue 6 → Wed 7 Oct <span style="color: #98A2AF">· stop</span></span><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">-1.0R</span>
+</div>
+</section>
+<section aria-label="Skipped setups after 5 sessions" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 380px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Skipped setups after 5 sessions</h2><div style="font-size: 13px; color: #98A2AF">3 still pending</div></div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+  <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #3DD68C">2</div><div style="font-size: 12px; color: #98A2AF">up more than 2%</div></div>
+  <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px">5</div><div style="font-size: 12px; color: #98A2AF">within ±2%</div></div>
+  <div style="padding: 10px; border: 1px solid #232A35; border-radius: 8px"><div style="font-family: 'IBM Plex Mono', monospace; font-size: 20px; color: #FF8A8F">1</div><div style="font-size: 12px; color: #98A2AF">down more than 2%</div></div>
+</div>
+<div style="font-size: 13px; color: #C9CFD6; line-height: 1.5">8 of 11 model skips have a 5-session result. Biggest miss: <b style="font-weight: 600">AMZN</b> skipped Wed 7 Oct at confidence 0.49, then rose 2.9%.</div>
+</section>
+</div>
+
+<section aria-label="Observations" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Observations</h2></div>
+<ul style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; line-height: 1.55; color: #C9CFD6">
+  <li>Both winners were entered in an up market with normal volatility; the one loser was the only entry in high volatility.</li>
+  <li>You confirmed 1 bad call this week (XOM). 2 more drafts are waiting for you below.</li>
+  <li>On Friday most symbols were held back by the pre-filter because RSI rose above 70; no model calls were needed for them.</li>
+</ul>
+</section>
+
+<section aria-label="Suggestion" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 16px 20px; border: 1px solid #4A3A16; background: #211C10; border-radius: 10px">
+  <div style="flex: 1 1 480px; display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 12px; font-weight: 600; color: #F2B94B; text-transform: uppercase; letter-spacing: 0.08em">Suggestion · not applied</div>
+    <div style="line-height: 1.55">Watch entries in high volatility. With 1 trade this is an early signal, not a finding; nothing changes unless you change the settings or the spec.</div>
+  </div>
+  <a href="Performance.dc.html" style="height: 44px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; box-sizing: border-box"><span>Open Performance</span></a>
+</section>
+
+<section aria-label="Verdicts to confirm" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Verdicts to confirm</h2><div style="font-size: 13px; color: #98A2AF">2 waiting</div></div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 13px"><b style="font-weight: 600">AMZN</b> <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #C9CFD6">SKIP</span> <span style="color: #98A2AF">· Wed 7 Oct · +2.9% after 5 sessions</span></div>
+    <div style="font-size: 13px; color: #C9CFD6">Draft: <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #3A1416; color: #FF8A8F; border: 1px solid #7A2A2E">Bad call</span> <span style="color: #98A2AF">Skipped a valid uptrend on weak volume; it ran.</span></div>
+  </div>
+  <div style="display: flex; gap: 6px"><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #2E3643; background: #171C24; color: #C9CFD6; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Good call</button><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #F2B94B; background: #211C10; color: #F2B94B; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Bad call</button><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #2E3643; background: #171C24; color: #C9CFD6; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Unclear</button></div>
+</div><div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+    <div style="font-size: 13px"><b style="font-weight: 600">AAPL</b> <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #C9CFD6">ENTER</span> <span style="color: #98A2AF">· Tue 6 Oct · target +1.6R</span></div>
+    <div style="font-size: 13px; color: #C9CFD6">Draft: <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Good call</span> <span style="color: #98A2AF">Entry and stop followed the plan; target reached.</span></div>
+  </div>
+  <div style="display: flex; gap: 6px"><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #F2B94B; background: #211C10; color: #F2B94B; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Good call</button><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #2E3643; background: #171C24; color: #C9CFD6; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Bad call</button><button type="button" style="height: 36px; padding: 0 10px; border-radius: 6px; border: 1px solid #2E3643; background: #171C24; color: #C9CFD6; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap">Unclear</button></div>
+</div><div style="font-size: 12px; color: #98A2AF; padding-top: 4px">Drafts are written once the 5-session result is in. Only verdicts you confirm count in reviews.</div>
+</section>
+
+  </div>
+</div>
+
+  </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 1700}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {};
+  }
+  renderVals() {
+    var self = this;
+
+    var navCollapsed = !!(this.state && this.state.navCollapsed);
+    var navBase = 'height:44px;display:flex;align-items:center;gap:12px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;box-sizing:border-box;white-space:nowrap;' + (navCollapsed ? 'justify-content:center;padding:0;' : 'padding:0 12px;');
+    var nav = {
+      expanded: !navCollapsed,
+      expandedStr: String(!navCollapsed),
+      toggle: function () { self.setState({ navCollapsed: !navCollapsed }); },
+      toggleLabel: navCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      aside: 'flex:0 0 ' + (navCollapsed ? '72px' : '232px') + ';box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px ' + (navCollapsed ? '12px' : '16px') + ';background:#0F131A;border-right:1px solid #232A35',
+      brandRow: 'display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #232A35;' + (navCollapsed ? 'justify-content:center' : ''),
+      item: navBase + 'color:#98A2AF',
+      active: navBase + 'background:#1C222C;color:#E7EAEE',
+      status: 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#171C24;border:1px solid #232A35;font-size:13px;' + (navCollapsed ? 'justify-content:center' : ''),
+      dot: 'width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#3DD68C',
+      toggleStyle: navBase + 'width:100%;border:1px solid #232A35;background:transparent;color:#98A2AF;cursor:pointer;font-family:inherit'
+    };
+    nav.group = navCollapsed ? 'height:1px;background:#232A35;margin:8px 4px;overflow:hidden;color:transparent;font-size:0' : 'font-size:11px;font-weight:600;color:#8A94A1;text-transform:uppercase;letter-spacing:0.08em;padding:12px 12px 4px';
+
+    return { nav: nav };
+  }
+}
+</script>
+</body>
+</html>

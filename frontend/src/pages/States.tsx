@@ -83,6 +83,16 @@ const sessionSamples: { label: string; state: string; session: SessionState }[] 
     } as SessionState,
   },
   {
+    label: 'Paused · after startup or Pause',
+    state: 'paused',
+    session: {
+      state: 'paused',
+      display_time: '',
+      now: new Date().toISOString(),
+      next_cycle: null,
+    } as SessionState,
+  },
+  {
     label: 'Early close · e.g. 27 Nov, the day after Thanksgiving',
     state: 'early_close',
     session: {
@@ -203,6 +213,14 @@ export default function States() {
 
       <Card label="Banners">
         <DemoBanner
+          label="Paused at startup"
+          sub="Shown after every start until Resume"
+          variant="info"
+          actions={<Button style={bannerButtonStyle}>Resume</Button>}
+        >
+          <b>Started paused at 15:12.</b> Reconciled with Alpaca: 2 positions, both with a stop and target. Held positions are still reviewed each cycle; no new entries until you resume.
+        </DemoBanner>
+        <DemoBanner
           label="Kill switch on · manual"
           variant="negative"
           actions={
@@ -312,6 +330,7 @@ export default function States() {
         open={dialog === 'flatten'}
         positions={samplePositions}
         dayTrades={1}
+        dayTradesMax={3}
         onCancel={() => setDialog(null)}
         onConfirm={() => setDialog(null)}
       />

@@ -7,6 +7,8 @@ import {
   getPositions,
   postKillSwitch,
   postKillSwitchResume,
+  postPause,
+  postPauseResume,
 } from '../api/state';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { HeaderState, PositionsResponse } from '../types/api';
@@ -22,6 +24,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith('/positions')) return 'Positions & orders';
   if (pathname.startsWith('/performance')) return 'Performance';
   if (pathname.startsWith('/inspector')) return 'LLM inspector';
+  if (pathname.startsWith('/reviews')) return 'Reviews';
   if (pathname.startsWith('/decisions')) return 'Decision detail';
   if (pathname.startsWith('/settings')) return 'Settings';
   if (pathname.startsWith('/states')) return 'States & dialogs';
@@ -92,6 +95,14 @@ export function Layout() {
       .catch((e: Error) => setError(e.message));
   };
 
+  // Pause/Resume is one click in both directions — no dialog, no reason.
+  const onPauseToggle = () => {
+    const call = state?.paused ? postPauseResume : postPause;
+    call()
+      .then(() => refreshAll())
+      .catch((e: Error) => setError(e.message));
+  };
+
   const onResumeConfirm = (reason: string) => {
     postKillSwitchResume(reason)
       .then(() => {
@@ -120,6 +131,7 @@ export function Layout() {
           state={state}
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
+          onPauseToggle={onPauseToggle}
           onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>
@@ -157,6 +169,7 @@ export function Layout() {
         open={dialog === 'flatten'}
         positions={positions?.open ?? []}
         dayTrades={positions?.day_trades_5d ?? 0}
+        dayTradesMax={positions?.day_trades?.max ?? 3}
         onCancel={() => setDialog(null)}
         onConfirm={onFlattenConfirm}
       />

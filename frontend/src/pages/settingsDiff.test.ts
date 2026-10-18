@@ -39,6 +39,7 @@ function base(): SettingsForm {
       max_orders_per_cycle: 6,
     },
     performance: { slippage_pct_per_side: 0.05, starting_equity: 10000 },
+    reviews: { briefing_enabled: true, monthly_cost_cap_usd: 2 },
     schedule: { cycles: ['10:46', '11:46'] },
     universe: {
       symbols: ['SPY', 'AAPL'],

@@ -1,4 +1,4 @@
-.PHONY: install run lint test run-backend run-frontend smoke-data smoke-decision
+.PHONY: install dev run run-backend run-frontend lint test test-backend test-frontend test-e2e smoke-data smoke-decision smoke-execution
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -8,6 +8,7 @@ RUFF := .venv/bin/ruff
 MYPY := .venv/bin/mypy
 PYTEST := .venv/bin/pytest
 PNPM := $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
+FE := cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM)
 
 # Backend port: SA_PORT from .env (fallback 8001). The frontend proxy gets
 # the same value via VITE_API_PORT so both sides always agree.
@@ -18,29 +19,44 @@ install:
 	python3 -m venv .venv
 	$(PIP) install -U pip
 	$(PIP) install -e ".[dev]"
-	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) install --allow-build=esbuild
+	$(FE) install --allow-build=esbuild
+
+dev: ## backend (uvicorn --reload) + Vite dev server, Ctrl-C stops both
+	@trap 'trap - INT TERM EXIT; kill 0' INT TERM EXIT; \
+	  $(UVICORN) --app-dir backend app.api.main:app --reload --host 127.0.0.1 --port $(SA_PORT) & \
+	  cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev & \
+	  wait
+
+run: ## build the UI, serve everything on 127.0.0.1:$(SA_PORT)
+	$(FE) build
+	$(UVICORN) --app-dir backend app.api.main:app --host 127.0.0.1 --port $(SA_PORT)
 
 run-backend:
-	$(UVICORN) app.api.main:app --host 127.0.0.1 --port $(SA_PORT) --reload
+	$(UVICORN) --app-dir backend app.api.main:app --host 127.0.0.1 --port $(SA_PORT) --reload
 
 run-frontend:
 	cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev
 
-run:
-	@trap 'kill $$(jobs -p) 2>/dev/null' EXIT; \
-	$(UVICORN) app.api.main:app --host 127.0.0.1 --port $(SA_PORT) --reload & \
-	cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev & \
-	wait
-
 lint:
 	cd backend && ../$(RUFF) check .
 	cd backend && ../$(MYPY) .
-	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) lint
-	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) typecheck
+	$(FE) lint
+	$(FE) typecheck
 
-test:
+test: test-backend test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
+
+test-backend:
 	cd backend && ../$(PYTEST) -v
-	cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) test
+
+test-frontend:
+	$(FE) test
+
+test-e2e:
+	@if ls "$$HOME"/.cache/ms-playwright/chromium* >/dev/null 2>&1; then \
+	  $(FE) exec playwright test --reporter=line; \
+	else \
+	  echo "skip playwright (needs browsers: cd frontend && pnpm exec playwright install chromium)"; \
+	fi
 
 smoke-data:
 	cd backend && ../$(PYTHON) -m app.smoke_data

@@ -21,6 +21,8 @@ export function sessionLabel(state: string): string {
       return 'Early close';
     case 'closed':
       return 'Market closed';
+    case 'paused':
+      return 'Paused';
     default:
       return state;
   }
@@ -32,6 +34,8 @@ export function sessionTail(state: string, session: HeaderState['session']): str
   const check = session.next_check ? `next check ${displayTime(session.next_check)}` : null;
 
   switch (state) {
+    case 'paused':
+      return ' · no new entries · stops active';
     case 'open': {
       const parts: string[] = [];
       if (check) parts.push(check);

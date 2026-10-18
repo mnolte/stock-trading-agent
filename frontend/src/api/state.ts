@@ -8,16 +8,24 @@ import type {
   DecisionDetail,
   DecisionsResponse,
   HeaderState,
+  KeyGroup,
+  KeysResponse,
   KillSwitchResponse,
   OrdersResponse,
   PaperResetResult,
   PerformanceResponse,
   PositionsResponse,
+  ReviewDetail,
+  ReviewsResponse,
   RunsResponse,
+  SaveKeyResult,
   SaveSettingsResult,
-  SettingsForm,
   SettingsResponse,
   StartRunResult,
+  TestKeyResult,
+  VerdictResolved,
+  VerdictsResponse,
+  VerdictValue,
   WatchlistResponse,
 } from '../types/api';
 
@@ -57,6 +65,14 @@ export function postKillSwitchResume(reason: string): Promise<KillSwitchResponse
   return post<KillSwitchResponse>('/api/kill-switch/resume', { reason });
 }
 
+export function postPause(): Promise<{ paused: boolean }> {
+  return post<{ paused: boolean }>('/api/pause', {});
+}
+
+export function postPauseResume(): Promise<{ paused: boolean }> {
+  return post<{ paused: boolean }>('/api/pause/resume', {});
+}
+
 export function postAcknowledgeEvent(id: number): Promise<{ acknowledged: boolean }> {
   return post(`/api/events/${id}/acknowledge`, {});
 }
@@ -65,8 +81,9 @@ export function postAcknowledgePosition(id: number): Promise<{ acknowledged: boo
   return post(`/api/positions/${id}/acknowledge`, {});
 }
 
-export function getDashboard(): Promise<DashboardResponse> {
-  return get<DashboardResponse>('/api/dashboard');
+export function getDashboard(symbol?: string): Promise<DashboardResponse> {
+  const query = symbol === undefined ? '' : `?symbol=${encodeURIComponent(symbol)}`;
+  return get<DashboardResponse>(`/api/dashboard${query}`);
 }
 
 export function getChart(symbol: string): Promise<ChartResponse> {
@@ -90,10 +107,25 @@ export function getSettings(): Promise<SettingsResponse> {
 }
 
 export function postSettings(
-  settings: SettingsForm,
+  settings: Record<string, Record<string, unknown>>,
   reason: string,
 ): Promise<SaveSettingsResult> {
   return post<SaveSettingsResult>('/api/settings', { settings, reason });
+}
+
+export function getKeys(): Promise<KeysResponse> {
+  return get<KeysResponse>('/api/keys');
+}
+
+export function postKey(
+  group: KeyGroup,
+  body: { key_id?: string; secret?: string; value?: string },
+): Promise<SaveKeyResult> {
+  return post<SaveKeyResult>(`/api/keys/${group}`, body);
+}
+
+export function postKeyTest(group: KeyGroup): Promise<TestKeyResult> {
+  return post<TestKeyResult>(`/api/keys/${group}/test`, {});
 }
 
 export function postPaperReset(): Promise<PaperResetResult> {
@@ -111,4 +143,20 @@ export function getRuns(): Promise<RunsResponse> {
 export function getPerformance(runId?: number): Promise<PerformanceResponse> {
   const query = runId === undefined ? '' : `?run=${runId}`;
   return get<PerformanceResponse>(`/api/performance${query}`);
+}
+
+export function getReviews(kind: 'weekly' | 'briefing'): Promise<ReviewsResponse> {
+  return get<ReviewsResponse>(`/api/reviews?kind=${kind}`);
+}
+
+export function getReview(id: number): Promise<ReviewDetail> {
+  return get<ReviewDetail>(`/api/reviews/${id}`);
+}
+
+export function getVerdicts(status: 'draft' | 'confirmed' | 'all' = 'draft'): Promise<VerdictsResponse> {
+  return get<VerdictsResponse>(`/api/verdicts?status=${status}`);
+}
+
+export function postVerdict(id: number, verdict: VerdictValue): Promise<VerdictResolved> {
+  return post<VerdictResolved>(`/api/verdicts/${id}`, { verdict });
 }

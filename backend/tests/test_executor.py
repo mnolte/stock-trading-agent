@@ -402,6 +402,124 @@ async def test_reconcile_closes_position_broker_no_longer_reports(
     assert any("closed at broker" in m for m in report.mismatches)
 
 
+async def test_reconcile_never_reopens_a_closed_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A closed position must not be resurrected by its old entry fill.
+
+    Regression: reconcile used to open a fresh Position for every filled
+    buy that had no *open* position, so each pass re-opened and re-closed
+    the same round trip, duplicating realized P&L.
+    """
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        decision = _decision(
+            session,
+            "MSFT",
+            "enter",
+            {"stop_price": 410.0, "target_price": 435.0},
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "enter"
+
+    # The entry fills, then the stop leg fires — a complete round trip.
+    await broker.tick("MSFT", Decimal("420"))
+    await executor.reconcile()
+    with session_factory() as session:
+        positions = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalars().all()
+        assert len(positions) == 1
+        assert positions[0].closed_at is None
+
+    await broker.tick("MSFT", Decimal("409"))
+    await executor.reconcile()
+    with session_factory() as session:
+        positions = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalars().all()
+        assert len(positions) == 1
+        assert positions[0].closed_at is not None
+        assert positions[0].exit_reason == "stop"
+        first_pnl = positions[0].realized_pnl_raw
+        assert first_pnl is not None
+
+    # Every reconcile after that: no phantom position, no P&L drift.
+    report = await executor.reconcile()
+    assert report.fills_recorded == 0
+    with session_factory() as session:
+        positions = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalars().all()
+        assert len(positions) == 1
+        assert positions[0].closed_at is not None
+        assert positions[0].realized_pnl_raw == first_pnl
+
+
+async def test_partial_fills_grow_the_open_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Extra fills on a working entry grow the position, not a new row."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("421")})
+    broker.partial_fill["MSFT"] = 2
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        decision = _decision(
+            session,
+            "MSFT",
+            "enter",
+            {"stop_price": 410.0, "target_price": 435.0},
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        entry = session.execute(
+            select(Order).where(Order.leg == "entry")
+        ).scalar_one()
+        assert entry.qty > 2  # a partial fill is a real subset
+
+    await broker.tick("MSFT", Decimal("420"))
+    await executor.reconcile()
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.qty == 2
+        assert position.closed_at is None
+
+    # The remainder fills: same position row grows to the full size.
+    await broker.tick("MSFT", Decimal("419"))
+    await executor.reconcile()
+    with session_factory() as session:
+        positions = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalars().all()
+        assert len(positions) == 1
+        assert positions[0].qty == entry.qty
+        assert positions[0].closed_at is None
+
+
 async def test_position_without_stop_gets_protective_stop(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -540,6 +658,57 @@ async def test_enter_skipped_on_wide_spread(
         assert decision.final_action == "blocked"
         assert decision.gates_result is not None
         assert decision.gates_result["blocked_by"] == "spread"
+    assert broker.submit_calls == 0
+
+
+async def test_entry_blocked_without_a_quote(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """No fresh quote → no spread/limit check possible → blocked, no order."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        decision = _decision(
+            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            None,
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert (decision.gates_result or {}).get("blocked_by") == "missing_data"
+    assert broker.submit_calls == 0
+
+
+async def test_entry_blocked_when_quote_mid_is_zero(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A zeroed quote must not crash the spread check with ZeroDivisionError."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        decision = _decision(
+            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT", ask="0.00", bid="0.00"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
     assert broker.submit_calls == 0
 
 
@@ -738,6 +907,225 @@ async def test_recent_entry_is_not_timed_out(
 
 
 # ----------------------------------------------------------------------
+# working entry orders in the gates (docs/SPEC.md, Risk management)
+
+
+def _wide_config() -> AppConfig:
+    """Sizing config where only the shared budgets can bind."""
+    config = AppConfig()
+    config.yaml["risk"]["max_open_positions"] = 10
+    config.yaml["risk"]["max_per_sector"] = 10
+    config.yaml["risk"]["max_position_pct"] = 100
+    config.yaml["risk"]["max_order_pct"] = 100
+    config.yaml["risk"]["max_orders_per_cycle"] = 10
+    return config
+
+
+async def _enter_symbol(
+    executor: Executor,
+    session: Session,
+    symbol: str,
+) -> Decision:
+    decision = _decision(
+        session,
+        symbol,
+        "enter",
+        {"stop_price": 90.0, "target_price": 120.0},
+    )
+    await executor.apply_decision(
+        session,
+        decision,
+        _item(symbol),
+        None,
+        _quote(symbol, ask="100.00", bid="99.95"),
+        NOW,
+        account=_account(),
+        earnings_known=True,
+    )
+    return decision
+
+
+async def test_same_cycle_entries_share_the_open_risk_budget(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Each entry in a cycle is gated against the budget left after the
+    earlier ones: every working entry commits 5 × (100.05 − 90) ≈ $50 of
+    open risk, so the fifth is sized down by what remains and the sixth
+    gets zero shares."""
+    broker = FakeBroker(FakeClock(NOW))
+    executor = _executor(session_factory, broker, config=_wide_config())
+    await executor.reconcile()
+    with session_factory() as session:
+        for i in range(4):
+            decision = await _enter_symbol(executor, session, f"S{i}")
+            assert decision.final_action == "enter", (
+                f"entry S{i}: {decision.gates_result}"
+            )
+        # $201 committed; ~$49 room left → sized down to 4 by open_risk.
+        fifth = await _enter_symbol(executor, session, "S4")
+        assert fifth.final_action == "enter"
+        assert fifth.gates_result is not None
+        sizing = cast("dict[str, object]", fifth.gates_result["sizing"])
+        assert sizing["shares"] == 4
+        assert "open_risk" in str(sizing["limited_by"])
+        # ~$241 committed; ~$9 room → a $10-distance entry gets nothing.
+        sixth = await _enter_symbol(executor, session, "S5")
+        session.commit()
+        assert sixth.final_action == "blocked"
+        assert sixth.gates_result is not None
+        assert sixth.gates_result["blocked_by"] == "open_risk"
+
+
+async def test_partially_filled_entry_counts_unfilled_only(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """2 of 4 filled: the filled part is a position, the working order
+    contributes only its remaining 2 shares to the budgets."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
+    broker.partial_fill["MSFT"] = 2
+    executor = _executor(session_factory, broker, clock, _wide_config())
+    await executor.reconcile()
+    with session_factory() as session:
+        decision = _decision(
+            session,
+            "MSFT",
+            "enter",
+            {"stop_price": 90.0, "target_price": 120.0},
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT", ask="100.00", bid="99.95"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        entry = session.execute(
+            select(Order).where(Order.leg == "entry")
+        ).scalar_one()
+        assert entry.qty == 5  # risk budget $50 / $10 distance
+
+    await broker.tick("MSFT", Decimal("100"))
+    await executor.reconcile()
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.qty == 2  # the filled part — never double counted
+        ctx = executor._gate_context(
+            session, _account(), "MSFT", 9, True
+        )
+        assert len(ctx.working_entries) == 1
+        working = ctx.working_entries[0]
+        assert working.symbol == "MSFT"
+        assert working.unfilled_qty == 3
+        assert working.limit_price == Decimal("100.05")
+        assert working.stop_price == Decimal("90")
+
+
+async def test_cancelling_a_working_entry_frees_the_budget(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A cancelled entry stops counting: a candidate that was blocked by
+    open risk passes once a working entry is cancelled."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock)
+    executor = _executor(session_factory, broker, clock, _wide_config())
+    await executor.reconcile()
+    with session_factory() as session:
+        for i in range(5):
+            await _enter_symbol(executor, session, f"S{i}")
+        blocked = await _enter_symbol(executor, session, "S5")
+        session.commit()
+        assert blocked.gates_result is not None
+        assert blocked.gates_result["blocked_by"] == "open_risk"
+
+        # Cancel S4's working entry: ~$40 of open risk frees up.
+        entry = session.execute(
+            select(Order).where(
+                Order.leg == "entry", Order.symbol == "S4"
+            )
+        ).scalar_one()
+        cancelled = await broker.cancel_order(entry.alpaca_order_id)
+        assert cancelled.error is None
+        entry.status = "canceled"
+        session.commit()
+
+        retry = _decision(
+            session,
+            "S5",
+            "enter",
+            {"stop_price": 90.0, "target_price": 120.0},
+        )
+        await executor.apply_decision(
+            session,
+            retry,
+            _item("S5"),
+            None,
+            _quote("S5", ask="100.00", bid="99.95"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert retry.final_action == "enter"
+        assert retry.gates_result is not None
+        # ~$49 of room → 4 shares at $10 distance, limited by open_risk.
+        sizing = cast("dict[str, object]", retry.gates_result["sizing"])
+        assert sizing["shares"] == 4
+        assert "open_risk" in str(sizing["limited_by"])
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "new",
+        "accepted",
+        "pending_new",
+        "accepted_for_bidding",
+        "partially_filled",
+        "held",
+        "calculated",
+        "pending_cancel",
+        "pending_replace",
+        "pending_review",
+    ],
+)
+async def test_every_working_status_counts_in_the_gates(
+    session_factory: sessionmaker[Session], status: str
+) -> None:
+    """All live Alpaca statuses — including the pending_* transitions —
+    feed working_entries, _held_and_pending and the prefilter check."""
+    broker = FakeBroker(FakeClock(NOW))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        session.add(
+            Order(
+                alpaca_order_id=f"ord-{status}",
+                client_order_id=f"c-{status}",
+                symbol="MSFT",
+                decision_id=None,
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=4,
+                limit_price=Decimal("100"),
+                status=status,
+                created_at=NOW.replace(tzinfo=None),
+            )
+        )
+        session.commit()
+        ctx = executor._gate_context(session, _account(), "AAPL", 9, True)
+        assert [e.symbol for e in ctx.working_entries] == ["MSFT"]
+        held, pending = executor.signals._held_and_pending()
+        assert "MSFT" in pending
+
+
+# ----------------------------------------------------------------------
 # exits and stop moves
 
 
@@ -915,6 +1303,77 @@ async def test_exit_aborted_when_cancel_unconfirmed(
         assert events and events[0].level == "critical"
         assert position.closed_at is None
     assert list(broker.orders) == [stop.data.id]
+    assert broker.orders[stop.data.id].status == "new"
+
+
+async def test_exit_cancels_broker_leg_missing_from_db(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A stop leg at the broker that the DB never recorded is cancelled
+    and confirmed before the market sell."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.commit()
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "exit"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.status == "filled"
+    # The unrecorded stop leg was cancelled, then the market sell went in.
+    assert broker.orders[stop.data.id].status == "canceled"
+    sells = [o for o in broker.orders.values() if o.order_type == "market"]
+    assert len(sells) == 1
+
+
+async def test_exit_aborted_when_broker_leg_cancel_unconfirmed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An unrecorded broker leg whose cancel never lands holds the sell."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    broker.cancel_stuck = True
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.commit()
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        events = _events(session, "leg_cancel_unconfirmed")
+        assert events and events[0].level == "critical"
+        assert position.closed_at is None
+    # No market sell went past the still-live stop.
+    assert all(o.order_type != "market" for o in broker.orders.values())
     assert broker.orders[stop.data.id].status == "new"
 
 
@@ -1198,6 +1657,37 @@ async def test_flatten_rejected_sell_keeps_stop_and_alerts(
         assert _events(session, "protective_stop")
 
 
+async def test_flatten_holds_sell_when_cancel_unconfirmed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A stop that survives cancel_all keeps the market sell held back —
+    selling past a live stop could leave an unintended short."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    broker.cancel_stuck = True  # cancel_all answers ok but orders stay open
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.commit()
+
+    result = await executor.flatten()
+
+    assert result["sold"] == []
+    assert result["blocked"] == ["MSFT"]
+    errors = result["errors"]
+    assert isinstance(errors, list) and any("MSFT" in e for e in errors)
+    # No market sell was submitted; the protective stop is still live.
+    assert all(o.order_type != "market" for o in broker.orders.values())
+    assert broker.orders[stop.data.id].status == "new"
+    assert [p.symbol for p in (await broker.get_positions()).data] == ["MSFT"]
+    with session_factory() as session:
+        events = _events(session, "flatten_sell_blocked")
+        assert events and events[0].level == "critical"
+
+
 async def test_resume_requires_a_reason(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -1278,3 +1768,95 @@ async def test_trade_update_updates_order_and_reconciles(
     with session_factory() as session:
         row = session.execute(select(Order)).scalar_one()
         assert row.status == "canceled"
+
+
+# ----------------------------------------------------------------------
+# paused (docs/SPEC.md, Risk management, Paused at startup)
+
+
+async def test_paused_blocks_new_entry(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """While paused the model's enter becomes blocked — nothing is sent."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    executor.state.paused = True
+    with session_factory() as session:
+        decision = _decision(
+            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "paused"
+    assert broker.orders == {}
+    assert broker.submit_calls == 0
+
+
+async def test_paused_position_can_still_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Held positions keep working while paused: a model exit sells."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    executor.state.paused = True
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "exit"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.side == "sell"
+
+
+async def test_pause_and_resume_record_events(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Pause and resume are stored; resume needs no reason."""
+    broker = FakeBroker(FakeClock(NOW))
+    executor = _executor(session_factory, broker)
+    state = executor.state
+
+    paused = state.paused
+    assert not paused
+
+    await executor.pause()
+    paused = state.paused
+    paused_since = state.paused_since
+    at_startup = state.paused_at_startup
+    assert paused
+    assert paused_since is not None
+    assert not at_startup  # a manual pause
+
+    await executor.resume_from_pause()  # one click, no reason
+    paused = state.paused
+    paused_since = state.paused_since
+    assert not paused
+    assert paused_since is None
+
+    with session_factory() as session:
+        events = _events(session, "pause")
+    assert [e.details["on"] for e in events if e.details] == [True, False]

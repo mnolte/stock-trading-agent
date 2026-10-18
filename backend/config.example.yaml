@@ -88,6 +88,18 @@ performance:
   slippage_pct_per_side: 0.05
   benchmark: SPY
 
+reviews:
+  weekly_day: saturday
+  weekly_time: "10:00"            # app timezone
+  briefing_enabled: true
+  briefing_time_ny: "09:00"       # trading days only
+  verdict_after_sessions: 5
+  model: gpt-4o-mini
+  temperature: 0.2
+  prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
+  max_words: {weekly_summary: 120, briefing: 80}
+  monthly_cost_cap_usd: 2         # separate from trading decisions
+
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
   backup_days: 14

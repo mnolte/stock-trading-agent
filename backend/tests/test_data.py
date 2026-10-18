@@ -62,13 +62,15 @@ def test_make_data_sources_simulated_uses_fakes() -> None:
     assert sources.alpaca is None
 
 
-def test_make_data_sources_paper_requires_keys() -> None:
+def test_make_data_sources_paper_without_keys_builds_unkeyed_client() -> None:
+    """Paper mode without stored keys still comes up: the app starts
+    paused and every Alpaca call fails as an ordinary error (docs/SPEC.md,
+    API keys). The clients exist so a Settings save can swap keys in."""
     config = AppConfig()
     config.env.mode = "paper"
-    config.env.alpaca_api_key = ""
-    config.env.alpaca_secret_key = ""
-    with pytest.raises(RuntimeError, match="ALPACA_API_KEY"):
-        make_data_sources(config)
+    sources = make_data_sources(config)
+    assert sources.alpaca is not None
+    assert sources.earnings is not None
 
 
 async def test_fake_bars_cover_regular_session() -> None:
@@ -231,6 +233,57 @@ async def test_refresh_earnings_stores_rows(
     # Refreshing again is idempotent.
     again = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
     assert again.data == 0
+
+
+async def test_refresh_earnings_upserts_and_prunes(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A revised report updates in place; one that vanishes is pruned."""
+    event = EarningsEvent(
+        symbol="AAPL",
+        date=date(2026, 10, 30),
+        time_of_day="after_close",
+        hour_raw="amc",
+        fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+    )
+    calendar = FakeCalendarSource()
+    earnings = FakeEarningsSource([event])
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=earnings,
+        fx=FakeFXSource(),
+        corporate_actions=FakeCorporateActionSource(),
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+
+    # Finnhub revises the timing: the stored row must follow.
+    earnings.events = [
+        EarningsEvent(
+            symbol="AAPL",
+            date=date(2026, 10, 30),
+            time_of_day="before_open",
+            hour_raw="bmo",
+            fetched_at=datetime(2026, 10, 16, tzinfo=UTC),
+        )
+    ]
+    await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+    with session_factory() as session:
+        row = session.execute(select(EarningRow)).scalars().one()
+        assert row.time_of_day == "before_open"
+        assert row.hour_raw == "bmo"
+
+    # The report is pulled from the calendar: the row is pruned.
+    earnings.events = []
+    await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+    with session_factory() as session:
+        assert session.execute(select(EarningRow)).scalars().all() == []
 
 
 async def test_refresh_corporate_actions_stores_rows(

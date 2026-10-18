@@ -13,7 +13,7 @@ import asyncio
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
 
@@ -45,10 +45,10 @@ from app.db.models import (
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
-from app.risk.gates import GateContext, evaluate_entry_gates
+from app.risk.gates import GateContext, WorkingEntry, evaluate_entry_gates
 from app.risk.math import trade_risk
 from app.signals.indicators import atr
-from app.signals.service import SignalService, SymbolEval
+from app.signals.service import SignalService, SymbolEval, trading_days_until
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -222,6 +222,47 @@ class Executor:
             session.commit()
         self._notify({"banners", "header", "approvals"})
 
+    async def pause(self) -> None:
+        """Pause new entries (docs/SPEC.md, Paused at startup).
+
+        Positions keep being reviewed and their stops stay in place; only
+        entries are blocked. Manual pauses clear the startup flag, so the
+        blue "Started paused" banner only ever marks a fresh start.
+        """
+        if self.state.paused:
+            return
+        self.state.paused = True
+        self.state.paused_at_startup = False
+        self.state.paused_since = self.clock.now()
+        with self._session_factory() as session:
+            record_event(
+                session,
+                self.clock,
+                level="info",
+                event_type="pause",
+                details={"on": True, "reason": "manual"},
+            )
+            session.commit()
+        self._notify({"banners", "header"})
+
+    async def resume_from_pause(self) -> None:
+        """Resume entries after a pause: one click, no reason needed."""
+        if not self.state.paused:
+            return
+        self.state.paused = False
+        self.state.paused_at_startup = False
+        self.state.paused_since = None
+        with self._session_factory() as session:
+            record_event(
+                session,
+                self.clock,
+                level="info",
+                event_type="pause",
+                details={"on": False, "reason": "manual"},
+            )
+            session.commit()
+        self._notify({"banners", "header", "approvals"})
+
     async def resume(self, reason: str) -> None:
         """Resume after a kill switch. The typed reason is stored."""
         if not reason.strip():
@@ -260,10 +301,47 @@ class Executor:
         sold: list[str] = []
         errors: list[str] = []
         rejected: list[str] = []
+        blocked: list[str] = []
         day_trade_warnings: list[str] = []
+        # Confirm the cancels landed before selling: a stop leg still live
+        # at the broker could fill after the market sell and leave an
+        # unintended short. A symbol with unconfirmed orders is not sold.
+        confirm_failed = False
+        still_open = await self.broker.get_open_orders()
+        blocked_symbols: set[str] = set()
+        if still_open.error is not None:
+            confirm_failed = True
+            errors.append(f"could not confirm cancels: {still_open.error}")
+        else:
+            blocked_symbols = {
+                o.symbol
+                for o in still_open.data
+                if o.is_open or any(leg.is_open for leg in o.legs)
+            }
         positions = await self.broker.get_positions()
-        if positions.error is None:
+        if positions.error is not None:
+            errors.append(f"could not read positions: {positions.error}")
+        else:
             for pos in positions.data:
+                if confirm_failed or pos.symbol in blocked_symbols:
+                    blocked.append(pos.symbol)
+                    errors.append(
+                        f"{pos.symbol}: sell held back, cancel not confirmed"
+                    )
+                    with self._session_factory() as session:
+                        record_event(
+                            session,
+                            self.clock,
+                            level="critical",
+                            event_type="flatten_sell_blocked",
+                            details={
+                                "symbol": pos.symbol,
+                                "qty": pos.qty,
+                                "reason": "cancel not confirmed",
+                            },
+                        )
+                        session.commit()
+                    continue
                 self._orders_this_cycle += 1
                 result = await self.broker.submit_market_sell(
                     symbol=pos.symbol,
@@ -322,6 +400,7 @@ class Executor:
                     "cancelled_orders": cancelled.data,
                     "sold": sold,
                     "rejected": rejected,
+                    "blocked": blocked,
                     "day_trade_warnings": day_trade_warnings,
                     "market_on_open": not regular_hours,
                     "errors": errors,
@@ -333,6 +412,7 @@ class Executor:
         return {
             "cancelled_orders": cancelled.data,
             "sold": sold,
+            "blocked": blocked,
             "market_on_open": not regular_hours,
             "errors": errors,
         }
@@ -430,7 +510,8 @@ class Executor:
             approval = session.get(Approval, approval_id)
             if approval is None or approval.status != "pending":
                 return {"ok": False, "error": "approval is not pending"}
-            decision = session.get(Decision, approval.decision_id)
+            if self.state.paused:
+                return {"ok": False, "error": "new entries are paused"}
 
             quotes = await self.market_data.sources.quotes.fetch_quotes(
                 [approval.symbol]
@@ -475,26 +556,38 @@ class Executor:
                     )
                 )
                 mid = (quote.ask + quote.bid) / 2
-                spread_pct = (quote.ask - quote.bid) / mid * 100
-                if spread_pct > max_spread:
-                    fail = f"spread {spread_pct:.3f}% > {max_spread}%"
+                if mid <= 0:
+                    fail = "quote midpoint is zero or negative"
+                else:
+                    spread_pct = (quote.ask - quote.bid) / mid * 100
+                    if spread_pct > max_spread:
+                        fail = f"spread {spread_pct:.3f}% > {max_spread}%"
 
             result = None
             qty = 0
             if fail is None:
                 # All risk gates again with fresh equity + the fresh ask.
                 account = await self.refresh_account()
-                earnings_known = (
-                    self.market_data.latest_earnings is None
-                    or self.market_data.latest_earnings.error is None
+                # Fresh earnings, not the decision-time snapshot: a report
+                # announced since then must still block the entry.
+                today = self.clock.now().astimezone(NY_TZ).date()
+                earnings_result = await self.market_data.refresh_earnings(
+                    today, today + timedelta(days=90)
                 )
-                snapshot = (decision.input_snapshot or {}) if decision else {}
-                days_to_earnings = snapshot.get("days_to_earnings")
+                earnings_known = earnings_result.error is None
+                next_date = self.signals.next_earnings(
+                    [approval.symbol], today
+                ).get(approval.symbol)
+                days_to_earnings = (
+                    trading_days_until(self.calendar, today, next_date)
+                    if next_date is not None
+                    else None
+                )
                 ctx = self._gate_context(
                     session,
                     account,
                     approval.symbol,
-                    days_to_earnings if isinstance(days_to_earnings, int) else None,
+                    days_to_earnings,
                     earnings_known,
                 )
                 result = evaluate_entry_gates(
@@ -1036,8 +1129,15 @@ class Executor:
     def _open_positions_from_fills(self, session: Session) -> int:
         """Open a DB position for each entry fill that has none yet.
 
-        Sell fills are handled by the broker-position sync: Alpaca is the
-        source of truth for qty and whether a position still exists.
+        A buy fill is "covered" once a position for the symbol is still
+        open or closed at/after it — the fill's shares lived in that
+        position. Without this guard every reconcile would re-open a
+        position that already closed and re-close it, duplicating
+        realized P&L. A fill older than every position's close (a round
+        trip the DB never recorded) still gets its position once, which
+        step 4 immediately closes; afterwards the fill is covered.
+        Sell fills are handled by the broker-position sync: Alpaca is
+        the source of truth for qty and whether a position still exists.
         """
         opened = 0
         filled_buys = session.execute(
@@ -1048,10 +1148,17 @@ class Executor:
         ).scalars().all()
         for order in filled_buys:
             fill_rows = session.execute(
-                select(Fill).where(Fill.order_id == order.id)
+                select(Fill)
+                .where(Fill.order_id == order.id)
+                .order_by(Fill.filled_at, Fill.id)
             ).scalars().all()
             if not fill_rows:
                 continue
+            filled_qty = sum(f.qty for f in fill_rows)
+            avg_price = sum(
+                (f.price * f.qty for f in fill_rows), Decimal(0)
+            ) / filled_qty
+            first_fill = fill_rows[0].filled_at
             open_pos = session.execute(
                 select(Position).where(
                     Position.symbol == order.symbol,
@@ -1059,8 +1166,26 @@ class Executor:
                 )
             ).scalar_one_or_none()
             if open_pos is not None:
+                # Partial fills keep arriving after the position opened:
+                # grow qty/avg from the fill rows (broker-derived) so step
+                # 4 doesn't flag a false qty mismatch before Alpaca's
+                # position view catches up.
+                if filled_qty > open_pos.qty:
+                    open_pos.qty = filled_qty
+                    open_pos.avg_entry_price = avg_price
                 continue
-            latest = fill_rows[-1]
+            covered = session.execute(
+                select(Position.id)
+                .where(
+                    Position.symbol == order.symbol,
+                    Position.closed_at >= first_fill,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
+            if covered is not None:
+                # Already processed into a position that has since closed;
+                # re-creating it would duplicate the realized P&L.
+                continue
             legs = session.execute(
                 select(Order).where(
                     Order.parent_alpaca_order_id == order.alpaca_order_id
@@ -1076,11 +1201,11 @@ class Executor:
                     origin="agent",
                     pending_ack=False,
                     entry_decision_id=order.decision_id,
-                    qty=sum(f.qty for f in fill_rows),
-                    avg_entry_price=latest.price,
+                    qty=filled_qty,
+                    avg_entry_price=avg_price,
                     current_stop_price=stop,
                     target_price=target,
-                    opened_at=latest.filled_at,
+                    opened_at=first_fill,
                 )
             )
             opened += 1
@@ -1356,12 +1481,42 @@ class Executor:
         open_positions = session.execute(
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
-        open_entries = session.execute(
-            select(Order.symbol).where(
+        # Working entry orders count in the gates as if they were already
+        # positions (docs/SPEC.md, Working entry orders): unfilled qty ×
+        # (limit − stop) toward open risk, unfilled qty × limit toward
+        # cash. Supervised approvals are not Order rows, so they never
+        # land here; they are gated again on Approve.
+        entry_rows = session.execute(
+            select(Order).where(
                 Order.leg == "entry",
                 Order.status.in_(OPEN_ORDER_STATUSES),
             )
         ).scalars().all()
+        working: list[WorkingEntry] = []
+        for row in entry_rows:
+            filled = session.execute(
+                select(func.coalesce(func.sum(Fill.qty), 0)).where(
+                    Fill.order_id == row.id
+                )
+            ).scalar_one()
+            unfilled = row.qty - int(filled)
+            if unfilled <= 0:
+                continue  # filled qty is a position already
+            stop_leg = session.execute(
+                select(Order.stop_price).where(
+                    Order.parent_alpaca_order_id == row.alpaca_order_id,
+                    Order.leg == "stop",
+                    Order.status.in_(OPEN_ORDER_STATUSES),
+                )
+            ).scalars().first()
+            working.append(
+                WorkingEntry(
+                    symbol=row.symbol,
+                    unfilled_qty=unfilled,
+                    limit_price=row.limit_price,
+                    stop_price=stop_leg,
+                )
+            )
         since = self.clock.now().astimezone(NY_TZ).date()
         # Day trades over the last 5 trading days, inclusive of today.
         days = self.market_data.recent_sessions(since, 5)
@@ -1402,7 +1557,7 @@ class Executor:
             last_equity=account.last_equity if account else Decimal(0),
             peak_equity=max(self.state.peak_equity, equity),
             open_positions=list(open_positions),
-            open_entry_symbols=frozenset(open_entries),
+            working_entries=tuple(working),
             day_trades_5d=int(day_trades),
             losing_streak=streak,
             shock_brake_1h=self.state.shock_brake_1h,
@@ -1410,6 +1565,7 @@ class Executor:
             days_to_earnings=days_to_earnings,
             earnings_known=earnings_known,
             kill_switch_on=self.state.kill_switch_on,
+            paused=self.state.paused,
             pending_ack=self.state.pending_ack(session) or self._reconcile_failed,
             orders_this_cycle=self._orders_this_cycle,
         )
@@ -1473,8 +1629,8 @@ class Executor:
             item.snapshot.days_to_earnings,
             earnings_known,
         )
-        price = quote.ask if quote else item.price
-        if price is None or stop is None or target is None:
+        if quote is None or stop is None or target is None:
+            # No fresh quote → no spread or limit check → no entry.
             decision.gates_result = {
                 "allowed": False,
                 "blocked_by": "missing_data",
@@ -1482,7 +1638,7 @@ class Executor:
             }
             decision.final_action = "blocked"
             return
-        entry = Decimal(str(price))
+        entry = Decimal(str(quote.ask))
         result = evaluate_entry_gates(
             ctx, entry=entry, stop=Decimal(str(stop)), config=self.config
         )
@@ -1515,8 +1671,19 @@ class Executor:
                 self.config.get("execution", "entry_limit_offset_pct", default=0.05)
             )
         )
-        mid = (quote.ask + quote.bid) / 2  # type: ignore[union-attr]
-        spread_pct = (quote.ask - quote.bid) / mid * 100  # type: ignore[union-attr]
+        mid = (quote.ask + quote.bid) / 2
+        if mid <= 0:
+            # A zeroed/negative quote midpoint would divide by zero below;
+            # the quote is unusable, so the entry is blocked.
+            decision.gates_result = result.to_json() | {
+                "allowed": False,
+                "blocked_by": "missing_data",
+                "detail": "quote midpoint is zero or negative",
+            }
+            decision.final_action = "blocked"
+            session.flush()
+            return
+        spread_pct = (quote.ask - quote.bid) / mid * 100
         if spread_pct > max_spread:
             decision.gates_result = result.to_json() | {
                 "allowed": False,
@@ -1526,7 +1693,7 @@ class Executor:
             decision.final_action = "blocked"
             session.flush()
             return
-        limit = _cents(quote.ask * (1 + offset / 100))  # type: ignore[union-attr]
+        limit = _cents(quote.ask * (1 + offset / 100))
 
         if str(self.config.get("execution", "mode", default="automatic")) == (
             "supervised"
@@ -1611,6 +1778,12 @@ class Executor:
             or position.current_stop_price is None
             or new_stop <= position.current_stop_price
         ):
+            # The model asked for a tighten that moves nothing — say so in
+            # gates_result rather than letting "tighten_stop" imply a change.
+            decision.gates_result = {
+                "tighten_noop": True,
+                "reason": "new stop is not above the current stop",
+            }
             return
         stop_row = session.execute(
             select(Order).where(
@@ -1621,6 +1794,10 @@ class Executor:
             )
         ).scalar_one_or_none()
         if stop_row is None:
+            decision.gates_result = {
+                "tighten_noop": True,
+                "reason": "no open stop leg for this position",
+            }
             return
         result = await self.broker.replace_stop(
             stop_row.alpaca_order_id, stop_price=_cents(new_stop)
@@ -1718,6 +1895,66 @@ class Executor:
                     details={
                         "symbol": position.symbol,
                         "order": leg.alpaca_order_id,
+                    },
+                )
+                session.flush()
+                return
+
+        # Broker-side legs the DB never recorded (e.g. a crash between the
+        # broker's accept and our store) must be cancelled and confirmed
+        # too — the market sell must never go past a live leg.
+        broker_open = await self.broker.get_open_orders()
+        if broker_open.error is not None:
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="leg_cancel_unconfirmed",
+                details={
+                    "symbol": position.symbol,
+                    "error": broker_open.error,
+                },
+            )
+            session.flush()
+            return
+        known_ids = {leg.alpaca_order_id for leg in legs}
+        extra_legs: list[BrokerOrder] = []
+        for order in broker_open.data:
+            if order.symbol != position.symbol or order.side != "sell":
+                continue
+            if order.is_open and order.id not in known_ids:
+                extra_legs.append(order)
+            extra_legs.extend(
+                leg_order
+                for leg_order in order.legs
+                if leg_order.is_open and leg_order.id not in known_ids
+            )
+        for order in extra_legs:
+            cancelled = await self.broker.cancel_order(order.id)
+            if cancelled.error is not None:
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="order_submit_failed",
+                    details={
+                        "symbol": position.symbol,
+                        "order": order.id,
+                        "error": cancelled.error,
+                    },
+                )
+                session.flush()
+                return
+            confirmed = await self.broker.get_order(order.id)
+            if confirmed.data is not None and confirmed.data.is_open:
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="leg_cancel_unconfirmed",
+                    details={
+                        "symbol": position.symbol,
+                        "order": order.id,
                     },
                 )
                 session.flush()

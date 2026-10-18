@@ -26,11 +26,13 @@ export function Header({
   state,
   title,
   onKillSwitch,
+  onPauseToggle,
   onMenu,
 }: {
   state: HeaderState | null;
   title: string;
   onKillSwitch: () => void;
+  onPauseToggle: () => void;
   onMenu?: () => void;
 }) {
   const [, forceTick] = useState(0);
@@ -40,7 +42,9 @@ export function Header({
   }, []);
 
   const sessionState = state?.session.state ?? 'closed';
-  const tail = state ? sessionTail(sessionState, state.session) : '';
+  const paused = state?.paused ?? false;
+  const pillState = paused ? 'paused' : sessionState;
+  const tail = state ? sessionTail(pillState, state.session) : '';
   const sessionTitle = state
     ? [
         `New York ${nyTime(state.session.now)}`,
@@ -154,11 +158,11 @@ export function Header({
               width: 8,
               height: 8,
               borderRadius: '50%',
-              background: sessionDot(sessionState),
+              background: paused ? 'var(--sa-accent)' : sessionDot(sessionState),
             }}
           />
           <span>
-            {sessionLabel(sessionState)}
+            {sessionLabel(pillState)}
             <span style={{ color: 'var(--sa-text-muted)' }}>{tail}</span>
           </span>
         </div>
@@ -258,6 +262,65 @@ export function Header({
             {state?.regime ?? '—'}
           </span>
         </div>
+
+        <button
+          type="button"
+          onClick={onPauseToggle}
+          disabled={paused && !!state?.resume_blocked}
+          title={
+            paused && state?.resume_blocked
+              ? `Resume needs all three keys set and passing — ${state.keys_issue ?? 'open Settings'}`
+              : paused
+                ? undefined
+                : 'Pause new entries. Stops, targets and position checks keep working.'
+          }
+          style={
+            paused
+              ? {
+                  height: 'var(--sa-control-height)',
+                  padding: '0 var(--sa-space-4)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--sa-space-3)',
+                  borderRadius: 'var(--sa-radius-md)',
+                  border: '1px solid var(--sa-accent)',
+                  background: 'var(--sa-accent)',
+                  color: 'var(--sa-bg)',
+                  fontSize: 'var(--sa-text-base)',
+                  fontWeight: 600,
+                  cursor: state?.resume_blocked ? 'not-allowed' : 'pointer',
+                  opacity: state?.resume_blocked ? 0.55 : 1,
+                  whiteSpace: 'nowrap',
+                }
+              : {
+                  height: 'var(--sa-control-height)',
+                  padding: '0 var(--sa-space-4)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--sa-space-3)',
+                  borderRadius: 'var(--sa-radius-md)',
+                  border: '1px solid var(--sa-border-strong)',
+                  background: 'var(--sa-raised)',
+                  color: 'var(--sa-text)',
+                  fontSize: 'var(--sa-text-base)',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                }
+          }
+        >
+          {paused ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="7 4 20 12 7 20 7 4" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="8" y1="5" x2="8" y2="19" />
+              <line x1="16" y1="5" x2="16" y2="19" />
+            </svg>
+          )}
+          <span>{paused ? 'Resume' : 'Pause'}</span>
+        </button>
 
         <button
           type="button"

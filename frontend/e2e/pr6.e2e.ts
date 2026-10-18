@@ -57,36 +57,37 @@ test('decision detail: sections render', async ({ page }, testInfo) => {
   test.skip(items.length === 0, 'no decisions recorded in this run');
 
   await page.goto(`/decisions/${items[0].id}`);
-  await expect(page.getByRole('heading', { name: 'Code checks' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Risk gates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Safety gates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Signal stack' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Agent reasoning' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Outcome', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Input snapshot' })).toBeVisible();
 
   await page.screenshot({ path: shot('decision', testInfo.project.name), fullPage: true });
 });
 
-test('settings: sections, save dialog, reset dialog', async ({ page }, testInfo) => {
+test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo) => {
   await page.goto('/settings');
 
-  await expect(page.getByText('Risk limits')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('heading', { name: 'API keys and data' })).toBeVisible({
+    timeout: 60_000,
+  });
   await expect(page.getByText('Universe')).toBeVisible();
-  await expect(page.getByText('Connections')).toBeVisible();
-  await expect(page.getByText('Settings history')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Risk limits' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Settings history' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Paper account', exact: true })).toBeVisible();
 
-  // Save is disabled until something changes; editing enables it and the
-  // confirm dialog shows the diff.
+  // The unsaved-changes bar opens on the first edit; Save stays off
+  // until a reason is typed (PR 10: reason is required, no dialog).
   const saveButton = page.getByRole('button', { name: /Save as v/ });
+  await expect(saveButton).toHaveCount(0);
+  await page.locator('#brief').click();
+  await expect(page.getByText('unsaved change')).toBeVisible();
   await expect(saveButton).toBeDisabled();
-  const riskField = page.getByRole('spinbutton', { name: /^Risk per trade/ });
-  await riskField.fill('0.4');
+  await page.getByLabel('Reason for this change').fill('e2e check');
   await expect(saveButton).toBeEnabled();
   await saveButton.click();
-  const saveDialog = page.getByRole('dialog', { name: /Save settings as/ });
-  await expect(saveDialog).toBeVisible();
-  await expect(saveDialog).toContainText('Risk per trade');
+  await expect(page.getByText(/Saved as v\d+/)).toBeVisible();
   await page.screenshot({ path: shot('settings-save', testInfo.project.name) });
-  await saveDialog.getByRole('button', { name: 'Cancel' }).click();
 
   // Reset requires typing RESET before the confirm button enables.
   await page.getByRole('button', { name: 'Reset paper account' }).click();

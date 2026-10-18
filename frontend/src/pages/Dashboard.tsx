@@ -26,6 +26,8 @@ import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
 import { displayFullDate, displayTime, nyTime } from '../format';
+import { actionBadgeStyle } from '../components/decisionFormat';
+import { earningsChipLabel } from './decisionDetail';
 import { actionChip, feedText } from './dashboardFeed';
 
 function Feed({ items }: { items: DashboardFeedItem[] }) {
@@ -88,6 +90,28 @@ function Feed({ items }: { items: DashboardFeedItem[] }) {
   );
 }
 
+function toneStyle(tone: number): React.CSSProperties {
+  return {
+    padding: '4px 8px',
+    borderRadius: 'var(--sa-radius-sm)',
+    fontFamily: 'var(--sa-font-mono)',
+    fontSize: 'var(--sa-text-sm)',
+    whiteSpace: 'nowrap',
+    background:
+      tone > 0
+        ? 'var(--sa-positive-bg)'
+        : tone < 0
+          ? 'var(--sa-negative-bg)'
+          : 'var(--sa-raised)',
+    color:
+      tone > 0
+        ? 'var(--sa-positive)'
+        : tone < 0
+          ? 'var(--sa-negative-text)'
+          : 'var(--sa-text-2)',
+  };
+}
+
 function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) {
   const d = dashboard?.latest_decision ?? null;
   if (!d) {
@@ -100,28 +124,141 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
     );
   }
   const chip = actionChip(d.final_action, d.no_call_reason);
+  const badge = actionBadgeStyle(d.final_action);
+  const regimeVariant: 'positive' | 'negative' | 'neutral' =
+    d.regime?.trend === 'up'
+      ? 'positive'
+      : d.regime?.trend === 'down'
+        ? 'negative'
+        : 'neutral';
   return (
     <Card
       label="Latest decision"
-      right={<Link to={`/decisions/${d.id}`}>Open decision detail</Link>}
+      right={
+        <span
+          style={{
+            fontFamily: 'var(--sa-font-mono)',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+          }}
+        >
+          {displayTime(d.time)} · {d.model ?? '—'}
+        </span>
+      }
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
-        <span style={{ fontWeight: 600 }}>{d.symbol}</span>
-        <Chip variant={chip.variant}>{chip.label}</Chip>
-        {d.confidence !== null && (
-          <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            confidence {d.confidence}
+        <div
+          style={{
+            minWidth: '88px',
+            height: '48px',
+            padding: '0 14px',
+            borderRadius: 'var(--sa-radius-md)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: 'var(--sa-font-mono)',
+            fontWeight: 600,
+            fontSize: 'var(--sa-text-lg)',
+            whiteSpace: 'nowrap',
+            background: badge.bg,
+            color: badge.color,
+          }}
+        >
+          {chip.label}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <span style={{ fontWeight: 600, fontSize: 'var(--sa-text-lg)' }}>{d.symbol}</span>
+          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+            confidence{' '}
+            <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
+              {d.confidence !== null ? d.confidence.toFixed(2) : '—'}
+            </span>
+          </span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {d.regime && (
+          <span title="SPY regime: trend × volatility">
+            <Chip variant={regimeVariant}>
+              market {d.regime.trend} · {d.regime.volatility} vol
+            </Chip>
           </span>
         )}
+        <Chip variant="neutral">{earningsChipLabel(d.earnings)}</Chip>
       </div>
       {d.why && (
-        <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+        <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.55 }}>
           {d.why}
         </p>
       )}
-      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-        {displayTime(d.time)} cycle · {d.context}
-      </div>
+      {d.sig.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {d.sig.map((s, i) => (
+            <span key={i} style={toneStyle(s.tone)}>
+              {s.text}
+            </span>
+          ))}
+        </div>
+      )}
+      {d.box.length > 0 && (
+        <div
+          style={{
+            border: '1px solid var(--sa-border)',
+            borderRadius: 'var(--sa-radius-md)',
+            padding: '4px var(--sa-space-3)',
+          }}
+        >
+          {d.box.map((row, i) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 'var(--sa-space-3)',
+                padding: '7px 0',
+                fontSize: 'var(--sa-text-md)',
+                borderBottom:
+                  i < d.box.length - 1 ? '1px solid var(--sa-border)' : 'none',
+              }}
+            >
+              <span style={{ color: 'var(--sa-text-2)' }}>{row.label}</span>
+              <span
+                style={{
+                  fontFamily: 'var(--sa-font-mono)',
+                  fontSize: 'var(--sa-text-sm)',
+                  textAlign: 'right',
+                  color:
+                    row.tone > 0
+                      ? 'var(--sa-positive)'
+                      : row.tone < 0
+                        ? 'var(--sa-negative-text)'
+                        : 'var(--sa-text-2)',
+                }}
+              >
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <Link
+        to={`/decisions/${d.id}`}
+        style={{
+          height: '44px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 'var(--sa-radius-md)',
+          border: '1px solid var(--sa-border-strong)',
+          background: 'var(--sa-raised)',
+          color: 'var(--sa-text)',
+          textDecoration: 'none',
+          fontWeight: 500,
+          marginTop: 'auto',
+        }}
+      >
+        Open full decision
+      </Link>
     </Card>
   );
 }
@@ -257,8 +394,10 @@ export default function Dashboard() {
   const [chart, setChart] = useState<ChartResponse | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const refreshDashboard = useCallback(() => {
-    getDashboard().then(setDashboard).catch(console.error);
+  const refreshDashboard = useCallback((symbol?: string | null) => {
+    getDashboard(symbol ?? undefined)
+      .then(setDashboard)
+      .catch(console.error);
   }, []);
   const refreshWatchlist = useCallback(() => {
     getWatchlist().then(setWatchlist).catch(console.error);
@@ -278,24 +417,29 @@ export default function Dashboard() {
   const chartSymbol = selected ?? symbols[0] ?? null;
 
   useEffect(() => {
-    refreshDashboard();
     refreshWatchlist();
     refreshApprovals();
     refreshPositions();
-  }, [refreshDashboard, refreshWatchlist, refreshApprovals, refreshPositions]);
+  }, [refreshWatchlist, refreshApprovals, refreshPositions]);
+  useEffect(() => {
+    // The latest-decision card tracks the selected symbol.
+    refreshDashboard(chartSymbol);
+  }, [chartSymbol, refreshDashboard]);
   useEffect(() => {
     refreshChart(chartSymbol);
   }, [chartSymbol, refreshChart]);
 
-  useLiveUpdates(['decisions', 'header', 'performance'], refreshDashboard);
+  useLiveUpdates(['decisions', 'header', 'performance'], () =>
+    refreshDashboard(chartSymbol),
+  );
   useLiveUpdates(['watchlist'], refreshWatchlist);
   useLiveUpdates(['approvals'], () => {
     refreshApprovals();
-    refreshDashboard();
+    refreshDashboard(chartSymbol);
   });
   useLiveUpdates(['positions', 'orders'], () => {
     refreshPositions();
-    refreshDashboard();
+    refreshDashboard(chartSymbol);
     refreshChart(chartSymbol);
   });
   useLiveUpdates(['watchlist', 'decisions'], () => refreshChart(chartSymbol));
@@ -315,6 +459,7 @@ export default function Dashboard() {
               key={a.id}
               approval={a}
               killSwitchOn={approvals.kill_switch_on}
+              paused={approvals.paused}
               onResolved={() => {
                 refreshApprovals();
                 refreshDashboard();
@@ -376,18 +521,19 @@ export default function Dashboard() {
         />
       </div>
 
-      {dashboard?.market_closed ? (
+      {dashboard?.market_closed && (
         <MarketClosed mc={dashboard.market_closed} />
-      ) : (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 'var(--sa-space-4)',
-            alignItems: 'stretch',
-          }}
-        >
-          <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      )}
+
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-4)',
+          alignItems: 'stretch',
+        }}
+      >
+        <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Card
             label={chartSymbol ?? 'Chart'}
             right={
@@ -454,12 +600,11 @@ export default function Dashboard() {
               {chart?.levels.target && <Legend swatch="var(--sa-positive)" label="Target" />}
             </div>
           </Card>
-          </div>
-          <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <LatestDecision dashboard={dashboard} />
-          </div>
         </div>
-      )}
+        <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <LatestDecision dashboard={dashboard} />
+        </div>
+      </div>
 
       <Watchlist
         rows={watchlist?.rows ?? []}

@@ -494,6 +494,10 @@ class FakeBroker:
         cancelled = 0
         for rec in self.orders.values():
             if rec.status in OPEN_ORDER_STATUSES:
+                if self.cancel_stuck:
+                    # Like a stuck pending_cancel at Alpaca: the call
+                    # succeeds but the order stays live.
+                    continue
                 rec.status = "canceled"
                 rec.updated_at = self._now()
                 cancelled += 1
@@ -588,7 +592,13 @@ class FakeBroker:
         """Move a mark; fills any order whose price is now crossed."""
         self.prices[symbol] = price
         for rec in list(self.orders.values()):
-            if rec.symbol != symbol or rec.status not in ("new", "accepted"):
+            # A partially filled order keeps working until done, like the
+            # real broker — it is not a terminal state.
+            if rec.symbol != symbol or rec.status not in (
+                "new",
+                "accepted",
+                "partially_filled",
+            ):
                 continue
             if rec.order_type == "market" and rec.side == "sell":
                 # A queued market(-on-open) sell fills at the next tick.

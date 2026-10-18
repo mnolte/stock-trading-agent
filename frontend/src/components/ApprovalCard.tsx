@@ -28,10 +28,12 @@ function RiskLine({ approval }: { approval: Approval }) {
 export function ApprovalCard({
   approval,
   killSwitchOn,
+  paused = false,
   onResolved,
 }: {
   approval: Approval;
   killSwitchOn: boolean;
+  paused?: boolean;
   onResolved: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -125,8 +127,14 @@ export function ApprovalCard({
         <Button
           variant="primary"
           onClick={() => act(() => postApprove(approval.id))}
-          disabled={busy || killSwitchOn}
-          title={killSwitchOn ? 'Kill switch is on' : undefined}
+          disabled={busy || killSwitchOn || paused}
+          title={
+            killSwitchOn
+              ? 'Kill switch is on'
+              : paused
+                ? 'New entries are paused'
+                : undefined
+          }
         >
           Approve
         </Button>

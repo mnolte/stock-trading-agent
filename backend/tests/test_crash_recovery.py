@@ -217,6 +217,51 @@ def test_interrupted_rows_do_not_count_and_do_not_break_the_streak(
     assert state.failed_cycles == 2
 
 
+def test_skipped_rows_do_not_break_the_failed_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Spec: error, skipped, error, error still turns the kill switch on —
+    a skipped cycle (market closed, holiday) is not a completion and does
+    not reset the count."""
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "skipped")
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 3
+
+
+def test_done_between_errors_resets_the_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Only a completed cycle resets: error, done, error, error → 2."""
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "done")
+    _insert_cycle(session_factory, "error")
+    _insert_cycle(session_factory, "error")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_cycles == 2
+
+
+def test_skipped_checks_do_not_break_the_check_streak(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Position checks keep their own count with the same rule."""
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "skipped", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+    _insert_cycle(session_factory, "error", kind="position_check")
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.failed_checks == 3
+    assert state.failed_cycles == 0
+
+
 def test_interrupted_rows_are_not_recovered_as_errors(
     session_factory: sessionmaker[Session], clock: Clock
 ) -> None:
@@ -248,3 +293,59 @@ def test_load_state_restores_consecutive_check_errors(
 
     assert state.failed_checks == 2
     assert state.failed_cycles == 1
+
+
+def test_restart_always_pauses_and_keeps_kill_switch(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Paused at startup: a kill switch that was on stays on after a
+    restart, and startup always comes up paused — even when trading was
+    running (never paused) before the restart."""
+    from app.engine.state import record_event
+
+    with session_factory() as session:
+        record_event(
+            session,
+            clock,
+            level="warning",
+            event_type="kill_switch",
+            details={"on": True, "reason": "testing", "automatic": False},
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.kill_switch_on
+    assert state.paused
+    assert state.paused_at_startup
+    assert state.paused_since is not None
+
+
+def test_restart_after_resume_is_paused_again(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """A pause resumed before shutdown still comes back paused."""
+    from app.engine.state import record_event
+
+    with session_factory() as session:
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type="pause",
+            details={"on": True, "reason": "startup"},
+        )
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type="pause",
+            details={"on": False, "reason": "manual"},
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert not state.kill_switch_on
+    assert state.paused
+    assert state.paused_at_startup

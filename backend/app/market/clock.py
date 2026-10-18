@@ -26,6 +26,11 @@ class Clock(Protocol):
     def to_zone(self, dt: datetime, tz: ZoneInfo) -> datetime: ...
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Naive means UTC here; aware values are converted, not relabelled."""
+    return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 class RealClock:
     """Production clock. The only place that reads the system clock."""
 
@@ -40,13 +45,13 @@ class FakeClock:
     """Frozen clock for tests and simulated mode."""
 
     def __init__(self, when: datetime) -> None:
-        self._when = when.replace(tzinfo=UTC)
+        self._when = _as_utc(when)
 
     def now(self) -> datetime:
         return self._when
 
     def set(self, when: datetime) -> None:
-        self._when = when.replace(tzinfo=UTC)
+        self._when = _as_utc(when)
 
     def advance(self, delta: timedelta) -> None:
         self._when += delta

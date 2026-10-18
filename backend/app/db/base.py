@@ -17,8 +17,18 @@ def get_db_url() -> str:
     return f"sqlite:///{path}"
 
 
+# One engine (one connection pool) per database URL — creating a fresh
+# engine per session maker leaked pools that were never disposed.
+_engines: dict[str, Engine] = {}
+
+
 def get_engine() -> Engine:
-    return create_engine(get_db_url(), connect_args={"check_same_thread": False})
+    url = get_db_url()
+    engine = _engines.get(url)
+    if engine is None:
+        engine = create_engine(url, connect_args={"check_same_thread": False})
+        _engines[url] = engine
+    return engine
 
 
 def get_session_maker() -> sessionmaker[Session]:

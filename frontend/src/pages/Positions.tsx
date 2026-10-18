@@ -22,7 +22,7 @@ function fmtPnl(value: string | null | undefined): { text: string; color: string
   if (value == null) return { text: '—', color: 'var(--sa-text-muted)' };
   const n = Number(value);
   return {
-    text: `${n >= 0 ? '+' : ''}$${Math.abs(n).toFixed(2)}`,
+    text: `${n >= 0 ? '+' : '−'}$${Math.abs(n).toFixed(2)}`,
     color: n >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)',
   };
 }

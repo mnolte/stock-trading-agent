@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { getDecision, getDecisions } from '../api/state';
 import { Card } from '../components/Card';
@@ -309,6 +309,7 @@ function CallDetail({ decision }: { decision: DecisionDetail }) {
 }
 
 export default function Inspector() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<DecisionsResponse | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<DecisionDetail | null>(null);
@@ -317,10 +318,17 @@ export default function Inspector() {
     getDecisions()
       .then((result) => {
         setData(result);
-        setSelectedId((current) => current ?? result.items[0]?.id ?? null);
+        const wanted = Number(searchParams.get('call'));
+        setSelectedId(
+          (current) =>
+            current ??
+            (Number.isInteger(wanted) && wanted > 0
+              ? wanted
+              : (result.items[0]?.id ?? null)),
+        );
       })
       .catch(console.error);
-  }, []);
+  }, [searchParams]);
 
   useEffect(() => {
     if (selectedId === null) {

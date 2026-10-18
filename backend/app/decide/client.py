@@ -20,6 +20,10 @@ from app.decide.output import DECISION_JSON_SCHEMA
 if TYPE_CHECKING:
     from app.config import AppConfig
 
+# Placeholder used when no OpenAI key is stored yet (same constant the
+# secrets store uses for unset keys).
+from app.secrets_service import MISSING_KEY
+
 
 @dataclass(frozen=True)
 class ModelResponse:
@@ -66,17 +70,24 @@ def token_cost(response: ModelResponse, config: AppConfig) -> Decimal | None:
 class OpenAIDecisionClient:
     """gpt-4o-mini (or configured model) via the OpenAI SDK, strict JSON schema."""
 
-    def __init__(self, config: AppConfig) -> None:
-        from openai import AsyncOpenAI
-
+    def __init__(self, config: AppConfig, api_key: str) -> None:
         self.model = str(config.get("decision", "model", default="gpt-4o-mini"))
         self.temperature = float(
             config.get("decision", "temperature", default=0)
         )
-        timeout = float(config.get("decision", "call_timeout_seconds", default=30))
-        self._client = AsyncOpenAI(
-            api_key=config.env.openai_api_key, timeout=timeout
+        self._timeout = float(
+            config.get("decision", "call_timeout_seconds", default=30)
         )
+        self._build(api_key)
+
+    def _build(self, api_key: str) -> None:
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(api_key=api_key, timeout=self._timeout)
+
+    def update_key(self, api_key: str) -> None:
+        """Swap the key in place after a Settings save."""
+        self._build(api_key)
 
     async def complete(self, *, system: str, user: str) -> ModelResponse:
         from openai.types.chat.completion_create_params import ResponseFormat
@@ -211,10 +222,12 @@ class FakeDecisionClient:
         )
 
 
-def make_decision_client(config: AppConfig) -> DecisionClient:
-    """Simulated mode uses the fake; paper mode needs OPENAI_API_KEY."""
+def make_decision_client(
+    config: AppConfig, api_key: str | None = None
+) -> DecisionClient:
+    """Simulated mode uses the fake. In paper mode a missing key is no
+    crash — the client exists and its calls fail as ordinary model errors
+    until a key is saved in Settings."""
     if config.env.mode == "simulated":
         return FakeDecisionClient()
-    if not config.env.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is required unless MODE=simulated")
-    return OpenAIDecisionClient(config)
+    return OpenAIDecisionClient(config, api_key=api_key or MISSING_KEY)

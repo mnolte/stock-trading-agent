@@ -1,6 +1,9 @@
+import asyncio
+import threading
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 import pytest
 from alpaca.common.enums import BaseURL
@@ -34,9 +37,9 @@ async def test_get_asset_reads_raw_class_field() -> None:
 
     broker = AlpacaPaperBroker("test-key", "test-secret")
 
-    def fake_asset(symbol: str) -> dict[str, Any]:
+    def fake_asset(symbol_or_asset_id: str | UUID) -> dict[str, Any]:
         return {
-            "symbol": symbol,
+            "symbol": str(symbol_or_asset_id),
             "class": "us_equity",
             "status": "active",
             "tradable": True,
@@ -50,6 +53,77 @@ async def test_get_asset_reads_raw_class_field() -> None:
     assert result.data is not None
     assert result.data.asset_class == "us_equity"
     assert result.data.tradable is True
+
+
+async def test_trade_update_handlers_run_on_the_app_loop() -> None:
+    """The SDK stream owns a private loop on its thread; handlers touch
+    the DB, the reconcile lock and the update bus, so they must be
+    scheduled on the application loop, not awaited on the stream loop."""
+    from app.broker.alpaca import AlpacaPaperBroker
+    from app.broker.models import TradeUpdateInfo
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    main_loop = asyncio.get_running_loop()
+    broker._main_loop = main_loop  # set by start_stream in production
+
+    done = asyncio.Event()
+    seen: dict[str, object] = {}
+
+    async def handler(update: TradeUpdateInfo) -> None:
+        seen["loop"] = asyncio.get_running_loop()
+        seen["symbol"] = update.order.symbol
+        done.set()
+
+    broker.subscribe_trade_updates(handler)
+
+    raw = {
+        "event": "fill",
+        "order": {
+            "id": "o1",
+            "symbol": "MSFT",
+            "side": "buy",
+            "type": "limit",
+            "status": "filled",
+            "qty": "4",
+            "filled_qty": "4",
+            "filled_avg_price": "420.10",
+        },
+        "qty": "4",
+        "price": "420.10",
+        "timestamp": "2026-10-15T17:00:00Z",
+        "position_qty": "4",
+    }
+
+    # TradingStream invokes the subscribed coroutine on its own thread's
+    # private event loop — reproduce that exactly.
+    thread = threading.Thread(
+        target=lambda: asyncio.run(broker._on_trade_update(raw)),
+        name="fake-stream",
+        daemon=True,
+    )
+    thread.start()
+    assert await asyncio.wait_for(done.wait(), timeout=5)
+    thread.join()
+
+    # The handler ran on the app loop — the foreign thread's loop is gone.
+    assert seen["loop"] is main_loop
+    assert seen["symbol"] == "MSFT"
+
+
+async def test_trade_update_without_main_loop_is_dropped() -> None:
+    """Before start_stream (or after the app loop closes) updates are
+    dropped rather than run on the wrong loop."""
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    called: list[object] = []
+
+    async def handler(update: object) -> None:
+        called.append(update)
+
+    broker.subscribe_trade_updates(handler)
+    await broker._on_trade_update({"event": "fill", "order": {}})
+    assert called == []
 
 
 async def test_check_paper_account_accepts_pa_account() -> None:

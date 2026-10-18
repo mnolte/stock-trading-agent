@@ -99,6 +99,12 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
         "best_price_at": None,
         "worst_price": None,
         "worst_price_at": None,
+        "first_touch": None,
+        "r_1h": None,
+        "r_1session": None,
+        "r_5sessions": None,
+        "best_r": None,
+        "worst_r": None,
     }
     # The versioned prompt file ships with the repo, so text resolves.
     assert body["prompt_version"] == "decision.v1"
@@ -170,6 +176,178 @@ def _seed_no_call() -> int:
 
 def test_decision_detail_404(client: TestClient) -> None:
     assert client.get("/api/decisions/9999").status_code == 404
+
+
+def _seed_today(**over: object) -> int:
+    """A decision on a cycle from today so the dashboard picks it up."""
+    fields: dict[str, object] = {
+        "symbol": "XOM",
+        "context": "candidate",
+        "input_snapshot": {"symbol": "XOM", "price": 120.5},
+        "rules_result": {"status": "pass", "reason": None, "checks": []},
+        "model_output": None,
+        "validation_result": {},
+        "final_action": "skip",
+        "prompt_version": "decision.v1",
+        "prompt_hash": "abc123",
+        "model": "fake-decision",
+    }
+    fields.update(over)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    with get_session_maker()() as session:
+        cycle = Cycle(
+            kind="cycle",
+            scheduled_time=now,
+            started_at=now,
+            finished_at=now,
+            status="done",
+        )
+        session.add(cycle)
+        session.flush()
+        decision = Decision(cycle_id=cycle.id, **fields)
+        session.add(decision)
+        session.flush()
+        session.add(Outcome(decision_id=decision.id))
+        session.commit()
+        return decision.id
+
+
+def test_decision_detail_trade_and_outcome_keys(client: TestClient) -> None:
+    decision_id = _seed_decision()
+    body = client.get(f"/api/decisions/{decision_id}").json()
+    assert {
+        "trade",
+        "earnings",
+        "next_outcome_due",
+        "execution_mode",
+        "eur_usd_rate",
+    } <= set(body)
+    # No position or orders: the snapshot price stands in as the proposed
+    # entry and the model's levels are absent, so no R can be computed.
+    assert body["trade"]["status"] == "none"
+    assert body["trade"]["entry"] == "418.19"
+    assert body["outcome"]["first_touch"] is None
+    assert body["outcome"]["r_1h"] is None
+
+
+def test_dashboard_latest_decision_for_symbol(client: TestClient) -> None:
+    _seed_today(
+        symbol="XOM",
+        final_action="no_call",
+        no_call_reason="rules",
+        model="none",
+        model_output=None,
+        rules_result={
+            "status": "fail",
+            "reason": "RSI 71 is above the 70 limit",
+            "checks": [
+                {"name": "RSI 40–70", "passed": False, "detail": "RSI 71 > 70"}
+            ],
+        },
+        input_snapshot={
+            "symbol": "XOM",
+            "price": 120.5,
+            "regime": {"trend": "up", "volatility": "normal"},
+            "indicators_1h": {"rsi14": 71, "vwap": 119.8, "obv_trend": "up"},
+            "indicators_daily": {"close": 121, "sma50": 118},
+            "days_to_earnings": 12,
+        },
+    )
+    card = client.get("/api/dashboard?symbol=XOM").json()["latest_decision"]
+    assert card["symbol"] == "XOM"
+    assert card["final_action"] == "no_call"
+    assert card["regime"] == {"trend": "up", "volatility": "normal"}
+    assert card["earnings"]["sessions"] == 12
+    assert card["earnings"]["date"] is None
+    # No model call: pre-filter reason, then model-call row, then next look.
+    assert len(card["box"]) == 3
+    assert card["box"][0]["label"] == "Pre-filter"
+    assert card["box"][0]["value"] == "RSI 71 > 70"
+    assert card["box"][0]["tone"] == -1
+    assert card["box"][1] == {
+        "label": "Model call",
+        "value": "none this cycle",
+        "tone": 0,
+    }
+    assert card["box"][2]["label"] == "Next look"
+    # Signal chips carry text and a tone for the colour.
+    assert {"text", "tone"} <= set(card["sig"][0])
+
+
+def test_dashboard_latest_decision_held_box(client: TestClient) -> None:
+    _seed_today(
+        symbol="MSFT",
+        context="held",
+        final_action="hold",
+        model_output={"action": "hold", "confidence": 0.66},
+        input_snapshot={
+            "symbol": "MSFT",
+            "context": "held",
+            "price": 421.3,
+            "time_ny": "2026-10-15T10:46:00-04:00",
+            "position": {
+                "qty": 4,
+                "entry": 418.2,
+                "stop": 409.6,
+                "target": 435.4,
+                "opened_at": "2026-10-15T09:46:00-04:00",
+                "r_so_far": 0.36,
+            },
+        },
+    )
+    card = client.get("/api/dashboard?symbol=MSFT").json()["latest_decision"]
+    assert card["symbol"] == "MSFT"
+    labels = [row["label"] for row in card["box"]]
+    assert labels == ["Position", "Stop / target", "Agent exit from"]
+    assert card["box"][0]["value"] == "4 sh @ 418.20 · +0.36R"
+    assert card["box"][1]["value"] == "409.60 / 435.40"
+    # Same-day position: an agent exit waits until tomorrow.
+    assert card["box"][2]["value"] == "tomorrow"
+
+
+def test_dashboard_latest_decision_skip_box(client: TestClient) -> None:
+    _seed_today(
+        symbol="AAPL",
+        final_action="skip",
+        model_output={
+            "action": "enter",
+            "confidence": 0.58,
+            "stop_price": 249.25,
+            "target_price": 255.8,
+        },
+        validation_result={
+            "valid": False,
+            "model_action": "enter",
+            "final_action": "skip",
+            "changed_by_code": True,
+            "checks": [
+                {
+                    "name": "Reward to risk ≥ 1.5",
+                    "passed": False,
+                    "detail": "",
+                    "value": "1.3",
+                },
+                {
+                    "name": "Stop 1.5–4 × ATR",
+                    "passed": True,
+                    "detail": "",
+                    "value": "2.1 × ATR",
+                },
+            ],
+        },
+        input_snapshot={"symbol": "AAPL", "price": 252.1},
+    )
+    card = client.get("/api/dashboard?symbol=AAPL").json()["latest_decision"]
+    labels = [row["label"] for row in card["box"]]
+    assert labels[0] == "Reward to risk ≥ 1.5"
+    assert card["box"][0]["value"] == "1.3 ✗"
+    assert card["box"][0]["tone"] == -1
+    assert card["box"][1]["value"] == "2.1 × ATR ✓"
+    assert card["box"][2] == {
+        "label": "Proposed stop / target",
+        "value": "249.25 / 255.80",
+        "tone": 0,
+    }
 
 
 def test_decisions_cycle_time_is_utc(client: TestClient) -> None:

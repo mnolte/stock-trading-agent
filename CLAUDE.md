@@ -11,8 +11,9 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 
 - Check it against the spec sections for that build step (`docs/README.md` has the map) and against `AGENTS.md` hard rules.
 - Look specifically for: network calls in tests, `datetime.now()` in engine code, floats for money, hard-coded thresholds, orders without a stop leg, any trace of the live Alpaca URL, and processes killed by name.
+- Also check the lessons from earlier reviews: a market sell sent before the stop and target legs are confirmed cancelled; screenshots or other files written into `design/` (they belong in `docs/screenshots/pr-<n>/`); merged migrations or used prompts that were edited; tests that share one database.
 - Check that risk math (stop distance, risk, reward to risk) comes from the one shared function.
-- Report findings as: blocking, should fix, nice to have. Quote file and line.
+- Report findings as: blocking, should fix, nice to have. Quote file and line. End with a reply Marc can paste to the author.
 
 ## When changing docs
 

@@ -8,6 +8,7 @@ import DevComponents from './pages/DevComponents';
 import Inspector from './pages/Inspector';
 import Performance from './pages/Performance';
 import Positions from './pages/Positions';
+import Reviews from './pages/Reviews';
 import Settings from './pages/Settings';
 import States from './pages/States';
 
@@ -21,6 +22,7 @@ function App() {
           <Route path="positions" element={<Positions />} />
           <Route path="performance" element={<Performance />} />
           <Route path="inspector" element={<Inspector />} />
+          <Route path="reviews" element={<Reviews />} />
           <Route path="decisions/:id" element={<Decision />} />
           <Route path="settings" element={<Settings />} />
           <Route path="states" element={<States />} />

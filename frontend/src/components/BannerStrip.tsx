@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
-import { getBanners, postAcknowledgeEvent, postAcknowledgePosition } from '../api/state';
+import {
+  getBanners,
+  postAcknowledgeEvent,
+  postAcknowledgePosition,
+  postPauseResume,
+} from '../api/state';
 import type { BannerItem } from '../types/api';
 import { displayTime } from '../format';
 import { Banner } from './Banner';
@@ -49,6 +54,18 @@ export function BannerStrip({
   }, [refresh, refreshKey]);
   useLiveUpdates(['banners'], refresh);
 
+  // Pause resume is one click, no reason (docs/SPEC.md, Paused at startup).
+  const resumePause = () => {
+    setPending(true);
+    postPauseResume()
+      .then(() => {
+        refresh();
+        onChanged?.();
+      })
+      .catch(console.error)
+      .finally(() => setPending(false));
+  };
+
   const acknowledge = (item: BannerItem) => {
     setPending(true);
     const call =
@@ -73,7 +90,15 @@ export function BannerStrip({
       {items.map((item, index) => {
         const actions: { label: string; onClick: () => void }[] = [];
         if (item.actions.includes('resume')) {
-          actions.push({ label: 'Resume', onClick: () => onResumeRequest(item) });
+          // Kill-switch resume opens the typed-reason dialog ("Resume…");
+          // pause resume is a plain one-click "Resume" (design: States).
+          actions.push({ label: 'Resume…', onClick: () => onResumeRequest(item) });
+        }
+        if (item.actions.includes('resume_pause') && !item.resume_blocked) {
+          actions.push({ label: 'Resume', onClick: resumePause });
+        }
+        if (item.actions.includes('open_settings')) {
+          actions.push({ label: 'Settings', onClick: () => navigate('/settings') });
         }
         if (item.actions.includes('review') || item.actions.includes('open_orders')) {
           actions.push({

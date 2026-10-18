@@ -10,10 +10,20 @@ os.environ.setdefault(
 )
 # Tests always run against the fakes, whatever .env says — sockets are blocked.
 os.environ["MODE"] = "simulated"
+# The real .env never feeds a test: SA_ENV_FILE points at nothing and the
+# key variables are scrubbed from the environment before config loads.
+os.environ["SA_ENV_FILE"] = str(Path(tempfile.gettempdir()) / "no-such-env-file")
+for _var in (
+    "ALPACA_API_KEY",
+    "ALPACA_SECRET_KEY",
+    "OPENAI_API_KEY",
+    "FINNHUB_API_KEY",
+):
+    os.environ.pop(_var, None)
 
-import app.config as config_module
-from app.api.main import create_app
-from fastapi.testclient import TestClient
+import app.config as config_module  # noqa: E402
+from app.api.main import create_app  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +32,8 @@ def _isolated_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     another test or into the next app boot. ``get_config()`` is reset so it
     picks the path up."""
     monkeypatch.setenv("SA_DB_PATH", str(tmp_path / "stock-agent-test.db"))
+    # secret.key and its mode-600 check need an isolated data dir per test.
+    monkeypatch.setenv("SA_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(config_module, "_config", None)
 
 

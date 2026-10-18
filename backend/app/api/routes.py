@@ -11,7 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import get_config
+from app.broker.models import OPEN_ORDER_STATUSES
+from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import (
@@ -25,11 +26,14 @@ from app.db.models import (
     Order,
     Outcome,
     Position,
+    Review,
     Run,
     SettingsVersion,
+    Verdict,
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor
+from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
@@ -39,6 +43,16 @@ from app.market.clock import (
     SessionClock,
     SessionState,
     make_clock,
+)
+from app.reviews.facts import verdict_eligible, verdict_facts
+from app.secrets_service import (
+    GROUP_LABELS,
+    GROUP_ORDER,
+    GROUPS,
+    MISSING_KEY,
+    KeyTesters,
+    SecretsStore,
+    scrub,
 )
 from app.settings_service import (
     SettingsError,
@@ -139,6 +153,11 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.replace(tzinfo=UTC).isoformat() if dt is not None else None
 
 
+def _aware(dt: datetime) -> datetime:
+    """An in-memory timestamp that may be naive; treated as UTC."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 def _fmt_money(value: Decimal | None) -> str | None:
     if value is None:
         return None
@@ -204,6 +223,16 @@ def header_state(request: Request) -> dict[str, object]:
         "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
         "kill_switch": kill_on,
+        "resume_blocked": _keys_issue(request) is not None,
+        "keys_issue": _keys_issue(request),
+        "paused": bool(getattr(state, "paused", False)),
+        "paused_since": (
+            _aware(state.paused_since).astimezone(UTC).isoformat()
+            if state is not None
+            and getattr(state, "paused", False)
+            and state.paused_since is not None
+            else None
+        ),
         "eur": _eur_rate(request),
     }
 
@@ -338,8 +367,111 @@ def list_decisions(request: Request) -> dict[str, object]:
     }
 
 
+def _decision_earnings(
+    session: Session, decision: Decision, scheduled: datetime
+) -> dict[str, object]:
+    """Earnings chip data: the next report at decision time + sessions seen."""
+    snapshot = decision.input_snapshot or {}
+    days = snapshot.get("days_to_earnings")
+    scheduled_day = scheduled.replace(tzinfo=UTC).astimezone(NY_TZ).date()
+    next_date = session.execute(
+        select(func.min(Earning.date)).where(
+            Earning.symbol == decision.symbol,
+            Earning.date >= datetime.combine(scheduled_day, dtime.min),
+        )
+    ).scalar_one_or_none()
+    return {
+        "date": next_date.date().isoformat() if next_date is not None else None,
+        "sessions": days if isinstance(days, int) else None,
+        "unavailable": days == "unavailable",
+    }
+
+
+def _r_multiple(
+    price: Decimal | None, entry: Decimal | None, stop: Decimal | None
+) -> str | None:
+    """Return on risk, e.g. '+0.22'; None when the inputs can't make one."""
+    if price is None or entry is None or stop is None:
+        return None
+    risk = entry - stop
+    if risk <= 0:
+        return None
+    return f"{(price - entry) / risk:+.2f}"
+
+
+def _trade_block(
+    position: Position | None,
+    orders: Sequence[Order],
+    fills: dict[int, Sequence[Fill]],
+    approval: Approval | None,
+    output: dict[str, object],
+    snapshot: dict[str, object],
+) -> dict[str, object]:
+    """The levels the decision traded at, for the tiles and R multiples.
+
+    Filled position first, then the order legs, then the approval or the
+    model's proposed levels.
+    """
+    entry: Decimal | None = None
+    stop: Decimal | None = None
+    target: Decimal | None = None
+    qty: int | None = None
+    status = "none"
+    if position is not None:
+        qty = position.qty
+        entry = position.avg_entry_price
+        stop = position.current_stop_price
+        target = position.target_price
+        status = "closed" if position.closed_at else "open"
+    entry_order = next((o for o in orders if o.leg == "entry"), None)
+    stop_order = next((o for o in orders if o.leg == "stop"), None)
+    target_order = next((o for o in orders if o.leg == "target"), None)
+    if entry is None and entry_order is not None:
+        qty = qty or entry_order.qty
+        order_fills = fills.get(entry_order.id, [])
+        filled_qty = sum(f.qty for f in order_fills)
+        if filled_qty:
+            entry = (
+                sum((f.price * f.qty for f in order_fills), Decimal(0))
+                / filled_qty
+            )
+        else:
+            entry = entry_order.limit_price
+    if stop is None and stop_order is not None:
+        stop = stop_order.stop_price or stop_order.limit_price
+    if target is None and target_order is not None:
+        target = target_order.limit_price or target_order.stop_price
+    if qty is None and approval is not None:
+        qty = approval.qty
+    if entry is None and approval is not None:
+        entry = approval.limit_price
+    if stop is None and isinstance(output.get("stop_price"), int | float):
+        stop = Decimal(str(output["stop_price"]))
+    if target is None and isinstance(output.get("target_price"), int | float):
+        target = Decimal(str(output["target_price"]))
+    if entry is None and isinstance(snapshot.get("price"), int | float):
+        entry = Decimal(str(snapshot["price"]))
+    if position is None:
+        status = (
+            "filled"
+            if entry_order is not None and entry_order.status == "filled"
+            else "open"
+            if entry_order is not None
+            else "approval"
+            if approval is not None and approval.status == "pending"
+            else "none"
+        )
+    return {
+        "qty": qty,
+        "entry": str(entry) if entry is not None else None,
+        "stop": str(stop) if stop is not None else None,
+        "target": str(target) if target is not None else None,
+        "status": status,
+    }
+
+
 @router.get("/decisions/{decision_id}")
-def decision_detail(decision_id: int) -> dict[str, object]:
+def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     """One stored decision with its prompt, output, checks and raw response."""
     with get_session_maker()() as session:
         row = session.execute(
@@ -371,10 +503,42 @@ def decision_detail(decision_id: int) -> dict[str, object]:
             .order_by(Approval.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+        position_row = session.execute(
+            select(Position).where(Position.entry_decision_id == decision_id)
+        ).scalar_one_or_none()
+        verdict_row = session.execute(
+            select(Verdict).where(Verdict.decision_id == decision_id)
+        ).scalar_one_or_none()
+        earnings = _decision_earnings(session, decision, scheduled)
+    output = decision.model_output or {}
+    snapshot = decision.input_snapshot or {}
+    trade = _trade_block(
+        position_row, order_rows, fills, approval_row, output, snapshot
+    )
+    entry = Decimal(trade["entry"]) if isinstance(trade["entry"], str) else None
+    stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
     except OSError:
         prompt_text = None
+    next_due = None
+    verdict_due = None
+    if outcome is not None:
+        worker = OutcomeWorker(
+            market_data=None,
+            calendar=_calendar(request),
+            config=get_config(),
+            clock=make_clock(),
+        )
+        next_due = worker.next_due(scheduled.replace(tzinfo=UTC), outcome)
+        # The verdict waits for the 5-session outcome specifically; the
+        # drawer chip shows the date it lands.
+        if outcome.price_5sessions is None:
+            for field, _at, target in worker._targets(
+                scheduled.replace(tzinfo=UTC)
+            ):
+                if field == "price_5sessions":
+                    verdict_due = target
     return {
         "id": decision.id,
         "cycle_time": scheduled.replace(tzinfo=UTC).isoformat(),
@@ -387,6 +551,7 @@ def decision_detail(decision_id: int) -> dict[str, object]:
         "model_output": decision.model_output,
         "validation_result": decision.validation_result,
         "gates_result": decision.gates_result,
+        "trade": trade,
         "outcome": (
             {
                 "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
@@ -409,10 +574,37 @@ def decision_detail(decision_id: int) -> dict[str, object]:
                     str(outcome.worst_price) if outcome.worst_price else None
                 ),
                 "worst_price_at": _iso(outcome.worst_price_at),
+                "first_touch": outcome.first_touch,
+                "r_1h": _r_multiple(outcome.price_1h, entry, stop),
+                "r_1session": _r_multiple(outcome.price_1session, entry, stop),
+                "r_5sessions": _r_multiple(outcome.price_5sessions, entry, stop),
+                "best_r": _r_multiple(outcome.best_price, entry, stop),
+                "worst_r": _r_multiple(outcome.worst_price, entry, stop),
             }
             if outcome is not None
             else None
         ),
+        "next_outcome_due": _iso(next_due),
+        "verdict": (
+            {
+                "id": verdict_row.id,
+                "verdict": verdict_row.verdict,
+                "reason": verdict_row.reason,
+                "source": verdict_row.source,
+                "draft_source": verdict_row.draft_source,
+                "created_at": _iso(verdict_row.created_at),
+                "updated_at": _iso(verdict_row.updated_at),
+            }
+            if verdict_row is not None
+            else None
+        ),
+        "verdict_eligible": verdict_eligible(decision),
+        "verdict_due": _iso(verdict_due),
+        "earnings": earnings,
+        "execution_mode": get_config().get(
+            "execution", "mode", default="automatic"
+        ),
+        "eur_usd_rate": _eur_rate(request)["rate"],
         "prompt_version": decision.prompt_version,
         "prompt_hash": decision.prompt_hash,
         "prompt_text": prompt_text,
@@ -459,6 +651,41 @@ def _executor(request: Request) -> Executor:
     return executor  # type: ignore[no-any-return]
 
 
+def _secrets(request: Request) -> SecretsStore | None:
+    return getattr(request.app.state, "secrets_store", None)
+
+
+def _key_testers(request: Request) -> KeyTesters:
+    testers = getattr(request.app.state, "key_testers", None)
+    if testers is None:
+        raise HTTPException(status_code=503, detail="key testers unavailable")
+    return testers  # type: ignore[no-any-return]
+
+
+def _keys_issue(request: Request) -> str | None:
+    """Short text for the missing/failing-key state; None when all pass or
+    in simulated mode (which needs no keys)."""
+    if get_config().env.mode == "simulated":
+        return None
+    store = _secrets(request)
+    missing = store.missing_groups() if store is not None else list(GROUP_ORDER)
+    if not missing:
+        return None
+    parts: list[str] = []
+    for group in missing:
+        status = (
+            store.group_status(group)["status"] if store is not None else "missing"
+        )
+        label = GROUP_LABELS[group]
+        if status == "missing":
+            parts.append(f"no {label} saved")
+        elif status == "failing":
+            parts.append(f"{label} failing the test")
+        else:
+            parts.append(f"{label} saved but untested")
+    return " · ".join(parts)
+
+
 @router.post("/kill-switch")
 async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Turn the kill switch on, or stop & flatten everything."""
@@ -472,12 +699,42 @@ async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, ob
     return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
 
 
+@router.post("/pause")
+async def pause(request: Request) -> dict[str, object]:
+    """Pause new entries; positions keep being reviewed and protected."""
+    executor = _executor(request)
+    await executor.pause()
+    return {"paused": True}
+
+
+@router.post("/pause/resume")
+async def pause_resume(request: Request) -> dict[str, object]:
+    """Resume entries after a pause. One click, no reason needed — but only
+    when every required key is set and passing (docs/SPEC.md, API keys)."""
+    executor = _executor(request)
+    issue = _keys_issue(request)
+    if issue is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Resume needs all three keys set and passing ({issue}).",
+        )
+    await executor.resume_from_pause()
+    return {"paused": False}
+
+
 @router.post("/kill-switch/resume")
 async def kill_switch_resume(
     request: Request, body: dict[str, object]
 ) -> dict[str, object]:
-    """Resume after a kill switch; the typed reason is stored in the log."""
+    """Resume after a kill switch; the typed reason is stored in the log.
+    Same key gate as a normal resume: nothing works without them."""
     executor = _executor(request)
+    issue = _keys_issue(request)
+    if issue is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Resume needs all three keys set and passing ({issue}).",
+        )
     reason = str(body.get("reason") or "")
     try:
         await executor.resume(reason)
@@ -597,7 +854,7 @@ def _position_legs(session: Session, position: Position) -> list[dict[str, objec
     legs = [
         row
         for row in rows
-        if row.leg in ("stop", "target") and row.status in OPEN_LIKE_STATUSES
+        if row.leg in ("stop", "target") and row.status in OPEN_ORDER_STATUSES
     ]
     out: list[dict[str, object]] = []
     if entry is not None:
@@ -636,16 +893,6 @@ def _position_legs(session: Session, position: Position) -> list[dict[str, objec
                 item["replaced_from"] = str(prev.stop_price)
         out.append(item)
     return out
-
-
-OPEN_LIKE_STATUSES = (
-    "new",
-    "accepted",
-    "pending_new",
-    "partially_filled",
-    "held",
-    "open",
-)
 
 
 @router.get("/positions")
@@ -839,6 +1086,7 @@ def banners(request: Request) -> dict[str, object]:
                         "protective_stop",
                         "position_check_failed",
                         "flatten_sell_rejected",
+                        "flatten_sell_blocked",
                     ]
                 ),
             )
@@ -917,6 +1165,24 @@ def banners(request: Request) -> dict[str, object]:
                         "actions": ["acknowledge"],
                     }
                 )
+            elif event.event_type == "flatten_sell_blocked":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "flatten_sell_blocked",
+                        "level": "critical",
+                        "message": (
+                            f"Stop & flatten held back the sale of "
+                            f"{event_symbol(details)}: an order cancel was "
+                            "never confirmed at Alpaca. The position keeps "
+                            "its stop; reconcile or cancel the order before "
+                            "selling."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
             else:
                 items.append(
                     {
@@ -930,9 +1196,102 @@ def banners(request: Request) -> dict[str, object]:
                     }
                 )
 
+    if (
+        state is not None
+        and getattr(state, "paused", False)
+        and getattr(state, "paused_at_startup", False)
+    ):
+        app_tz = ZoneInfo(
+            str(get_config().get("app", "timezone", default="Europe/Amsterdam"))
+        )
+        at = (
+            _aware(state.paused_since).astimezone(app_tz).strftime("%H:%M")
+            if state.paused_since is not None
+            else "—"
+        )
+        with get_session_maker()() as session:
+            open_positions = session.execute(
+                select(Position).where(Position.closed_at.is_(None))
+            ).scalars().all()
+        # Only claim broker state after a successful reconcile: a failed
+        # pass leaves the stored stops unverified (last_reconcile_ok).
+        if getattr(state, "last_reconcile_at", None) is None or not getattr(
+            state, "last_reconcile_ok", False
+        ):
+            reconciled = ""
+        elif not open_positions:
+            reconciled = "Reconciled with Alpaca: no open positions. "
+        else:
+            covered = sum(
+                1 for p in open_positions if p.current_stop_price is not None
+            )
+            count = len(open_positions)
+            detail = (
+                "all with a stop"
+                if covered == count
+                else f"{covered} of {count} with a stop"
+            )
+            reconciled = (
+                f"Reconciled with Alpaca: {count} "
+                f"position{'s' if count != 1 else ''}, {detail}. "
+            )
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "paused",
+                "level": "info",
+                "since": (
+                    _aware(state.paused_since).astimezone(UTC).isoformat()
+                    if state.paused_since
+                    else None
+                ),
+                "message": (
+                    f"Started paused at {at}. {reconciled}Held positions "
+                    "are still reviewed each cycle; no new entries until "
+                    "you resume."
+                ),
+                "resume_blocked": _keys_issue(request) is not None,
+                "actions": ["resume_pause"],
+            },
+        )
+    keys_issue = _keys_issue(request)
+    if keys_issue is not None:
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "missing_keys",
+                "level": "warning",
+                "message": (
+                    f"{keys_issue} — the agent stays paused until all "
+                    "three keys are set and passing."
+                ),
+                "actions": ["open_settings"],
+            },
+        )
+    store = _secrets(request)
+    if store is not None and store.env_present:
+        message = (
+            "API keys were imported from .env and now live encrypted in "
+            "Settings — remove them from .env."
+            if store.imported
+            else "API keys found in .env are ignored — keys live in "
+            "Settings. Remove them from .env."
+        )
+        items.insert(
+            0,
+            {
+                "id": None,
+                "kind": "env_keys",
+                "level": "info",
+                "message": message,
+                "actions": [],
+            },
+        )
     if state is not None and state.kill_switch_on:
         since = (
-            state.kill_switch_since.astimezone(UTC).isoformat()
+            _aware(state.kill_switch_since).astimezone(UTC).isoformat()
             if state.kill_switch_since
             else None
         )
@@ -1162,6 +1521,7 @@ def approvals(request: Request) -> dict[str, object]:
     return {
         "mode": get_config().get("execution", "mode", default="automatic"),
         "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
+        "paused": bool(getattr(state, "paused", False)),
         "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
         "recent": [_approval_json(a, None) for a in recent],
     }
@@ -1208,7 +1568,7 @@ def _held_symbols() -> set[str]:
             for row in session.execute(
                 select(Order.symbol).where(
                     Order.leg == "entry",
-                    Order.status.in_(OPEN_LIKE_STATUSES),
+                    Order.status.in_(OPEN_ORDER_STATUSES),
                 )
             ).all()
         }
@@ -1284,6 +1644,14 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "reviews": {
+            "briefing_enabled": get(
+                "reviews", "briefing_enabled", default=True
+            ),
+            "monthly_cost_cap_usd": get(
+                "reviews", "monthly_cost_cap_usd", default=2
+            ),
+        },
         "universe": {
             "symbols": get("universe", "symbols", default=[]),
             "sectors": get("universe", "sectors", default={}),
@@ -1326,7 +1694,7 @@ def _connections(request: Request) -> list[dict[str, object]]:
                 else ("connected · paper" if account is not None else "error")
             ),
             "detail": (
-                f"account {masked} · keys from .env"
+                f"account {masked} · keys stored encrypted"
                 if masked
                 else ("fake broker" if simulated else "account unread")
             ),
@@ -1371,7 +1739,7 @@ def _connections(request: Request) -> list[dict[str, object]]:
     fx = getattr(market_data, "latest_fx", None) if market_data else None
     rows.append(
         {
-            "source": "ECB FX (EUR/USD)",
+            "source": "ECB EUR/USD",
             "status": (
                 "simulated"
                 if simulated
@@ -1395,6 +1763,16 @@ def _connections(request: Request) -> list[dict[str, object]]:
         }
     )
     return rows
+
+
+def _reviews_spend(request: Request) -> str | None:
+    """This month's review-call spend for the cost-cap row (None without
+    a review service — e.g. a bare test app)."""
+    service = getattr(request.app.state, "review_service", None)
+    if service is None:
+        return None
+    with get_session_maker()() as session:
+        return str(service.monthly_spend(session))
 
 
 @router.get("/settings")
@@ -1427,6 +1805,7 @@ def settings(request: Request) -> dict[str, object]:
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
+        "reviews_spend_usd": _reviews_spend(request),
         "mode": config.env.mode,
     }
 
@@ -1442,30 +1821,41 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     broker = getattr(request.app.state, "broker", None)
     if broker is None:
         raise HTTPException(status_code=503, detail="broker unavailable")
+    # A still-pending save is the base for the next one — merging onto
+    # ``active`` would drop its changes from the new version's tree.
     active = config.effective()
+    base = config.pending() or active
     try:
         cleaned, changes = await validate_settings(
             submitted,
-            active,
+            base,
             broker=broker,
             held_symbols=_held_symbols(),
         )
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=exc.errors) from exc
-    new_tree = _deep_merge(active, cleaned)
+    if not reason.strip():
+        # Required and shown in History (docs/SPEC.md, Settings screen).
+        raise HTTPException(
+            status_code=422, detail=["a reason is required"]
+        )
+    new_tree = _deep_merge(base, cleaned)
     with get_session_maker()() as session:
         row = save_version(
             session, _clock(request), settings=new_tree, reason=reason
         )
         session.commit()
         version = row.version
-    config.set_pending(cleaned, version)
+    # The pending version must be the full merged tree, same as the stored
+    # row — passing only ``cleaned`` would silently revert every earlier
+    # saved change at the next cycle's promotion.
+    config.set_pending(new_tree, version)
     schedule = cleaned.get("schedule")
     if isinstance(schedule, dict) and "cycles" in schedule and (
-        schedule["cycles"] != _nested_get(active, "schedule", "cycles")
+        schedule["cycles"] != _nested_get(base, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
-    _notify(request, "header")
+    _notify(request, "header", "settings")
     return {
         "version": version,
         "changes": changes,
@@ -1476,6 +1866,264 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
+
+
+# ----------------------------------------------------------------------
+# API keys (encrypted, write-only, tested before save)
+
+
+def _open_items() -> int:
+    """Open positions plus open orders — the Alpaca-replace guard count."""
+    with get_session_maker()() as session:
+        positions = session.execute(
+            select(func.count(Position.id)).where(Position.closed_at.is_(None))
+        ).scalar_one()
+        open_orders = session.execute(
+            select(func.count(Order.id)).where(
+                Order.status.in_(OPEN_ORDER_STATUSES)
+            )
+        ).scalar_one()
+    return positions + open_orders
+
+
+def _data_source_tiles(request: Request) -> list[dict[str, object]]:
+    """The design's four data-source tiles for the keys section."""
+    wanted = {
+        "Alpaca market data",
+        "Alpaca news",
+        "Finnhub earnings",
+        "ECB EUR/USD",
+    }
+    return [row for row in _connections(request) if row["source"] in wanted]
+
+
+_KEY_ROW_INFO: dict[str, dict[str, str]] = {
+    "alpaca": {
+        "label": "Alpaca paper keys",
+        "hint": "Orders, positions, market data and news",
+    },
+    "openai": {"label": "OpenAI", "hint": "Trading decisions and reviews"},
+    "finnhub": {"label": "Finnhub", "hint": "Earnings calendar (free plan)"},
+}
+
+
+@router.get("/keys")
+def api_keys(request: Request) -> dict[str, object]:
+    """Key metadata for Settings: status, mask and timestamps — never a key."""
+    store = _secrets(request)
+    open_items = _open_items()
+    state = getattr(request.app.state, "exec_state", None)
+    paused_or_kill = bool(
+        state is not None
+        and (getattr(state, "paused", False) or getattr(state, "kill_switch_on", False))
+    )
+    replace_allowed = paused_or_kill and open_items == 0
+    rows = []
+    for group in GROUP_ORDER:
+        status = store.group_status(group) if store is not None else {
+            "name": group,
+            "set": False,
+            "status": "missing",
+            "masked": None,
+            "account": None,
+            "saved_at": None,
+            "tested_at": None,
+            "error": None,
+        }
+        rows.append({**_KEY_ROW_INFO[group], **status})
+    return {
+        "keys": rows,
+        "set_count": sum(1 for row in rows if row["set"]),
+        "all_ready": store.all_ready() if store is not None else False,
+        "open_items": open_items,
+        "paused_or_kill": paused_or_kill,
+        "replace_allowed": replace_allowed,
+        "replace_hint": (
+            "Replacing needs the agent paused with no open positions or "
+            f"orders ({open_items} open). Only paper keys are accepted."
+        ),
+        "env_keys": bool(store is not None and store.env_present),
+        "mode": get_config().env.mode,
+        "data_sources": _data_source_tiles(request),
+    }
+
+
+async def _apply_keys(request: Request, changed: set[str]) -> None:
+    """Point the live clients at newly saved keys — in place, so every
+    service holding the client object keeps working."""
+    store = _secrets(request)
+    if store is None:
+        return
+    config = get_config()
+    sources = getattr(request.app.state, "data_sources", None)
+    if "alpaca" in changed:
+        key_id, secret = store.alpaca_pair()
+        if sources is not None and sources.alpaca is not None:
+            sources.alpaca.update_credentials(
+                key_id or MISSING_KEY, secret or MISSING_KEY
+            )
+        from app.broker.alpaca import AlpacaPaperBroker
+
+        broker = getattr(request.app.state, "broker", None)
+        if isinstance(broker, AlpacaPaperBroker):
+            await broker.update_credentials(
+                key_id or MISSING_KEY,
+                secret or MISSING_KEY,
+                keyed=bool(key_id and secret),
+            )
+        executor = getattr(request.app.state, "executor", None)
+        if executor is not None:
+            await executor.refresh_account()
+    if "finnhub" in changed and sources is not None:
+        update_key = getattr(sources.earnings, "update_key", None)
+        if callable(update_key):
+            update_key(store.get("finnhub") or MISSING_KEY)
+    if "openai" in changed and config.env.mode != "simulated":
+        key = store.get("openai")
+        if key:
+            from app.reviews.client import OpenAIReviewClient
+
+            runner = getattr(request.app.state, "cycle_runner", None)
+            decide = getattr(runner, "decide", None)
+            if decide is not None:
+                decide.api_key = key
+                update_key = getattr(decide.client, "update_key", None)
+                if callable(update_key):
+                    update_key(key)
+                else:
+                    decide.reload()
+            service = getattr(request.app.state, "review_service", None)
+            review_client = getattr(service, "client", None)
+            if service is not None:
+                update_key = getattr(review_client, "update_key", None)
+                if callable(update_key):
+                    update_key(key)
+                else:
+                    service.client = OpenAIReviewClient(config, api_key=key)
+
+
+@router.post("/keys/{group}")
+async def save_api_key(
+    request: Request, group: str, body: dict[str, object]
+) -> dict[str, object]:
+    """Test a candidate key, then save it only when the test passes —
+    the old key keeps working until then. Alpaca has extra guards."""
+    store = _secrets(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="key store unavailable")
+    if group not in GROUPS:
+        raise HTTPException(status_code=404, detail="unknown key")
+    testers = _key_testers(request)
+
+    if group == "alpaca":
+        key_id = str(body.get("key_id") or "").strip()
+        secret = str(body.get("secret") or "").strip()
+        if not key_id or not secret:
+            raise HTTPException(
+                status_code=422,
+                detail="the Alpaca key id and secret are both required",
+            )
+        state = getattr(request.app.state, "exec_state", None)
+        paused_or_kill = bool(
+            state is not None
+            and (
+                getattr(state, "paused", False)
+                or getattr(state, "kill_switch_on", False)
+            )
+        )
+        if not paused_or_kill:
+            raise HTTPException(
+                status_code=422,
+                detail="pause the agent or turn the kill switch on before "
+                "replacing the Alpaca keys",
+            )
+        open_items = _open_items()
+        if open_items:
+            raise HTTPException(
+                status_code=422,
+                detail=f"close all positions and orders first ({open_items} open)",
+            )
+        result = await testers.alpaca(key_id, secret)
+        if not result.ok:
+            # The candidate was never stored, so the store's scrub list
+            # doesn't cover it — strip it here before it can reach the
+            # event log or the response.
+            clean = scrub(result.error or "", [key_id, secret])
+            store.record_event(
+                "alpaca_key_id", "tested", False, clean, last4=key_id[-4:]
+            )
+            raise HTTPException(status_code=422, detail=clean or "test failed")
+        old_account = getattr(
+            getattr(state, "account", None) if state is not None else None,
+            "account_number",
+            None,
+        )
+        account_changed = bool(
+            result.account and old_account and result.account != old_account
+        )
+        for name, value in (
+            ("alpaca_key_id", key_id),
+            ("alpaca_secret", secret),
+        ):
+            store.save(name, value, "ok", result.detail)
+            store.record_event(name, "saved", True, result.detail)
+        await _apply_keys(request, {"alpaca"})
+        if account_changed:
+            executor = _executor(request)
+            await executor.activate_kill_switch(
+                reason=(
+                    "Alpaca keys point at a different paper account — "
+                    "start a new run"
+                ),
+                automatic=True,
+            )
+        _notify(request, "banners", "header", "settings")
+        return {
+            "ok": True,
+            "account_changed": account_changed,
+            "key": store.group_status("alpaca"),
+        }
+
+    value = str(body.get("value") or "").strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="a key is required")
+    result = await (
+        testers.openai(value) if group == "openai" else testers.finnhub(value)
+    )
+    if not result.ok:
+        clean = scrub(result.error or "", [value])
+        store.record_event(group, "tested", False, clean, last4=value[-4:])
+        raise HTTPException(status_code=422, detail=clean or "test failed")
+    store.save(group, value, "ok", result.detail)
+    store.record_event(group, "saved", True, result.detail)
+    await _apply_keys(request, {group})
+    _notify(request, "banners", "header", "settings")
+    return {"ok": True, "key": store.group_status(group)}
+
+
+@router.post("/keys/{group}/test")
+async def test_api_key(request: Request, group: str) -> dict[str, object]:
+    """The separate Test action: re-checks the stored key and updates its
+    result — the value is never returned."""
+    store = _secrets(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="key store unavailable")
+    if group not in GROUPS:
+        raise HTTPException(status_code=404, detail="unknown key")
+    result = await store.retest_stored(group, _key_testers(request))
+    if result is None:
+        raise HTTPException(
+            status_code=422, detail=f"no {GROUP_LABELS[group]} saved yet"
+        )
+    _notify(request, "banners", "header", "settings")
+    return {
+        "ok": result.ok,
+        "error": scrub(result.error or "", store.scrub_values()) or None,
+        "key": store.group_status(group),
+    }
+
+
+
 
 
 # ----------------------------------------------------------------------
@@ -1555,8 +2203,212 @@ def performance(request: Request, run: int | None = None) -> dict[str, object]:
 # Dashboard + chart
 
 
+def _f(value: object) -> float | None:
+    """JSON number or None; 'unavailable' strings read as None."""
+    return value if isinstance(value, int | float) else None
+
+
+def _fmt_price2(value: object) -> str:
+    f = _f(value)
+    return f"{f:.2f}" if f is not None else "—"
+
+
+def _sig_chips(
+    snapshot: dict[str, object], config: AppConfig
+) -> list[dict[str, object]]:
+    """Signal chips under the card's reasoning line (design: Main)."""
+    chips: list[dict[str, object]] = []
+    ind1h = cast("dict[str, object]", snapshot.get("indicators_1h") or {})
+    daily = cast("dict[str, object]", snapshot.get("indicators_daily") or {})
+
+    rsi = _f(ind1h.get("rsi14"))
+    if rsi is not None:
+        rsi_min = float(config.get("rules", "rsi_min", default=40))
+        rsi_max = float(config.get("rules", "rsi_max", default=70))
+        chips.append(
+            {
+                "text": f"RSI {rsi:.0f}",
+                "tone": -1 if rsi < rsi_min or rsi > rsi_max else 0,
+            }
+        )
+
+    price, vwap = _f(snapshot.get("price")), _f(ind1h.get("vwap"))
+    if price is not None and vwap:
+        rel = (price - vwap) / vwap * 100
+        chips.append(
+            {
+                "text": (
+                    "> VWAP" if rel > 0.05 else "< VWAP" if rel < -0.05 else "≈ VWAP"
+                ),
+                "tone": 1 if rel > 0.05 else -1 if rel < -0.05 else 0,
+            }
+        )
+
+    ema20, ema50 = _f(ind1h.get("ema20")), _f(ind1h.get("ema50"))
+    if ema20 is not None and ema50 is not None:
+        chips.append(
+            {
+                "text": "EMA 20 > 50" if ema20 > ema50 else "EMA 20 < 50",
+                "tone": 1 if ema20 > ema50 else -1,
+            }
+        )
+
+    close, sma50 = _f(daily.get("close")), _f(daily.get("sma50"))
+    if close is not None and sma50 is not None:
+        chips.append(
+            {
+                "text": "Daily > SMA 50" if close > sma50 else "Daily < SMA 50",
+                "tone": 1 if close > sma50 else -1,
+            }
+        )
+
+    obv = ind1h.get("obv_trend")
+    if obv in ("up", "down", "flat"):
+        chips.append(
+            {
+                "text": {"up": "OBV ↑", "down": "OBV ↓", "flat": "OBV flat"}[obv],
+                "tone": {"up": 1, "down": -1, "flat": 0}[obv],
+            }
+        )
+
+    rs = _f(ind1h.get("rs_vs_spy_pct"))
+    if rs is not None:
+        chips.append(
+            {
+                "text": f"RS vs SPY {rs:+.1f}%",
+                "tone": 1 if rs > 0 else -1 if rs < 0 else 0,
+            }
+        )
+
+    gap = _f(daily.get("gap_pct"))
+    if gap is not None:
+        chips.append({"text": f"Gap {gap:+.1f}%", "tone": 0})
+    return chips
+
+
+def _box_row(label: str, value: str, tone: int = 0) -> dict[str, object]:
+    return {"label": label, "value": value, "tone": tone}
+
+
+def _check_row(check: dict[str, object]) -> dict[str, object]:
+    """One check → a summary-box line (name / value with a pass mark)."""
+    passed = bool(check.get("passed"))
+    value = check.get("value") or check.get("detail") or "—"
+    return _box_row(
+        str(check.get("name")),
+        f"{value} {'✓' if passed else '✗'}",
+        1 if passed else -1,
+    )
+
+
+def _latest_box(
+    decision: Decision,
+    snapshot: dict[str, object],
+    session_state: SessionState,
+    app_tz: ZoneInfo,
+) -> list[dict[str, object]]:
+    """The card's three-line summary box (design: skip / held / no-call)."""
+    output = decision.model_output or {}
+    validation = decision.validation_result or {}
+    rules = decision.rules_result or {}
+
+    if decision.final_action == "no_call":
+        reason = decision.no_call_reason or "rules"
+        rule_checks = cast(
+            "list[dict[str, object]]", rules.get("checks") or []
+        )
+        failed = next((c for c in rule_checks if not c.get("passed")), None)
+        if reason == "rules":
+            label, tone = "Pre-filter", -1
+            detail = str(
+                (failed or {}).get("detail") or rules.get("reason") or "failed"
+            )
+        elif reason == "call_cap":
+            label, tone, detail = "Call cap", 0, "reached"
+        elif reason == "quote_missing":
+            label, tone, detail = "Quote", -1, "unavailable"
+        else:
+            label, tone = "Model call", -1
+            detail = str(validation.get("error") or "failed")
+        nxt = session_state.next_cycle
+        look = (
+            f"{nxt.astimezone(app_tz).strftime('%H:%M')} cycle"
+            if nxt is not None
+            else "next session"
+        )
+        return [
+            _box_row(label, detail, tone),
+            _box_row("Model call", "none this cycle"),
+            _box_row("Next look", look),
+        ]
+
+    if decision.context == "held":
+        pos = cast("dict[str, object]", snapshot.get("position") or {})
+        rows: list[dict[str, object]] = []
+        if pos:
+            r = _f(pos.get("r_so_far"))
+            value = f"{pos.get('qty')} sh @ {_fmt_price2(pos.get('entry'))}"
+            if r is not None:
+                value += f" · {r:+.2f}R"
+            rows.append(_box_row("Position", value, 1 if (r or 0) >= 0 else -1))
+            rows.append(
+                _box_row(
+                    "Stop / target",
+                    f"{_fmt_price2(pos.get('stop'))} / "
+                    f"{_fmt_price2(pos.get('target'))}",
+                )
+            )
+        else:
+            rows += [
+                _box_row("Position", "—"),
+                _box_row("Stop / target", "—"),
+            ]
+        # An agent exit on a same-day-opened position waits for the next
+        # session (day-trade guard), as do exits already deferred.
+        opened = str(pos.get("opened_at") or "")
+        decided = str(snapshot.get("time_ny") or "")
+        same_day = bool(opened) and opened[:10] == decided[:10]
+        exit_from = (
+            "tomorrow"
+            if same_day
+            or decision.final_action == "deferred"
+            or pos.get("deferred_exit")
+            else "now"
+        )
+        rows.append(_box_row("Agent exit from", exit_from))
+        return rows[:3]
+
+    # Candidate decisions: failed check first, then a pass, then the
+    # proposed stop and target.
+    checks = cast("list[dict[str, object]]", validation.get("checks") or [])
+    gates = decision.gates_result or {}
+    gate_checks = cast(
+        "list[dict[str, object]]", gates.get("checks") or []
+    )
+    ordered = [c for c in checks + gate_checks if not c.get("passed")] + [
+        c for c in checks + gate_checks if c.get("passed")
+    ]
+    rows = [_check_row(c) for c in ordered[:2]]
+    while len(rows) < 2:
+        rows.append(
+            _box_row(
+                "Model action",
+                str(validation.get("model_action") or decision.final_action),
+            )
+        )
+    stop = _fmt_price2(output.get("stop_price"))
+    target = _fmt_price2(output.get("target_price"))
+    label = (
+        "Stop / target"
+        if decision.final_action == "enter"
+        else "Proposed stop / target"
+    )
+    rows.append(_box_row(label, f"{stop} / {target}"))
+    return rows[:3]
+
+
 @router.get("/dashboard")
-def dashboard(request: Request) -> dict[str, object]:
+def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
     config = get_config()
     clock = getattr(request.app.state, "clock", None) or make_clock()
@@ -1620,6 +2472,21 @@ def dashboard(request: Request) -> dict[str, object]:
             if day_sessions
             else 0
         )
+        # Latest decision for the card: today's newest for the selected
+        # symbol (or the newest overall when no symbol is given).
+        latest = next(
+            (
+                row
+                for row in today_decisions
+                if symbol is None or row[0].symbol == symbol.upper()
+            ),
+            None,
+        )
+        latest_earnings = (
+            _decision_earnings(session, latest[0], latest[1])
+            if latest is not None
+            else None
+        )
 
     # Stat cards.
     open_risk = Decimal(0)
@@ -1654,14 +2521,24 @@ def dashboard(request: Request) -> dict[str, object]:
         since_label = f"since {run.started_at.astimezone(app_tz).strftime('%d %b')}"
 
     # Latest decision card.
-    latest = today_decisions[0] if today_decisions else None
     latest_card = None
     if latest is not None:
         d, scheduled = latest
         validation = d.validation_result or {}
         checks = cast("list[dict[str, object]]", validation.get("checks") or [])
         output = d.model_output or {}
+        rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
+        if d.final_action == "no_call":
+            why = (
+                rules.get("reason") or validation.get("error") or d.no_call_reason
+            )
+        else:
+            why = (
+                output.get("thesis")
+                or validation.get("note")
+                or validation.get("error")
+            )
         latest_card = {
             "id": d.id,
             "symbol": d.symbol,
@@ -1670,12 +2547,12 @@ def dashboard(request: Request) -> dict[str, object]:
             "final_action": d.final_action,
             "no_call_reason": d.no_call_reason,
             "confidence": output.get("confidence"),
-            "why": (
-                output.get("thesis")
-                or validation.get("note")
-                or validation.get("error")
-                or d.no_call_reason
-            ),
+            "why": why,
+            "model": d.model,
+            "regime": snapshot.get("regime"),
+            "earnings": latest_earnings,
+            "sig": _sig_chips(snapshot, config),
+            "box": _latest_box(d, snapshot, session_state, app_tz),
             "checks": [
                 {
                     "name": c.get("name"),
@@ -1754,14 +2631,20 @@ def dashboard(request: Request) -> dict[str, object]:
                 f"{calls} model call{'s' if calls != 1 else ''} · "
                 f"${cost:.3f}."
             )
-        # "Cycle N of M today" counts today's run cycles so far.
+        # "Cycle N of M today" counts today's run cycles so far; M is the
+        # session's active count (fewer on early-close days), not the
+        # configured list length.
         today_cycles = [
             c for c in cycles if _ny_date(c.scheduled_time) == today_ny
         ]
-        total_today = int(
+        today_session = _calendar(request).session_for(today_ny)
+        total_today = (
             len(
-                get_config().get("schedule", "cycles", default=[]) or []
+                SessionClock(clock, get_config(), _calendar(request))
+                .active_cycles(today_session)
             )
+            if today_session is not None
+            else 0
         )
         cycle_index = len(today_cycles)
         ams_time = scheduled_ny.astimezone(app_tz).strftime("%H:%M")
@@ -1988,7 +2871,7 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
                 select(Order).where(
                     Order.symbol == symbol,
                     Order.leg == "entry",
-                    Order.status.in_(OPEN_LIKE_STATUSES),
+                    Order.status.in_(OPEN_ORDER_STATUSES),
                 )
             ).scalar_one_or_none()
             if order is not None:
@@ -2061,3 +2944,246 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
         "price": price,
         "day_change_pct": change,
     }
+
+
+# ----------------------------------------------------------------------
+# Reviews: weekly review, daily briefing, verdicts (docs/SPEC.md, Reviews)
+
+_VERDICT_VALUES = ("good_call", "bad_call", "unclear")
+_WEEKDAY_NUMBERS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
+
+
+def _week_sub(review: Review) -> str:
+    facts = review.facts or {}
+    period = facts.get("period") or {}
+    start, end = period.get("start"), period.get("end")
+    if isinstance(start, str) and isinstance(end, str):
+        s = datetime.fromisoformat(start).date()
+        e = datetime.fromisoformat(end).date()
+        if s.month == e.month:
+            return f"{s.day} – {e.day} {e.strftime('%b')}"
+        return f"{s.day} {s.strftime('%b')} – {e.day} {e.strftime('%b')}"
+    return review.period
+
+
+def _review_label(review: Review) -> str:
+    facts = review.facts or {}
+    period = facts.get("period") or {}
+    if review.kind == "weekly":
+        return f"Week {period.get('week', review.period)}"
+    try:
+        day = datetime.fromisoformat(review.period).date()
+    except ValueError:
+        return review.period
+    return f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+
+
+def _review_item(review: Review) -> dict[str, object]:
+    facts = review.facts or {}
+    item: dict[str, object] = {
+        "id": review.id,
+        "kind": review.kind,
+        "period": review.period,
+        "label": _review_label(review),
+        "sub": _week_sub(review),
+        "source": review.source,
+        "reason": review.reason,
+        "due_at": _iso(review.due_at),
+        "created_at": _iso(review.created_at),
+    }
+    if review.kind == "weekly":
+        item["return_pct"] = facts.get("return_pct")
+    else:
+        item["preview"] = review.text[:80]
+    return item
+
+
+def _next_weekly_due(request: Request) -> str | None:
+    """The next weekly-review instant in the future (aware UTC ISO)."""
+    config = get_config()
+    tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
+    weekday = _WEEKDAY_NUMBERS.get(
+        str(config.get("reviews", "weekly_day", default="saturday"))
+        .strip()
+        .lower(),
+        5,
+    )
+    raw = str(config.get("reviews", "weekly_time", default="10:00"))
+    hour, minute = (int(p) for p in raw.split(":")[:2])
+    now = _clock(request).now()
+    local_today = now.astimezone(tz).date()
+    days_ahead = (weekday - local_today.weekday()) % 7
+    candidate = datetime.combine(
+        local_today + timedelta(days=days_ahead), dtime(hour, minute), tzinfo=tz
+    )
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate.astimezone(UTC).isoformat()
+
+
+def _review_schedule(request: Request) -> str:
+    """The subtitle under the page title: the configured schedule, in the
+    app timezone ("Weekly review Saturday 10:00 · briefing trading days
+    15:00 Amsterdam"; "briefing off" when briefings are disabled)."""
+    config = get_config()
+    tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
+    city = str(tz).rsplit("/", 1)[-1]
+    day = str(config.get("reviews", "weekly_day", default="saturday")).capitalize()
+    at = str(config.get("reviews", "weekly_time", default="10:00"))
+    parts = [f"Weekly review {day} {at}"]
+    if not bool(config.get("reviews", "briefing_enabled", default=True)):
+        parts.append("briefing off")
+        return " · ".join(parts)
+    raw = str(config.get("reviews", "briefing_time_ny", default="09:00"))
+    hour, minute = (int(p) for p in raw.split(":")[:2])
+    now_ny = _clock(request).now().astimezone(NY_TZ).date()
+    local = datetime.combine(now_ny, dtime(hour, minute), tzinfo=NY_TZ).astimezone(tz)
+    parts.append(f"briefing trading days {local.strftime('%H:%M')} {city}")
+    return " · ".join(parts)
+
+
+@router.get("/reviews")
+def reviews_list(request: Request, kind: str = "weekly") -> dict[str, object]:
+    """Written weekly reviews or daily briefings, newest first."""
+    if kind not in ("weekly", "briefing"):
+        raise HTTPException(status_code=400, detail="kind must be weekly or briefing")
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(Review)
+            .where(Review.kind == kind)
+            .order_by(Review.due_at.desc())
+            .limit(52)
+        ).scalars().all()
+    return {
+        "items": [_review_item(r) for r in rows],
+        "next_weekly_due": _next_weekly_due(request) if kind == "weekly" else None,
+        "schedule": _review_schedule(request),
+    }
+
+
+@router.get("/reviews/{review_id}")
+def review_detail(review_id: int) -> dict[str, object]:
+    """One review: the facts, the text and where the text came from."""
+    with get_session_maker()() as session:
+        review = session.execute(
+            select(Review).where(Review.id == review_id)
+        ).scalar_one_or_none()
+    if review is None:
+        raise HTTPException(status_code=404, detail="review not found")
+    return {
+        **_review_item(review),
+        "facts": review.facts,
+        "text": review.text,
+        "content": review.content,
+        "model": review.model,
+        "prompt_version": review.prompt_version,
+        "tokens": review.tokens,
+        "cost": str(review.cost) if review.cost is not None else None,
+    }
+
+
+def _verdict_outcome(
+    request: Request,
+    session: Session,
+    decision: Decision,
+    scheduled: datetime,
+    outcome: Outcome | None,
+) -> str | None:
+    """The one-line outcome next to a draft verdict ("target +1.6R")."""
+    if outcome is None or outcome.price_5sessions is None:
+        return None
+    facts = verdict_facts(
+        session,
+        config=get_config(),
+        clock=_clock(request),
+        decision=decision,
+        scheduled=scheduled,
+        outcome=outcome,
+    )
+    n = facts.get("sessions", 5)
+    trade = facts.get("trade")
+    if trade is not None and trade.get("exit") is not None and trade.get("r") is not None:
+        r = float(trade["r"])
+        return f"{trade['exit']} {r:+.1f}R"
+    pct = facts.get("pct_5sessions")
+    if pct is None:
+        return None
+    suffix = " · open" if trade is not None and trade.get("open") else ""
+    return f"{float(pct):+.1f}% after {n} sessions{suffix}"
+
+
+@router.get("/verdicts")
+def verdicts_list(request: Request, status: str = "draft") -> dict[str, object]:
+    """Draft verdicts to confirm (default) or confirmed ones (?status=confirmed|all)."""
+    if status not in ("draft", "confirmed", "all"):
+        raise HTTPException(status_code=400, detail="unknown status")
+    with get_session_maker()() as session:
+        query = (
+            select(Verdict, Decision, Cycle.scheduled_time, Outcome)
+            .join(Decision, Verdict.decision_id == Decision.id)
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .outerjoin(Outcome, Outcome.decision_id == Decision.id)
+            .order_by(Verdict.id)
+        )
+        if status == "draft":
+            query = query.where(Verdict.source == "draft")
+        elif status == "confirmed":
+            query = query.where(Verdict.source == "marc").order_by(
+                Verdict.updated_at.desc()
+            )
+        rows = session.execute(query.limit(100)).all()
+        items = [
+            {
+                "id": verdict.id,
+                "decision_id": decision.id,
+                "symbol": decision.symbol,
+                "final_action": decision.final_action,
+                "decided_at": _aware(scheduled).isoformat(),
+                "outcome": _verdict_outcome(
+                    request, session, decision, scheduled, outcome
+                ),
+                "verdict": verdict.verdict,
+                "reason": verdict.reason,
+                "source": verdict.source,
+                "draft_source": verdict.draft_source,
+                "created_at": _iso(verdict.created_at),
+                "updated_at": _iso(verdict.updated_at),
+            }
+            for verdict, decision, scheduled, outcome in rows
+        ]
+    return {"items": items, "status": status}
+
+
+@router.post("/verdicts/{verdict_id}")
+def verdict_resolve(
+    request: Request, verdict_id: int, body: dict[str, object]
+) -> dict[str, object]:
+    """Confirm a draft verdict (same value) or change it — either way the
+    verdict becomes Marc's and counts in reviews."""
+    value = str(body.get("verdict", ""))
+    if value not in _VERDICT_VALUES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"verdict must be one of {', '.join(_VERDICT_VALUES)}",
+        )
+    with get_session_maker()() as session:
+        verdict = session.execute(
+            select(Verdict).where(Verdict.id == verdict_id)
+        ).scalar_one_or_none()
+        if verdict is None:
+            raise HTTPException(status_code=404, detail="verdict not found")
+        verdict.verdict = value
+        verdict.source = "marc"
+        verdict.updated_at = _naive_utc(_clock(request).now())
+        session.commit()
+        resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
+    _notify(request, "reviews", "decisions")
+    return resolved

@@ -71,6 +71,10 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "performance": {
         "slippage_pct_per_side": ("number", 0, 10),
     },
+    "reviews": {
+        "briefing_enabled": ("bool", None, None),
+        "monthly_cost_cap_usd": ("number", 0, 100),
+    },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
@@ -110,6 +114,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("risk", "max_order_pct"): "Max single order",
     ("risk", "max_orders_per_cycle"): "Max orders per cycle",
     ("performance", "slippage_pct_per_side"): "Assumed slippage",
+    ("reviews", "briefing_enabled"): "Daily briefing",
+    ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("universe", "symbols"): "Universe",
 }
@@ -263,7 +269,16 @@ def _validate_universe(
     held_symbols: set[str],
 ) -> tuple[dict[str, Any], list[str], list[str]] | str:
     """Returns (cleaned universe dict, changes, symbols needing asset checks)."""
-    if not isinstance(body, dict) or set(body) - UNIVERSE_KEYS:
+    if not isinstance(body, dict):
+        return "universe: only symbols and sectors are editable"
+    active_allowed = active.get("universe", {}).get("allowed_sectors")
+    for key, value in body.items():
+        if key in UNIVERSE_KEYS:
+            continue
+        # The form echoes the read-only sector list back on a full save;
+        # tolerate it unchanged, but never let a client move it.
+        if key == "allowed_sectors" and value == active_allowed:
+            continue
         return "universe: only symbols and sectors are editable"
     symbols = body.get("symbols")
     sectors = body.get("sectors") or {}

@@ -20,6 +20,10 @@ export interface HeaderState {
   today_eur: string | null;
   regime: string;
   kill_switch: boolean;
+  paused: boolean;
+  paused_since: string | null;
+  resume_blocked?: boolean;
+  keys_issue?: string | null;
 }
 
 export interface RuleCheck {
@@ -124,6 +128,28 @@ export interface DecisionOutcome {
   best_price_at: string | null;
   worst_price: string | null;
   worst_price_at: string | null;
+  first_touch: 'stop' | 'target' | 'neither' | null;
+  r_1h: string | null;
+  r_1session: string | null;
+  r_5sessions: string | null;
+  best_r: string | null;
+  worst_r: string | null;
+}
+
+/** The levels a decision traded at: position, order legs or proposed. */
+export interface DecisionTrade {
+  qty: number | null;
+  entry: string | null;
+  stop: string | null;
+  target: string | null;
+  status: string;
+}
+
+/** Earnings chip data: next report date + trading sessions seen at decision time. */
+export interface DecisionEarnings {
+  date: string | null;
+  sessions: number | null;
+  unavailable: boolean;
 }
 
 export interface BannerItem {
@@ -137,6 +163,7 @@ export interface BannerItem {
   automatic?: boolean;
   reason?: string | null;
   since?: string | null;
+  resume_blocked?: boolean;
   actions: string[];
 }
 
@@ -246,6 +273,178 @@ export interface KillSwitchResponse {
   errors?: string[];
 }
 
+// ---- Reviews ---------------------------------------------------------------
+
+export type ReviewKind = 'weekly' | 'briefing';
+
+export interface ReviewListItem {
+  id: number;
+  kind: ReviewKind;
+  period: string;
+  label: string;
+  sub: string;
+  source: 'model' | 'template';
+  reason: string | null;
+  due_at: string | null;
+  created_at: string | null;
+  model?: string | null;
+  prompt_version?: string | null;
+  return_pct?: number | null;
+  preview?: string | null;
+}
+
+export interface ReviewsResponse {
+  items: ReviewListItem[];
+  next_weekly_due: string | null;
+  /** The schedule line under the page title, computed from config. */
+  schedule: string;
+}
+
+export interface ReviewContent {
+  summary?: string;
+  observations?: string[];
+  suggestion?: string | null;
+  text?: string;
+}
+
+export interface WeeklyTrade {
+  symbol: string;
+  opened: string | null;
+  closed: string | null;
+  exit: string;
+  r: number | null;
+  pnl_usd: number | null;
+  regime: string | null;
+}
+
+export interface WeeklySkips {
+  total: number;
+  with_outcome: number;
+  pending: number;
+  up: number;
+  flat: number;
+  down: number;
+  biggest_miss: {
+    symbol: string;
+    date: string;
+    confidence: number | null;
+    pct: number;
+  } | null;
+}
+
+export interface WeeklyAggRow {
+  name: string;
+  trades: number;
+  won: number;
+  avg_r: number | null;
+  pnl_usd: number | null;
+}
+
+export interface WeeklyFacts {
+  period: {
+    week?: number;
+    start?: string;
+    end?: string;
+    due?: string;
+    trading_days?: number;
+    [key: string]: unknown;
+  };
+  limits?: {
+    weekly_summary_words?: number;
+    verdict_after_sessions?: number;
+    skip_flat_pct?: number;
+    [key: string]: unknown;
+  };
+  return_pct: number | null;
+  return_usd: number | null;
+  equity_start: number | null;
+  equity_end: number | null;
+  spy_return_pct: number | null;
+  vs_spy_pts: number | null;
+  max_drawdown_pct: number | null;
+  trades_closed: number;
+  won: number;
+  lost: number;
+  avg_r: number | null;
+  model_cost_usd: number | null;
+  model_calls: number;
+  reviews_cost_usd: number | null;
+  trades: WeeklyTrade[];
+  best_trade: WeeklyTrade | null;
+  worst_trade: WeeklyTrade | null;
+  skips: WeeklySkips;
+  verdicts: { good_call: number; bad_call: number; unclear: number; total: number };
+  by_regime: WeeklyAggRow[];
+  by_symbol: WeeklyAggRow[];
+}
+
+export interface BriefingFacts {
+  date: string;
+  positions: {
+    symbol: string;
+    qty: number;
+    price: number | null;
+    stop: number | null;
+    stop_distance_pct: number | null;
+  }[];
+  earnings_today: { symbol: string; time_of_day: string }[];
+  earnings_tomorrow: { symbol: string; time_of_day: string }[];
+  regime: string;
+  yesterday: { return_pct: number | null; return_usd: number | null };
+  banners: { kind: string; level: string }[];
+}
+
+export interface ReviewDetail extends ReviewListItem {
+  facts: Record<string, unknown> | null;
+  text: string;
+  content: ReviewContent | null;
+  model: string | null;
+  prompt_version: string | null;
+  tokens: number | null;
+  cost: string | null;
+}
+
+// ---- Verdicts ----------------------------------------------------------------
+
+export type VerdictValue = 'good_call' | 'bad_call' | 'unclear';
+
+export interface VerdictItem {
+  id: number;
+  decision_id: number;
+  symbol: string;
+  final_action: string;
+  decided_at: string;
+  outcome: string | null;
+  verdict: VerdictValue;
+  reason: string | null;
+  source: 'draft' | 'marc';
+  draft_source: 'model' | 'template';
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface VerdictsResponse {
+  items: VerdictItem[];
+  status: string;
+}
+
+/** POST /api/verdicts/{id} returns the resolved verdict's core fields. */
+export interface VerdictResolved {
+  id: number;
+  verdict: VerdictValue;
+  source: 'draft' | 'marc';
+}
+
+export interface DecisionVerdict {
+  id: number;
+  verdict: VerdictValue;
+  reason: string | null;
+  source: 'draft' | 'marc';
+  draft_source: 'model' | 'template';
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface DecisionDetail {
   id: number;
   cycle_time: string;
@@ -258,7 +457,15 @@ export interface DecisionDetail {
   model_output: ModelOutput | null;
   validation_result: ValidationResult | null;
   gates_result: Record<string, unknown> | null;
+  trade: DecisionTrade | null;
   outcome: DecisionOutcome | null;
+  next_outcome_due: string | null;
+  verdict: DecisionVerdict | null;
+  verdict_eligible: boolean;
+  verdict_due: string | null;
+  earnings: DecisionEarnings | null;
+  execution_mode: string | null;
+  eur_usd_rate: string | null;
   prompt_version: string | null;
   prompt_hash: string | null;
   prompt_text: string | null;
@@ -305,6 +512,7 @@ export interface Approval {
 export interface ApprovalsResponse {
   mode: string;
   kill_switch_on: boolean;
+  paused: boolean;
   items: Approval[];
   recent: Approval[];
 }
@@ -353,6 +561,7 @@ export interface SettingsForm {
     max_orders_per_cycle: number;
   };
   performance: { slippage_pct_per_side: number; starting_equity: number };
+  reviews: { briefing_enabled: boolean; monthly_cost_cap_usd: number };
   schedule: { cycles: string[] };
   universe: {
     symbols: string[];
@@ -398,11 +607,55 @@ export interface SettingsResponse {
   };
   connections: ConnectionRow[];
   history: SettingsHistoryRow[];
+  reviews_spend_usd?: string | null;
   mode: string;
 }
 
 export interface SettingsError {
   detail: Record<string, string> | string;
+}
+
+// ---- API keys (write-only; never a key value) -------------------------------
+
+export type KeyGroup = 'alpaca' | 'openai' | 'finnhub';
+export type KeyStatus = 'ok' | 'failing' | 'untested' | 'missing';
+
+export interface KeyRow {
+  name: KeyGroup;
+  label: string;
+  hint: string;
+  set: boolean;
+  status: KeyStatus;
+  masked: string | null;
+  account: string | null;
+  saved_at: string | null;
+  tested_at: string | null;
+  error: string | null;
+}
+
+export interface KeysResponse {
+  keys: KeyRow[];
+  set_count: number;
+  all_ready: boolean;
+  open_items: number;
+  paused_or_kill: boolean;
+  replace_allowed: boolean;
+  replace_hint: string;
+  env_keys: boolean;
+  mode: string;
+  data_sources: ConnectionRow[];
+}
+
+export interface SaveKeyResult {
+  ok: boolean;
+  account_changed?: boolean;
+  key: KeyRow;
+}
+
+export interface TestKeyResult {
+  ok: boolean;
+  error: string | null;
+  key: KeyRow;
 }
 
 export interface SaveSettingsResult {
@@ -554,6 +807,17 @@ export interface DashboardStats {
   execution_mode: string;
 }
 
+export interface DashboardSigChip {
+  text: string;
+  tone: number;
+}
+
+export interface DashboardBoxRow {
+  label: string;
+  value: string;
+  tone: number;
+}
+
 export interface DashboardLatestDecision {
   id: number;
   symbol: string;
@@ -563,6 +827,11 @@ export interface DashboardLatestDecision {
   no_call_reason: string | null;
   confidence: number | null;
   why: string | null;
+  model: string | null;
+  regime: { trend: string; volatility: string } | null;
+  earnings: DecisionEarnings | null;
+  sig: DashboardSigChip[];
+  box: DashboardBoxRow[];
   checks: { name: string; passed: boolean; detail: string }[];
   price: string | null;
   time: string;

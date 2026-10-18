@@ -33,6 +33,11 @@ from app.engine.position_check import PositionChecker
 from app.engine.state import load_execution_state
 from app.market.calendar import CalendarStore
 from app.market.clock import make_clock
+from app.secrets_service import (
+    SecretsStore,
+    make_key_testers,
+    read_env_keys,
+)
 from app.signals.service import SignalService
 
 BLOCKED = "read-only check: write blocked"
@@ -132,7 +137,11 @@ async def _main() -> int:
 
     run_migrations()
     clock = make_clock(config)
-    sources = make_data_sources(config)
+    store = SecretsStore(config, clock)
+    await store.import_env_keys(
+        read_env_keys(), make_key_testers(config, clock)
+    )
+    sources = make_data_sources(config, store)
     if sources.alpaca is None:
         print("MODE is not paper — run with MODE=paper")
         return 1
@@ -143,7 +152,7 @@ async def _main() -> int:
         return 1
     print(f"paper-account check: ok ({paper.data})")
 
-    broker = ReadOnlyBroker(make_broker(config, sources, clock))
+    broker = ReadOnlyBroker(make_broker(config, sources, clock, store))
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
