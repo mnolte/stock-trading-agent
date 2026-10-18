@@ -6,12 +6,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.data.models import Bar5m, DailyBar
+from app.data.models import Bar5m, CalendarDay, DailyBar
 from app.db.base import get_session_maker
 from app.db.models import Bar1d as Bar1dRow
 from app.db.models import Bar5m as Bar5mRow
 
 UTC = ZoneInfo("UTC")
+NY_TZ = ZoneInfo("America/New_York")
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -113,6 +114,38 @@ class BarCache:
                 .select_from(Bar1dRow)
                 .where(Bar1dRow.symbol == symbol)
             ).scalar_one()
+
+    def covered_session_dates(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> set[date]:
+        """New York session dates with at least one cached 5m bar.
+
+        ``sessions`` are ``CalendarDay``-like (open/close attributes); the
+        result is intersected with their dates so stray bars outside the
+        wanted range never count.
+        """
+        if not sessions:
+            return set()
+        start = min(s.open for s in sessions)
+        end = max(s.close for s in sessions)
+        with self._session_factory() as session:
+            starts = (
+                session.execute(
+                    select(Bar5mRow.start)
+                    .where(
+                        Bar5mRow.symbol == symbol,
+                        Bar5mRow.start >= _naive_utc(start),
+                        Bar5mRow.start <= _naive_utc(end),
+                    )
+                    .distinct()
+                )
+                .scalars()
+                .all()
+            )
+        wanted = {s.date for s in sessions}
+        return {
+            _aware_utc(s).astimezone(NY_TZ).date() for s in starts
+        } & wanted
 
     def get_daily(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Return cached daily bars for a symbol in [start, end], by date."""

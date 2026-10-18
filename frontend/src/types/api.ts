@@ -567,6 +567,13 @@ export interface SettingsForm {
     symbols: string[];
     sectors: Record<string, string>;
     allowed_sectors: string[];
+    mode: string;
+    screen: {
+      min_price: number;
+      min_avg_dollar_volume: number;
+      lookback_sessions: number;
+      drop_after_failed_screens: number;
+    };
   };
 }
 
@@ -900,4 +907,91 @@ export interface ChartResponse {
   warming_up: boolean;
   price: string | null;
   day_change_pct: string | null;
+}
+
+// ---- Universe (pool + liquidity screen, v0.2) --------------------------------
+
+export interface UniverseFixedSymbol {
+  symbol: string;
+  sector: string;
+}
+
+export interface UniverseThresholds {
+  min_price: number;
+  min_avg_dollar_volume: number;
+  lookback_sessions: number;
+  drop_after_failed_screens: number;
+  max_position_pct: number;
+}
+
+export interface UniverseFunnelStep {
+  key: string;
+  count: number;
+  out: string[];
+}
+
+export interface UniverseScreenSummary {
+  session_date: string | null;
+  failed: boolean;
+  equity?: string | null;
+  max_position_usd?: string | null;
+  funnel: UniverseFunnelStep[];
+  eligible_total: number;
+}
+
+export type UniverseRowStatus =
+  | 'eligible'
+  | 'excluded'
+  | 'warming_up'
+  | 'held';
+
+export interface UniverseRow {
+  symbol: string;
+  sector: string;
+  added_at: string | null;
+  status: UniverseRowStatus;
+  rank: number | null;
+  last_close: string | null;
+  avg_dollar_volume: string | null;
+  return_vs_spy: string | null;
+  fails: number;
+  failed_check: string | null;
+  detail: string;
+  held: boolean;
+  qty: number;
+  screened: boolean;
+  in_pool: boolean;
+}
+
+export interface UniverseCounts {
+  pool: number;
+  eligible: number;
+  excluded: number;
+  warming_up: number;
+  held: number;
+}
+
+export interface UniverseResponse {
+  mode: string;
+  allowed_sectors: string[];
+  fixed_symbols: UniverseFixedSymbol[];
+  held_symbols: string[];
+  screen_time_ny: string;
+  history: { daily_sessions: number; sessions_5m: number };
+  thresholds: UniverseThresholds;
+  pool?: { size: number; max: number };
+  counts?: UniverseCounts;
+  screen?: UniverseScreenSummary | null;
+  rows?: UniverseRow[];
+}
+
+export interface UniverseAddResult {
+  symbol: string;
+  sector: string;
+  added: boolean;
+}
+
+export interface UniverseImportResult {
+  added: number;
+  skipped: number;
 }

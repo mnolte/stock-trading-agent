@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getKeys,
   getSettings,
+  getUniverse,
   postKey,
   postKeyTest,
   postPaperReset,
@@ -18,6 +20,7 @@ import type {
   KeysResponse,
   SettingsForm,
   SettingsResponse,
+  UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -168,6 +171,11 @@ const DEFAULTS: Record<string, string> = {
   'performance.slippage_pct_per_side': '0.05%',
   'reviews.briefing_enabled': 'On',
   'reviews.monthly_cost_cap_usd': '$2',
+  'universe.mode': 'Fixed list',
+  'universe.screen.min_price': '$10',
+  'universe.screen.min_avg_dollar_volume': '$100M',
+  'universe.screen.lookback_sessions': '20',
+  'universe.screen.drop_after_failed_screens': '3',
 };
 
 // field path -> unit suffix for "Changed from …" and the unsaved list
@@ -239,7 +247,7 @@ const SECTIONS = [
 const SEARCH_TEXT: Record<string, string> = {
   keys: 'api keys alpaca openai finnhub key test replace data sources market data news earnings ecb connections',
   trading:
-    'trading execution mode automatic supervised universe symbols sector add remove slippage assumed',
+    'trading execution mode automatic supervised universe fixed list screened pool liquidity screen min price average dollar volume drop after one share fits slippage assumed',
   risk:
     'risk limits per trade max position size single order total open risk positions sector cash only daily loss limit losing streak shock brake drawdown kill orders per cycle brakes portfolio',
   rules:
@@ -311,7 +319,7 @@ function Row({
 }: {
   id?: string;
   label: string;
-  help: string;
+  help: ReactNode;
   changed?: boolean;
   changedFrom?: string;
   error?: string;
@@ -786,6 +794,8 @@ export default function Settings() {
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
 
+  const [universe, setUniverse] = useState<UniverseResponse | null>(null);
+
   const refresh = useCallback(() => {
     getSettings()
       .then((d) => {
@@ -793,6 +803,7 @@ export default function Settings() {
         setForm((f) => f ?? structuredClone(d.settings));
       })
       .catch(console.error);
+    getUniverse().then(setUniverse).catch(() => setUniverse(null));
   }, []);
 
   const refreshKeys = useCallback(() => {
@@ -803,7 +814,7 @@ export default function Settings() {
     refresh();
     refreshKeys();
   }, [refresh, refreshKeys]);
-  useLiveUpdates(['header'], refresh);
+  useLiveUpdates(['header', 'universe'], refresh);
   useLiveUpdates(['settings', 'banners'], refreshKeys);
 
   const diffs = useMemo(
@@ -848,6 +859,29 @@ export default function Settings() {
     patch(section, key, (data.settings[section] as Record<string, unknown>)[key]);
   };
 
+  const patchScreen = (key: string, value: unknown) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            universe: {
+              ...f.universe,
+              screen: { ...f.universe.screen, [key]: value },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
+  const resetScreen = (key: string) => {
+    if (!data) return;
+    patchScreen(
+      key,
+      (data.settings.universe.screen as Record<string, unknown>)[key],
+    );
+  };
+
   const addSymbol = () => {
     if (!form || !newSymbol.trim() || !newSector) return;
     const symbol = newSymbol.trim().toUpperCase();
@@ -884,23 +918,34 @@ export default function Settings() {
     // tree and merges it onto the active settings. Read-only rows and
     // unchanged values are never part of a save.
     const submission: Record<string, Record<string, unknown>> = {};
-    let universeChanged = false;
+    const universeSub: Record<string, unknown> = {};
+    const screenSub: Record<string, unknown> = {};
+    let universeListChanged = false;
     for (const path of Object.keys(changed)) {
       const [section, key] = path.split('.', 2);
       if (section === 'universe') {
-        universeChanged = true;
+        if (path === 'universe.mode') {
+          universeSub.mode = form.universe.mode;
+        } else if (key === 'screen') {
+          const leaf = path.split('.')[2];
+          screenSub[leaf] = (
+            form.universe.screen as Record<string, unknown>
+          )[leaf];
+        } else {
+          universeListChanged = true;
+        }
         continue;
       }
       (submission[section] ??= {})[key] = (
         form[section as keyof SettingsForm] as Record<string, unknown>
       )[key];
     }
-    if (universeChanged) {
-      submission.universe = {
-        symbols: form.universe.symbols,
-        sectors: form.universe.sectors,
-      };
+    if (universeListChanged) {
+      universeSub.symbols = form.universe.symbols;
+      universeSub.sectors = form.universe.sectors;
     }
+    if (Object.keys(screenSub).length > 0) universeSub.screen = screenSub;
+    if (Object.keys(universeSub).length > 0) submission.universe = universeSub;
     postSettings(submission, reason.trim())
       .then((res) => {
         setForm(null);
@@ -983,7 +1028,12 @@ export default function Settings() {
       locked={props.locked}
       defaultText={props.defaultText ?? (path in DEFAULTS ? DEFAULTS[path] : undefined)}
       onReset={() => {
-        const [section, key] = path.split('.') as [keyof SettingsForm, string];
+        const parts = path.split('.');
+        if (parts.length === 3 && parts[0] === 'universe') {
+          resetScreen(parts[2]);
+          return;
+        }
+        const [section, key] = parts as [keyof SettingsForm, string];
         reset(section, key);
       }}
     >
@@ -1136,10 +1186,151 @@ export default function Settings() {
               </div>
             </Row>
 
+            <Row
+              id="umode"
+              label="Universe"
+              help={
+                <>
+                  Fixed list: the {s.universe.symbols.length} symbols below. Screened pool: a daily liquidity screen picks the eligible symbols from a pool of up to {universe?.pool?.max ?? 150}.{' '}
+                  <Link to="/universe" style={{ color: 'var(--sa-accent)' }}>
+                    Open Universe
+                    {universe?.pool && universe?.counts
+                      ? ` · ${universe.pool.size} in pool, ${universe.counts.eligible} eligible`
+                      : ''}
+                  </Link>
+                </>
+              }
+              changed={'universe.mode' in changed}
+              changedFrom={changed['universe.mode'] ? String(changed['universe.mode']) : undefined}
+              defaultText={DEFAULTS['universe.mode']}
+              onReset={() => reset('universe', 'mode')}
+            >
+              <div role="radiogroup" aria-label="Universe" style={{ display: 'inline-flex', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
+                {(
+                  [
+                    ['fixed', 'Fixed list'],
+                    ['screened', 'Screened pool'],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={s.universe.mode === mode}
+                    onClick={() => patch('universe', 'mode', mode)}
+                    style={{
+                      height: 38,
+                      padding: '0 14px',
+                      border: 0,
+                      borderRadius: 'var(--sa-radius-sm)',
+                      cursor: 'pointer',
+                      fontSize: 'var(--sa-text-base)',
+                      fontWeight: 600,
+                      background: s.universe.mode === mode ? 'var(--sa-border-strong)' : 'transparent',
+                      color: s.universe.mode === mode ? 'var(--sa-text)' : 'var(--sa-text-muted)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Row>
+
+            <h3 style={subHead}>
+              Liquidity screen · {universe?.screen_time_ny ?? '08:10'} New York
+            </h3>
+            {row('universe.screen.min_price', {
+              id: 'minpx',
+              label: 'Min price',
+              help: 'Lower-priced stocks are excluded.',
+              children: (
+                <NumBox
+                  id="minpx"
+                  label="Min price"
+                  value={s.universe.screen.min_price}
+                  unit="$"
+                  accent={'universe.screen.min_price' in changed}
+                  invalid={!!fieldErrors['universe.screen.min_price']}
+                  onChange={(v) => patchScreen('min_price', v)}
+                />
+              ),
+            })}
+            {row('universe.screen.min_avg_dollar_volume', {
+              id: 'adv',
+              label: 'Min average dollar volume',
+              help: 'Average of price × volume over the last sessions below.',
+              children: (
+                <NumBox
+                  id="adv"
+                  label="Min average dollar volume"
+                  value={s.universe.screen.min_avg_dollar_volume / 1_000_000}
+                  unit="$M"
+                  accent={'universe.screen.min_avg_dollar_volume' in changed}
+                  invalid={!!fieldErrors['universe.screen.min_avg_dollar_volume']}
+                  onChange={(v) => patchScreen('min_avg_dollar_volume', v * 1_000_000)}
+                />
+              ),
+            })}
+            {row('universe.screen.lookback_sessions', {
+              id: 'advn',
+              label: 'Average over',
+              help: 'Sessions used for the dollar volume and for the rank.',
+              children: (
+                <NumBox
+                  id="advn"
+                  label="Average over"
+                  value={s.universe.screen.lookback_sessions}
+                  unit="sessions"
+                  accent={'universe.screen.lookback_sessions' in changed}
+                  invalid={!!fieldErrors['universe.screen.lookback_sessions']}
+                  onChange={(v) => patchScreen('lookback_sessions', v)}
+                />
+              ),
+            })}
+            {row('universe.screen.drop_after_failed_screens', {
+              id: 'drop',
+              label: 'Drop after',
+              help: 'A symbol leaves the eligible list only after failing this many daily screens in a row.',
+              children: (
+                <NumBox
+                  id="drop"
+                  label="Drop after"
+                  value={s.universe.screen.drop_after_failed_screens}
+                  unit="days"
+                  accent={'universe.screen.drop_after_failed_screens' in changed}
+                  invalid={!!fieldErrors['universe.screen.drop_after_failed_screens']}
+                  onChange={(v) => patchScreen('drop_after_failed_screens', v)}
+                />
+              ),
+            })}
+            <Row
+              id="fit"
+              label="One share fits in max position"
+              help="A symbol whose price is above max position size can never be bought."
+              locked
+            >
+              <Switch id="fit" on locked />
+            </Row>
+            <Row
+              id="rank"
+              label="Model-call order"
+              help="Candidates that pass the rules get model calls in this order, after held positions."
+              defaultText="Return vs SPY"
+            >
+              <select
+                id="rank"
+                aria-label="Model-call order"
+                disabled
+                style={{ ...selectStyle, minWidth: 200 }}
+              >
+                <option>Return vs SPY, 20 sessions</option>
+              </select>
+            </Row>
+
             <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <span style={{ fontSize: 'var(--sa-text-base)' }}>Universe</span>
+                  <span style={{ fontSize: 'var(--sa-text-base)' }}>Fixed list</span>
                   <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                     US stocks and ETFs tradable at Alpaca, long only. Held symbols (locked) can't be removed until closed.
                   </span>
@@ -1755,4 +1946,9 @@ const LABEL_OF: Record<string, string> = {
   'risk.max_orders_per_cycle': 'Max orders per cycle',
   'reviews.briefing_enabled': 'Daily briefing',
   'reviews.monthly_cost_cap_usd': 'Review cost cap',
+  'universe.mode': 'Universe mode',
+  'universe.screen.min_price': 'Min price',
+  'universe.screen.min_avg_dollar_volume': 'Min average dollar volume',
+  'universe.screen.lookback_sessions': 'Average over',
+  'universe.screen.drop_after_failed_screens': 'Drop after',
 };

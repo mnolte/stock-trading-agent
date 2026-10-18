@@ -57,6 +57,7 @@ from app.secrets_service import (
     scrub,
 )
 from app.signals.service import SignalService
+from app.universe.service import UniverseService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,20 @@ async def run_scheduled_cycle(
     hour, minute = (int(p) for p in cycle_time.split(":")[:2])
     scheduled = datetime.combine(today, dtime(hour, minute), tzinfo=NY_TZ)
     await runner.run(scheduled)
+
+
+async def run_universe_screen(
+    service: UniverseService, bus: UpdateBus | None = None
+) -> None:
+    """Scheduler entry point: the 08:10 New York liquidity screen.
+
+    In fixed mode the service no-ops, so the job is harmless on the v0.1
+    paper run. A data failure keeps the previous eligible list and shows
+    a banner (docs/SPEC.md, Larger universe).
+    """
+    await service.run_screen()
+    if bus is not None:
+        bus.publish("universe", "banners", "header")
 
 
 async def run_scheduled_check(
@@ -443,11 +458,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         outcomes=outcome_worker,
         notify=lambda topics: bus.publish(*topics),
     )
+    universe_service = UniverseService(
+        market_data=market_data,
+        sources=sources,
+        calendar=calendar_store,
+        broker=broker,
+        config=config,
+        clock=clock,
+        notify=lambda: bus.publish("universe", "banners", "header"),
+    )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
+
+    # v0.2: the pool seeds the first time screened mode is used; the daily
+    # screen itself runs from its 08:10 New York job (and once at startup
+    # in simulated mode, so the demo has a list on day one).
+    if universe_service.mode() == "screened":
+        universe_service.ensure_pool_loaded()
+        if config.env.mode == "simulated":
+            await universe_service.run_screen()
 
     # Trade updates → ledger; then reconcile once so the database starts
     # as a mirror of the broker (adopted positions get their stop here).
@@ -541,6 +573,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.exec_state = exec_state
     app.state.position_checker = position_checker
     app.state.review_service = review_service
+    app.state.universe = universe_service
     app.state.update_bus = bus
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
@@ -569,6 +602,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         IntervalTrigger(minutes=5),
         args=[calendar_store, config, clock],
         id="calendar-retry",
+    )
+    # Liquidity screen (v0.2): 08:10 New York on trading days, after the
+    # daily bars refresh. Reads the configured time each startup; no-ops
+    # in fixed mode and outside trading days.
+    screen_at = str(
+        (config.pending() or config.effective())
+        .get("universe", {})
+        .get("screen", {})
+        .get("time_ny", "08:10")
+    )
+    screen_hour, screen_minute = (int(p) for p in screen_at.split(":")[:2])
+    scheduler.add_job(
+        run_universe_screen,
+        CronTrigger(hour=screen_hour, minute=screen_minute, timezone=NY_TZ),
+        args=[universe_service, bus],
+        id="universe-screen",
+        misfire_grace_time=int(
+            config.get("schedule", "misfire_grace_seconds", default=120)
+        ),
+        coalesce=True,
     )
     # Daily database copy: an app-timezone job (Amsterdam per spec).
     app_tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))

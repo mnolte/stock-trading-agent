@@ -23,6 +23,9 @@ import type {
   SettingsResponse,
   StartRunResult,
   TestKeyResult,
+  UniverseAddResult,
+  UniverseImportResult,
+  UniverseResponse,
   VerdictResolved,
   VerdictsResponse,
   VerdictValue,
@@ -159,4 +162,32 @@ export function getVerdicts(status: 'draft' | 'confirmed' | 'all' = 'draft'): Pr
 
 export function postVerdict(id: number, verdict: VerdictValue): Promise<VerdictResolved> {
   return post<VerdictResolved>(`/api/verdicts/${id}`, { verdict });
+}
+
+export function getUniverse(): Promise<UniverseResponse> {
+  return get<UniverseResponse>('/api/universe');
+}
+
+export function postUniverseAdd(
+  symbol: string,
+  sector: string,
+): Promise<UniverseAddResult> {
+  return post<UniverseAddResult>('/api/universe/pool', { symbol, sector });
+}
+
+export function postUniverseImport(csv: string): Promise<UniverseImportResult> {
+  return post<UniverseImportResult>('/api/universe/import', { csv });
+}
+
+export function postUniverseRemove(
+  symbol: string,
+): Promise<{ symbol: string; removed: boolean }> {
+  return post<{ symbol: string; removed: boolean }>(
+    `/api/universe/pool/${encodeURIComponent(symbol)}/remove`,
+    {},
+  );
+}
+
+export function postUniverseScreen(): Promise<Record<string, unknown>> {
+  return post<Record<string, unknown>>('/api/universe/screen', {});
 }

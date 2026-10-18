@@ -821,7 +821,7 @@ async def test_validate_universe_tolerates_unchanged_allowed_sectors(
     assert cleaned["universe"]["symbols"] == universe["symbols"]
     assert "allowed_sectors" not in cleaned["universe"]
 
-    with pytest.raises(SettingsError, match="only symbols and sectors"):
+    with pytest.raises(SettingsError, match="not editable"):
         await validate_settings(
             {
                 "universe": {

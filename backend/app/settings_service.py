@@ -82,7 +82,25 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
 }
 
 # Keys that may appear inside ``universe`` in a save body.
-UNIVERSE_KEYS = {"symbols", "sectors"}
+UNIVERSE_KEYS = {"symbols", "sectors", "mode", "screen"}
+
+# Editable liquidity-screen thresholds (docs/SPEC.md, Larger universe).
+SCREEN_KEYS: dict[str, tuple[str, float | None, float | None]] = {
+    "min_price": ("number", 0, None),
+    "min_avg_dollar_volume": ("number", 0, None),
+    "lookback_sessions": ("int", 1, 260),
+    "drop_after_failed_screens": ("int", 1, 20),
+}
+
+SCREEN_LABELS: dict[str, str] = {
+    "min_price": "Min price",
+    "min_avg_dollar_volume": "Min avg dollar volume",
+    "lookback_sessions": "Screen lookback",
+    "drop_after_failed_screens": "Drops after",
+}
+
+# universe keys the form echoes but never edits — tolerated when unchanged.
+UNIVERSE_READ_ONLY = {"rank_by", "watchlist_rows", "max_pool", "pool_file"}
 
 LABELS: dict[tuple[str, str], str] = {
     ("execution", "mode"): "Execution mode",
@@ -118,6 +136,11 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("universe", "symbols"): "Universe",
+    ("universe", "mode"): "Universe mode",
+    ("universe", "screen.min_price"): "Min price",
+    ("universe", "screen.min_avg_dollar_volume"): "Min avg dollar volume",
+    ("universe", "screen.lookback_sessions"): "Screen lookback",
+    ("universe", "screen.drop_after_failed_screens"): "Drops after",
 }
 
 
@@ -270,69 +293,119 @@ def _validate_universe(
 ) -> tuple[dict[str, Any], list[str], list[str]] | str:
     """Returns (cleaned universe dict, changes, symbols needing asset checks)."""
     if not isinstance(body, dict):
-        return "universe: only symbols and sectors are editable"
-    active_allowed = active.get("universe", {}).get("allowed_sectors")
+        return "universe: not editable"
+    active_universe = active.get("universe", {})
+    active_allowed = active_universe.get("allowed_sectors")
     for key, value in body.items():
         if key in UNIVERSE_KEYS:
             continue
-        # The form echoes the read-only sector list back on a full save;
-        # tolerate it unchanged, but never let a client move it.
+        # The form echoes read-only keys back on a full save; tolerate them
+        # unchanged, but never let a client move them.
         if key == "allowed_sectors" and value == active_allowed:
             continue
-        return "universe: only symbols and sectors are editable"
-    symbols = body.get("symbols")
-    sectors = body.get("sectors") or {}
-    if not isinstance(symbols, list) or not symbols:
-        return "universe.symbols: a non-empty list of tickers"
-    cleaned_symbols: list[str] = []
-    for raw in symbols:
-        symbol = str(raw).upper().strip()
-        if not SYMBOL_RE.match(symbol):
-            return f"{raw!r}: not a valid ticker"
-        cleaned_symbols.append(symbol)
-    if len(set(cleaned_symbols)) != len(cleaned_symbols):
-        return "universe.symbols: duplicates"
-    if "SPY" not in cleaned_symbols:
-        return "SPY stays in the universe: the regime and the shock brake need it"
-    held_removed = held_symbols - set(cleaned_symbols)
-    if held_removed:
-        return (
-            f"{', '.join(sorted(held_removed))}: a symbol you hold can't be "
-            "removed until it is closed"
-        )
-    allowed_sectors = active.get("universe", {}).get("allowed_sectors", [])
-    cleaned_sectors: dict[str, str] = {}
-    missing: list[str] = []
-    for symbol in cleaned_symbols:
-        sector = sectors.get(symbol)
-        if sector is None:
-            missing.append(symbol)
+        if key in UNIVERSE_READ_ONLY and value == active_universe.get(key):
             continue
-        if sector not in allowed_sectors:
-            return f"{symbol}: sector must be one of {', '.join(allowed_sectors)}"
-        cleaned_sectors[symbol] = str(sector)
-    if missing:
-        return f"{', '.join(missing)}: a sector is required"
-    old_symbols = list(active.get("universe", {}).get("symbols", []))
-    new_symbols = [s for s in cleaned_symbols if s not in old_symbols]
-    removed = [s for s in old_symbols if s not in cleaned_symbols]
+        return f"universe.{key}: not editable"
+
+    cleaned: dict[str, Any] = {}
     changes: list[str] = []
-    if new_symbols:
-        changes.append(f"Universe: added {', '.join(new_symbols)}")
-    if removed:
-        changes.append(f"Universe: removed {', '.join(removed)}")
-    for symbol in cleaned_symbols:
-        if active.get("universe", {}).get("sectors", {}).get(
-            symbol
-        ) != cleaned_sectors.get(symbol) and symbol not in new_symbols:
+    asset_checks: list[str] = []
+
+    if "mode" in body:
+        mode = str(body["mode"])
+        if mode not in ("fixed", "screened"):
+            return "universe.mode: must be fixed or screened"
+        cleaned["mode"] = mode
+        if mode != active_universe.get("mode"):
             changes.append(
-                f"Universe: {symbol} sector → {cleaned_sectors[symbol]}"
+                f"Universe mode: {_fmt_change(active_universe.get('mode'))} "
+                f"→ {_fmt_change(mode)}"
             )
-    return (
-        {"symbols": cleaned_symbols, "sectors": cleaned_sectors},
-        changes,
-        new_symbols,
-    )
+
+    if "screen" in body:
+        if not isinstance(body["screen"], dict):
+            return "universe.screen: not editable"
+        active_screen = active_universe.get("screen") or {}
+        cleaned_screen: dict[str, Any] = {}
+        for key, value in body["screen"].items():
+            spec = SCREEN_KEYS.get(key)
+            label = SCREEN_LABELS.get(key, f"screen.{key}")
+            if spec is None:
+                if value == active_screen.get(key):
+                    continue  # read-only echo (time_ny)
+                return f"universe.screen.{key}: not editable"
+            kind, minimum, maximum = spec
+            try:
+                num = _clean_number(value, minimum, maximum, label)
+                if kind == "int":
+                    if num != int(num):
+                        raise SettingsError([f"{label}: must be a whole number"])
+                    cleaned_screen[key] = int(num)
+                else:
+                    cleaned_screen[key] = num
+            except SettingsError as exc:
+                return "; ".join(exc.errors)
+            if cleaned_screen[key] != active_screen.get(key):
+                changes.append(
+                    f"{label}: {_fmt_change(active_screen.get(key))} "
+                    f"→ {_fmt_change(cleaned_screen[key])}"
+                )
+        if cleaned_screen:
+            cleaned["screen"] = cleaned_screen
+
+    if "symbols" in body or "sectors" in body:
+        symbols = body.get("symbols")
+        sectors = body.get("sectors") or {}
+        if not isinstance(symbols, list) or not symbols:
+            return "universe.symbols: a non-empty list of tickers"
+        cleaned_symbols: list[str] = []
+        for raw in symbols:
+            symbol = str(raw).upper().strip()
+            if not SYMBOL_RE.match(symbol):
+                return f"{raw!r}: not a valid ticker"
+            cleaned_symbols.append(symbol)
+        if len(set(cleaned_symbols)) != len(cleaned_symbols):
+            return "universe.symbols: duplicates"
+        if "SPY" not in cleaned_symbols:
+            return "SPY stays in the universe: the regime and the shock brake need it"
+        held_removed = held_symbols - set(cleaned_symbols)
+        if held_removed:
+            return (
+                f"{', '.join(sorted(held_removed))}: a symbol you hold can't be "
+                "removed until it is closed"
+            )
+        allowed_sectors = active_universe.get("allowed_sectors", [])
+        cleaned_sectors: dict[str, str] = {}
+        missing: list[str] = []
+        for symbol in cleaned_symbols:
+            sector = sectors.get(symbol)
+            if sector is None:
+                missing.append(symbol)
+                continue
+            if sector not in allowed_sectors:
+                return f"{symbol}: sector must be one of {', '.join(allowed_sectors)}"
+            cleaned_sectors[symbol] = str(sector)
+        if missing:
+            return f"{', '.join(missing)}: a sector is required"
+        old_symbols = list(active_universe.get("symbols", []))
+        new_symbols = [s for s in cleaned_symbols if s not in old_symbols]
+        removed = [s for s in old_symbols if s not in cleaned_symbols]
+        if new_symbols:
+            changes.append(f"Universe: added {', '.join(new_symbols)}")
+        if removed:
+            changes.append(f"Universe: removed {', '.join(removed)}")
+        for symbol in cleaned_symbols:
+            if active_universe.get("sectors", {}).get(
+                symbol
+            ) != cleaned_sectors.get(symbol) and symbol not in new_symbols:
+                changes.append(
+                    f"Universe: {symbol} sector → {cleaned_sectors[symbol]}"
+                )
+        cleaned["symbols"] = cleaned_symbols
+        cleaned["sectors"] = cleaned_sectors
+        asset_checks.extend(new_symbols)
+
+    return cleaned, changes, asset_checks
 
 
 def _nested_get(tree: dict[str, Any], *keys: str) -> Any:
@@ -425,6 +498,19 @@ def version_change_summary(
             if prev == cur:
                 continue
             if section == "universe" and key == "sectors":
+                continue
+            if isinstance(prev, dict) and isinstance(cur, dict):
+                # Nested groups (universe.screen) diff per leaf.
+                for sub in sorted(set(prev) | set(cur)):
+                    p2, c2 = prev.get(sub), cur.get(sub)
+                    if p2 == c2:
+                        continue
+                    label = LABELS.get(
+                        (section, f"{key}.{sub}"), f"{section}.{key}.{sub}"
+                    )
+                    parts.append(
+                        f"{label}: {_fmt_change(p2)} → {_fmt_change(c2)}"
+                    )
                 continue
             label = LABELS.get((section, key), f"{section}.{key}")
             if section == "universe" and key == "symbols":

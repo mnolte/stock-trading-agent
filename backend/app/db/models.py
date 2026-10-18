@@ -228,6 +228,56 @@ class CorporateAction(Base):
     ratio_or_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
 
 
+class UniversePoolRow(Base):
+    """One symbol in the screened-mode pool (docs/SPEC.md, Larger universe).
+
+    Seeded from ``backend/universe/pool.csv`` the first time screened mode
+    starts, then edited on the Universe screen. Removed rows keep their row
+    with ``removed_at`` set — a held symbol stays in the pool until its
+    position is closed.
+    """
+
+    __tablename__ = "universe_pool"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
+    sector: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # default | added | import
+    added_at: Mapped[datetime] = mapped_column(nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class UniverseScreenRow(Base):
+    """One symbol's result in one daily liquidity screen.
+
+    Written once per trading day per pool symbol; the eligible list for a
+    session is fixed at screen time. ``failed_in_a_row`` counts consecutive
+    screens the symbol failed — an eligible symbol only drops out at the
+    configured threshold (default 3).
+    """
+
+    __tablename__ = "universe_screens"
+    __table_args__ = (
+        UniqueConstraint("session_date", "symbol", name="uq_universe_screens_day_symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # eligible | excluded | warming_up
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Per-check results, e.g. {"history": "pass", ..., "failed_check": "one_share"}.
+    check_results: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    last_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    avg_dollar_volume: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # 20-session return minus SPY's, in percentage points.
+    return_vs_spy: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    rank: Mapped[int | None] = mapped_column(nullable=True)
+    failed_in_a_row: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
 class SettingsVersion(Base):
     """Versioned settings changes."""
 

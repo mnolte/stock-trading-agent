@@ -71,7 +71,7 @@ test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo)
   await expect(page.getByRole('heading', { name: 'API keys and data' })).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText('Universe')).toBeVisible();
+  await expect(page.getByLabel('Universe')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Risk limits' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Settings history' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Paper account', exact: true })).toBeVisible();

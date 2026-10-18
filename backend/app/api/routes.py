@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from datetime import time as dtime
@@ -65,8 +67,11 @@ from app.settings_service import (
 )
 from app.signals.indicators import ema_series
 from app.signals.service import SignalService
+from app.universe.service import PoolError, UniverseService
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _notify(request: Request, *topics: str) -> None:
@@ -1087,6 +1092,7 @@ def banners(request: Request) -> dict[str, object]:
                         "position_check_failed",
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
+                        "universe_screen_failed",
                     ]
                 ),
             )
@@ -1177,6 +1183,22 @@ def banners(request: Request) -> dict[str, object]:
                             "never confirmed at Alpaca. The position keeps "
                             "its stop; reconcile or cancel the order before "
                             "selling."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "universe_screen_failed":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "universe_screen_failed",
+                        "level": "warning",
+                        "message": (
+                            "Today's universe screen failed "
+                            f"({details.get('error', 'unknown error')}). The "
+                            "previous eligible list stays in effect."
                         ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
@@ -1653,9 +1675,28 @@ def _settings_form(config: object) -> dict[str, object]:
             ),
         },
         "universe": {
+            "mode": get("universe", "mode", default="fixed"),
             "symbols": get("universe", "symbols", default=[]),
             "sectors": get("universe", "sectors", default={}),
             "allowed_sectors": get("universe", "allowed_sectors", default=[]),
+            "screen": {
+                "min_price": get("universe", "screen", "min_price", default=10),
+                "min_avg_dollar_volume": get(
+                    "universe",
+                    "screen",
+                    "min_avg_dollar_volume",
+                    default=100000000,
+                ),
+                "lookback_sessions": get(
+                    "universe", "screen", "lookback_sessions", default=20
+                ),
+                "drop_after_failed_screens": get(
+                    "universe",
+                    "screen",
+                    "drop_after_failed_screens",
+                    default=3,
+                ),
+            },
         },
     }
 
@@ -3187,3 +3228,101 @@ def verdict_resolve(
         resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
     _notify(request, "reviews", "decisions")
     return resolved
+
+
+# ----------------------------------------------------------------------
+# Universe (docs/SPEC.md, Larger universe). All of this is inert in fixed
+# mode: describe() returns the fixed list and the pool stays untouched.
+
+
+def _universe(request: Request) -> UniverseService:
+    service = getattr(request.app.state, "universe", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="universe service unavailable")
+    return cast(UniverseService, service)
+
+
+@router.get("/universe")
+def universe(request: Request) -> dict[str, object]:
+    """The Universe screen: mode, pool rows, latest screen and funnel."""
+    return _universe(request).describe()
+
+
+async def _warm_up_in_background(service: UniverseService, symbols: list[str]) -> None:
+    try:
+        await service.warm_up(symbols)
+    except Exception:  # noqa: BLE001
+        logger.exception("universe warm-up failed for %s", symbols)
+
+
+@router.post("/universe/pool")
+async def universe_pool_add(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Add one symbol (with a required sector) to the screened pool.
+
+    The same checks apply as a fixed-universe symbol add: valid ticker,
+    active and tradable US stock or ETF at Alpaca, allowed sector — plus
+    the pool cap. The symbol warms up and joins the list at the next
+    daily screen.
+    """
+    service = _universe(request)
+    symbol = str(body.get("symbol") or "").strip().upper()
+    sector = str(body.get("sector") or "").strip()
+    try:
+        row = await service.add_symbol(symbol, sector)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    asyncio.get_running_loop().create_task(
+        _warm_up_in_background(service, [row.symbol])
+    )
+    _notify(request, "universe")
+    return {"symbol": row.symbol, "sector": row.sector, "added": True}
+
+
+@router.post("/universe/import")
+async def universe_pool_import(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Import ``symbol,sector`` CSV rows into the pool — all or nothing."""
+    service = _universe(request)
+    text = body.get("csv")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail=["csv text required"])
+    try:
+        added, skipped = await service.import_csv(text)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    if added:
+        asyncio.get_running_loop().create_task(
+            _warm_up_in_background(service, added)
+        )
+    _notify(request, "universe")
+    return {"added": len(added), "skipped": skipped}
+
+
+@router.post("/universe/pool/{symbol}/remove")
+def universe_pool_remove(request: Request, symbol: str) -> dict[str, object]:
+    """Remove a symbol from the pool. A held symbol stays listed until its
+    position is closed — held symbols are always handled."""
+    service = _universe(request)
+    try:
+        service.remove_symbol(symbol)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    _notify(request, "universe")
+    return {"symbol": symbol.upper(), "removed": True}
+
+
+@router.post("/universe/screen")
+async def universe_screen_now(request: Request) -> dict[str, object]:
+    """Run the daily screen on demand — simulated mode only.
+
+    In paper mode the screen runs from the 08:10 New York scheduler job;
+    this hook exists for tests and the simulated demo.
+    """
+    if get_config().env.mode != "simulated":
+        raise HTTPException(status_code=403, detail="simulated mode only")
+    result = await _universe(request).run_screen()
+    _notify(request, "universe", "banners", "header")
+    return result

@@ -34,6 +34,11 @@ const FIELD_LABELS: Record<string, string> = {
   'reviews.monthly_cost_cap_usd': 'Review cost cap',
   'schedule.cycles': 'Cycle times',
   'universe.symbols': 'Universe',
+  'universe.mode': 'Universe mode',
+  'universe.screen.min_price': 'Min price',
+  'universe.screen.min_avg_dollar_volume': 'Min average dollar volume',
+  'universe.screen.lookback_sessions': 'Average over',
+  'universe.screen.drop_after_failed_screens': 'Drop after',
 };
 
 export interface DiffRow {
@@ -46,6 +51,42 @@ function fmtVal(value: unknown): string {
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   return String(value);
+}
+
+/** Display value for a leaf path — money fields show units. */
+function fmtPath(path: string, value: unknown): string {
+  if (path === 'universe.screen.min_avg_dollar_volume') {
+    const n = Number(value);
+    return Number.isNaN(n) ? String(value) : `$${n / 1_000_000}M`;
+  }
+  if (path === 'universe.screen.min_price') return `$${String(value)}`;
+  if (path === 'universe.screen.lookback_sessions') return `${String(value)} sessions`;
+  if (path === 'universe.screen.drop_after_failed_screens') return `${String(value)} days`;
+  if (path === 'universe.mode') return value === 'screened' ? 'Screened pool' : 'Fixed list';
+  return fmtVal(value);
+}
+
+/** Nested leaves of `universe.screen`, as `universe.screen.<key>` paths. */
+function screenLeafRows(
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  const cur = current.universe.screen as Record<string, unknown>;
+  const next = edited.universe.screen as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(cur), ...Object.keys(next)])) {
+    const path = `universe.screen.${key}`;
+    if (fmtVal(cur[key]) === fmtVal(next[key])) continue;
+    if (map !== null) map[path] = fmtPath(path, cur[key]);
+    if (rows !== null) {
+      rows.push({
+        label: FIELD_LABELS[path] ?? path,
+        from: fmtPath(path, cur[key]),
+        to: fmtPath(path, next[key]),
+      });
+    }
+  }
 }
 
 /** Client-side diff between the saved settings and the edited form. */
@@ -74,10 +115,14 @@ export function diffSettings(
         }
         continue;
       }
+      if (path === 'universe.screen') {
+        screenLeafRows(current, edited, null, rows);
+        continue;
+      }
       if (path === 'universe.allowed_sectors') continue;
       const old = (current[section] as Record<string, unknown>)[key];
       if (fmtVal(old) !== fmtVal(value)) {
-        rows.push({ label: FIELD_LABELS[path] ?? path, from: fmtVal(old), to: fmtVal(value) });
+        rows.push({ label: FIELD_LABELS[path] ?? path, from: fmtPath(path, old), to: fmtPath(path, value) });
       }
     }
   }
@@ -105,9 +150,13 @@ export function diffMap(
         }
         continue;
       }
+      if (path === 'universe.screen') {
+        screenLeafRows(current, edited, map, null);
+        continue;
+      }
       if (path === 'universe.allowed_sectors') continue;
       const old = (current[section] as Record<string, unknown>)[key];
-      if (fmtVal(old) !== fmtVal(value)) map[path] = fmtVal(old);
+      if (fmtVal(old) !== fmtVal(value)) map[path] = fmtPath(path, old);
     }
   }
   return map;
