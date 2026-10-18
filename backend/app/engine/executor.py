@@ -29,7 +29,7 @@ from app.broker.models import (
     TradeUpdateInfo,
 )
 from app.data.cache import _naive_utc
-from app.data.models import Quote
+from app.data.models import CalendarDay, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import (
@@ -45,8 +45,13 @@ from app.db.models import (
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
-from app.risk.gates import GateContext, WorkingEntry, evaluate_entry_gates
-from app.risk.math import trade_risk
+from app.risk.gates import GateContext, evaluate_entry_gates
+from app.risk.math import (
+    WorkingEntry,
+    drawdown_pct,
+    session_pnl_pct,
+    trade_risk,
+)
 from app.signals.indicators import atr
 from app.signals.service import SignalService, SymbolEval, trading_days_until
 
@@ -77,6 +82,38 @@ def _ny_date(dt: datetime) -> date:
 
 def _cents(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def spy_session_moves(
+    market_data: MarketDataService,
+    sessions: list[CalendarDay],
+    now: datetime,
+    today: date,
+) -> tuple[Decimal | None, Decimal | None]:
+    """SPY's change on the last closed 1h bar and since today's open.
+
+    These are the shock-brake gate inputs, shared with the dashboard risk
+    budget card: ``(last_1h_pct, since_open_pct)``, each None when its
+    bars are missing (market closed, no 1h bar finished yet).
+    """
+    bars_1h = [
+        b
+        for b in market_data.get_1h_bars_range("SPY", sessions)
+        if b.end <= now
+    ]
+    if not bars_1h:
+        return None, None
+    last = bars_1h[-1]
+    move_1h = (
+        (last.close - last.open) / last.open * 100 if last.open > 0 else None
+    )
+    todays = [b for b in bars_1h if b.start.astimezone(NY_TZ).date() == today]
+    move_session = (
+        (todays[-1].close - todays[0].open) / todays[0].open * 100
+        if todays and todays[0].open > 0
+        else None
+    )
+    return move_1h, move_session
 
 
 class Executor:
@@ -135,22 +172,15 @@ class Executor:
             limit = Decimal(
                 str(self.config.get("risk", "daily_loss_limit_pct", default=2))
             )
-            if account.last_equity > 0:
-                pnl_pct = (
-                    (account.equity - account.last_equity)
-                    / account.last_equity
-                    * 100
-                )
-                if pnl_pct <= -limit:
-                    self.state.daily_loss_hit = True
+            pnl_pct = session_pnl_pct(account.equity, account.last_equity)
+            if pnl_pct <= -limit:
+                self.state.daily_loss_hit = True
             kill_pct = Decimal(
                 str(self.config.get("risk", "drawdown_kill_pct", default=8))
             )
             if (
                 self.state.peak_equity > 0
-                and (self.state.peak_equity - account.equity)
-                / self.state.peak_equity
-                * 100
+                and drawdown_pct(account.equity, self.state.peak_equity)
                 >= kill_pct
                 and not self.state.kill_switch_on
             ):
@@ -169,12 +199,10 @@ class Executor:
         if session is None:
             return
         sessions = self.market_data.recent_sessions(today, 3)
-        bars_1h = [
-            b
-            for b in self.market_data.get_1h_bars_range("SPY", sessions)
-            if b.end <= now
-        ]
-        if not bars_1h:
+        move_1h, move_session = spy_session_moves(
+            self.market_data, sessions, now, today
+        )
+        if move_1h is None and move_session is None:
             return
         shock_1h = Decimal(
             str(self.config.get("risk", "shock_brake_1h_pct", default=1.5))
@@ -182,18 +210,10 @@ class Executor:
         shock_session = Decimal(
             str(self.config.get("risk", "shock_brake_session_pct", default=2.5))
         )
-        last = bars_1h[-1]
-        if last.open > 0:
-            change = (last.close - last.open) / last.open * 100
-            if change <= -shock_1h:
-                self.state.shock_brake_1h = True
-        todays = [
-            b for b in bars_1h if b.start.astimezone(NY_TZ).date() == today
-        ]
-        if todays and todays[0].open > 0:
-            change = (todays[-1].close - todays[0].open) / todays[0].open * 100
-            if change <= -shock_session:
-                self.state.shock_brake_session = True
+        if move_1h is not None and move_1h <= -shock_1h:
+            self.state.shock_brake_1h = True
+        if move_session is not None and move_session <= -shock_session:
+            self.state.shock_brake_session = True
 
     # ------------------------------------------------------------------
     # kill switch
@@ -1569,6 +1589,12 @@ class Executor:
             pending_ack=self.state.pending_ack(session) or self._reconcile_failed,
             orders_this_cycle=self._orders_this_cycle,
         )
+
+    def budget_context(self, session: Session) -> GateContext:
+        """The gate inputs as they stand now — the dashboard risk budget
+        card reads the same context the entry gates see, with no candidate
+        symbol (``""`` never matches a held position or pending entry)."""
+        return self._gate_context(session, None, "", None, True)
 
     async def apply_decision(
         self,

@@ -7,6 +7,7 @@ import {
   getChart,
   getDashboard,
   getPositions,
+  getRiskBudget,
   getWatchlist,
 } from '../api/state';
 import type {
@@ -16,12 +17,14 @@ import type {
   DashboardResponse,
   MarketClosedCard,
   PositionsResponse,
+  RiskBudgetResponse,
   WatchlistResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { PriceChart } from '../components/PriceChart';
+import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
@@ -392,6 +395,7 @@ export default function Dashboard() {
   const [approvals, setApprovals] = useState<ApprovalsResponse | null>(null);
   const [positions, setPositions] = useState<PositionsResponse | null>(null);
   const [chart, setChart] = useState<ChartResponse | null>(null);
+  const [budget, setBudget] = useState<RiskBudgetResponse | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
   const refreshDashboard = useCallback((symbol?: string | null) => {
@@ -412,6 +416,9 @@ export default function Dashboard() {
     if (!symbol) return;
     getChart(symbol).then(setChart).catch(() => setChart(null));
   }, []);
+  const refreshBudget = useCallback(() => {
+    getRiskBudget().then(setBudget).catch(console.error);
+  }, []);
 
   const symbols = watchlist?.rows.map((r) => r.symbol) ?? [];
   const chartSymbol = selected ?? symbols[0] ?? null;
@@ -420,7 +427,8 @@ export default function Dashboard() {
     refreshWatchlist();
     refreshApprovals();
     refreshPositions();
-  }, [refreshWatchlist, refreshApprovals, refreshPositions]);
+    refreshBudget();
+  }, [refreshWatchlist, refreshApprovals, refreshPositions, refreshBudget]);
   useEffect(() => {
     // The latest-decision card tracks the selected symbol.
     refreshDashboard(chartSymbol);
@@ -442,13 +450,16 @@ export default function Dashboard() {
     refreshDashboard(chartSymbol);
     refreshChart(chartSymbol);
   });
+  // The risk budget card reads the gate context: positions, orders and
+  // account updates (header) all change its inputs.
+  useLiveUpdates(['positions', 'orders', 'header'], refreshBudget);
   useLiveUpdates(['watchlist', 'decisions'], () => refreshChart(chartSymbol));
 
   const stats = dashboard?.stats;
-  const riskPct = stats?.open_risk_pct !== null && stats?.open_risk_pct !== undefined
-    ? Number(stats.open_risk_pct)
-    : null;
-  const riskCap = stats?.open_risk_cap_pct ?? 0;
+  const sincePct =
+    stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
+      ? Number(stats.since_start_pct)
+      : null;
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -490,35 +501,50 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)' }}>
-        <StatCard
-          label="Open risk"
-          value={riskPct !== null ? `${riskPct.toFixed(2)}%` : '—'}
-          sub={`of ${riskCap}% cap${stats?.open_risk_usd ? ` · $${stats.open_risk_usd}` : ''}`}
-          bar={
-            riskPct !== null && riskCap > 0
-              ? {
-                  width: `${Math.min(100, (riskPct / riskCap) * 100)}%`,
-                  color: 'var(--sa-accent)',
-                }
-              : undefined
-          }
-        />
-        <StatCard
-          label="Positions"
-          value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
-          sub={`cash $${stats?.cash ?? '—'} · no margin`}
-        />
-        <StatCard
-          label="Day trades"
-          value={`${stats?.day_trades ?? 0} of ${stats?.day_trades_max ?? '—'}`}
-          sub="last 5 trading days"
-        />
-        <StatCard
-          label="Since start"
-          value={stats?.since_start_pct !== null && stats?.since_start_pct !== undefined ? `${stats.since_start_pct}%` : '—'}
-          sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
-        />
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-5)',
+          alignItems: 'stretch',
+        }}
+      >
+        <RiskBudgetCard budget={budget} />
+        <div
+          style={{
+            flex: '1 1 240px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--sa-space-3)',
+            minWidth: 0,
+          }}
+        >
+          <StatCard
+            label="Positions"
+            value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
+            sub={`cash $${stats?.cash ?? '—'} · no margin`}
+            style={{ flex: '1 1 auto' }}
+          />
+          <StatCard
+            label="Since start"
+            value={
+              stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
+                ? `${stats.since_start_pct}%`
+                : '—'
+            }
+            valueColor={
+              sincePct === null
+                ? undefined
+                : sincePct > 0
+                  ? 'var(--sa-positive)'
+                  : sincePct < 0
+                    ? 'var(--sa-negative)'
+                    : undefined
+            }
+            sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
+            style={{ flex: '1 1 auto' }}
+          />
+        </div>
       </div>
 
       {dashboard?.market_closed && (

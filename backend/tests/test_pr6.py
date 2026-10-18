@@ -1040,13 +1040,15 @@ def test_dashboard_endpoint_shape(client: TestClient) -> None:
     assert {"session", "stats", "feed", "approvals_pending"} <= set(body)
     stats = body["stats"]
     assert {
-        "open_risk_pct",
         "positions",
-        "day_trades",
-        "day_trades_max",
+        "positions_cap",
+        "cash",
         "since_start_pct",
         "execution_mode",
     } <= set(stats)
+    # Risk figures moved to /api/risk-budget with the risk budget card.
+    assert "open_risk_pct" not in stats
+    assert "day_trades" not in stats
 
 
 def test_runs_and_chart_endpoints(client: TestClient) -> None:

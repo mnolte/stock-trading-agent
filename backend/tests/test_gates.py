@@ -6,12 +6,8 @@ from decimal import Decimal
 import pytest
 from app.config import AppConfig
 from app.db.models import Position
-from app.risk.gates import (
-    GateContext,
-    GateResult,
-    WorkingEntry,
-    evaluate_entry_gates,
-)
+from app.risk.gates import GateContext, GateResult, evaluate_entry_gates
+from app.risk.math import WorkingEntry
 
 pytestmark = pytest.mark.anyio
 

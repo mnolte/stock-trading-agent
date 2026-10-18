@@ -14,7 +14,16 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from app.db.models import Position
-from app.risk.math import Sizing, open_risk, position_size
+from app.risk.math import (
+    Sizing,
+    WorkingEntry,
+    committed_entries,
+    drawdown_pct,
+    open_risk,
+    position_size,
+    session_pnl_pct,
+    streak_risk_factor,
+)
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -27,20 +36,6 @@ class GateCheck:
     name: str
     passed: bool
     detail: str
-
-
-@dataclass(frozen=True)
-class WorkingEntry:
-    """An entry order still working at the broker: submitted, accepted or
-    partially filled and not yet cancelled, expired or rejected
-    (docs/SPEC.md, Risk management — Working entry orders). Only the
-    unfilled quantity counts; filled shares are a position and are never
-    counted twice."""
-
-    symbol: str
-    unfilled_qty: int
-    limit_price: Decimal | None
-    stop_price: Decimal | None  # bracket stop leg; None → worst case
 
 
 @dataclass(frozen=True)
@@ -176,17 +171,13 @@ def evaluate_entry_gates(
     daily_limit_pct = Decimal(
         str(config.get("risk", "daily_loss_limit_pct", default=2))
     )
-    session_pnl_pct = (
-        (ctx.equity - ctx.last_equity) / ctx.last_equity * 100
-        if ctx.last_equity > 0
-        else Decimal(0)
-    )
-    if session_pnl_pct <= -daily_limit_pct:
+    pnl_pct = session_pnl_pct(ctx.equity, ctx.last_equity)
+    if pnl_pct <= -daily_limit_pct:
         return block(
             "daily_loss_limit",
-            f"session P&L {_pct(session_pnl_pct)}% ≤ −{_pct(daily_limit_pct)}%",
+            f"session P&L {_pct(pnl_pct)}% ≤ −{_pct(daily_limit_pct)}%",
         )
-    ok("daily_loss_limit", f"session P&L {_pct(session_pnl_pct)}%")
+    ok("daily_loss_limit", f"session P&L {_pct(pnl_pct)}%")
 
     # Shock brake: SPY down hard in the last hour or since the open.
     shock_1h = Decimal(str(config.get("risk", "shock_brake_1h_pct", default=1.5)))
@@ -230,25 +221,17 @@ def evaluate_entry_gates(
     # Drawdown kill: equity below peak by the configured pct turns the
     # kill switch on — the executor handles activation on this gate name.
     kill_pct = Decimal(str(config.get("risk", "drawdown_kill_pct", default=8)))
-    drawdown_pct = (
-        (ctx.peak_equity - ctx.equity) / ctx.peak_equity * 100
-        if ctx.peak_equity > 0
-        else Decimal(0)
-    )
-    if drawdown_pct >= kill_pct:
+    dd_pct = drawdown_pct(ctx.equity, ctx.peak_equity)
+    if dd_pct >= kill_pct:
         return block(
             "drawdown_kill",
-            f"drawdown {_pct(drawdown_pct)}% ≥ {_pct(kill_pct)}% of peak",
+            f"drawdown {_pct(dd_pct)}% ≥ {_pct(kill_pct)}% of peak",
         )
-    ok("drawdown_kill", f"drawdown {_pct(drawdown_pct)}%")
+    ok("drawdown_kill", f"drawdown {_pct(dd_pct)}%")
 
     # Losing streak halves the risk budget; it never blocks by itself.
     streak_len = int(config.get("risk", "losing_streak", default=3))
-    factor = Decimal(1)
-    if streak_len > 0 and ctx.losing_streak >= streak_len:
-        factor = Decimal(
-            str(config.get("risk", "losing_streak_risk_factor", default=0.5))
-        )
+    factor = streak_risk_factor(ctx.losing_streak, config)
     checks.append(
         GateCheck(
             "losing_streak",
@@ -268,17 +251,7 @@ def evaluate_entry_gates(
     # unfilled qty × (limit − stop) counts toward open risk, unfilled qty ×
     # limit toward cash; an entry whose stop leg is missing counts its full
     # committed value as risk — the conservative worst case.
-    working_risk = Decimal(0)
-    working_cash = Decimal(0)
-    for e in ctx.working_entries:
-        committed = e.unfilled_qty * (e.limit_price or Decimal(0))
-        working_cash += committed
-        if e.limit_price is not None and e.stop_price is not None:
-            working_risk += e.unfilled_qty * max(
-                Decimal(0), e.limit_price - e.stop_price
-            )
-        else:
-            working_risk += committed
+    working_risk, working_cash = committed_entries(ctx.working_entries)
     current_open_risk = open_risk(
         (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
         for p in ctx.open_positions

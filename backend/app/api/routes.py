@@ -34,7 +34,7 @@ from app.db.models import (
     Verdict,
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
-from app.engine.executor import Executor
+from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
@@ -47,6 +47,7 @@ from app.market.clock import (
     make_clock,
 )
 from app.reviews.facts import verdict_eligible, verdict_facts
+from app.risk.budget import Meter, risk_budget
 from app.secrets_service import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -1058,6 +1059,111 @@ async def positions(request: Request) -> dict[str, object]:
 def _ny_date(dt: datetime) -> object:
     aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
     return aware.astimezone(NY_TZ).date()
+
+
+def _meter_fill(meter: Meter | None) -> str:
+    """Bar width in percent of the limit, capped at 100 (display only)."""
+    if meter is None:
+        return "0"
+    if meter.limit_pct <= 0:
+        return "100" if meter.used_pct > 0 else "0"
+    return str(min(Decimal(100), meter.used_pct / meter.limit_pct * 100))
+
+
+@router.get("/risk-budget")
+async def risk_budget_state(request: Request) -> dict[str, object]:
+    """The dashboard risk budget card: every limit as it stands now.
+
+    Figures come from the same gate context and helpers the entry gates
+    use — the GUI never recomputes risk (docs/SPEC.md, GUI — Risk budget
+    card). The account refresh is the same call the engine makes before
+    it gates, so the meters read what the gates would see right now.
+    """
+    executor = _executor(request)
+    config = get_config()
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    now = clock.now()
+    today_ny = now.astimezone(NY_TZ).date()
+    await executor.refresh_account()
+    spy_1h: Decimal | None = None
+    spy_session: Decimal | None = None
+    market_data = getattr(request.app.state, "market_data", None)
+    if market_data is not None:
+        sessions = market_data.recent_sessions(today_ny, 3)
+        spy_1h, spy_session = spy_session_moves(
+            market_data, sessions, now, today_ny
+        )
+    with get_session_maker()() as session:
+        ctx = executor.budget_context(session)
+    budget = risk_budget(
+        ctx, config, spy_1h_pct=spy_1h, spy_session_pct=spy_session
+    )
+    return {
+        "settings_version": config.active_version,
+        "open_risk": {
+            "used_pct": (
+                str(budget.open_risk.used_pct)
+                if budget.open_risk is not None
+                else None
+            ),
+            "used_usd": str(budget.open_risk_usd),
+            "limit_pct": str(budget.open_risk_limit_pct),
+            "level": (
+                budget.open_risk.level
+                if budget.open_risk is not None
+                else "normal"
+            ),
+            "fill_pct": _meter_fill(budget.open_risk),
+        },
+        "daily_loss": {
+            "used_pct": str(budget.daily_loss.used_pct),
+            "session_pnl_pct": str(budget.session_pnl_pct),
+            "limit_pct": str(budget.daily_loss.limit_pct),
+            "level": budget.daily_loss.level,
+            "fill_pct": _meter_fill(budget.daily_loss),
+        },
+        "drawdown": {
+            "used_pct": str(budget.drawdown.used_pct),
+            "limit_pct": str(budget.drawdown.limit_pct),
+            "level": budget.drawdown.level,
+            "fill_pct": _meter_fill(budget.drawdown),
+        },
+        "room": {
+            "trades": budget.room_trades,
+            "limited_by": budget.room_limited_by,
+        },
+        "sectors": [
+            {"sector": s.sector, "used": s.used, "cap": s.cap}
+            for s in budget.sectors
+        ],
+        "risk_per_trade_pct": str(budget.risk_per_trade_pct),
+        "losing_streak": {
+            "count": budget.losing_streak,
+            "max": budget.losing_streak_len,
+            "factor": str(budget.losing_streak_factor),
+        },
+        "shock_brake": {
+            "on": budget.shock_brake_on,
+            "limit_1h_pct": str(budget.shock_1h_limit_pct),
+            "limit_session_pct": str(budget.shock_session_limit_pct),
+            "spy_1h_pct": (
+                str(budget.spy_1h_pct) if budget.spy_1h_pct is not None else None
+            ),
+            "spy_session_pct": (
+                str(budget.spy_session_pct)
+                if budget.spy_session_pct is not None
+                else None
+            ),
+        },
+        "day_trades": {
+            "count": budget.day_trades_5d,
+            "max": budget.day_trades_max,
+        },
+        "positions": {
+            "open": budget.open_count,
+            "cap": budget.max_positions,
+        },
+    }
 
 
 @router.get("/orders")
@@ -2472,12 +2578,6 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     today = clock.now().astimezone(app_tz).date()
     day_start = datetime.combine(today, dtime.min, tzinfo=app_tz)
     start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
-    market_data = getattr(request.app.state, "market_data", None)
-    day_sessions = (
-        market_data.recent_sessions(today_ny, 5)
-        if market_data is not None
-        else []
-    )
 
     with get_session_maker()() as session:
         cycles = session.execute(
@@ -2513,15 +2613,6 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         run = session.execute(
             select(Run).order_by(Run.id.desc()).limit(1)
         ).scalar_one_or_none()
-        day_trades = (
-            session.execute(
-                select(func.count(DayTrade.id)).where(
-                    DayTrade.date >= _naive_utc(day_sessions[0].open)
-                )
-            ).scalar_one()
-            if day_sessions
-            else 0
-        )
         # Latest decision for the card: today's newest for the selected
         # symbol (or the newest overall when no symbol is given).
         latest = next(
@@ -2538,17 +2629,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             else None
         )
 
-    # Stat cards.
-    open_risk = Decimal(0)
-    for p in open_rows:
-        if p.current_stop_price is not None:
-            open_risk += p.qty * max(
-                Decimal(0), p.avg_entry_price - p.current_stop_price
-            )
+    # Stat cards. Risk figures live on /api/risk-budget, which reads the
+    # same gate context the entry gates see.
     equity = account.equity if account else None
-    open_risk_pct = (
-        (open_risk / equity * 100) if equity and equity > 0 else None
-    )
     since_start_pct = None
     spy_pct = None
     since_label = "since start"
@@ -2779,15 +2862,8 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         },
         "cycle_line": cycle_line,
         "stats": {
-            "open_risk_pct": str(open_risk_pct) if open_risk_pct is not None else None,
-            "open_risk_usd": _fmt_money(open_risk),
-            "open_risk_cap_pct": config.get(
-                "risk", "max_open_risk_pct", default=2.5
-            ),
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
-            "day_trades": day_trades,
-            "day_trades_max": config.get("risk", "pdt_max_day_trades", default=3),
             "cash": _fmt_money(account.cash if account else None),
             "since_start_pct": (
                 f"{since_start_pct:+.2f}" if since_start_pct is not None else None

@@ -61,6 +61,20 @@ def trade_risk(
 
 
 @dataclass(frozen=True)
+class WorkingEntry:
+    """An entry order still working at the broker: submitted, accepted or
+    partially filled and not yet cancelled, expired or rejected
+    (docs/SPEC.md, Risk management — Working entry orders). Only the
+    unfilled quantity counts; filled shares are a position and are never
+    counted twice."""
+
+    symbol: str
+    unfilled_qty: int
+    limit_price: Decimal | None
+    stop_price: Decimal | None  # bracket stop leg; None → worst case
+
+
+@dataclass(frozen=True)
 class Sizing:
     shares: int
     risk_budget: Decimal
@@ -121,3 +135,49 @@ def open_risk(positions: Iterable[tuple[int, Decimal, Decimal]]) -> Decimal:
     for qty, entry, stop in positions:
         total += qty * max(Decimal(0), entry - stop)
     return total
+
+
+def committed_entries(entries: Iterable[WorkingEntry]) -> tuple[Decimal, Decimal]:
+    """(risk, cash) already spent by working entry orders.
+
+    docs/SPEC.md, Working entry orders: unfilled qty x (limit - stop)
+    counts toward open risk, unfilled qty x limit toward cash; an entry
+    whose stop leg is missing counts its full committed value as risk —
+    the conservative worst case.
+    """
+    risk = Decimal(0)
+    cash = Decimal(0)
+    for e in entries:
+        committed = e.unfilled_qty * (e.limit_price or Decimal(0))
+        cash += committed
+        if e.limit_price is not None and e.stop_price is not None:
+            risk += e.unfilled_qty * max(
+                Decimal(0), e.limit_price - e.stop_price
+            )
+        else:
+            risk += committed
+    return risk, cash
+
+
+def session_pnl_pct(equity: Decimal, last_equity: Decimal) -> Decimal:
+    """Session P&L vs the previous close's equity; the daily-loss input."""
+    if last_equity <= 0:
+        return Decimal(0)
+    return (equity - last_equity) / last_equity * 100
+
+
+def drawdown_pct(equity: Decimal, peak_equity: Decimal) -> Decimal:
+    """How far equity is under the run's peak; the drawdown-kill input."""
+    if peak_equity <= 0:
+        return Decimal(0)
+    return (peak_equity - equity) / peak_equity * 100
+
+
+def streak_risk_factor(losing_streak: int, config: AppConfig) -> Decimal:
+    """The losing-streak multiplier on the risk budget (1 under the limit)."""
+    streak_len = int(config.get("risk", "losing_streak", default=3))
+    if streak_len > 0 and losing_streak >= streak_len:
+        return Decimal(
+            str(config.get("risk", "losing_streak_risk_factor", default=0.5))
+        )
+    return Decimal(1)

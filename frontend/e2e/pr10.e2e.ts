@@ -53,6 +53,55 @@ test('paused at startup: banner, paused pill, one-click resume', async ({
   ).toHaveCount(0);
 });
 
+test('risk budget card shows meters, facts and hover rules', async ({
+  page,
+}, testInfo) => {
+  const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
+
+  await page.goto('/');
+
+  const card = page.locator('section[aria-label="Risk budget"]');
+  await expect(card).toBeVisible({ timeout: 60_000 });
+
+  // Three limit meters, each against its configured cap.
+  for (const label of ['Open risk', "Today's loss", 'Drawdown']) {
+    await expect(card.getByText(label, { exact: true })).toBeVisible();
+  }
+  await expect(card.getByText('of 2.5% cap')).toBeVisible();
+  await expect(card.getByText('of −2% limit')).toBeVisible();
+  await expect(card.getByText('of −8% kill')).toBeVisible();
+
+  // The fact rows from the same gate inputs.
+  for (const label of [
+    'Room for',
+    'Sectors',
+    'Risk per trade',
+    'Shock brake',
+    'Day trades',
+  ]) {
+    await expect(card.getByText(label, { exact: true })).toBeVisible();
+  }
+  await expect(card.getByText(/more trades?/)).toBeVisible();
+  await expect(card.getByText(/last 5 trading days/)).toBeVisible();
+
+  // Every label explains its rule on hover.
+  await expect(card.locator('span[title]')).toHaveCount(8);
+  await expect(
+    card.locator(
+      'span[title="The smallest of: positions left, open risk left ÷ risk per trade, and cash ÷ max position size."]'
+    )
+  ).toBeVisible();
+
+  // Positions and Since start stay beside the card.
+  await expect(page.getByText('Positions', { exact: true })).toBeVisible();
+  await expect(page.getByText('Since start', { exact: true })).toBeVisible();
+
+  await page.screenshot({
+    path: path.join(outDir, `risk-budget-${suffix}.png`),
+    fullPage: true,
+  });
+});
+
 test('pause and resume any time, no reason', async ({ page }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
 

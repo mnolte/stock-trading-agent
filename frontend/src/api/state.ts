@@ -16,6 +16,7 @@ import type {
   PerformanceResponse,
   PositionsResponse,
   ReviewDetail,
+  RiskBudgetResponse,
   ReviewsResponse,
   RunsResponse,
   SaveKeyResult,
@@ -91,6 +92,10 @@ export function getDashboard(symbol?: string): Promise<DashboardResponse> {
 
 export function getChart(symbol: string): Promise<ChartResponse> {
   return get<ChartResponse>(`/api/chart/${symbol}`);
+}
+
+export function getRiskBudget(): Promise<RiskBudgetResponse> {
+  return get<RiskBudgetResponse>('/api/risk-budget');
 }
 
 export function getApprovals(): Promise<ApprovalsResponse> {

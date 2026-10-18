@@ -807,18 +807,49 @@ export interface DashboardCycleLine {
 }
 
 export interface DashboardStats {
-  open_risk_pct: string | null;
-  open_risk_usd: string | null;
-  open_risk_cap_pct: number;
   positions: number;
   positions_cap: number;
-  day_trades: number;
-  day_trades_max: number;
   cash: string | null;
   since_start_pct: string | null;
   since_label: string;
   spy_pct: string | null;
   execution_mode: string;
+}
+
+// ---- Risk budget card ------------------------------------------------------
+// Every figure is computed by the backend's risk-gate functions (GET
+// /api/risk-budget); the GUI only formats what it is given.
+
+export type BudgetMeterLevel = 'normal' | 'amber' | 'red';
+
+export interface BudgetMeter {
+  used_pct: string | null;
+  limit_pct: string;
+  level: BudgetMeterLevel;
+  fill_pct: string; // bar width in % of the limit, capped at 100
+}
+
+export interface RiskBudgetResponse {
+  settings_version: number | null;
+  open_risk: BudgetMeter & { used_usd: string };
+  daily_loss: BudgetMeter & { session_pnl_pct: string };
+  drawdown: BudgetMeter;
+  room: {
+    trades: number;
+    limited_by: 'positions' | 'open_risk' | 'cash';
+  };
+  sectors: { sector: string; used: number; cap: number }[];
+  risk_per_trade_pct: string;
+  losing_streak: { count: number; max: number; factor: string };
+  shock_brake: {
+    on: boolean;
+    limit_1h_pct: string;
+    limit_session_pct: string;
+    spy_1h_pct: string | null;
+    spy_session_pct: string | null;
+  };
+  day_trades: { count: number; max: number };
+  positions: { open: number; cap: number };
 }
 
 export interface DashboardSigChip {
