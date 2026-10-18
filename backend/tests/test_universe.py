@@ -737,6 +737,30 @@ async def test_held_symbols_always_listed(
     assert payload["counts"]["held"] == 1
 
 
+async def test_describe_warming_progress(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Pool symbols with no screen row show warming progress — computed
+    for the whole pool from shared windows plus two grouped queries."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
+    )
+    service, *_ = make_service(session_factory, clock, calendar, config)
+    await service.warm_up(["AAPL"])  # full history; MSFT stays cold
+    payload = service.describe()
+    rows = {r["symbol"]: r for r in payload["rows"]}
+    assert rows["AAPL"]["status"] == "warming_up"
+    assert rows["AAPL"]["failed_check"] is None
+    assert rows["AAPL"]["detail"] == "ready — enters at the next screen"
+    assert rows["MSFT"]["status"] == "warming_up"
+    assert rows["MSFT"]["failed_check"] == "history"
+    assert "0 of " in rows["MSFT"]["detail"]
+    assert payload["counts"]["warming_up"] == 2
+
+
 async def test_full_default_pool_screens_in_simulated_mode(
     session_factory: sessionmaker[Session],
     clock: FakeClock,

@@ -113,6 +113,34 @@ reviews:
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 
+notifications:
+  repeat_limit_minutes: 30        # same subject; critical alerts are never held back
+  quiet_hours: {start: "23:00", end: "08:00"}   # app timezone; only critical alerts are sent
+  email:                          # password is entered in Settings and stored encrypted
+    smtp_host: ""
+    smtp_port: 587
+    tls: starttls
+    username: ""
+    from: ""
+    to: ""
+  events:                         # channels per event; critical events always include browser
+    kill_switch: [browser, email]
+    missing_stop: [browser, email]
+    reconciliation: [browser, email]
+    order_rejected: [browser, email]
+    daily_loss_limit: [browser, email]
+    shock_brake: [browser]
+    pdt_guard: [browser]
+    source_failing: [browser, email]
+    position_checks_failing: [browser, email]
+    model_failing: [browser]
+    approval_waiting: [browser]
+    exit_deferred_or_earnings_exit: [browser]
+    trade: []
+    daily_briefing: [email]
+    weekly_review: [email]
+    verdicts_waiting: []
+
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
   backup_days: 14

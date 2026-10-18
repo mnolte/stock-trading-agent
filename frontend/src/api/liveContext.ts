@@ -12,6 +12,7 @@ export type Topic =
   | 'approvals'
   | 'reviews'
   | 'settings'
+  | 'notifications'
   | 'universe';
 
 export type LiveStatus = 'live' | 'paused';

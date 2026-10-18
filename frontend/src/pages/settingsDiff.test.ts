@@ -41,6 +41,14 @@ function base(): SettingsForm {
     performance: { slippage_pct_per_side: 0.05, starting_equity: 10000 },
     reviews: { briefing_enabled: true, monthly_cost_cap_usd: 2 },
     schedule: { cycles: ['10:46', '11:46'] },
+    notifications: {
+      repeat_limit_minutes: 30,
+      quiet_hours: { start: '23:00', end: '08:00' },
+      events: {
+        kill_switch: ['browser', 'email'],
+        trade: [],
+      },
+    },
     universe: {
       symbols: ['SPY', 'AAPL'],
       sectors: { SPY: 'Index', AAPL: 'Technology' },
@@ -121,6 +129,29 @@ describe('diffSettings', () => {
       label: 'Drop after',
       from: '3 days',
       to: '5 days',
+    });
+  });
+
+  it('reports notification leaves and channel lists', () => {
+    const edited = base();
+    edited.notifications.repeat_limit_minutes = 15;
+    edited.notifications.quiet_hours.end = '07:30';
+    edited.notifications.events.trade = ['browser'];
+    const diffs = diffSettings(base(), edited);
+    expect(diffs).toContainEqual({
+      label: 'Repeat limit',
+      from: '30 min',
+      to: '15 min',
+    });
+    expect(diffs).toContainEqual({
+      label: 'Quiet hours to',
+      from: '08:00',
+      to: '07:30',
+    });
+    expect(diffs).toContainEqual({
+      label: 'Trade opened or closed · channels',
+      from: 'banner only',
+      to: 'browser',
     });
   });
 });

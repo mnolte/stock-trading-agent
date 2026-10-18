@@ -45,6 +45,7 @@ from app.db.models import (
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
+from app.notifications.service import Notifier, NullNotifier
 from app.risk.gates import GateContext, evaluate_entry_gates
 from app.risk.math import (
     WorkingEntry,
@@ -131,6 +132,7 @@ class Executor:
         state: ExecutionState,
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.broker = broker
         self.market_data = market_data
@@ -142,6 +144,8 @@ class Executor:
         self._session_factory = session_factory or get_session_maker()
         # Pushes WebSocket update topics to the GUI; a no-op in tests.
         self._notify = notify or (lambda topics: None)
+        # The notification service; a no-op until main wires it in.
+        self._notifier = notifier or NullNotifier()
         self._orders_this_cycle = 0
         self._order_seq = 0
         # Alpaca enforces client_order_id uniqueness account-wide
@@ -173,8 +177,14 @@ class Executor:
                 str(self.config.get("risk", "daily_loss_limit_pct", default=2))
             )
             pnl_pct = session_pnl_pct(account.equity, account.last_equity)
-            if pnl_pct <= -limit:
+            if pnl_pct <= -limit and not self.state.daily_loss_hit:
                 self.state.daily_loss_hit = True
+                self._notifier.notify(
+                    "daily_loss_limit",
+                    f"session P&L {pnl_pct:.2f}% ≤ −{limit}% — "
+                    "no new entries today",
+                    link="/",
+                )
             kill_pct = Decimal(
                 str(self.config.get("risk", "drawdown_kill_pct", default=8))
             )
@@ -211,8 +221,22 @@ class Executor:
             str(self.config.get("risk", "shock_brake_session_pct", default=2.5))
         )
         if move_1h is not None and move_1h <= -shock_1h:
+            if not self.state.shock_brake_1h:
+                self._notifier.notify(
+                    "shock_brake",
+                    f"SPY {move_1h:.2f}% in the last hour — "
+                    "no new entries",
+                    link="/",
+                )
             self.state.shock_brake_1h = True
         if move_session is not None and move_session <= -shock_session:
+            if not self.state.shock_brake_session:
+                self._notifier.notify(
+                    "shock_brake",
+                    f"SPY {move_session:.2f}% since the open — "
+                    "no new entries",
+                    link="/",
+                )
             self.state.shock_brake_session = True
 
     # ------------------------------------------------------------------
@@ -1160,6 +1184,7 @@ class Executor:
         the source of truth for qty and whether a position still exists.
         """
         opened = 0
+        opened_symbols: list[tuple[str, int, Decimal]] = []
         filled_buys = session.execute(
             select(Order).where(
                 Order.side == "buy",
@@ -1229,7 +1254,14 @@ class Executor:
                 )
             )
             opened += 1
+            opened_symbols.append((order.symbol, filled_qty, avg_price))
         session.flush()
+        for symbol, qty, avg_price in opened_symbols:
+            self._notifier.notify(
+                "trade",
+                f"opened {symbol}: {qty} shares @ {avg_price}",
+                link="/positions",
+            )
         return opened
 
     def _record_day_trade(
@@ -1254,6 +1286,28 @@ class Executor:
                     order_ids=[],
                 )
             )
+            session.flush()
+            # Same window the entry gate uses: the last 5 sessions.
+            days = self.market_data.recent_sessions(closed_date, 5)
+            count = (
+                session.execute(
+                    select(func.count(DayTrade.id)).where(
+                        DayTrade.date >= _naive_utc(days[0].open)
+                    )
+                ).scalar_one()
+                if days
+                else 0
+            )
+            max_dt = int(
+                self.config.get("risk", "pdt_max_day_trades", default=3)
+            )
+            if count >= max_dt:
+                self._notifier.notify(
+                    "pdt_guard",
+                    f"{count} of {max_dt} day trades in the last "
+                    "5 sessions",
+                    link="/positions",
+                )
 
     def _close_position(
         self,
@@ -1309,6 +1363,14 @@ class Executor:
         # Keep qty at the closed size: Performance shows the shares traded.
         position.deferred_exit = None
         report.mismatches.append(f"{position.symbol}: closed at broker")
+        pnl = (
+            f"P&L {raw:+.2f}" if raw is not None else "P&L unknown"
+        )
+        self._notifier.notify(
+            "trade",
+            f"closed {position.symbol}: {exit_reason}, {pnl}",
+            link="/positions",
+        )
         self._record_day_trade(session, position, self.clock.now())
 
     async def _adopt_position(
@@ -1744,6 +1806,12 @@ class Executor:
                 "approval_id": approval.id,
             }
             session.flush()
+            self._notifier.notify(
+                "approval_waiting",
+                f"{decision.symbol}: {qty} shares at {limit} — "
+                "approve on the dashboard",
+                link="/",
+            )
             self._notify({"approvals", "decisions"})
             return
 
@@ -2015,4 +2083,10 @@ class Executor:
             return
         self._store_broker_order(session, sold.data, decision.id, leg="exit")
         session.flush()
+        if reason == "earnings_exit":
+            self._notifier.notify(
+                "exit_deferred_or_earnings_exit",
+                f"{position.symbol}: sold ahead of tomorrow's earnings",
+                link="/positions",
+            )
         self._notify({"positions", "orders"})

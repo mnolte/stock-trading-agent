@@ -9,6 +9,8 @@ state from the log.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -26,8 +28,22 @@ if TYPE_CHECKING:
     from app.config import AppConfig
     from app.market.clock import Clock
 
+logger = logging.getLogger(__name__)
+
 # Event types whose unacknowledged rows block new entries.
 BLOCKING_EVENT_TYPES = ("reconciliation",)
+
+# The notification service registers here at startup; every recorded
+# event is offered to it after the row is written
+# (docs/SPEC.md, Notifications).
+EventSink = Callable[[str, str, "dict[str, object] | None"], None]
+
+_event_sink: EventSink | None = None
+
+
+def set_event_sink(sink: EventSink | None) -> None:
+    global _event_sink
+    _event_sink = sink
 
 
 @dataclass
@@ -112,6 +128,13 @@ def record_event(
     )
     session.add(event)
     session.flush()
+    if _event_sink is not None:
+        try:
+            _event_sink(event_type, level, details)
+        except Exception:  # noqa: BLE001 - a notification must never
+            logger.exception(  # break the path that recorded the event
+                "notification sink failed for %s", event_type
+            )
     return event
 
 

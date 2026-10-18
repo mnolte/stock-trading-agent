@@ -29,6 +29,7 @@ from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
+from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
 from app.signals.service import SignalService
 
@@ -69,6 +70,7 @@ class CycleRunner:
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
         on_settings_promoted: Callable[[], None] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -81,6 +83,7 @@ class CycleRunner:
         self.outcomes = outcomes
         self._session_factory = session_factory or get_session_maker()
         self._notify = notify or (lambda topics: None)
+        self._notifier = notifier or NullNotifier()
         # Reschedules cron jobs when promoted settings move cycle times.
         self._on_settings_promoted = on_settings_promoted or (lambda: None)
 
@@ -275,6 +278,17 @@ class CycleRunner:
             cycle.data_source_health = report.data_source_health or None
             session.commit()
         self._notify({"header", "decisions"})
+        failing = {
+            name: status
+            for name, status in report.data_source_health.items()
+            if status != "ok"
+        }
+        if failing:
+            self._notifier.notify(
+                "source_failing",
+                ", ".join(f"{name} ({status})" for name, status in failing.items()),
+                link="/settings",
+            )
         await self._count_cycle_outcome(report)
         return report
 
@@ -378,10 +392,18 @@ class CycleRunner:
             session, [item.symbol for item in reviews], now
         )
         last_cycle = self._is_last_cycle(now)
+        earnings_result = self.market_data.latest_earnings
         earnings_known = (
-            self.market_data.latest_earnings is None
-            or self.market_data.latest_earnings.error is None
+            earnings_result is None or earnings_result.error is None
         )
+        if not earnings_known and earnings_result is not None:
+            self._notifier.notify(
+                "source_failing",
+                "earnings calendar unavailable "
+                f"({earnings_result.error}) — "
+                "entries stay blocked",
+                link="/settings",
+            )
 
         # Symbols the rules reject still get a stored decision — "no_call"
         # with reason "rules" — so the inspector shows why they were skipped.

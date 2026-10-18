@@ -387,6 +387,48 @@ async def test_daily_cache_roundtrip(
     assert [b.date for b in cached] == [b.date for b in bars]
 
 
+async def test_bar_cache_batched_counts(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The grouped counts the Universe screen uses match the per-symbol
+    lookups they replace."""
+    calendar = FakeCalendarSource()
+    source = FakeBarSource(calendar)
+    cache = BarCache(session_factory)
+    sessions = [
+        s
+        for d in (13, 14, 15)
+        if (s := calendar.session_for(date(2026, 10, d))) is not None
+    ]
+    assert len(sessions) == 3
+
+    for symbol, count in (("AAPL", 2), ("MSFT", 1)):
+        for session in sessions[:count]:
+            bars = (
+                await source.fetch_5m_bars(
+                    symbol,
+                    session.open.astimezone(UTC),
+                    session.close.astimezone(UTC),
+                )
+            ).data
+            cache.store(bars)
+    daily = (
+        await source.fetch_daily_bars(
+            "AAPL", date(2026, 10, 13), date(2026, 10, 15)
+        )
+    ).data
+    cache.store_daily(daily)
+
+    covered = cache.covered_session_counts(["AAPL", "MSFT", "ZZZ"], sessions)
+    assert covered == {"AAPL": 2, "MSFT": 1, "ZZZ": 0}
+    daily_counts = cache.daily_bar_counts(["AAPL", "ZZZ"], sessions)
+    assert daily_counts == {"AAPL": 3, "ZZZ": 0}
+    # Same answers as the per-symbol methods.
+    assert covered["AAPL"] == len(cache.covered_session_dates("AAPL", sessions))
+    assert cache.covered_session_counts([], sessions) == {}
+    assert cache.daily_bar_counts(["AAPL"], []) == {"AAPL": 0}
+
+
 async def test_refresh_daily_fills_cache(
     session_factory: sessionmaker[Session], fake_sources: DataSources
 ) -> None:

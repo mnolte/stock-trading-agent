@@ -287,7 +287,7 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime |
 | LLM inspector | Every model call: prompt version, full prompt, raw response, tokens, cost, latency, validation result |
-| Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
+| Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode); confirm dialogs for Stop & flatten, reset paper account and settings changes |
 
 The layout must also work at phone width, so the VPS version can be checked from a phone.
@@ -296,7 +296,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 **Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and day trades in the last 5 trading days. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
 
-**Settings screen.** Sections with a section list on the left (a scrolling row on a phone) and a "Find a setting" filter: API keys and data, Trading (execution mode, universe, slippage), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Earnings, Model and reviews, Schedule (read-only), History and Paper account. Each setting is one row: name, one-line explanation, the control with its unit, and its default underneath. Values fixed by the spec (cash only, cycle times) are shown locked. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. Keys are not part of this flow: they are saved per key, straight away (see API keys).
+**Settings screen.** Sections with a section list on the left (a scrolling row on a phone) and a "Find a setting" filter: API keys and data, Trading (execution mode, universe, slippage), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Earnings, Model and reviews, Notifications, Schedule (read-only), History and Paper account. Each setting is one row: name, one-line explanation, the control with its unit, and its default underneath. Values fixed by the spec (cash only, cycle times) are shown locked. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. Keys are not part of this flow: they are saved per key, straight away (see API keys).
 
 **Design handoff.** The repo has a `design/` folder: `DESIGN.md` (rules, shared components, which PR builds which screen), `tokens.css`, `screens/` (the 7 screens as HTML, the source of exact styles and wording) and `screenshots/`. The spec wins on behaviour, the design on look and wording; differences go in the PR description.
 
@@ -311,6 +311,37 @@ API keys are entered in Settings, not in `.env`. There are four: Alpaca key ID a
 - **Missing or failing keys.** The app always starts (paused, as usual) and shows a banner naming the missing or failing key with a link to Settings. Resume stays disabled until the Alpaca, OpenAI and Finnhub keys are all set and passing. Simulated mode needs no keys.
 - **Moving from `.env`.** At startup, a key found in the environment with nothing stored under that name is imported once, tested, and stored; a banner then says "Keys imported from .env — remove them from .env". After that, keys in the environment are ignored with a warning in the log.
 - Settings, keys and the kill switch have no login, so the backend stays bound to `127.0.0.1` (hard rule 10). On a VPS later the GUI is reached over an SSH tunnel until login exists.
+
+## Notifications
+
+The agent tells Marc about what matters while he is away from the screen. Every "alert" in this spec is a notification event below.
+
+**Channels.** In the app every event shows as a banner or toast, always. Browser notifications (Web Notifications API) work while the GUI is open in a browser tab; Settings asks for permission. Email goes through SMTP: host, port with STARTTLS, username, from and to in Settings; the password is stored encrypted in the `secrets` table as `smtp_password`, write-only like the API keys. Saving the SMTP details sends a test first; "Send test" sends one to every enabled channel.
+
+| Event | Severity | Browser | Email |
+| --- | --- | --- | --- |
+| Kill switch turned on (manual, drawdown kill, failed cycles) | Critical | always | on |
+| Position without a stop at Alpaca (protective stop placed) | Critical | always | on |
+| Reconciliation mismatch or adopted position | Critical | always | on |
+| Order rejected by Alpaca (including a Stop & flatten sale) | Critical | always | on |
+| Daily loss limit reached | Warning | on | on |
+| Shock brake on | Warning | on | off |
+| Day-trade guard at 3 of 3 | Warning | on | off |
+| Data source or API key failing | Warning | on | on |
+| Position checks failing (3 in a row) | Warning | on | on |
+| Model failing or review cost cap reached | Warning | on | off |
+| Entry waiting for approval (supervised mode) | Info | on | off |
+| Exit deferred (day-trade rule) or earnings exit tomorrow | Info | on | off |
+| Trade opened or closed | Info | off | off |
+| Daily briefing | Info | off | on |
+| Weekly review ready | Info | off | on |
+| Verdicts waiting to confirm (once a day, with the briefing) | Info | off | off |
+
+**Rules.** Critical events always go to the browser and are never held back. Any other event with the same subject is sent at most once per 30 minutes (repeat limit). During quiet hours (23:00–08:00 Amsterdam) only critical events are sent; the rest are held and sent as one summary when quiet hours end. Sending runs in the background: a slow or failing channel never delays a cycle, a check or an order. Three failed emails in a row show a banner.
+
+**Content.** Subject `[Stock Agent · PAPER] <event>: <one line with the key number>`, for example "Kill switch on: drawdown −8.1% from peak". The body has the figures, the time in Amsterdam and New York, what the agent did and what Marc needs to do, and a link to the right GUI page. Briefings and reviews carry their text. Notifications never contain keys or passwords.
+
+**Settings.** The event × channel choices, the repeat limit and quiet hours are settings (versioned, in Settings → Notifications). SMTP details are saved on their own, like the keys.
 
 ## Data model
 
@@ -332,7 +363,8 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `settings_versions` | version, settings JSON, changed at, reason |
 | `universe_pool` | symbol, sector, source (default, added or import), added at, removed at (v0.2) |
 | `universe_screens` | session date, symbol, status (eligible, excluded or warming_up), check results JSON, last close, average dollar volume, return vs SPY, rank, failed screens in a row (v0.2) |
-| `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub), encrypted value, last 4 characters, saved at, tested at, test result |
+| `notifications` | time, event, severity, subject, channels, status per channel (sent, failed, held back, quiet hours), error |
+| `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub, smtp_password), encrypted value, last 4 characters, saved at, tested at, test result |
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON |
 
 A daily copy of the database is made at 03:00 Amsterdam time with SQLite's online backup API (never a plain file copy, which can catch a write half-done), checked with `PRAGMA integrity_check`, and kept for 14 days. Migrations are never edited once merged; a schema change is always a new revision. At startup the app compares the schema with the models and refuses to start with a clear message if they differ.
@@ -364,7 +396,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 and 12. 
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* a crash mid-cycle recovers cleanly.
 9. **Reviews.** Weekly review, daily briefing and verdicts (see Reviews).
-10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`, plus the dashboard risk budget card and cycle counter (see Risk budget card, Cycle counter). *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
+10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`, plus the dashboard risk budget card and cycle counter (see Risk budget card, Cycle counter) and notifications (see Notifications). If this makes PR 10 too large, notifications may follow as their own PR, still before the paper run. *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
 11. **Pool and liquidity screen (v0.2).** `universe_pool` and `universe_screens`, pool loading from `pool.csv`, add/import/remove, warm-up, daily screen with hysteresis, rank, universe mode in Settings, Universe screen. Default mode stays `fixed`. *Done when:* in simulated mode the screen over the 72-symbol pool gives the expected statuses, and fixed mode is unchanged.
 12. **Cycles at scale (v0.2).** Cycles over eligible plus held symbols, multi-symbol bar requests, model calls in rank order, cycle duration and warning, 5-min bar pruning, dashboard watchlist filters and search. *Done when:* a simulated session with the 72-symbol pool keeps every cycle under 10 minutes and under 150 Alpaca calls per minute, and every held position is handled.
 

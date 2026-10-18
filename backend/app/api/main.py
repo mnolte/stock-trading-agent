@@ -40,10 +40,12 @@ from app.engine.state import (
     load_execution_state,
     record_event,
     recover_interrupted_cycles,
+    set_event_sink,
 )
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
+from app.notifications.service import NotificationService
 from app.reviews.client import make_review_client
 from app.reviews.service import ReviewService
 from app.secrets_service import (
@@ -393,6 +395,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # client is built, and the scrub filter is in place before anything
     # can log a value that passed through the environment.
     secrets_store = SecretsStore(config, clock)
+    # One notification service behind every alert (docs/SPEC.md,
+    # Notifications). The record_event sink is registered before any
+    # client can write an event row.
+    notification_service = NotificationService(
+        config=config,
+        clock=clock,
+        secrets=secrets_store,
+        publish=lambda topics: bus.publish(*topics),
+    )
+    notification_service.start()
+    set_event_sink(notification_service.sink)
     key_testers = make_key_testers(config, clock)
     await secrets_store.import_env_keys(read_env_keys(), key_testers)
     install_secret_scrub_filter(secrets_store.scrub_values)
@@ -400,6 +413,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)
+        missing = secrets_store.missing_groups()
+        if missing:
+            notification_service.notify(
+                "source_failing",
+                f"{', '.join(missing)} key(s) failing — "
+                "the agent stays paused",
+                link="/settings",
+            )
 
     broker = make_broker(config, sources, clock, secrets_store)
     calendar_store = CalendarStore(sources.calendar)
@@ -409,6 +430,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         make_decision_client(config, api_key=secrets_store.get("openai")),
         config,
         api_key=secrets_store.get("openai"),
+        notifier=notification_service,
     )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
@@ -420,6 +442,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         clock=clock,
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
     )
     outcome_worker = OutcomeWorker(
         market_data=market_data,
@@ -438,6 +461,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signals=signal_service,
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -457,6 +481,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         executor=executor,
         outcomes=outcome_worker,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
     )
     universe_service = UniverseService(
         market_data=market_data,
@@ -575,6 +600,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.review_service = review_service
     app.state.universe = universe_service
     app.state.update_bus = bus
+    app.state.notification_service = notification_service
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     # When promoted settings move cycle times the cron jobs are rebuilt.
@@ -690,12 +716,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="verdict-scan",
         coalesce=True,
     )
+    # Quiet-hours heartbeat: sends the held-notifications summary when
+    # the window ends, and catches up after a restart.
+    scheduler.add_job(
+        notification_service.tick,
+        IntervalTrigger(minutes=1),
+        id="notifications-tick",
+        coalesce=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     try:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        set_event_sink(None)
+        await notification_service.stop()
         # Normal shutdown: give a running cycle or check the grace window
         # to finish; leftovers become "interrupted" and never count as
         # failures — only rows still "running" at the next startup (a real

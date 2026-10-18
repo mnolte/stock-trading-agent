@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -6,20 +6,26 @@ import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getKeys,
+  getNotifications,
   getSettings,
   getUniverse,
   postKey,
   postKeyTest,
+  postNotificationTest,
   postPaperReset,
   postSettings,
+  postSmtpSettings,
   postStartRun,
 } from '../api/state';
 import type {
   KeyGroup,
   KeyRow,
   KeysResponse,
+  NotificationEventMeta,
+  NotificationItem,
   SettingsForm,
   SettingsResponse,
+  SmtpStatus,
   UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
@@ -176,6 +182,7 @@ const DEFAULTS: Record<string, string> = {
   'universe.screen.min_avg_dollar_volume': '$100M',
   'universe.screen.lookback_sessions': '20',
   'universe.screen.drop_after_failed_screens': '3',
+  'notifications.repeat_limit_minutes': '30 min',
 };
 
 // field path -> unit suffix for "Changed from …" and the unsaved list
@@ -195,6 +202,7 @@ const UNITS: Record<string, string> = {
   'risk.earnings_blackout_days': ' trading days',
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
+  'notifications.repeat_limit_minutes': ' min',
 };
 
 // field path -> section id, for the section-list change badges
@@ -239,6 +247,7 @@ const SECTIONS = [
   { id: 'rules', label: 'Entry rules' },
   { id: 'earnings', label: 'Earnings' },
   { id: 'model', label: 'Model and reviews' },
+  { id: 'notify', label: 'Notifications' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'history', label: 'History' },
   { id: 'danger', label: 'Paper account' },
@@ -255,6 +264,8 @@ const SEARCH_TEXT: Record<string, string> = {
   earnings: 'earnings blackout hold through report sell trading days',
   model:
     'model reviews decisions prompt temperature calls per cycle daily briefing review cost cap',
+  notify:
+    'notifications alerts browser email smtp quiet hours repeat limit critical warnings trading reviews send test channels',
   schedule: 'schedule cycles new york amsterdam bar used entries position checks times',
   history: 'history version reason change settings log',
   danger: 'paper account reset new run start over balance',
@@ -786,6 +797,421 @@ function KeysSection({
 }
 
 // ---------------------------------------------------------------------------
+// notifications section (design/screens/Settings.dc.html → #notify)
+
+const NOTIFY_GROUPS: [string, string][] = [
+  ['critical', 'Critical · always sent, never held back'],
+  ['warnings', 'Warnings'],
+  ['trading', 'Trading'],
+  ['reviews', 'Reviews'],
+];
+
+function ChannelCheck({
+  checked,
+  locked,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  locked?: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      aria-disabled={locked || undefined}
+      title={locked ? 'Always on for critical alerts' : undefined}
+      onClick={locked ? undefined : onToggle}
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 5,
+        border: `1px solid ${checked ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
+        background: checked ? 'var(--sa-accent)' : 'transparent',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        opacity: locked ? 0.55 : 1,
+        cursor: locked ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {checked && (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--sa-bg)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <polyline points="5 12 10 17 19 7" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
+/** The event × channel matrix. In-app banners are always on and not a
+ * column; critical rows lock the browser checkbox on (spec). */
+function EventChannelTable({
+  events,
+  channels,
+  changed,
+  onToggle,
+  onReset,
+}: {
+  events: NotificationEventMeta[];
+  channels: Record<string, string[]>;
+  changed: Record<string, string>;
+  onToggle: (key: string, channel: 'browser' | 'email') => void;
+  onReset: (key: string) => void;
+}) {
+  const cell: CSSProperties = {
+    padding: '9px 6px',
+    borderBottom: '1px solid var(--sa-border)',
+    verticalAlign: 'middle',
+  };
+  return (
+    <div style={{ flex: '3 1 420px', minWidth: 0 }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr>
+              <th scope="col" style={{ textAlign: 'left', width: 'auto', padding: '8px 6px', fontSize: 'var(--sa-text-sm)', fontWeight: 500, color: 'var(--sa-text-muted)', borderBottom: '1px solid var(--sa-border)' }}>Event</th>
+              <th scope="col" style={{ textAlign: 'center', width: 60, padding: '8px 6px', fontSize: 'var(--sa-text-sm)', fontWeight: 500, color: 'var(--sa-text-muted)', borderBottom: '1px solid var(--sa-border)' }}>Browser</th>
+              <th scope="col" style={{ textAlign: 'center', width: 60, padding: '8px 6px', fontSize: 'var(--sa-text-sm)', fontWeight: 500, color: 'var(--sa-text-muted)', borderBottom: '1px solid var(--sa-border)' }}>Email</th>
+            </tr>
+          </thead>
+          <tbody>
+            {NOTIFY_GROUPS.map(([group, heading]) => {
+              const rows = events.filter((ev) => ev.group === group);
+              if (rows.length === 0) return null;
+              return [
+                <tr key={`g-${group}`}>
+                  <td colSpan={3} style={{ padding: '14px 6px 6px', fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                    {heading}
+                  </td>
+                </tr>,
+                ...rows.map((ev) => {
+                  const chans = channels[ev.key] ?? [];
+                  const critical = ev.severity === 'critical';
+                  const rowChanged = `notifications.events.${ev.key}` in changed;
+                  return (
+                    <tr key={ev.key}>
+                      <td style={{ ...cell, fontSize: 'var(--sa-text-md)' }}>
+                        {ev.label}
+                        {ev.description && (
+                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 2 }}>
+                            {ev.description}
+                          </div>
+                        )}
+                        {rowChanged && (
+                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-accent)', marginTop: 2 }}>
+                            Changed from {changed[`notifications.events.${ev.key}`]} ·{' '}
+                            <button
+                              type="button"
+                              onClick={() => onReset(ev.key)}
+                              style={{ background: 'none', border: 0, color: 'var(--sa-accent)', cursor: 'pointer', fontSize: 'var(--sa-text-sm)', padding: 0, textDecoration: 'underline' }}
+                            >
+                              Reset
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...cell, textAlign: 'center' }}>
+                        <ChannelCheck
+                          checked={critical || chans.includes('browser')}
+                          locked={critical}
+                          label={`${ev.label}, browser`}
+                          onToggle={() => onToggle(ev.key, 'browser')}
+                        />
+                      </td>
+                      <td style={{ ...cell, textAlign: 'center' }}>
+                        <ChannelCheck
+                          checked={chans.includes('email')}
+                          label={`${ev.label}, email`}
+                          onToggle={() => onToggle(ev.key, 'email')}
+                        />
+                      </td>
+                    </tr>
+                  );
+                }),
+              ];
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** The Browser card: Web Notifications API permission state plus the
+ * one-click request. Browser permission lives in the browser, not in
+ * settings versions. */
+function BrowserNotifyCard() {
+  const [perm, setPerm] = useState<NotificationPermission | 'unsupported'>(() =>
+    typeof window !== 'undefined' && 'Notification' in window
+      ? Notification.permission
+      : 'unsupported',
+  );
+  const status =
+    perm === 'granted'
+      ? { tone: 'ok' as const, text: 'allowed' }
+      : perm === 'denied'
+        ? { tone: 'bad' as const, text: 'blocked' }
+        : perm === 'unsupported'
+          ? { tone: 'neutral' as const, text: 'unavailable' }
+          : { tone: 'neutral' as const, text: 'not allowed yet' };
+  return (
+    <div style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+        <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>Browser</b>
+        <span style={chip(status.tone)}>{status.text}</span>
+      </div>
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+        Works while Stock Agent is open in a browser tab. Also shown as a toast in the app.
+        {perm === 'denied' && ' Blocked in the browser — allow notifications for this page in its site settings.'}
+      </span>
+      {perm === 'default' && (
+        <div>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              Notification.requestPermission()
+                .then((p) => setPerm(p))
+                .catch(() => setPerm('unsupported'));
+            }}
+            style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}
+          >
+            Allow notifications
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SmtpFormState {
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+  from_addr: string;
+  to_addr: string;
+}
+
+/** The Email (SMTP) card. Saves only after a successful test send on the
+ * backend; the password goes to the encrypted secrets store and is never
+ * read back. */
+function SmtpCard({
+  smtp,
+  onSaved,
+  onNotice,
+  onError,
+}: {
+  smtp: SmtpStatus | null;
+  onSaved: () => void;
+  onNotice: (text: string) => void;
+  onError: (msgs: string[]) => void;
+}) {
+  const [form, setForm] = useState<SmtpFormState>({
+    host: '',
+    port: '587',
+    username: '',
+    password: '',
+    from_addr: '',
+    to_addr: '',
+  });
+  const [busy, setBusy] = useState<'save' | 'test' | null>(null);
+  const hydrated = useRef(false);
+
+  useEffect(() => {
+    // Fill the saved values once; later edits must not be overwritten by
+    // a background settings refresh.
+    if (smtp && !hydrated.current) {
+      hydrated.current = true;
+      setForm({
+        host: smtp.host ?? '',
+        port: String(smtp.port ?? 587),
+        username: smtp.username ?? '',
+        password: '',
+        from_addr: smtp.from_addr ?? '',
+        to_addr: smtp.to_addr ?? '',
+      });
+    }
+  }, [smtp]);
+
+  const field = (
+    id: string,
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    opts: { type?: string; placeholder?: string; mono?: boolean } = {},
+  ) => (
+    <label htmlFor={id} style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{label}</span>
+      <input
+        id={id}
+        type={opts.type ?? 'text'}
+        value={value}
+        placeholder={opts.placeholder}
+        onChange={(e) => set(e.target.value)}
+        style={{ ...textInput(), width: '100%', fontFamily: opts.mono ? 'var(--sa-font-mono)' : undefined }}
+      />
+    </label>
+  );
+
+  const status = !smtp?.configured
+    ? { tone: 'neutral' as const, text: 'not set up' }
+    : smtp.test_result === 'ok' && smtp.tested_at
+      ? { tone: 'ok' as const, text: `test sent ${displayTime(smtp.tested_at)}` }
+      : smtp.test_result === 'failed'
+        ? { tone: 'bad' as const, text: 'test failed' }
+        : { tone: 'neutral' as const, text: 'saved' };
+
+  const save = () => {
+    const port = Number(form.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      onError(['Port: a whole number between 1 and 65535.']);
+      return;
+    }
+    setBusy('save');
+    postSmtpSettings({
+      host: form.host.trim(),
+      port,
+      username: form.username.trim(),
+      from_addr: form.from_addr.trim(),
+      to_addr: form.to_addr.trim(),
+      ...(form.password ? { password: form.password } : {}),
+    })
+      .then(() => {
+        setForm((f) => ({ ...f, password: '' }));
+        onNotice('SMTP saved — the test send passed.');
+        onSaved();
+      })
+      .catch((e) => onError(errorMessages(e)))
+      .finally(() => setBusy(null));
+  };
+
+  const sendTest = () => {
+    setBusy('test');
+    postNotificationTest()
+      .then(() => onNotice('Test sent — see Recently sent below.'))
+      .catch((e) => onError(errorMessages(e)))
+      .finally(() => setBusy(null));
+  };
+
+  return (
+    <div style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
+        <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>Email (SMTP)</b>
+        <span style={chip(status.tone)}>{status.text}</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+        {field('smtp-host', 'SMTP host', form.host, (v) => setForm((f) => ({ ...f, host: v })), { mono: true })}
+        <label htmlFor="smtp-port" style={{ display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 }}>
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Port · TLS</span>
+          <span style={inputBox()}>
+            <input
+              id="smtp-port"
+              value={form.port}
+              inputMode="numeric"
+              onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
+              style={numInput(56)}
+            />
+            <span style={unitText}>STARTTLS</span>
+          </span>
+        </label>
+        {field('smtp-user', 'Username', form.username, (v) => setForm((f) => ({ ...f, username: v })))}
+        {field('smtp-pass', 'Password (encrypted)', form.password, (v) => setForm((f) => ({ ...f, password: v })), {
+          type: 'password',
+          placeholder: smtp?.password_set ? '••••••••' : undefined,
+        })}
+        {field('smtp-from', 'From', form.from_addr, (v) => setForm((f) => ({ ...f, from_addr: v })), { type: 'email' })}
+        {field('smtp-to', 'To', form.to_addr, (v) => setForm((f) => ({ ...f, to_addr: v })), { type: 'email' })}
+      </div>
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+        The password is stored encrypted like the API keys and never shown again. Saving tests the connection first.
+      </span>
+      {smtp?.test_result === 'failed' && smtp.test_detail && (
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-negative-text)' }}>{smtp.test_detail}</span>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button
+          variant="ghost"
+          onClick={sendTest}
+          disabled={busy !== null || !smtp?.configured}
+          title={!smtp?.configured ? 'Save the SMTP details first' : undefined}
+          style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border-strong)', background: 'var(--sa-raised)' }}
+        >
+          {busy === 'test' ? 'Sending…' : 'Send test'}
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={save}
+          disabled={busy !== null || !form.host.trim() || !form.to_addr.trim()}
+          style={{ height: 36, padding: '0 16px' }}
+        >
+          {busy === 'save' ? 'Testing…' : 'Test and save'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const NOTIFY_STATUS_TEXT: Record<string, string> = {
+  sent: '✓',
+  failed: '✗',
+  queued: 'sending…',
+  'held back': 'held back',
+  'quiet hours': 'held',
+};
+
+function recentStatus(item: NotificationItem): string {
+  const parts = Object.entries(item.channel_status)
+    .filter(([channel]) => channel !== 'app')
+    .map(([channel, st]) => `${channel} ${NOTIFY_STATUS_TEXT[st] ?? st}`);
+  return parts.join(' · ') || 'in app';
+}
+
+/** The "Recently sent" rows — the `notifications` table, newest first. */
+function RecentNotifications() {
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const refresh = useCallback(() => {
+    getNotifications(0, 10)
+      .then((res) => setItems(res.items))
+      .catch(() => setItems([]));
+  }, []);
+  useEffect(refresh, [refresh]);
+  useLiveUpdates(['notifications'], refresh);
+  return (
+    <div style={{ padding: '6px 0 14px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {items.map((item) => (
+          <div
+            key={item.id}
+            style={{ display: 'grid', gridTemplateColumns: '92px 1fr auto', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', alignItems: 'baseline' }}
+          >
+            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              {displayDayTime(item.time)}
+            </span>
+            <span style={{ color: 'var(--sa-text-2)' }}>
+              {item.subject.replace(/^\[Stock Agent[^\]]*\]\s*/, '')}
+            </span>
+            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              {recentStatus(item)}
+            </span>
+          </div>
+        ))}
+        {items.length === 0 && (
+          <div style={{ padding: '8px 0', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+            Nothing sent yet.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // page
 
 export default function Settings() {
@@ -906,6 +1332,33 @@ export default function Settings() {
     );
   };
 
+  const patchQuiet = (key: 'start' | 'end', value: string) => {
+    if (!form) return;
+    patch('notifications', 'quiet_hours', {
+      ...form.notifications.quiet_hours,
+      [key]: value,
+    });
+  };
+
+  const toggleChannel = (key: string, channel: 'browser' | 'email') => {
+    if (!form) return;
+    const current = form.notifications.events[key] ?? [];
+    patch('notifications', 'events', {
+      ...form.notifications.events,
+      [key]: current.includes(channel)
+        ? current.filter((c) => c !== channel)
+        : [...current, channel],
+    });
+  };
+
+  const resetEventChannels = (key: string) => {
+    if (!data || !form) return;
+    patch('notifications', 'events', {
+      ...form.notifications.events,
+      [key]: [...(data.settings.notifications.events[key] ?? [])],
+    });
+  };
+
   const addSymbol = () => {
     if (!form || !newSymbol.trim() || !newSector) return;
     const symbol = newSymbol.trim().toUpperCase();
@@ -1010,9 +1463,11 @@ export default function Settings() {
   const held = new Set(data.held_symbols);
 
   const sectionChanges = (id: string) =>
-    Object.keys(changed).filter((path) =>
-      path.startsWith('universe.') ? id === 'trading' : SECTION_OF[path] === id,
-    ).length;
+    Object.keys(changed).filter((path) => {
+      if (path.startsWith('universe.')) return id === 'trading';
+      if (path.startsWith('notifications.')) return id === 'notify';
+      return SECTION_OF[path] === id;
+    }).length;
 
   const visibleSections = SECTIONS.filter((section) => {
     if (!find.trim()) return true;
@@ -1797,6 +2252,99 @@ export default function Settings() {
           </Section>
 
           <Section
+            id="notify"
+            title="Notifications"
+            right="browser · email"
+            blurb="What the agent tells you about, and where. Critical alerts always reach the browser."
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, padding: '8px 0 4px' }}>
+              <EventChannelTable
+                events={data.notification_events}
+                channels={s.notifications?.events ?? {}}
+                changed={changed}
+                onToggle={toggleChannel}
+                onReset={resetEventChannels}
+              />
+              <div style={{ flex: '2 1 300px', minWidth: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <BrowserNotifyCard />
+                  <SmtpCard
+                    smtp={data.smtp}
+                    onSaved={refresh}
+                    onNotice={setNotice}
+                    onError={setErrors}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {row('notifications.repeat_limit_minutes', {
+              id: 'throttle',
+              label: 'Repeat limit',
+              help: 'The same alert is sent at most once per this many minutes. Critical alerts are never held back.',
+              children: (
+                <NumBox
+                  id="throttle"
+                  value={s.notifications?.repeat_limit_minutes ?? 30}
+                  unit="min"
+                  accent={'notifications.repeat_limit_minutes' in changed}
+                  invalid={!!fieldErrors['notifications.repeat_limit_minutes']}
+                  onChange={(v) => patch('notifications', 'repeat_limit_minutes', v)}
+                />
+              ),
+            })}
+
+            <Row
+              label="Quiet hours (Amsterdam)"
+              help="Only critical alerts are sent in this window; the rest wait until it ends."
+              changed={
+                'notifications.quiet_hours.start' in changed ||
+                'notifications.quiet_hours.end' in changed
+              }
+              changedFrom={`${data.settings.notifications.quiet_hours.start}–${data.settings.notifications.quiet_hours.end}`}
+              error={
+                fieldErrors['notifications.quiet_hours.start'] ??
+                fieldErrors['notifications.quiet_hours.end']
+              }
+              defaultText="23:00–08:00"
+              pendingText={pendingJoined(
+                ['notifications.quiet_hours.start', 'notifications.quiet_hours.end'],
+                '–',
+              )}
+              onReset={() => reset('notifications', 'quiet_hours')}
+            >
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span style={inputBox(
+                  'notifications.quiet_hours.start' in changed,
+                  !!fieldErrors['notifications.quiet_hours.start'],
+                )}>
+                  <input
+                    aria-label="from"
+                    value={s.notifications?.quiet_hours?.start ?? ''}
+                    onChange={(e) => patchQuiet('start', e.target.value)}
+                    style={numInput(60)}
+                  />
+                </span>
+                <span style={{ color: 'var(--sa-text-muted)' }}>to</span>
+                <span style={inputBox(
+                  'notifications.quiet_hours.end' in changed,
+                  !!fieldErrors['notifications.quiet_hours.end'],
+                )}>
+                  <input
+                    aria-label="to"
+                    value={s.notifications?.quiet_hours?.end ?? ''}
+                    onChange={(e) => patchQuiet('end', e.target.value)}
+                    style={numInput(60)}
+                  />
+                </span>
+              </span>
+            </Row>
+
+            <h3 style={subHead}>Recently sent</h3>
+            <RecentNotifications />
+          </Section>
+
+          <Section
             id="schedule"
             title="Schedule"
             right={`${data.schedule.cycles_per_session} cycles per session`}
@@ -1996,4 +2544,7 @@ const LABEL_OF: Record<string, string> = {
   'universe.screen.min_avg_dollar_volume': 'Min average dollar volume',
   'universe.screen.lookback_sessions': 'Average over',
   'universe.screen.drop_after_failed_screens': 'Drop after',
+  'notifications.repeat_limit_minutes': 'Repeat limit',
+  'notifications.quiet_hours.start': 'Quiet hours from',
+  'notifications.quiet_hours.end': 'Quiet hours to',
 };

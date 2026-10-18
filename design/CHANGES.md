@@ -2,6 +2,14 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-18 — Notifications in Settings
+
+- `Settings.dc.html`: new "Notifications" section (and section-list entry) after Model and reviews: event table grouped Critical / Warnings / Trading / Reviews with Browser and Email checkboxes (browser locked on for critical events); Browser channel status; Email (SMTP) fields with encrypted password, Send test and Test and save; repeat limit; quiet hours; recently sent list. `Settings.png` and `Settings-390.png` re-rendered.
+
+## 2026-10-18 — Cycle counter
+
+- `Main.dc.html`: the this-cycle strip ends with a cycle counter instead of "Cycle 3 of 6 today": next cycle 19:46 (13:46 NY) with countdown, six segments for today's cycles (done, next outlined in amber, later), "Cycle 4 of 6 today · #52 this run" and the next position check. `Main.png` and `Main-390.png` re-rendered.
+
 ## 2026-10-18 — Risk budget card
 
 - `Main.dc.html`: the four summary tiles are replaced by a "Risk budget" card (meters for open risk vs 2.5% cap, today's loss vs −2% limit, drawdown vs −8% kill; facts for room for more trades, sectors, risk per trade and losing streak, shock brake, day trades; every label has a hover explanation) next to two tiles (Positions, Since start). The open-risk and day-trade tiles moved into the card. Screenshots `Main.png` and `Main-390.png` re-rendered.

@@ -5,7 +5,14 @@ import type { SettingsForm } from '../types/api';
 // they are typed; Save stays disabled while any rule fails (docs/SPEC.md,
 // Settings screen).
 
-export type FieldKind = 'number' | 'int' | 'bool' | 'str' | 'mode' | 'universe_mode';
+export type FieldKind =
+  | 'number'
+  | 'int'
+  | 'bool'
+  | 'str'
+  | 'mode'
+  | 'universe_mode'
+  | 'time';
 
 export interface FieldRule {
   kind: FieldKind;
@@ -46,6 +53,9 @@ export const FIELD_RULES: Record<string, FieldRule> = {
   'performance.slippage_pct_per_side': { kind: 'number', min: 0, max: 10, label: 'Assumed slippage' },
   'reviews.briefing_enabled': { kind: 'bool', label: 'Daily briefing' },
   'reviews.monthly_cost_cap_usd': { kind: 'number', min: 0, max: 100, label: 'Review cost cap' },
+  'notifications.repeat_limit_minutes': { kind: 'int', min: 0, max: 1440, label: 'Repeat limit' },
+  'notifications.quiet_hours.start': { kind: 'time', label: 'Quiet hours from' },
+  'notifications.quiet_hours.end': { kind: 'time', label: 'Quiet hours to' },
   'universe.mode': { kind: 'universe_mode', label: 'Universe' },
   'universe.screen.min_price': { kind: 'number', min: 0, label: 'Min price' },
   'universe.screen.min_avg_dollar_volume': { kind: 'number', min: 0, label: 'Min average dollar volume' },
@@ -87,6 +97,13 @@ function validateField(value: unknown, rule: FieldRule): string | null {
       return typeof value === 'string' && value.trim()
         ? null
         : `${rule.label}: required`;
+    case 'time': {
+      if (typeof value !== 'string') return `${rule.label}: required`;
+      const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+      if (!m || Number(m[1]) > 23 || Number(m[2]) > 59)
+        return `${rule.label}: use HH:MM, e.g. 23:00`;
+      return null;
+    }
     default:
       return null;
   }

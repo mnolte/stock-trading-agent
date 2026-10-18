@@ -73,7 +73,11 @@ table{border-collapse:collapse}
 <div role="status" style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 12px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; font-size: 13px">
   <span style="padding: 3px 8px; border-radius: 6px; background: #1C222C; color: #C9CFD6; font-size: 12px; font-weight: 600">18:46 cycle</span>
   <span style="flex: 1 1 420px; color: #C9CFD6; line-height: 1.5">5 of 8 symbols not held failed the <span title="The rules check that decides whether the model is asked at all." style="text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">pre-filter</span>. 3 reached the model: all skipped. Both open positions held. 5 model calls · $0.002.</span>
-  <span style="color: #98A2AF">Cycle 3 of 6 today</span>
+  <div role="timer" aria-label="Cycle counter" style="flex: 0 1 360px; min-width: 260px; display: flex; flex-direction: column; gap: 6px; padding-left: 14px; border-left: 1px solid #232A35">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px"><span style="color: #C9CFD6">Next cycle <b style="font-weight: 600; color: #E7EAEE">19:46</b> <span style="color: #98A2AF">· 13:46 NY</span></span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #E7EAEE">{{countdown}}</span></div>
+  <div aria-hidden="true" style="display: flex; gap: 4px"><span title="Cycle 1 · 10:46 New York · done" style="flex: 1; height: 8px; border-radius: 4px; background: #9FB4CC"></span><span title="Cycle 2 · 11:46 New York · done" style="flex: 1; height: 8px; border-radius: 4px; background: #9FB4CC"></span><span title="Cycle 3 · 12:46 New York · done" style="flex: 1; height: 8px; border-radius: 4px; background: #9FB4CC"></span><span title="Cycle 4 · 13:46 New York · next" style="flex: 1; height: 8px; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 2px #F2B94B"></span><span title="Cycle 5 · 14:46 New York · later" style="flex: 1; height: 8px; border-radius: 4px; background: #232A35"></span><span title="Cycle 6 · 15:46 New York · later" style="flex: 1; height: 8px; border-radius: 4px; background: #232A35"></span></div>
+  <div style="display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #98A2AF"><span>Cycle 4 of 6 today · #52 this run</span><span>check 19:01</span></div>
+</div>
 </div>
 <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
 <section aria-label="Risk budget" style="flex: 999 1 600px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
@@ -354,6 +358,7 @@ class Component extends DCLogic {
     });
 
     return {
+      countdown: '53:48',
       nav: nav, rows: rows, candles: candles, lines: lines, grid: grid, sessions: sessions, levels: levels, entryMark: entryMark, dec: dec,
       sel: { id: sel.id, priceText: '$' + fmt(sel.price), chgText: chgText(sel.chg), chgStyle: 'font-family:IBM Plex Mono,monospace;font-size:14px;color:' + chgColor(sel.chg) }
     };

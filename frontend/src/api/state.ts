@@ -11,6 +11,7 @@ import type {
   KeyGroup,
   KeysResponse,
   KillSwitchResponse,
+  NotificationsResponse,
   OrdersResponse,
   PaperResetResult,
   PerformanceResponse,
@@ -22,6 +23,7 @@ import type {
   SaveKeyResult,
   SaveSettingsResult,
   SettingsResponse,
+  SmtpStatus,
   StartRunResult,
   TestKeyResult,
   UniverseAddResult,
@@ -119,6 +121,33 @@ export function postSettings(
   reason: string,
 ): Promise<SaveSettingsResult> {
   return post<SaveSettingsResult>('/api/settings', { settings, reason });
+}
+
+export function getNotifications(
+  afterId = 0,
+  limit = 20,
+): Promise<NotificationsResponse> {
+  return get<NotificationsResponse>(
+    `/api/notifications?after_id=${afterId}&limit=${limit}`,
+  );
+}
+
+export function postNotificationTest(): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>('/api/notifications/test', {});
+}
+
+export function postSmtpSettings(body: {
+  host: string;
+  port: number;
+  username: string;
+  from_addr: string;
+  to_addr: string;
+  password?: string;
+}): Promise<{ ok: boolean; smtp: SmtpStatus }> {
+  return post<{ ok: boolean; smtp: SmtpStatus }>(
+    '/api/notifications/smtp',
+    body,
+  );
 }
 
 export function getKeys(): Promise<KeysResponse> {

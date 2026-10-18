@@ -46,6 +46,11 @@ from app.market.clock import (
     SessionState,
     make_clock,
 )
+from app.notifications.events import EVENT_DEFS
+from app.notifications.service import (
+    EMAIL_FAILURE_BANNER_AT,
+    NotificationService,
+)
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.risk.budget import Meter, risk_budget
 from app.secrets_service import (
@@ -660,6 +665,10 @@ def _executor(request: Request) -> Executor:
 
 def _secrets(request: Request) -> SecretsStore | None:
     return getattr(request.app.state, "secrets_store", None)
+
+
+def _notifications(request: Request) -> NotificationService | None:
+    return getattr(request.app.state, "notification_service", None)
 
 
 def _key_testers(request: Request) -> KeyTesters:
@@ -1461,6 +1470,24 @@ def banners(request: Request) -> dict[str, object]:
                 "actions": [],
             }
         )
+    notification_service = _notifications(request)
+    if (
+        notification_service is not None
+        and notification_service.email_failures >= EMAIL_FAILURE_BANNER_AT
+    ):
+        items.append(
+            {
+                "id": None,
+                "kind": "email_failing",
+                "level": "warning",
+                "message": (
+                    f"{notification_service.email_failures} notification "
+                    "emails failed in a row. Check the SMTP details under "
+                    "Settings → Notifications."
+                ),
+                "actions": ["open_settings"],
+            }
+        )
     market_data = getattr(request.app.state, "market_data", None)
     earnings_status = (
         getattr(market_data, "latest_earnings", None) if market_data else None
@@ -1773,6 +1800,17 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "notifications": {
+            "repeat_limit_minutes": get(
+                "notifications", "repeat_limit_minutes", default=30
+            ),
+            "quiet_hours": get(
+                "notifications",
+                "quiet_hours",
+                default={"start": "23:00", "end": "08:00"},
+            ),
+            "events": get("notifications", "events", default={}),
+        },
         "reviews": {
             "briefing_enabled": get(
                 "reviews", "briefing_enabled", default=True
@@ -1962,6 +2000,21 @@ def settings(request: Request) -> dict[str, object]:
         "connections": _connections(request),
         "history": history,
         "reviews_spend_usd": _reviews_spend(request),
+        "notification_events": [
+            {
+                "key": d.key,
+                "label": d.label,
+                "description": d.description,
+                "group": d.group,
+                "severity": d.severity,
+            }
+            for d in EVENT_DEFS
+        ],
+        "smtp": (
+            _notifications(request).smtp_status()  # type: ignore[union-attr]
+            if _notifications(request) is not None
+            else None
+        ),
         "mode": config.env.mode,
     }
 
@@ -2025,7 +2078,72 @@ def _clock(request: Request) -> Clock:
 
 
 # ----------------------------------------------------------------------
-# API keys (encrypted, write-only, tested before save)
+# Notifications (docs/SPEC.md, Notifications)
+
+
+@router.get("/notifications")
+def notifications(
+    request: Request, after_id: int = 0, limit: int = 20
+) -> dict[str, object]:
+    """Recent notifications, newest first, for the toasts and the
+    'Recently sent' list on the Settings page."""
+    service = _notifications(request)
+    if service is None:
+        return {"items": [], "latest_id": after_id}
+    return service.recent(after_id=after_id, limit=limit)
+
+
+@router.post("/notifications/test")
+async def notification_test(request: Request) -> dict[str, object]:
+    """'Send test': one notification on every enabled channel."""
+    service = _notifications(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="notifications unavailable")
+    return await service.send_test()
+
+
+@router.post("/notifications/smtp")
+async def save_smtp(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Save the SMTP details — only after a real test send succeeded.
+    The password (if any) goes to the encrypted secrets table."""
+    service = _notifications(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="notifications unavailable")
+    host = str(body.get("host") or "").strip()
+    username = str(body.get("username") or "").strip()
+    from_addr = str(body.get("from_addr") or "").strip()
+    to_addr = str(body.get("to_addr") or "").strip()
+    raw_password = body.get("password")
+    password = str(raw_password) if raw_password else None
+    errors: list[str] = []
+    if not host:
+        errors.append("SMTP host is required")
+    if not to_addr:
+        errors.append("Send to is required")
+    try:
+        port = int(str(body.get("port") or 587))
+    except ValueError:
+        port = 0
+    if not 1 <= port <= 65535:
+        errors.append("SMTP port must be 1–65535")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    result = await service.save_smtp(
+        host=host,
+        port=port,
+        username=username,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        password=password,
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=422,
+            detail=[f"test send failed: {result.get('error')}"],
+        )
+    return {"ok": True, "smtp": service.smtp_status()}
 
 
 def _open_items() -> int:

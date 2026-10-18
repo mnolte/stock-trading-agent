@@ -65,6 +65,17 @@ class ScreenError(Exception):
 
 
 @dataclass
+class _HistoryWindows:
+    """The session windows and counts the history check needs — shared
+    across symbols, so they are computed once per run, not per symbol."""
+
+    completed: list[CalendarDay]
+    started: list[CalendarDay]
+    want_daily: int
+    want_5m: int
+
+
+@dataclass
 class _ScreenMetrics:
     """One symbol's screen inputs and raw result."""
 
@@ -420,14 +431,9 @@ class UniverseService:
     # History / warm-up
     # ------------------------------------------------------------------
 
-    def _history_detail(
-        self, symbol: str, now: datetime
-    ) -> tuple[bool, str, list[CalendarDay], list[CalendarDay]]:
-        """The same warming semantics as the signal snapshot: completed
-        daily bars and covered 5m sessions against the configured needs
-        (260 daily / 60 sessions), capped by what the calendar can supply.
-        Returns (loaded, detail, completed daily sessions, started sessions).
-        """
+    def _history_windows(self, now: datetime) -> _HistoryWindows:
+        """Completed daily sessions and started 5m sessions, with the
+        counts the history check wants — identical for every symbol."""
         ny_today = now.astimezone(NY_TZ).date()
         daily_sessions = self._market_data.recent_sessions(
             ny_today, self._daily_history_sessions()
@@ -437,18 +443,64 @@ class UniverseService:
             ny_today, self._history_sessions()
         )
         started = [s for s in sessions if s.open <= now]
-        daily_bars = self._market_data.get_daily_bars(symbol, completed)
-        covered = self._market_data.bars_cache.covered_session_dates(
-            symbol, started
+        return _HistoryWindows(
+            completed=completed,
+            started=started,
+            want_daily=min(self._daily_history_sessions(), len(completed)),
+            want_5m=min(self._history_sessions(), len(started)),
         )
-        want_daily = min(self._daily_history_sessions(), len(completed))
-        want_5m = min(self._history_sessions(), len(started))
-        loaded = len(daily_bars) >= want_daily and len(covered) >= want_5m
+
+    @staticmethod
+    def _history_loaded(
+        daily_count: int, covered_count: int, windows: _HistoryWindows
+    ) -> tuple[bool, str]:
+        loaded = (
+            daily_count >= windows.want_daily
+            and covered_count >= windows.want_5m
+        )
         detail = (
-            f"{len(daily_bars)} of {want_daily} daily bars · "
-            f"{len(covered)} of {want_5m} sessions"
+            f"{daily_count} of {windows.want_daily} daily bars · "
+            f"{covered_count} of {windows.want_5m} sessions"
         )
-        return loaded, detail, completed, started
+        return loaded, detail
+
+    def _history_detail(
+        self, symbol: str, windows: _HistoryWindows
+    ) -> tuple[bool, str]:
+        """The same warming semantics as the signal snapshot: completed
+        daily bars and covered 5m sessions against the configured needs
+        (260 daily / 60 sessions), capped by what the calendar can supply.
+        Returns (loaded, detail).
+        """
+        daily_bars = self._market_data.get_daily_bars(
+            symbol, windows.completed
+        )
+        covered = self._market_data.bars_cache.covered_session_dates(
+            symbol, windows.started
+        )
+        return self._history_loaded(len(daily_bars), len(covered), windows)
+
+    def _warming_details(
+        self, symbols: list[str], now: datetime
+    ) -> dict[str, tuple[bool, str]]:
+        """The history check for many symbols at once: the windows are
+        shared and each bar table is queried once, grouped by symbol,
+        instead of two per-symbol queries."""
+        if not symbols:
+            return {}
+        windows = self._history_windows(now)
+        daily = self._market_data.bars_cache.daily_bar_counts(
+            symbols, windows.completed
+        )
+        covered = self._market_data.bars_cache.covered_session_counts(
+            symbols, windows.started
+        )
+        return {
+            symbol: self._history_loaded(
+                daily.get(symbol, 0), covered.get(symbol, 0), windows
+            )
+            for symbol in symbols
+        }
 
     async def _fetch_daily(
         self, symbol: str, sessions: list[CalendarDay]
@@ -635,14 +687,19 @@ class UniverseService:
 
         # 2. Check every symbol.
         completed = [s for s in daily_sessions if s.close <= now]
+        windows = _HistoryWindows(
+            completed=completed,
+            started=started,
+            want_daily=min(self._daily_history_sessions(), len(completed)),
+            want_5m=want_5m,
+        )
         spy_bars = self._market_data.get_daily_bars("SPY", completed)
         spy_return = _period_return(spy_bars, lookback)
         metrics: dict[str, _ScreenMetrics] = {}
         for row in pool:
             metrics[row.symbol] = await self._screen_symbol(
                 row.symbol,
-                now,
-                completed,
+                windows,
                 min_price,
                 min_dv,
                 max_position_usd,
@@ -747,8 +804,7 @@ class UniverseService:
     async def _screen_symbol(
         self,
         symbol: str,
-        now: datetime,
-        completed: list[CalendarDay],
+        windows: _HistoryWindows,
         min_price: Decimal,
         min_dv: Decimal,
         max_position_usd: Decimal,
@@ -756,7 +812,7 @@ class UniverseService:
         spy_return: Decimal | None,
     ) -> _ScreenMetrics:
         checks = dict.fromkeys(CHECK_KEYS, "pass")
-        loaded, hist_detail, _, _ = self._history_detail(symbol, now)
+        loaded, hist_detail = self._history_detail(symbol, windows)
         if not loaded:
             checks["history"] = "warming"
             return _ScreenMetrics(
@@ -768,7 +824,7 @@ class UniverseService:
                 return_vs_spy=None,
             )
 
-        daily = self._market_data.get_daily_bars(symbol, completed)
+        daily = self._market_data.get_daily_bars(symbol, windows.completed)
         last_close = daily[-1].close if daily else None
         dv = _avg_dollar_volume(daily, lookback)
         ret = _period_return(daily, lookback)
@@ -870,12 +926,19 @@ class UniverseService:
             pool = self._active_pool(session)
             latest_rows = self.latest_screen_rows()
 
+        # Symbols without a screen row get their warming progress here —
+        # batched: one shared session computation plus two grouped queries
+        # for the whole pool, not a calendar walk and two queries per row.
+        warming = self._warming_details(
+            [e.symbol for e in pool if e.symbol not in latest_rows], now
+        )
+
         rows: list[dict[str, Any]] = []
         for entry in pool:
             row = latest_rows.get(entry.symbol)
             check: dict[str, Any] = (row.check_results or {}) if row is not None else {}
             if row is None:
-                loaded, detail, _, _ = self._history_detail(entry.symbol, now)
+                loaded, detail = warming[entry.symbol]
                 # Not screened yet — never "eligible" off a screen row.
                 status = "warming_up"
                 check = {

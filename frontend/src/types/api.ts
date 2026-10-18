@@ -563,6 +563,12 @@ export interface SettingsForm {
   performance: { slippage_pct_per_side: number; starting_equity: number };
   reviews: { briefing_enabled: boolean; monthly_cost_cap_usd: number };
   schedule: { cycles: string[] };
+  notifications: {
+    repeat_limit_minutes: number;
+    quiet_hours: { start: string; end: string };
+    /** event key -> channels (app is always on and not listed) */
+    events: Record<string, string[]>;
+  };
   universe: {
     symbols: string[];
     sectors: Record<string, string>;
@@ -622,7 +628,53 @@ export interface SettingsResponse {
   connections: ConnectionRow[];
   history: SettingsHistoryRow[];
   reviews_spend_usd?: string | null;
+  /** Event rows for the Notifications section, spec order. */
+  notification_events: NotificationEventMeta[];
+  /** SMTP card state; null when the notification service is absent. */
+  smtp: SmtpStatus | null;
   mode: string;
+}
+
+// ---- Notifications ----------------------------------------------------------
+
+export interface NotificationEventMeta {
+  key: string;
+  label: string;
+  description: string;
+  group: 'critical' | 'warnings' | 'trading' | 'reviews' | string;
+  severity: 'critical' | 'warning' | 'info' | string;
+}
+
+export interface NotificationItem {
+  id: number;
+  time: string;
+  event: string;
+  severity: string;
+  subject: string;
+  body: string | null;
+  link: string | null;
+  channels: string[];
+  channel_status: Record<string, string>;
+  error: string | null;
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  latest_id: number;
+}
+
+export interface SmtpStatus {
+  configured: boolean;
+  host: string;
+  port: number;
+  username: string;
+  from_addr: string;
+  to_addr: string;
+  password_set: boolean;
+  saved_at: string | null;
+  tested_at: string | null;
+  test_result: string | null;
+  test_detail: string | null;
 }
 
 export interface SettingsError {

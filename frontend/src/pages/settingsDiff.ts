@@ -33,6 +33,9 @@ const FIELD_LABELS: Record<string, string> = {
   'reviews.briefing_enabled': 'Daily briefing',
   'reviews.monthly_cost_cap_usd': 'Review cost cap',
   'schedule.cycles': 'Cycle times',
+  'notifications.repeat_limit_minutes': 'Repeat limit',
+  'notifications.quiet_hours.start': 'Quiet hours from',
+  'notifications.quiet_hours.end': 'Quiet hours to',
   'universe.symbols': 'Universe',
   'universe.mode': 'Universe mode',
   'universe.screen.min_price': 'Min price',
@@ -63,7 +66,85 @@ export function fmtPath(path: string, value: unknown): string {
   if (path === 'universe.screen.lookback_sessions') return `${String(value)} sessions`;
   if (path === 'universe.screen.drop_after_failed_screens') return `${String(value)} days`;
   if (path === 'universe.mode') return value === 'screened' ? 'Screened pool' : 'Fixed list';
+  if (path === 'notifications.repeat_limit_minutes') return `${String(value)} min`;
   return fmtVal(value);
+}
+
+// Event labels for `notifications.events.<key>` diff rows — mirrors
+// backend/app/notifications/events.py EVENT_DEFS.
+const EVENT_LABELS: Record<string, string> = {
+  kill_switch: 'Kill switch turned on',
+  missing_stop: 'Position without a stop at Alpaca',
+  reconciliation: 'Reconciliation mismatch or adopted position',
+  order_rejected: 'Order rejected by Alpaca',
+  daily_loss_limit: 'Daily loss limit reached',
+  shock_brake: 'Shock brake on',
+  pdt_guard: 'Day-trade guard',
+  source_failing: 'Data source or API key failing',
+  position_checks_failing: 'Position checks failing',
+  model_failing: 'Model failing or review cost cap reached',
+  approval_waiting: 'Entry waiting for approval',
+  exit_deferred_or_earnings_exit: 'Exit deferred or earnings exit',
+  trade: 'Trade opened or closed',
+  daily_briefing: 'Daily briefing',
+  weekly_review: 'Weekly review ready',
+  verdicts_waiting: 'Verdicts waiting to confirm',
+};
+
+/** Channel list display for an events leaf: 'browser, email' or 'banner only'. */
+function fmtChannels(value: unknown): string {
+  if (Array.isArray(value) && value.length > 0) {
+    return [...value].sort().join(' + ');
+  }
+  return 'banner only';
+}
+
+/** Nested leaves of a dict field (`notifications.quiet_hours`,
+ * `notifications.events`), as `<section>.<key>.<sub>` paths. */
+function dictLeafRows(
+  section: keyof SettingsForm,
+  key: string,
+  current: SettingsForm,
+  edited: SettingsForm,
+  fmt: (value: unknown) => string,
+  labelFor: (sub: string) => string,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  const cur =
+    ((current[section] as Record<string, unknown>)?.[key] as
+      | Record<string, unknown>
+      | undefined) ?? {};
+  const next =
+    ((edited[section] as Record<string, unknown>)?.[key] as
+      | Record<string, unknown>
+      | undefined) ?? {};
+  for (const sub of new Set([...Object.keys(cur), ...Object.keys(next)])) {
+    const path = `${section}.${key}.${sub}`;
+    if (fmt(cur[sub]) === fmt(next[sub])) continue;
+    if (map !== null) map[path] = fmt(cur[sub]);
+    if (rows !== null) {
+      rows.push({ label: labelFor(sub), from: fmt(cur[sub]), to: fmt(next[sub]) });
+    }
+  }
+}
+
+function notificationLeafRows(
+  key: 'quiet_hours' | 'events',
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  if (key === 'quiet_hours') {
+    dictLeafRows('notifications', 'quiet_hours', current, edited, fmtVal,
+      (sub) => FIELD_LABELS[`notifications.quiet_hours.${sub}`] ?? `Quiet hours ${sub}`,
+      map, rows);
+  } else {
+    dictLeafRows('notifications', 'events', current, edited, fmtChannels,
+      (sub) => `${EVENT_LABELS[sub] ?? sub} · channels`,
+      map, rows);
+  }
 }
 
 /** Nested leaves of `universe.screen`, as `universe.screen.<key>` paths. */
@@ -119,6 +200,10 @@ export function diffSettings(
         screenLeafRows(current, edited, null, rows);
         continue;
       }
+      if (path === 'notifications.quiet_hours' || path === 'notifications.events') {
+        notificationLeafRows(key as 'quiet_hours' | 'events', current, edited, null, rows);
+        continue;
+      }
       if (path === 'universe.allowed_sectors') continue;
       const old = (current[section] as Record<string, unknown>)[key];
       if (fmtVal(old) !== fmtVal(value)) {
@@ -152,6 +237,10 @@ export function diffMap(
       }
       if (path === 'universe.screen') {
         screenLeafRows(current, edited, map, null);
+        continue;
+      }
+      if (path === 'notifications.quiet_hours' || path === 'notifications.events') {
+        notificationLeafRows(key as 'quiet_hours' | 'events', current, edited, map, null);
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;

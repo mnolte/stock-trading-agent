@@ -26,6 +26,7 @@ from app.decide.output import (
     validate_model_output,
 )
 from app.decide.prompt import Prompt, cached_prompt
+from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
 
 # Final action recorded when no usable model answer exists (no call made,
@@ -91,12 +92,14 @@ class DecisionService:
         config: AppConfig,
         session_factory: sessionmaker[Session] | None = None,
         api_key: str | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.client = client
         self.config = config
         # Kept for reload(): a promoted model/prompt rebuilds the client
         # with the same stored key (keys live in the secrets table).
         self.api_key = api_key
+        self._notifier = notifier or NullNotifier()
         self._session_factory = session_factory or get_session_maker()
         version = str(config.get("decision", "prompt", default="decision.v1"))
         self._prompt: Prompt = cached_prompt(version)
@@ -142,6 +145,12 @@ class DecisionService:
         )
         # A failed call left no output to fall back on; "no_call" says so.
         failed = response.error is not None
+        if failed:
+            self._notifier.notify(
+                "model_failing",
+                f"{symbol}: model call failed ({response.error})",
+                link="/inspector",
+            )
         decision = self._store(
             session,
             cycle_id=cycle_id,

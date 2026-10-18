@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-18 — Notifications
+
+- New "Notifications" section: in-app banners always; browser notifications while the GUI is open; email over SMTP (password stored encrypted as `smtp_password`). 16 events in three severities with default channels; critical events always reach the browser and are never held back; repeat limit 30 minutes; quiet hours 23:00–08:00 Amsterdam (non-critical held and sent as one summary); sending never blocks trading; three failed emails show a banner. Subject and body format defined.
+- Settings: new Notifications section (event × channel, repeat limit, quiet hours, SMTP with Send test, recently sent). Data model: `notifications` table; `secrets` gains `smtp_password`. Config: `notifications` block.
+- Build plan: part of PR 10 (may be split into its own PR before the paper run).
+
 ## 2026-10-18 — Cycle counter on the dashboard
 
 - GUI: new "Cycle counter" paragraph. The this-cycle strip ends with the next cycle (Amsterdam and New York time, live countdown), a segment per cycle of today's session, "Cycle n of 6 today", the cycle number in this run and the next position check; states for market closed, kill switch on and a running cycle. Built in PR 10 with the risk budget card.

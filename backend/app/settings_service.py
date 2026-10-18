@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.data.cache import _naive_utc
 from app.decide.prompt import load_prompt
 from app.market.clock import NY_TZ, SessionClock
+from app.notifications.events import EVENT_DEFS, EVENTS
 
 if TYPE_CHECKING:
     from app.broker.base import Broker
@@ -79,7 +80,15 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
     },
+    "notifications": {
+        "repeat_limit_minutes": ("int", 0, 1440),
+        "quiet_hours": ("quiet_hours", None, None),
+        "events": ("notify_events", None, None),
+    },
 }
+
+# Channels the user may pick per event (``app`` is always on).
+NOTIFY_CHANNELS = {"browser", "email"}
 
 # Keys that may appear inside ``universe`` in a save body.
 UNIVERSE_KEYS = {"symbols", "sectors", "mode", "screen"}
@@ -135,6 +144,11 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "briefing_enabled"): "Daily briefing",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
+    ("notifications", "repeat_limit_minutes"): "Repeat limit",
+    ("notifications", "quiet_hours"): "Quiet hours",
+    ("notifications", "quiet_hours.start"): "Quiet hours from",
+    ("notifications", "quiet_hours.end"): "Quiet hours to",
+    ("notifications", "events"): "Notification channels",
     ("universe", "symbols"): "Universe",
     ("universe", "mode"): "Universe mode",
     ("universe", "screen.min_price"): "Min price",
@@ -142,6 +156,9 @@ LABELS: dict[tuple[str, str], str] = {
     ("universe", "screen.lookback_sessions"): "Screen lookback",
     ("universe", "screen.drop_after_failed_screens"): "Drops after",
 }
+LABELS.update(
+    {("notifications", f"events.{d.key}"): d.label for d in EVENT_DEFS}
+)
 
 
 class SettingsError(Exception):
@@ -180,6 +197,53 @@ def _clean_cycle_list(value: object) -> list[str]:
             ) from None
         result.append(parsed.strftime("%H:%M"))
     return sorted(set(result))
+
+
+def _clean_quiet_hours(value: object) -> dict[str, str]:
+    """``{"start": "HH:MM", "end": "HH:MM"}`` in Amsterdam time."""
+    if not isinstance(value, dict):
+        raise SettingsError(["Quiet hours: start and end times are required"])
+    out: dict[str, str] = {}
+    for name in ("start", "end"):
+        text = str(value.get(name, ""))
+        try:
+            parsed = datetime.strptime(text, "%H:%M")  # noqa: DTZ007
+        except ValueError:
+            raise SettingsError(
+                [f"Quiet hours {name}: {text!r} is not an HH:MM time"]
+            ) from None
+        out[name] = parsed.strftime("%H:%M")
+    return out
+
+
+def _clean_notify_events(value: object) -> dict[str, list[str]]:
+    """``{event: [browser, email]}`` — unknown events/channels rejected.
+
+    ``app`` is not a valid value here (it is always on); critical events
+    may list fewer channels — the service still forces the browser
+    channel for them at send time.
+    """
+    if not isinstance(value, dict):
+        raise SettingsError(["Notification channels: expected an event map"])
+    out: dict[str, list[str]] = {}
+    for key, channels in value.items():
+        definition = EVENTS.get(str(key))
+        if definition is None:
+            raise SettingsError([f"Notification channels: unknown event {key!r}"])
+        if not isinstance(channels, list):
+            raise SettingsError(
+                [f"{definition.label}: expected a list of channels"]
+            )
+        cleaned: list[str] = []
+        for channel in channels:
+            if channel not in NOTIFY_CHANNELS:
+                raise SettingsError(
+                    [f"{definition.label}: unknown channel {channel!r}"]
+                )
+            if channel not in cleaned:
+                cleaned.append(channel)
+        out[str(key)] = cleaned
+    return out
 
 
 async def validate_settings(
@@ -246,6 +310,10 @@ async def validate_settings(
                     out[key] = text
                 elif kind == "cycles":
                     out[key] = _clean_cycle_list(value)
+                elif kind == "quiet_hours":
+                    out[key] = _clean_quiet_hours(value)
+                elif kind == "notify_events":
+                    out[key] = _clean_notify_events(value)
                 elif kind == "int":
                     num = _clean_number(value, minimum, maximum, label)
                     if num != int(num):
@@ -258,7 +326,21 @@ async def validate_settings(
                 continue
             old = _nested_get(active, section, key)
             if old != out[key]:
-                changes.append(f"{label}: {_fmt_change(old)} → {_fmt_change(out[key])}")
+                if isinstance(old, dict) and isinstance(out[key], dict):
+                    for sub in sorted(set(old) | set(out[key])):
+                        if old.get(sub) != out[key].get(sub):
+                            sub_label = LABELS.get(
+                                (section, f"{key}.{sub}"),
+                                f"{section}.{key}.{sub}",
+                            )
+                            changes.append(
+                                f"{sub_label}: {_fmt_change(old.get(sub))} "
+                                f"→ {_fmt_change(out[key].get(sub))}"
+                            )
+                else:
+                    changes.append(
+                        f"{label}: {_fmt_change(old)} → {_fmt_change(out[key])}"
+                    )
         if out:
             cleaned[section] = out
 

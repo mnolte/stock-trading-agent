@@ -419,6 +419,58 @@ class Verdict(Base):
     decision: Mapped[Decision] = relationship()
 
 
+class Notification(Base):
+    """One notification event and its per-channel outcome (docs/SPEC.md,
+    Notifications).
+
+    Every alert the agent raises lands here once; ``channel_status`` records
+    what each channel did — ``sent``, ``failed``, ``held back`` (repeat
+    limit), ``quiet hours`` or ``queued`` while the background email send is
+    still in flight.
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    time: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    # One of the configured event keys (kill_switch, missing_stop, …) or a
+    # system event (test, quiet_summary).
+    event: Mapped[str] = mapped_column(String(48), nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # critical | warning | info
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # GUI page the alert links to, e.g. "/positions".
+    link: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    channels: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    channel_status: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Held by quiet hours until the end-of-window summary picks it up.
+    held_for_quiet: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+
+class SmtpSettings(Base):
+    """The non-secret half of the email channel (docs/SPEC.md, Notifications).
+
+    Saved on its own, outside the versioned settings, after a successful
+    test send. The password is a ``secrets`` row (``smtp_password``) —
+    encrypted, write-only, never here.
+    """
+
+    __tablename__ = "smtp_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    from_addr: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_addr: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
 class Event(Base):
     """Reconciliation, kill switch, error and acknowledgment events."""
 
