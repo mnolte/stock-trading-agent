@@ -75,32 +75,48 @@ table{border-collapse:collapse}
   <span style="flex: 1 1 420px; color: #C9CFD6; line-height: 1.5">5 of 8 symbols not held failed the <span title="The rules check that decides whether the model is asked at all." style="text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">pre-filter</span>. 3 reached the model: all skipped. Both open positions held. 5 model calls · $0.002.</span>
   <span style="color: #98A2AF">Cycle 3 of 6 today</span>
 </div>
-<section aria-label="Account summary" style="display: flex; flex-wrap: wrap; gap: 12px">
-<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
-  <div title="Loss if every open position hit its stop. JPM counts as 0: its stop is above entry." style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Open risk</div>
-  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">0.34%</div>
-  <div style="height: 6px; background: #232A35; border-radius: 3px; overflow: hidden"><div style="width: 14%; height: 6px; background: #F2B94B"></div></div>
-  <div style="font-size: 13px; color: #98A2AF">of 2.5% cap · $34.40</div>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
+<section aria-label="Risk budget" style="flex: 999 1 600px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Risk budget</h2><span style="font-size: 13px; color: #98A2AF">limits from settings v3</span></div>
+  <div style="display: flex; flex-wrap: wrap; gap: 16px 28px">
+    <div style="flex: 1 1 300px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+  <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 13px"><span title="What you would lose if every open position and working entry hit its stop. JPM counts as 0: its stop is above entry." style="color: #C9CFD6; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Open risk</span><span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">0.34% <span style="color: #98A2AF">of 2.5% cap</span></span></div>
+  <div style="height: 8px; background: #232A35; border-radius: 4px; overflow: hidden"><div style="width: 13.600000000000001%; height: 8px; border-radius: 4px; background: #F2B94B"></div></div>
 </div>
-<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+      <div style="display: flex; flex-direction: column; gap: 6px">
+  <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 13px"><span title="Loss in the current session. At −2% no new entries for the rest of the session." style="color: #C9CFD6; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Today's loss</span><span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">0.00% <span style="color: #98A2AF">of −2% limit</span></span></div>
+  <div style="height: 8px; background: #232A35; border-radius: 4px; overflow: hidden"><div style="width: 0%; height: 8px; border-radius: 4px; background: #9FB4CC"></div></div>
+</div>
+      <div style="display: flex; flex-direction: column; gap: 6px">
+  <div style="display: flex; justify-content: space-between; gap: 12px; font-size: 13px"><span title="How far equity is below its highest point in this run. At −8% the kill switch turns on and everything is closed." style="color: #C9CFD6; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Drawdown</span><span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">−0.28% <span style="color: #98A2AF">of −8% kill</span></span></div>
+  <div style="height: 8px; background: #232A35; border-radius: 4px; overflow: hidden"><div style="width: 3.5000000000000004%; height: 8px; border-radius: 4px; background: #9FB4CC"></div></div>
+</div>
+    </div>
+    <div style="flex: 1 1 260px; min-width: 0">
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span title="The smallest of: positions left, open risk left ÷ risk per trade, and cash ÷ max position size." style="color: #98A2AF; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Room for</span><span style="color: #C9CFD6; text-align: right">2 more trades</span></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span title="At most 2 positions per sector; working entries count." style="color: #98A2AF; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Sectors</span><span style="color: #C9CFD6; text-align: right">Technology 1/2 · Financials 1/2</span></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span title="After 3 losses in a row risk per trade is halved until a win." style="color: #98A2AF; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Risk per trade</span><span style="color: #C9CFD6; text-align: right">0.5% · losing streak 0 of 3</span></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span title="No new entries this session when SPY drops 1.5% in a 1h bar or 2.5% since the open." style="color: #98A2AF; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Shock brake</span><span style="color: #C9CFD6; text-align: right">off · SPY +0.12% last 1h, +0.38% since open</span></div>
+      <div style="display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span title="Pattern day trading guard. At 3, no new entries until the count drops." style="color: #98A2AF; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">Day trades</span><span style="color: #C9CFD6; text-align: right">0 of 3 · last 5 trading days</span></div>
+    </div>
+  </div>
+</section>
+<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 12px; min-width: 0">
+  <div style="flex: 1 1 auto; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
   <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Positions</div>
   <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">2 of 4</div>
   
   <div style="font-size: 13px; color: #98A2AF">cash $6,634.30 · no margin</div>
 </div>
-<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
-  <div title="Pattern day trading guard. At 3, no new entries until the count drops." style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Day trades</div>
-  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">0 of 3</div>
-  
-  <div style="font-size: 13px; color: #98A2AF">last 5 trading days</div>
-</div>
-<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="flex: 1 1 auto; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
   <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Since start</div>
   <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #3DD68C; white-space: nowrap">+1.84%</div>
   
   <div style="font-size: 13px; color: #98A2AF">SPY +1.21% · started 5 Oct</div>
 </div>
-</section>
+</div>
+</div>
 <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
 <section aria-label="Price chart" style="flex: 999 1 600px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box">
   <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px">

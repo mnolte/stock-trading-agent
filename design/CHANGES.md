@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-18 — Risk budget card
+
+- `Main.dc.html`: the four summary tiles are replaced by a "Risk budget" card (meters for open risk vs 2.5% cap, today's loss vs −2% limit, drawdown vs −8% kill; facts for room for more trades, sectors, risk per trade and losing streak, shock brake, day trades; every label has a hover explanation) next to two tiles (Positions, Since start). The open-risk and day-trade tiles moved into the card. Screenshots `Main.png` and `Main-390.png` re-rendered.
+
 ## 2026-10-18 — Larger universe (v0.2)
 
 - New screen `Universe.dc.html` in the Control group (every sidebar updated): mode banner, five count tiles, today's screen funnel (72 → 69), how the screen works, and the pool table with filters (All, Eligible, Held, Excluded, Warming up), search, rank, 20-session dollar volume, return vs SPY, status with reason, Add to pool, Import CSV and remove.

@@ -28,7 +28,7 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 
 | File | Screen | Built in |
 | --- | --- | --- |
-| `Main.dc.html` | Dashboard: header, this-cycle line, summary cards, price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest) |
+| `Main.dc.html` | Dashboard: header, this-cycle line, risk budget card with positions and since-start tiles, price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card) |
 | `Decision.dc.html` | Decision detail drawer, 560 px, in Trading Agent's layout (gates, signal stack, reasoning, levels, outcome), opened from the dashboard, positions and inspector | PR 4 (model part), PR 6 |
 | `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, day trades, account, order history | PR 5 (data), PR 6 |
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, decisions and outcomes, closed trades | PR 7 |
