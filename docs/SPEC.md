@@ -326,6 +326,8 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
+| `universe_pool` | symbol, sector, source (default, added or import), added at, removed at (v0.2) |
+| `universe_screens` | session date, symbol, status (eligible, excluded or warming_up), check results JSON, last close, average dollar volume, return vs SPY, rank, failed screens in a row (v0.2) |
 | `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub), encrypted value, last 4 characters, saved at, tested at, test result |
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON |
 
@@ -347,7 +349,7 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 
 ## Build plan
 
-Ten PRs, each reviewable on its own. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
+Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 and 12. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
 
 1. **Skeleton.** Repo layout, FastAPI app, React shell with header and empty screens, config loading, SQLite and migrations, `AGENTS.md`, CI running tests with sockets blocked. *Done when:* app starts, header shows PAPER and a fake clock.
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
@@ -359,6 +361,8 @@ Ten PRs, each reviewable on its own. Paper orders are first sent in PR 5; everyt
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* a crash mid-cycle recovers cleanly.
 9. **Reviews.** Weekly review, daily briefing and verdicts (see Reviews).
 10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`. *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
+11. **Pool and liquidity screen (v0.2).** `universe_pool` and `universe_screens`, pool loading from `pool.csv`, add/import/remove, warm-up, daily screen with hysteresis, rank, universe mode in Settings, Universe screen. Default mode stays `fixed`. *Done when:* in simulated mode the screen over the 72-symbol pool gives the expected statuses, and fixed mode is unchanged.
+12. **Cycles at scale (v0.2).** Cycles over eligible plus held symbols, multi-symbol bar requests, model calls in rank order, cycle duration and warning, 5-min bar pruning, dashboard watchlist filters and search. *Done when:* a simulated session with the 72-symbol pool keeps every cycle under 10 minutes and under 150 Alpaca calls per minute, and every held position is handled.
 
 ## Reviews
 
@@ -380,6 +384,32 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 
 **GUI.** A Reviews screen in the Learn group with Weekly and Briefings tabs and a "Verdicts to confirm" list. The decision drawer shows the verdict with Confirm and Change. The Dashboard is unchanged.
 
+## Larger universe (v0.2)
+
+Watch more of the market without taking more risk: risk limits, gates and the 10-call cap stay the same; only the set of symbols the agent looks at grows. Built as PR 11 and PR 12.
+
+**Two modes.** `universe.mode` is `fixed` (the 10-symbol list from v0.1, the default) or `screened` (a daily liquidity screen over a pool). Settings → Trading → Universe switches between them. A switch is a new settings version and applies at the next daily screen, never mid-session. Switch at the start of a new run so the v0.1 paper results stay comparable. In `fixed` mode everything behaves exactly as in v0.1.
+
+**Pool.** `backend/universe/pool.csv` (symbol, sector) holds a default pool of 72 large US stocks and ETFs with sectors from the fixed list. It is loaded into `universe_pool` the first time screened mode starts; after that the pool is edited on the Universe screen (add one symbol with its sector, import a CSV of symbol and sector, remove) and the file is only the defaults. At most 150 symbols. Adding checks what it checks today (active, tradable US stock or ETF at Alpaca, sector required) and the symbol warms up until its history is loaded.
+
+**Daily screen.** On trading days at 08:10 New York, after the daily bars refresh, every pool symbol is checked on completed sessions:
+
+| Check | Default | Fails as |
+| --- | --- | --- |
+| History loaded | 260 daily bars and 60 sessions of 5-min bars | Warming up |
+| Active and tradable at Alpaca | yes | Excluded |
+| Last close | ≥ $10 | Excluded |
+| One share fits in max position | price ≤ max position size × equity at screen time (fixed by the spec) | Excluded |
+| Average dollar volume (close × volume) | ≥ $100M over the last 20 sessions | Excluded |
+
+A symbol that passes every check is eligible. An eligible symbol stays eligible until it fails 3 screens in a row; a new or warming-up symbol becomes eligible on its first pass. The eligible list is fixed for the whole session. If the screen itself fails (data error), the previous list is kept and a banner says so. Held symbols are always handled by cycles, position checks, exits and earnings exits, whatever their screen status; a held symbol removed from the pool leaves it when the position is closed.
+
+**Rank.** At the screen, each eligible symbol gets a rank: its return over the last 20 completed sessions minus SPY's over the same sessions (ties broken by dollar volume). The rank is shown on the Universe screen and the dashboard and is part of the input snapshot.
+
+**Cycles at scale.** Cycles run over the eligible symbols plus held symbols. 5-min bars are fetched with multi-symbol requests; quotes and news only for symbols that get a model call. Model calls go to held positions first, then to candidates that pass the rules in rank order, up to `max_calls_per_cycle` (10); the rest are stored as `no_call` with reason `call_cap`. The shared limit of 150 Alpaca calls per minute still applies. Each cycle's duration is stored; a cycle longer than 10 minutes shows a warning banner. 5-min bars older than 120 sessions are deleted after the 03:00 backup.
+
+**GUI.** A Universe screen in the Control group: mode, counts (pool, eligible, held, excluded, warming up), today's screen as a funnel, and the pool table (rank, symbol, sector, price, 20-session average dollar volume, return vs SPY, status with reason) with filters, search, add, CSV import and remove. Statuses: eligible, eligible with 1 or 2 fails, held, excluded with the failed check, warming up. The dashboard watchlist gets filters (All, Pass rules, Held, Earnings within 3 days) and search; in screened mode it is sorted by rank and shows 15 rows, then "Show all". Settings → Trading gets the universe mode and the screen thresholds. In fixed mode the Universe screen shows the fixed list and points to Settings.
+
 ## Out of scope and later versions
 
 Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login.
@@ -389,7 +419,7 @@ Likely v0.2+, in rough order:
 - Ask the agent (as in Trading Agent). Briefings and reviews moved forward to PR 9 (see Reviews).
 - Shadow strategies: run a second prompt or model on the same inputs without trading, and compare outcomes.
 - Backtest mode on the cached 5-min bars.
-- Larger universe with a liquidity screen.
+- Larger universe with a liquidity screen: specified for PR 11 and 12 (see Larger universe).
 - VPS deployment with HTTPS and login.
 - Live-readiness checklist, and a separate spec for live trading (including Dutch tax treatment, which needs checking with an advisor before going live).
 

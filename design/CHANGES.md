@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-18 — Larger universe (v0.2)
+
+- New screen `Universe.dc.html` in the Control group (every sidebar updated): mode banner, five count tiles, today's screen funnel (72 → 69), how the screen works, and the pool table with filters (All, Eligible, Held, Excluded, Warming up), search, rank, 20-session dollar volume, return vs SPY, status with reason, Add to pool, Import CSV and remove.
+- `Settings.dc.html`: Trading → Universe is now a Fixed list / Screened pool switch with a link to Universe, plus a "Liquidity screen" group (min price, min dollar volume, sessions, drop after, one share fits (locked), model-call order). The symbol chips moved to the Universe screen.
+- `Main.dc.html`: watchlist toolbar with filters (All, Pass rules, Held, Earnings ≤ 3 days) and search, and a link to Universe.
+
 ## 2026-10-18 — Settings redesign and API keys
 
 - `Settings.dc.html` rebuilt: section list on the left with "Find a setting" and unsaved-change counts (a scrolling row at phone width); larger section titles with a one-line explanation; one row per setting (name, explanation, control with unit, default underneath) instead of four-column field grids; ranges as one row ("40 to 70"); locked values (cash only) marked "fixed by the spec"; held symbols in the universe locked; sector picker when adding a symbol.
