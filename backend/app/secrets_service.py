@@ -199,8 +199,9 @@ class LiveKeyTesters:
             start = self._clock.now().date()
             await asyncio.to_thread(
                 client.earnings_calendar,
-                _from=start.isoformat(),
-                to=(start + timedelta(days=30)).isoformat(),
+                start.isoformat(),
+                (start + timedelta(days=30)).isoformat(),
+                "SPY",
             )
             return KeyTestResult(ok=True)
         except Exception as exc:  # noqa: BLE001
