@@ -604,6 +604,13 @@ export interface SettingsResponse {
   settings: SettingsForm;
   active_version: number;
   pending_version: number | null;
+  /** Saved-but-not-yet-active leaf values, e.g. {'universe.mode': 'screened'}.
+   * The form shows the active values; these mark which rows have a pending
+   * change waiting for the next cycle. */
+  pending?: Record<string, unknown>;
+  /** Human-readable diff of pending vs active, e.g. 'Universe mode: fixed →
+   * screened'. */
+  pending_change?: string | null;
   next_version: number;
   held_symbols: string[];
   prompt_options: { version: string; hash: string }[];

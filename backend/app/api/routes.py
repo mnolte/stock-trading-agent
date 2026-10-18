@@ -60,6 +60,7 @@ from app.settings_service import (
     SettingsError,
     _deep_merge,
     _nested_get,
+    pending_change_map,
     save_version,
     schedule_table,
     validate_settings,
@@ -1836,10 +1837,18 @@ def settings(request: Request) -> dict[str, object]:
                 "reason": row.reason,
             }
         )
+    pending_tree = config.pending()
+    active_tree = config.effective()
     return {
         "settings": _settings_form(config),
         "active_version": config.active_version,
         "pending_version": config.pending_version,
+        "pending": pending_change_map(active_tree, pending_tree)
+        if pending_tree is not None
+        else {},
+        "pending_change": version_change_summary(active_tree, pending_tree)
+        if pending_tree is not None
+        else None,
         "next_version": (rows[0].version + 1) if rows else 1,
         "held_symbols": sorted(_held_symbols()),
         "prompt_options": _prompt_options(),

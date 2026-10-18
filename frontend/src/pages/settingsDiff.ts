@@ -54,7 +54,7 @@ function fmtVal(value: unknown): string {
 }
 
 /** Display value for a leaf path — money fields show units. */
-function fmtPath(path: string, value: unknown): string {
+export function fmtPath(path: string, value: unknown): string {
   if (path === 'universe.screen.min_avg_dollar_volume') {
     const n = Number(value);
     return Number.isNaN(n) ? String(value) : `$${n / 1_000_000}M`;

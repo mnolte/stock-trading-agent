@@ -108,6 +108,12 @@ test('settings: universe mode and liquidity screen rows', async ({
   await expect(
     page.getByRole('radio', { name: 'Screened pool' })
   ).toBeVisible();
+  // The saved-but-pending switch stays visible: active value in the control,
+  // pending value marked next to it and summarised in the banner.
+  await expect(page.getByText('Pending: Screened pool')).toBeVisible();
+  await expect(
+    page.getByText(/is pending — it applies at the next cycle: Universe mode/)
+  ).toBeVisible();
   await expect(page.getByText('Liquidity screen ·')).toBeVisible();
   await expect(page.getByLabel('Min price', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Min average dollar volume')).toBeVisible();

@@ -525,6 +525,44 @@ def version_change_summary(
     return "; ".join(parts) or "No effective change"
 
 
+def pending_change_map(
+    active: dict[str, Any], pending: dict[str, Any]
+) -> dict[str, Any]:
+    """Leaf paths where the pending version differs from the active tree.
+
+    Returns ``{path: pending value}`` so the Settings form can mark each
+    saved-but-not-yet-active field ("Pending: Screened pool") — without it a
+    save looks lost because the form shows the active values until the next
+    cycle promotes the version.
+    """
+    out: dict[str, Any] = {}
+    for section in sorted(set(active) | set(pending)):
+        a = active.get(section) or {}
+        p = pending.get(section) or {}
+        if not isinstance(a, dict) or not isinstance(p, dict):
+            if a != p:
+                out[section] = p
+            continue
+        for key in sorted(set(a) | set(p)):
+            if key == "allowed_sectors":
+                continue
+            av, pv = a.get(key), p.get(key)
+            if av == pv:
+                continue
+            if isinstance(av, dict) and isinstance(pv, dict):
+                prefix = (
+                    "universe.sector"
+                    if (section, key) == ("universe", "sectors")
+                    else f"{section}.{key}"
+                )
+                for sub in sorted(set(av) | set(pv)):
+                    if av.get(sub) != pv.get(sub):
+                        out[f"{prefix}.{sub}"] = pv.get(sub)
+                continue
+            out[f"{section}.{key}"] = pv
+    return out
+
+
 # ----------------------------------------------------------------------
 # schedule + connections payloads
 

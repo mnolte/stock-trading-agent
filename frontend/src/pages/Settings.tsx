@@ -26,7 +26,7 @@ import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
 import { displayDateTime, displayDayTime, displayTime } from '../format';
-import { diffMap, diffSettings } from './settingsDiff';
+import { diffMap, diffSettings, fmtPath } from './settingsDiff';
 import { validateForm } from './settingsValidation';
 
 // ---------------------------------------------------------------------------
@@ -314,6 +314,7 @@ function Row({
   error,
   locked,
   defaultText,
+  pendingText,
   onReset,
   children,
 }: {
@@ -325,6 +326,7 @@ function Row({
   error?: string;
   locked?: boolean;
   defaultText?: string;
+  pendingText?: string;
   onReset?: () => void;
   children: ReactNode;
 }) {
@@ -359,6 +361,14 @@ function Row({
           defaultText !== undefined && (
             <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-faint)' }}>Default {defaultText}</span>
           )
+        )}
+        {pendingText !== undefined && (
+          <span
+            title="Saved in the pending version — applies at the next cycle"
+            style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-faint)' }}
+          >
+            Pending: {pendingText}
+          </span>
         )}
       </div>
     </div>
@@ -817,6 +827,20 @@ export default function Settings() {
   useLiveUpdates(['header', 'universe'], refresh);
   useLiveUpdates(['settings', 'banners'], refreshKeys);
 
+  const pendingMap = data?.pending ?? {};
+  const pendingText = (path: string): string | undefined =>
+    path in pendingMap ? fmtPath(path, pendingMap[path]) : undefined;
+  const pendingJoined = (
+    paths: string[],
+    join: string,
+    fmt?: (value: unknown) => string,
+  ): string | undefined => {
+    const vals = paths
+      .filter((p) => p in pendingMap)
+      .map((p) => (fmt ? fmt(pendingMap[p]) : String(pendingMap[p])));
+    return vals.length ? vals.join(join) : undefined;
+  };
+
   const diffs = useMemo(
     () => (data && form ? diffSettings(data.settings, form) : []),
     [data, form],
@@ -1026,6 +1050,7 @@ export default function Settings() {
       changedFrom={changed[path] ? `${changed[path]}${suffix(path)}` : undefined}
       error={fieldErrors[path]}
       locked={props.locked}
+      pendingText={pendingText(path)}
       defaultText={props.defaultText ?? (path in DEFAULTS ? DEFAULTS[path] : undefined)}
       onReset={() => {
         const parts = path.split('.');
@@ -1053,7 +1078,10 @@ export default function Settings() {
       {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
       {notice && <Banner variant="info">{notice}</Banner>}
       {data.pending_version !== null && (
-        <Banner variant="info">v{data.pending_version} is pending — it applies at the next cycle.</Banner>
+        <Banner variant="info">
+          v{data.pending_version} is pending — it applies at the next cycle
+          {data.pending_change ? `: ${data.pending_change}` : '.'}
+        </Banner>
       )}
 
       {/* Phone width: the section list becomes a horizontal scroll row. */}
@@ -1157,6 +1185,7 @@ export default function Settings() {
               changed={'execution.mode' in changed}
               changedFrom={changed['execution.mode'] ? String(changed['execution.mode']) : undefined}
               defaultText={DEFAULTS['execution.mode']}
+              pendingText={pendingText('execution.mode')}
               onReset={() => reset('execution', 'mode')}
             >
               <div role="radiogroup" aria-label="Execution mode" style={{ display: 'inline-flex', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
@@ -1203,6 +1232,7 @@ export default function Settings() {
               changed={'universe.mode' in changed}
               changedFrom={changed['universe.mode'] ? String(changed['universe.mode']) : undefined}
               defaultText={DEFAULTS['universe.mode']}
+              pendingText={pendingText('universe.mode')}
               onReset={() => reset('universe', 'mode')}
             >
               <div role="radiogroup" aria-label="Universe" style={{ display: 'inline-flex', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
@@ -1337,6 +1367,11 @@ export default function Settings() {
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                   <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{s.universe.symbols.length} symbols</span>
+                  {'universe.symbols' in pendingMap || Object.keys(pendingMap).some((p) => p.startsWith('universe.sector.')) ? (
+                    <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-faint)' }}>
+                      Pending: list change saved
+                    </span>
+                  ) : null}
                   {'universe.symbols' in changed || Object.keys(changed).some((p) => p.startsWith('universe.sector.')) ? (
                     <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-accent)' }}>
                       Changed from {data.settings.universe.symbols.length} symbols ·{' '}
@@ -1523,6 +1558,11 @@ export default function Settings() {
               changedFrom={`${data.settings.risk.shock_brake_1h_pct}% / ${data.settings.risk.shock_brake_session_pct}%`}
               error={fieldErrors['risk.shock_brake_1h_pct'] ?? fieldErrors['risk.shock_brake_session_pct']}
               defaultText="1.5% / 2.5%"
+              pendingText={pendingJoined(
+                ['risk.shock_brake_1h_pct', 'risk.shock_brake_session_pct'],
+                ' / ',
+                (v) => `${v}%`,
+              )}
               onReset={() => {
                 reset('risk', 'shock_brake_1h_pct');
                 reset('risk', 'shock_brake_session_pct');
@@ -1570,6 +1610,7 @@ export default function Settings() {
               changedFrom={`${data.settings.rules.rsi_min}–${data.settings.rules.rsi_max}`}
               error={fieldErrors['rules.rsi_min']}
               defaultText="40–70"
+              pendingText={pendingJoined(['rules.rsi_min', 'rules.rsi_max'], '–')}
               onReset={() => {
                 reset('rules', 'rsi_min');
                 reset('rules', 'rsi_max');
@@ -1598,6 +1639,10 @@ export default function Settings() {
               changedFrom={`${data.settings.decision.stop_atr_min}–${data.settings.decision.stop_atr_max}`}
               error={fieldErrors['decision.stop_atr_min']}
               defaultText="1.5–4 × ATR"
+              pendingText={pendingJoined(
+                ['decision.stop_atr_min', 'decision.stop_atr_max'],
+                '–',
+              )}
               onReset={() => {
                 reset('decision', 'stop_atr_min');
                 reset('decision', 'stop_atr_max');

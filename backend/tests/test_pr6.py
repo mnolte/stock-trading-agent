@@ -1109,6 +1109,46 @@ def test_settings_get_and_save_flow(client: TestClient) -> None:
         session.commit()
 
 
+def test_settings_response_marks_pending_values(client: TestClient) -> None:
+    """A saved-but-not-yet-active change stays visible: the form still shows
+    the active value while ``pending`` / ``pending_change`` say what the next
+    cycle will use — a save must not look lost."""
+    saved = client.post(
+        "/api/settings",
+        json={
+            "settings": {
+                "universe": {"mode": "screened"},
+                "risk": {"risk_per_trade_pct": 0.4},
+            },
+            "reason": "pending markers",
+        },
+    )
+    assert saved.status_code == 200
+
+    body = client.get("/api/settings").json()
+    assert body["pending_version"] == saved.json()["version"]
+    # The form shows the active values — pending is marked separately.
+    assert body["settings"]["universe"]["mode"] == "fixed"
+    assert body["settings"]["risk"]["risk_per_trade_pct"] == 0.5
+    assert body["pending"]["universe.mode"] == "screened"
+    assert body["pending"]["risk.risk_per_trade_pct"] == 0.4
+    assert "Universe mode" in body["pending_change"]
+    assert "Risk per trade" in body["pending_change"]
+
+    # Same cleanup as test_settings_get_and_save_flow — no leaks.
+    from app.config import get_config
+    from app.db.base import get_session_maker
+    from app.db.models import SettingsVersion
+
+    config = get_config()
+    config._pending = None
+    config.pending_version = None
+    config.reschedule_cycles = False
+    with get_session_maker()() as session:
+        session.query(SettingsVersion).delete()
+        session.commit()
+
+
 def test_reject_approval_api(client: TestClient) -> None:
     """Reject resolves a pending approval; outcome shows on the decision."""
     from app.db.base import get_session_maker
