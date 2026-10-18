@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-10-17 — Adopted positions keep an existing broker stop
+
+- Reconciliation: a position adopted at Alpaca that is already covered by an open sell stop there (e.g. one placed before the database was rebuilt) keeps that stop — no second stop order is placed for the same shares. The position records the existing stop's price as its stop.
+- Order ids: `client_order_id` gains a per-process nonce (`sa-<kind>-<id>-<symbol>-<nonce>-<seq>`). Alpaca enforces uniqueness account-wide forever, so ids must not collide after a restart or a database rebuild.
+
+## 2026-10-17 — Answers from the PR 8 review
+
+- Data model: the daily backup at 03:00 uses SQLite's online backup API and `PRAGMA integrity_check`, never a plain file copy. Migrations are immutable once merged; startup refuses to run if the schema doesn't match the models.
+- Errors: on a normal shutdown, wait up to 60 s for a running cycle or check; if it's still running it is marked interrupted and does not count as a failure. Only rows still running at the next startup (a real crash) count. Startup reconciles with Alpaca before anything else.
+- AGENTS.md: new hard rule 11, migrations are immutable once merged.
+- `config.example.yaml`: `storage.backup_time`, `storage.shutdown_grace_seconds`.
+
 ## 2026-10-16 — Screenshot location made explicit
 
 - AGENTS.md, docs/DEVIN_KICKOFF.md and design/DESIGN.md: PR screenshots are saved in `docs/screenshots/pr-<n>/` and never in `design/`; the PR shows them next to the reference PNG. (The old wording "next to the matching file in design/screenshots/" read as "save them there".)
@@ -10,22 +22,6 @@ Newest first.
 
 - Outcome tracking: "1 session" = same New York time on the next trading session; "5 sessions" = same time on the 5th trading session after the decision; clamped to the close on early-close days. Price = last closed 5-minute bar at or before the target time, stored with the bar's timestamp.
 - GUI: Performance shows results by symbol (new "By symbol" card in the design); the day-trade counter belongs on Positions & orders, not Performance.
-
-## 2026-10-16 — PR 7: performance and outcomes
-
-- Data model: `outcomes` gains the 5-minute bar's timestamp next to every recorded price (`price_1h_at`, `price_1session_at`, `price_5sessions_at`, `best_price_at`, `worst_price_at`); the decision detail API returns them and the GUI shows the bar time under each outcome tile.
-- Data model: `positions.qty` now keeps the closed size after a position closes instead of going to zero, so Performance can show the shares traded.
-- GUI: `performance` added to the WebSocket topics; published after cycles and position checks.
-- API: `GET /api/performance` (`?run=<id>` for an earlier run) serves the Performance screen: summary cards, equity curve with SPY benchmark and EUR/USD, by regime, by symbol, decision outcomes, closed trades.
-- The SIP delay for outcome filling reuses the data client's `SIP_MIN_AGE` (16 min) instead of a new config key.
-- Tests: each test gets its own database file (conftest resets `SA_DB_PATH` and the config cache); no test can leave state for another test or the next app boot.
-## 2026-10-16 — PR 6 completion
-
-- Header session pill shows the next position check alongside the next cycle (`next_check` on `/api/session` and `/api/header`, plus `cycles_today` on the header for the early-close tail). Position checks come from `schedule.position_checks` in config; checks after the session close do not run.
-- EUR figure shows "EUR unavailable" when the ECB rate is missing, instead of a bare euro symbol. Today is green or red by its sign.
-- Decision feed distinguishes RULES (pre-filter hold) from NO CALL (`call_cap`, `quote_missing`, `model_error`); open positions show an "exit deferred" marker on the dashboard.
-- Session pill wording follows the design: "stops stay active" after the last cycle, weekday in "opens Fri 15:30", "closes 19:00 · 3 cycles today" on early-close days.
-- PR screenshots now live in `docs/screenshots/pr-6/`; earlier shots were wrongly kept under `design/screenshots/`.
 
 ## 2026-10-16 — Answers to PR 6 questions
 

@@ -273,6 +273,58 @@ async def test_reconcile_adopts_unknown_position_without_atr(
         assert position.current_stop_price == Decimal("97.00")
 
 
+async def test_reconcile_adopted_position_keeps_existing_broker_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A stop already open at the broker covers the adopted position —
+    no second stop is placed (the DB-rebuild case)."""
+    broker = FakeBroker(
+        FakeClock(NOW), cash=Decimal("10000"), prices={"XYZ": Decimal("100")}
+    )
+    broker.positions["XYZ"] = _PosRec(qty=7, avg_entry_price=Decimal("100"))
+    # An agent stop placed before the database was rebuilt.
+    await broker.submit_stop_order(
+        symbol="XYZ",
+        qty=7,
+        stop_price=Decimal("95"),
+        client_order_id="sa-protect-1-XYZ-old",
+    )
+    executor = _executor(session_factory, broker)
+
+    report = await executor.reconcile()
+
+    assert report.adopted == ["XYZ"]
+    # No new stop was submitted: the existing one still sits at the broker.
+    assert broker.submit_calls == 1
+    stops = [
+        o for o in broker.orders.values() if o.symbol == "XYZ" and o.order_type == "stop"
+    ]
+    assert len(stops) == 1
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "XYZ")
+        ).scalar_one()
+        assert position.origin == "adopted"
+        assert position.pending_ack is True
+        # The effective protection is the existing stop's price.
+        assert position.current_stop_price == Decimal("95")
+        assert not _events(session, "protective_stop_failed")
+
+
+def test_client_order_ids_unique_across_processes(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Alpaca rejects reused client_order_ids forever; the per-process
+    nonce makes the same logical order unique after a restart or a
+    database rebuild."""
+    broker = FakeBroker(FakeClock(NOW))
+    first = _executor(session_factory, broker)
+    second = _executor(session_factory, broker)
+    assert first._client_id("protect", 1, "TSLA") != second._client_id(
+        "protect", 1, "TSLA"
+    )
+
+
 async def test_acknowledge_adopted_position_unblocks_entries(
     session_factory: sessionmaker[Session],
 ) -> None:

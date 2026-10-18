@@ -10,6 +10,7 @@ error reconciliation decides what happened), and all money is Decimal.
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -106,6 +107,10 @@ class Executor:
         self._notify = notify or (lambda topics: None)
         self._orders_this_cycle = 0
         self._order_seq = 0
+        # Alpaca enforces client_order_id uniqueness account-wide
+        # forever; the seq restarts each process, so a per-process
+        # nonce keeps ids unique across restarts and DB rebuilds.
+        self._order_nonce = secrets.token_hex(3)
         self._reconcile_failed = False
         self._reconcile_lock = asyncio.Lock()
 
@@ -718,7 +723,10 @@ class Executor:
 
     def _client_id(self, kind: str, ref_id: int, symbol: str) -> str:
         self._order_seq += 1
-        return f"sa-{kind}-{ref_id}-{symbol}-{self._order_seq}"
+        return (
+            f"sa-{kind}-{ref_id}-{symbol}-"
+            f"{self._order_nonce}-{self._order_seq}"
+        )
 
     @staticmethod
     def _leg_for(order: BrokerOrder, parent: BrokerOrder | None) -> str:
@@ -946,15 +954,12 @@ class Executor:
                             "db_qty": position.qty,
                         },
                     )
-            new_stops: dict[str, Decimal] = {}
-            for symbol, bp in broker_positions.items():
-                if symbol not in known_symbols:
-                    placed = await self._adopt_position(session, bp, report)
-                    if placed is not None:
-                        new_stops[symbol] = placed
-
-            # 5. Every open position needs a live stop at the broker.
+            # Sell-side stops already open at the broker, per symbol.
+            # Needed before adoption (a position may already be covered
+            # by a stop placed before the database was rebuilt) and for
+            # step 5's coverage check.
             open_stops: dict[str, Decimal] = {}
+            broker_stops: dict[str, list[BrokerOrder]] = {}
             for order in broker_open.values():
                 if order.side == "sell" and order.order_type in (
                     "stop",
@@ -963,8 +968,19 @@ class Executor:
                     open_stops[order.symbol] = open_stops.get(
                         order.symbol, Decimal(0)
                     ) + order.qty
-            for symbol, qty in new_stops.items():
-                open_stops[symbol] = open_stops.get(symbol, Decimal(0)) + qty
+                    broker_stops.setdefault(order.symbol, []).append(order)
+
+            for symbol, bp in broker_positions.items():
+                if symbol not in known_symbols:
+                    placed = await self._adopt_position(
+                        session, bp, report, broker_stops.get(symbol, [])
+                    )
+                    if placed is not None:
+                        open_stops[symbol] = (
+                            open_stops.get(symbol, Decimal(0)) + placed
+                        )
+
+            # 5. Every open position needs a live stop at the broker.
             for position in session.execute(
                 select(Position).where(Position.closed_at.is_(None))
             ).scalars().all():
@@ -1155,12 +1171,18 @@ class Executor:
         session: Session,
         bp: BrokerPosition,
         report: ReconcileReport,
+        existing_stops: list[BrokerOrder],
     ) -> Decimal | None:
         """A position at the broker the agent never opened: adopt it.
 
         It gets a standalone gtc stop at current − adopted_stop_atr × the
         1h ATR (or −protective_stop_fallback_pct without ATR), no target,
-        and blocks new entries until acknowledged. Returns the stop qty.
+        and blocks new entries until acknowledged. Sell-side stops
+        already open at the broker (e.g. one placed before the database
+        was rebuilt) count as cover — no second stop is placed for the
+        same shares. Returns the newly placed stop qty — 0 when an
+        existing stop already covers the position, None on a failed
+        write.
         """
         price = bp.current_price or bp.avg_entry_price
         atr_1h = self._atr_1h(bp.symbol)
@@ -1176,6 +1198,14 @@ class Executor:
         else:
             stop = _cents(price * (1 - fallback_pct / 100))
             basis = f"{fallback_pct}% below price (ATR unavailable)"
+        covered = sum(o.qty for o in existing_stops) >= bp.qty
+        if covered:
+            prices = [o.stop_price for o in existing_stops]
+            priced = [p for p in prices if p is not None]
+            if priced:
+                # The highest stop fires first: the effective protection.
+                stop = max(priced)
+            basis = "existing broker stop"
         position = Position(
             symbol=bp.symbol,
             origin="adopted",
@@ -1189,25 +1219,31 @@ class Executor:
         )
         session.add(position)
         session.flush()
-        result = await self.broker.submit_stop_order(
-            symbol=bp.symbol,
-            qty=bp.qty,
-            stop_price=stop,
-            client_order_id=self._client_id("protect", position.id, bp.symbol),
-        )
-        placed: Decimal | None = None
-        if result.error is not None or result.data is None:
-            report.errors.append(f"adopted stop {bp.symbol}: {result.error}")
-            record_event(
-                session,
-                self.clock,
-                level="critical",
-                event_type="protective_stop_failed",
-                details={"symbol": bp.symbol, "error": result.error},
+        placed: Decimal | None = Decimal(0)
+        if not covered:
+            result = await self.broker.submit_stop_order(
+                symbol=bp.symbol,
+                qty=bp.qty,
+                stop_price=stop,
+                client_order_id=self._client_id(
+                    "protect", position.id, bp.symbol
+                ),
             )
-        else:
-            self._store_broker_order(session, result.data, None, leg="stop")
-            placed = Decimal(bp.qty)
+            if result.error is not None or result.data is None:
+                placed = None
+                report.errors.append(
+                    f"adopted stop {bp.symbol}: {result.error}"
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="protective_stop_failed",
+                    details={"symbol": bp.symbol, "error": result.error},
+                )
+            else:
+                self._store_broker_order(session, result.data, None, leg="stop")
+                placed = Decimal(bp.qty)
         report.adopted.append(bp.symbol)
         report.mismatches.append(f"{bp.symbol}: adopted {bp.qty} shares")
         record_event(

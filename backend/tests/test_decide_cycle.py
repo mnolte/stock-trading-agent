@@ -21,10 +21,10 @@ from app.data.fake import (
 from app.data.models import DataResult, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Cycle, Decision, Outcome, Position
+from app.db.models import Cycle, Decision, Event, Outcome, Position
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
-from app.engine.cycle import CycleRunner
+from app.engine.cycle import CycleReport, CycleRunner
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.rules.prefilter import RulesResult
@@ -131,6 +131,7 @@ def _runner(
     client: FakeDecisionClient | None = None,
     clock: FakeClock | None = None,
     universe: list[str] | None = None,
+    with_executor: bool = False,
 ) -> CycleRunner:
     config = AppConfig()
     if universe is not None:
@@ -144,6 +145,22 @@ def _runner(
     signals = SignalService(market_data, calendar, config, clock, session_factory)
     signals.refresh_eval = lambda: _resolved(evaluation)  # type: ignore[method-assign]
     decide = DecisionService(client or FakeDecisionClient(), config, session_factory)
+    executor = None
+    if with_executor:
+        from app.broker.fake import FakeBroker
+        from app.engine.executor import Executor
+        from app.engine.state import ExecutionState
+
+        executor = Executor(
+            broker=FakeBroker(clock),
+            market_data=market_data,
+            signals=signals,
+            calendar=calendar,
+            config=config,
+            clock=clock,
+            state=ExecutionState(clock=clock),
+            session_factory=session_factory,
+        )
     return CycleRunner(
         market_data=market_data,
         signals=signals,
@@ -152,6 +169,7 @@ def _runner(
         calendar=calendar,
         config=config,
         clock=clock,
+        executor=executor,
         session_factory=session_factory,
     )
 
@@ -564,3 +582,67 @@ def test_hold_through_earnings_disables_exit(
     assert not runner._earnings_exit_due(
         _held(), earnings, LAST_CYCLE, last_cycle=True
     )
+
+
+# ----------------------------------------------------------------------
+# error kill switch (docs/SPEC.md, Risk management, Errors)
+
+
+async def _explode(
+    session: Session,
+    cycle_id: int,
+    scheduled_ny: datetime,
+    now: datetime,
+    report: CycleReport,
+) -> None:
+    raise RuntimeError("data exploded")
+
+
+async def test_three_failed_cycles_turn_the_kill_switch_on(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Three cycles erroring in a row activate the automatic kill switch."""
+    runner = _runner(session_factory, _evaluation(), with_executor=True)
+    assert runner.executor is not None
+
+    runner._run = _explode  # type: ignore[method-assign]
+    for _ in range(3):
+        report = await runner.run(CYCLE_1246)
+
+    assert report.status == "error"
+    state = runner.executor.state
+    assert state.failed_cycles == 3
+    assert state.kill_switch_on
+    assert state.kill_switch_auto
+    assert "3 cycles failed in a row" in (state.kill_switch_reason or "")
+    with session_factory() as session:
+        event = session.execute(
+            select(Event).where(Event.event_type == "kill_switch")
+        ).scalar_one()
+    assert (event.details or {})["automatic"] is True
+    assert (event.details or {})["on"] is True
+
+
+async def test_a_successful_cycle_resets_the_failure_streak(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A done cycle between errors restarts the count; no kill at two."""
+    runner = _runner(session_factory, _evaluation(), with_executor=True)
+    assert runner.executor is not None
+
+    real_run = runner._run
+    runner._run = _explode  # type: ignore[method-assign]
+    await runner.run(CYCLE_1246)
+    await runner.run(CYCLE_1246)
+    assert runner.executor.state.failed_cycles == 2
+
+    runner._run = real_run  # type: ignore[method-assign]
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert runner.executor.state.failed_cycles == 0
+
+    runner._run = _explode  # type: ignore[method-assign]
+    await runner.run(CYCLE_1246)
+    await runner.run(CYCLE_1246)
+    assert runner.executor.state.failed_cycles == 2
+    assert not runner.executor.state.kill_switch_on

@@ -130,6 +130,14 @@ class FakeBroker:
             value += mark * pos.qty
         return value
 
+    def _duplicate_client_id(self, client_order_id: str) -> bool:
+        # Alpaca enforces client_order_id uniqueness account-wide,
+        # including on canceled/expired orders.
+        return any(
+            rec.client_order_id == client_order_id
+            for rec in self.orders.values()
+        )
+
     async def _emit(self, rec: _OrderRec, event: str) -> None:
         update = TradeUpdateInfo(
             event=event,
@@ -279,6 +287,12 @@ class FakeBroker:
         self.submit_calls += 1
         if self.fail_writes:
             return self._write_error()
+        if self._duplicate_client_id(client_order_id):
+            return DataResult(
+                data=None,  # type: ignore[arg-type]
+                error="client_order_id must be unique",
+                source="fake",
+            )
         now = self._now()
         parent = _OrderRec(
             id=self._next_id(),
@@ -334,6 +348,12 @@ class FakeBroker:
         self.submit_calls += 1
         if self.fail_writes:
             return self._write_error()
+        if self._duplicate_client_id(client_order_id):
+            return DataResult(
+                data=None,  # type: ignore[arg-type]
+                error="client_order_id must be unique",
+                source="fake",
+            )
         now = self._now()
         rec = _OrderRec(
             id=self._next_id(),
@@ -368,6 +388,12 @@ class FakeBroker:
         self.submit_calls += 1
         if self.fail_writes:
             return self._write_error()
+        if self._duplicate_client_id(client_order_id):
+            return DataResult(
+                data=None,  # type: ignore[arg-type]
+                error="client_order_id must be unique",
+                source="fake",
+            )
         now = self._now()
         rec = _OrderRec(
             id=self._next_id(),

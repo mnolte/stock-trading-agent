@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -21,16 +23,25 @@ from app.broker.base import Broker
 from app.config import AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
+from app.db.backup import create_backup
+from app.db.base import check_schema_matches_models
 from app.decide.client import make_decision_client
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.position_check import PositionChecker
-from app.engine.state import load_execution_state
+from app.engine.state import (
+    finalize_interrupted_cycles,
+    load_execution_state,
+    recover_interrupted_cycles,
+)
+from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
 from app.signals.service import SignalService
+
+logger = logging.getLogger(__name__)
 
 
 def run_migrations() -> None:
@@ -86,6 +97,31 @@ async def refresh_daily_data_and_signals(
     await signals.refresh()
     if bus is not None:
         bus.publish("watchlist", "header", "banners", "performance")
+
+
+def run_daily_backup(clock: Clock) -> None:
+    """Daily job (app timezone): copy the database and prune old copies.
+
+    A failed copy is logged and recorded as an event so a missed backup is
+    not silent; if the event write also fails, the job exception is left
+    for the scheduler log.
+    """
+    try:
+        create_backup()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("daily database copy failed")
+        from app.db.base import get_session_maker
+        from app.engine.state import record_event
+
+        with get_session_maker()() as session:
+            record_event(
+                session,
+                clock,
+                level="warning",
+                event_type="backup_failed",
+                details={"error": str(exc)},
+            )
+            session.commit()
 
 
 async def run_scheduled_cycle(
@@ -225,9 +261,13 @@ async def retry_calendar_load(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    setup_logging()
     config = get_config()
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
+    # Migrations are immutable; a schema that drifted outside them fails
+    # here with the differing table/column instead of a raw SQL error.
+    check_schema_matches_models()
     # Versioned GUI settings sit on top of the YAML before anything reads
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
@@ -306,8 +346,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Fill any outcome targets that were due while the app was down, and
     # record the startup equity point.
     from app.db.base import get_session_maker
+    from app.db.models import Cycle
 
     with get_session_maker()() as session:
+        recovered = recover_interrupted_cycles(session, exec_state, clock)
+        if recovered:
+            session.commit()
+        # Repeated failures reach the same kill-switch threshold at startup
+        # as they do at runtime (docs/SPEC.md, Risk management, Errors). The
+        # reason names the newest failure — an interruption or a real error.
+        kill_after = int(config.get("risk", "failed_cycles_kill", default=3))
+        if (
+            exec_state.failed_cycles >= kill_after
+            and not exec_state.kill_switch_on
+        ):
+            last_failed = session.execute(
+                select(Cycle)
+                .where(Cycle.kind == "cycle", Cycle.status == "error")
+                .order_by(Cycle.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            detail = (
+                (last_failed.errors or ["unknown"])[0]
+                if last_failed is not None
+                else "unknown"
+            )
+            await executor.activate_kill_switch(
+                reason=(
+                    f"{exec_state.failed_cycles} cycles failed in a row: "
+                    f"{detail}"
+                ),
+                automatic=True,
+            )
+
         outcome_worker.fill(session, clock.now())
         if exec_state.account is not None:
             outcome_worker.write_equity_snapshot(
@@ -356,6 +427,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         args=[calendar_store, config, clock],
         id="calendar-retry",
     )
+    # Daily database copy: an app-timezone job (Amsterdam per spec).
+    app_tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
+    backup_at = str(config.get("storage", "backup_time", default="03:00"))
+    backup_hour, backup_minute = (int(p) for p in backup_at.split(":")[:2])
+    scheduler.add_job(
+        run_daily_backup,
+        CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
+        args=[clock],
+        id="daily-db-backup",
+    )
     # Run the decision cycle at every configured cycle time; the runner
     # refreshes the stored signal snapshot as part of the cycle. Missed
     # cycles may run late by at most misfire_grace_seconds, and several
@@ -380,6 +461,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        # Normal shutdown: give a running cycle or check the grace window
+        # to finish; leftovers become "interrupted" and never count as
+        # failures — only rows still "running" at the next startup (a real
+        # crash) do (docs/SPEC.md, Risk management, Errors).
+        grace = float(
+            config.get("storage", "shutdown_grace_seconds", default=60)
+        )
+        interrupted = await finalize_interrupted_cycles(
+            get_session_maker(), clock, grace
+        )
+        if interrupted:
+            logger.warning(
+                "Shutdown with %d cycle(s) still running; marked interrupted",
+                interrupted,
+            )
         await broker.stop_stream()
 
 
