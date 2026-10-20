@@ -51,7 +51,10 @@ test('universe: fixed mode shows the v0.1 list and points to Settings', async ({
     page.getByText(/The fixed list is edited in/)
   ).toBeVisible();
   await expect(page.getByRole('link', { name: 'Screen settings' })).toBeVisible();
-  await expect(page.getByText('AAPL')).toBeVisible();
+  // The preview pool table also lists AAPL — target the fixed-list chip.
+  await expect(
+    page.locator('b').filter({ hasText: 'AAPL' })
+  ).toBeVisible();
 
   await page.screenshot({ path: shot('universe-fixed', testInfo.project.name), fullPage: true });
 });
@@ -78,7 +81,9 @@ test('universe: the daily screen shows as a preview in fixed mode', async ({
   await expect(
     page.getByText(/the screened pool arrives with PR 12/i)
   ).toBeVisible();
-  await expect(page.getByText('Pool')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'Pool' })
+  ).toBeVisible();
   await expect(page.getByText('Today’s screen')).toBeVisible();
   await expect(
     page.getByText(/a preview, not used by cycles yet/i)
