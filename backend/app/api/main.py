@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,6 +23,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from app.api.routes import router as api_router
+from app.api.strategies import router as strategies_router
 from app.api.websocket import UpdateBus
 from app.api.websocket import router as ws_router
 from app.broker.base import Broker
@@ -29,7 +32,14 @@ from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
 from app.db.base import check_schema_matches_models
-from app.decide.client import make_decision_client
+from app.db.models import Strategy
+from app.decide.client import (
+    DecisionClient,
+    FakeDecisionClient,
+    OpenAIDecisionClient,
+    UnpricedModelError,
+    make_decision_client,
+)
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
@@ -58,6 +68,9 @@ from app.secrets_service import (
     read_env_keys,
     scrub,
 )
+from app.shadows.portfolio import LiveGateState
+from app.shadows.runner import ShadowRunner
+from app.shadows.strategy import check_model_prices
 from app.signals.service import SignalService
 from app.universe.service import UniverseService
 
@@ -291,6 +304,55 @@ async def startup_key_checks(
         await secrets.retest_stored(group, testers, event=False)
 
 
+def make_shadow_client_factory(
+    config: AppConfig, secrets: SecretsStore
+) -> Callable[[Strategy], DecisionClient]:
+    """Each shadow gets its own model client — never live's — with its own
+    model and temperature; simulated mode uses the fake."""
+
+    def factory(strategy: Strategy) -> DecisionClient:
+        if config.env.mode == "simulated":
+            return FakeDecisionClient()
+        view = config.overlay(
+            {
+                "decision": {
+                    "model": strategy.model,
+                    "temperature": strategy.temperature or 0,
+                }
+            }
+        )
+        return OpenAIDecisionClient(view, api_key=secrets.get("openai") or MISSING_KEY)
+
+    return factory
+
+
+def spawn_background(
+    tasks: set[asyncio.Task[object]], coro: Coroutine[Any, Any, object], name: str
+) -> None:
+    """Start shadow work as its own task so the live job returns at once."""
+    task: asyncio.Task[object] = asyncio.get_running_loop().create_task(coro, name=name)
+    tasks.add(task)
+
+    def _done(t: asyncio.Task[object]) -> None:
+        tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            logger.error("%s failed", name, exc_info=t.exception())
+
+    task.add_done_callback(_done)
+
+
+def check_model_prices_at_startup(config: AppConfig) -> None:
+    """Refuse to start when the live, reviews or an active shadow's model
+    has no entry in model_prices (docs/SPEC.md, Strategies and shadows)."""
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        try:
+            check_model_prices(config, session)
+        except UnpricedModelError as exc:
+            raise RuntimeError(f"Refusing to start: {exc}") from exc
+
+
 def check_execution_mode(config: AppConfig) -> None:
     """Only automatic and supervised exist; refuse to start on anything else."""
     mode = str(config.get("execution", "mode", default="automatic"))
@@ -399,6 +461,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
     check_execution_mode(config)
+    check_model_prices_at_startup(config)
 
     clock = make_clock(config)
     bus = UpdateBus()
@@ -494,6 +557,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notify=lambda topics: bus.publish(*topics),
         notifier=notification_service,
     )
+    def live_gate_state() -> LiveGateState:
+        from app.db.base import get_session_maker
+
+        with get_session_maker()() as s:
+            pending_ack = exec_state.pending_ack(s)
+        return LiveGateState(
+            kill_switch_on=exec_state.kill_switch_on,
+            paused=exec_state.paused,
+            pending_ack=pending_ack,
+            shock_brake_1h=exec_state.shock_brake_1h,
+            shock_brake_session=exec_state.shock_brake_session,
+        )
+
+    # Shadow strategies (PR 13): their own clients and cost cap, no broker.
+    shadow_runner = ShadowRunner(
+        config=config,
+        clock=clock,
+        calendar=calendar_store,
+        client_factory=make_shadow_client_factory(config, secrets_store),
+        live_state=live_gate_state,
+        notifier=notification_service,
+        notify=lambda topics: bus.publish(*topics),
+    )
+    shadow_tasks: set[asyncio.Task[object]] = set()
+    cycle_runner.on_cycle_done = lambda report: spawn_background(
+        shadow_tasks,
+        shadow_runner.after_cycle(report.cycle_id or 0, report.shadow_snapshots),
+        f"shadows-cycle-{report.cycle_id}",
+    )
+    position_checker.on_check_done = lambda: spawn_background(
+        shadow_tasks, shadow_runner.after_check(), "shadows-check"
+    )
+    executor.on_flatten = shadow_runner.flatten
+    cycle_runner.shadow_symbols = shadow_runner.held_symbols
     universe_service = UniverseService(
         market_data=market_data,
         sources=sources,
@@ -610,6 +707,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.universe = universe_service
     app.state.update_bus = bus
     app.state.notification_service = notification_service
+    app.state.shadow_runner = shadow_runner
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     # When promoted settings move cycle times the cron jobs are rebuilt.
@@ -739,6 +837,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        # Shadow work is never waited for: it is cut, never live.
+        for task in list(shadow_tasks):
+            task.cancel()
         set_event_sink(None)
         await notification_service.stop()
         # Normal shutdown: give a running cycle or check the grace window
@@ -769,6 +870,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(api_router, prefix="/api")
+    app.include_router(strategies_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
     if FRONTEND_DIST.is_dir():
         app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")

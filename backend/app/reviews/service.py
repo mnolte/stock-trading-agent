@@ -383,7 +383,11 @@ class ReviewService:
             model=response.model,
             prompt_version=prompt.version,
             tokens=response.tokens,
-            cost=token_cost(response, self.config, section="reviews"),
+            cost=token_cost(
+                response,
+                self.config,
+                model=str(self.config.get("reviews", "model", default="")),
+            ),
         )
 
     # ------------------------------------------------------------------

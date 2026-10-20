@@ -2,6 +2,26 @@
 
 Newest first.
 
+## 2026-10-20 — PR 13 review fixes (added by Devin)
+
+- Storage: SQLite runs in WAL mode with a busy timeout (`storage.sqlite_busy_timeout_seconds: 30`), so a writer waits for the lock instead of failing. Shadow work commits before every model call and never holds a write lock across an await.
+- Data model: `shadow_decisions` also stores `input_snapshot` for a symbol only shadows hold, because live makes no decision for it and so there is no live row to share.
+
+## 2026-10-20 — Answers from the PR 13 review
+
+- Shadow fills: orders timed at the live cycle's scheduled time; entries fill at the limit or a better open; the stop is checked on the fill bar (stop first), the target from the next bar; gaps fill at the open; market exits (model, earnings, flatten) at the next 5-min bar's open plus slippage; a candidate without a price gets no_call (quote_missing). Shadows skip the spread check and fresh-quote gate (documented as a small advantage).
+- Live's cycle builds snapshots for symbols held by any active or paused shadow; live makes no decision for them.
+- Slots: active and paused shadows count (max 3); a paused shadow makes no calls or entries but manages its virtual positions; archive frees a slot.
+- Missed shadow work stores its reason (time or cost_cap). Notification event renamed "Model failing, or review or shadow cost cap reached".
+- Decision layer → Prompt and Reviews → Model and cost now point at `model_prices`.
+
+## 2026-10-20 — Answers to PR 13 questions
+
+- "Same as live" counts a symbol-cycle only if at least one side did more than a rules no_call; all no_call reasons are one action; missed shadow work excluded; shown with its count.
+- Shadows follow live's Pause, kill switch and reconciliation block for new entries (same gate name), keep managing virtual positions, and are flattened virtually by Stop & flatten; all other gates use the shadow's own portfolio; shock brake is market-wide. Shadows credit dividends.
+- Compare and the equity chart use live's adjusted return (Performance's function); raw on hover.
+- Prices: the `model_prices` config block is the only source from PR 13; the decision/reviews `*_cost_per_mtok` keys are removed; unpriced models refused at startup, in Settings, New shadow and the backtest picker; each call stores its cost when made.
+
 ## 2026-10-20 — Token prices in config
 
 - Decision layer, Prompt and Reviews, Model and cost (added by Devin): USD cost is computed from configured prices per million tokens, `decision.input_cost_per_mtok` / `output_cost_per_mtok` and the same keys under `reviews`. Added to `config.example.yaml` (gpt-4o-mini prices; check OpenAI's current prices).

@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.strategies import check_promotion, finish_promotion
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
@@ -33,6 +34,7 @@ from app.db.models import (
     SettingsVersion,
     Verdict,
 )
+from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
@@ -2047,6 +2049,8 @@ def settings(request: Request) -> dict[str, object]:
         "next_version": (rows[0].version + 1) if rows else 1,
         "held_symbols": sorted(_held_symbols()),
         "prompt_options": _prompt_options(),
+        # Only models with a price may be selected (docs/SPEC.md, Cost).
+        "priced_models": priced_models(config),
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
@@ -2099,13 +2103,23 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         raise HTTPException(
             status_code=422, detail=["a reason is required"]
         )
+    # "Promote to live" saves like any other change, then archives the
+    # shadow (docs/SPEC.md, Strategies and shadows — Promote to live).
+    promote_raw = body.get("promote_strategy_id")
+    promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
+        promote_raw
+    ).isdigit() else None
     new_tree = _deep_merge(base, cleaned)
     with get_session_maker()() as session:
+        if promote_id is not None:
+            check_promotion(session, config, promote_id)
         row = save_version(
             session, _clock(request), settings=new_tree, reason=reason
         )
-        session.commit()
         version = row.version
+        if promote_id is not None:
+            finish_promotion(session, promote_id, version, _clock(request).now())
+        session.commit()
     # The pending version must be the full merged tree, same as the stored
     # row — passing only ``cleaned`` would silently revert every earlier
     # saved change at the next cycle's promotion.
@@ -2115,7 +2129,7 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         schedule["cycles"] != _nested_get(base, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
-    _notify(request, "header", "settings")
+    _notify(request, "header", "settings", "strategies")
     return {
         "version": version,
         "changes": changes,
@@ -2325,6 +2339,10 @@ async def _apply_keys(request: Request, changed: set[str]) -> None:
                     update_key(key)
                 else:
                     service.client = OpenAIReviewClient(config, api_key=key)
+            # Shadow clients are rebuilt lazily with the new stored key.
+            shadows = getattr(request.app.state, "shadow_runner", None)
+            if shadows is not None:
+                shadows.reset_clients()
 
 
 @router.post("/keys/{group}")
@@ -3191,8 +3209,8 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     # Model call counter tile (docs/SPEC.md, GUI — Model call counter):
     # today's real decision calls against the day's maximum — the
     # per-cycle cap times today's active cycles — with today's and this
-    # month's decision spend. Reviews have their own cap; its spend feeds
-    # the tile's hover text. Shadows and backtests (PR 13/14) join later.
+    # month's decision spend. Reviews and shadows have their own caps; their
+    # spend feeds the tile's hover text. Backtests (PR 14) join later.
     calls_today = sum(1 for d, _ in today_decisions if d.model != "none")
     calls_cost_today = sum(
         (d.cost or Decimal(0))
@@ -3218,6 +3236,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             review_service.monthly_spend(session)
             if review_service is not None
             else None
+        )
+        shadow_runner = getattr(request.app.state, "shadow_runner", None)
+        shadows_spend = (
+            shadow_runner.monthly_spend(session) if shadow_runner is not None else None
         )
     calls_per_cycle = int(
         config.get("decision", "max_calls_per_cycle", default=10)
@@ -3267,6 +3289,13 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
             "reviews_cost_cap": str(
                 config.get("reviews", "monthly_cost_cap_usd", default=2)
+            ),
+            # Shadows have their own cap too (docs/SPEC.md, Model call counter).
+            "shadows_cost_month": (
+                str(shadows_spend) if shadows_spend is not None else None
+            ),
+            "shadows_cost_cap": str(
+                config.get("shadows", "monthly_cost_cap_usd", default=5)
             ),
         },
         "briefing": _briefing_card(request, clock, app_tz, today_ny),

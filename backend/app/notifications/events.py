@@ -115,7 +115,7 @@ EVENT_DEFS: tuple[EventDef, ...] = (
     ),
     EventDef(
         "model_failing",
-        "Model failing or review cost cap reached",
+        "Model failing, or review or shadow cost cap reached",
         "",
         "warnings",
         WARNING,

@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -22,7 +23,7 @@ from app.data.factory import DataSources
 from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Earning, Position
+from app.db.models import Cycle, Position
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.engine.executor import Executor
@@ -31,6 +32,7 @@ from app.engine.state import record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
+from app.risk.earnings import earnings_exit_due, next_earnings
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
 from app.signals.service import SignalService
 
@@ -52,6 +54,9 @@ class CycleReport:
     calls: int = 0
     decisions: list[int] = field(default_factory=list)
     duration_seconds: float | None = None
+    # Snapshots built for symbols only shadow strategies hold; live makes
+    # no rules check, model call or decision for them.
+    shadow_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class CycleRunner:
@@ -73,6 +78,7 @@ class CycleRunner:
         notify: Callable[[set[str]], None] | None = None,
         on_settings_promoted: Callable[[], None] | None = None,
         notifier: Notifier | None = None,
+        on_cycle_done: Callable[[CycleReport], None] | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -88,6 +94,12 @@ class CycleRunner:
         self._notifier = notifier or NullNotifier()
         # Reschedules cron jobs when promoted settings move cycle times.
         self._on_settings_promoted = on_settings_promoted or (lambda: None)
+        # Shadow strategies start after a finished cycle (docs/SPEC.md,
+        # Running shadows). Main schedules them as their own task, so this
+        # call returns at once and never delays live.
+        self.on_cycle_done = on_cycle_done or (lambda report: None)
+        # Symbols held by active or paused shadows (set by main).
+        self.shadow_symbols: Callable[[], list[str]] = lambda: []
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -129,7 +141,10 @@ class CycleRunner:
             return clock_result.data.is_open
         state = SessionClock(self.clock, self.config, self.calendar).state()
         report.data_source_health["clock"] = "ok"
-        return state.state in ("open", "early_close")
+        # "Last cycle done" is a display state: the market is still open
+        # until the close, and at the last cycle's own minute the state
+        # already reads it — the 15:46 cycle must still run.
+        return state.state in ("open", "early_close", "last_cycle_done")
 
     # ------------------------------------------------------------------
     # data updates
@@ -194,34 +209,13 @@ class CycleRunner:
 
     def _is_last_cycle(self, now: datetime) -> bool:
         """True when ``now`` is at/past the session's last active cycle."""
-        today = now.astimezone(NY_TZ).date()
-        session = self.calendar.session_for(today)
-        if session is None:
-            return False
-        cycles = SessionClock(self.clock, self.config, self.calendar).active_cycles(
-            session
-        )
-        if not cycles:
-            return True
-        return now.astimezone(NY_TZ) >= cycles[-1]
+        return SessionClock(self.clock, self.config, self.calendar).is_last_cycle(now)
 
     def _earnings_map(
         self, session: Session, symbols: list[str], now: datetime
     ) -> dict[str, tuple[date, str]]:
         """Next earnings (date, time_of_day) per symbol, today or later."""
-        today = now.astimezone(NY_TZ).date()
-        rows = session.execute(
-            select(Earning.symbol, Earning.date, Earning.time_of_day)
-            .where(
-                Earning.symbol.in_(symbols),
-                Earning.date >= datetime.combine(today, datetime.min.time()),
-            )
-            .order_by(Earning.date)
-        ).all()
-        result: dict[str, tuple[date, str]] = {}
-        for symbol, day, tod in rows:
-            result.setdefault(symbol, (day.date(), tod))
-        return result
+        return next_earnings(session, symbols, now)
 
     def _earnings_exit_due(
         self,
@@ -230,28 +224,15 @@ class CycleRunner:
         now: datetime,
         last_cycle: bool,
     ) -> bool:
-        """Held symbol reports before the next session's close → exit in the
-        last cycle the day before. Unknown time of day counts as before open."""
-        if not last_cycle:
-            return False
-        if self.config.get("risk", "hold_through_earnings", default=False):
-            return False
-        info = earnings.get(position.symbol)
-        if info is None:
-            return False
-        event_date, time_of_day = info
-        today = now.astimezone(NY_TZ).date()
-        # A report after today's close still counts as "before the next
-        # session's close": sell in this last cycle so the position is never
-        # held through the release.
-        if event_date == today:
-            return time_of_day == "after_close"
-        next_day = self.calendar.next_trading_day(today)
-        if next_day is None or event_date != next_day.date:
-            return False
-        # Reports at next close (after_close) are handled at that session's
-        # last cycle, not today's; an unknown time counts as before open.
-        return time_of_day != "after_close"
+        """The shared earnings-exit rule (app.risk.earnings)."""
+        return earnings_exit_due(
+            position.symbol,
+            earnings,
+            now,
+            last_cycle=last_cycle,
+            calendar=self.calendar,
+            config=self.config,
+        )
 
     # ------------------------------------------------------------------
     # the cycle
@@ -348,6 +329,11 @@ class CycleRunner:
                 link="/settings",
             )
         await self._count_cycle_outcome(report)
+        if report.status == "done" and report.cycle_id is not None:
+            try:
+                self.on_cycle_done(report)
+            except Exception:  # noqa: BLE001
+                logger.exception("shadow hook failed after cycle %s", report.cycle_id)
         return report
 
     async def _count_cycle_outcome(self, report: CycleReport) -> None:
@@ -417,13 +403,39 @@ class CycleRunner:
                 report.data_source_health["account"] = "error"
 
         symbols = self.market_data.universe()
-        await self._update_bars(symbols, now, report)
+        try:
+            shadow_only = [s for s in self.shadow_symbols() if s not in symbols]
+        except Exception:  # noqa: BLE001
+            logger.exception("shadow-held symbols unavailable")
+            shadow_only = []
+        # One bar request covers shadow-held symbols too (docs/SPEC.md,
+        # Running shadows); they get no rules check or decision.
+        await self._update_bars(symbols + shadow_only, now, report)
         # The 1h shock-brake leg runs here, on the hourly cycle, so the
         # just-topped-up cache holds the completed bar (docs/SPEC.md,
         # Position check).
         if self.executor is not None:
             await self.executor.update_session_brakes(include_1h=True)
         evaluation = await self.signals.refresh_eval()
+        if shadow_only:
+            try:
+                for symbol, (snap, bars_1h) in self.signals.snapshots_for(
+                    shadow_only, now
+                ).items():
+                    report.shadow_snapshots[symbol] = build_input_snapshot(
+                        symbol=symbol,
+                        context="held",
+                        cycle_time_ny=scheduled_ny,
+                        price=snap.price,
+                        regime=evaluation.regime,
+                        snapshot=snap,
+                        bars_1h=bars_1h,
+                        position=None,
+                        news=None,
+                    )
+            except Exception:  # noqa: BLE001
+                # Never let shadow inputs affect the live cycle.
+                logger.exception("shadow-held snapshots failed")
 
         positions = {
             row.symbol: row

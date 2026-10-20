@@ -127,6 +127,29 @@ class SessionClock:
                 result.append(check_dt)
         return result
 
+    def is_last_cycle(self, now: datetime) -> bool:
+        """True when ``now`` is at/past the session's last active cycle."""
+        session = self.calendar.session_for(now.astimezone(self.market_tz).date())
+        if session is None:
+            return False
+        cycles = self.active_cycles(session)
+        if not cycles:
+            return True
+        return now.astimezone(self.market_tz) >= cycles[-1]
+
+    def next_live_event(self, now: datetime) -> datetime | None:
+        """The next scheduled live cycle or position check strictly after
+        ``now`` today (None once the session's last one has passed)."""
+        session = self.calendar.session_for(now.astimezone(self.market_tz).date())
+        if session is None:
+            return None
+        later = [
+            t
+            for t in self.active_cycles(session) + self.active_checks(session)
+            if t > now
+        ]
+        return min(later) if later else None
+
     def state(self) -> SessionState:
         now = self.clock.now()
         ny_now = self.clock.to_zone(now, self.market_tz)

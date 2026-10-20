@@ -13,7 +13,8 @@ export type Topic =
   | 'reviews'
   | 'settings'
   | 'notifications'
-  | 'universe';
+  | 'universe'
+  | 'strategies';
 
 export type LiveStatus = 'live' | 'paused';
 

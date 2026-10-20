@@ -51,36 +51,60 @@ class DecisionClient(Protocol):
         ...
 
 
-# Fallback prices (gpt-4o-mini) for configs created before these keys
-# existed: a missing key must never silently record a $0 cost.
-_FALLBACK_INPUT_COST_PER_MTOK = "0.15"
-_FALLBACK_OUTPUT_COST_PER_MTOK = "0.60"
+class UnpricedModelError(RuntimeError):
+    """A model is configured for use but has no entry in ``model_prices``."""
+
+
+def model_price(
+    prices: dict[str, Any] | None, model: str
+) -> tuple[Decimal, Decimal] | None:
+    """(input, output) USD per million tokens for ``model``, or None.
+
+    ``model_prices`` in config.yaml is the only price source (docs/SPEC.md,
+    Strategies and shadows — Cost)."""
+    entry = (prices or {}).get(model)
+    if not isinstance(entry, dict):
+        return None
+    try:
+        return Decimal(str(entry["input"])), Decimal(str(entry["output"]))
+    except (KeyError, ArithmeticError, ValueError):
+        return None
+
+
+def priced_models(config: AppConfig) -> list[str]:
+    """Every model with a complete price — the only ones that may be picked."""
+    prices = config.get("model_prices", default={}) or {}
+    return sorted(m for m in prices if model_price(prices, m) is not None)
+
+
+def require_price(config: AppConfig, model: str, what: str) -> None:
+    """Raise when ``model`` (used for ``what``) has no price."""
+    if model_price(config.get("model_prices", default={}), model) is None:
+        raise UnpricedModelError(
+            f"{what} model {model!r} has no price in model_prices"
+        )
 
 
 def token_cost(
-    response: ModelResponse, config: AppConfig, *, section: str = "decision"
+    response: ModelResponse, config: AppConfig, *, model: str | None = None
 ) -> Decimal | None:
-    """USD cost from the configured per-token prices; None without usage."""
+    """USD cost of one call from ``model_prices``; None without usage.
+
+    ``model`` is the configured model the call was made for (the fake
+    clients report their own name); it defaults to ``response.model``.
+    The cost is stored on the row when the call is made, so a later price
+    change never rewrites past costs. Startup refuses unpriced models, so
+    a missing price here means the config changed underneath — no cost is
+    recorded rather than a silent $0.
+    """
     if response.tokens_in is None or response.tokens_out is None:
         return None
-    in_price = Decimal(
-        str(
-            config.get(
-                section,
-                "input_cost_per_mtok",
-                default=_FALLBACK_INPUT_COST_PER_MTOK,
-            )
-        )
+    price = model_price(
+        config.get("model_prices", default={}), model or response.model
     )
-    out_price = Decimal(
-        str(
-            config.get(
-                section,
-                "output_cost_per_mtok",
-                default=_FALLBACK_OUTPUT_COST_PER_MTOK,
-            )
-        )
-    )
+    if price is None:
+        return None
+    in_price, out_price = price
     return (
         Decimal(response.tokens_in) * in_price
         + Decimal(response.tokens_out) * out_price
