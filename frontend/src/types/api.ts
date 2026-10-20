@@ -891,6 +891,49 @@ export interface DashboardStats {
   since_label: string;
   spy_pct: string | null;
   execution_mode: string;
+  // Model call counter (docs/SPEC.md, GUI — Model call counter).
+  calls_today: number;
+  calls_max: number;
+  calls_per_cycle: number;
+  cycles_today: number;
+  calls_cost_today: string;
+  calls_cost_month: string;
+  reviews_cost_month: string | null;
+  reviews_cost_cap: string;
+}
+
+// ---- Daily briefing card ---------------------------------------------------
+// The dashboard card next to the risk budget (docs/SPEC.md, GUI — Daily
+// briefing card). The backend builds the chip text; the GUI only renders.
+
+export interface BriefingChip {
+  text: string;
+  tone: 'neutral' | 'positive' | 'negative' | 'warning';
+}
+
+export interface BriefingCardData {
+  id: number;
+  /** Date label like "Mon 20 Oct" — shown for a previous-day briefing. */
+  label: string;
+  /** Whether the card covers today's New York session. */
+  today: boolean;
+  /** The briefing's write slot in app time, "15:00" — shown for today's. */
+  time: string;
+  text: string;
+  chips: BriefingChip[];
+  /** "model" = every number checked; "template" = plain fallback + reason. */
+  source: 'model' | 'template' | string;
+  reason: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  cost: string | null;
+}
+
+export interface DashboardBriefing {
+  enabled: boolean;
+  /** UTC ISO of the next briefing write; null when disabled or unknown. */
+  next_at: string | null;
+  card: BriefingCardData | null;
 }
 
 // ---- Risk budget card ------------------------------------------------------
@@ -988,6 +1031,7 @@ export interface DashboardResponse {
   cycle_line: DashboardCycleLine | null;
   cycle_counter: CycleCounter | null;
   stats: DashboardStats;
+  briefing: DashboardBriefing | null;
   latest_decision: DashboardLatestDecision | null;
   approvals_pending: number;
   market_closed: MarketClosedCard | null;

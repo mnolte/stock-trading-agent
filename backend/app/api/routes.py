@@ -3,10 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
@@ -2681,6 +2681,119 @@ def _latest_box(
     return rows[:3]
 
 
+def _briefing_chips(facts: dict[str, Any]) -> list[dict[str, str]]:
+    """The fact chips on the dashboard briefing card (design Main:
+    position count, yesterday's result, market regime, earnings inside a
+    day, banner count). The text is built here so the GUI only renders."""
+    chips: list[dict[str, str]] = []
+    positions = facts.get("positions") or []
+    n = len(positions)
+    chips.append(
+        {
+            "text": (
+                f"{n} position{'s' if n != 1 else ''}" if n else "no positions"
+            ),
+            "tone": "neutral",
+        }
+    )
+    yesterday = facts.get("yesterday") or {}
+    pct = yesterday.get("return_pct")
+    usd = yesterday.get("return_usd")
+    if pct is None:
+        chips.append({"text": "yesterday —", "tone": "neutral"})
+    else:
+        text = f"yesterday {pct:+.2f}%"
+        if usd is not None:
+            text += f" · {'+' if usd >= 0 else '−'}${abs(usd):,.2f}"
+        tone = "positive" if pct > 0 else "negative" if pct < 0 else "neutral"
+        chips.append({"text": text, "tone": tone})
+    regime = str(facts.get("regime") or "unavailable").lower()
+    chips.append(
+        {
+            "text": f"market {regime}",
+            "tone": (
+                "positive"
+                if regime.startswith("up")
+                else "negative"
+                if regime.startswith("down")
+                else "neutral"
+            ),
+        }
+    )
+    earnings = [
+        *(f"{e['symbol']} today" for e in facts.get("earnings_today") or []),
+        *(
+            f"{e['symbol']} tomorrow"
+            for e in facts.get("earnings_tomorrow") or []
+        ),
+    ]
+    chips.append(
+        {
+            "text": (
+                "earnings " + " · ".join(earnings)
+                if earnings
+                else "no earnings ≤ 1 day"
+            ),
+            "tone": "neutral",
+        }
+    )
+    banners = facts.get("banners") or []
+    chips.append(
+        {
+            "text": (
+                f"{len(banners)} banner{'s' if len(banners) != 1 else ''}"
+                if banners
+                else "no banners"
+            ),
+            "tone": "warning" if banners else "neutral",
+        }
+    )
+    return chips
+
+
+def _briefing_card(
+    request: Request, clock: Clock, app_tz: ZoneInfo, today_ny: date
+) -> dict[str, Any]:
+    """The daily briefing card on the dashboard (docs/SPEC.md, GUI —
+    Daily briefing card). Shows the latest written briefing — today's
+    once its slot has passed, the previous one before that — plus when
+    the next one is written, or "off" with a Settings link."""
+    config = get_config()
+    service = getattr(request.app.state, "review_service", None)
+    enabled = bool(config.get("reviews", "briefing_enabled", default=True))
+    next_at = (
+        service.next_briefing_at() if service is not None and enabled else None
+    )
+    card: dict[str, Any] | None = None
+    with get_session_maker()() as session:
+        review = session.execute(
+            select(Review)
+            .where(Review.kind == "briefing")
+            .order_by(Review.due_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if review is not None:
+        due = review.due_at.replace(tzinfo=UTC)
+        card = {
+            "id": review.id,
+            "label": _review_label(review),
+            "today": review.period == today_ny.isoformat(),
+            "time": due.astimezone(app_tz).strftime("%H:%M"),
+            "text": (review.content or {}).get("text") or review.text,
+            "chips": _briefing_chips(review.facts or {}),
+            "source": review.source,
+            "reason": review.reason,
+            "model": review.model,
+            "prompt_version": review.prompt_version,
+            "cost": str(review.cost) if review.cost is not None else None,
+        }
+    return {
+        "enabled": enabled,
+        "next_at": next_at.isoformat() if next_at is not None else None,
+        "card": card,
+    }
+
+
 @router.get("/dashboard")
 def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
@@ -3024,6 +3137,41 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "today_summary": ", ".join(summary_parts) or "quiet day",
         }
 
+    # Model call counter tile (docs/SPEC.md, GUI — Model call counter):
+    # today's real decision calls against the day's maximum — the
+    # per-cycle cap times today's active cycles — with today's and this
+    # month's decision spend. Reviews have their own cap; its spend feeds
+    # the tile's hover text. Shadows and backtests (PR 13/14) join later.
+    calls_today = sum(1 for d, _ in today_decisions if d.model != "none")
+    calls_cost_today = sum(
+        (d.cost or Decimal(0))
+        for d, _ in today_decisions
+        if d.model != "none"
+    )
+    month_start = (
+        datetime.combine(today.replace(day=1), dtime.min, tzinfo=app_tz)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
+    with get_session_maker()() as session:
+        calls_cost_month = session.execute(
+            select(func.sum(Decision.cost))
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .where(
+                Cycle.scheduled_time >= month_start,
+                Decision.model != "none",
+            )
+        ).scalar_one() or Decimal(0)
+        review_service = getattr(request.app.state, "review_service", None)
+        reviews_spend = (
+            review_service.monthly_spend(session)
+            if review_service is not None
+            else None
+        )
+    calls_per_cycle = int(
+        config.get("decision", "max_calls_per_cycle", default=10)
+    )
+
     return {
         "session": {
             "state": session_state.state,
@@ -3057,7 +3205,20 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "execution_mode": config.get(
                 "execution", "mode", default="automatic"
             ),
+            "calls_today": calls_today,
+            "calls_max": calls_per_cycle * len(active_today),
+            "calls_per_cycle": calls_per_cycle,
+            "cycles_today": len(active_today),
+            "calls_cost_today": str(calls_cost_today),
+            "calls_cost_month": str(calls_cost_month),
+            "reviews_cost_month": (
+                str(reviews_spend) if reviews_spend is not None else None
+            ),
+            "reviews_cost_cap": str(
+                config.get("reviews", "monthly_cost_cap_usd", default=2)
+            ),
         },
+        "briefing": _briefing_card(request, clock, app_tz, today_ny),
         "latest_decision": latest_card,
         "approvals_pending": len(pending),
         "market_closed": market_closed,

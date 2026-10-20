@@ -92,9 +92,21 @@ test('risk budget card shows meters, facts and hover rules', async ({
     )
   ).toBeVisible();
 
-  // Positions and Since start stay beside the card.
+  // The summary tiles sit in their own row: Positions, the model-call
+  // counter (calls against the day's cap) and Since start.
   await expect(page.getByText('Positions', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Model calls today', { exact: true })
+  ).toBeVisible();
   await expect(page.getByText('Since start', { exact: true })).toBeVisible();
+
+  // The daily briefing card sits next to the risk budget card and links
+  // to the Reviews screen.
+  const briefing = page.locator('section[aria-label="Daily briefing"]');
+  await expect(briefing).toBeVisible();
+  await expect(
+    briefing.getByRole('link', { name: 'All briefings and reviews' })
+  ).toBeVisible();
 
   await page.screenshot({
     path: path.join(outDir, `risk-budget-${suffix}.png`),

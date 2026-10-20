@@ -34,7 +34,7 @@ from app.reviews.facts import verdict_eligible, weekly_facts
 from app.reviews.numbercheck import bad_numbers
 from app.reviews.service import ReviewService
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -871,3 +871,161 @@ def test_verdicts_endpoints(client: TestClient) -> None:
         == 422
     )
     assert client.post("/api/verdicts/999", json={"verdict": "good_call"}).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# dashboard: briefing card + model call counter (docs/SPEC.md, GUI)
+
+
+def _clear_briefings() -> None:
+    """Drop the briefings the app wrote at startup so a test can control
+    what the dashboard card shows."""
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        session.execute(delete(Review).where(Review.kind == "briefing"))
+        session.commit()
+
+
+def _seed_briefing(
+    *,
+    period: str = "2026-10-14",
+    source: str = "model",
+    reason: str | None = None,
+) -> int:
+    """One written briefing in the app's database; returns its id."""
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        review = Review(
+            kind="briefing",
+            period=period,
+            facts={
+                "positions": [
+                    {
+                        "symbol": "JPM",
+                        "qty": 8,
+                        "price": 232.8,
+                        "stop": 226.1,
+                        "stop_distance_pct": 2.9,
+                    }
+                ],
+                "earnings_today": [],
+                "earnings_tomorrow": [
+                    {"symbol": "GOOGL", "time_of_day": "before_open"}
+                ],
+                "regime": "Up · normal vol",
+                "yesterday": {"return_pct": 0.18, "return_usd": 18.4},
+                "banners": [],
+            },
+            text="One position open: JPM.",
+            content={"text": "One position open: JPM."},
+            source=source,
+            reason=reason,
+            model="gpt-4o-mini" if source == "model" else None,
+            prompt_version="briefing.v1",
+            tokens=900 if source == "model" else None,
+            cost=Decimal("0.0004") if source == "model" else None,
+            due_at=datetime(2026, 10, 14, 13, 0),
+            created_at=datetime(2026, 10, 14, 13, 0),
+        )
+        session.add(review)
+        session.commit()
+        return review.id
+
+
+def test_dashboard_briefing_card(client: TestClient) -> None:
+    """The card shows the latest briefing with the fact chips it used,
+    its provenance and when the next one is written."""
+    _clear_briefings()
+    _seed_briefing()
+    briefing = client.get("/api/dashboard").json()["briefing"]
+    assert briefing["enabled"] is True
+    assert briefing["next_at"] is not None
+    card = briefing["card"]
+    # The frozen clock sits on Thu 15 Oct: yesterday's briefing shows
+    # with its date, marked as not today's.
+    assert card["label"] == "Wed 14 Oct"
+    assert card["today"] is False
+    assert card["text"] == "One position open: JPM."
+    assert card["source"] == "model"
+    assert card["model"] == "gpt-4o-mini"
+    assert card["prompt_version"] == "briefing.v1"
+    assert float(card["cost"]) == pytest.approx(0.0004)
+    texts = [c["text"] for c in card["chips"]]
+    assert texts == [
+        "1 position",
+        "yesterday +0.18% · +$18.40",
+        "market up · normal vol",
+        "earnings GOOGL tomorrow",
+        "no banners",
+    ]
+    # Its cost feeds the model-call tile's review spend for October.
+    stats = client.get("/api/dashboard").json()["stats"]
+    assert float(stats["reviews_cost_month"]) == pytest.approx(0.0004)
+    assert stats["reviews_cost_cap"] == "2"
+
+
+def test_dashboard_briefing_card_today(client: TestClient) -> None:
+    """The app writes today's briefing at startup; the card marks it as
+    today's so it can show the write time instead of a date."""
+    card = client.get("/api/dashboard").json()["briefing"]["card"]
+    assert card is not None
+    assert card["today"] is True
+    assert card["label"] == "Thu 15 Oct"
+    assert card["time"] == "15:00"  # 09:00 New York, Amsterdam time
+    assert len(card["chips"]) == 5
+
+
+def test_dashboard_briefing_card_template(client: TestClient) -> None:
+    """A plain-template briefing carries the fallback reason and no
+    model or cost."""
+    _clear_briefings()
+    _seed_briefing(source="template", reason="number check failed")
+    card = client.get("/api/dashboard").json()["briefing"]["card"]
+    assert card["source"] == "template"
+    assert card["reason"] == "number check failed"
+    assert card["model"] is None
+    assert card["cost"] is None
+    assert card["prompt_version"] == "briefing.v1"
+
+
+def test_dashboard_briefing_disabled(client: TestClient) -> None:
+    """With briefings turned off the card still renders, saying so,
+    with no next write time."""
+    from app.config import get_config
+
+    get_config()._active.setdefault("reviews", {})["briefing_enabled"] = False
+    briefing = client.get("/api/dashboard").json()["briefing"]
+    assert briefing["enabled"] is False
+    assert briefing["next_at"] is None
+
+
+def test_dashboard_call_counter(client: TestClient) -> None:
+    """The Model calls today tile: real calls against the day's maximum,
+    with today's and this month's decision cost."""
+    from app.db.base import get_session_maker
+
+    stats = client.get("/api/dashboard").json()["stats"]
+    assert stats["calls_per_cycle"] == 10
+    assert stats["calls_max"] == 10 * stats["cycles_today"]
+    before_calls = stats["calls_today"]
+    before_today = float(stats["calls_cost_today"])
+    before_month = float(stats["calls_cost_month"])
+
+    with get_session_maker()() as session:
+        # A real model call and a rules no_call (not counted, no cost).
+        _seed_decision(session, _ny(date(2026, 10, 15), time(9, 46)))
+        _seed_decision(
+            session,
+            _ny(date(2026, 10, 15), time(9, 46)),
+            symbol="AMZN",
+            final_action="no_call",
+            no_call_reason="rules",
+        )
+        session.commit()
+
+    stats = client.get("/api/dashboard").json()["stats"]
+    assert stats["calls_today"] == before_calls + 1
+    assert float(stats["calls_cost_today"]) == pytest.approx(before_today + 0.001)
+    assert float(stats["calls_cost_month"]) == pytest.approx(before_month + 0.001)

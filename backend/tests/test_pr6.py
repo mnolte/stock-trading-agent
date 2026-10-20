@@ -1165,7 +1165,7 @@ def test_approvals_endpoint_shape(client: TestClient) -> None:
 
 def test_dashboard_endpoint_shape(client: TestClient) -> None:
     body = client.get("/api/dashboard").json()
-    assert {"session", "stats", "feed", "approvals_pending"} <= set(body)
+    assert {"session", "stats", "feed", "approvals_pending", "briefing"} <= set(body)
     stats = body["stats"]
     assert {
         "positions",
@@ -1173,7 +1173,14 @@ def test_dashboard_endpoint_shape(client: TestClient) -> None:
         "cash",
         "since_start_pct",
         "execution_mode",
+        "calls_today",
+        "calls_max",
+        "calls_cost_today",
+        "calls_cost_month",
+        "reviews_cost_month",
+        "reviews_cost_cap",
     } <= set(stats)
+    assert {"enabled", "next_at", "card"} <= set(body["briefing"])
     # Risk figures moved to /api/risk-budget with the risk budget card.
     assert "open_risk_pct" not in stats
     assert "day_trades" not in stats

@@ -174,6 +174,21 @@ class ReviewService:
             self.config.get("reviews", "briefing_enabled", default=True)
         )
 
+    def next_briefing_at(self) -> datetime | None:
+        """The next briefing write instant (aware UTC), for the
+        dashboard's "next briefing" line. ``None`` when briefings are off
+        or no trading day is found within two weeks."""
+        if not self._briefing_enabled():
+            return None
+        now = self.clock.now()
+        day = now.astimezone(NY_TZ).date()
+        for _ in range(15):
+            slot = self._briefing_slot(day)
+            if slot is not None and slot > now:
+                return slot
+            day += timedelta(days=1)
+        return None
+
     def _prompt(self, kind: str) -> Prompt:
         version = str(
             self.config.get("reviews", "prompts", kind, default=f"{kind}.v1")

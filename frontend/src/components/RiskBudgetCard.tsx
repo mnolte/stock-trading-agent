@@ -122,7 +122,7 @@ export function RiskBudgetCard({ budget }: { budget: RiskBudgetResponse | null }
     <section
       aria-label="Risk budget"
       style={{
-        flex: '999 1 600px',
+        flex: '1 1 560px',
         minWidth: 0,
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',

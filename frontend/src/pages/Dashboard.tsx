@@ -21,6 +21,7 @@ import type {
   WatchlistResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { CycleCounter } from '../components/CycleCounter';
@@ -438,7 +439,7 @@ export default function Dashboard() {
     refreshChart(chartSymbol);
   }, [chartSymbol, refreshChart]);
 
-  useLiveUpdates(['decisions', 'header', 'performance'], () =>
+  useLiveUpdates(['decisions', 'header', 'performance', 'reviews'], () =>
     refreshDashboard(chartSymbol),
   );
   useLiveUpdates(['watchlist'], refreshWatchlist);
@@ -526,46 +527,73 @@ export default function Dashboard() {
         style={{
           display: 'flex',
           flexWrap: 'wrap',
+          gap: 'var(--sa-space-3)',
+          alignItems: 'stretch',
+        }}
+      >
+        <StatCard
+          label="Positions"
+          value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
+          sub={`cash $${stats?.cash ?? '—'} · no margin`}
+        />
+        <Link
+          to="/inspector"
+          title={
+            stats
+              ? `Decision calls today: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
+                (stats.reviews_cost_month !== null && stats.reviews_cost_month !== undefined
+                  ? ` Reviews have their own $${stats.reviews_cost_cap} monthly cap: $${Number(stats.reviews_cost_month).toFixed(2)} used.`
+                  : '')
+              : undefined
+          }
+          style={{
+            display: 'flex',
+            flex: '1 1 190px',
+            minWidth: 0,
+            textDecoration: 'none',
+          }}
+        >
+          <StatCard
+            label="Model calls today"
+            value={`${stats?.calls_today ?? 0}`}
+            bar={{
+              width: `${stats && stats.calls_max > 0 ? Math.min(100, (stats.calls_today / stats.calls_max) * 100) : 0}%`,
+              color: 'var(--sa-info)',
+            }}
+            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} today · $${stats ? Number(stats.calls_cost_month).toFixed(2) : '—'} this month`}
+            style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
+          />
+        </Link>
+        <StatCard
+          label="Since start"
+          value={
+            stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
+              ? `${stats.since_start_pct}%`
+              : '—'
+          }
+          valueColor={
+            sincePct === null
+              ? undefined
+              : sincePct > 0
+                ? 'var(--sa-positive)'
+                : sincePct < 0
+                  ? 'var(--sa-negative)'
+                  : undefined
+          }
+          sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
+        />
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
           gap: 'var(--sa-space-5)',
           alignItems: 'stretch',
         }}
       >
+        <BriefingCard briefing={dashboard?.briefing ?? null} />
         <RiskBudgetCard budget={budget} />
-        <div
-          style={{
-            flex: '1 1 240px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--sa-space-3)',
-            minWidth: 0,
-          }}
-        >
-          <StatCard
-            label="Positions"
-            value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
-            sub={`cash $${stats?.cash ?? '—'} · no margin`}
-            style={{ flex: '1 1 auto' }}
-          />
-          <StatCard
-            label="Since start"
-            value={
-              stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
-                ? `${stats.since_start_pct}%`
-                : '—'
-            }
-            valueColor={
-              sincePct === null
-                ? undefined
-                : sincePct > 0
-                  ? 'var(--sa-positive)'
-                  : sincePct < 0
-                    ? 'var(--sa-negative)'
-                    : undefined
-            }
-            sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
-            style={{ flex: '1 1 auto' }}
-          />
-        </div>
       </div>
 
       {dashboard?.market_closed && (
