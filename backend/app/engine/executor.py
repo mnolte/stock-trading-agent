@@ -93,25 +93,29 @@ def spy_session_moves(
 ) -> tuple[Decimal | None, Decimal | None]:
     """SPY's change on the last closed 1h bar and since today's open.
 
-    These are the shock-brake gate inputs, shared with the dashboard risk
-    budget card: ``(last_1h_pct, since_open_pct)``, each None when its
-    bars are missing (market closed, no 1h bar finished yet).
+    These are the shock-brake display inputs, shared with the dashboard
+    risk budget card: ``(last_1h_pct, since_open_pct)``, each None when
+    today's bars are missing (market closed, no 1h bar finished yet).
+    Only complete 1h bars of today's session count — a partial bar of the
+    hour still running is not "the last 1h bar", and yesterday's bar is
+    not today's move.
     """
-    bars_1h = [
+    todays = [
         b
         for b in market_data.get_1h_bars_range("SPY", sessions)
-        if b.end <= now
+        if b.complete
+        and b.end <= now
+        and b.start.astimezone(NY_TZ).date() == today
     ]
-    if not bars_1h:
+    if not todays:
         return None, None
-    last = bars_1h[-1]
+    last = todays[-1]
     move_1h = (
         (last.close - last.open) / last.open * 100 if last.open > 0 else None
     )
-    todays = [b for b in bars_1h if b.start.astimezone(NY_TZ).date() == today]
     move_session = (
         (todays[-1].close - todays[0].open) / todays[0].open * 100
-        if todays and todays[0].open > 0
+        if todays[0].open > 0
         else None
     )
     return move_1h, move_session
@@ -168,8 +172,14 @@ class Executor:
             self.state.peak_equity = account.equity
         return account
 
-    async def update_session_brakes(self) -> None:
-        """Shock brake, daily loss and drawdown kill from fresh data."""
+    async def update_session_brakes(self, *, include_1h: bool = False) -> None:
+        """Shock brake, daily loss and drawdown kill from fresh data.
+
+        The since-open leg of the shock brake uses the real-time SPY IEX
+        quote — position checks and cycles both refresh it. The 1h leg
+        reads the last *complete* session-aligned 1h bar and only runs on
+        decision cycles (``include_1h``), right after the bar top-up.
+        """
         self.state.reset_session_if_new_day()
         account = await self.refresh_account()
         if account is not None:
@@ -202,16 +212,51 @@ class Executor:
                     automatic=True,
                 )
 
-        # Shock brake from SPY 1h bars.
+        # Shock brake: the quote is the real-time price; today's open
+        # comes from the session's first 5m bar, topped up here so the
+        # early position checks work before the first cycle runs.
         now = self.clock.now()
         today = now.astimezone(NY_TZ).date()
         session = self.calendar.session_for(today)
         if session is None:
             return
-        sessions = self.market_data.recent_sessions(today, 3)
-        move_1h, move_session = spy_session_moves(
-            self.market_data, sessions, now, today
+        bars = await self.market_data.sources.bars.fetch_5m_bars(
+            "SPY", session.open, now
         )
+        if bars.error is None and bars.data:
+            self.market_data.bars_cache.store(bars.data)
+        todays_5m = self.market_data.get_5m_bars(
+            "SPY", session.open, session.close
+        )
+        session_open = todays_5m[0].open if todays_5m else None
+
+        quotes = await self.market_data.sources.quotes.fetch_quotes(["SPY"])
+        quote = (
+            quotes.data.get("SPY")
+            if quotes.error is None and quotes.data
+            else None
+        )
+        move_session = (
+            (quote.last - session_open) / session_open * 100
+            if quote is not None
+            and session_open is not None
+            and session_open > 0
+            else None
+        )
+        move_1h: Decimal | None = None
+        if include_1h:
+            closed_1h = [
+                b
+                for b in self.market_data.get_1h_bars("SPY", session)
+                if b.complete and b.end <= now
+            ]
+            if closed_1h and closed_1h[-1].open > 0:
+                move_1h = (
+                    (closed_1h[-1].close - closed_1h[-1].open)
+                    / closed_1h[-1].open
+                    * 100
+                )
+
         if move_1h is None and move_session is None:
             return
         shock_1h = Decimal(

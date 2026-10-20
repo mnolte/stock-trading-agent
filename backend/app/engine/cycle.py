@@ -357,10 +357,14 @@ class CycleRunner:
             account = await self.executor.refresh_account()
             if account is None:
                 report.data_source_health["account"] = "error"
-            await self.executor.update_session_brakes()
 
         symbols = self.market_data.universe()
         quotes, news = await self._update_data(symbols, now, report)
+        # The 1h shock-brake leg runs here, on the hourly cycle, so the
+        # just-topped-up cache holds the completed bar (docs/SPEC.md,
+        # Position check).
+        if self.executor is not None:
+            await self.executor.update_session_brakes(include_1h=True)
         evaluation = await self.signals.refresh_eval()
 
         positions = {

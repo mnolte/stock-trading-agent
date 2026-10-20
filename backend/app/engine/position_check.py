@@ -107,6 +107,8 @@ class PositionChecker:
         if rec.errors:
             report.errors.extend(rec.errors)
             raise RuntimeError("; ".join(rec.errors))
+        # Since-open shock brake, daily loss and drawdown kill from the
+        # real-time quote and account; the 1h leg stays on the cycle.
         await self.executor.update_session_brakes()
         if self.state.account is not None:
             if self.outcomes is not None:
