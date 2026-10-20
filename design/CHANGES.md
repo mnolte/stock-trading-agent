@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-21 — Backtest: process, bar store, estimate
+
+- `Backtest.dc.html`: the estimate shows "≈" and the cost at the 10-call cap; the note under Run says separate process, one database per strategy, 40 Alpaca calls per minute and pausing during live cycles and checks; the Runs card shows the bar store size with "Clear bar store" (disabled while a run is active).
+
 ## 2026-10-19 — Briefing card, model call counter, Strategies, Backtest
 
 - `Main.dc.html`: summary tiles row (Positions, Model calls today with a bar against the 60-call maximum and cost, Since start); new "Daily briefing · 15:00" card next to the risk budget card, with fact chips and a footer (numbers checked, model and prompt, cost, next briefing).

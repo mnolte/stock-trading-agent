@@ -42,6 +42,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 10. **Local only.** The backend binds to `127.0.0.1` in v0.1.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
+13. **No write lock across a network call.** Commit before any model, broker or data call; never keep a SQLite write transaction open while awaiting I/O. Live jobs and shadows share one event loop and one database file.
 
 ## Conventions
 

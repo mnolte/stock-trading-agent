@@ -155,10 +155,13 @@ shadows:                        # v0.2, PR 13
 backtest:                         # v0.2, PR 14
   monthly_cost_cap_usd: 20
   max_range_years: 3
-  alpaca_calls_per_minute: 50     # paused during live cycles and checks
+  alpaca_calls_per_minute: 40     # live keeps 150 of Alpaca's 200; paused during live cycles and checks
   assumed_spread_pct: 0.05        # no historical quotes on the free plan
   same_bar_stop_and_target: stop
-  data_dir: data/backtests        # one SQLite file per run
+  data_dir: data/backtests        # run-<id>/<strategy>.db + market.db per run
+  bar_store: data/backtests/bars.db   # never pruned automatically; not in the 03:00 backup
+  cancel_grace_seconds: 60        # then the app stops the child by PID
+  process_nice: 10
   model_cutoffs:                  # LLM strategies only from the day after
     gpt-4o-mini: "2023-10-31"
     gpt-4.1-mini: "2024-06-01"
@@ -167,4 +170,4 @@ storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
   backup_days: 14
   shutdown_grace_seconds: 60     # wait for a running cycle/check on normal shutdown
-  sqlite_busy_timeout_seconds: 30   # WAL journal; a writer waits this long for the lock instead of failing
+  sqlite_busy_timeout_seconds: 30  # every connection uses WAL; never hold a write lock across a network call

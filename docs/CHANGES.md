@@ -2,10 +2,17 @@
 
 Newest first.
 
-## 2026-10-20 — PR 13 review fixes (added by Devin)
+## 2026-10-21 — Answers to PR 14 questions
 
-- Storage: SQLite runs in WAL mode with a busy timeout (`storage.sqlite_busy_timeout_seconds: 30`), so a writer waits for the lock instead of failing. Shadow work commits before every model call and never holds a write lock across an await.
-- Data model: `shadow_decisions` also stores `input_snapshot` for a symbol only shadows hold, because live makes no decision for it and so there is no live row to share.
+- Run layout: `data/backtests/run-<id>/` with one live-schema DB per strategy and a read-only `market.db` (earnings, news, corporate actions); no strategy column in the live schema; strategies advance in lockstep; deleting a run removes its folder.
+- Bars: separate never-pruned store `data/backtests/bars.db`, filled before a run (copy from live cache, then download); runs read bars only from it; not in the 03:00 backup; size shown, "Clear bar store" when idle.
+- Estimate: calls from each strategy's average real calls per cycle (fallback live's, then the 10-call cap; rules-only 0), cache hits from `llm_cache` by model, temperature, prompt hash and cycle time (new `cycle_time` column), cost via `model_prices`; also the cost at the cap; Run disabled only when the expected cost exceeds what's left.
+- Process: child process, one at a time, lower priority; progress on the `backtests` row; cancel flag, stop by PID after 60 s; pause flag during live cycles and checks before every download and model call; interrupted runs keep partial results. Backtest download limit lowered from 50 to 40 calls per minute so live's 150 plus backtests stay under Alpaca's 200.
+
+## 2026-10-21 — PR 13 merge follow-ups
+
+- Data model: `shadow_decisions` gains `input_snapshot`, filled only for symbols that only a shadow holds (other rows share live's snapshot), and `missed_reason`.
+- Storage: every SQLite connection uses WAL and a busy timeout (`storage.sqlite_busy_timeout_seconds: 30`); no job keeps a write transaction open across a model or network call (found in PR 13: the shadow runner held its write lock during model calls). AGENTS.md: new hard rule 13.
 
 ## 2026-10-20 — Answers from the PR 13 review
 
