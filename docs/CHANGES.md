@@ -2,17 +2,18 @@
 
 Newest first.
 
-## 2026-10-20 — Strategies and shadows built (PR 13)
+## 2026-10-20 — PR 13 review fixes (added by Devin)
 
-- Built as specified; choices the spec leaves open are listed here and in the PR under "Questions".
-- Virtual fills: an entry fills at the limit, or at the bar's open when the bar opens below it. Stops and targets are checked from the bar after the fill bar. A gap through the stop fills at the open, and so does a gap above the target. Model exits, earnings exits and Stop & flatten fill at the open of the first 5-min bar that starts at or after the request. The order and exit time is the live cycle's scheduled time, so shadows act at the same moment as live.
-- Shadows read only cached bars. Position checks don't fetch bars, so a check only sees bars cached by the last cycle; the bars are replayed in time order, so the results are the same, just found later.
-- A shadow candidate without a price in the stored snapshot gets `no_call` (`quote_missing`), as live does. If the shadow cost cap is reached in the middle of a cycle, the rest of that cycle's LLM work is recorded as missed.
-- The shadow cost-cap warning uses the existing "Model failing or review cost cap reached" event, once per month.
-- A rules-only baseline can't be promoted, because live is always an LLM strategy.
-- `shadow_positions` also stores the status, limit, initial stop, a pending exit and the last bar checked. `shadow_decisions` also stores the rebuilt position block, rules result, validation, prompt hash and raw response.
-- The weekly review facts gain `strategies`: live and each shadow with adjusted return, vs SPY, closed trades won and lost, average R, max drawdown, model cost, "same as live" and missed work.
-- Fix: in simulated mode the 15:46 cycle was skipped, because at its own minute the session state already read "Last cycle done". Paper mode uses Alpaca's clock and was not affected.
+- Storage: SQLite runs in WAL mode with a busy timeout (`storage.sqlite_busy_timeout_seconds: 30`), so a writer waits for the lock instead of failing. Shadow work commits before every model call and never holds a write lock across an await.
+- Data model: `shadow_decisions` also stores `input_snapshot` for a symbol only shadows hold, because live makes no decision for it and so there is no live row to share.
+
+## 2026-10-20 — Answers from the PR 13 review
+
+- Shadow fills: orders timed at the live cycle's scheduled time; entries fill at the limit or a better open; the stop is checked on the fill bar (stop first), the target from the next bar; gaps fill at the open; market exits (model, earnings, flatten) at the next 5-min bar's open plus slippage; a candidate without a price gets no_call (quote_missing). Shadows skip the spread check and fresh-quote gate (documented as a small advantage).
+- Live's cycle builds snapshots for symbols held by any active or paused shadow; live makes no decision for them.
+- Slots: active and paused shadows count (max 3); a paused shadow makes no calls or entries but manages its virtual positions; archive frees a slot.
+- Missed shadow work stores its reason (time or cost_cap). Notification event renamed "Model failing, or review or shadow cost cap reached".
+- Decision layer → Prompt and Reviews → Model and cost now point at `model_prices`.
 
 ## 2026-10-20 — Answers to PR 13 questions
 

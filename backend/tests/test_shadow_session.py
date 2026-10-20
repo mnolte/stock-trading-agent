@@ -30,7 +30,7 @@ from app.data.fake import (
 )
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Cycle, Run, ShadowDecision, ShadowEquity, Strategy
+from app.db.models import Cycle, Decision, Run, ShadowDecision, ShadowEquity, Strategy
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
@@ -150,7 +150,16 @@ async def test_full_session_two_shadows_and_rules_only_never_delay_live(
         bars=BarCache(sf).get,
     )
     handed_off: list[Coroutine[Any, Any, object]] = []
-    live.on_cycle_done = lambda report: handed_off.append(shadows.after_cycle(report.cycle_id or 0))
+    reports: list[Any] = []
+
+    def hand_off(report: Any) -> None:
+        reports.append(report)
+        handed_off.append(shadows.after_cycle(report.cycle_id or 0, report.shadow_snapshots))
+
+    live.on_cycle_done = hand_off
+    # CAT stands in for a symbol only a shadow holds: live builds its
+    # snapshot but makes no rules check, model call or decision for it.
+    live.shadow_symbols = lambda: [*shadows.held_symbols(), "CAT"]
     checker.on_check_done = lambda: handed_off.append(shadows.after_check())
 
     session_day = calendar.session_for(DAY)
@@ -181,7 +190,16 @@ async def test_full_session_two_shadows_and_rules_only_never_delay_live(
                 done_after = session.execute(select(func.count(ShadowDecision.id))).scalar_one()
             assert done_after > done_before
 
+    assert all("CAT" in r.shadow_snapshots for r in reports)
+    cat = reports[-1].shadow_snapshots["CAT"]
+    assert cat["context"] == "held" and cat["indicators_1h"]["atr14"] != "unavailable"
     with sf() as session:
+        assert (
+            session.execute(
+                select(func.count(Decision.id)).where(Decision.symbol == "CAT")
+            ).scalar_one()
+            == 0
+        )
         live_cycles = list(
             session.execute(select(Cycle).where(Cycle.kind == "cycle").order_by(Cycle.id)).scalars()
         )

@@ -126,9 +126,21 @@ def regime_from_snapshot(snap: dict[str, Any], config: AppConfig) -> MarketRegim
     )
 
 
-def _rank_key(decision: Decision) -> tuple[int, int]:
-    rank = (decision.input_snapshot or {}).get("rank")
-    return (rank if isinstance(rank, int) else 10**9, decision.id)
+@dataclass(frozen=True)
+class LiveInput:
+    """One symbol of a live cycle as a shadow sees it: the stored snapshot
+    and the live decision it came with. ``live_id`` is None for a symbol
+    only a shadow holds — live built its snapshot but made no decision."""
+
+    symbol: str
+    snapshot: dict[str, Any]
+    live_id: int | None
+    order: int
+
+
+def _rank_key(item: LiveInput) -> tuple[int, int]:
+    rank = item.snapshot.get("rank")
+    return (rank if isinstance(rank, int) else 10**9, item.order)
 
 
 def _virtual_position(sp: ShadowPosition) -> Position:
@@ -274,8 +286,31 @@ class ShadowRunner:
     # ------------------------------------------------------------------
     # entry points
 
-    async def after_cycle(self, cycle_id: int) -> ShadowReport:
-        """Run every shadow on the stored snapshots of one finished cycle."""
+    def held_symbols(self) -> list[str]:
+        """Symbols held by any active or paused shadow in the current run —
+        live's cycle builds snapshots for them too."""
+        with self._sf() as session:
+            run = self._run(session)
+            if run is None:
+                return []
+            rows = session.execute(
+                select(ShadowPosition.symbol)
+                .join(Strategy, ShadowPosition.strategy_id == Strategy.id)
+                .where(
+                    Strategy.status.in_(NON_ARCHIVED),
+                    ShadowPosition.run_id == run.id,
+                    ShadowPosition.status == "open",
+                )
+            ).all()
+        return sorted({r[0] for r in rows})
+
+    async def after_cycle(
+        self, cycle_id: int, extra_snapshots: dict[str, dict[str, Any]] | None = None
+    ) -> ShadowReport:
+        """Run every shadow on the stored snapshots of one finished cycle.
+
+        ``extra_snapshots`` are the snapshots live built for symbols only
+        shadows hold (no live decision exists for them)."""
         report = ShadowReport(cycle_id=cycle_id)
         async with self._lock:
             with self._sf() as session:
@@ -307,7 +342,17 @@ class ShadowRunner:
                         bars=self._bars,
                         config=self.config,
                     )
-                    await self._decide(session, strategy, cycle, run, scheduled, live, deadline, sr)
+                    await self._decide(
+                        session,
+                        strategy,
+                        cycle,
+                        run,
+                        scheduled,
+                        live,
+                        deadline,
+                        sr,
+                        extra_snapshots or {},
+                    )
                     write_equity(
                         session,
                         strategy_id=strategy.id,
@@ -388,6 +433,7 @@ class ShadowRunner:
         live: LiveGateState,
         deadline: datetime | None,
         sr: StrategyReport,
+        extra_snapshots: dict[str, dict[str, Any]],
     ) -> None:
         cfg = strategy_config(self.config, strategy)
         llm = strategy.kind == "llm"
@@ -421,16 +467,25 @@ class ShadowRunner:
             self._notify_cap(session)
             return
 
-        decisions = list(
-            session.execute(
+        decisions = [
+            LiveInput(d.symbol, dict(d.input_snapshot or {}), d.id, d.id)
+            for d in session.execute(
                 select(Decision).where(Decision.cycle_id == cycle.id).order_by(Decision.id)
             ).scalars()
-        )
-        held_items: list[Decision] = []
-        passing: list[tuple[Decision, RulesResult]] = []
-        failing: list[tuple[Decision, RulesResult]] = []
+        ]
+        # Symbols only this shadow holds: live built their snapshots in the
+        # same cycle but made no decision (docs/SPEC.md, Running shadows).
+        seen = {d.symbol for d in decisions}
+        decisions += [
+            LiveInput(symbol, snap, None, 10**9 + i)
+            for i, (symbol, snap) in enumerate(sorted(extra_snapshots.items()))
+            if symbol in held and symbol not in seen
+        ]
+        held_items: list[LiveInput] = []
+        passing: list[tuple[LiveInput, RulesResult]] = []
+        failing: list[tuple[LiveInput, RulesResult]] = []
         for d in decisions:
-            snap = d.input_snapshot or {}
+            snap = d.snapshot
             if d.symbol in held:
                 held_items.append(d)
                 continue
@@ -446,7 +501,8 @@ class ShadowRunner:
             (passing if rules.status == STATUS_PASS else failing).append((d, rules))
         passing.sort(key=lambda pair: _rank_key(pair[0]))
 
-        state = {"calls": 0, "orders": 0, "out": False}
+        # "out" is False, or why the rest of the cycle is missed: time | cost_cap.
+        state: dict[str, Any] = {"calls": 0, "orders": 0, "out": False}
 
         def out_of_time() -> bool:
             if state["out"]:
@@ -454,16 +510,16 @@ class ShadowRunner:
             if deadline is not None:
                 margin = timedelta(seconds=timeout) if llm else timedelta(0)
                 if self.clock.now() + margin >= deadline:
-                    state["out"] = True
+                    state["out"] = "time"
             if llm and not state["out"] and self.cap_reached(session):
                 # The cap hit mid-cycle: the rest is skipped like missed work.
                 sr.paused_by_cap = True
                 self._notify_cap(session)
-                state["out"] = True
+                state["out"] = "cost_cap"
             return bool(state["out"])
 
         async def call(
-            d: Decision,
+            d: LiveInput,
             context: str,
             snap_json: dict[str, Any],
             price: Decimal | None,
@@ -475,6 +531,9 @@ class ShadowRunner:
             sr.calls += 1
             prompt = cached_prompt(str(strategy.prompt_version))
             budget = (deadline - self.clock.now()).total_seconds() if deadline is not None else None
+            # Never hold a database write transaction across an await: live
+            # jobs run on the same event loop and must always get the lock.
+            session.commit()
             try:
                 response = await asyncio.wait_for(
                     self._client(strategy).complete(
@@ -483,9 +542,9 @@ class ShadowRunner:
                     timeout=budget,
                 )
             except TimeoutError as exc:
-                state["out"] = True
+                state["out"] = "time"
                 raise _OutOfTime from exc
-            ind = indicators_from_snapshot(d.symbol, d.input_snapshot or {})
+            ind = indicators_from_snapshot(d.symbol, d.snapshot)
             validation = validate_model_output(
                 response.raw,
                 symbol=d.symbol,
@@ -522,14 +581,14 @@ class ShadowRunner:
         # ---- held positions first
         for d in held_items:
             sp = held[d.symbol]
-            snap = d.input_snapshot or {}
+            snap = d.snapshot
             price = _dec(snap.get("price"))
             position_json = _position_block(_virtual_position(sp), price)
             snap_json: dict[str, Any] = copy.deepcopy(dict(snap))
             snap_json["context"] = "held"
             snap_json["position"] = position_json
             if out_of_time():
-                self._missed(session, strategy, cycle, d, "held", sr)
+                self._missed(session, strategy, cycle, d, "held", sr, str(state["out"]))
                 continue
             if llm and int(state["calls"]) >= max_calls:
                 row = self._row(
@@ -545,7 +604,7 @@ class ShadowRunner:
                 try:
                     row = await call(d, "held", snap_json, price, sp.stop, None)
                 except _OutOfTime:
-                    self._missed(session, strategy, cycle, d, "held", sr)
+                    self._missed(session, strategy, cycle, d, "held", sr, str(state["out"]))
                     continue
             else:
                 # rules_only exits only through its stop, target or earnings.
@@ -560,9 +619,9 @@ class ShadowRunner:
         # ---- candidates that pass this strategy's rules, in rank order
         for d, rules in passing:
             if out_of_time():
-                self._missed(session, strategy, cycle, d, "candidate", sr)
+                self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
                 continue
-            snap = d.input_snapshot or {}
+            snap = d.snapshot
             price = _dec(snap.get("price"))
             stop: Decimal | None = None
             target: Decimal | None = None
@@ -594,7 +653,9 @@ class ShadowRunner:
                     try:
                         row = await call(d, "candidate", snap_json, price, None, rules)
                     except _OutOfTime:
-                        self._missed(session, strategy, cycle, d, "candidate", sr)
+                        self._missed(
+                            session, strategy, cycle, d, "candidate", sr, str(state["out"])
+                        )
                         continue
                     output = row.model_output or {}
                     stop = _dec(output.get("stop_price"))
@@ -631,7 +692,7 @@ class ShadowRunner:
         # ---- everything the rules reject: stored, never called
         for d, rules in failing:
             if state["out"]:
-                self._missed(session, strategy, cycle, d, "candidate", sr)
+                self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
                 continue
             session.add(
                 self._row(
@@ -653,7 +714,7 @@ class ShadowRunner:
         self,
         strategy: Strategy,
         cycle: Cycle,
-        d: Decision,
+        d: LiveInput,
         context: str,
         *,
         final_action: str,
@@ -666,7 +727,8 @@ class ShadowRunner:
             cycle_id=cycle.id,
             symbol=d.symbol,
             context=context,
-            live_decision_id=d.id,
+            live_decision_id=d.live_id,
+            input_snapshot=None if d.live_id is not None else d.snapshot,
             position=position,
             rules_result=rules_result_json(rules),
             final_action=final_action,
@@ -682,12 +744,14 @@ class ShadowRunner:
         session: Session,
         strategy: Strategy,
         cycle: Cycle,
-        d: Decision,
+        d: LiveInput,
         context: str,
         sr: StrategyReport,
+        reason: str,
     ) -> None:
         row = self._row(strategy, cycle, d, context, final_action="no_call")
         row.missed = True
+        row.missed_reason = reason
         session.add(row)
         sr.missed += 1
 
@@ -722,12 +786,12 @@ class ShadowRunner:
         run: Run,
         at: datetime,
         live: LiveGateState,
-        d: Decision,
+        d: LiveInput,
         state: dict[str, Any],
     ) -> None:
         """Live gates and sizing on the virtual portfolio, then a working
         limit entry at the live limit price and timeout."""
-        ind = indicators_from_snapshot(d.symbol, d.input_snapshot or {})
+        ind = indicators_from_snapshot(d.symbol, d.snapshot)
         ctx = gate_context(
             session,
             symbol=d.symbol,

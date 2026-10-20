@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -53,6 +54,9 @@ class CycleReport:
     calls: int = 0
     decisions: list[int] = field(default_factory=list)
     duration_seconds: float | None = None
+    # Snapshots built for symbols only shadow strategies hold; live makes
+    # no rules check, model call or decision for them.
+    shadow_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class CycleRunner:
@@ -94,6 +98,8 @@ class CycleRunner:
         # Running shadows). Main schedules them as their own task, so this
         # call returns at once and never delays live.
         self.on_cycle_done = on_cycle_done or (lambda report: None)
+        # Symbols held by active or paused shadows (set by main).
+        self.shadow_symbols: Callable[[], list[str]] = lambda: []
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -397,13 +403,39 @@ class CycleRunner:
                 report.data_source_health["account"] = "error"
 
         symbols = self.market_data.universe()
-        await self._update_bars(symbols, now, report)
+        try:
+            shadow_only = [s for s in self.shadow_symbols() if s not in symbols]
+        except Exception:  # noqa: BLE001
+            logger.exception("shadow-held symbols unavailable")
+            shadow_only = []
+        # One bar request covers shadow-held symbols too (docs/SPEC.md,
+        # Running shadows); they get no rules check or decision.
+        await self._update_bars(symbols + shadow_only, now, report)
         # The 1h shock-brake leg runs here, on the hourly cycle, so the
         # just-topped-up cache holds the completed bar (docs/SPEC.md,
         # Position check).
         if self.executor is not None:
             await self.executor.update_session_brakes(include_1h=True)
         evaluation = await self.signals.refresh_eval()
+        if shadow_only:
+            try:
+                for symbol, (snap, bars_1h) in self.signals.snapshots_for(
+                    shadow_only, now
+                ).items():
+                    report.shadow_snapshots[symbol] = build_input_snapshot(
+                        symbol=symbol,
+                        context="held",
+                        cycle_time_ny=scheduled_ny,
+                        price=snap.price,
+                        regime=evaluation.regime,
+                        snapshot=snap,
+                        bars_1h=bars_1h,
+                        position=None,
+                        news=None,
+                    )
+            except Exception:  # noqa: BLE001
+                # Never let shadow inputs affect the live cycle.
+                logger.exception("shadow-held snapshots failed")
 
         positions = {
             row.symbol: row

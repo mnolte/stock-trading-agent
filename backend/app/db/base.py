@@ -1,4 +1,6 @@
-from sqlalchemy import Engine, Numeric, create_engine, inspect
+from typing import Any
+
+from sqlalchemy import Engine, Numeric, create_engine, event, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_config
@@ -22,11 +24,39 @@ def get_db_url() -> str:
 _engines: dict[str, Engine] = {}
 
 
+def configure_sqlite(engine: Engine, busy_timeout_seconds: float) -> Engine:
+    """WAL journal and a busy timeout on every connection.
+
+    Shadow strategies, API requests and live jobs all write to the one
+    SQLite file. WAL lets readers run beside a writer, and the busy
+    timeout makes a writer wait for the lock instead of failing — a live
+    write must never fail because a shadow write is in progress.
+    """
+    busy_ms = int(busy_timeout_seconds * 1000)
+
+    @event.listens_for(engine, "connect")
+    def _on_connect(dbapi_conn: Any, _record: Any) -> None:
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={busy_ms}")
+        cursor.close()
+
+    return engine
+
+
 def get_engine() -> Engine:
     url = get_db_url()
     engine = _engines.get(url)
     if engine is None:
-        engine = create_engine(url, connect_args={"check_same_thread": False})
+        timeout = float(
+            get_config().get("storage", "sqlite_busy_timeout_seconds", default=30)
+        )
+        engine = configure_sqlite(
+            create_engine(
+                url, connect_args={"check_same_thread": False, "timeout": timeout}
+            ),
+            timeout,
+        )
         _engines[url] = engine
     return engine
 

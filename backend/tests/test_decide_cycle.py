@@ -928,3 +928,37 @@ async def test_slow_cycle_raises_warning_event(
     assert cycle.duration_seconds == report.duration_seconds
     assert event.level == "warning"
     assert (event.details or {})["cycle_id"] == cycle.id
+
+
+@pytest.mark.parametrize(
+    ("day", "last", "early_close"),
+    [
+        (date(2026, 10, 15), time(15, 46), None),  # normal day: 15:46
+        (date(2026, 11, 27), time(12, 46), time(13, 0)),  # early close: 12:46
+    ],
+)
+async def test_simulated_last_cycle_of_the_session_runs(
+    session_factory: sessionmaker[Session],
+    day: date,
+    last: time,
+    early_close: time | None,
+) -> None:
+    """At the last cycle's own minute the session state already reads
+    "Last cycle done"; the market is still open and the cycle must run
+    in simulated mode (PR 13 fix), on early-close days too."""
+    from app.engine.cycle import CycleReport
+    from app.market.clock import SessionClock
+
+    calendar = FakeCalendarSource(early_closes={day: early_close} if early_close else None)
+    scheduled = datetime.combine(day, last, tzinfo=NY_TZ)
+    clock = FakeClock(scheduled)
+    sources = _sources(
+        calendar=calendar, bars=FakeBarSource(calendar), quotes=FakeQuoteSource(clock)
+    )
+    runner = _runner(session_factory, _evaluation(), sources=sources, clock=clock)
+    assert runner._is_last_cycle(scheduled)
+    state = SessionClock(clock, runner.config, cast(CalendarProvider, calendar)).state()
+    assert state.state == "last_cycle_done"
+    assert await runner._market_open(CycleReport())
+    report = await runner.run(scheduled)
+    assert report.status == "done", report.errors

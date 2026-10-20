@@ -255,6 +255,42 @@ class SignalService:
             today,
         )
 
+    def snapshots_for(
+        self, symbols: list[str], now: datetime
+    ) -> dict[str, tuple[IndicatorSnapshot, list[Bar1h]]]:
+        """Indicator snapshots (and closed 1h bars) for symbols outside the
+        cycle universe — the ones only shadow strategies hold. No rules
+        check: live makes no decision for them (docs/SPEC.md, Running
+        shadows)."""
+        if not symbols:
+            return {}
+        today = now.astimezone(NY_TZ).date()
+        sessions = self._sessions_for(today)
+        daily_sessions = self._daily_sessions_for(today)
+        spy_1h = self.hourly_bars("SPY", sessions, now)
+        earnings_status = self.market_data.latest_earnings
+        earnings_available = earnings_status is not None and earnings_status.error is None
+        earnings_next = self.next_earnings(symbols, today)
+        out: dict[str, tuple[IndicatorSnapshot, list[Bar1h]]] = {}
+        for symbol in symbols:
+            bars_1h, daily, todays = self._symbol_bars(
+                symbol, sessions, daily_sessions, today, now
+            )
+            out[symbol] = (
+                self._snapshot_from_bars(
+                    symbol,
+                    bars_1h,
+                    daily,
+                    todays,
+                    spy_1h,
+                    earnings_available,
+                    earnings_next,
+                    today,
+                ),
+                bars_1h,
+            )
+        return out
+
     def regime(self, now: datetime) -> MarketRegime:
         today = now.astimezone(NY_TZ).date()
         sessions = self._daily_sessions_for(today)

@@ -558,6 +558,11 @@ class ShadowDecision(Base):
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     missed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Why the work was missed: time (next live event due) | cost_cap.
+    missed_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Only for a symbol live made no decision on (held by shadows only):
+    # the snapshot live's cycle built for it.
+    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 

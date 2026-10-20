@@ -82,7 +82,7 @@ const EVENT_LABELS: Record<string, string> = {
   pdt_guard: 'Day-trade guard',
   source_failing: 'Data source or API key failing',
   position_checks_failing: 'Position checks failing',
-  model_failing: 'Model failing or review cost cap reached',
+  model_failing: 'Model failing, or review or shadow cost cap reached',
   approval_waiting: 'Entry waiting for approval',
   exit_deferred_or_earnings_exit: 'Exit deferred or earnings exit',
   trade: 'Trade opened or closed',

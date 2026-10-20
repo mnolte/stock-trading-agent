@@ -7,8 +7,9 @@ docs/SPEC.md, Strategies and shadows — Virtual trading:
   before the live entry timeout. Fill price: the limit, or the bar's open
   when the bar opens below it.
 - Stops and targets are checked bar by bar at every position check and
-  cycle; when both are touched in one bar the stop counts. A gap through
-  the stop fills at the open; a gap above the target fills at the open.
+  cycle; when both are touched in one bar the stop counts. The stop is
+  already checked on the fill bar; the target counts from the next bar. A
+  gap through the stop fills at the open; a gap above the target too.
 - Market exits (model exit, earnings exit, Stop & flatten) fill at the open
   of the first bar starting at or after the request.
 - Slippage per side and dividends (ex-date inside the hold) are applied like
@@ -165,7 +166,15 @@ def replay_bars(
                     sp.entry = min(bar.open, sp.limit_price)
                     sp.opened_at = _naive_utc(bar.start)
                     events.append(FillEvent(sp.id, sp.symbol, "filled", sp.entry, bar.start))
-                # The fill bar's own path is unknown; stops start next bar.
+                    # The stop is already checked on the fill bar (stop
+                    # first); the target only counts from the next bar.
+                    if bar.low <= sp.stop:
+                        price = min(bar.open, sp.stop)
+                        close_position(
+                            session, sp, price=price, at=bar.start, reason="stop", slip=slip
+                        )
+                        events.append(FillEvent(sp.id, sp.symbol, "stop", price, bar.start))
+                        break
                 continue
             sp.bars_through = _naive_utc(bar.start)
             if (

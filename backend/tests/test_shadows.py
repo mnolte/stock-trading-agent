@@ -277,6 +277,38 @@ def test_limit_touched_fills_at_limit(sf: sessionmaker[Session]) -> None:
     assert sp.entry == Decimal("100.05")
 
 
+def test_stop_counts_on_the_fill_bar(sf: sessionmaker[Session]) -> None:
+    sid = _strategy(sf, "A")
+    _pending(sf, sid)
+    t = datetime(2026, 10, 15, 10, 50, tzinfo=NY_TZ)
+    bars = Bars([_bar("MSFT", t, "100.40", "100.50", "97.80", "98.10")])
+    events = _replay(sf, sid, bars, t + timedelta(minutes=20))
+    assert [e.kind for e in events] == ["filled", "stop"]
+    (sp,) = _positions(sf, sid)
+    assert sp.entry == Decimal("100.05")
+    assert sp.exit_reason == "stop" and sp.exit_price == Decimal("98")
+
+
+def test_target_does_not_count_on_the_fill_bar(sf: sessionmaker[Session]) -> None:
+    sid = _strategy(sf, "A")
+    _pending(sf, sid)
+    t = datetime(2026, 10, 15, 10, 50, tzinfo=NY_TZ)
+    bars = Bars(
+        [
+            _bar("MSFT", t, "100.40", "104.50", "100.00", "104.20"),  # fills, touches target
+            _bar("MSFT", t + timedelta(minutes=5), "103.0", "103.5", "102.5", "103.0"),
+        ]
+    )
+    events = _replay(sf, sid, bars, t + timedelta(minutes=20))
+    assert [e.kind for e in events] == ["filled"]
+    assert _positions(sf, sid)[0].status == "open"
+    # The next bar touching the target closes it.
+    later = Bars(
+        [*bars.bars, _bar("MSFT", t + timedelta(minutes=10), "103.5", "104.1", "103.4", "104")]
+    )
+    assert [e.kind for e in _replay(sf, sid, later, t + timedelta(minutes=30))] == ["target"]
+
+
 def test_bar_before_order_time_is_ignored(sf: sessionmaker[Session]) -> None:
     """The 10:45 bar started before the 10:46 decision — not "later"."""
     sid = _strategy(sf, "A")
@@ -702,8 +734,61 @@ async def test_work_past_next_live_event_is_missed(sf: sessionmaker[Session]) ->
     # margin); the rest is skipped and recorded as missed.
     assert len(called) == 3
     assert len(missed) == 2
+    assert {r.missed_reason for r in missed} == {"time"}
     assert report.strategies[0].missed == 2
     assert clock.now() <= datetime(2026, 10, 15, 11, 4, tzinfo=NY_TZ)
+
+
+async def test_cost_cap_reached_mid_cycle_records_cost_cap_reason(
+    sf: sessionmaker[Session],
+) -> None:
+    symbols = ["MSFT", "AAPL", "NVDA"]
+    cycle_id = _seed(sf, [(s, "skip", None, _snap(s)) for s in symbols])
+    sid = _strategy(sf, "A")
+    config = AppConfig()
+    # The first fake call (~$0.0001) already exceeds this cap.
+    config._active["shadows"]["monthly_cost_cap_usd"] = 0.00001
+    notes = Notes()
+    runner = _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)), config=config, notes=notes)
+    report = await runner.after_cycle(cycle_id)
+    rows = _rows(sf, sid)
+    assert report.strategies[0].calls == 1
+    missed = [r for r in rows.values() if r.missed]
+    assert len(missed) == 2
+    assert {r.missed_reason for r in missed} == {"cost_cap"}
+    assert [e for e, _ in notes.sent] == ["model_failing"]
+
+
+async def test_shadow_only_symbol_uses_the_snapshot_live_built(
+    sf: sessionmaker[Session],
+) -> None:
+    """CAT is held only by the shadow: live built its snapshot but made no
+    decision, so the shadow decides on it without a live decision row and
+    it stays out of "same as live"."""
+    sid = _strategy(sf, "A")
+    _pending(
+        sf,
+        sid,
+        symbol="CAT",
+        status="open",
+        entry=Decimal("100"),
+        opened_at=_naive(datetime(2026, 10, 14, 11, 0, tzinfo=NY_TZ)),
+        bars_through=_naive(CYCLE),
+    )
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    runner = _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)))
+    assert runner.held_symbols() == ["CAT"]
+    await runner.after_cycle(cycle_id, {"CAT": _snap("CAT", context="held")})
+    cat = _rows(sf, sid)["CAT"]
+    assert cat.live_decision_id is None
+    assert cat.context == "held"
+    assert cat.final_action == "hold"
+    assert cat.tokens is not None  # the LLM shadow was called for it
+    assert cat.input_snapshot is not None and cat.input_snapshot["symbol"] == "CAT"
+    assert cat.position is not None and cat.position["qty"] == 10
+    with sf() as session:
+        result = same_as_live(session, sid, RUN_START)
+    assert result.counted == 1  # MSFT only
 
 
 # ----------------------------------------------------------------------
@@ -780,3 +865,33 @@ def test_both_rules_no_call_cycle_does_not_change_share(sf: sessionmaker[Session
     with sf() as session:
         after = same_as_live(session, sid, RUN_START)
     assert (before.matched, before.counted) == (after.matched, after.counted) == (1, 1)
+
+
+async def test_paused_shadow_keeps_its_slot_and_manages_positions(
+    sf: sessionmaker[Session],
+) -> None:
+    """A paused shadow makes no calls or entries, still has its stops
+    checked, and keeps its slot until archived."""
+    sid = _strategy(sf, "A", status="paused")
+    _strategy(sf, "B")
+    _strategy(sf, "C", kind="rules_only")
+    _pending(
+        sf,
+        sid,
+        symbol="AAPL",
+        status="open",
+        entry=Decimal("100"),
+        opened_at=_naive(datetime(2026, 10, 14, 11, 0, tzinfo=NY_TZ)),
+        bars_through=_naive(datetime(2026, 10, 15, 10, 30, tzinfo=NY_TZ)),
+    )
+    bars = Bars(
+        [_bar("AAPL", datetime(2026, 10, 15, 10, 35, tzinfo=NY_TZ), "99", "99.5", "97", "97.5")]
+    )
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)), bars=bars).after_cycle(cycle_id)
+    assert _rows(sf, sid) == {}
+    (aapl,) = _positions(sf, sid)
+    assert aapl.exit_reason == "stop"
+    with sf() as session, pytest.raises(StrategyError) as exc:
+        validate_new_strategy({"name": "D", "kind": "rules_only"}, AppConfig(), session)
+    assert any("slots" in e for e in exc.value.errors)

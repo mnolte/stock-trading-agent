@@ -583,13 +583,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     shadow_tasks: set[asyncio.Task[object]] = set()
     cycle_runner.on_cycle_done = lambda report: spawn_background(
         shadow_tasks,
-        shadow_runner.after_cycle(report.cycle_id or 0),
+        shadow_runner.after_cycle(report.cycle_id or 0, report.shadow_snapshots),
         f"shadows-cycle-{report.cycle_id}",
     )
     position_checker.on_check_done = lambda: spawn_background(
         shadow_tasks, shadow_runner.after_check(), "shadows-check"
     )
     executor.on_flatten = shadow_runner.flatten
+    cycle_runner.shadow_symbols = shadow_runner.held_symbols
     universe_service = UniverseService(
         market_data=market_data,
         sources=sources,
