@@ -1,16 +1,12 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR screenshots land in docs/screenshots/pr-9/ (design/ stays untouched):
+import { screenshotDir } from './shots';
+
+// PR screenshots are for docs/screenshots/pr-9/ (pass SCREENSHOT_DIR, see ./shots) (design/ stays untouched):
 // the latest-decision card on Main and the rebuilt decision drawer.
-const outDir =
-  process.env.SCREENSHOT_DIR ??
-  path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../docs/screenshots/pr-9'
-  );
+const outDir = screenshotDir('pr-9');
 
 test('latest decision card: chips, summary box, full-decision button', async ({
   page,
