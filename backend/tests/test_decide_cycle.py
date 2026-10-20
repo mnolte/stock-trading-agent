@@ -136,8 +136,8 @@ def _runner(
     config = AppConfig()
     if universe is not None:
         config.yaml["universe"]["symbols"] = universe
-    src = sources or _sources()
     clock = clock or FakeClock(NOW_13H)
+    src = sources or _sources(quotes=FakeQuoteSource(clock))
     calendar = cast(CalendarProvider, src.calendar)
     market_data = MarketDataService(
         src, calendar, config, session_factory=session_factory

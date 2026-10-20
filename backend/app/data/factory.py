@@ -25,6 +25,7 @@ from app.data.protocols import (
     QuoteSource,
 )
 from app.data.rate_limiter import RateLimitConfig, RateLimiter
+from app.market.clock import RealClock
 from app.secrets_service import MISSING_KEY, SecretsStore
 
 
@@ -55,7 +56,9 @@ def make_data_sources(
         calendar = FakeCalendarSource()
         return DataSources(
             bars=FakeBarSource(calendar),
-            quotes=FakeQuoteSource(),
+            # Quotes stamped "now" so the fresh-quote gate sees them as
+            # fresh in simulated mode too.
+            quotes=FakeQuoteSource(RealClock()),
             news=FakeNewsSource(),
             earnings=FakeEarningsSource(),
             fx=FakeFXSource(),

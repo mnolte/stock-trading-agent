@@ -51,7 +51,7 @@ def _checker(
     calendar = FakeCalendarSource()
     sources = DataSources(
         bars=FakeBarSource(calendar),
-        quotes=quotes or FakeQuoteSource(),
+        quotes=quotes or FakeQuoteSource(clock),
         news=FakeNewsSource(),
         earnings=FakeEarningsSource(),
         fx=FakeFXSource(),

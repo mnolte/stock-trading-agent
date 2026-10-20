@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
@@ -46,7 +46,7 @@ from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
-from app.risk.gates import GateContext, evaluate_entry_gates
+from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates
 from app.risk.math import (
     WorkingEntry,
     drawdown_pct,
@@ -587,6 +587,66 @@ class Executor:
             return f"reward to risk {reward_to_risk or 0:.2f} below {min_rr}"
         return None
 
+    async def _fresh_entry_check(
+        self,
+        *,
+        symbol: str,
+        stop: Decimal,
+        target: Decimal,
+        atr_1h: Decimal | None,
+    ) -> tuple[Quote | None, Decimal | None, str | None]:
+        """The "Fresh quote" gate right before an entry order is sent.
+
+        Fetches the latest IEX quote, rejects a missing quote
+        (``quote_missing``) or one whose own timestamp is older than
+        ``execution.quote_max_age_seconds`` (``quote_stale``), and on a
+        fresh quote re-runs the spread check, recomputes the limit price
+        and re-runs the code checks (stop distance, reward to risk) from
+        the new entry. Returns ``(quote, limit, reason)`` — on failure
+        ``limit`` is None and ``reason`` names the failing check.
+        Automatic entries and Approve share this step; exits and stop
+        moves never wait on it (docs/SPEC.md, Entries).
+        """
+        quotes = await self.market_data.sources.quotes.fetch_quotes([symbol])
+        quote = (
+            quotes.data.get(symbol)
+            if quotes.error is None and quotes.data
+            else None
+        )
+        if quote is None:
+            return None, None, "quote_missing"
+        ts = quote.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        max_age = float(
+            self.config.get("execution", "quote_max_age_seconds", default=60)
+        )
+        if (self.clock.now() - ts).total_seconds() > max_age:
+            return quote, None, "quote_stale"
+        max_spread = Decimal(
+            str(self.config.get("execution", "max_spread_pct", default=0.15))
+        )
+        mid = (quote.ask + quote.bid) / 2
+        if mid <= 0:
+            return quote, None, "quote midpoint is zero or negative"
+        spread_pct = (quote.ask - quote.bid) / mid * 100
+        if spread_pct > max_spread:
+            return quote, None, f"spread {spread_pct:.3f}% > {max_spread}%"
+        offset = Decimal(
+            str(
+                self.config.get("execution", "entry_limit_offset_pct", default=0.05)
+            )
+        )
+        limit = _cents(quote.ask * (1 + offset / 100))
+        risk = trade_risk(limit, stop, target, atr_1h)
+        fail = self._code_check_failure(
+            atr_multiple=risk.atr_multiple,
+            reward_to_risk=risk.reward_to_risk,
+        )
+        if fail is not None:
+            return quote, None, fail
+        return quote, limit, None
+
     async def approve(self, approval_id: int) -> dict[str, object]:
         """Re-check gates, code checks and spread on a fresh quote, then submit.
 
@@ -602,104 +662,64 @@ class Executor:
             if self.state.paused:
                 return {"ok": False, "error": "new entries are paused"}
 
-            quotes = await self.market_data.sources.quotes.fetch_quotes(
-                [approval.symbol]
+            # The shared "Fresh quote" gate: latest IEX quote, freshness,
+            # spread, limit recompute and code checks — the same function
+            # automatic entries use (docs/SPEC.md, Entries).
+            quote, limit, fail = await self._fresh_entry_check(
+                symbol=approval.symbol,
+                stop=approval.stop_price,
+                target=approval.target_price,
+                atr_1h=self._atr_1h(approval.symbol),
             )
-            quote = (
-                quotes.data.get(approval.symbol)
-                if quotes.error is None and quotes.data
-                else None
-            )
-            if quote is None:
-                self._resolve_approval(
-                    approval, "rejected", "no quote at approve time"
-                )
-                session.commit()
-                self._notify({"approvals", "decisions"})
-                return {"ok": False, "error": "no quote at approve time"}
-
-            # Code checks on the fresh limit with the model's stop and target.
-            offset = Decimal(
-                str(
-                    self.config.get(
-                        "execution", "entry_limit_offset_pct", default=0.05
-                    )
-                )
-            )
-            limit = _cents(quote.ask * (1 + offset / 100))
-            atr_1h = self._atr_1h(approval.symbol)
-            risk = trade_risk(
-                limit, approval.stop_price, approval.target_price, atr_1h
-            )
-            fail = self._code_check_failure(
-                atr_multiple=risk.atr_multiple,
-                reward_to_risk=risk.reward_to_risk,
-            )
-            if fail is None:
-                # Spread on the fresh quote.
-                max_spread = Decimal(
-                    str(
-                        self.config.get(
-                            "execution", "max_spread_pct", default=0.15
-                        )
-                    )
-                )
-                mid = (quote.ask + quote.bid) / 2
-                if mid <= 0:
-                    fail = "quote midpoint is zero or negative"
-                else:
-                    spread_pct = (quote.ask - quote.bid) / mid * 100
-                    if spread_pct > max_spread:
-                        fail = f"spread {spread_pct:.3f}% > {max_spread}%"
-
-            result = None
-            qty = 0
-            if fail is None:
-                # All risk gates again with fresh equity + the fresh ask.
-                account = await self.refresh_account()
-                # Fresh earnings, not the decision-time snapshot: a report
-                # announced since then must still block the entry.
-                today = self.clock.now().astimezone(NY_TZ).date()
-                earnings_result = await self.market_data.refresh_earnings(
-                    today, today + timedelta(days=90)
-                )
-                earnings_known = earnings_result.error is None
-                next_date = self.signals.next_earnings(
-                    [approval.symbol], today
-                ).get(approval.symbol)
-                days_to_earnings = (
-                    trading_days_until(self.calendar, today, next_date)
-                    if next_date is not None
-                    else None
-                )
-                ctx = self._gate_context(
-                    session,
-                    account,
-                    approval.symbol,
-                    days_to_earnings,
-                    earnings_known,
-                )
-                result = evaluate_entry_gates(
-                    ctx,
-                    entry=quote.ask,
-                    stop=approval.stop_price,
-                    config=self.config,
-                )
-                if not result.allowed:
-                    blocked = result.blocked_by or "gate"
-                    detail = next(
-                        (c.detail for c in result.checks if not c.passed), ""
-                    )
-                    fail = f"{blocked}: {detail}".rstrip(": ")
-                else:
-                    assert result.sizing is not None
-                    qty = result.sizing.shares
-
             if fail is not None:
                 self._resolve_approval(approval, "rejected", fail)
                 session.commit()
                 self._notify({"approvals", "decisions"})
                 return {"ok": False, "error": fail}
+            assert quote is not None and limit is not None
+
+            # All risk gates again with fresh equity + the fresh ask.
+            account = await self.refresh_account()
+            # Fresh earnings, not the decision-time snapshot: a report
+            # announced since then must still block the entry.
+            today = self.clock.now().astimezone(NY_TZ).date()
+            earnings_result = await self.market_data.refresh_earnings(
+                today, today + timedelta(days=90)
+            )
+            earnings_known = earnings_result.error is None
+            next_date = self.signals.next_earnings(
+                [approval.symbol], today
+            ).get(approval.symbol)
+            days_to_earnings = (
+                trading_days_until(self.calendar, today, next_date)
+                if next_date is not None
+                else None
+            )
+            ctx = self._gate_context(
+                session,
+                account,
+                approval.symbol,
+                days_to_earnings,
+                earnings_known,
+            )
+            result = evaluate_entry_gates(
+                ctx,
+                entry=quote.ask,
+                stop=approval.stop_price,
+                config=self.config,
+            )
+            if not result.allowed:
+                blocked = result.blocked_by or "gate"
+                detail = next(
+                    (c.detail for c in result.checks if not c.passed), ""
+                )
+                fail = f"{blocked}: {detail}".rstrip(": ")
+                self._resolve_approval(approval, "rejected", fail)
+                session.commit()
+                self._notify({"approvals", "decisions"})
+                return {"ok": False, "error": fail}
+            assert result.sizing is not None
+            qty = result.sizing.shares
 
             self._orders_this_cycle += 1
             client_id = self._client_id(
@@ -1795,7 +1815,8 @@ class Executor:
         assert result.sizing is not None
         qty = result.sizing.shares
 
-        # Spread and entry limit from the IEX quote.
+        # Spread and entry limit from the decision-time IEX quote; the
+        # automatic branch re-fetches a fresh quote before submitting.
         max_spread = Decimal(
             str(self.config.get("execution", "max_spread_pct", default=0.15))
         )
@@ -1832,7 +1853,8 @@ class Executor:
             "supervised"
         ):
             # Supervised mode: the entry waits for Marc's approval instead
-            # of going to Alpaca (docs/SPEC.md, Supervised mode).
+            # of going to Alpaca (docs/SPEC.md, Supervised mode). Approve
+            # re-fetches a fresh quote and re-runs every check.
             self._supersede_pending(session, decision.symbol)
             approval = Approval(
                 decision_id=decision.id,
@@ -1860,12 +1882,41 @@ class Executor:
             self._notify({"approvals", "decisions"})
             return
 
+        # The "Fresh quote" gate right before the order is sent — the
+        # shared pre-submit step Approve also uses (docs/SPEC.md,
+        # Entries): fetch the latest IEX quote, reject missing or stale,
+        # then re-run the spread check, recompute the limit and re-run
+        # the code checks from the new entry. A failure is recorded on
+        # the gates result; no order is sent, no retry this cycle.
+        _, fresh_limit, fresh_fail = await self._fresh_entry_check(
+            symbol=decision.symbol,
+            stop=Decimal(str(stop)),
+            target=Decimal(str(target)),
+            atr_1h=item.snapshot.atr_1h,
+        )
+        if fresh_fail is not None:
+            failed = replace(
+                result,
+                allowed=False,
+                blocked_by="fresh_quote",
+                sizing=None,
+                checks=[
+                    *result.checks,
+                    GateCheck("fresh_quote", False, fresh_fail),
+                ],
+            )
+            decision.gates_result = failed.to_json()
+            decision.final_action = "blocked"
+            session.flush()
+            return
+        assert fresh_limit is not None
+
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
         submitted = await self.broker.submit_bracket_entry(
             symbol=decision.symbol,
             qty=qty,
-            limit_price=limit,
+            limit_price=fresh_limit,
             stop_price=_cents(Decimal(str(stop))),
             target_price=_cents(Decimal(str(target))),
             client_order_id=client_id,
