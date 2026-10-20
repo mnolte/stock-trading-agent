@@ -1,21 +1,24 @@
 """Universe pool and daily liquidity screen (docs/SPEC.md, Larger universe).
 
-Everything here sits behind ``universe.mode``: with the mode at ``fixed``
-nothing in this module runs and the cycles keep using the configured fixed
-symbols. In ``screened`` mode this service
+This service
 
 - seeds ``universe_pool`` from ``backend/universe/pool.csv`` the first time
-  screened mode starts, and manages add / CSV import / remove afterwards,
+  it runs, and manages add / CSV import / remove afterwards,
 - warms new symbols up to 260 daily bars and 60 sessions of 5-minute bars
   through the shared data sources (and therefore the shared Alpaca limiter),
-- runs the daily screen at 08:10 New York on trading days: history, tradable,
-  min price, one share fits the configured max position at screen-time
-  equity, and 20-session average dollar volume,
+- runs the daily screen at 08:10 New York on trading days in either mode:
+  history, tradable, min price, one share fits the configured max position
+  at screen-time equity, and 20-session average dollar volume,
 - freezes the eligible list for the session and ranks it by 20-session
   return minus SPY's, ties broken by dollar volume,
 - keeps an eligible symbol in the list until it has failed the screen on 3
   consecutive trading days, and keeps the previous list untouched when the
   screen itself fails (a banner is raised instead).
+
+Which list the cycles run is stamped on the screen's success event: a
+``screened`` screen hands its ranked eligible list to cycles, a ``fixed``
+screen (or no screen yet) leaves them on the configured symbols — a mode
+switch applies at the next daily screen, never mid-session.
 """
 
 from __future__ import annotations
@@ -522,7 +525,7 @@ class UniverseService:
         if not sessions:
             return None
         res = await self._sources.bars.fetch_5m_bars(
-            symbol, sessions[0].open, sessions[-1].close
+            [symbol], sessions[0].open, sessions[-1].close
         )
         if res.error is not None:
             return res.error
@@ -611,9 +614,6 @@ class UniverseService:
         banner.
         """
         now = now or self._clock.now()
-        # Screened mode is blocked until PR 12 — until then the screen
-        # still runs in fixed mode and stores the eligible list as a
-        # preview for the Universe screen (docs/SPEC.md §443).
         today = now.astimezone(NY_TZ).date()
         day = self._calendar.session_for(today)
         if day is None:
@@ -631,6 +631,7 @@ class UniverseService:
                     event_type="universe_screen_failed",
                     details={
                         "session_date": today.isoformat(),
+                        "mode": self.mode(),
                         "error": str(exc)[:500],
                     },
                 )
@@ -785,6 +786,9 @@ class UniverseService:
                 event_type="universe_screen",
                 details={
                     "session_date": today.isoformat(),
+                    # Stamps which list this screen hands to cycles — the
+                    # cycle universe reads the newest success event.
+                    "mode": self.mode(),
                     "equity": str(equity),
                     "max_position_usd": str(max_position_usd),
                     "funnel": funnel,
@@ -899,9 +903,10 @@ class UniverseService:
         ]
         payload: dict[str, Any] = {
             "mode": mode,
-            # Screened mode is blocked until PR 12; in fixed mode the
-            # screen results are a preview — cycles don't read them.
-            "preview": mode != "screened",
+            # Preview = cycles don't trade the shown list yet: no screened
+            # screen has run (docs/SPEC.md, Larger universe — a switch
+            # applies at the next daily screen).
+            "preview": self._market_data.screened_rows() is None,
             "allowed_sectors": self.allowed_sectors(),
             "fixed_symbols": fixed,
             "held_symbols": sorted(held),

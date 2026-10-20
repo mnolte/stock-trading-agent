@@ -27,6 +27,7 @@ from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
+from app.engine.state import record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
@@ -50,6 +51,7 @@ class CycleReport:
     data_source_health: dict[str, str] = field(default_factory=dict)
     calls: int = 0
     decisions: list[int] = field(default_factory=list)
+    duration_seconds: float | None = None
 
 
 class CycleRunner:
@@ -131,34 +133,61 @@ class CycleRunner:
 
     # ------------------------------------------------------------------
     # data updates
+    #
+    # Fetch scope at scale (docs/SPEC.md, Cycles at scale): bars cover the
+    # whole cycle universe in one multi-symbol request, quotes cover the
+    # review set (held + rules-pass), news only the symbols that get a
+    # model call.
 
-    async def _update_data(
+    async def _update_bars(
         self, symbols: list[str], now: datetime, report: CycleReport
-    ) -> tuple[dict[str, Quote], dict[str, list[NewsItem]] | None]:
-        bar_results = await self.market_data.refresh_bars(now - BAR_TOPUP, now)
-        failed = [s for s, r in bar_results.items() if r.error is not None]
-        report.data_source_health["bars"] = (
-            "ok" if not failed else f"failed: {', '.join(failed)}"
+    ) -> None:
+        bar_results = await self.market_data.refresh_bars(
+            now - BAR_TOPUP, now, symbols
         )
+        errors = {
+            r.error for r in bar_results.values() if r.error is not None
+        }
+        if not errors:
+            report.data_source_health["bars"] = "ok"
+        elif len(errors) == 1:
+            # One shared request failed for the whole universe — report
+            # the error itself, not a list of every symbol.
+            report.data_source_health["bars"] = f"failed: {errors.pop()}"
+        else:
+            failed = sorted(
+                s for s, r in bar_results.items() if r.error is not None
+            )
+            report.data_source_health["bars"] = f"failed: {', '.join(failed)}"
 
+    async def _fetch_quotes(
+        self, symbols: list[str], report: CycleReport
+    ) -> dict[str, Quote]:
+        if not symbols:
+            return {}
         quotes_result = await self.sources.quotes.fetch_quotes(symbols)
         report.data_source_health["quotes"] = (
             "ok" if quotes_result.error is None else f"failed: {quotes_result.error}"
         )
-        quotes = quotes_result.data if quotes_result.error is None else {}
+        return quotes_result.data if quotes_result.error is None else {}
 
+    async def _fetch_news(
+        self, symbols: list[str], now: datetime, report: CycleReport
+    ) -> dict[str, list[NewsItem]] | None:
+        """Headlines for the symbols that get a model call; None on error."""
+        if not symbols:
+            return {}
         news_result = await self.sources.news.fetch_news(
             symbols, now - NEWS_WINDOW, now
         )
-        news: dict[str, list[NewsItem]] | None = None
-        if news_result.error is None:
-            news = {symbol: [] for symbol in symbols}
-            for item in news_result.data:
-                news.setdefault(item.symbol, []).append(item)
-            report.data_source_health["news"] = "ok"
-        else:
+        if news_result.error is not None:
             report.data_source_health["news"] = f"failed: {news_result.error}"
-        return quotes, news
+            return None
+        news: dict[str, list[NewsItem]] = {symbol: [] for symbol in symbols}
+        for item in news_result.data:
+            news.setdefault(item.symbol, []).append(item)
+        report.data_source_health["news"] = "ok"
+        return news
 
     # ------------------------------------------------------------------
     # earnings exits
@@ -276,8 +305,37 @@ class CycleRunner:
             cycle.finished_at = _naive_utc(self.clock.now())
             cycle.errors = report.errors or None
             cycle.data_source_health = report.data_source_health or None
+            if cycle.started_at is not None and cycle.finished_at is not None:
+                cycle.duration_seconds = (
+                    cycle.finished_at - cycle.started_at
+                ).total_seconds()
+            report.duration_seconds = cycle.duration_seconds
+            # A cycle slower than the configured limit raises a warning
+            # banner — at scale the screen, fetches and model calls add up
+            # (docs/SPEC.md, Cycles at scale).
+            warn_minutes = float(
+                self.config.get(
+                    "schedule", "cycle_duration_warn_minutes", default=10
+                )
+            )
+            if (
+                cycle.duration_seconds is not None
+                and cycle.duration_seconds > warn_minutes * 60
+            ):
+                record_event(
+                    session,
+                    self.clock,
+                    level="warning",
+                    event_type="cycle_slow",
+                    details={
+                        "cycle_id": cycle.id,
+                        "scheduled_time": scheduled_ny.isoformat(),
+                        "duration_seconds": round(cycle.duration_seconds, 1),
+                        "warn_minutes": warn_minutes,
+                    },
+                )
             session.commit()
-        self._notify({"header", "decisions"})
+        self._notify({"header", "decisions", "banners"})
         failing = {
             name: status
             for name, status in report.data_source_health.items()
@@ -359,7 +417,7 @@ class CycleRunner:
                 report.data_source_health["account"] = "error"
 
         symbols = self.market_data.universe()
-        quotes, news = await self._update_data(symbols, now, report)
+        await self._update_bars(symbols, now, report)
         # The 1h shock-brake leg runs here, on the hourly cycle, so the
         # just-topped-up cache holds the completed bar (docs/SPEC.md,
         # Position check).
@@ -391,6 +449,24 @@ class CycleRunner:
             for item in evaluation.items
             if item.rules.status == STATUS_PASS
         ]
+
+        # Quotes cover the review set — a candidate without a quote can
+        # never enter and skips its model call. The called set is the
+        # review order walked until the call cap fills; news is fetched
+        # for exactly those symbols (docs/SPEC.md, Cycles at scale).
+        quotes = await self._fetch_quotes(
+            [item.symbol for item in reviews], report
+        )
+        max_calls = int(
+            self.config.get("decision", "max_calls_per_cycle", default=10)
+        )
+        called: list[str] = []
+        for item in reviews:
+            if len(called) >= max_calls:
+                break
+            if item.rules.status == STATUS_HELD or item.symbol in quotes:
+                called.append(item.symbol)
+        news = await self._fetch_news(called, now, report)
 
         earnings = self._earnings_map(
             session, [item.symbol for item in reviews], now
@@ -425,6 +501,7 @@ class CycleRunner:
                 bars_1h=item.bars_1h,
                 position=None,
                 news=None,
+                rank=item.rank,
             )
             decision = self.decide.record_no_call(
                 session,
@@ -437,9 +514,6 @@ class CycleRunner:
                 detail=f"rules: {item.rules.status}",
             )
             report.decisions.append(decision.id)
-        max_calls = int(
-            self.config.get("decision", "max_calls_per_cycle", default=10)
-        )
         capped_at: int | None = None
         for i, item in enumerate(reviews):
             if report.calls >= max_calls:
@@ -458,7 +532,8 @@ class CycleRunner:
                 snapshot=item.snapshot,
                 bars_1h=item.bars_1h,
                 position=position,
-                news=None if news is None else news.get(item.symbol, []),
+                news=None if news is None else news.get(item.symbol),
+                rank=item.rank,
             )
             if context == "candidate" and price is None:
                 # Missing quotes mean no new entries this cycle — and no
@@ -533,6 +608,7 @@ class CycleRunner:
                     bars_1h=item.bars_1h,
                     position=positions.get(item.symbol),
                     news=None,
+                    rank=item.rank,
                 ),
                 rules=item.rules,
                 reason="call_cap",

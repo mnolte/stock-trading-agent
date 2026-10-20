@@ -164,10 +164,12 @@ class FakeBarSource:
 
     async def fetch_5m_bars(
         self,
-        symbol: str,
+        symbols: list[str],
         start: datetime,
         end: datetime,
     ) -> DataResult[list[Bar5m]]:
+        """One call for the whole universe — mirrors the multi-symbol
+        Alpaca request; bars for every symbol come back together."""
         start_date = start.astimezone(NY_TZ).date()
         end_date = end.astimezone(NY_TZ).date()
         calendar = await self.calendar.fetch_calendar(start_date, end_date)
@@ -176,11 +178,16 @@ class FakeBarSource:
             # Skip sessions fully outside the requested UTC interval.
             if day.close < start or day.open > end:
                 continue
-            bars.extend(
-                _bars_for_session(
-                    symbol, day.date, day.open, day.close, self.drift.get(symbol, 0.0)
+            for symbol in symbols:
+                bars.extend(
+                    _bars_for_session(
+                        symbol,
+                        day.date,
+                        day.open,
+                        day.close,
+                        self.drift.get(symbol, 0.0),
+                    )
                 )
-            )
         return DataResult(data=bars, source="fake")
 
     async def fetch_daily_bars(

@@ -35,3 +35,21 @@ a:hover {
 table {
   border-collapse: collapse;
 }
+
+@keyframes sa-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes sa-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}

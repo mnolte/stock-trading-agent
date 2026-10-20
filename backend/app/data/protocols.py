@@ -19,11 +19,11 @@ from app.data.models import (
 class BarSource(Protocol):
     async def fetch_5m_bars(
         self,
-        symbol: str,
+        symbols: list[str],
         start: datetime,
         end: datetime,
     ) -> DataResult[list[Bar5m]]:
-        """Fetch 5-minute bars for one symbol in [start, end]."""
+        """Fetch 5-minute bars for the symbols in [start, end] — one request."""
         ...
 
     async def fetch_daily_bars(

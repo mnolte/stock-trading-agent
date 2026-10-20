@@ -236,7 +236,7 @@ Code checks after the model answers:
 - A `tighten_stop` only raises the stop.
 - Invalid or unparseable output counts as `skip` (or `hold` for a position) and is stored with the raw text. When no model call is made or the call fails, the decision is stored with final action `no_call` and a reason: `rules`, `call_cap`, `quote_missing` or `model_error`. A model call times out after 30 seconds and is not retried; for a held position `no_call` means the position is left as it is.
 
-**Prompt.** `prompts/decision.v1.md`, versioned; each decision stores the prompt version and hash, the model name and the token cost. The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
+**Prompt.** `prompts/decision.v1.md`, versioned; each decision stores the prompt version and hash, the model name and the token cost. The USD cost is computed in code from the configured per-million-token prices `decision.input_cost_per_mtok` and `decision.output_cost_per_mtok`. The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
 
 **Outcome tracking.** For every decision, including skips, record the price after 1 hour, 1 session and 5 sessions. 1 session means the same New York time on the next trading session; 5 sessions means the same time on the 5th trading session after the decision (weekends and holidays don't count). If that time falls after the session's close (early-close days), the close is used. The price is the last closed 5-minute bar at or before the target time, stored with that bar's timestamp. For trades, also record the best and worst price reached while open, and whether the stop or the target was touched first. This feeds the Performance screen and later prompt reviews.
 
@@ -306,7 +306,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 **Settings screen.** Sections with a section list on the left (a scrolling row on a phone) and a "Find a setting" filter: API keys and data, Trading (execution mode, universe, slippage), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Earnings, Model and reviews, Notifications, Schedule (read-only), History and Paper account. Each setting is one row: name, one-line explanation, the control with its unit, and its default underneath. Values fixed by the spec (cash only, cycle times) are shown locked. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. Keys are not part of this flow: they are saved per key, straight away (see API keys).
 
-**Design handoff.** The repo has a `design/` folder: `DESIGN.md` (rules, shared components, which PR builds which screen), `tokens.css`, `screens/` (the 7 screens as HTML, the source of exact styles and wording) and `screenshots/`. The spec wins on behaviour, the design on look and wording; differences go in the PR description.
+**Design handoff.** The repo has a `design/` folder: `DESIGN.md` (rules, shared components, which PR builds which screen), `tokens.css`, `screens/` (one HTML file per screen, the source of exact styles and wording) and `screenshots/`. The spec wins on behaviour, the design on look and wording; differences go in the PR description.
 
 ## API keys
 
@@ -428,13 +428,13 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 
 **Number check.** Every number in the model's text must match a fact it was given (after rounding). If one doesn't, or there is no OpenAI key, the call fails or the review cost cap is reached, the app shows a plain template built from the facts instead, labelled with the reason (for example "Plain review: number check failed"). The failure is logged.
 
-**Model and cost.** Same model as decisions (gpt-4o-mini), temperature 0.2, with versioned prompts (`weekly.v1`, `briefing.v1`, `verdict.v1`) that are never edited once used. Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions.
+**Model and cost.** Same model as decisions (gpt-4o-mini), temperature 0.2, with versioned prompts (`weekly.v1`, `briefing.v1`, `verdict.v1`) that are never edited once used. Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions. Their cost uses the `reviews` section's own `input_cost_per_mtok` and `output_cost_per_mtok`, separate from the decision prices.
 
 **Missed runs.** Unlike cycles, a review or briefing missed while the app was down is written at the next start, labelled with its original date. A briefing older than its trading day is skipped.
 
 **Storage.** A `reviews` table (kind, period, facts JSON, text, source model or template, reason, model, prompt version, tokens, cost, created at) and a `verdicts` table (decision, verdict, reason, source draft or Marc, created and updated at).
 
-**GUI.** A Reviews screen in the Learn group with Weekly and Briefings tabs and a "Verdicts to confirm" list. The decision drawer shows the verdict with Confirm and Change. The Dashboard is unchanged.
+**GUI.** A Reviews screen in the Learn group with Weekly and Briefings tabs and a "Verdicts to confirm" list. The decision drawer shows the verdict with Confirm and Change. The Dashboard shows today's briefing (see Daily briefing card).
 
 ## Larger universe (v0.2)
 
@@ -472,7 +472,7 @@ A shadow strategy decides on exactly the same inputs as live, every cycle, but n
 
 **Virtual trading.** Each shadow has a virtual portfolio that starts with the live run's starting equity when the shadow starts. Entries use the same limit price and timeout as live and fill when a later 5-min bar trades at or through the limit. Stops and targets are checked on 5-min bars at every position check and cycle; when both are touched in the same bar, the stop counts. Slippage per side, the day-trade rule and earnings exits apply as for live. The shadow code has no broker client at all; a test fails the build if it can reach one.
 
-**Cost.** Shadow model calls have their own monthly cap ($5). When it is reached, LLM shadows pause until the next month (rules-only shadows keep running) and a warning notification is sent. Shadows never use live call budget or rate limits needed by live.
+**Cost.** Shadow model calls have their own monthly cap ($5). When it is reached, LLM shadows pause until the next month (rules-only shadows keep running) and a warning notification is sent. Shadows never use live call budget or rate limits needed by live. Shadows and backtests can use other models than live, so PR 13 adds one price table keyed by model name (`model_prices`, input and output USD per million tokens) and moves the decision and review prices into it; every cost (decisions, reviews, shadows, backtests) is computed from that table, and a model without a price can't be selected.
 
 **Comparing.** For the current run, per strategy: return, difference with SPY, closed trades won and lost, average R, max drawdown, model cost, and "same as live" (share of symbol-cycles where the final action matched live). The disagreements list shows each symbol-cycle where a shadow and live chose differently, with what happened after (the 5-session outcome, or the trade's result). The weekly review's facts include this comparison. A new run restarts every shadow.
 

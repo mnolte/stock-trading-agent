@@ -15,10 +15,11 @@ from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar, DataResult, FXR
 from app.db.base import get_session_maker
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
-from app.db.models import Order, Position
+from app.db.models import Event, Order, Position, UniverseScreenRow
 from app.market.calendar import CalendarProvider
 
 UTC = ZoneInfo("UTC")
+NY_TZ = ZoneInfo("America/New_York")
 
 
 class MarketDataService:
@@ -41,14 +42,61 @@ class MarketDataService:
         self.latest_earnings: DataResult[int] | None = None
 
     def universe(self) -> list[str]:
-        """Configured symbols plus every held symbol.
+        """The cycle universe — the list every data refresh and cycle runs.
 
-        A symbol with an open position or a live entry order is always
-        managed — fetched, evaluated and exited — even when it is no
-        longer on the configured list (docs/SPEC.md, Larger universe).
+        In ``screened`` mode the newest successful screen hands its
+        eligible rows to cycles in rank order; in ``fixed`` mode (or
+        before the first screened screen has run) the configured symbols
+        are used. Held symbols and SPY are always added on top, so a
+        position is still managed outside the eligible list and the
+        regime / shock-brake baseline never disappears (docs/SPEC.md,
+        Larger universe).
         """
-        symbols = list(self.config.get("universe", "symbols", default=[]))
-        return symbols + sorted(self._held_symbols() - set(symbols))
+        screened = self.screened_rows()
+        base = (
+            [row.symbol for row in screened]
+            if screened is not None
+            else list(self.config.get("universe", "symbols", default=[]))
+        )
+        extras = self._held_symbols() | {"SPY"}
+        return base + sorted(extras - set(base))
+
+    def screened_rows(self) -> list[UniverseScreenRow] | None:
+        """Eligible rows of the screen currently in effect, in rank order.
+
+        Returns ``None`` while cycles run the fixed list: no screen has
+        run yet, or the newest successful screen ran in ``fixed`` mode.
+        A failed screen writes no success event, so the previous list
+        stays in effect (docs/SPEC.md, Larger universe — a switch applies
+        at the next daily screen, never mid-session).
+        """
+        with self._session_factory() as session:
+            event = session.execute(
+                select(Event)
+                .where(Event.event_type == "universe_screen")
+                .order_by(Event.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            details = dict(event.details or {}) if event is not None else {}
+            if event is None or details.get("mode") != "screened":
+                return None
+            try:
+                session_date = date.fromisoformat(str(details["session_date"]))
+            except (KeyError, ValueError):
+                return None
+            rows = session.execute(
+                select(UniverseScreenRow)
+                .where(
+                    UniverseScreenRow.session_date == session_date,
+                    UniverseScreenRow.status == "eligible",
+                )
+                .order_by(UniverseScreenRow.rank)
+            ).scalars()
+            return list(rows)
+
+    def universe_mode(self) -> str:
+        """Which list cycles run right now — ``screened`` or ``fixed``."""
+        return "screened" if self.screened_rows() is not None else "fixed"
 
     def _held_symbols(self) -> set[str]:
         """Open-position symbols plus symbols with a live entry order."""
@@ -84,17 +132,39 @@ class MarketDataService:
             cursor = prev.date
         return sorted(days, key=lambda d: d.date)
 
-    async def refresh_bars(self, start: datetime, end: datetime) -> dict[str, DataResult[int]]:
-        """Fetch and cache 5-minute bars for every symbol in the universe."""
-        results: dict[str, DataResult[int]] = {}
-        for symbol in self.universe():
-            fetched = await self.sources.bars.fetch_5m_bars(symbol, start, end)
-            if fetched.error is not None:
-                results[symbol] = DataResult(data=0, error=fetched.error, source=fetched.source)
-                continue
-            inserted = self.bars_cache.store(fetched.data)
-            results[symbol] = DataResult(data=inserted, source=fetched.source)
-        return results
+    async def refresh_bars(
+        self,
+        start: datetime,
+        end: datetime,
+        symbols: list[str] | None = None,
+    ) -> dict[str, DataResult[int]]:
+        """Fetch and cache 5-minute bars — one multi-symbol request.
+
+        The eligible list at scale is too long for per-symbol calls; the
+        bar source takes the whole universe in one request (docs/SPEC.md,
+        Cycles at scale). ``symbols`` defaults to ``universe()``.
+        """
+        wanted = symbols if symbols is not None else self.universe()
+        if not wanted:
+            return {}
+        fetched = await self.sources.bars.fetch_5m_bars(wanted, start, end)
+        if fetched.error is not None:
+            return {
+                symbol: DataResult(
+                    data=0, error=fetched.error, source=fetched.source
+                )
+                for symbol in wanted
+            }
+        grouped: dict[str, list[Bar5m]] = {symbol: [] for symbol in wanted}
+        for bar in fetched.data or []:
+            grouped.setdefault(bar.symbol, []).append(bar)
+        return {
+            symbol: DataResult(
+                data=self.bars_cache.store(grouped[symbol]),
+                source=fetched.source,
+            )
+            for symbol in wanted
+        }
 
     async def refresh_history(self, today: date) -> dict[str, DataResult[int]]:
         """Fill the cache with ``history_sessions`` sessions of 5-minute bars."""
@@ -109,6 +179,21 @@ class MarketDataService:
         start = min(days, key=lambda d: d.open).open.astimezone(UTC)
         end = max(days, key=lambda d: d.close).close.astimezone(UTC)
         return await self.refresh_bars(start, end)
+
+    def prune_5m_bars(self, now: datetime) -> int:
+        """Drop cached 5m bars older than ``bars_5m_keep_sessions`` sessions.
+
+        Called after the daily backup: bars older than the kept window
+        (default 120 sessions) are removed from the cache — daily bars
+        are untouched (docs/SPEC.md, Cycles at scale).
+        """
+        keep = int(
+            self.config.get("schedule", "bars_5m_keep_sessions", default=120)
+        )
+        sessions = self.recent_sessions(now.astimezone(NY_TZ).date(), keep)
+        if not sessions:
+            return 0
+        return self.bars_cache.prune_5m(min(s.open for s in sessions))
 
     def get_5m_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
         return self.bars_cache.get(symbol, start, end)

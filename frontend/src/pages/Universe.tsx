@@ -278,8 +278,10 @@ export default function Universe() {
         <Chip variant="info">{screened ? 'screened pool' : 'fixed list'}</Chip>
         <span style={{ flex: '1 1 420px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
           {screened
-            ? `Screened at ${data.screen_time_ny} New York (${ams} Amsterdam) on trading days. The eligible list is fixed for the whole session; held symbols are always managed, even if excluded or removed.`
-            : 'The universe is the fixed list below — the screened pool arrives with PR 12. The daily screen below is a preview, not used by cycles yet.'}
+            ? data.preview
+              ? `Screened at ${data.screen_time_ny} New York (${ams} Amsterdam) on trading days. The first screened screen switches cycles to the eligible list; until then cycles keep the fixed list.`
+              : `Screened at ${data.screen_time_ny} New York (${ams} Amsterdam) on trading days. The eligible list is fixed for the whole session; held symbols are always managed, even if excluded or removed.`
+            : 'The universe is the fixed list below. The daily screen below is a preview — the screened pool is switched on in Settings → Trading.'}
         </span>
         <Link
           to="/settings"
@@ -337,7 +339,7 @@ export default function Universe() {
             <Link to="/settings" style={{ color: 'var(--sa-accent)' }}>
               Settings → Trading
             </Link>
-            . A screened pool arrives with PR 12 — until then the daily screen runs as a preview below.
+            . The screened pool is switched on in Settings → Trading — until then the daily screen runs as a preview below.
           </p>
         </Card>
       )}
@@ -465,7 +467,9 @@ export default function Universe() {
                   A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
                 </li>
                 <li>
-                  This list is a preview — cycles still trade the fixed list until PR 12.
+                  {data.preview
+                    ? 'This list is a preview — cycles still trade the fixed list.'
+                    : 'Cycles trade this list — the rank orders the model calls.'}
                 </li>
                 <li>
                   Rank is the return over the last {data.thresholds.lookback_sessions} sessions minus SPY’s, recomputed at the daily screen.

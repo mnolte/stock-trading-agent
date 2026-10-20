@@ -221,7 +221,7 @@ class Executor:
         if session is None:
             return
         bars = await self.market_data.sources.bars.fetch_5m_bars(
-            "SPY", session.open, now
+            ["SPY"], session.open, now
         )
         if bars.error is None and bars.data:
             self.market_data.bars_cache.store(bars.data)

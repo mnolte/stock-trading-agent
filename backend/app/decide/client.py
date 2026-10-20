@@ -51,15 +51,35 @@ class DecisionClient(Protocol):
         ...
 
 
-def token_cost(response: ModelResponse, config: AppConfig) -> Decimal | None:
+# Fallback prices (gpt-4o-mini) for configs created before these keys
+# existed: a missing key must never silently record a $0 cost.
+_FALLBACK_INPUT_COST_PER_MTOK = "0.15"
+_FALLBACK_OUTPUT_COST_PER_MTOK = "0.60"
+
+
+def token_cost(
+    response: ModelResponse, config: AppConfig, *, section: str = "decision"
+) -> Decimal | None:
     """USD cost from the configured per-token prices; None without usage."""
     if response.tokens_in is None or response.tokens_out is None:
         return None
     in_price = Decimal(
-        str(config.get("decision", "input_cost_per_mtok", default=0))
+        str(
+            config.get(
+                section,
+                "input_cost_per_mtok",
+                default=_FALLBACK_INPUT_COST_PER_MTOK,
+            )
+        )
     )
     out_price = Decimal(
-        str(config.get("decision", "output_cost_per_mtok", default=0))
+        str(
+            config.get(
+                section,
+                "output_cost_per_mtok",
+                default=_FALLBACK_OUTPUT_COST_PER_MTOK,
+            )
+        )
     )
     return (
         Decimal(response.tokens_in) * in_price

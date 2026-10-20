@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-20 — Token prices in config
+
+- Decision layer, Prompt and Reviews, Model and cost (added by Devin): USD cost is computed from configured prices per million tokens, `decision.input_cost_per_mtok` / `output_cost_per_mtok` and the same keys under `reviews`. Added to `config.example.yaml` (gpt-4o-mini prices; check OpenAI's current prices).
+- Two stale sentences fixed: the design handoff no longer says "7 screens", and Reviews no longer says the Dashboard is unchanged (it shows the daily briefing card).
+- Strategies and shadows, Cost: from PR 13 one `model_prices` table keyed by model replaces those keys, because shadows and backtests can use other models; a model without a price can't be selected.
+
 ## 2026-10-20 — Fresh quote before entries; screened mode blocked until PR 12
 
 - Alpaca integration, Entries: new "Fresh quote before every entry". The latest IEX quote is fetched right before each entry order (automatic and Approve, one shared function) and rejected if its own timestamp is older than 60 s; spread check, limit price and code checks are redone from it; any failure means no order, recorded as a failed "Fresh quote" gate. Exits never wait for a quote. Config: `execution.quote_max_age_seconds: 60`.

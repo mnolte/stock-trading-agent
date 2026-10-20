@@ -1,7 +1,7 @@
 """The decision cycle end to end on fakes: stored decisions, no network."""
 
 import json
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -18,7 +18,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import DataResult, Quote
+from app.data.models import Bar5m, DataResult, NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Cycle, Decision, Event, Order, Outcome, Position
@@ -769,3 +769,162 @@ async def test_paused_cycle_reviews_held_and_blocks_entries(
         ).scalars().all()
     assert orders == []
     assert any(o.leg == "exit" for o in sells)
+
+
+# ----------------------------------------------------------------------
+# cycles at scale (docs/SPEC.md, Cycles at scale)
+
+
+class _CountingBars(FakeBarSource):
+    """Records the symbol list of every 5m bar request."""
+
+    def __init__(self, calendar: FakeCalendarSource) -> None:
+        super().__init__(calendar)
+        self.calls: list[list[str]] = []
+
+    async def fetch_5m_bars(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> DataResult[list[Bar5m]]:
+        self.calls.append(list(symbols))
+        return await super().fetch_5m_bars(symbols, start, end)
+
+
+class _RecordingQuotes:
+    """FakeQuoteSource that records the requested symbols."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        self.calls.append(list(symbols))
+        return await FakeQuoteSource().fetch_quotes(symbols)
+
+
+class _RecordingNews:
+    """FakeNewsSource that records the requested symbols."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    async def fetch_news(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> DataResult[list[NewsItem]]:
+        self.calls.append(list(symbols))
+        return await FakeNewsSource().fetch_news(symbols, start, end)
+
+
+async def test_cycle_fetches_bars_in_one_multi_symbol_request(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The whole cycle universe is topped up with one multi-symbol bars
+    request — not one call per symbol."""
+    bars = _CountingBars(FakeCalendarSource())
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass"), _item("AAPL", "fail")),
+        sources=_sources(bars=bars),
+        universe=["MSFT", "AAPL", "XOM"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    # SPY joins the universe for the regime/shock-brake baseline.
+    assert bars.calls == [["MSFT", "AAPL", "XOM", "SPY"]]
+
+
+async def test_cycle_fetches_quotes_for_review_symbols_only(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Quotes are fetched for the review set — held first, then
+    rules-pass candidates — never for symbols the rules rejected."""
+    quotes = _RecordingQuotes()
+    runner = _runner(
+        session_factory,
+        _evaluation(
+            _item("MSFT", "pass"),
+            _item("AAPL", "fail"),
+            _item("JPM", "held"),
+            held={"JPM"},
+        ),
+        sources=_sources(quotes=quotes),
+        universe=["MSFT", "AAPL", "JPM"],
+    )
+    await runner.run(CYCLE_1246)
+    assert quotes.calls == [["JPM", "MSFT"]]
+
+
+async def test_cycle_fetches_news_for_called_symbols_only(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """News is fetched only for symbols that get a model call — the
+    review order walked until the call cap fills."""
+    news = _RecordingNews()
+    runner = _runner(
+        session_factory,
+        _evaluation(
+            _item("AAPL", "pass"),
+            _item("MSFT", "pass"),
+            _item("XOM", "pass"),
+        ),
+        sources=_sources(news=news),
+        universe=["AAPL", "MSFT", "XOM"],
+    )
+    runner.config.yaml["decision"]["max_calls_per_cycle"] = 2
+    report = await runner.run(CYCLE_1246)
+    assert report.calls == 2
+    assert news.calls == [["AAPL", "MSFT"]]
+
+
+class _TickingClock(FakeClock):
+    """now() advances by a fixed step on every call — models a slow cycle
+    without sleeping."""
+
+    def __init__(self, start: datetime, step: timedelta) -> None:
+        super().__init__(start)
+        self._step = step
+
+    def now(self) -> datetime:
+        current = self._when
+        self._when = current + self._step
+        return current
+
+
+async def test_cycle_duration_is_stored(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass")),
+        universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    with session_factory() as session:
+        cycle = session.execute(select(Cycle)).scalar_one()
+    assert cycle.duration_seconds == 0  # frozen clock → no elapsed time
+    assert report.duration_seconds == 0
+
+
+async def test_slow_cycle_raises_warning_event(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A cycle over the configured warning limit writes a cycle_slow
+    event — the banner the dashboard shows."""
+    clock = _TickingClock(NOW_13H, timedelta(minutes=6))
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass")),
+        clock=clock,
+        universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.duration_seconds is not None
+    assert report.duration_seconds > 600  # over the 10-minute limit
+    with session_factory() as session:
+        cycle = session.execute(select(Cycle)).scalar_one()
+        event = session.execute(
+            select(Event).where(Event.event_type == "cycle_slow")
+        ).scalar_one()
+    assert cycle.duration_seconds == report.duration_seconds
+    assert event.level == "warning"
+    assert (event.details or {})["cycle_id"] == cycle.id

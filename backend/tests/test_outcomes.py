@@ -170,7 +170,7 @@ def _session_close(bar: Bar5m, calendar: CalendarProvider) -> datetime:
 async def _bars(
     market_data: MarketDataService, start: datetime, end: datetime
 ) -> list[Bar5m]:
-    result = await market_data.sources.bars.fetch_5m_bars("MSFT", start, end)
+    result = await market_data.sources.bars.fetch_5m_bars(["MSFT"], start, end)
     return result.data
 
 

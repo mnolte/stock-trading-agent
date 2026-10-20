@@ -251,11 +251,32 @@ def header_state(request: Request) -> dict[str, object]:
 
 @router.get("/watchlist")
 def watchlist(request: Request) -> dict[str, object]:
-    """Per-symbol rules status; serves the stored signal snapshot."""
+    """Per-symbol rules status; serves the stored signal snapshot.
+
+    ``universe_mode`` is the list cycles actually run — ``screened`` only
+    once a screened-mode screen has produced an eligible list (a mode
+    switch applies at the next daily screen). In screened mode the rows
+    arrive in screen-rank order and the dashboard shows the configured
+    ``watchlist_rows`` first.
+    """
     signals = _signals(request)
     result = signals.latest if signals is not None else None
+    market_data = getattr(request.app.state, "market_data", None)
+    universe_mode = (
+        market_data.universe_mode() if market_data is not None else "fixed"
+    )
+    config = get_config()
+    meta: dict[str, object] = {
+        "universe_mode": universe_mode,
+        "watchlist_rows": int(
+            config.get("universe", "watchlist_rows", default=15)
+        ),
+        "earnings_blackout_days": int(
+            config.get("risk", "earnings_blackout_days", default=3)
+        ),
+    }
     if result is None:
-        return {"computed_at": None, "regime": None, "rows": []}
+        return {"computed_at": None, "regime": None, "rows": [], **meta}
     return {
         "computed_at": result.computed_at.isoformat(),
         "regime": {
@@ -264,6 +285,7 @@ def watchlist(request: Request) -> dict[str, object]:
             "label": result.regime.label,
             "blocks_entries": result.regime.blocks_entries,
         },
+        **meta,
         "rows": [
             {
                 "symbol": row.symbol,
@@ -295,6 +317,8 @@ def watchlist(request: Request) -> dict[str, object]:
                     if row.last_action_time
                     else None
                 ),
+                "rank": row.rank,
+                "days_to_earnings": row.days_to_earnings,
             }
             for row in result.rows
         ],
@@ -1209,6 +1233,7 @@ def banners(request: Request) -> dict[str, object]:
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
                         "universe_screen_failed",
+                        "cycle_slow",
                     ]
                 ),
             )
@@ -1299,6 +1324,32 @@ def banners(request: Request) -> dict[str, object]:
                             "never confirmed at Alpaca. The position keeps "
                             "its stop; reconcile or cancel the order before "
                             "selling."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "cycle_slow":
+                seconds = details.get("duration_seconds")
+                took = (
+                    f"{seconds / 60:.0f} minutes"
+                    if isinstance(seconds, int | float)
+                    else "too long"
+                )
+                warn = details.get("warn_minutes")
+                warn_text = (
+                    f"{warn:g}" if isinstance(warn, int | float) else "10"
+                )
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "cycle_slow",
+                        "level": "warning",
+                        "message": (
+                            f"A decision cycle took {took} — over the "
+                            f"{warn_text}-minute warning limit. Check "
+                            "its cycle row for a slow data source."
                         ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
