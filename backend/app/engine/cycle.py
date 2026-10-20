@@ -440,8 +440,10 @@ class CycleRunner:
         max_calls = int(
             self.config.get("decision", "max_calls_per_cycle", default=10)
         )
-        for item in reviews:
+        capped_at: int | None = None
+        for i, item in enumerate(reviews):
             if report.calls >= max_calls:
+                capped_at = i
                 break
             quote = quotes.get(item.symbol)
             price = quote.ask if quote is not None else None
@@ -458,9 +460,9 @@ class CycleRunner:
                 position=position,
                 news=None if news is None else news.get(item.symbol, []),
             )
-            report.calls += 1
             if context == "candidate" and price is None:
-                # Missing quotes mean no new entries this cycle.
+                # Missing quotes mean no new entries this cycle — and no
+                # model call, so the cap slot stays free for the next one.
                 decision = self.decide.record_no_call(
                     session,
                     cycle_id=cycle_id,
@@ -472,6 +474,7 @@ class CycleRunner:
                     detail="quote unavailable",
                 )
             else:
+                report.calls += 1
                 decision = await self.decide.decide(
                     session,
                     cycle_id=cycle_id,
@@ -509,8 +512,10 @@ class CycleRunner:
                 )
             session.commit()
             report.decisions.append(decision.id)
-        # Candidates beyond the call cap are recorded without a call.
-        for item in reviews[max_calls:]:
+        # Review items past the cap are recorded without a call — the tail
+        # starts where the loop stopped, not at ``max_calls``, since
+        # quote-missing candidates never consumed a call slot.
+        for item in reviews[capped_at if capped_at is not None else len(reviews):]:
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,
