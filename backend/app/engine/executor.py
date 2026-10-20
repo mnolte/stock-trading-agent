@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING
@@ -29,7 +29,7 @@ from app.broker.models import (
     TradeUpdateInfo,
 )
 from app.data.cache import _naive_utc
-from app.data.models import Quote
+from app.data.models import CalendarDay, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import (
@@ -45,8 +45,14 @@ from app.db.models import (
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
-from app.risk.gates import GateContext, WorkingEntry, evaluate_entry_gates
-from app.risk.math import trade_risk
+from app.notifications.service import Notifier, NullNotifier
+from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates
+from app.risk.math import (
+    WorkingEntry,
+    drawdown_pct,
+    session_pnl_pct,
+    trade_risk,
+)
 from app.signals.indicators import atr
 from app.signals.service import SignalService, SymbolEval, trading_days_until
 
@@ -79,6 +85,42 @@ def _cents(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def spy_session_moves(
+    market_data: MarketDataService,
+    sessions: list[CalendarDay],
+    now: datetime,
+    today: date,
+) -> tuple[Decimal | None, Decimal | None]:
+    """SPY's change on the last closed 1h bar and since today's open.
+
+    These are the shock-brake display inputs, shared with the dashboard
+    risk budget card: ``(last_1h_pct, since_open_pct)``, each None when
+    today's bars are missing (market closed, no 1h bar finished yet).
+    Only complete 1h bars of today's session count — a partial bar of the
+    hour still running is not "the last 1h bar", and yesterday's bar is
+    not today's move.
+    """
+    todays = [
+        b
+        for b in market_data.get_1h_bars_range("SPY", sessions)
+        if b.complete
+        and b.end <= now
+        and b.start.astimezone(NY_TZ).date() == today
+    ]
+    if not todays:
+        return None, None
+    last = todays[-1]
+    move_1h = (
+        (last.close - last.open) / last.open * 100 if last.open > 0 else None
+    )
+    move_session = (
+        (todays[-1].close - todays[0].open) / todays[0].open * 100
+        if todays[0].open > 0
+        else None
+    )
+    return move_1h, move_session
+
+
 class Executor:
     """Order placement, reconciliation and kill-switch actions."""
 
@@ -94,6 +136,7 @@ class Executor:
         state: ExecutionState,
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.broker = broker
         self.market_data = market_data
@@ -105,6 +148,8 @@ class Executor:
         self._session_factory = session_factory or get_session_maker()
         # Pushes WebSocket update topics to the GUI; a no-op in tests.
         self._notify = notify or (lambda topics: None)
+        # The notification service; a no-op until main wires it in.
+        self._notifier = notifier or NullNotifier()
         self._orders_this_cycle = 0
         self._order_seq = 0
         # Alpaca enforces client_order_id uniqueness account-wide
@@ -127,30 +172,35 @@ class Executor:
             self.state.peak_equity = account.equity
         return account
 
-    async def update_session_brakes(self) -> None:
-        """Shock brake, daily loss and drawdown kill from fresh data."""
+    async def update_session_brakes(self, *, include_1h: bool = False) -> None:
+        """Shock brake, daily loss and drawdown kill from fresh data.
+
+        The since-open leg of the shock brake uses the real-time SPY IEX
+        quote — position checks and cycles both refresh it. The 1h leg
+        reads the last *complete* session-aligned 1h bar and only runs on
+        decision cycles (``include_1h``), right after the bar top-up.
+        """
         self.state.reset_session_if_new_day()
         account = await self.refresh_account()
         if account is not None:
             limit = Decimal(
                 str(self.config.get("risk", "daily_loss_limit_pct", default=2))
             )
-            if account.last_equity > 0:
-                pnl_pct = (
-                    (account.equity - account.last_equity)
-                    / account.last_equity
-                    * 100
+            pnl_pct = session_pnl_pct(account.equity, account.last_equity)
+            if pnl_pct <= -limit and not self.state.daily_loss_hit:
+                self.state.daily_loss_hit = True
+                self._notifier.notify(
+                    "daily_loss_limit",
+                    f"session P&L {pnl_pct:.2f}% ≤ −{limit}% — "
+                    "no new entries today",
+                    link="/",
                 )
-                if pnl_pct <= -limit:
-                    self.state.daily_loss_hit = True
             kill_pct = Decimal(
                 str(self.config.get("risk", "drawdown_kill_pct", default=8))
             )
             if (
                 self.state.peak_equity > 0
-                and (self.state.peak_equity - account.equity)
-                / self.state.peak_equity
-                * 100
+                and drawdown_pct(account.equity, self.state.peak_equity)
                 >= kill_pct
                 and not self.state.kill_switch_on
             ):
@@ -162,19 +212,52 @@ class Executor:
                     automatic=True,
                 )
 
-        # Shock brake from SPY 1h bars.
+        # Shock brake: the quote is the real-time price; today's open
+        # comes from the session's first 5m bar, topped up here so the
+        # early position checks work before the first cycle runs.
         now = self.clock.now()
         today = now.astimezone(NY_TZ).date()
         session = self.calendar.session_for(today)
         if session is None:
             return
-        sessions = self.market_data.recent_sessions(today, 3)
-        bars_1h = [
-            b
-            for b in self.market_data.get_1h_bars_range("SPY", sessions)
-            if b.end <= now
-        ]
-        if not bars_1h:
+        bars = await self.market_data.sources.bars.fetch_5m_bars(
+            "SPY", session.open, now
+        )
+        if bars.error is None and bars.data:
+            self.market_data.bars_cache.store(bars.data)
+        todays_5m = self.market_data.get_5m_bars(
+            "SPY", session.open, session.close
+        )
+        session_open = todays_5m[0].open if todays_5m else None
+
+        quotes = await self.market_data.sources.quotes.fetch_quotes(["SPY"])
+        quote = (
+            quotes.data.get("SPY")
+            if quotes.error is None and quotes.data
+            else None
+        )
+        move_session = (
+            (quote.last - session_open) / session_open * 100
+            if quote is not None
+            and session_open is not None
+            and session_open > 0
+            else None
+        )
+        move_1h: Decimal | None = None
+        if include_1h:
+            closed_1h = [
+                b
+                for b in self.market_data.get_1h_bars("SPY", session)
+                if b.complete and b.end <= now
+            ]
+            if closed_1h and closed_1h[-1].open > 0:
+                move_1h = (
+                    (closed_1h[-1].close - closed_1h[-1].open)
+                    / closed_1h[-1].open
+                    * 100
+                )
+
+        if move_1h is None and move_session is None:
             return
         shock_1h = Decimal(
             str(self.config.get("risk", "shock_brake_1h_pct", default=1.5))
@@ -182,18 +265,24 @@ class Executor:
         shock_session = Decimal(
             str(self.config.get("risk", "shock_brake_session_pct", default=2.5))
         )
-        last = bars_1h[-1]
-        if last.open > 0:
-            change = (last.close - last.open) / last.open * 100
-            if change <= -shock_1h:
-                self.state.shock_brake_1h = True
-        todays = [
-            b for b in bars_1h if b.start.astimezone(NY_TZ).date() == today
-        ]
-        if todays and todays[0].open > 0:
-            change = (todays[-1].close - todays[0].open) / todays[0].open * 100
-            if change <= -shock_session:
-                self.state.shock_brake_session = True
+        if move_1h is not None and move_1h <= -shock_1h:
+            if not self.state.shock_brake_1h:
+                self._notifier.notify(
+                    "shock_brake",
+                    f"SPY {move_1h:.2f}% in the last hour — "
+                    "no new entries",
+                    link="/",
+                )
+            self.state.shock_brake_1h = True
+        if move_session is not None and move_session <= -shock_session:
+            if not self.state.shock_brake_session:
+                self._notifier.notify(
+                    "shock_brake",
+                    f"SPY {move_session:.2f}% since the open — "
+                    "no new entries",
+                    link="/",
+                )
+            self.state.shock_brake_session = True
 
     # ------------------------------------------------------------------
     # kill switch
@@ -498,6 +587,66 @@ class Executor:
             return f"reward to risk {reward_to_risk or 0:.2f} below {min_rr}"
         return None
 
+    async def _fresh_entry_check(
+        self,
+        *,
+        symbol: str,
+        stop: Decimal,
+        target: Decimal,
+        atr_1h: Decimal | None,
+    ) -> tuple[Quote | None, Decimal | None, str | None]:
+        """The "Fresh quote" gate right before an entry order is sent.
+
+        Fetches the latest IEX quote, rejects a missing quote
+        (``quote_missing``) or one whose own timestamp is older than
+        ``execution.quote_max_age_seconds`` (``quote_stale``), and on a
+        fresh quote re-runs the spread check, recomputes the limit price
+        and re-runs the code checks (stop distance, reward to risk) from
+        the new entry. Returns ``(quote, limit, reason)`` — on failure
+        ``limit`` is None and ``reason`` names the failing check.
+        Automatic entries and Approve share this step; exits and stop
+        moves never wait on it (docs/SPEC.md, Entries).
+        """
+        quotes = await self.market_data.sources.quotes.fetch_quotes([symbol])
+        quote = (
+            quotes.data.get(symbol)
+            if quotes.error is None and quotes.data
+            else None
+        )
+        if quote is None:
+            return None, None, "quote_missing"
+        ts = quote.timestamp
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        max_age = float(
+            self.config.get("execution", "quote_max_age_seconds", default=60)
+        )
+        if (self.clock.now() - ts).total_seconds() > max_age:
+            return quote, None, "quote_stale"
+        max_spread = Decimal(
+            str(self.config.get("execution", "max_spread_pct", default=0.15))
+        )
+        mid = (quote.ask + quote.bid) / 2
+        if mid <= 0:
+            return quote, None, "quote midpoint is zero or negative"
+        spread_pct = (quote.ask - quote.bid) / mid * 100
+        if spread_pct > max_spread:
+            return quote, None, f"spread {spread_pct:.3f}% > {max_spread}%"
+        offset = Decimal(
+            str(
+                self.config.get("execution", "entry_limit_offset_pct", default=0.05)
+            )
+        )
+        limit = _cents(quote.ask * (1 + offset / 100))
+        risk = trade_risk(limit, stop, target, atr_1h)
+        fail = self._code_check_failure(
+            atr_multiple=risk.atr_multiple,
+            reward_to_risk=risk.reward_to_risk,
+        )
+        if fail is not None:
+            return quote, None, fail
+        return quote, limit, None
+
     async def approve(self, approval_id: int) -> dict[str, object]:
         """Re-check gates, code checks and spread on a fresh quote, then submit.
 
@@ -513,104 +662,64 @@ class Executor:
             if self.state.paused:
                 return {"ok": False, "error": "new entries are paused"}
 
-            quotes = await self.market_data.sources.quotes.fetch_quotes(
-                [approval.symbol]
+            # The shared "Fresh quote" gate: latest IEX quote, freshness,
+            # spread, limit recompute and code checks — the same function
+            # automatic entries use (docs/SPEC.md, Entries).
+            quote, limit, fail = await self._fresh_entry_check(
+                symbol=approval.symbol,
+                stop=approval.stop_price,
+                target=approval.target_price,
+                atr_1h=self._atr_1h(approval.symbol),
             )
-            quote = (
-                quotes.data.get(approval.symbol)
-                if quotes.error is None and quotes.data
-                else None
-            )
-            if quote is None:
-                self._resolve_approval(
-                    approval, "rejected", "no quote at approve time"
-                )
-                session.commit()
-                self._notify({"approvals", "decisions"})
-                return {"ok": False, "error": "no quote at approve time"}
-
-            # Code checks on the fresh limit with the model's stop and target.
-            offset = Decimal(
-                str(
-                    self.config.get(
-                        "execution", "entry_limit_offset_pct", default=0.05
-                    )
-                )
-            )
-            limit = _cents(quote.ask * (1 + offset / 100))
-            atr_1h = self._atr_1h(approval.symbol)
-            risk = trade_risk(
-                limit, approval.stop_price, approval.target_price, atr_1h
-            )
-            fail = self._code_check_failure(
-                atr_multiple=risk.atr_multiple,
-                reward_to_risk=risk.reward_to_risk,
-            )
-            if fail is None:
-                # Spread on the fresh quote.
-                max_spread = Decimal(
-                    str(
-                        self.config.get(
-                            "execution", "max_spread_pct", default=0.15
-                        )
-                    )
-                )
-                mid = (quote.ask + quote.bid) / 2
-                if mid <= 0:
-                    fail = "quote midpoint is zero or negative"
-                else:
-                    spread_pct = (quote.ask - quote.bid) / mid * 100
-                    if spread_pct > max_spread:
-                        fail = f"spread {spread_pct:.3f}% > {max_spread}%"
-
-            result = None
-            qty = 0
-            if fail is None:
-                # All risk gates again with fresh equity + the fresh ask.
-                account = await self.refresh_account()
-                # Fresh earnings, not the decision-time snapshot: a report
-                # announced since then must still block the entry.
-                today = self.clock.now().astimezone(NY_TZ).date()
-                earnings_result = await self.market_data.refresh_earnings(
-                    today, today + timedelta(days=90)
-                )
-                earnings_known = earnings_result.error is None
-                next_date = self.signals.next_earnings(
-                    [approval.symbol], today
-                ).get(approval.symbol)
-                days_to_earnings = (
-                    trading_days_until(self.calendar, today, next_date)
-                    if next_date is not None
-                    else None
-                )
-                ctx = self._gate_context(
-                    session,
-                    account,
-                    approval.symbol,
-                    days_to_earnings,
-                    earnings_known,
-                )
-                result = evaluate_entry_gates(
-                    ctx,
-                    entry=quote.ask,
-                    stop=approval.stop_price,
-                    config=self.config,
-                )
-                if not result.allowed:
-                    blocked = result.blocked_by or "gate"
-                    detail = next(
-                        (c.detail for c in result.checks if not c.passed), ""
-                    )
-                    fail = f"{blocked}: {detail}".rstrip(": ")
-                else:
-                    assert result.sizing is not None
-                    qty = result.sizing.shares
-
             if fail is not None:
                 self._resolve_approval(approval, "rejected", fail)
                 session.commit()
                 self._notify({"approvals", "decisions"})
                 return {"ok": False, "error": fail}
+            assert quote is not None and limit is not None
+
+            # All risk gates again with fresh equity + the fresh ask.
+            account = await self.refresh_account()
+            # Fresh earnings, not the decision-time snapshot: a report
+            # announced since then must still block the entry.
+            today = self.clock.now().astimezone(NY_TZ).date()
+            earnings_result = await self.market_data.refresh_earnings(
+                today, today + timedelta(days=90)
+            )
+            earnings_known = earnings_result.error is None
+            next_date = self.signals.next_earnings(
+                [approval.symbol], today
+            ).get(approval.symbol)
+            days_to_earnings = (
+                trading_days_until(self.calendar, today, next_date)
+                if next_date is not None
+                else None
+            )
+            ctx = self._gate_context(
+                session,
+                account,
+                approval.symbol,
+                days_to_earnings,
+                earnings_known,
+            )
+            result = evaluate_entry_gates(
+                ctx,
+                entry=quote.ask,
+                stop=approval.stop_price,
+                config=self.config,
+            )
+            if not result.allowed:
+                blocked = result.blocked_by or "gate"
+                detail = next(
+                    (c.detail for c in result.checks if not c.passed), ""
+                )
+                fail = f"{blocked}: {detail}".rstrip(": ")
+                self._resolve_approval(approval, "rejected", fail)
+                session.commit()
+                self._notify({"approvals", "decisions"})
+                return {"ok": False, "error": fail}
+            assert result.sizing is not None
+            qty = result.sizing.shares
 
             self._orders_this_cycle += 1
             client_id = self._client_id(
@@ -1140,6 +1249,7 @@ class Executor:
         the source of truth for qty and whether a position still exists.
         """
         opened = 0
+        opened_symbols: list[tuple[str, int, Decimal]] = []
         filled_buys = session.execute(
             select(Order).where(
                 Order.side == "buy",
@@ -1209,7 +1319,14 @@ class Executor:
                 )
             )
             opened += 1
+            opened_symbols.append((order.symbol, filled_qty, avg_price))
         session.flush()
+        for symbol, qty, avg_price in opened_symbols:
+            self._notifier.notify(
+                "trade",
+                f"opened {symbol}: {qty} shares @ {avg_price}",
+                link="/positions",
+            )
         return opened
 
     def _record_day_trade(
@@ -1234,6 +1351,28 @@ class Executor:
                     order_ids=[],
                 )
             )
+            session.flush()
+            # Same window the entry gate uses: the last 5 sessions.
+            days = self.market_data.recent_sessions(closed_date, 5)
+            count = (
+                session.execute(
+                    select(func.count(DayTrade.id)).where(
+                        DayTrade.date >= _naive_utc(days[0].open)
+                    )
+                ).scalar_one()
+                if days
+                else 0
+            )
+            max_dt = int(
+                self.config.get("risk", "pdt_max_day_trades", default=3)
+            )
+            if count >= max_dt:
+                self._notifier.notify(
+                    "pdt_guard",
+                    f"{count} of {max_dt} day trades in the last "
+                    "5 sessions",
+                    link="/positions",
+                )
 
     def _close_position(
         self,
@@ -1289,6 +1428,14 @@ class Executor:
         # Keep qty at the closed size: Performance shows the shares traded.
         position.deferred_exit = None
         report.mismatches.append(f"{position.symbol}: closed at broker")
+        pnl = (
+            f"P&L {raw:+.2f}" if raw is not None else "P&L unknown"
+        )
+        self._notifier.notify(
+            "trade",
+            f"closed {position.symbol}: {exit_reason}, {pnl}",
+            link="/positions",
+        )
         self._record_day_trade(session, position, self.clock.now())
 
     async def _adopt_position(
@@ -1570,6 +1717,12 @@ class Executor:
             orders_this_cycle=self._orders_this_cycle,
         )
 
+    def budget_context(self, session: Session) -> GateContext:
+        """The gate inputs as they stand now — the dashboard risk budget
+        card reads the same context the entry gates see, with no candidate
+        symbol (``""`` never matches a held position or pending entry)."""
+        return self._gate_context(session, None, "", None, True)
+
     async def apply_decision(
         self,
         session: Session,
@@ -1662,7 +1815,8 @@ class Executor:
         assert result.sizing is not None
         qty = result.sizing.shares
 
-        # Spread and entry limit from the IEX quote.
+        # Spread and entry limit from the decision-time IEX quote; the
+        # automatic branch re-fetches a fresh quote before submitting.
         max_spread = Decimal(
             str(self.config.get("execution", "max_spread_pct", default=0.15))
         )
@@ -1699,7 +1853,8 @@ class Executor:
             "supervised"
         ):
             # Supervised mode: the entry waits for Marc's approval instead
-            # of going to Alpaca (docs/SPEC.md, Supervised mode).
+            # of going to Alpaca (docs/SPEC.md, Supervised mode). Approve
+            # re-fetches a fresh quote and re-runs every check.
             self._supersede_pending(session, decision.symbol)
             approval = Approval(
                 decision_id=decision.id,
@@ -1718,15 +1873,50 @@ class Executor:
                 "approval_id": approval.id,
             }
             session.flush()
+            self._notifier.notify(
+                "approval_waiting",
+                f"{decision.symbol}: {qty} shares at {limit} — "
+                "approve on the dashboard",
+                link="/",
+            )
             self._notify({"approvals", "decisions"})
             return
+
+        # The "Fresh quote" gate right before the order is sent — the
+        # shared pre-submit step Approve also uses (docs/SPEC.md,
+        # Entries): fetch the latest IEX quote, reject missing or stale,
+        # then re-run the spread check, recompute the limit and re-run
+        # the code checks from the new entry. A failure is recorded on
+        # the gates result; no order is sent, no retry this cycle.
+        _, fresh_limit, fresh_fail = await self._fresh_entry_check(
+            symbol=decision.symbol,
+            stop=Decimal(str(stop)),
+            target=Decimal(str(target)),
+            atr_1h=item.snapshot.atr_1h,
+        )
+        if fresh_fail is not None:
+            failed = replace(
+                result,
+                allowed=False,
+                blocked_by="fresh_quote",
+                sizing=None,
+                checks=[
+                    *result.checks,
+                    GateCheck("fresh_quote", False, fresh_fail),
+                ],
+            )
+            decision.gates_result = failed.to_json()
+            decision.final_action = "blocked"
+            session.flush()
+            return
+        assert fresh_limit is not None
 
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
         submitted = await self.broker.submit_bracket_entry(
             symbol=decision.symbol,
             qty=qty,
-            limit_price=limit,
+            limit_price=fresh_limit,
             stop_price=_cents(Decimal(str(stop))),
             target_price=_cents(Decimal(str(target))),
             client_order_id=client_id,
@@ -1989,4 +2179,10 @@ class Executor:
             return
         self._store_broker_order(session, sold.data, decision.id, leg="exit")
         session.flush()
+        if reason == "earnings_exit":
+            self._notifier.notify(
+                "exit_deferred_or_earnings_exit",
+                f"{position.symbol}: sold ahead of tomorrow's earnings",
+                link="/positions",
+            )
         self._notify({"positions", "orders"})

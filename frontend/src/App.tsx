@@ -11,6 +11,7 @@ import Positions from './pages/Positions';
 import Reviews from './pages/Reviews';
 import Settings from './pages/Settings';
 import States from './pages/States';
+import Universe from './pages/Universe';
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
           <Route path="reviews" element={<Reviews />} />
           <Route path="decisions/:id" element={<Decision />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="universe" element={<Universe />} />
           <Route path="states" element={<States />} />
           <Route path="dev/components" element={<DevComponents />} />
           <Route path="*" element={<Navigate to="/" replace />} />

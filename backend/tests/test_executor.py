@@ -21,14 +21,14 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Quote
+from app.data.models import Bar5m, DailyBar, DataResult, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Cycle, DayTrade, Decision, Event, Order, Position
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
-from app.market.clock import UTC, FakeClock
+from app.market.clock import NY_TZ, UTC, FakeClock
 from app.rules.prefilter import RulesResult
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
@@ -49,9 +49,9 @@ def session_factory(tmp_path: Path) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def _sources() -> DataSources:
+def _sources(**overrides: object) -> DataSources:
     calendar = FakeCalendarSource()
-    return DataSources(
+    sources = DataSources(
         bars=FakeBarSource(calendar),
         quotes=FakeQuoteSource(),
         news=FakeNewsSource(),
@@ -61,6 +61,9 @@ def _sources() -> DataSources:
         calendar=calendar,
         alpaca=None,
     )
+    for key, value in overrides.items():
+        setattr(sources, key, value)
+    return sources
 
 
 def _executor(
@@ -68,10 +71,11 @@ def _executor(
     broker: FakeBroker,
     clock: FakeClock | None = None,
     config: AppConfig | None = None,
+    sources: DataSources | None = None,
 ) -> Executor:
     clock = clock or FakeClock(NOW)
     config = config or AppConfig()
-    sources = _sources()
+    sources = sources or _sources(quotes=FakeQuoteSource(clock))
     calendar = cast(CalendarProvider, sources.calendar)
     market_data = MarketDataService(
         sources, calendar, config, session_factory=session_factory
@@ -419,7 +423,7 @@ async def test_reconcile_never_reopens_a_closed_position(
             session,
             "MSFT",
             "enter",
-            {"stop_price": 410.0, "target_price": 435.0},
+            {"stop_price": 412.0, "target_price": 435.0},
         )
         await executor.apply_decision(
             session,
@@ -481,7 +485,7 @@ async def test_partial_fills_grow_the_open_position(
             session,
             "MSFT",
             "enter",
-            {"stop_price": 410.0, "target_price": 435.0},
+            {"stop_price": 412.0, "target_price": 435.0},
         )
         await executor.apply_decision(
             session,
@@ -571,14 +575,20 @@ async def test_enter_places_bracket_order(
     session_factory: sessionmaker[Session],
 ) -> None:
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
-    executor = _executor(session_factory, broker)
+    # The order-time quote comes from the source — pin it to the same
+    # 420.10 ask so the limit below is exact.
+    executor = _executor(
+        session_factory,
+        broker,
+        sources=_sources(quotes=_StaticQuotes({"MSFT": _quote("MSFT")})),
+    )
     await executor.reconcile()
     with session_factory() as session:
         decision = _decision(
             session,
             "MSFT",
             "enter",
-            {"stop_price": 410.0, "target_price": 435.0},
+            {"stop_price": 412.0, "target_price": 435.0},
         )
         await executor.apply_decision(
             session,
@@ -615,7 +625,7 @@ async def test_enter_blocked_by_gate_places_nothing(
     executor.state.kill_switch_on = True
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -642,7 +652,7 @@ async def test_enter_skipped_on_wide_spread(
     executor = _executor(session_factory, broker)
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -669,7 +679,7 @@ async def test_entry_blocked_without_a_quote(
     executor = _executor(session_factory, broker)
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -695,7 +705,7 @@ async def test_entry_blocked_when_quote_mid_is_zero(
     executor = _executor(session_factory, broker)
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -720,7 +730,7 @@ async def test_failed_entry_write_is_never_resent(
     executor = _executor(session_factory, broker)
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -984,7 +994,26 @@ async def test_partially_filled_entry_counts_unfilled_only(
     clock = FakeClock(NOW)
     broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
     broker.partial_fill["MSFT"] = 2
-    executor = _executor(session_factory, broker, clock, _wide_config())
+    executor = _executor(
+        session_factory,
+        broker,
+        clock,
+        _wide_config(),
+        sources=_sources(
+            quotes=_StaticQuotes(
+                {
+                    "MSFT": Quote(
+                        symbol="MSFT",
+                        bid=Decimal("99.95"),
+                        ask=Decimal("100.00"),
+                        last=Decimal("100.00"),
+                        timestamp=NOW,
+                        feed="iex",
+                    )
+                }
+            )
+        ),
+    )
     await executor.reconcile()
     with session_factory() as session:
         decision = _decision(
@@ -1783,7 +1812,7 @@ async def test_paused_blocks_new_entry(
     executor.state.paused = True
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -1860,3 +1889,339 @@ async def test_pause_and_resume_record_events(
     with session_factory() as session:
         events = _events(session, "pause")
     assert [e.details["on"] for e in events if e.details] == [True, False]
+
+
+# ----------------------------------------------------------------------
+# session safety brakes (B1)
+
+
+class _StaticQuotes:
+    """Fixed quotes keyed by symbol — deterministic brake inputs."""
+
+    def __init__(self, quotes: dict[str, Quote]) -> None:
+        self._quotes = quotes
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        return DataResult(
+            data={s: self._quotes[s] for s in symbols if s in self._quotes},
+            source="fake",
+        )
+
+
+class _NoBars:
+    """A bar source that never returns data — only the cache matters."""
+
+    async def fetch_5m_bars(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> DataResult[list[Bar5m]]:
+        return DataResult(data=[], source="fake")
+
+    async def fetch_daily_bars(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> DataResult[list[DailyBar]]:
+        return DataResult(data=[], source="fake")
+
+
+def _spy_5m_bars(
+    start: datetime, count: int, open_: Decimal, close: Decimal
+) -> list[Bar5m]:
+    """``count`` consecutive 5m bars drifting evenly from ``open_`` to ``close``."""
+    step = (close - open_) / count
+    bars = []
+    price = open_
+    for i in range(count):
+        nxt = price + step
+        bars.append(
+            Bar5m(
+                symbol="SPY",
+                start=start + timedelta(minutes=5 * i),
+                open=price,
+                high=max(price, nxt),
+                low=min(price, nxt),
+                close=nxt,
+                volume=1000,
+                feed="fake",
+            )
+        )
+        price = nxt
+    return bars
+
+
+async def test_shock_brake_session_uses_fresh_spy_quote(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A mid-session SPY crash trips the brake via the real-time quote,
+    even though every cached bar is flat."""
+    crash_quote = Quote(
+        symbol="SPY",
+        bid=Decimal("549"),
+        ask=Decimal("550"),
+        last=Decimal("550"),  # ~-5% below the session open (~580)
+        timestamp=NOW,
+        feed="iex",
+    )
+    sources = _sources(quotes=_StaticQuotes({"SPY": crash_quote}))
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)), sources=sources)
+
+    await executor.update_session_brakes()  # position-check mode
+
+    assert executor.state.shock_brake_session is True
+    assert executor.state.shock_brake_1h is False  # 1h leg is cycle-only
+
+
+async def test_shock_brake_session_quiet_quote_no_trip(
+    session_factory: sessionmaker[Session],
+) -> None:
+    calm_quote = Quote(
+        symbol="SPY",
+        bid=Decimal("579"),
+        ask=Decimal("580"),
+        last=Decimal("580"),
+        timestamp=NOW,
+        feed="iex",
+    )
+    sources = _sources(quotes=_StaticQuotes({"SPY": calm_quote}))
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)), sources=sources)
+
+    await executor.update_session_brakes()
+
+    assert executor.state.shock_brake_session is False
+    assert executor.state.shock_brake_1h is False
+
+
+async def test_shock_brake_1h_runs_only_with_flag(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The last complete 1h bar is down > 1.5% — the 1h brake trips only
+    when ``include_1h`` is set (decision cycles, not position checks)."""
+    session = FakeCalendarSource().session_for(NOW.astimezone(NY_TZ).date())
+    assert session is not None
+    bars = []
+    # 09:30-10:30 and 10:30-11:30 windows: complete, flat.
+    for i in range(2):
+        bars += _spy_5m_bars(
+            session.open + timedelta(hours=i), 12, Decimal("580"), Decimal("580")
+        )
+    # 11:30-12:30 window: complete bar, -1.72% (past the -1.5% threshold).
+    bars += _spy_5m_bars(
+        session.open + timedelta(hours=2), 12, Decimal("580"), Decimal("570")
+    )
+    sources = _sources(bars=_NoBars())
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)), sources=sources)
+    executor.market_data.bars_cache.store(bars)
+
+    await executor.update_session_brakes()  # position-check mode
+    assert executor.state.shock_brake_1h is False
+
+    await executor.update_session_brakes(include_1h=True)  # cycle mode
+    assert executor.state.shock_brake_1h is True
+
+
+async def test_shock_brake_1h_ignores_partial_bar(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A still-forming 1h window (fewer than 12 cached 5m bars) must not be
+    read as 'the last 1h bar' — even after its window end has passed."""
+    session = FakeCalendarSource().session_for(NOW.astimezone(NY_TZ).date())
+    assert session is not None
+    bars = []
+    # 09:30-10:30 and 10:30-11:30 windows: complete, flat.
+    for i in range(2):
+        bars += _spy_5m_bars(
+            session.open + timedelta(hours=i), 12, Decimal("580"), Decimal("580")
+        )
+    # 11:30-12:30 window: only 8 of 12 bars cached (SIP gap), but a crash.
+    bars += _spy_5m_bars(
+        session.open + timedelta(hours=2), 8, Decimal("580"), Decimal("540")
+    )
+    sources = _sources(bars=_NoBars())
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)), sources=sources)
+    executor.market_data.bars_cache.store(bars)
+
+    await executor.update_session_brakes(include_1h=True)
+
+    assert executor.state.shock_brake_1h is False
+
+
+# ----------------------------------------------------------------------
+# fresh-quote gate before order submission (S3)
+
+
+class _AgedQuotes:
+    """Quotes stamped ``age`` seconds behind the executor clock."""
+
+    def __init__(
+        self,
+        clock: FakeClock,
+        age: int,
+        ask: str = "420.10",
+        bid: str = "420.00",
+    ) -> None:
+        self._clock = clock
+        self._age = age
+        self._ask = Decimal(ask)
+        self._bid = Decimal(bid)
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        ts = self._clock.now() - timedelta(seconds=self._age)
+        return DataResult(
+            data={
+                s: Quote(
+                    symbol=s,
+                    bid=self._bid,
+                    ask=self._ask,
+                    last=self._ask,
+                    timestamp=ts,
+                    feed="iex",
+                )
+                for s in symbols
+            },
+            source="fake",
+        )
+
+
+class _DownQuotes:
+    """The quote feed is unavailable."""
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote] | None]:
+        return DataResult(data=None, error="quote feed down", source="fake")
+
+
+async def _apply_enter(executor: Executor, session: Session) -> Decision:
+    decision = _decision(
+        session,
+        "MSFT",
+        "enter",
+        {"stop_price": 412.0, "target_price": 435.0},
+    )
+    await executor.apply_decision(
+        session,
+        decision,
+        _item("MSFT"),
+        None,
+        _quote("MSFT"),
+        NOW,
+        account=_account(),
+        earnings_known=True,
+    )
+    return decision
+
+
+async def test_fresh_quote_gate_rejects_stale_quote(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A quote 61s old at order time fails the Fresh quote gate — no order."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(
+        session_factory,
+        broker,
+        clock,
+        sources=_sources(quotes=_AgedQuotes(clock, 61)),
+    )
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "fresh_quote"
+        checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
+        assert checks[-1]["name"] == "fresh_quote"
+        assert checks[-1]["detail"] == "quote_stale"
+    assert broker.submit_calls == 0
+
+
+async def test_fresh_quote_gate_accepts_quote_within_max_age(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A quote 59s old is still fresh — the order goes out."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(
+        session_factory,
+        broker,
+        clock,
+        sources=_sources(quotes=_AgedQuotes(clock, 59)),
+    )
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        session.commit()
+        assert decision.final_action == "enter"
+    assert broker.submit_calls == 1
+
+
+async def test_fresh_quote_gate_rejects_fetch_failure(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """No quote at order time → quote_missing, no order sent."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(
+        session_factory,
+        broker,
+        sources=_sources(quotes=_DownQuotes()),
+    )
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "fresh_quote"
+        checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
+        assert checks[-1]["detail"] == "quote_missing"
+    assert broker.submit_calls == 0
+
+
+async def test_fresh_quote_gate_rejects_when_fresh_price_breaks_rr(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The fresh ask jumped: reward to risk falls below 1.5 — no order."""
+    # limit = 421.30 * 1.0005 ≈ 421.51 → distance 9.51 (3.1 × ATR ok),
+    # reward 13.49 → rr 1.42 < 1.5.
+    clock = FakeClock(NOW)
+    executor = _executor(
+        session_factory,
+        FakeBroker(clock, prices={"MSFT": Decimal("420")}),
+        clock,
+        sources=_sources(quotes=_AgedQuotes(clock, 0, ask="421.30", bid="421.20")),
+    )
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "fresh_quote"
+        checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
+        assert "reward to risk" in str(checks[-1]["detail"])
+
+
+async def test_enter_and_approve_share_the_fresh_quote_step(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both paths call the same ``_fresh_entry_check``."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker, clock)
+    calls: list[str] = []
+    real = executor._fresh_entry_check
+
+    async def spy(
+        *, symbol: str, stop: Decimal, target: Decimal, atr_1h: Decimal | None
+    ) -> object:
+        calls.append(symbol)
+        return await real(symbol=symbol, stop=stop, target=target, atr_1h=atr_1h)
+
+    monkeypatch.setattr(executor, "_fresh_entry_check", spy)
+
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        session.commit()
+        assert decision.final_action == "enter"
+    assert calls == ["MSFT"]
+    assert broker.submit_calls == 1

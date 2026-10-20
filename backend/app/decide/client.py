@@ -83,7 +83,9 @@ class OpenAIDecisionClient:
     def _build(self, api_key: str) -> None:
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=api_key, timeout=self._timeout)
+        self._client = AsyncOpenAI(
+            api_key=api_key, timeout=self._timeout, max_retries=0
+        )
 
     def update_key(self, api_key: str) -> None:
         """Swap the key in place after a Settings save."""

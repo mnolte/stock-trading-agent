@@ -66,6 +66,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+def _check_universe_mode(tree: dict[str, Any]) -> None:
+    """Refuse ``universe.mode: screened`` — the eligible list is not
+    wired into cycles until PR 12 (docs/SPEC.md §443)."""
+    universe = tree.get("universe")
+    if isinstance(universe, dict) and universe.get("mode") == "screened":
+        raise ValueError(
+            "universe.mode 'screened' is not available yet — "
+            "Screened pool arrives with PR 12"
+        )
+
+
 class AppConfig:
     """Unified config: .env values plus the YAML config file.
 
@@ -78,6 +89,7 @@ class AppConfig:
     def __init__(self) -> None:
         self.env = EnvSettings()
         self._yaml = self._load_yaml()
+        _check_universe_mode(self._yaml)
         # The settings in force right now (YAML + last promoted version).
         self._active: dict[str, Any] = self._yaml
         # Saved-but-not-yet-promoted settings (YAML + pending version).
@@ -123,7 +135,9 @@ class AppConfig:
 
     def apply_saved(self, settings: dict[str, Any], version: int) -> None:
         """Make a stored settings version active (startup / promotion)."""
-        self._active = _deep_merge(self._yaml, settings)
+        merged = _deep_merge(self._yaml, settings)
+        _check_universe_mode(merged)
+        self._active = merged
         self.active_version = version
 
     def set_pending(self, settings: dict[str, Any], version: int) -> None:

@@ -37,6 +37,7 @@ from app.decide.prompt import Prompt, cached_prompt
 from app.engine.state import ExecutionState, record_event
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
+from app.notifications.service import Notifier, NullNotifier
 from app.reviews.client import SCHEMAS, ReviewClient
 from app.reviews.facts import (
     app_tz,
@@ -104,6 +105,7 @@ class ReviewService:
         state: ExecutionState | None = None,
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -114,6 +116,7 @@ class ReviewService:
         self.state = state
         self._session_factory = session_factory or get_session_maker()
         self._notify = notify or (lambda topics: None)
+        self._notifier = notifier or NullNotifier()
 
     # ------------------------------------------------------------------
     # schedule helpers
@@ -170,6 +173,21 @@ class ReviewService:
         return bool(
             self.config.get("reviews", "briefing_enabled", default=True)
         )
+
+    def next_briefing_at(self) -> datetime | None:
+        """The next briefing write instant (aware UTC), for the
+        dashboard's "next briefing" line. ``None`` when briefings are off
+        or no trading day is found within two weeks."""
+        if not self._briefing_enabled():
+            return None
+        now = self.clock.now()
+        day = now.astimezone(NY_TZ).date()
+        for _ in range(15):
+            slot = self._briefing_slot(day)
+            if slot is not None and slot > now:
+                return slot
+            day += timedelta(days=1)
+        return None
 
     def _prompt(self, kind: str) -> Prompt:
         version = str(
@@ -421,6 +439,12 @@ class ReviewService:
             except IntegrityError:
                 session.rollback()
                 return None
+        self._notifier.notify(
+            "weekly_review",
+            f"week {period} ready",
+            body=str(composed.content.get("summary", "")),
+            link="/reviews",
+        )
         self._notify({"reviews"})
         return review
 
@@ -485,6 +509,24 @@ class ReviewService:
             except IntegrityError:
                 session.rollback()
                 return None
+            waiting = session.execute(
+                select(func.count(Verdict.id)).where(
+                    Verdict.source == "draft"
+                )
+            ).scalar_one()
+        self._notifier.notify(
+            "daily_briefing",
+            f"{period} ready",
+            body=str(composed.content.get("text", "")),
+            link="/reviews",
+        )
+        if waiting:
+            # Spec: once a day, with the briefing.
+            self._notifier.notify(
+                "verdicts_waiting",
+                f"{waiting} draft verdict(s) waiting to confirm",
+                link="/reviews",
+            )
         self._notify({"reviews"})
         return review
 

@@ -11,18 +11,24 @@ import type {
   KeyGroup,
   KeysResponse,
   KillSwitchResponse,
+  NotificationsResponse,
   OrdersResponse,
   PaperResetResult,
   PerformanceResponse,
   PositionsResponse,
   ReviewDetail,
+  RiskBudgetResponse,
   ReviewsResponse,
   RunsResponse,
   SaveKeyResult,
   SaveSettingsResult,
   SettingsResponse,
+  SmtpStatus,
   StartRunResult,
   TestKeyResult,
+  UniverseAddResult,
+  UniverseImportResult,
+  UniverseResponse,
   VerdictResolved,
   VerdictsResponse,
   VerdictValue,
@@ -90,6 +96,10 @@ export function getChart(symbol: string): Promise<ChartResponse> {
   return get<ChartResponse>(`/api/chart/${symbol}`);
 }
 
+export function getRiskBudget(): Promise<RiskBudgetResponse> {
+  return get<RiskBudgetResponse>('/api/risk-budget');
+}
+
 export function getApprovals(): Promise<ApprovalsResponse> {
   return get<ApprovalsResponse>('/api/approvals');
 }
@@ -111,6 +121,33 @@ export function postSettings(
   reason: string,
 ): Promise<SaveSettingsResult> {
   return post<SaveSettingsResult>('/api/settings', { settings, reason });
+}
+
+export function getNotifications(
+  afterId = 0,
+  limit = 20,
+): Promise<NotificationsResponse> {
+  return get<NotificationsResponse>(
+    `/api/notifications?after_id=${afterId}&limit=${limit}`,
+  );
+}
+
+export function postNotificationTest(): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>('/api/notifications/test', {});
+}
+
+export function postSmtpSettings(body: {
+  host: string;
+  port: number;
+  username: string;
+  from_addr: string;
+  to_addr: string;
+  password?: string;
+}): Promise<{ ok: boolean; smtp: SmtpStatus }> {
+  return post<{ ok: boolean; smtp: SmtpStatus }>(
+    '/api/notifications/smtp',
+    body,
+  );
 }
 
 export function getKeys(): Promise<KeysResponse> {
@@ -159,4 +196,32 @@ export function getVerdicts(status: 'draft' | 'confirmed' | 'all' = 'draft'): Pr
 
 export function postVerdict(id: number, verdict: VerdictValue): Promise<VerdictResolved> {
   return post<VerdictResolved>(`/api/verdicts/${id}`, { verdict });
+}
+
+export function getUniverse(): Promise<UniverseResponse> {
+  return get<UniverseResponse>('/api/universe');
+}
+
+export function postUniverseAdd(
+  symbol: string,
+  sector: string,
+): Promise<UniverseAddResult> {
+  return post<UniverseAddResult>('/api/universe/pool', { symbol, sector });
+}
+
+export function postUniverseImport(csv: string): Promise<UniverseImportResult> {
+  return post<UniverseImportResult>('/api/universe/import', { csv });
+}
+
+export function postUniverseRemove(
+  symbol: string,
+): Promise<{ symbol: string; removed: boolean }> {
+  return post<{ symbol: string; removed: boolean }>(
+    `/api/universe/pool/${encodeURIComponent(symbol)}/remove`,
+    {},
+  );
+}
+
+export function postUniverseScreen(): Promise<Record<string, unknown>> {
+  return post<Record<string, unknown>>('/api/universe/screen', {});
 }

@@ -6,12 +6,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.data.models import Bar5m, DailyBar
+from app.data.models import Bar5m, CalendarDay, DailyBar
 from app.db.base import get_session_maker
 from app.db.models import Bar1d as Bar1dRow
 from app.db.models import Bar5m as Bar5mRow
 
 UTC = ZoneInfo("UTC")
+NY_TZ = ZoneInfo("America/New_York")
 
 
 def _naive_utc(dt: datetime) -> datetime:
@@ -113,6 +114,98 @@ class BarCache:
                 .select_from(Bar1dRow)
                 .where(Bar1dRow.symbol == symbol)
             ).scalar_one()
+
+    def covered_session_dates(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> set[date]:
+        """New York session dates with at least one cached 5m bar.
+
+        ``sessions`` are ``CalendarDay``-like (open/close attributes); the
+        result is intersected with their dates so stray bars outside the
+        wanted range never count.
+        """
+        if not sessions:
+            return set()
+        start = min(s.open for s in sessions)
+        end = max(s.close for s in sessions)
+        with self._session_factory() as session:
+            starts = (
+                session.execute(
+                    select(Bar5mRow.start)
+                    .where(
+                        Bar5mRow.symbol == symbol,
+                        Bar5mRow.start >= _naive_utc(start),
+                        Bar5mRow.start <= _naive_utc(end),
+                    )
+                    .distinct()
+                )
+                .scalars()
+                .all()
+            )
+        wanted = {s.date for s in sessions}
+        return {
+            _aware_utc(s).astimezone(NY_TZ).date() for s in starts
+        } & wanted
+
+    def covered_session_counts(
+        self, symbols: list[str], sessions: list[CalendarDay]
+    ) -> dict[str, int]:
+        """Covered New York sessions per symbol, in one grouped query.
+
+        Same coverage as ``covered_session_dates`` but batched: cached bars
+        only ever span regular sessions (13:30–21:00 UTC), so a bar's UTC
+        date is always its New York session date and SQL ``date(start)``
+        can do the grouping instead of converting every bar in Python.
+        """
+        counts = dict.fromkeys(symbols, 0)
+        if not symbols or not sessions:
+            return counts
+        start = min(s.open for s in sessions)
+        end = max(s.close for s in sessions)
+        wanted = {s.date for s in sessions}
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(Bar5mRow.symbol, func.date(Bar5mRow.start))
+                    .where(
+                        Bar5mRow.symbol.in_(symbols),
+                        Bar5mRow.start >= _naive_utc(start),
+                        Bar5mRow.start <= _naive_utc(end),
+                    )
+                    .distinct()
+                )
+                .all()
+            )
+        for symbol, day in rows:
+            if date.fromisoformat(day) in wanted:
+                counts[symbol] += 1
+        return counts
+
+    def daily_bar_counts(
+        self, symbols: list[str], sessions: list[CalendarDay]
+    ) -> dict[str, int]:
+        """Cached daily bars per symbol on the given session dates."""
+        counts = dict.fromkeys(symbols, 0)
+        if not symbols or not sessions:
+            return counts
+        wanted = {s.date for s in sessions}
+        start = min(wanted)
+        end = max(wanted)
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(Bar1dRow.symbol, Bar1dRow.date).where(
+                        Bar1dRow.symbol.in_(symbols),
+                        Bar1dRow.date >= start,
+                        Bar1dRow.date <= end,
+                    )
+                )
+                .all()
+            )
+        for symbol, day in rows:
+            if day in wanted:
+                counts[symbol] += 1
+        return counts
 
     def get_daily(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Return cached daily bars for a symbol in [start, end], by date."""

@@ -29,6 +29,7 @@ from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
+from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
 from app.signals.service import SignalService
 
@@ -69,6 +70,7 @@ class CycleRunner:
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
         on_settings_promoted: Callable[[], None] | None = None,
+        notifier: Notifier | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -81,6 +83,7 @@ class CycleRunner:
         self.outcomes = outcomes
         self._session_factory = session_factory or get_session_maker()
         self._notify = notify or (lambda topics: None)
+        self._notifier = notifier or NullNotifier()
         # Reschedules cron jobs when promoted settings move cycle times.
         self._on_settings_promoted = on_settings_promoted or (lambda: None)
 
@@ -238,6 +241,9 @@ class CycleRunner:
             session.add(cycle)
             session.commit()
             report.cycle_id = cycle.id
+            # The dashboard's cycle counter switches to "running" on this
+            # push, and back to the countdown on the one after commit.
+            self._notify({"header", "decisions"})
 
             try:
                 await self._run(session, cycle.id, scheduled_ny, now, report)
@@ -271,6 +277,18 @@ class CycleRunner:
             cycle.errors = report.errors or None
             cycle.data_source_health = report.data_source_health or None
             session.commit()
+        self._notify({"header", "decisions"})
+        failing = {
+            name: status
+            for name, status in report.data_source_health.items()
+            if status != "ok"
+        }
+        if failing:
+            self._notifier.notify(
+                "source_failing",
+                ", ".join(f"{name} ({status})" for name, status in failing.items()),
+                link="/settings",
+            )
         await self._count_cycle_outcome(report)
         return report
 
@@ -339,10 +357,14 @@ class CycleRunner:
             account = await self.executor.refresh_account()
             if account is None:
                 report.data_source_health["account"] = "error"
-            await self.executor.update_session_brakes()
 
         symbols = self.market_data.universe()
         quotes, news = await self._update_data(symbols, now, report)
+        # The 1h shock-brake leg runs here, on the hourly cycle, so the
+        # just-topped-up cache holds the completed bar (docs/SPEC.md,
+        # Position check).
+        if self.executor is not None:
+            await self.executor.update_session_brakes(include_1h=True)
         evaluation = await self.signals.refresh_eval()
 
         positions = {
@@ -374,10 +396,18 @@ class CycleRunner:
             session, [item.symbol for item in reviews], now
         )
         last_cycle = self._is_last_cycle(now)
+        earnings_result = self.market_data.latest_earnings
         earnings_known = (
-            self.market_data.latest_earnings is None
-            or self.market_data.latest_earnings.error is None
+            earnings_result is None or earnings_result.error is None
         )
+        if not earnings_known and earnings_result is not None:
+            self._notifier.notify(
+                "source_failing",
+                "earnings calendar unavailable "
+                f"({earnings_result.error}) — "
+                "entries stay blocked",
+                link="/settings",
+            )
 
         # Symbols the rules reject still get a stored decision — "no_call"
         # with reason "rules" — so the inspector shows why they were skipped.
@@ -410,8 +440,10 @@ class CycleRunner:
         max_calls = int(
             self.config.get("decision", "max_calls_per_cycle", default=10)
         )
-        for item in reviews:
+        capped_at: int | None = None
+        for i, item in enumerate(reviews):
             if report.calls >= max_calls:
+                capped_at = i
                 break
             quote = quotes.get(item.symbol)
             price = quote.ask if quote is not None else None
@@ -428,9 +460,9 @@ class CycleRunner:
                 position=position,
                 news=None if news is None else news.get(item.symbol, []),
             )
-            report.calls += 1
             if context == "candidate" and price is None:
-                # Missing quotes mean no new entries this cycle.
+                # Missing quotes mean no new entries this cycle — and no
+                # model call, so the cap slot stays free for the next one.
                 decision = self.decide.record_no_call(
                     session,
                     cycle_id=cycle_id,
@@ -442,6 +474,7 @@ class CycleRunner:
                     detail="quote unavailable",
                 )
             else:
+                report.calls += 1
                 decision = await self.decide.decide(
                     session,
                     cycle_id=cycle_id,
@@ -479,8 +512,10 @@ class CycleRunner:
                 )
             session.commit()
             report.decisions.append(decision.id)
-        # Candidates beyond the call cap are recorded without a call.
-        for item in reviews[max_calls:]:
+        # Review items past the cap are recorded without a call — the tail
+        # starts where the loop stopped, not at ``max_calls``, since
+        # quote-missing candidates never consumed a call slot.
+        for item in reviews[capped_at if capped_at is not None else len(reviews):]:
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,

@@ -136,8 +136,8 @@ def _runner(
     config = AppConfig()
     if universe is not None:
         config.yaml["universe"]["symbols"] = universe
-    src = sources or _sources()
     clock = clock or FakeClock(NOW_13H)
+    src = sources or _sources(quotes=FakeQuoteSource(clock))
     calendar = cast(CalendarProvider, src.calendar)
     market_data = MarketDataService(
         src, calendar, config, session_factory=session_factory
@@ -451,6 +451,53 @@ async def test_call_cap_reviews_held_positions_before_candidates(
         assert decisions[symbol].final_action == "no_call"
         assert decisions[symbol].no_call_reason == "call_cap"
         assert decisions[symbol].model == "none"
+
+
+async def test_quote_missing_does_not_consume_call_slot(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A candidate with no quote makes no model call, so the cap slot stays
+    free for the next candidate."""
+
+    class MsftOnlyQuotes:
+        async def fetch_quotes(
+            self, symbols: list[str]
+        ) -> DataResult[dict[str, Quote]]:
+            return DataResult(
+                data={
+                    "MSFT": Quote(
+                        symbol="MSFT",
+                        bid=Decimal("420"),
+                        ask=Decimal("420.10"),
+                        last=Decimal("420.10"),
+                        timestamp=NOW_13H,
+                        feed="iex",
+                    )
+                },
+                source="fake",
+            )
+
+    runner = _runner(
+        session_factory,
+        _evaluation(
+            _item("AAPL", "pass"),  # no quote → quote_missing
+            _item("MSFT", "pass"),  # gets the one call slot
+            _item("XOM", "pass"),   # past the cap → call_cap
+        ),
+        sources=_sources(quotes=MsftOnlyQuotes()),
+        universe=["AAPL", "MSFT", "XOM"],
+    )
+    runner.config.yaml["decision"]["max_calls_per_cycle"] = 1
+
+    report = await runner.run(CYCLE_1246)
+
+    assert report.calls == 1
+    decisions = {d.symbol: d for d in _decisions(session_factory)}
+    assert decisions["AAPL"].final_action == "no_call"
+    assert decisions["AAPL"].no_call_reason == "quote_missing"
+    assert decisions["MSFT"].model != "none"
+    assert decisions["XOM"].final_action == "no_call"
+    assert decisions["XOM"].no_call_reason == "call_cap"
 
 
 async def test_run_due_respects_early_close(

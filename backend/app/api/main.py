@@ -40,10 +40,12 @@ from app.engine.state import (
     load_execution_state,
     record_event,
     recover_interrupted_cycles,
+    set_event_sink,
 )
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
+from app.notifications.service import NotificationService
 from app.reviews.client import make_review_client
 from app.reviews.service import ReviewService
 from app.secrets_service import (
@@ -57,6 +59,7 @@ from app.secrets_service import (
     scrub,
 )
 from app.signals.service import SignalService
+from app.universe.service import UniverseService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,21 @@ async def run_scheduled_cycle(
     hour, minute = (int(p) for p in cycle_time.split(":")[:2])
     scheduled = datetime.combine(today, dtime(hour, minute), tzinfo=NY_TZ)
     await runner.run(scheduled)
+
+
+async def run_universe_screen(
+    service: UniverseService, bus: UpdateBus | None = None
+) -> None:
+    """Scheduler entry point: the 08:10 New York liquidity screen.
+
+    The screen runs in fixed mode too — its eligible list is a preview
+    on the Universe screen until PR 12 wires it into cycles. A data
+    failure keeps the previous list and shows a banner (docs/SPEC.md,
+    Larger universe).
+    """
+    await service.run_screen()
+    if bus is not None:
+        bus.publish("universe", "banners", "header")
 
 
 async def run_scheduled_check(
@@ -378,6 +396,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # client is built, and the scrub filter is in place before anything
     # can log a value that passed through the environment.
     secrets_store = SecretsStore(config, clock)
+    # One notification service behind every alert (docs/SPEC.md,
+    # Notifications). The record_event sink is registered before any
+    # client can write an event row.
+    notification_service = NotificationService(
+        config=config,
+        clock=clock,
+        secrets=secrets_store,
+        publish=lambda topics: bus.publish(*topics),
+    )
+    notification_service.start()
+    set_event_sink(notification_service.sink)
     key_testers = make_key_testers(config, clock)
     await secrets_store.import_env_keys(read_env_keys(), key_testers)
     install_secret_scrub_filter(secrets_store.scrub_values)
@@ -385,6 +414,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)
+        missing = secrets_store.missing_groups()
+        if missing:
+            notification_service.notify(
+                "source_failing",
+                f"{', '.join(missing)} key(s) failing — "
+                "the agent stays paused",
+                link="/settings",
+            )
 
     broker = make_broker(config, sources, clock, secrets_store)
     calendar_store = CalendarStore(sources.calendar)
@@ -394,6 +431,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         make_decision_client(config, api_key=secrets_store.get("openai")),
         config,
         api_key=secrets_store.get("openai"),
+        notifier=notification_service,
     )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
@@ -405,6 +443,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         clock=clock,
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
     )
     outcome_worker = OutcomeWorker(
         market_data=market_data,
@@ -423,6 +462,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signals=signal_service,
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -442,12 +482,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         executor=executor,
         outcomes=outcome_worker,
         notify=lambda topics: bus.publish(*topics),
+        notifier=notification_service,
+    )
+    universe_service = UniverseService(
+        market_data=market_data,
+        sources=sources,
+        calendar=calendar_store,
+        broker=broker,
+        config=config,
+        clock=clock,
+        notify=lambda: bus.publish("universe", "banners", "header"),
     )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
+
+    # The pool seeds once at startup; the daily screen runs from its
+    # 08:10 New York job as a preview while screened mode is blocked —
+    # the eligible list only reaches cycles when PR 12 lands
+    # (docs/SPEC.md §443). The simulated demo triggers it through
+    # POST /api/universe/screen.
+    universe_service.ensure_pool_loaded()
 
     # Trade updates → ledger; then reconcile once so the database starts
     # as a mirror of the broker (adopted positions get their stop here).
@@ -541,7 +598,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.exec_state = exec_state
     app.state.position_checker = position_checker
     app.state.review_service = review_service
+    app.state.universe = universe_service
     app.state.update_bus = bus
+    app.state.notification_service = notification_service
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     # When promoted settings move cycle times the cron jobs are rebuilt.
@@ -569,6 +628,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         IntervalTrigger(minutes=5),
         args=[calendar_store, config, clock],
         id="calendar-retry",
+    )
+    # Liquidity screen (v0.2): 08:10 New York on trading days, after the
+    # daily bars refresh. Reads the configured time each startup; no-ops
+    # in fixed mode and outside trading days.
+    screen_at = str(
+        (config.pending() or config.effective())
+        .get("universe", {})
+        .get("screen", {})
+        .get("time_ny", "08:10")
+    )
+    screen_hour, screen_minute = (int(p) for p in screen_at.split(":")[:2])
+    scheduler.add_job(
+        run_universe_screen,
+        CronTrigger(hour=screen_hour, minute=screen_minute, timezone=NY_TZ),
+        args=[universe_service, bus],
+        id="universe-screen",
+        misfire_grace_time=int(
+            config.get("schedule", "misfire_grace_seconds", default=120)
+        ),
+        coalesce=True,
     )
     # Daily database copy: an app-timezone job (Amsterdam per spec).
     app_tz = ZoneInfo(str(config.get("app", "timezone", default="Europe/Amsterdam")))
@@ -637,12 +716,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="verdict-scan",
         coalesce=True,
     )
+    # Quiet-hours heartbeat: sends the held-notifications summary when
+    # the window ends, and catches up after a restart.
+    scheduler.add_job(
+        notification_service.tick,
+        IntervalTrigger(minutes=1),
+        id="notifications-tick",
+        coalesce=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     try:
         yield
     finally:
         scheduler.shutdown(wait=False)
+        set_event_sink(None)
+        await notification_service.stop()
         # Normal shutdown: give a running cycle or check the grace window
         # to finish; leftovers become "interrupted" and never count as
         # failures — only rows still "running" at the next startup (a real

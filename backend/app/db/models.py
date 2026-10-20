@@ -228,6 +228,56 @@ class CorporateAction(Base):
     ratio_or_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
 
 
+class UniversePoolRow(Base):
+    """One symbol in the screened-mode pool (docs/SPEC.md, Larger universe).
+
+    Seeded from ``backend/universe/pool.csv`` the first time screened mode
+    starts, then edited on the Universe screen. Removed rows keep their row
+    with ``removed_at`` set — a held symbol stays in the pool until its
+    position is closed.
+    """
+
+    __tablename__ = "universe_pool"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
+    sector: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # default | added | import
+    added_at: Mapped[datetime] = mapped_column(nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class UniverseScreenRow(Base):
+    """One symbol's result in one daily liquidity screen.
+
+    Written once per trading day per pool symbol; the eligible list for a
+    session is fixed at screen time. ``failed_in_a_row`` counts consecutive
+    screens the symbol failed — an eligible symbol only drops out at the
+    configured threshold (default 3).
+    """
+
+    __tablename__ = "universe_screens"
+    __table_args__ = (
+        UniqueConstraint("session_date", "symbol", name="uq_universe_screens_day_symbol"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    # eligible | excluded | warming_up
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    # Per-check results, e.g. {"history": "pass", ..., "failed_check": "one_share"}.
+    check_results: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    last_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    avg_dollar_volume: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # 20-session return minus SPY's, in percentage points.
+    return_vs_spy: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    rank: Mapped[int | None] = mapped_column(nullable=True)
+    failed_in_a_row: Mapped[int] = mapped_column(nullable=False, default=0)
+
+
 class SettingsVersion(Base):
     """Versioned settings changes."""
 
@@ -367,6 +417,58 @@ class Verdict(Base):
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
     decision: Mapped[Decision] = relationship()
+
+
+class Notification(Base):
+    """One notification event and its per-channel outcome (docs/SPEC.md,
+    Notifications).
+
+    Every alert the agent raises lands here once; ``channel_status`` records
+    what each channel did — ``sent``, ``failed``, ``held back`` (repeat
+    limit), ``quiet hours`` or ``queued`` while the background email send is
+    still in flight.
+    """
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    time: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    # One of the configured event keys (kill_switch, missing_stop, …) or a
+    # system event (test, quiet_summary).
+    event: Mapped[str] = mapped_column(String(48), nullable=False)
+    severity: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # critical | warning | info
+    subject: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # GUI page the alert links to, e.g. "/positions".
+    link: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    channels: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    channel_status: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Held by quiet hours until the end-of-window summary picks it up.
+    held_for_quiet: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
+
+class SmtpSettings(Base):
+    """The non-secret half of the email channel (docs/SPEC.md, Notifications).
+
+    Saved on its own, outside the versioned settings, after a successful
+    test send. The password is a ``secrets`` row (``smtp_password``) —
+    encrypted, write-only, never here.
+    """
+
+    __tablename__ = "smtp_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    host: Mapped[str] = mapped_column(String(255), nullable=False)
+    port: Mapped[int] = mapped_column(nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    from_addr: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_addr: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
 class Event(Base):

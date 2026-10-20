@@ -1,7 +1,8 @@
 """Encrypted API keys (docs/SPEC.md, API keys).
 
-The four keys — ``alpaca_key_id``, ``alpaca_secret``, ``openai``,
-``finnhub`` — live in the ``secrets`` table, Fernet-encrypted. The key
+The keys — ``alpaca_key_id``, ``alpaca_secret``, ``openai``,
+``finnhub`` and the SMTP ``smtp_password`` — live in the ``secrets``
+table, Fernet-encrypted. The key
 file is ``SA_DATA_DIR/secret.key`` (created at first start, mode 600,
 never in the DB). Reads never expose values: only the name, the last
 four characters, timestamps and the test result cross the API.
@@ -39,7 +40,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SECRET_NAMES = ("alpaca_key_id", "alpaca_secret", "openai", "finnhub")
+SECRET_NAMES = (
+    "alpaca_key_id",
+    "alpaca_secret",
+    "openai",
+    "finnhub",
+    "smtp_password",
+)
 
 # The UI treats the Alpaca pair as one entry: three "keys" in the GUI.
 GROUPS: dict[str, tuple[str, ...]] = {
@@ -459,6 +466,25 @@ class SecretsStore:
             "saved_at": _iso(saved_at),
             "tested_at": _iso(tested_at),
             "error": error,
+        }
+
+    def secret_status(self, name: str) -> dict[str, object] | None:
+        """Metadata for one stored secret — timestamps and test result,
+        never the value. Used for the SMTP password's test chip."""
+        row = self._meta.get(name)
+        if row is None:
+            return None
+
+        def _iso(value: datetime | None) -> str | None:
+            if value is None:
+                return None
+            return value.replace(tzinfo=None).isoformat() + "Z"
+
+        return {
+            "saved_at": _iso(row.saved_at),
+            "tested_at": _iso(row.tested_at),
+            "test_result": row.test_result,
+            "test_detail": row.test_detail,
         }
 
     def missing_groups(self) -> list[str]:

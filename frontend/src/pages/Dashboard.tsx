@@ -7,6 +7,7 @@ import {
   getChart,
   getDashboard,
   getPositions,
+  getRiskBudget,
   getWatchlist,
 } from '../api/state';
 import type {
@@ -16,12 +17,16 @@ import type {
   DashboardResponse,
   MarketClosedCard,
   PositionsResponse,
+  RiskBudgetResponse,
   WatchlistResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
+import { CycleCounter } from '../components/CycleCounter';
 import { PriceChart } from '../components/PriceChart';
+import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
@@ -392,6 +397,7 @@ export default function Dashboard() {
   const [approvals, setApprovals] = useState<ApprovalsResponse | null>(null);
   const [positions, setPositions] = useState<PositionsResponse | null>(null);
   const [chart, setChart] = useState<ChartResponse | null>(null);
+  const [budget, setBudget] = useState<RiskBudgetResponse | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
 
   const refreshDashboard = useCallback((symbol?: string | null) => {
@@ -412,6 +418,9 @@ export default function Dashboard() {
     if (!symbol) return;
     getChart(symbol).then(setChart).catch(() => setChart(null));
   }, []);
+  const refreshBudget = useCallback(() => {
+    getRiskBudget().then(setBudget).catch(console.error);
+  }, []);
 
   const symbols = watchlist?.rows.map((r) => r.symbol) ?? [];
   const chartSymbol = selected ?? symbols[0] ?? null;
@@ -420,7 +429,8 @@ export default function Dashboard() {
     refreshWatchlist();
     refreshApprovals();
     refreshPositions();
-  }, [refreshWatchlist, refreshApprovals, refreshPositions]);
+    refreshBudget();
+  }, [refreshWatchlist, refreshApprovals, refreshPositions, refreshBudget]);
   useEffect(() => {
     // The latest-decision card tracks the selected symbol.
     refreshDashboard(chartSymbol);
@@ -429,7 +439,7 @@ export default function Dashboard() {
     refreshChart(chartSymbol);
   }, [chartSymbol, refreshChart]);
 
-  useLiveUpdates(['decisions', 'header', 'performance'], () =>
+  useLiveUpdates(['decisions', 'header', 'performance', 'reviews'], () =>
     refreshDashboard(chartSymbol),
   );
   useLiveUpdates(['watchlist'], refreshWatchlist);
@@ -442,13 +452,16 @@ export default function Dashboard() {
     refreshDashboard(chartSymbol);
     refreshChart(chartSymbol);
   });
+  // The risk budget card reads the gate context: positions, orders and
+  // account updates (header) all change its inputs.
+  useLiveUpdates(['positions', 'orders', 'header'], refreshBudget);
   useLiveUpdates(['watchlist', 'decisions'], () => refreshChart(chartSymbol));
 
   const stats = dashboard?.stats;
-  const riskPct = stats?.open_risk_pct !== null && stats?.open_risk_pct !== undefined
-    ? Number(stats.open_risk_pct)
-    : null;
-  const riskCap = stats?.open_risk_cap_pct ?? 0;
+  const sincePct =
+    stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
+      ? Number(stats.since_start_pct)
+      : null;
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -470,55 +483,117 @@ export default function Dashboard() {
         </div>
       )}
 
-      {dashboard?.cycle_line && (
+      {(dashboard?.cycle_line || dashboard?.cycle_counter) && (
         <div
+          role="status"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            gap: 'var(--sa-space-2) var(--sa-space-5)',
-            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '10px var(--sa-space-3)',
+            padding: 'var(--sa-space-3) var(--sa-space-4)',
+            background: 'var(--sa-panel)',
+            border: '1px solid var(--sa-border)',
+            borderRadius: 'var(--sa-radius-lg)',
             fontSize: 'var(--sa-text-md)',
           }}
         >
-          <span>
-            <b style={{ fontWeight: 600 }}>{dashboard.cycle_line.label}</b>
-            <span style={{ color: 'var(--sa-text-2)' }}> · {dashboard.cycle_line.text}</span>
-          </span>
-          <span style={{ color: 'var(--sa-text-muted)', fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)' }}>
-            Cycle {dashboard.cycle_line.cycle_index} of {dashboard.cycle_line.cycles_today} today
-          </span>
+          {dashboard?.cycle_line && (
+            <>
+              <span
+                style={{
+                  padding: '3px var(--sa-space-2)',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  background: 'var(--sa-subtle)',
+                  color: 'var(--sa-text-2)',
+                  fontSize: 'var(--sa-text-sm)',
+                  fontWeight: 600,
+                }}
+              >
+                {dashboard.cycle_line.label}
+              </span>
+              <span
+                style={{ flex: '1 1 420px', color: 'var(--sa-text-2)', lineHeight: 1.5 }}
+              >
+                {dashboard.cycle_line.text}
+              </span>
+            </>
+          )}
+          {dashboard?.cycle_counter && <CycleCounter counter={dashboard.cycle_counter} />}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)' }}>
-        <StatCard
-          label="Open risk"
-          value={riskPct !== null ? `${riskPct.toFixed(2)}%` : '—'}
-          sub={`of ${riskCap}% cap${stats?.open_risk_usd ? ` · $${stats.open_risk_usd}` : ''}`}
-          bar={
-            riskPct !== null && riskCap > 0
-              ? {
-                  width: `${Math.min(100, (riskPct / riskCap) * 100)}%`,
-                  color: 'var(--sa-accent)',
-                }
-              : undefined
-          }
-        />
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-3)',
+          alignItems: 'stretch',
+        }}
+      >
         <StatCard
           label="Positions"
           value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
           sub={`cash $${stats?.cash ?? '—'} · no margin`}
         />
-        <StatCard
-          label="Day trades"
-          value={`${stats?.day_trades ?? 0} of ${stats?.day_trades_max ?? '—'}`}
-          sub="last 5 trading days"
-        />
+        <Link
+          to="/inspector"
+          title={
+            stats
+              ? `Decision calls today: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
+                (stats.reviews_cost_month !== null && stats.reviews_cost_month !== undefined
+                  ? ` Reviews have their own $${stats.reviews_cost_cap} monthly cap: $${Number(stats.reviews_cost_month).toFixed(2)} used.`
+                  : '')
+              : undefined
+          }
+          style={{
+            display: 'flex',
+            flex: '1 1 190px',
+            minWidth: 0,
+            textDecoration: 'none',
+          }}
+        >
+          <StatCard
+            label="Model calls today"
+            value={`${stats?.calls_today ?? 0}`}
+            bar={{
+              width: `${stats && stats.calls_max > 0 ? Math.min(100, (stats.calls_today / stats.calls_max) * 100) : 0}%`,
+              color: 'var(--sa-info)',
+            }}
+            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} today · $${stats ? Number(stats.calls_cost_month).toFixed(2) : '—'} this month`}
+            style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
+          />
+        </Link>
         <StatCard
           label="Since start"
-          value={stats?.since_start_pct !== null && stats?.since_start_pct !== undefined ? `${stats.since_start_pct}%` : '—'}
+          value={
+            stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
+              ? `${stats.since_start_pct}%`
+              : '—'
+          }
+          valueColor={
+            sincePct === null
+              ? undefined
+              : sincePct > 0
+                ? 'var(--sa-positive)'
+                : sincePct < 0
+                  ? 'var(--sa-negative)'
+                  : undefined
+          }
           sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
         />
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-5)',
+          alignItems: 'stretch',
+        }}
+      >
+        <BriefingCard briefing={dashboard?.briefing ?? null} />
+        <RiskBudgetCard budget={budget} />
       </div>
 
       {dashboard?.market_closed && (

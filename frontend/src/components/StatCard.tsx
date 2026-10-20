@@ -6,9 +6,10 @@ export interface StatCardProps {
   valueColor?: string;
   sub?: string;
   bar?: { width: string; color: string };
+  style?: React.CSSProperties;
 }
 
-export function StatCard({ label, value, valueColor, sub, bar }: StatCardProps) {
+export function StatCard({ label, value, valueColor, sub, bar, style }: StatCardProps) {
   return (
     <div
       style={{
@@ -21,6 +22,7 @@ export function StatCard({ label, value, valueColor, sub, bar }: StatCardProps) 
         flexDirection: 'column',
         gap: '6px',
         minWidth: 0,
+        ...style,
       }}
     >
       <div

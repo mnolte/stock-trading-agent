@@ -16,6 +16,7 @@ import { Banner } from './Banner';
 import { BannerStrip } from './BannerStrip';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
+import NotificationToasts from './NotificationToasts';
 import { Sidebar } from './Sidebar';
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
@@ -159,6 +160,7 @@ export function Layout() {
           <Outlet />
         </main>
       </div>
+      <NotificationToasts />
 
       <KillSwitchDialog
         open={dialog === 'menu'}

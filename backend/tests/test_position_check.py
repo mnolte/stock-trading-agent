@@ -17,6 +17,8 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
+from app.data.models import DataResult, Quote
+from app.data.protocols import QuoteSource
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Cycle, EquitySnapshot, Event
@@ -43,13 +45,14 @@ def session_factory(tmp_path: Path) -> sessionmaker[Session]:
 def _checker(
     session_factory: sessionmaker[Session],
     broker: FakeBroker,
+    quotes: QuoteSource | None = None,
 ) -> PositionChecker:
     clock = FakeClock(NOW)
     config = AppConfig()
     calendar = FakeCalendarSource()
     sources = DataSources(
         bars=FakeBarSource(calendar),
-        quotes=FakeQuoteSource(),
+        quotes=quotes or FakeQuoteSource(clock),
         news=FakeNewsSource(),
         earnings=FakeEarningsSource(),
         fx=FakeFXSource(),
@@ -136,3 +139,54 @@ async def test_failed_checks_alert_at_threshold(
             select(Cycle).where(Cycle.kind == "position_check")
         ).scalars().all()
         assert all(c.status == "error" for c in cycles)
+
+
+class _CrashQuotes:
+    """SPY trading ~5% below the session open — a mid-session crash."""
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        return DataResult(
+            data={
+                s: Quote(
+                    symbol=s,
+                    bid=Decimal("549"),
+                    ask=Decimal("550"),
+                    last=Decimal("550"),
+                    timestamp=NOW,
+                    feed="iex",
+                )
+                for s in symbols
+            },
+            source="fake",
+        )
+
+
+async def test_position_check_trips_shock_brake_on_spy_crash(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """B1: SPY crossing the since-open threshold mid-session must trip the
+    brake inside this same position check — the quote is real-time."""
+    broker = FakeBroker(FakeClock(NOW), cash=Decimal("10000"))
+    checker = _checker(session_factory, broker, quotes=_CrashQuotes())
+
+    report = await checker.run()
+
+    assert report.ok
+    assert checker.state.shock_brake_session is True
+    # The 1h leg is decision-cycle only; position checks leave it alone.
+    assert checker.state.shock_brake_1h is False
+
+
+async def test_position_check_quiet_spy_no_brake(
+    session_factory: sessionmaker[Session],
+) -> None:
+    broker = FakeBroker(FakeClock(NOW), cash=Decimal("10000"))
+    checker = _checker(session_factory, broker)  # default calm quotes
+
+    report = await checker.run()
+
+    assert report.ok
+    assert checker.state.shock_brake_session is False
+    assert checker.state.shock_brake_1h is False

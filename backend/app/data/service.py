@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
 from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.cache import BarCache, _naive_utc
@@ -14,6 +15,7 @@ from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar, DataResult, FXR
 from app.db.base import get_session_maker
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
+from app.db.models import Order, Position
 from app.market.calendar import CalendarProvider
 
 UTC = ZoneInfo("UTC")
@@ -39,7 +41,34 @@ class MarketDataService:
         self.latest_earnings: DataResult[int] | None = None
 
     def universe(self) -> list[str]:
-        return list(self.config.get("universe", "symbols", default=[]))
+        """Configured symbols plus every held symbol.
+
+        A symbol with an open position or a live entry order is always
+        managed — fetched, evaluated and exited — even when it is no
+        longer on the configured list (docs/SPEC.md, Larger universe).
+        """
+        symbols = list(self.config.get("universe", "symbols", default=[]))
+        return symbols + sorted(self._held_symbols() - set(symbols))
+
+    def _held_symbols(self) -> set[str]:
+        """Open-position symbols plus symbols with a live entry order."""
+        with self._session_factory() as session:
+            held = {
+                row[0]
+                for row in session.execute(
+                    select(Position.symbol).where(Position.closed_at.is_(None))
+                ).all()
+            }
+            held.update(
+                row[0]
+                for row in session.execute(
+                    select(Order.symbol).where(
+                        Order.leg == "entry",
+                        Order.status.in_(OPEN_ORDER_STATUSES),
+                    )
+                ).all()
+            )
+        return held
 
     def recent_sessions(self, today: date, count: int) -> list[CalendarDay]:
         """The ``count`` most recent trading sessions ending at ``today``."""

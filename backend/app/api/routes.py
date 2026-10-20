@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
@@ -32,7 +34,7 @@ from app.db.models import (
     Verdict,
 )
 from app.decide.prompt import PROMPTS_DIR, load_prompt
-from app.engine.executor import Executor
+from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
@@ -44,7 +46,13 @@ from app.market.clock import (
     SessionState,
     make_clock,
 )
+from app.notifications.events import EVENT_DEFS
+from app.notifications.service import (
+    EMAIL_FAILURE_BANNER_AT,
+    NotificationService,
+)
 from app.reviews.facts import verdict_eligible, verdict_facts
+from app.risk.budget import Meter, risk_budget
 from app.secrets_service import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -58,6 +66,7 @@ from app.settings_service import (
     SettingsError,
     _deep_merge,
     _nested_get,
+    pending_change_map,
     save_version,
     schedule_table,
     validate_settings,
@@ -65,8 +74,11 @@ from app.settings_service import (
 )
 from app.signals.indicators import ema_series
 from app.signals.service import SignalService
+from app.universe.service import PoolError, UniverseService
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _notify(request: Request, *topics: str) -> None:
@@ -655,6 +667,10 @@ def _secrets(request: Request) -> SecretsStore | None:
     return getattr(request.app.state, "secrets_store", None)
 
 
+def _notifications(request: Request) -> NotificationService | None:
+    return getattr(request.app.state, "notification_service", None)
+
+
 def _key_testers(request: Request) -> KeyTesters:
     testers = getattr(request.app.state, "key_testers", None)
     if testers is None:
@@ -1054,6 +1070,111 @@ def _ny_date(dt: datetime) -> object:
     return aware.astimezone(NY_TZ).date()
 
 
+def _meter_fill(meter: Meter | None) -> str:
+    """Bar width in percent of the limit, capped at 100 (display only)."""
+    if meter is None:
+        return "0"
+    if meter.limit_pct <= 0:
+        return "100" if meter.used_pct > 0 else "0"
+    return str(min(Decimal(100), meter.used_pct / meter.limit_pct * 100))
+
+
+@router.get("/risk-budget")
+async def risk_budget_state(request: Request) -> dict[str, object]:
+    """The dashboard risk budget card: every limit as it stands now.
+
+    Figures come from the same gate context and helpers the entry gates
+    use — the GUI never recomputes risk (docs/SPEC.md, GUI — Risk budget
+    card). The account refresh is the same call the engine makes before
+    it gates, so the meters read what the gates would see right now.
+    """
+    executor = _executor(request)
+    config = get_config()
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    now = clock.now()
+    today_ny = now.astimezone(NY_TZ).date()
+    await executor.refresh_account()
+    spy_1h: Decimal | None = None
+    spy_session: Decimal | None = None
+    market_data = getattr(request.app.state, "market_data", None)
+    if market_data is not None:
+        sessions = market_data.recent_sessions(today_ny, 3)
+        spy_1h, spy_session = spy_session_moves(
+            market_data, sessions, now, today_ny
+        )
+    with get_session_maker()() as session:
+        ctx = executor.budget_context(session)
+    budget = risk_budget(
+        ctx, config, spy_1h_pct=spy_1h, spy_session_pct=spy_session
+    )
+    return {
+        "settings_version": config.active_version,
+        "open_risk": {
+            "used_pct": (
+                str(budget.open_risk.used_pct)
+                if budget.open_risk is not None
+                else None
+            ),
+            "used_usd": str(budget.open_risk_usd),
+            "limit_pct": str(budget.open_risk_limit_pct),
+            "level": (
+                budget.open_risk.level
+                if budget.open_risk is not None
+                else "normal"
+            ),
+            "fill_pct": _meter_fill(budget.open_risk),
+        },
+        "daily_loss": {
+            "used_pct": str(budget.daily_loss.used_pct),
+            "session_pnl_pct": str(budget.session_pnl_pct),
+            "limit_pct": str(budget.daily_loss.limit_pct),
+            "level": budget.daily_loss.level,
+            "fill_pct": _meter_fill(budget.daily_loss),
+        },
+        "drawdown": {
+            "used_pct": str(budget.drawdown.used_pct),
+            "limit_pct": str(budget.drawdown.limit_pct),
+            "level": budget.drawdown.level,
+            "fill_pct": _meter_fill(budget.drawdown),
+        },
+        "room": {
+            "trades": budget.room_trades,
+            "limited_by": budget.room_limited_by,
+        },
+        "sectors": [
+            {"sector": s.sector, "used": s.used, "cap": s.cap}
+            for s in budget.sectors
+        ],
+        "risk_per_trade_pct": str(budget.risk_per_trade_pct),
+        "losing_streak": {
+            "count": budget.losing_streak,
+            "max": budget.losing_streak_len,
+            "factor": str(budget.losing_streak_factor),
+        },
+        "shock_brake": {
+            "on": budget.shock_brake_on,
+            "limit_1h_pct": str(budget.shock_1h_limit_pct),
+            "limit_session_pct": str(budget.shock_session_limit_pct),
+            "spy_1h_pct": (
+                str(budget.spy_1h_pct) if budget.spy_1h_pct is not None else None
+            ),
+            "spy_session_pct": (
+                str(budget.spy_session_pct)
+                if budget.spy_session_pct is not None
+                else None
+            ),
+        },
+        "day_trades": {
+            "count": budget.day_trades_5d,
+            "max": budget.day_trades_max,
+        },
+        "positions": {
+            "open": budget.open_count,
+            "cap": budget.max_positions,
+        },
+    }
+
+
 @router.get("/orders")
 def orders(request: Request) -> dict[str, object]:
     """Latest order rows with leg, fills and slippage."""
@@ -1087,6 +1208,7 @@ def banners(request: Request) -> dict[str, object]:
                         "position_check_failed",
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
+                        "universe_screen_failed",
                     ]
                 ),
             )
@@ -1177,6 +1299,22 @@ def banners(request: Request) -> dict[str, object]:
                             "never confirmed at Alpaca. The position keeps "
                             "its stop; reconcile or cancel the order before "
                             "selling."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "universe_screen_failed":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "universe_screen_failed",
+                        "level": "warning",
+                        "message": (
+                            "Today's universe screen failed "
+                            f"({details.get('error', 'unknown error')}). The "
+                            "previous eligible list stays in effect."
                         ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
@@ -1330,6 +1468,24 @@ def banners(request: Request) -> dict[str, object]:
                 "message": "Daily loss limit reached. "
                 "No new entries until tomorrow's first cycle.",
                 "actions": [],
+            }
+        )
+    notification_service = _notifications(request)
+    if (
+        notification_service is not None
+        and notification_service.email_failures >= EMAIL_FAILURE_BANNER_AT
+    ):
+        items.append(
+            {
+                "id": None,
+                "kind": "email_failing",
+                "level": "warning",
+                "message": (
+                    f"{notification_service.email_failures} notification "
+                    "emails failed in a row. Check the SMTP details under "
+                    "Settings → Notifications."
+                ),
+                "actions": ["open_settings"],
             }
         )
     market_data = getattr(request.app.state, "market_data", None)
@@ -1644,6 +1800,17 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "notifications": {
+            "repeat_limit_minutes": get(
+                "notifications", "repeat_limit_minutes", default=30
+            ),
+            "quiet_hours": get(
+                "notifications",
+                "quiet_hours",
+                default={"start": "23:00", "end": "08:00"},
+            ),
+            "events": get("notifications", "events", default={}),
+        },
         "reviews": {
             "briefing_enabled": get(
                 "reviews", "briefing_enabled", default=True
@@ -1653,9 +1820,28 @@ def _settings_form(config: object) -> dict[str, object]:
             ),
         },
         "universe": {
+            "mode": get("universe", "mode", default="fixed"),
             "symbols": get("universe", "symbols", default=[]),
             "sectors": get("universe", "sectors", default={}),
             "allowed_sectors": get("universe", "allowed_sectors", default=[]),
+            "screen": {
+                "min_price": get("universe", "screen", "min_price", default=10),
+                "min_avg_dollar_volume": get(
+                    "universe",
+                    "screen",
+                    "min_avg_dollar_volume",
+                    default=100000000,
+                ),
+                "lookback_sessions": get(
+                    "universe", "screen", "lookback_sessions", default=20
+                ),
+                "drop_after_failed_screens": get(
+                    "universe",
+                    "screen",
+                    "drop_after_failed_screens",
+                    default=3,
+                ),
+            },
         },
     }
 
@@ -1795,10 +1981,18 @@ def settings(request: Request) -> dict[str, object]:
                 "reason": row.reason,
             }
         )
+    pending_tree = config.pending()
+    active_tree = config.effective()
     return {
         "settings": _settings_form(config),
         "active_version": config.active_version,
         "pending_version": config.pending_version,
+        "pending": pending_change_map(active_tree, pending_tree)
+        if pending_tree is not None
+        else {},
+        "pending_change": version_change_summary(active_tree, pending_tree)
+        if pending_tree is not None
+        else None,
         "next_version": (rows[0].version + 1) if rows else 1,
         "held_symbols": sorted(_held_symbols()),
         "prompt_options": _prompt_options(),
@@ -1806,6 +2000,21 @@ def settings(request: Request) -> dict[str, object]:
         "connections": _connections(request),
         "history": history,
         "reviews_spend_usd": _reviews_spend(request),
+        "notification_events": [
+            {
+                "key": d.key,
+                "label": d.label,
+                "description": d.description,
+                "group": d.group,
+                "severity": d.severity,
+            }
+            for d in EVENT_DEFS
+        ],
+        "smtp": (
+            _notifications(request).smtp_status()  # type: ignore[union-attr]
+            if _notifications(request) is not None
+            else None
+        ),
         "mode": config.env.mode,
     }
 
@@ -1869,7 +2078,72 @@ def _clock(request: Request) -> Clock:
 
 
 # ----------------------------------------------------------------------
-# API keys (encrypted, write-only, tested before save)
+# Notifications (docs/SPEC.md, Notifications)
+
+
+@router.get("/notifications")
+def notifications(
+    request: Request, after_id: int = 0, limit: int = 20
+) -> dict[str, object]:
+    """Recent notifications, newest first, for the toasts and the
+    'Recently sent' list on the Settings page."""
+    service = _notifications(request)
+    if service is None:
+        return {"items": [], "latest_id": after_id}
+    return service.recent(after_id=after_id, limit=limit)
+
+
+@router.post("/notifications/test")
+async def notification_test(request: Request) -> dict[str, object]:
+    """'Send test': one notification on every enabled channel."""
+    service = _notifications(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="notifications unavailable")
+    return await service.send_test()
+
+
+@router.post("/notifications/smtp")
+async def save_smtp(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Save the SMTP details — only after a real test send succeeded.
+    The password (if any) goes to the encrypted secrets table."""
+    service = _notifications(request)
+    if service is None:
+        raise HTTPException(status_code=503, detail="notifications unavailable")
+    host = str(body.get("host") or "").strip()
+    username = str(body.get("username") or "").strip()
+    from_addr = str(body.get("from_addr") or "").strip()
+    to_addr = str(body.get("to_addr") or "").strip()
+    raw_password = body.get("password")
+    password = str(raw_password) if raw_password else None
+    errors: list[str] = []
+    if not host:
+        errors.append("SMTP host is required")
+    if not to_addr:
+        errors.append("Send to is required")
+    try:
+        port = int(str(body.get("port") or 587))
+    except ValueError:
+        port = 0
+    if not 1 <= port <= 65535:
+        errors.append("SMTP port must be 1–65535")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    result = await service.save_smtp(
+        host=host,
+        port=port,
+        username=username,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        password=password,
+    )
+    if not result.get("ok"):
+        raise HTTPException(
+            status_code=422,
+            detail=[f"test send failed: {result.get('error')}"],
+        )
+    return {"ok": True, "smtp": service.smtp_status()}
 
 
 def _open_items() -> int:
@@ -2407,6 +2681,119 @@ def _latest_box(
     return rows[:3]
 
 
+def _briefing_chips(facts: dict[str, Any]) -> list[dict[str, str]]:
+    """The fact chips on the dashboard briefing card (design Main:
+    position count, yesterday's result, market regime, earnings inside a
+    day, banner count). The text is built here so the GUI only renders."""
+    chips: list[dict[str, str]] = []
+    positions = facts.get("positions") or []
+    n = len(positions)
+    chips.append(
+        {
+            "text": (
+                f"{n} position{'s' if n != 1 else ''}" if n else "no positions"
+            ),
+            "tone": "neutral",
+        }
+    )
+    yesterday = facts.get("yesterday") or {}
+    pct = yesterday.get("return_pct")
+    usd = yesterday.get("return_usd")
+    if pct is None:
+        chips.append({"text": "yesterday —", "tone": "neutral"})
+    else:
+        text = f"yesterday {pct:+.2f}%"
+        if usd is not None:
+            text += f" · {'+' if usd >= 0 else '−'}${abs(usd):,.2f}"
+        tone = "positive" if pct > 0 else "negative" if pct < 0 else "neutral"
+        chips.append({"text": text, "tone": tone})
+    regime = str(facts.get("regime") or "unavailable").lower()
+    chips.append(
+        {
+            "text": f"market {regime}",
+            "tone": (
+                "positive"
+                if regime.startswith("up")
+                else "negative"
+                if regime.startswith("down")
+                else "neutral"
+            ),
+        }
+    )
+    earnings = [
+        *(f"{e['symbol']} today" for e in facts.get("earnings_today") or []),
+        *(
+            f"{e['symbol']} tomorrow"
+            for e in facts.get("earnings_tomorrow") or []
+        ),
+    ]
+    chips.append(
+        {
+            "text": (
+                "earnings " + " · ".join(earnings)
+                if earnings
+                else "no earnings ≤ 1 day"
+            ),
+            "tone": "neutral",
+        }
+    )
+    banners = facts.get("banners") or []
+    chips.append(
+        {
+            "text": (
+                f"{len(banners)} banner{'s' if len(banners) != 1 else ''}"
+                if banners
+                else "no banners"
+            ),
+            "tone": "warning" if banners else "neutral",
+        }
+    )
+    return chips
+
+
+def _briefing_card(
+    request: Request, clock: Clock, app_tz: ZoneInfo, today_ny: date
+) -> dict[str, Any]:
+    """The daily briefing card on the dashboard (docs/SPEC.md, GUI —
+    Daily briefing card). Shows the latest written briefing — today's
+    once its slot has passed, the previous one before that — plus when
+    the next one is written, or "off" with a Settings link."""
+    config = get_config()
+    service = getattr(request.app.state, "review_service", None)
+    enabled = bool(config.get("reviews", "briefing_enabled", default=True))
+    next_at = (
+        service.next_briefing_at() if service is not None and enabled else None
+    )
+    card: dict[str, Any] | None = None
+    with get_session_maker()() as session:
+        review = session.execute(
+            select(Review)
+            .where(Review.kind == "briefing")
+            .order_by(Review.due_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if review is not None:
+        due = review.due_at.replace(tzinfo=UTC)
+        card = {
+            "id": review.id,
+            "label": _review_label(review),
+            "today": review.period == today_ny.isoformat(),
+            "time": due.astimezone(app_tz).strftime("%H:%M"),
+            "text": (review.content or {}).get("text") or review.text,
+            "chips": _briefing_chips(review.facts or {}),
+            "source": review.source,
+            "reason": review.reason,
+            "model": review.model,
+            "prompt_version": review.prompt_version,
+            "cost": str(review.cost) if review.cost is not None else None,
+        }
+    return {
+        "enabled": enabled,
+        "next_at": next_at.isoformat() if next_at is not None else None,
+        "card": card,
+    }
+
+
 @router.get("/dashboard")
 def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
@@ -2422,12 +2809,6 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     today = clock.now().astimezone(app_tz).date()
     day_start = datetime.combine(today, dtime.min, tzinfo=app_tz)
     start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
-    market_data = getattr(request.app.state, "market_data", None)
-    day_sessions = (
-        market_data.recent_sessions(today_ny, 5)
-        if market_data is not None
-        else []
-    )
 
     with get_session_maker()() as session:
         cycles = session.execute(
@@ -2463,14 +2844,17 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         run = session.execute(
             select(Run).order_by(Run.id.desc()).limit(1)
         ).scalar_one_or_none()
-        day_trades = (
+        # The counter's "in this run" number: cycles since the run started
+        # (docs/SPEC.md, GUI — Cycle counter).
+        run_cycle_number = (
             session.execute(
-                select(func.count(DayTrade.id)).where(
-                    DayTrade.date >= _naive_utc(day_sessions[0].open)
+                select(func.count(Cycle.id)).where(
+                    Cycle.kind == "cycle",
+                    Cycle.scheduled_time >= run.started_at,
                 )
             ).scalar_one()
-            if day_sessions
-            else 0
+            if run is not None
+            else None
         )
         # Latest decision for the card: today's newest for the selected
         # symbol (or the newest overall when no symbol is given).
@@ -2488,17 +2872,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             else None
         )
 
-    # Stat cards.
-    open_risk = Decimal(0)
-    for p in open_rows:
-        if p.current_stop_price is not None:
-            open_risk += p.qty * max(
-                Decimal(0), p.avg_entry_price - p.current_stop_price
-            )
+    # Stat cards. Risk figures live on /api/risk-budget, which reads the
+    # same gate context the entry gates see.
     equity = account.equity if account else None
-    open_risk_pct = (
-        (open_risk / equity * 100) if equity and equity > 0 else None
-    )
     since_start_pct = None
     spy_pct = None
     since_label = "since start"
@@ -2564,6 +2940,21 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "price": snapshot.get("price"),
             "time": scheduled.replace(tzinfo=UTC).isoformat(),
         }
+
+    # Cycle counter and cycle line share the session math. "Cycle N of M
+    # today" counts today's run cycles so far; M is the session's active
+    # count (fewer on early-close days), not the configured list length.
+    session_clock = SessionClock(clock, config, _calendar(request))
+    today_session = _calendar(request).session_for(today_ny)
+    active_today = (
+        session_clock.active_cycles(today_session)
+        if today_session is not None
+        else []
+    )
+    today_cycle_rows = [
+        c for c in cycles if _ny_date(c.scheduled_time) == today_ny
+    ]
+    cycle_index = len(today_cycle_rows)
 
     # Cycle line (design: "5 of 8 symbols not held failed the pre-filter.
     # 3 reached the model: all skipped. Both open positions held.
@@ -2631,30 +3022,68 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                 f"{calls} model call{'s' if calls != 1 else ''} · "
                 f"${cost:.3f}."
             )
-        # "Cycle N of M today" counts today's run cycles so far; M is the
-        # session's active count (fewer on early-close days), not the
-        # configured list length.
-        today_cycles = [
-            c for c in cycles if _ny_date(c.scheduled_time) == today_ny
-        ]
-        today_session = _calendar(request).session_for(today_ny)
-        total_today = (
-            len(
-                SessionClock(clock, get_config(), _calendar(request))
-                .active_cycles(today_session)
-            )
-            if today_session is not None
-            else 0
-        )
-        cycle_index = len(today_cycles)
         ams_time = scheduled_ny.astimezone(app_tz).strftime("%H:%M")
         cycle_line = {
             "label": f"{ams_time} cycle",
             "status": last_cycle.status,
             "text": " ".join(sentences),
             "cycle_index": cycle_index,
-            "cycles_today": total_today,
+            "cycles_today": len(active_today),
         }
+
+    # Cycle counter at the strip's right end (docs/SPEC.md, GUI). The whole
+    # schedule — today's active cycles as done/next/later segments, the
+    # next cycle and the next position check — is computed here from the
+    # trading calendar and config; the GUI only formats and ticks.
+    ny_now = clock.now().astimezone(NY_TZ)
+    next_cycle_utc = session_state.next_cycle
+    if next_cycle_utc is None:
+        # Nothing left today (last cycle done): point at the next
+        # session's first cycle, like the closed state does.
+        next_session = _calendar(request).next_trading_day(today_ny)
+        upcoming = (
+            session_clock.active_cycles(next_session)
+            if next_session is not None
+            else []
+        )
+        next_cycle_utc = upcoming[0].astimezone(UTC) if upcoming else None
+    next_check_utc = session_state.next_check
+    cycle_counter = {
+        "kill_switch": bool(getattr(state, "kill_switch_on", False)),
+        "running": any(c.status == "running" for c in today_cycle_rows),
+        "now": clock.now().astimezone(UTC).isoformat(),
+        "next_cycle": (
+            next_cycle_utc.isoformat() if next_cycle_utc is not None else None
+        ),
+        "next_cycle_today": (
+            next_cycle_utc is not None
+            and next_cycle_utc.astimezone(NY_TZ).date() == today_ny
+        ),
+        "next_check": (
+            next_check_utc.isoformat() if next_check_utc is not None else None
+        ),
+        "next_check_today": (
+            next_check_utc is not None
+            and next_check_utc.astimezone(NY_TZ).date() == today_ny
+        ),
+        "segments": [
+            {
+                "time": t.astimezone(UTC).isoformat(),
+                "status": (
+                    "done"
+                    if t <= ny_now
+                    else "next"
+                    if next_cycle_utc is not None
+                    and t.astimezone(UTC) == next_cycle_utc
+                    else "later"
+                ),
+            }
+            for t in active_today
+        ],
+        "cycle_index": cycle_index,
+        "cycles_today": len(active_today),
+        "run_cycle_number": run_cycle_number,
+    }
 
     # Decisions feed, grouped client-side by cycle.
     feed = [
@@ -2708,6 +3137,41 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "today_summary": ", ".join(summary_parts) or "quiet day",
         }
 
+    # Model call counter tile (docs/SPEC.md, GUI — Model call counter):
+    # today's real decision calls against the day's maximum — the
+    # per-cycle cap times today's active cycles — with today's and this
+    # month's decision spend. Reviews have their own cap; its spend feeds
+    # the tile's hover text. Shadows and backtests (PR 13/14) join later.
+    calls_today = sum(1 for d, _ in today_decisions if d.model != "none")
+    calls_cost_today = sum(
+        (d.cost or Decimal(0))
+        for d, _ in today_decisions
+        if d.model != "none"
+    )
+    month_start = (
+        datetime.combine(today.replace(day=1), dtime.min, tzinfo=app_tz)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
+    with get_session_maker()() as session:
+        calls_cost_month = session.execute(
+            select(func.sum(Decision.cost))
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .where(
+                Cycle.scheduled_time >= month_start,
+                Decision.model != "none",
+            )
+        ).scalar_one() or Decimal(0)
+        review_service = getattr(request.app.state, "review_service", None)
+        reviews_spend = (
+            review_service.monthly_spend(session)
+            if review_service is not None
+            else None
+        )
+    calls_per_cycle = int(
+        config.get("decision", "max_calls_per_cycle", default=10)
+    )
+
     return {
         "session": {
             "state": session_state.state,
@@ -2728,16 +3192,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
         },
         "cycle_line": cycle_line,
+        "cycle_counter": cycle_counter,
         "stats": {
-            "open_risk_pct": str(open_risk_pct) if open_risk_pct is not None else None,
-            "open_risk_usd": _fmt_money(open_risk),
-            "open_risk_cap_pct": config.get(
-                "risk", "max_open_risk_pct", default=2.5
-            ),
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
-            "day_trades": day_trades,
-            "day_trades_max": config.get("risk", "pdt_max_day_trades", default=3),
             "cash": _fmt_money(account.cash if account else None),
             "since_start_pct": (
                 f"{since_start_pct:+.2f}" if since_start_pct is not None else None
@@ -2747,7 +3205,20 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "execution_mode": config.get(
                 "execution", "mode", default="automatic"
             ),
+            "calls_today": calls_today,
+            "calls_max": calls_per_cycle * len(active_today),
+            "calls_per_cycle": calls_per_cycle,
+            "cycles_today": len(active_today),
+            "calls_cost_today": str(calls_cost_today),
+            "calls_cost_month": str(calls_cost_month),
+            "reviews_cost_month": (
+                str(reviews_spend) if reviews_spend is not None else None
+            ),
+            "reviews_cost_cap": str(
+                config.get("reviews", "monthly_cost_cap_usd", default=2)
+            ),
         },
+        "briefing": _briefing_card(request, clock, app_tz, today_ny),
         "latest_decision": latest_card,
         "approvals_pending": len(pending),
         "market_closed": market_closed,
@@ -3187,3 +3658,101 @@ def verdict_resolve(
         resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
     _notify(request, "reviews", "decisions")
     return resolved
+
+
+# ----------------------------------------------------------------------
+# Universe (docs/SPEC.md, Larger universe). All of this is inert in fixed
+# mode: describe() returns the fixed list and the pool stays untouched.
+
+
+def _universe(request: Request) -> UniverseService:
+    service = getattr(request.app.state, "universe", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="universe service unavailable")
+    return cast(UniverseService, service)
+
+
+@router.get("/universe")
+def universe(request: Request) -> dict[str, object]:
+    """The Universe screen: mode, pool rows, latest screen and funnel."""
+    return _universe(request).describe()
+
+
+async def _warm_up_in_background(service: UniverseService, symbols: list[str]) -> None:
+    try:
+        await service.warm_up(symbols)
+    except Exception:  # noqa: BLE001
+        logger.exception("universe warm-up failed for %s", symbols)
+
+
+@router.post("/universe/pool")
+async def universe_pool_add(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Add one symbol (with a required sector) to the screened pool.
+
+    The same checks apply as a fixed-universe symbol add: valid ticker,
+    active and tradable US stock or ETF at Alpaca, allowed sector — plus
+    the pool cap. The symbol warms up and joins the list at the next
+    daily screen.
+    """
+    service = _universe(request)
+    symbol = str(body.get("symbol") or "").strip().upper()
+    sector = str(body.get("sector") or "").strip()
+    try:
+        row = await service.add_symbol(symbol, sector)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    asyncio.get_running_loop().create_task(
+        _warm_up_in_background(service, [row.symbol])
+    )
+    _notify(request, "universe")
+    return {"symbol": row.symbol, "sector": row.sector, "added": True}
+
+
+@router.post("/universe/import")
+async def universe_pool_import(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Import ``symbol,sector`` CSV rows into the pool — all or nothing."""
+    service = _universe(request)
+    text = body.get("csv")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=422, detail=["csv text required"])
+    try:
+        added, skipped = await service.import_csv(text)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    if added:
+        asyncio.get_running_loop().create_task(
+            _warm_up_in_background(service, added)
+        )
+    _notify(request, "universe")
+    return {"added": len(added), "skipped": skipped}
+
+
+@router.post("/universe/pool/{symbol}/remove")
+def universe_pool_remove(request: Request, symbol: str) -> dict[str, object]:
+    """Remove a symbol from the pool. A held symbol stays listed until its
+    position is closed — held symbols are always handled."""
+    service = _universe(request)
+    try:
+        service.remove_symbol(symbol)
+    except PoolError as exc:
+        raise HTTPException(status_code=422, detail=exc.messages) from exc
+    _notify(request, "universe")
+    return {"symbol": symbol.upper(), "removed": True}
+
+
+@router.post("/universe/screen")
+async def universe_screen_now(request: Request) -> dict[str, object]:
+    """Run the daily screen on demand — simulated mode only.
+
+    In paper mode the screen runs from the 08:10 New York scheduler job;
+    this hook exists for tests and the simulated demo.
+    """
+    if get_config().env.mode != "simulated":
+        raise HTTPException(status_code=403, detail="simulated mode only")
+    result = await _universe(request).run_screen()
+    _notify(request, "universe", "banners", "header")
+    return result

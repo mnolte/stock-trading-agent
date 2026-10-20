@@ -563,10 +563,23 @@ export interface SettingsForm {
   performance: { slippage_pct_per_side: number; starting_equity: number };
   reviews: { briefing_enabled: boolean; monthly_cost_cap_usd: number };
   schedule: { cycles: string[] };
+  notifications: {
+    repeat_limit_minutes: number;
+    quiet_hours: { start: string; end: string };
+    /** event key -> channels (app is always on and not listed) */
+    events: Record<string, string[]>;
+  };
   universe: {
     symbols: string[];
     sectors: Record<string, string>;
     allowed_sectors: string[];
+    mode: string;
+    screen: {
+      min_price: number;
+      min_avg_dollar_volume: number;
+      lookback_sessions: number;
+      drop_after_failed_screens: number;
+    };
   };
 }
 
@@ -597,6 +610,13 @@ export interface SettingsResponse {
   settings: SettingsForm;
   active_version: number;
   pending_version: number | null;
+  /** Saved-but-not-yet-active leaf values, e.g. {'universe.mode': 'screened'}.
+   * The form shows the active values; these mark which rows have a pending
+   * change waiting for the next cycle. */
+  pending?: Record<string, unknown>;
+  /** Human-readable diff of pending vs active, e.g. 'Universe mode: fixed →
+   * screened'. */
+  pending_change?: string | null;
   next_version: number;
   held_symbols: string[];
   prompt_options: { version: string; hash: string }[];
@@ -608,7 +628,53 @@ export interface SettingsResponse {
   connections: ConnectionRow[];
   history: SettingsHistoryRow[];
   reviews_spend_usd?: string | null;
+  /** Event rows for the Notifications section, spec order. */
+  notification_events: NotificationEventMeta[];
+  /** SMTP card state; null when the notification service is absent. */
+  smtp: SmtpStatus | null;
   mode: string;
+}
+
+// ---- Notifications ----------------------------------------------------------
+
+export interface NotificationEventMeta {
+  key: string;
+  label: string;
+  description: string;
+  group: 'critical' | 'warnings' | 'trading' | 'reviews' | string;
+  severity: 'critical' | 'warning' | 'info' | string;
+}
+
+export interface NotificationItem {
+  id: number;
+  time: string;
+  event: string;
+  severity: string;
+  subject: string;
+  body: string | null;
+  link: string | null;
+  channels: string[];
+  channel_status: Record<string, string>;
+  error: string | null;
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[];
+  latest_id: number;
+}
+
+export interface SmtpStatus {
+  configured: boolean;
+  host: string;
+  port: number;
+  username: string;
+  from_addr: string;
+  to_addr: string;
+  password_set: boolean;
+  saved_at: string | null;
+  tested_at: string | null;
+  test_result: string | null;
+  test_detail: string | null;
 }
 
 export interface SettingsError {
@@ -792,19 +858,118 @@ export interface DashboardCycleLine {
   cycles_today: number;
 }
 
+// Cycle counter at the right end of the this-cycle strip. The schedule is
+// computed by the backend from the trading calendar and config; the GUI
+// only formats it and ticks the countdown (docs/SPEC.md, GUI).
+
+export type CycleSegmentStatus = 'done' | 'next' | 'later';
+
+export interface CycleCounterSegment {
+  time: string; // UTC ISO of the scheduled cycle
+  status: CycleSegmentStatus;
+}
+
+export interface CycleCounter {
+  kill_switch: boolean;
+  running: boolean;
+  now: string | null; // server time, to correct client-clock drift
+  next_cycle: string | null;
+  next_cycle_today: boolean;
+  next_check: string | null;
+  next_check_today: boolean;
+  segments: CycleCounterSegment[];
+  cycle_index: number;
+  cycles_today: number;
+  run_cycle_number: number | null;
+}
+
 export interface DashboardStats {
-  open_risk_pct: string | null;
-  open_risk_usd: string | null;
-  open_risk_cap_pct: number;
   positions: number;
   positions_cap: number;
-  day_trades: number;
-  day_trades_max: number;
   cash: string | null;
   since_start_pct: string | null;
   since_label: string;
   spy_pct: string | null;
   execution_mode: string;
+  // Model call counter (docs/SPEC.md, GUI — Model call counter).
+  calls_today: number;
+  calls_max: number;
+  calls_per_cycle: number;
+  cycles_today: number;
+  calls_cost_today: string;
+  calls_cost_month: string;
+  reviews_cost_month: string | null;
+  reviews_cost_cap: string;
+}
+
+// ---- Daily briefing card ---------------------------------------------------
+// The dashboard card next to the risk budget (docs/SPEC.md, GUI — Daily
+// briefing card). The backend builds the chip text; the GUI only renders.
+
+export interface BriefingChip {
+  text: string;
+  tone: 'neutral' | 'positive' | 'negative' | 'warning';
+}
+
+export interface BriefingCardData {
+  id: number;
+  /** Date label like "Mon 20 Oct" — shown for a previous-day briefing. */
+  label: string;
+  /** Whether the card covers today's New York session. */
+  today: boolean;
+  /** The briefing's write slot in app time, "15:00" — shown for today's. */
+  time: string;
+  text: string;
+  chips: BriefingChip[];
+  /** "model" = every number checked; "template" = plain fallback + reason. */
+  source: 'model' | 'template' | string;
+  reason: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  cost: string | null;
+}
+
+export interface DashboardBriefing {
+  enabled: boolean;
+  /** UTC ISO of the next briefing write; null when disabled or unknown. */
+  next_at: string | null;
+  card: BriefingCardData | null;
+}
+
+// ---- Risk budget card ------------------------------------------------------
+// Every figure is computed by the backend's risk-gate functions (GET
+// /api/risk-budget); the GUI only formats what it is given.
+
+export type BudgetMeterLevel = 'normal' | 'amber' | 'red';
+
+export interface BudgetMeter {
+  used_pct: string | null;
+  limit_pct: string;
+  level: BudgetMeterLevel;
+  fill_pct: string; // bar width in % of the limit, capped at 100
+}
+
+export interface RiskBudgetResponse {
+  settings_version: number | null;
+  open_risk: BudgetMeter & { used_usd: string };
+  daily_loss: BudgetMeter & { session_pnl_pct: string };
+  drawdown: BudgetMeter;
+  room: {
+    trades: number;
+    limited_by: 'positions' | 'open_risk' | 'cash';
+  };
+  sectors: { sector: string; used: number; cap: number }[];
+  risk_per_trade_pct: string;
+  losing_streak: { count: number; max: number; factor: string };
+  shock_brake: {
+    on: boolean;
+    limit_1h_pct: string;
+    limit_session_pct: string;
+    spy_1h_pct: string | null;
+    spy_session_pct: string | null;
+  };
+  day_trades: { count: number; max: number };
+  positions: { open: number; cap: number };
 }
 
 export interface DashboardSigChip {
@@ -864,7 +1029,9 @@ export interface DashboardResponse {
     next_close: string | null;
   };
   cycle_line: DashboardCycleLine | null;
+  cycle_counter: CycleCounter | null;
   stats: DashboardStats;
+  briefing: DashboardBriefing | null;
   latest_decision: DashboardLatestDecision | null;
   approvals_pending: number;
   market_closed: MarketClosedCard | null;
@@ -900,4 +1067,92 @@ export interface ChartResponse {
   warming_up: boolean;
   price: string | null;
   day_change_pct: string | null;
+}
+
+// ---- Universe (pool + liquidity screen, v0.2) --------------------------------
+
+export interface UniverseFixedSymbol {
+  symbol: string;
+  sector: string;
+}
+
+export interface UniverseThresholds {
+  min_price: number;
+  min_avg_dollar_volume: number;
+  lookback_sessions: number;
+  drop_after_failed_screens: number;
+  max_position_pct: number;
+}
+
+export interface UniverseFunnelStep {
+  key: string;
+  count: number;
+  out: string[];
+}
+
+export interface UniverseScreenSummary {
+  session_date: string | null;
+  failed: boolean;
+  equity?: string | null;
+  max_position_usd?: string | null;
+  funnel: UniverseFunnelStep[];
+  eligible_total: number;
+}
+
+export type UniverseRowStatus =
+  | 'eligible'
+  | 'excluded'
+  | 'warming_up'
+  | 'held';
+
+export interface UniverseRow {
+  symbol: string;
+  sector: string;
+  added_at: string | null;
+  status: UniverseRowStatus;
+  rank: number | null;
+  last_close: string | null;
+  avg_dollar_volume: string | null;
+  return_vs_spy: string | null;
+  fails: number;
+  failed_check: string | null;
+  detail: string;
+  held: boolean;
+  qty: number;
+  screened: boolean;
+  in_pool: boolean;
+}
+
+export interface UniverseCounts {
+  pool: number;
+  eligible: number;
+  excluded: number;
+  warming_up: number;
+  held: number;
+}
+
+export interface UniverseResponse {
+  mode: string;
+  preview?: boolean;
+  allowed_sectors: string[];
+  fixed_symbols: UniverseFixedSymbol[];
+  held_symbols: string[];
+  screen_time_ny: string;
+  history: { daily_sessions: number; sessions_5m: number };
+  thresholds: UniverseThresholds;
+  pool?: { size: number; max: number };
+  counts?: UniverseCounts;
+  screen?: UniverseScreenSummary | null;
+  rows?: UniverseRow[];
+}
+
+export interface UniverseAddResult {
+  symbol: string;
+  sector: string;
+  added: boolean;
+}
+
+export interface UniverseImportResult {
+  added: number;
+  skipped: number;
 }

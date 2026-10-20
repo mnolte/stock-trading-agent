@@ -2,6 +2,25 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-19 — Briefing card, model call counter, Strategies, Backtest
+
+- `Main.dc.html`: summary tiles row (Positions, Model calls today with a bar against the 60-call maximum and cost, Since start); new "Daily briefing · 15:00" card next to the risk budget card, with fact chips and a footer (numbers checked, model and prompt, cost, next briefing).
+- New screen `Strategies.dc.html` (Learn group): shadow cost and slots with New shadow, comparison table with colour keys, small-sample warning, equity curves with SPY, selected strategy (what differs from live, Pause, Archive, Promote disabled under 20 trades), disagreements list.
+- New screen `Backtest.dc.html` (Learn group): new-backtest form (dates, quick ranges, universe, strategies with cutoff note, equity, slippage, estimate with model-cutoff check), runs list (running with progress and cancel, done, refused), results for run #4 (tiles live vs rules, equity curves with SPY, by regime, Read with care, trades/decisions/CSV).
+- Sidebar: Learn group now Reviews, Strategies, Backtest, LLM inspector (every screen). All screenshots re-rendered.
+
+## 2026-10-18 — Notifications in Settings
+
+- `Settings.dc.html`: new "Notifications" section (and section-list entry) after Model and reviews: event table grouped Critical / Warnings / Trading / Reviews with Browser and Email checkboxes (browser locked on for critical events); Browser channel status; Email (SMTP) fields with encrypted password, Send test and Test and save; repeat limit; quiet hours; recently sent list. `Settings.png` and `Settings-390.png` re-rendered.
+
+## 2026-10-18 — Cycle counter
+
+- `Main.dc.html`: the this-cycle strip ends with a cycle counter instead of "Cycle 3 of 6 today": next cycle 19:46 (13:46 NY) with countdown, six segments for today's cycles (done, next outlined in amber, later), "Cycle 4 of 6 today · #52 this run" and the next position check. `Main.png` and `Main-390.png` re-rendered.
+
+## 2026-10-18 — Risk budget card
+
+- `Main.dc.html`: the four summary tiles are replaced by a "Risk budget" card (meters for open risk vs 2.5% cap, today's loss vs −2% limit, drawdown vs −8% kill; facts for room for more trades, sectors, risk per trade and losing streak, shock brake, day trades; every label has a hover explanation) next to two tiles (Positions, Since start). The open-risk and day-trade tiles moved into the card. Screenshots `Main.png` and `Main-390.png` re-rendered.
+
 ## 2026-10-18 — Larger universe (v0.2)
 
 - New screen `Universe.dc.html` in the Control group (every sidebar updated): mode banner, five count tiles, today's screen funnel (72 → 69), how the screen works, and the pool table with filters (All, Eligible, Held, Excluded, Warming up), search, rank, 20-session dollar volume, return vs SPY, status with reason, Add to pool, Import CSV and remove.

@@ -22,7 +22,14 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Bar1h, CalendarDay, DailyBar, EarningsEvent, Quote
+from app.data.models import (
+    Bar1h,
+    CalendarDay,
+    DailyBar,
+    DataResult,
+    EarningsEvent,
+    Quote,
+)
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Approval, Cycle, Decision, Event, Order, Position, Run
@@ -52,11 +59,11 @@ def session_factory(tmp_path: Path) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
-def _sources() -> DataSources:
+def _sources(clock: FakeClock | None = None, **overrides: object) -> DataSources:
     calendar = FakeCalendarSource()
-    return DataSources(
+    sources = DataSources(
         bars=FakeBarSource(calendar),
-        quotes=FakeQuoteSource(),
+        quotes=FakeQuoteSource(clock),
         news=FakeNewsSource(),
         earnings=FakeEarningsSource(),
         fx=FakeFXSource(),
@@ -64,6 +71,9 @@ def _sources() -> DataSources:
         calendar=calendar,
         alpaca=None,
     )
+    for key, value in overrides.items():
+        setattr(sources, key, value)
+    return sources
 
 
 def _executor(
@@ -71,10 +81,11 @@ def _executor(
     broker: FakeBroker,
     clock: FakeClock | None = None,
     config: AppConfig | None = None,
+    sources: DataSources | None = None,
 ) -> Executor:
     clock = clock or FakeClock(NOW)
     config = config or AppConfig()
-    sources = _sources()
+    sources = sources or _sources(clock)
     calendar = cast(CalendarProvider, sources.calendar)
     market_data = MarketDataService(
         sources, calendar, config, session_factory=session_factory
@@ -187,7 +198,7 @@ async def _pending_approval_id(
     session_factory: sessionmaker[Session],
     executor: Executor,
     symbol: str = "MSFT",
-    stop: str = "410",
+    stop: str = "412",
     target: str = "435",
 ) -> int:
     """Run a supervised entry and return the stored approval's id."""
@@ -269,7 +280,7 @@ async def test_automatic_entry_still_sends_order(
     await executor.reconcile()
     with session_factory() as session:
         decision = _decision(
-            session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
@@ -539,6 +550,123 @@ async def test_pending_approvals_expire_at_next_cycle(
         assert stored.status == "expired"
         assert stored.reason == "expired at the next cycle"
     assert executor.expire_pending_approvals() == 0
+
+
+# ----------------------------------------------------------------------
+# fresh-quote gate on Approve (S3)
+
+
+class _StaleQuotes:
+    """Quotes stamped ``age`` seconds behind the clock."""
+
+    def __init__(self, clock: FakeClock, age: int) -> None:
+        self._clock = clock
+        self._age = age
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        ts = self._clock.now() - timedelta(seconds=self._age)
+        return DataResult(
+            data={
+                s: Quote(
+                    symbol=s,
+                    bid=Decimal("420.00"),
+                    ask=Decimal("420.10"),
+                    last=Decimal("420.10"),
+                    timestamp=ts,
+                    feed="iex",
+                )
+                for s in symbols
+            },
+            source="fake",
+        )
+
+
+async def test_approve_rejects_on_stale_quote(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A 61s-old quote at approve time → rejected with quote_stale."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    sources = _sources(clock)  # fresh quotes while the approval is created
+    executor = _executor(
+        session_factory, broker, clock, config, sources=sources
+    )
+    await executor.reconcile()
+    approval_id = await _pending_approval_id(session_factory, executor)
+    sources.quotes = _StaleQuotes(clock, 61)
+
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is False
+    assert result["error"] == "quote_stale"
+    with session_factory() as session:
+        stored = session.get(Approval, approval_id)
+        assert stored is not None
+        assert stored.status == "rejected"
+        assert stored.reason == "quote_stale"
+    assert broker.submit_calls == 0
+
+
+async def test_approve_rejects_when_quote_missing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    class _NoQuotes:
+        async def fetch_quotes(
+            self, symbols: list[str]
+        ) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={}, error="feed down", source="fake")
+
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    sources = _sources(clock)
+    executor = _executor(
+        session_factory, broker, clock, config, sources=sources
+    )
+    await executor.reconcile()
+    approval_id = await _pending_approval_id(session_factory, executor)
+    sources.quotes = _NoQuotes()
+
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is False
+    assert result["error"] == "quote_missing"
+    assert broker.submit_calls == 0
+
+
+async def test_approve_uses_shared_fresh_quote_step(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Approve runs the same ``_fresh_entry_check`` automatic entries use."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    executor = _executor(session_factory, broker, clock, config)
+    await executor.reconcile()
+    approval_id = await _pending_approval_id(session_factory, executor)
+    monkeypatch.setattr(executor, "_atr_1h", lambda symbol: Decimal("3"))
+    calls: list[str] = []
+    real = executor._fresh_entry_check
+
+    async def spy(
+        *, symbol: str, stop: Decimal, target: Decimal, atr_1h: Decimal | None
+    ) -> object:
+        calls.append(symbol)
+        return await real(symbol=symbol, stop=stop, target=target, atr_1h=atr_1h)
+
+    monkeypatch.setattr(executor, "_fresh_entry_check", spy)
+
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is True
+    assert calls == ["MSFT"]
 
 
 # ----------------------------------------------------------------------
@@ -821,7 +949,7 @@ async def test_validate_universe_tolerates_unchanged_allowed_sectors(
     assert cleaned["universe"]["symbols"] == universe["symbols"]
     assert "allowed_sectors" not in cleaned["universe"]
 
-    with pytest.raises(SettingsError, match="only symbols and sectors"):
+    with pytest.raises(SettingsError, match="not editable"):
         await validate_settings(
             {
                 "universe": {
@@ -1037,16 +1165,25 @@ def test_approvals_endpoint_shape(client: TestClient) -> None:
 
 def test_dashboard_endpoint_shape(client: TestClient) -> None:
     body = client.get("/api/dashboard").json()
-    assert {"session", "stats", "feed", "approvals_pending"} <= set(body)
+    assert {"session", "stats", "feed", "approvals_pending", "briefing"} <= set(body)
     stats = body["stats"]
     assert {
-        "open_risk_pct",
         "positions",
-        "day_trades",
-        "day_trades_max",
+        "positions_cap",
+        "cash",
         "since_start_pct",
         "execution_mode",
+        "calls_today",
+        "calls_max",
+        "calls_cost_today",
+        "calls_cost_month",
+        "reviews_cost_month",
+        "reviews_cost_cap",
     } <= set(stats)
+    assert {"enabled", "next_at", "card"} <= set(body["briefing"])
+    # Risk figures moved to /api/risk-budget with the risk budget card.
+    assert "open_risk_pct" not in stats
+    assert "day_trades" not in stats
 
 
 def test_runs_and_chart_endpoints(client: TestClient) -> None:
@@ -1096,6 +1233,83 @@ def test_settings_get_and_save_flow(client: TestClient) -> None:
 
     # The saved version must not leak into the next app's startup or the
     # shared test database.
+    from app.config import get_config
+    from app.db.base import get_session_maker
+    from app.db.models import SettingsVersion
+
+    config = get_config()
+    config._pending = None
+    config.pending_version = None
+    config.reschedule_cycles = False
+    with get_session_maker()() as session:
+        session.query(SettingsVersion).delete()
+        session.commit()
+
+
+def test_settings_rejects_screened_mode(client: TestClient) -> None:
+    """universe.mode=screened is refused until PR 12 wires the eligible
+    list into cycles (docs/SPEC.md §443)."""
+    saved = client.post(
+        "/api/settings",
+        json={
+            "settings": {"universe": {"mode": "screened"}},
+            "reason": "try the screened pool",
+        },
+    )
+    assert saved.status_code == 422
+    assert "Screened pool arrives with PR 12" in str(saved.json()["detail"])
+    # Fixed stays valid.
+    assert (
+        client.post(
+            "/api/settings",
+            json={
+                "settings": {"universe": {"mode": "fixed"}},
+                "reason": "back to fixed",
+            },
+        ).status_code
+        == 200
+    )
+    # Same cleanup as test_settings_get_and_save_flow — no leaks.
+    from app.config import get_config
+    from app.db.base import get_session_maker
+    from app.db.models import SettingsVersion
+
+    config = get_config()
+    config._pending = None
+    config.pending_version = None
+    config.reschedule_cycles = False
+    with get_session_maker()() as session:
+        session.query(SettingsVersion).delete()
+        session.commit()
+
+
+def test_settings_response_marks_pending_values(client: TestClient) -> None:
+    """A saved-but-not-yet-active change stays visible: the form still shows
+    the active value while ``pending`` / ``pending_change`` say what the next
+    cycle will use — a save must not look lost."""
+    saved = client.post(
+        "/api/settings",
+        json={
+            "settings": {
+                "universe": {"screen": {"min_price": 15}},
+                "risk": {"risk_per_trade_pct": 0.4},
+            },
+            "reason": "pending markers",
+        },
+    )
+    assert saved.status_code == 200
+
+    body = client.get("/api/settings").json()
+    assert body["pending_version"] == saved.json()["version"]
+    # The form shows the active values — pending is marked separately.
+    assert body["settings"]["universe"]["screen"]["min_price"] == 10
+    assert body["settings"]["risk"]["risk_per_trade_pct"] == 0.5
+    assert body["pending"]["universe.screen.min_price"] == 15
+    assert body["pending"]["risk.risk_per_trade_pct"] == 0.4
+    assert "Min price" in body["pending_change"]
+    assert "Risk per trade" in body["pending_change"]
+
+    # Same cleanup as test_settings_get_and_save_flow — no leaks.
     from app.config import get_config
     from app.db.base import get_session_maker
     from app.db.models import SettingsVersion
