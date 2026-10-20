@@ -617,8 +617,8 @@ async def test_approve_rejects_when_quote_missing(
     class _NoQuotes:
         async def fetch_quotes(
             self, symbols: list[str]
-        ) -> DataResult[dict[str, Quote] | None]:
-            return DataResult(data=None, error="feed down", source="fake")
+        ) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={}, error="feed down", source="fake")
 
     clock = FakeClock(NOW)
     broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
@@ -655,9 +655,11 @@ async def test_approve_uses_shared_fresh_quote_step(
     calls: list[str] = []
     real = executor._fresh_entry_check
 
-    async def spy(**kwargs: object) -> object:
-        calls.append(str(kwargs.get("symbol")))
-        return await real(**kwargs)
+    async def spy(
+        *, symbol: str, stop: Decimal, target: Decimal, atr_1h: Decimal | None
+    ) -> object:
+        calls.append(symbol)
+        return await real(symbol=symbol, stop=stop, target=target, atr_1h=atr_1h)
 
     monkeypatch.setattr(executor, "_fresh_entry_check", spy)
 
@@ -1237,6 +1239,43 @@ def test_settings_get_and_save_flow(client: TestClient) -> None:
         session.commit()
 
 
+def test_settings_rejects_screened_mode(client: TestClient) -> None:
+    """universe.mode=screened is refused until PR 12 wires the eligible
+    list into cycles (docs/SPEC.md §443)."""
+    saved = client.post(
+        "/api/settings",
+        json={
+            "settings": {"universe": {"mode": "screened"}},
+            "reason": "try the screened pool",
+        },
+    )
+    assert saved.status_code == 422
+    assert "Screened pool arrives with PR 12" in str(saved.json()["detail"])
+    # Fixed stays valid.
+    assert (
+        client.post(
+            "/api/settings",
+            json={
+                "settings": {"universe": {"mode": "fixed"}},
+                "reason": "back to fixed",
+            },
+        ).status_code
+        == 200
+    )
+    # Same cleanup as test_settings_get_and_save_flow — no leaks.
+    from app.config import get_config
+    from app.db.base import get_session_maker
+    from app.db.models import SettingsVersion
+
+    config = get_config()
+    config._pending = None
+    config.pending_version = None
+    config.reschedule_cycles = False
+    with get_session_maker()() as session:
+        session.query(SettingsVersion).delete()
+        session.commit()
+
+
 def test_settings_response_marks_pending_values(client: TestClient) -> None:
     """A saved-but-not-yet-active change stays visible: the form still shows
     the active value while ``pending`` / ``pending_change`` say what the next
@@ -1245,7 +1284,7 @@ def test_settings_response_marks_pending_values(client: TestClient) -> None:
         "/api/settings",
         json={
             "settings": {
-                "universe": {"mode": "screened"},
+                "universe": {"screen": {"min_price": 15}},
                 "risk": {"risk_per_trade_pct": 0.4},
             },
             "reason": "pending markers",
@@ -1256,11 +1295,11 @@ def test_settings_response_marks_pending_values(client: TestClient) -> None:
     body = client.get("/api/settings").json()
     assert body["pending_version"] == saved.json()["version"]
     # The form shows the active values — pending is marked separately.
-    assert body["settings"]["universe"]["mode"] == "fixed"
+    assert body["settings"]["universe"]["screen"]["min_price"] == 10
     assert body["settings"]["risk"]["risk_per_trade_pct"] == 0.5
-    assert body["pending"]["universe.mode"] == "screened"
+    assert body["pending"]["universe.screen.min_price"] == 15
     assert body["pending"]["risk.risk_per_trade_pct"] == 0.4
-    assert "Universe mode" in body["pending_change"]
+    assert "Min price" in body["pending_change"]
     assert "Risk per trade" in body["pending_change"]
 
     # Same cleanup as test_settings_get_and_save_flow — no leaks.

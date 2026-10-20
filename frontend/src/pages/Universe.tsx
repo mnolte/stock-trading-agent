@@ -279,7 +279,7 @@ export default function Universe() {
         <span style={{ flex: '1 1 420px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
           {screened
             ? `Screened at ${data.screen_time_ny} New York (${ams} Amsterdam) on trading days. The eligible list is fixed for the whole session; held symbols are always managed, even if excluded or removed.`
-            : 'The universe is the fixed list below — the daily liquidity screen is off. Switch to a screened pool in Settings → Trading.'}
+            : 'The universe is the fixed list below — the screened pool arrives with PR 12. The daily screen below is a preview, not used by cycles yet.'}
         </span>
         <Link
           to="/settings"
@@ -337,19 +337,19 @@ export default function Universe() {
             <Link to="/settings" style={{ color: 'var(--sa-accent)' }}>
               Settings → Trading
             </Link>
-            . A screened pool picks the eligible symbols every trading day — switch the universe mode there.
+            . A screened pool arrives with PR 12 — until then the daily screen runs as a preview below.
           </p>
         </Card>
       )}
 
-      {screened && data.pool && counts && (
+      {data.pool && counts && (
         <>
           {/* summary tiles */}
           <section aria-label="Universe summary" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
             {(
               [
                 ['Pool', String(data.pool.size), `limit ${data.pool.max}`, 'var(--sa-text)'],
-                ['Eligible', String(counts.eligible), 'next session', 'var(--sa-accent)'],
+                ['Eligible', String(counts.eligible), data.preview ? 'preview' : 'next session', 'var(--sa-accent)'],
                 ['Held', String(counts.held), data.held_symbols.join(', ') || '—', 'var(--sa-text)'],
                 [
                   'Excluded',
@@ -465,7 +465,7 @@ export default function Universe() {
                   A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
                 </li>
                 <li>
-                  The screen only picks the eligible list — cycles still trade the fixed list in this version.
+                  This list is a preview — cycles still trade the fixed list until PR 12.
                 </li>
                 <li>
                   Rank is the return over the last {data.thresholds.lookback_sessions} sessions minus SPY’s, recomputed at the daily screen.

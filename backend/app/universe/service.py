@@ -165,12 +165,10 @@ class UniverseService:
     def ensure_pool_loaded(self) -> int:
         """Seed the default pool from pool.csv — once, ever.
 
-        Runs the first time screened mode is used. Rows added before the
-        seed keep theirs; a pool that already saw the defaults (even if a
-        row was removed since) is never re-seeded.
+        Runs at startup and the first time the pool is described. Rows
+        added before the seed keep theirs; a pool that already saw the
+        defaults (even if a row was removed since) is never re-seeded.
         """
-        if self.mode() != "screened":
-            return 0
         now = self._clock.now()
         with self._sf() as session:
             seeded = session.execute(
@@ -608,13 +606,14 @@ class UniverseService:
     async def run_screen(self, now: datetime | None = None) -> dict[str, Any]:
         """Run the daily liquidity screen for the session at ``now``.
 
-        No-ops in fixed mode and on non-trading days. On a data error the
-        previous list is kept untouched and a ``universe_screen_failed``
-        event raises the banner.
+        No-ops on non-trading days. On a data error the previous list is
+        kept untouched and a ``universe_screen_failed`` event raises the
+        banner.
         """
         now = now or self._clock.now()
-        if self.mode() != "screened":
-            return {"skipped": "fixed mode"}
+        # Screened mode is blocked until PR 12 — until then the screen
+        # still runs in fixed mode and stores the eligible list as a
+        # preview for the Universe screen (docs/SPEC.md §443).
         today = now.astimezone(NY_TZ).date()
         day = self._calendar.session_for(today)
         if day is None:
@@ -900,6 +899,9 @@ class UniverseService:
         ]
         payload: dict[str, Any] = {
             "mode": mode,
+            # Screened mode is blocked until PR 12; in fixed mode the
+            # screen results are a preview — cycles don't read them.
+            "preview": mode != "screened",
             "allowed_sectors": self.allowed_sectors(),
             "fixed_symbols": fixed,
             "held_symbols": sorted(held),
@@ -918,8 +920,6 @@ class UniverseService:
                 or 20,
             },
         }
-        if mode != "screened":
-            return payload
 
         self.ensure_pool_loaded()
         with self._sf() as session:

@@ -1089,6 +1089,7 @@ export interface UniverseCounts {
 
 export interface UniverseResponse {
   mode: string;
+  preview?: boolean;
   allowed_sectors: string[];
   fixed_symbols: UniverseFixedSymbol[];
   held_symbols: string[];

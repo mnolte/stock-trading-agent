@@ -695,23 +695,30 @@ async def test_held_symbol_leaves_pool_when_position_closes(
     )
 
 
-async def test_fixed_mode_unchanged(session_factory: sessionmaker[Session],
+async def test_fixed_mode_screen_is_preview(
+    session_factory: sessionmaker[Session],
     clock: FakeClock,
     calendar: FakeCalendarSource,
     tmp_path: Path,
 ) -> None:
-    """Fixed mode is exactly v0.1: no pool seed, no screen rows, the
-    universe is still the configured symbol list."""
-    config = make_config(tmp_path, mode="fixed")
+    """Screened mode is blocked until PR 12, but the daily screen still
+    runs in fixed mode: the pool seeds, screen rows are stored, the
+    Universe screen marks them ``preview`` — and cycles keep trading the
+    configured list (docs/SPEC.md §443)."""
+    config = make_config(tmp_path, [("AAPL", "Technology")], mode="fixed")
     service, market_data, *_ = make_service(
         session_factory, clock, calendar, config
     )
-    assert service.ensure_pool_loaded() == 0
+    assert service.ensure_pool_loaded() == 1
     result = await service.run_screen()
-    assert result == {"skipped": "fixed mode"}
+    assert "skipped" not in result and "failed" not in result
     with session_factory() as session:
-        assert session.execute(select(UniversePoolRow)).scalars().all() == []
-        assert session.execute(select(UniverseScreenRow)).scalars().all() == []
+        rows = session.execute(select(UniverseScreenRow)).scalars().all()
+    assert {r.symbol for r in rows} == {"AAPL"}
+    payload = service.describe()
+    assert payload["preview"] is True
+    assert payload["rows"][0]["symbol"] == "AAPL"
+    # Cycles and signal evaluation still use the configured list.
     assert market_data.universe() == [
         "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"
     ]
@@ -793,6 +800,25 @@ def test_universe_includes_held_symbols(
         ).scalar_one().status = "canceled"
         session.commit()
     assert market_data.universe() == fixed
+
+
+def test_config_refuses_screened_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Startup refuses a screened-mode config — from the YAML file and
+    from a stored settings version — because cycles don't read the
+    eligible list until PR 12 (docs/SPEC.md §443)."""
+    monkeypatch.setattr(
+        AppConfig, "_load_yaml", lambda self: {"universe": {"mode": "screened"}}
+    )
+    with pytest.raises(ValueError, match="Screened pool arrives with PR 12"):
+        AppConfig()
+    monkeypatch.setattr(AppConfig, "_load_yaml", lambda self: {})
+    config = AppConfig()
+    with pytest.raises(ValueError, match="Screened pool arrives with PR 12"):
+        config.apply_saved({"universe": {"mode": "screened"}}, version=1)
+    config.apply_saved({"universe": {"mode": "fixed"}}, version=2)
+    assert config.get("universe", "mode") == "fixed"
 
 
 async def test_describe_warming_progress(

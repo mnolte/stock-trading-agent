@@ -17,7 +17,7 @@ const shot = (base: string, project: string) =>
 /** Save a settings version (applies at the next screen for universe.*). */
 async function setUniverseMode(
   request: import('@playwright/test').APIRequestContext,
-  mode: 'fixed' | 'screened',
+  mode: 'fixed',
 ) {
   const response = await request.post('/api/settings', {
     data: {
@@ -29,8 +29,8 @@ async function setUniverseMode(
 }
 
 test.beforeEach(async ({ request }) => {
-  // The e2e database is shared between runs: put the mode back to fixed
-  // before the fixed-mode checks (a pending screened version would win).
+  // The e2e database is shared between runs: make sure the mode is fixed
+  // before the fixed-mode checks.
   const universe = await request.get('/api/universe');
   if (universe.ok() && (await universe.json()).mode !== 'fixed') {
     await setUniverseMode(request, 'fixed');
@@ -56,14 +56,13 @@ test('universe: fixed mode shows the v0.1 list and points to Settings', async ({
   await page.screenshot({ path: shot('universe-fixed', testInfo.project.name), fullPage: true });
 });
 
-test('universe: screened mode shows the screen and the pool', async ({
+test('universe: the daily screen shows as a preview in fixed mode', async ({
   page,
   request,
 }, testInfo) => {
   // The first screen seeds the 72-symbol pool and warms up 260 daily +
   // 60 sessions of 5-min bars per symbol with fakes — minutes, not seconds.
   testInfo.setTimeout(420_000);
-  await setUniverseMode(request, 'screened');
 
   const screen = await request.post('/api/universe/screen', {
     data: {},
@@ -73,13 +72,17 @@ test('universe: screened mode shows the screen and the pool', async ({
 
   await page.goto('/universe', { waitUntil: 'domcontentloaded' });
 
-  await expect(page.getByText('screened pool')).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText('Pool of 72')).toBeVisible();
+  // Screened mode is blocked until PR 12: the app stays on the fixed list
+  // and the screen results show as a preview only.
+  await expect(page.getByText('fixed list', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(
-    page.getByText(/Screened at 08:10 New York \(14:10 Amsterdam\)/)
+    page.getByText(/the screened pool arrives with PR 12/i)
   ).toBeVisible();
+  await expect(page.getByText('Pool')).toBeVisible();
   await expect(page.getByText('Today’s screen')).toBeVisible();
-  await expect(page.getByText('In the pool')).toBeVisible();
+  await expect(
+    page.getByText(/a preview, not used by cycles yet/i)
+  ).toBeVisible();
   await expect(
     page.getByText('Eligible for the next session', { exact: true })
   ).toBeVisible();
@@ -88,16 +91,23 @@ test('universe: screened mode shows the screen and the pool', async ({
   await expect(
     page.getByRole('button', { name: 'Import CSV…' })
   ).toBeVisible();
-  await expect(page.getByText('eligible').first()).toBeVisible();
 
-  await page.screenshot({ path: shot('universe-screened', testInfo.project.name), fullPage: true });
+  await page.screenshot({ path: shot('universe-preview', testInfo.project.name), fullPage: true });
 });
 
-test('settings: universe mode and liquidity screen rows', async ({
+test('settings: the screened pool is blocked until PR 12', async ({
   page,
   request,
 }, testInfo) => {
-  await setUniverseMode(request, 'screened');
+  // The API refuses a screened-mode save outright.
+  const refused = await request.post('/api/settings', {
+    data: {
+      settings: { universe: { mode: 'screened' } },
+      reason: 'e2e: try screened mode',
+    },
+  });
+  expect(refused.status()).toBe(422);
+  expect(await refused.text()).toContain('Screened pool arrives with PR 12');
 
   await page.goto('/settings');
   await expect(
@@ -105,17 +115,10 @@ test('settings: universe mode and liquidity screen rows', async ({
   ).toBeVisible({ timeout: 60_000 });
 
   await expect(page.getByRole('radio', { name: 'Fixed list' })).toBeVisible();
+  // The screened option is visible but disabled until PR 12.
   await expect(
     page.getByRole('radio', { name: 'Screened pool' })
-  ).toBeVisible();
-  // The saved-but-pending switch stays visible: active value in the control,
-  // pending value marked next to it and summarised in the banner. Other saves
-  // from earlier specs share the pending version (the e2e database is shared
-  // and no cycle promotes mid-run), so only require Universe mode in the list.
-  await expect(page.getByText('Pending: Screened pool')).toBeVisible();
-  await expect(
-    page.getByText(/is pending — it applies at the next cycle.*Universe mode/)
-  ).toBeVisible();
+  ).toBeDisabled();
   await expect(page.getByText('Liquidity screen ·')).toBeVisible();
   await expect(page.getByLabel('Min price', { exact: true })).toBeVisible();
   await expect(page.getByLabel('Min average dollar volume')).toBeVisible();
@@ -128,9 +131,4 @@ test('settings: universe mode and liquidity screen rows', async ({
   ).toBeVisible();
 
   await page.screenshot({ path: shot('settings-universe', testInfo.project.name), fullPage: true });
-});
-
-test.afterEach(async ({ request }) => {
-  // Leave the shared e2e database in the v0.1 mode.
-  await setUniverseMode(request, 'fixed');
 });

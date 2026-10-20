@@ -161,9 +161,10 @@ async def run_universe_screen(
 ) -> None:
     """Scheduler entry point: the 08:10 New York liquidity screen.
 
-    In fixed mode the service no-ops, so the job is harmless on the v0.1
-    paper run. A data failure keeps the previous eligible list and shows
-    a banner (docs/SPEC.md, Larger universe).
+    The screen runs in fixed mode too — its eligible list is a preview
+    on the Universe screen until PR 12 wires it into cycles. A data
+    failure keeps the previous list and shows a banner (docs/SPEC.md,
+    Larger universe).
     """
     await service.run_screen()
     if bus is not None:
@@ -498,13 +499,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
 
-    # v0.2: the pool seeds the first time screened mode is used; the daily
-    # screen itself runs from its 08:10 New York job (and once at startup
-    # in simulated mode, so the demo has a list on day one).
-    if universe_service.mode() == "screened":
-        universe_service.ensure_pool_loaded()
-        if config.env.mode == "simulated":
-            await universe_service.run_screen()
+    # The pool seeds once at startup; the daily screen runs from its
+    # 08:10 New York job as a preview while screened mode is blocked —
+    # the eligible list only reaches cycles when PR 12 lands
+    # (docs/SPEC.md §443). The simulated demo triggers it through
+    # POST /api/universe/screen.
+    universe_service.ensure_pool_loaded()
 
     # Trade updates → ledger; then reconcile once so the database starts
     # as a mirror of the broker (adopted positions get their stop here).
