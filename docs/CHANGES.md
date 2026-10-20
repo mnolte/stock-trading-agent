@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-10-20 — Fresh quote before entries; screened mode blocked until PR 12
+
+- Alpaca integration, Entries: new "Fresh quote before every entry". The latest IEX quote is fetched right before each entry order (automatic and Approve, one shared function) and rejected if its own timestamp is older than 60 s; spread check, limit price and code checks are redone from it; any failure means no order, recorded as a failed "Fresh quote" gate. Exits never wait for a quote. Config: `execution.quote_max_age_seconds: 60`.
+- Larger universe: until PR 12, Settings and startup refuse `universe.mode: screened`; the daily screen still runs and the Universe screen shows a preview. PR 12 removes the block.
+
+## 2026-10-19 — Briefing card, model call counter, shadows and backtesting
+
+- GUI: "Daily briefing card" (today's briefing on the dashboard next to the risk budget, with number-check status, model, cost and next briefing; previous briefing before 15:00) and "Model call counter" (decision calls today vs the day's maximum, cost today and this month; review, shadow and backtest cost on hover). Both in PR 10.
+- New section "Strategies and shadows (v0.2)", PR 13: strategy configurations (llm or rules_only, prompt, model, temperature, rule and check overrides; risk gates never overridable); up to 3 shadows run after each live cycle on the same input snapshots with virtual portfolios and fills on 5-min bars; never delay live; no broker client; $5 monthly cap; comparison, "same as live", disagreements; Promote to live through Settings after 20 closed trades.
+- New section "Backtesting (v0.2)", PR 14: live cycle code over past sessions with the fake broker and a database per run; data download at 50 calls/min paused during live work; lookahead guards; fills on 5-min bars (stop first when both touched); LLM strategies only after their model's knowledge cutoff; answer cache; estimate before start; $20 monthly cap; results with "Read with care" assumptions; CSV export.
+- Data model: `strategies`, `shadow_decisions`, `shadow_positions`, `shadow_equity`, `backtests`, `llm_cache`. Config: `shadows` and `backtest` blocks. GUI table: Universe, Strategies and Backtest screens.
+- Later versions: shadow strategies and backtesting moved forward to PR 13 and 14.
+
 ## 2026-10-18 — Notifications
 
 - New "Notifications" section: in-app banners always; browser notifications while the GUI is open; email over SMTP (password stored encrypted as `smtp_password`). 16 events in three severities with default channels; critical events always reach the browser and are never held back; repeat limit 30 minutes; quiet hours 23:00–08:00 Amsterdam (non-critical held and sent as one summary); sending never blocks trading; three failed emails show a banner. Subject and body format defined.

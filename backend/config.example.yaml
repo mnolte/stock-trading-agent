@@ -50,6 +50,7 @@ execution:
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
   max_spread_pct: 0.15
+  quote_max_age_seconds: 60    # fresh IEX quote fetched right before each entry; older = no order
   time_in_force: gtc
 
 rules:
@@ -140,6 +141,23 @@ notifications:
     daily_briefing: [email]
     weekly_review: [email]
     verdicts_waiting: []
+
+shadows:                        # v0.2, PR 13
+  max_active: 3
+  monthly_cost_cap_usd: 5         # separate from decisions, reviews and backtests
+  promote_min_closed_trades: 20
+  rules_only: {stop_atr: 2.0, target_r: 2.0}
+
+backtest:                         # v0.2, PR 14
+  monthly_cost_cap_usd: 20
+  max_range_years: 3
+  alpaca_calls_per_minute: 50     # paused during live cycles and checks
+  assumed_spread_pct: 0.05        # no historical quotes on the free plan
+  same_bar_stop_and_target: stop
+  data_dir: data/backtests        # one SQLite file per run
+  model_cutoffs:                  # LLM strategies only from the day after
+    gpt-4o-mini: "2023-10-31"
+    gpt-4.1-mini: "2024-06-01"
 
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check

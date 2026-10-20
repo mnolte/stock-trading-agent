@@ -28,12 +28,14 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 
 | File | Screen | Built in |
 | --- | --- | --- |
-| `Main.dc.html` | Dashboard: header, this-cycle line with cycle counter, risk budget card with positions and since-start tiles, price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card, cycle counter) |
+| `Main.dc.html` | Dashboard: header, this-cycle line with cycle counter, summary tiles (positions, model calls today, since start), daily briefing and risk budget cards, price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card, cycle counter, briefing card, model call counter) |
 | `Decision.dc.html` | Decision detail drawer, 560 px, in Trading Agent's layout (gates, signal stack, reasoning, levels, outcome), opened from the dashboard, positions and inspector | PR 4 (model part), PR 6 |
 | `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, day trades, account, order history | PR 5 (data), PR 6 |
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, decisions and outcomes, closed trades | PR 7 |
 | `Inspector.dc.html` | LLM inspector: calls today, metadata, validation result, prompt, raw response | PR 4 |
 | `Universe.dc.html` | Universe (v0.2): mode banner, counts, today's screen as a funnel, how the screen works, pool table with filters, search, rank, dollar volume, return vs SPY, status, add, CSV import and remove | PR 11 |
+| `Strategies.dc.html` | Strategies (v0.2): shadow cost and slots, comparison table (live, shadows, rules only), small-sample warning, equity curves with SPY, selected strategy with Pause, Archive, Promote, disagreements list | PR 13 |
+| `Backtest.dc.html` | Backtest (v0.2): new-backtest form with quick ranges, strategy picker, estimate and model-cutoff check; runs list with progress and cost; results tiles per strategy, equity curves with SPY, by regime, Read with care | PR 14 |
 | `Settings.dc.html` | Settings: section list with filter; API keys (masked, Test, Replace, inline "Test and save" form) and data sources; trading; risk limits in three groups; entry rules; earnings; model and reviews; notifications (event × browser/email, SMTP, repeat limit, quiet hours, recently sent); schedule; history; paper reset. One row per setting with its default, changed rows highlighted with Reset, sticky unsaved-changes bar with reason. `Settings-390.png` shows phone width | PR 6, redesigned in PR 10 |
 | `Reviews.dc.html` | Reviews: weekly review with stats, closed trades, skipped setups after 5 sessions, observations, suggestion (not applied), verdicts to confirm; Briefings tab | PR 9 |
 | `States.dc.html` | Session states, all banners, market-closed dashboard, pending approval, and 5 dialogs | PR 5 (kill switch), PR 6, PR 8 (error states) |

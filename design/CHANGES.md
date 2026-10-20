@@ -2,6 +2,13 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-19 — Briefing card, model call counter, Strategies, Backtest
+
+- `Main.dc.html`: summary tiles row (Positions, Model calls today with a bar against the 60-call maximum and cost, Since start); new "Daily briefing · 15:00" card next to the risk budget card, with fact chips and a footer (numbers checked, model and prompt, cost, next briefing).
+- New screen `Strategies.dc.html` (Learn group): shadow cost and slots with New shadow, comparison table with colour keys, small-sample warning, equity curves with SPY, selected strategy (what differs from live, Pause, Archive, Promote disabled under 20 trades), disagreements list.
+- New screen `Backtest.dc.html` (Learn group): new-backtest form (dates, quick ranges, universe, strategies with cutoff note, equity, slippage, estimate with model-cutoff check), runs list (running with progress and cancel, done, refused), results for run #4 (tiles live vs rules, equity curves with SPY, by regime, Read with care, trades/decisions/CSV).
+- Sidebar: Learn group now Reviews, Strategies, Backtest, LLM inspector (every screen). All screenshots re-rendered.
+
 ## 2026-10-18 — Notifications in Settings
 
 - `Settings.dc.html`: new "Notifications" section (and section-list entry) after Model and reviews: event table grouped Critical / Warnings / Trading / Reviews with Browser and Email checkboxes (browser locked on for critical events); Browser channel status; Email (SMTP) fields with encrypted password, Send test and Test and save; repeat limit; quiet hours; recently sent list. `Settings.png` and `Settings-390.png` re-rendered.

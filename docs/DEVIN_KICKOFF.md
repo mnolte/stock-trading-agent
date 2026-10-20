@@ -81,6 +81,86 @@ screenshots in docs/screenshots/pr-11/ next to the design PNGs, and ask in
 the PR before guessing.
 ```
 
+## Dashboard additions and v0.2 plan (19 Oct)
+
+```
+Two additions to PR 10 (dashboard), then the v0.2 plan grows by two PRs.
+Pull the updated spec and design packages first.
+
+1) PR 10 additions — read docs/SPEC.md → GUI, "Daily briefing card" and
+   "Model call counter"; design/screens/Main.dc.html and Main.png.
+- Daily briefing card next to the risk budget card: today's briefing text
+  (from the PR 9 reviews table), chips for the facts it used, number-check
+  status or the plain-template reason, model, prompt version, cost, next
+  briefing time. Before 15:00 Amsterdam on a trading day show the previous
+  briefing with its date; briefings off → "Briefings are off" + Settings link.
+- Model call counter tile: decision calls today vs max (max_calls_per_cycle ×
+  cycles today), cost today and this month; hover shows review cost vs its
+  cap (and later shadow/backtest cost). Links to the LLM inspector.
+- Both read stored data from the backend; no numbers computed in the frontend.
+- Tests: briefing before/after 15:00 and with briefings off; counter max on
+  an early-close day; costs match the model-call log.
+
+2) After PR 12, v0.2 continues with:
+- PR 13 Strategies and shadows — docs/SPEC.md → "Strategies and shadows
+  (v0.2)", design/screens/Strategies.dc.html.
+- PR 14 Backtesting — docs/SPEC.md → "Backtesting (v0.2)",
+  design/screens/Backtest.dc.html.
+Build them in that order, one PR each, only after PR 12 is merged. Use the
+kickoff below when you start PR 13.
+```
+
+## v0.2 kickoff: strategies and shadows (PR 13)
+
+```
+PR 13 (Strategies and shadows) is next. Pull the latest spec and design
+packages, then read, in this order:
+1. docs/CHANGES.md, entry 2026-10-19
+2. docs/SPEC.md → "Strategies and shadows (v0.2)", Data model (strategies,
+   shadow_decisions, shadow_positions, shadow_equity), Build plan item 13
+3. backend/config.example.yaml → shadows block
+4. design/screens/Strategies.dc.html and screenshots/Strategies.png
+
+Build PR 13 only:
+- Alembic revision for the four new tables.
+- A Strategy config (kind llm | rules_only, prompt version, model,
+  temperature, overrides of entry rules and code checks). Live = current
+  settings version. Risk gates, sizing, PDT and earnings handling are never
+  overridable — share the live functions, don't copy them.
+- Shadow runner: after each live cycle finishes, run every active shadow
+  (max 3) on that cycle's stored input snapshots, with the position part
+  rebuilt from the shadow's virtual portfolio; held first, then rules-passing
+  candidates in rank order, same 10-call cap. Skip and record "missed" if the
+  next live cycle or check is due. Never delay live.
+- Virtual portfolio and fills on 5-min bars: entry limit + timeout, stops and
+  targets checked at every check/cycle, stop first when both touched in one
+  bar, slippage per side, day-trade rule, earnings exit.
+- rules_only baseline: stop entry − 2 × ATR(1h), target 2R.
+- Shadow cost cap ($5/month, separate); LLM shadows pause at the cap,
+  rules-only continue; warning notification.
+- The shadow package must not import or receive the broker client; add a test
+  that fails if it can.
+- Comparison: return, vs SPY, closed trades, average R, max drawdown, model
+  cost, "same as live"; disagreements with 5-session outcome or trade result.
+  Weekly review facts include the comparison.
+- Promote to live: enabled at ≥ 20 closed trades; opens Settings with the
+  differences pre-filled as a new version (reason required); archives the shadow.
+- Strategies screen in the Learn group, as in the design, with the "New
+  shadow" dialog.
+
+Tests (fakes, injected clock, no network): a full simulated session with two
+shadows and rules-only alongside live with no delay to any live cycle;
+virtual fills (limit touched/not touched, stop vs target same bar); shadows
+can't override gates; cost cap pauses LLM shadows only; "same as live"
+calculation; promote disabled under 20 trades.
+
+Done when the build-plan "done when" for PR 13 holds. Use the PR template,
+save screenshots in docs/screenshots/pr-13/ next to the design PNGs, and ask
+in the PR before guessing.
+```
+
+PR 14 (Backtesting) uses the "Each later PR" message below.
+
 ## Each later PR
 
 ```

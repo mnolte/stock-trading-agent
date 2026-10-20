@@ -36,6 +36,8 @@ table{border-collapse:collapse}
       <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
       <div style="{{nav.group}}">Learn</div>
       <a href="Reviews.dc.html" aria-label="Reviews" title="Reviews" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="5" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="8" y1="3" x2="8" y2="7"></line><line x1="16" y1="3" x2="16" y2="7"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Reviews</span></sc-if></a>
+      <a href="Strategies.dc.html" aria-label="Strategies" title="Strategies" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="9" r="2"></circle><line x1="6" y1="7" x2="6" y2="17"></line><path d="M18 11c0 4-6 3-12 6"></path></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Strategies</span></sc-if></a>
+      <a href="Backtest.dc.html" aria-label="Backtest" title="Backtest" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M3 12a9 9 0 1 0 3-6.7"></path><polyline points="3 4 3 9 8 9"></polyline><polyline points="12 8 12 12 15 14"></polyline></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Backtest</span></sc-if></a>
       <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
       <div style="{{nav.group}}">Control</div>
       <a href="Universe.dc.html" aria-label="Universe" title="Universe" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="6" r="2"></circle><circle cx="12" cy="6" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="18" cy="12" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="12" cy="18" r="2"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Universe</span></sc-if></a>
@@ -79,8 +81,34 @@ table{border-collapse:collapse}
   <div style="display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #98A2AF"><span>Cycle 4 of 6 today · #52 this run</span><span>check 19:01</span></div>
 </div>
 </div>
+<section aria-label="Account summary" style="display: flex; flex-wrap: wrap; gap: 12px">
+<div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Positions</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">2 of 4</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">cash $6,634.30 · no margin</div>
+</div><div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div title="Decision calls today: at most 10 per cycle, 6 cycles. Reviews have their own $2 monthly cap: $0.01 used." style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Model calls today</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">17</div>
+  <div style="height: 6px; background: #232A35; border-radius: 3px; overflow: hidden"><div style="width: 28.333333333333332%; height: 6px; background: #7FB8FF"></div></div>
+  <div style="font-size: 13px; color: #98A2AF">of 60 max · $0.007 today · $0.11 this month</div>
+</div><div style="flex: 1 1 190px; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
+  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Since start</div>
+  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #3DD68C; white-space: nowrap">+1.84%</div>
+  
+  <div style="font-size: 13px; color: #98A2AF">SPY +1.21% · started 5 Oct</div>
+</div>
+</section>
 <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
-<section aria-label="Risk budget" style="flex: 999 1 600px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
+<section aria-label="Daily briefing" style="flex: 999 1 460px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; box-sizing: border-box">
+  <div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Daily briefing · 15:00</h2><a href="Reviews.dc.html" style="font-size: 13px">All briefings and reviews</a></div>
+  <p style="margin: 0; line-height: 1.65; color: #C9CFD6">One position open: JPM, 8 shares from 231.40, last close 232.80, 2.9% above its stop at 226.10. Yesterday the account gained $18.40 (+0.18%) while SPY rose 0.42%; no trades closed. The market regime is up with normal volatility, so entries are allowed. No held or watched symbol reports today or tomorrow; the first is GOOGL on 27 Oct. No banners. First cycle at 16:46.</p>
+  <div style="display: flex; flex-wrap: wrap; gap: 6px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">1 position</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">yesterday +0.18% · SPY +0.42%</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">market up · normal vol</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">no earnings ≤ 1 day</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">no banners</span></div>
+  <div style="flex: 1"></div>
+  <div style="display: flex; flex-wrap: wrap; gap: 6px 16px; padding-top: 10px; border-top: 1px solid #232A35; font-size: 12px; color: #98A2AF"><span>Numbers checked ✓</span><span>gpt-4o-mini · briefing.v1</span><span>$0.0004</span><span>Next briefing Fri 16 Oct 15:00</span></div>
+  <div style="font-size: 12px; color: #98A2AF">Written by the model from figures computed by the agent before the open; every number was checked against those figures. Things that changed since are in the cards around it.</div>
+</section>
+<section aria-label="Risk budget" style="flex: 1 1 560px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box">
   <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Risk budget</h2><span style="font-size: 13px; color: #98A2AF">limits from settings v3</span></div>
   <div style="display: flex; flex-wrap: wrap; gap: 16px 28px">
     <div style="flex: 1 1 300px; display: flex; flex-direction: column; gap: 14px; min-width: 0">
@@ -106,20 +134,6 @@ table{border-collapse:collapse}
     </div>
   </div>
 </section>
-<div style="flex: 1 1 240px; display: flex; flex-direction: column; gap: 12px; min-width: 0">
-  <div style="flex: 1 1 auto; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
-  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Positions</div>
-  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #E7EAEE; white-space: nowrap">2 of 4</div>
-  
-  <div style="font-size: 13px; color: #98A2AF">cash $6,634.30 · no margin</div>
-</div>
-  <div style="flex: 1 1 auto; padding: 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0">
-  <div style="font-size: 12px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Since start</div>
-  <div style="font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 500; color: #3DD68C; white-space: nowrap">+1.84%</div>
-  
-  <div style="font-size: 13px; color: #98A2AF">SPY +1.21% · started 5 Oct</div>
-</div>
-</div>
 </div>
 <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
 <section aria-label="Price chart" style="flex: 999 1 600px; min-width: 0; background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box">

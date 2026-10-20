@@ -24,9 +24,11 @@
 | 7 | Performance and outcomes | Decision layer (outcome tracking); Alpaca integration (paper realism) | `Performance` |
 | 8 | Hardening | Risk management (errors); Data model (backups) | `States` (error states) |
 | 9 | Reviews | Reviews; Data model | `Reviews`, verdict in `Decision` |
-| 10 | Settings and API keys | GUI (Settings screen, Risk budget card, Cycle counter); API keys; Notifications; Data model | `Settings`, risk budget card and cycle counter in `Main` |
+| 10 | Settings and API keys | GUI (Settings screen, Risk budget card, Cycle counter, Daily briefing card, Model call counter); API keys; Notifications; Data model | `Settings`, risk budget card, cycle counter, briefing card and model call counter in `Main` |
 | 11 | Pool and liquidity screen (v0.2) | Larger universe (pool, daily screen, rank, GUI); Data model | `Universe`, universe rows in `Settings` |
 | 12 | Cycles at scale (v0.2) | Larger universe (cycles at scale); Decision layer (one cycle) | Watchlist filters in `Main` |
+| 13 | Strategies and shadows (v0.2) | Strategies and shadows; Decision layer; Data model | `Strategies` |
+| 14 | Backtesting (v0.2) | Backtesting; Decision layer; Risk management; Data model | `Backtest` |
 
 ## PR description template
 

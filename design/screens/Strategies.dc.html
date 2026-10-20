@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Agent — Strategies</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input,select{font-family:inherit}
+table{border-collapse:collapse}
+</style>
+</helmet>
+<div style="min-height: 1700px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <aside aria-label="Sidebar" style="{{nav.aside}}">
+    <div style="{{nav.brandRow}}">
+      <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
+      <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
+        </div>
+      </sc-if>
+    </div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 2px">
+      <div style="{{nav.group}}">Monitor</div>
+      <a href="Main.dc.html" aria-label="Dashboard" title="Dashboard" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Dashboard</span></sc-if></a>
+      <a href="Positions.dc.html" aria-label="Positions & orders" title="Positions & orders" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Positions & orders</span></sc-if></a>
+      <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
+      <div style="{{nav.group}}">Learn</div>
+      <a href="Reviews.dc.html" aria-label="Reviews" title="Reviews" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="5" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="8" y1="3" x2="8" y2="7"></line><line x1="16" y1="3" x2="16" y2="7"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Reviews</span></sc-if></a>
+      <a href="Strategies.dc.html" aria-current="page" aria-label="Strategies" title="Strategies" style="{{nav.active}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="9" r="2"></circle><line x1="6" y1="7" x2="6" y2="17"></line><path d="M18 11c0 4-6 3-12 6"></path></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Strategies</span></sc-if></a>
+      <a href="Backtest.dc.html" aria-label="Backtest" title="Backtest" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M3 12a9 9 0 1 0 3-6.7"></path><polyline points="3 4 3 9 8 9"></polyline><polyline points="12 8 12 12 15 14"></polyline></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Backtest</span></sc-if></a>
+      <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
+      <div style="{{nav.group}}">Control</div>
+      <a href="Universe.dc.html" aria-label="Universe" title="Universe" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="6" r="2"></circle><circle cx="12" cy="6" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="18" cy="12" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="12" cy="18" r="2"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Universe</span></sc-if></a>
+      <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
+    </nav>
+    <div style="flex: 1"></div>
+    <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
+    <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
+  </aside>
+
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid #232A35; background: #0F131A">
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 18px; font-weight: 600">Strategies</h1><div style="font-size: 13px; color: #98A2AF">Shadow strategies run on the same inputs without trading</div></div>
+      <span title="Orders go to Alpaca's paper account. Real-money trading is not built." style="display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+      <div title="New York 12:52 · market closes 16:00 New York (22:00 Amsterdam)" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #171C24; border: 1px solid #232A35; font-size: 13px; white-space: nowrap">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #3DD68C"></span>
+        <span>Market open</span>
+        <span style="color: #98A2AF">· next cycle 19:46 · in 54 min</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Equity</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #E7EAEE; white-space: nowrap">$10,184.30 <span style="color: #98A2AF; font-size: 12px">€8,749.40</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Today</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #3DD68C; white-space: nowrap">+$42.10 <span style="color: #98A2AF; font-size: 12px">+€36.17</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span title="Market regime from SPY: trend × volatility" style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Regime</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Up · normal vol</span>
+      </div>
+      <a href="States.dc.html" title="Pause new entries. Stops, targets and position checks keep working." style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><line x1="8" y1="5" x2="8" y2="19"></line><line x1="16" y1="5" x2="16" y2="19"></line></svg><span>Pause</span></a>
+      <a href="States.dc.html" title="Stop new entries, or stop and sell everything" style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #7A2A2E; background: #3A1416; color: #FFB3B6; font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="13"></line><line x1="12" y1="17" x2="12" y2="17"></line></svg><span>Kill switch</span></a>
+    </div>
+  </header>
+  <main style="max-width: 1440px; width: 100%; margin: 0 auto; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; padding: 14px 18px; background: #12161D; border: 1px solid #232A35; border-radius: 10px">
+  <span style="font-size: 13px; color: #C9CFD6">Shadows never trade. They see exactly what live saw each cycle, decide after it, and fill on the same 5-min bars with the same slippage.</span>
+  <span style="flex: 1"></span>
+  <span style="font-size: 13px; color: #98A2AF">Shadow model cost <span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">$0.54 of $5</span> this month · 3 of 3 slots</span>
+  <button type="button" style="height: 40px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; box-sizing: border-box"><span>New shadow…</span></button>
+</div>
+<section aria-label="Compare" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Compare</h2><div style="font-size: 13px; color: #98A2AF">this run · since 5 Oct</div></div>
+<div style="overflow-x: auto"><table style="width: 100%; min-width: 900px; border-collapse: collapse"><thead><tr><th scope="col" title="" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Strategy</th><th scope="col" title="" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap"></th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Since 5 Oct</th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">vs SPY</th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Closed trades</th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Average R</th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Max drawdown</th><th scope="col" title="Share of decisions where this strategy chose the same final action as live" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Same as live</th><th scope="col" title="" style="text-align: right; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Model cost</th></tr></thead><tbody><tr style="">
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><div style="display: flex; gap: 10px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #F2B94B; flex: 0 0 10px"></span><div><div style="font-weight: 600">Live</div><div style="font-size: 12px; color: #98A2AF">decision.v1 · gpt-4o-mini · settings v3</div></div></div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">live</span></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+1.84%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+0.63 pts</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right"><span style="font-family: 'IBM Plex Mono', monospace">3</span><div style="font-size: 12px; color: #98A2AF">2 won · 1 lost</div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">+1.07R</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">−0.49%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">—</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">$0.11</td>
+</tr><tr style="">
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><div style="display: flex; gap: 10px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #7FB8FF; flex: 0 0 10px"></span><div><div style="font-weight: 600">A · Stricter trend</div><div style="font-size: 12px; color: #98A2AF">decision.v2 · gpt-4o-mini</div></div></div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #13202F; color: #7FB8FF; border: 1px solid #24405F">shadow</span></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+1.21%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">+0.00 pts</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right"><span style="font-family: 'IBM Plex Mono', monospace">2</span><div style="font-size: 12px; color: #98A2AF">1 won · 1 lost</div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">+0.80R</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">−0.52%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">86%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">$0.10</td>
+</tr><tr style="background: #211C10; box-shadow: inset 3px 0 0 #7FB8FF;">
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><div style="display: flex; gap: 10px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #C792EA; flex: 0 0 10px"></span><div><div style="font-weight: 600">B · Bigger model</div><div style="font-size: 12px; color: #98A2AF">decision.v1 · gpt-4.1-mini</div></div></div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #13202F; color: #7FB8FF; border: 1px solid #24405F">shadow</span></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+2.10%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #3DD68C">+0.89 pts</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right"><span style="font-family: 'IBM Plex Mono', monospace">4</span><div style="font-size: 12px; color: #98A2AF">3 won · 1 lost</div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">+1.20R</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">−0.61%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">79%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">$0.44</td>
+</tr><tr style="">
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><div style="display: flex; gap: 10px; align-items: center"><span style="width: 10px; height: 10px; border-radius: 3px; background: #9FB4CC; flex: 0 0 10px"></span><div><div style="font-weight: 600">Rules only</div><div style="font-size: 12px; color: #98A2AF">no model · stop 2 × ATR · target 2R</div></div></div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">baseline</span></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">-0.62%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">-1.83 pts</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right"><span style="font-family: 'IBM Plex Mono', monospace">9</span><div style="font-size: 12px; color: #98A2AF">3 won · 6 lost</div></td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">−0.14R</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">−1.40%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">41%</td>
+  <td style="padding: 11px 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: middle; text-align: right; font-family: 'IBM Plex Mono', monospace">$0.00</td>
+</tr></tbody></table></div><div style="display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid #6B4E17; background: #3A2A0E; border-radius: 8px; font-size: 13px; color: #FFD58A; line-height: 1.5">
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><path d="M12 3l10 18H2z"></path><line x1="12" y1="10" x2="12" y2="14"></line><line x1="12" y1="18" x2="12" y2="18"></line></svg><span>9 sessions and 2 to 9 closed trades per strategy: far too few to tell strategies apart. Promoting to live needs at least 20 closed trades; read the differences as hints, not results.</span>
+</div>
+</section>
+<div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch">
+  <section aria-label="Equity since 5 Oct" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 3 1 520px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Equity since 5 Oct</h2><div style="font-size: 13px; color: #98A2AF">% of starting equity</div></div>
+<div style="padding-right: 48px"><div style="position: relative; height: 280px"><div style="position: absolute; left: 0; right: 0; top: 39px; border-top: 1px solid #1C222C"><span style="position: absolute; right: -44px; top: -8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #98A2AF">+2%</span></div><div style="position: absolute; left: 0; right: 0; top: 97px; border-top: 1px solid #1C222C"><span style="position: absolute; right: -44px; top: -8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #98A2AF">+1%</span></div><div style="position: absolute; left: 0; right: 0; top: 154px; border-top: 1px solid #1C222C"><span style="position: absolute; right: -44px; top: -8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #98A2AF">+0%</span></div><div style="position: absolute; left: 0; right: 0; top: 212px; border-top: 1px solid #1C222C"><span style="position: absolute; right: -44px; top: -8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #98A2AF">-1%</span></div><div style="position: absolute; left: 0; right: 0; top: 270px; border-top: 1px solid #1C222C"><span style="position: absolute; right: -44px; top: -8px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #98A2AF">-2%</span></div>
+  <svg viewBox="0 0 1000 280" preserveAspectRatio="none" aria-label="Equity since 5 Oct, percent" style="position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible"><polyline points="0.0,154.4 111.1,148.7 222.2,119.8 333.3,137.1 444.4,102.4 555.6,68.4 666.7,79.3 777.8,73.6 888.9,67.8 1000.0,48.1" fill="none" stroke="#F2B94B" stroke-width="2" vector-effect="non-scaling-stroke"></polyline><polyline points="0.0,154.4 111.1,148.7 222.2,125.6 333.3,142.9 444.4,114.0 555.6,90.9 666.7,102.4 777.8,96.7 888.9,90.9 1000.0,84.5" fill="none" stroke="#7FB8FF" stroke-width="2" vector-effect="non-scaling-stroke"></polyline><polyline points="0.0,154.4 111.1,142.9 222.2,114.0 333.3,125.6 444.4,85.1 555.6,50.4 666.7,62.0 777.8,50.4 888.9,44.7 1000.0,33.1" fill="none" stroke="#C792EA" stroke-width="2" vector-effect="non-scaling-stroke"></polyline><polyline points="0.0,154.4 111.1,166.0 222.2,148.7 333.3,183.3 444.4,171.8 555.6,160.2 666.7,189.1 777.8,177.6 888.9,200.7 1000.0,190.3" fill="none" stroke="#9FB4CC" stroke-width="2" vector-effect="non-scaling-stroke"></polyline><polyline points="0.0,154.4 111.1,137.1 222.2,142.9 333.3,125.6 444.4,119.8 555.6,112.3 666.7,108.2 777.8,96.7 888.9,102.4 1000.0,84.5" fill="none" stroke="#C9CFD6" stroke-width="2" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"></polyline></svg>
+</div>
+<div style="display: flex; justify-content: space-between; font-size: 11px; color: #98A2AF; margin-top: 6px"><span>5 Oct</span><span>7 Oct</span><span>9 Oct</span><span>13 Oct</span><span>15 Oct</span></div></div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; color: #C9CFD6"><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 3px; border-radius: 2px; background: #F2B94B"></span>Live</span><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 3px; border-radius: 2px; background: #7FB8FF"></span>A · Stricter trend</span><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 3px; border-radius: 2px; background: #C792EA"></span>B · Bigger model</span><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 3px; border-radius: 2px; background: #9FB4CC"></span>Rules only</span><span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 0; border-top: 2px dashed #C9CFD6"></span>SPY</span></div>
+</section>
+  <section aria-label="B · Bigger model" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 2 1 360px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">B · Bigger model</h2><div style="font-size: 13px; color: #98A2AF"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #13202F; color: #7FB8FF; border: 1px solid #24405F">shadow</span></div></div>
+<div style="display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span style="color: #98A2AF">Differs from live</span><span style="color: #C9CFD6; text-align: right"><span style="font-family: 'IBM Plex Mono', monospace">model gpt-4o-mini → gpt-4.1-mini</span></span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span style="color: #98A2AF">Same as live</span><span style="color: #C9CFD6; text-align: right">prompt decision.v1, temperature 0, rules, checks, risk gates</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span style="color: #98A2AF">Started</span><span style="color: #C9CFD6; text-align: right">5 Oct 15:02 · virtual $10,000</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span style="color: #98A2AF">Calls</span><span style="color: #C9CFD6; text-align: right">312 · $0.44 · runs after each live cycle</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #1C222C; font-size: 13px"><span style="color: #98A2AF">Open virtual positions</span><span style="color: #C9CFD6; text-align: right">MSFT 4 sh · CAT 2 sh</span></div><div style="display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px"><button type="button" style="height: 40px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid #232A35; background: transparent; color: #C9CFD6; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; box-sizing: border-box"><span>Pause</span></button><button type="button" style="height: 40px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; border: 1px solid #232A35; background: transparent; color: #C9CFD6; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; white-space: nowrap; box-sizing: border-box"><span>Archive</span></button>
+  <button type="button" disabled title="Needs at least 20 closed trades (has 4)" style="height: 40px; padding: 0 16px; border-radius: 8px; border: 1px solid #232A35; background: transparent; color: #6B7480; font-size: 14px; font-weight: 600; cursor: not-allowed">Promote to live…</button></div>
+<div style="font-size: 12px; color: #98A2AF; padding-top: 6px">Promote opens Settings with this model filled in as a new settings version; nothing changes until you save it with a reason.</div>
+</section>
+</div>
+<section aria-label="Where B and live disagreed" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Where B and live disagreed</h2><div style="font-size: 13px; color: #98A2AF"><a href="Decision.dc.html">Open a decision</a></div></div>
+<div style="display: grid; grid-template-columns: 96px 60px 1fr auto; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Wed 7 Oct</span><b style="font-weight: 600">AMZN</b>
+  <span style="color: #C9CFD6">live SKIP 0.49 · B ENTER 0.61</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C">B +2.1R target</span>
+</div><div style="display: grid; grid-template-columns: 96px 60px 1fr auto; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Tue 6 Oct</span><b style="font-weight: 600">XOM</b>
+  <span style="color: #C9CFD6">live ENTER 0.57 · B SKIP 0.44</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #FF8A8F">live −1.0R stop</span>
+</div><div style="display: grid; grid-template-columns: 96px 60px 1fr auto; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Mon 12 Oct</span><b style="font-weight: 600">GOOGL</b>
+  <span style="color: #C9CFD6">live SKIP 0.52 · B ENTER 0.58</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #FF8A8F">B −1.0R stop</span>
+</div><div style="display: grid; grid-template-columns: 96px 60px 1fr auto; gap: 10px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid #232A35; font-size: 13px">
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Thu 15 Oct</span><b style="font-weight: 600">CAT</b>
+  <span style="color: #C9CFD6">live SKIP 0.53 · B ENTER 0.60</span>
+  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">B open</span>
+</div><div style="font-size: 12px; color: #98A2AF; padding-top: 8px">14 disagreements in 9 sessions · outcome after 5 sessions or at exit</div>
+</section>
+
+  </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 1700}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {};
+  }
+  renderVals() {
+    var self = this;
+
+    var navCollapsed = !!(this.state && this.state.navCollapsed);
+    var navBase = 'height:44px;display:flex;align-items:center;gap:12px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;box-sizing:border-box;white-space:nowrap;' + (navCollapsed ? 'justify-content:center;padding:0;' : 'padding:0 12px;');
+    var nav = {
+      expanded: !navCollapsed,
+      expandedStr: String(!navCollapsed),
+      toggle: function () { self.setState({ navCollapsed: !navCollapsed }); },
+      toggleLabel: navCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      aside: 'flex:0 0 ' + (navCollapsed ? '72px' : '232px') + ';box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px ' + (navCollapsed ? '12px' : '16px') + ';background:#0F131A;border-right:1px solid #232A35',
+      brandRow: 'display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #232A35;' + (navCollapsed ? 'justify-content:center' : ''),
+      item: navBase + 'color:#98A2AF',
+      active: navBase + 'background:#1C222C;color:#E7EAEE',
+      status: 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#171C24;border:1px solid #232A35;font-size:13px;' + (navCollapsed ? 'justify-content:center' : ''),
+      dot: 'width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#3DD68C',
+      toggleStyle: navBase + 'width:100%;border:1px solid #232A35;background:transparent;color:#98A2AF;cursor:pointer;font-family:inherit'
+    };
+    nav.group = navCollapsed ? 'height:1px;background:#232A35;margin:8px 4px;overflow:hidden;color:transparent;font-size:0' : 'font-size:11px;font-weight:600;color:#8A94A1;text-transform:uppercase;letter-spacing:0.08em;padding:12px 12px 4px';
+
+    return { nav: nav };
+  }
+}
+</script>
+</body>
+</html>

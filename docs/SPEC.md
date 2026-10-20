@@ -144,6 +144,7 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 - Entry limit = current IEX ask + 0.05%. If not filled within 10 minutes, cancel it and record "entry not filled".
 - Skip the entry if the IEX spread is above 0.15% of price.
 - Quantity is whole shares from the risk sizing; if that rounds to 0, skip.
+- **Fresh quote before every entry.** Right before an entry order is sent (automatic or approved), fetch the latest IEX quote. Reject it if the quote's own timestamp is more than 60 seconds old (`execution.quote_max_age_seconds`). With the fresh quote, re-run the spread check, recompute the limit price and re-run the code checks (reward to risk, stop distance) from the new entry. Any failure means no order: it is recorded as a failed "Fresh quote" gate with reason `quote_stale`, `quote_missing` or the failing check, and the symbol is looked at again next cycle. Automatic entries and Approve use the same function. Exits, stop moves and Stop & flatten never wait for a quote.
 
 **Managing positions**
 
@@ -288,9 +289,16 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime |
 | LLM inspector | Every model call: prompt version, full prompt, raw response, tokens, cost, latency, validation result |
 | Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
+| Universe (v0.2) | Pool, daily screen and eligible symbols (see Larger universe) |
+| Strategies (v0.2) | Live, shadows and baselines compared; equity curves; disagreements; Promote to live (see Strategies and shadows) |
+| Backtest (v0.2) | New backtest with estimate, runs, results (see Backtesting) |
 | States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode); confirm dialogs for Stop & flatten, reset paper account and settings changes |
 
 The layout must also work at phone width, so the VPS version can be checked from a phone.
+
+**Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text, chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
+
+**Model call counter.** A summary tile shows today's decision calls against the day's maximum (max calls per cycle × cycles today, 60 by default), with today's and this month's decision cost. On hover it shows review cost against its own cap, and from v0.2 shadow and backtest cost against theirs. It links to the LLM inspector.
 
 **Cycle counter.** The this-cycle strip at the top of the dashboard ends with a cycle counter: the next cycle's time in Amsterdam and New York with a live countdown (mm:ss under an hour, otherwise h:mm), one segment per cycle of today's session (done, next, later; an early-close day has fewer), "Cycle n of 6 today", the cycle's number in this run, and the next position check. Market closed: the next session's first cycle with its day. Kill switch on: "Kill switch on · no cycles". A cycle that is running shows "running" instead of the countdown. The count in this run comes from the `cycles` table (kind cycle) since the run started.
 
@@ -361,6 +369,12 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
+| `strategies` | name, kind (llm or rules_only), prompt version, model, temperature, rule and check overrides JSON, status (active, paused, archived), created, archived at (v0.2) |
+| `shadow_decisions` | strategy, cycle, symbol, context, live decision (shares its input snapshot), model output JSON, final action, gates result, tokens, cost, missed (v0.2) |
+| `shadow_positions` | strategy, symbol, qty, entry, stop, target, opened, closed, exit reason, R (v0.2) |
+| `shadow_equity` | strategy, time, equity (v0.2) |
+| `backtests` | name, period, universe mode, strategies JSON, starting equity, slippage, status, progress, cost, run database path, warnings JSON, summary JSON, created, finished (v0.2) |
+| `llm_cache` | key hash (model, temperature, prompt version and hash, input snapshot hash), response JSON, tokens, created (v0.2) |
 | `universe_pool` | symbol, sector, source (default, added or import), added at, removed at (v0.2) |
 | `universe_screens` | session date, symbol, status (eligible, excluded or warming_up), check results JSON, last close, average dollar volume, return vs SPY, rank, failed screens in a row (v0.2) |
 | `notifications` | time, event, severity, subject, channels, status per channel (sent, failed, held back, quiet hours), error |
@@ -385,7 +399,7 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 
 ## Build plan
 
-Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 and 12. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
+Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
 
 1. **Skeleton.** Repo layout, FastAPI app, React shell with header and empty screens, config loading, SQLite and migrations, `AGENTS.md`, CI running tests with sockets blocked. *Done when:* app starts, header shows PAPER and a fake clock.
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
@@ -396,9 +410,11 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 and 12. 
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* a crash mid-cycle recovers cleanly.
 9. **Reviews.** Weekly review, daily briefing and verdicts (see Reviews).
-10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`, plus the dashboard risk budget card and cycle counter (see Risk budget card, Cycle counter) and notifications (see Notifications). If this makes PR 10 too large, notifications may follow as their own PR, still before the paper run. *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
+10. **Settings and API keys.** Settings screen redesign (see Settings screen) and keys entered in Settings (see API keys), including the one-time import from `.env`, plus the dashboard risk budget card, cycle counter, daily briefing card and model call counter (see Risk budget card, Cycle counter, Daily briefing card, Model call counter) and notifications (see Notifications). If this makes PR 10 too large, notifications may follow as their own PR, still before the paper run. *Done when:* the app runs with an `.env` that has no keys, and the 4-week paper run can start.
 11. **Pool and liquidity screen (v0.2).** `universe_pool` and `universe_screens`, pool loading from `pool.csv`, add/import/remove, warm-up, daily screen with hysteresis, rank, universe mode in Settings, Universe screen. Default mode stays `fixed`. *Done when:* in simulated mode the screen over the 72-symbol pool gives the expected statuses, and fixed mode is unchanged.
 12. **Cycles at scale (v0.2).** Cycles over eligible plus held symbols, multi-symbol bar requests, model calls in rank order, cycle duration and warning, 5-min bar pruning, dashboard watchlist filters and search. *Done when:* a simulated session with the 72-symbol pool keeps every cycle under 10 minutes and under 150 Alpaca calls per minute, and every held position is handled.
+13. **Strategies and shadows (v0.2).** `strategies`, shadow runner after each live cycle, virtual portfolios and fills, rules-only baseline, shadow cost cap, comparison and disagreements, Promote to live via Settings, Strategies screen. *Done when:* in simulated mode two shadows and the rules-only baseline run alongside live for a full session without delaying any live cycle, and a test proves the shadow code cannot reach the broker.
+14. **Backtesting (v0.2).** Backtest worker on the live cycle code with the fake broker, per-run database, historical data download within its own rate limit, lookahead guards, simulated fills, model-cutoff check, answer cache, estimate and cost cap, results and Backtest screen. *Done when:* a rules-only backtest over 3 months of cached bars gives the same trades twice, an LLM backtest before the model's cutoff is refused, and a lookahead test passes.
 
 ## Reviews
 
@@ -424,7 +440,7 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 
 Watch more of the market without taking more risk: risk limits, gates and the 10-call cap stay the same; only the set of symbols the agent looks at grows. Built as PR 11 and PR 12.
 
-**Two modes.** `universe.mode` is `fixed` (the 10-symbol list from v0.1, the default) or `screened` (a daily liquidity screen over a pool). Settings → Trading → Universe switches between them. A switch is a new settings version and applies at the next daily screen, never mid-session. Switch at the start of a new run so the v0.1 paper results stay comparable. In `fixed` mode everything behaves exactly as in v0.1.
+**Two modes.** `universe.mode` is `fixed` (the 10-symbol list from v0.1, the default) or `screened` (a daily liquidity screen over a pool). Settings → Trading → Universe switches between them. A switch is a new settings version and applies at the next daily screen, never mid-session. Switch at the start of a new run so the v0.1 paper results stay comparable. In `fixed` mode everything behaves exactly as in v0.1. Until PR 12 wires cycles to the eligible list, Settings and startup refuse `screened` ("Screened pool arrives with PR 12"); the daily screen still runs and the Universe screen shows its result as a preview that cycles don't use yet.
 
 **Pool.** `backend/universe/pool.csv` (symbol, sector) holds a default pool of 72 large US stocks and ETFs with sectors from the fixed list. It is loaded into `universe_pool` the first time screened mode starts; after that the pool is edited on the Universe screen (add one symbol with its sector, import a CSV of symbol and sector, remove) and the file is only the defaults. At most 150 symbols. Adding checks what it checks today (active, tradable US stock or ETF at Alpaca, sector required) and the symbol warms up until its history is loaded.
 
@@ -446,6 +462,42 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
 
 **GUI.** A Universe screen in the Control group: mode, counts (pool, eligible, held, excluded, warming up), today's screen as a funnel, and the pool table (rank, symbol, sector, price, 20-session average dollar volume, return vs SPY, status with reason) with filters, search, add, CSV import and remove. Statuses: eligible, eligible with 1 or 2 fails, held, excluded with the failed check, warming up. The dashboard watchlist gets filters (All, Pass rules, Held, Earnings within 3 days) and search; in screened mode it is sorted by rank and shows 15 rows, then "Show all". Settings → Trading gets the universe mode and the screen thresholds. In fixed mode the Universe screen shows the fixed list and points to Settings.
 
+## Strategies and shadows (v0.2)
+
+A shadow strategy decides on exactly the same inputs as live, every cycle, but never trades. It answers questions like "would another prompt, a bigger model, or no model at all have done better?" with evidence from the same market, instead of opinions. Built as PR 13.
+
+**Strategies.** A strategy is a named configuration: kind (`llm` or `rules_only`), prompt version, model, temperature, and overrides of the entry rules and code checks (RSI range, minimum confidence, stop distance range, minimum reward to risk). Risk gates, sizing, the day-trade rule and earnings handling can never be overridden; every strategy runs under the live limits. Live is the strategy defined by the current settings version. `rules_only` enters whenever the rules pass, with the stop at entry − 2 × ATR(1h) and the target at 2R, and exits only through its stop, target or the earnings exit.
+
+**Running shadows.** At most 3 shadows are active. After each live cycle has finished and its orders are sent, every active shadow runs on that cycle's stored input snapshots: the market part is reused as it is, and the position part is rebuilt from the shadow's own virtual portfolio. Calls go to the shadow's held positions first, then to candidates that pass its rules in rank order, up to the same 10-call cap. Shadow work never delays live: if the next live cycle or position check is due, unfinished shadow work for that cycle is skipped and recorded as missed.
+
+**Virtual trading.** Each shadow has a virtual portfolio that starts with the live run's starting equity when the shadow starts. Entries use the same limit price and timeout as live and fill when a later 5-min bar trades at or through the limit. Stops and targets are checked on 5-min bars at every position check and cycle; when both are touched in the same bar, the stop counts. Slippage per side, the day-trade rule and earnings exits apply as for live. The shadow code has no broker client at all; a test fails the build if it can reach one.
+
+**Cost.** Shadow model calls have their own monthly cap ($5). When it is reached, LLM shadows pause until the next month (rules-only shadows keep running) and a warning notification is sent. Shadows never use live call budget or rate limits needed by live.
+
+**Comparing.** For the current run, per strategy: return, difference with SPY, closed trades won and lost, average R, max drawdown, model cost, and "same as live" (share of symbol-cycles where the final action matched live). The disagreements list shows each symbol-cycle where a shadow and live chose differently, with what happened after (the 5-session outcome, or the trade's result). The weekly review's facts include this comparison. A new run restarts every shadow.
+
+**Promote to live.** Only possible once the shadow has at least 20 closed trades. It opens Settings with the shadow's differences filled in as a new settings version, which Marc saves with a reason like any other change; the shadow is then archived. Nothing is promoted automatically.
+
+**GUI.** A Strategies screen in the Learn group: the comparison table (live, shadows and baselines), a warning while samples are small, equity curves with SPY, the selected strategy's configuration (what differs from live) with Pause, Archive and Promote, and the disagreements list. "New shadow" opens a dialog to name it, pick the kind, prompt version, model and temperature, and set rule overrides.
+
+## Backtesting (v0.2)
+
+A backtest replays strategies over past sessions with the same code that trades live, so results are comparable with the paper run. Built as PR 14.
+
+**Engine.** The cycle, rules, risk gates, sizing, position checks and outcome tracking are the live code, driven by an injected clock over historical sessions and the fake broker from simulated mode. Each run writes to its own SQLite file in `data/backtests/`; the live database only gets a summary row. Backtests never touch the Alpaca account. One run at a time, in a background worker, with progress, cancel and a summary at the end.
+
+**Data.** 5-min and daily bars come from the cache; missing ranges are downloaded from Alpaca (split-adjusted) at most 50 calls per minute, pausing during live cycles and checks. News comes from Alpaca's historical news, earnings dates from Finnhub's calendar history. Every input is cut at the decision time with the same delays as live (bars closed at least 16 minutes earlier, news published before the decision); tests check that no later data leaks in. Days with missing earnings data block entries for that symbol, and the results say so. There are no historical quotes on the free data plan, so the spread is assumed (0.05%) and the limit price uses the last 5-min close.
+
+**Fills.** Bracket orders are simulated on 5-min bars: an entry fills when a bar trades at or through the limit before the entry timeout; stops and targets are checked on every bar; when both are touched in the same bar the stop counts. Slippage per side applies (0.05% by default, editable per run). Commission is zero, as at Alpaca.
+
+**Model calls.** An `llm` strategy can only be backtested from the day after its model's knowledge cutoff (from `backtest.model_cutoffs`); an earlier start is refused before the run begins, because the model may already know what happened. Answers are cached by model, temperature, prompt version and hash, and input snapshot hash, so a rerun on the same inputs costs nothing and gives the same result. Before a run starts the screen shows the number of sessions, bars to download, estimated model calls (minus cache hits) and estimated cost. Backtests have their own monthly cap ($20); a run that reaches it stops cleanly and keeps its results so far.
+
+**Runs.** A run has a period (at most 3 years), the universe (fixed list, or the screened pool applied day by day with only the data available that day, flagged for survivorship bias because the pool is today's list), the strategies to compare (live settings, any shadow, rules only), starting equity and slippage.
+
+**Results.** Per strategy: return, difference with SPY buy and hold over the same sessions, max drawdown, closed trades, win rate, average R, profit factor and time in market; equity curves with SPY; results by market regime and by symbol; the trade list; and every decision, opened in the same decision drawer as live. A "Read with care" list names every assumption the run relied on (assumed spreads, missing earnings days, same-bar stop and target, cache hits, survivorship). CSV export of trades and decisions. A backtest is evidence about the past, never a forecast; the screen says so and the weekly review never cites a backtest as a reason to change anything.
+
+**GUI.** A Backtest screen in the Learn group: the new-backtest form with quick ranges, strategy picker, the estimate and the cutoff check; the runs list with status, progress, cost and cancel; and the selected run's results.
+
 ## Out of scope and later versions
 
 Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login.
@@ -453,8 +505,8 @@ Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fr
 Likely v0.2+, in rough order:
 
 - Ask the agent (as in Trading Agent). Briefings and reviews moved forward to PR 9 (see Reviews).
-- Shadow strategies: run a second prompt or model on the same inputs without trading, and compare outcomes.
-- Backtest mode on the cached 5-min bars.
+- Shadow strategies: specified for PR 13 (see Strategies and shadows).
+- Backtesting: specified for PR 14 (see Backtesting).
 - Larger universe with a liquidity screen: specified for PR 11 and 12 (see Larger universe).
 - VPS deployment with HTTPS and login.
 - Live-readiness checklist, and a separate spec for live trading (including Dutch tax treatment, which needs checking with an advisor before going live).

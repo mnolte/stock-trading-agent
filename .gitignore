@@ -29,6 +29,7 @@ backend/config.yaml
 *.db
 *.sqlite3
 *.bak
+backups/
 logs/
 
 # Editors / OS
