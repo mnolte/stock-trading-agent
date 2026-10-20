@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-21 — Local DB repair note
+
+- `shadow_positions.exit_requested_at` records when a shadow market exit (model, earnings, flatten, day-trade rule) was requested; the exit fills at the open of the first 5-minute bar at or after that time. The merged `d6e7f8a9b0c1` migration already had the column, but a database migrated by an early PR 13 branch version lacks it: downgrade to `c4d5e6f7a8b9` then upgrade to head recreates the shadow tables (all live data keeps).
+
 ## 2026-10-21 — Answers to PR 14 questions
 
 - Run layout: `data/backtests/run-<id>/` with one live-schema DB per strategy and a read-only `market.db` (earnings, news, corporate actions); no strategy column in the live schema; strategies advance in lockstep; deleting a run removes its folder.

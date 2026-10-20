@@ -27,6 +27,8 @@ docs/screenshots/e2e/
 # Local config / data
 backend/config.yaml
 *.db
+*.db-shm
+*.db-wal
 *.sqlite3
 *.bak
 backups/
