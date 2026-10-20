@@ -279,14 +279,16 @@ class AlpacaDataClient:
             return DataResult(data=None, error=str(exc), source="alpaca")
 
     async def fetch_5m_bars(
-        self, symbol: str, start: datetime, end: datetime
+        self, symbols: list[str], start: datetime, end: datetime
     ) -> DataResult[list[Bar5m]]:
+        """One multi-symbol request — the screened eligible list is too
+        long for per-symbol calls (docs/SPEC.md, Cycles at scale)."""
         try:
             end = min(end, self.clock.now() - self.SIP_MIN_AGE)
-            if end <= start:
+            if not symbols or end <= start:
                 return DataResult(data=[], source="alpaca")
             request = StockBarsRequest(
-                symbol_or_symbols=symbol,
+                symbol_or_symbols=symbols,
                 timeframe=TimeFrame(5, TimeFrameUnit.Minute),
                 start=start,
                 end=end,
@@ -297,7 +299,12 @@ class AlpacaDataClient:
                 self.market_data.get_stock_bars, request
             )
             raw_bars = dict(raw) if isinstance(raw, dict) else {}
-            return DataResult(data=parse_bars(raw_bars, symbol), source="alpaca")
+            bars = [
+                bar
+                for symbol in symbols
+                for bar in parse_bars(raw_bars, symbol)
+            ]
+            return DataResult(data=bars, source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=[], error=str(exc), source="alpaca")
 

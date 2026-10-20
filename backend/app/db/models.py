@@ -53,6 +53,7 @@ class Cycle(Base):
     scheduled_time: Mapped[datetime] = mapped_column(nullable=False, index=True)
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     errors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     data_source_health: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)

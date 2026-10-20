@@ -290,7 +290,7 @@ async def test_sip_bar_request_ends_at_least_16_minutes_ago() -> None:
         return {"AAPL": []}
 
     client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
-    await client.fetch_5m_bars("AAPL", now - timedelta(hours=1), now)
+    await client.fetch_5m_bars(["AAPL"], now - timedelta(hours=1), now)
     # The SDK request model stores naive datetimes; compare in UTC.
     end = captured["request"].end
     assert end is not None
@@ -309,7 +309,7 @@ async def test_sip_bar_request_keeps_older_end() -> None:
         return {"AAPL": []}
 
     client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
-    await client.fetch_5m_bars("AAPL", now - timedelta(hours=3), old_end)
+    await client.fetch_5m_bars(["AAPL"], now - timedelta(hours=3), old_end)
     end = captured["request"].end
     assert end is not None
     assert end.replace(tzinfo=UTC) == old_end
@@ -326,7 +326,7 @@ async def test_5m_bar_request_is_split_adjusted() -> None:
         return {"AAPL": []}
 
     client.market_data.get_stock_bars = fake_get_stock_bars  # type: ignore[assignment]
-    await client.fetch_5m_bars("AAPL", now - timedelta(hours=3), now)
+    await client.fetch_5m_bars(["AAPL"], now - timedelta(hours=3), now)
     request = captured["request"]
     assert request.adjustment == Adjustment.SPLIT
     assert request.feed == DataFeed.SIP
@@ -383,7 +383,7 @@ async def test_sip_bar_request_empty_when_range_too_recent() -> None:
         raise AssertionError("should not be called")
 
     client.market_data.get_stock_bars = boom  # type: ignore[assignment]
-    result = await client.fetch_5m_bars("AAPL", now - timedelta(minutes=5), now)
+    result = await client.fetch_5m_bars(["AAPL"], now - timedelta(minutes=5), now)
     assert result.error is None
     assert result.data == []
 

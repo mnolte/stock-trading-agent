@@ -122,6 +122,7 @@ def build_input_snapshot(
     bars_1h: list[Bar1h],
     position: Position | None,
     news: list[NewsItem] | None,
+    rank: int | None = None,
 ) -> dict[str, Any]:
     """The JSON snapshot for one model call; also stored on the decision row."""
     # None = none scheduled; "unavailable" = the earnings source failed.
@@ -133,6 +134,8 @@ def build_input_snapshot(
         "symbol": symbol,
         "context": context,
         "time_ny": cycle_time_ny.isoformat(),
+        # Liquidity-screen rank — "unavailable" in fixed mode or off-list.
+        "rank": rank if rank is not None else UNAVAILABLE,
         "price": _num(price, 2),
         "regime": {"trend": regime.trend, "volatility": regime.volatility},
         "indicators_1h": {

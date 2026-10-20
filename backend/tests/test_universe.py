@@ -69,11 +69,10 @@ class StubBars(FakeBarSource):
 
 class No5mBars(StubBars):
     async def fetch_5m_bars(
-        self, symbol: str, start: datetime, end: datetime
+        self, symbols: list[str], start: datetime, end: datetime
     ) -> DataResult[list[Bar5m]]:
-        if symbol in self.no_5m:
-            return DataResult(data=[], source="fake")
-        return await super().fetch_5m_bars(symbol, start, end)
+        wanted = [s for s in symbols if s not in self.no_5m]
+        return await super().fetch_5m_bars(wanted, start, end)
 
 
 @pytest.fixture
@@ -701,10 +700,10 @@ async def test_fixed_mode_screen_is_preview(
     calendar: FakeCalendarSource,
     tmp_path: Path,
 ) -> None:
-    """Screened mode is blocked until PR 12, but the daily screen still
-    runs in fixed mode: the pool seeds, screen rows are stored, the
-    Universe screen marks them ``preview`` — and cycles keep trading the
-    configured list (docs/SPEC.md §443)."""
+    """The daily screen runs in fixed mode too: the pool seeds, screen
+    rows are stored, the Universe screen marks them ``preview`` — and
+    cycles keep trading the configured list until a screened-mode screen
+    has run (docs/SPEC.md, Larger universe)."""
     config = make_config(tmp_path, [("AAPL", "Technology")], mode="fixed")
     service, market_data, *_ = make_service(
         session_factory, clock, calendar, config
@@ -719,6 +718,8 @@ async def test_fixed_mode_screen_is_preview(
     assert payload["preview"] is True
     assert payload["rows"][0]["symbol"] == "AAPL"
     # Cycles and signal evaluation still use the configured list.
+    assert market_data.universe_mode() == "fixed"
+    assert market_data.screened_rows() is None
     assert market_data.universe() == [
         "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"
     ]
@@ -802,21 +803,20 @@ def test_universe_includes_held_symbols(
     assert market_data.universe() == fixed
 
 
-def test_config_refuses_screened_mode(
+def test_config_accepts_screened_mode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Startup refuses a screened-mode config — from the YAML file and
-    from a stored settings version — because cycles don't read the
-    eligible list until PR 12 (docs/SPEC.md §443)."""
+    """Screened mode is a valid config — from the YAML file and from a
+    stored settings version (docs/SPEC.md, Larger universe)."""
     monkeypatch.setattr(
         AppConfig, "_load_yaml", lambda self: {"universe": {"mode": "screened"}}
     )
-    with pytest.raises(ValueError, match="Screened pool arrives with PR 12"):
-        AppConfig()
+    config = AppConfig()
+    assert config.get("universe", "mode") == "screened"
     monkeypatch.setattr(AppConfig, "_load_yaml", lambda self: {})
     config = AppConfig()
-    with pytest.raises(ValueError, match="Screened pool arrives with PR 12"):
-        config.apply_saved({"universe": {"mode": "screened"}}, version=1)
+    config.apply_saved({"universe": {"mode": "screened"}}, version=1)
+    assert config.get("universe", "mode") == "screened"
     config.apply_saved({"universe": {"mode": "fixed"}}, version=2)
     assert config.get("universe", "mode") == "fixed"
 
@@ -881,3 +881,180 @@ def test_pool_csv_defaults_valid(
     assert all(SYMBOL_RE.match(symbol) for symbol, _ in rows)
     allowed = set(service.allowed_sectors())
     assert all(sector in allowed for _, sector in rows)
+
+
+# ----------------------------------------------------------------------
+# Cycles at scale — the screened list is what cycles run (docs/SPEC.md)
+
+
+async def test_screened_universe_uses_ranked_eligible(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """After a screened-mode screen the cycle universe is its eligible
+    list in rank order — excluded pool symbols drop out, held symbols
+    and SPY stay in."""
+    config = make_config(
+        tmp_path,
+        [
+            ("SPY", "Index"),
+            ("AAPL", "Technology"),
+            ("MSFT", "Technology"),
+            ("JPM", "Financials"),
+        ],
+    )
+    bars = StubBars(calendar)
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars
+    )
+    sessions = market_data.recent_sessions(SCREEN_DATE, 260)
+    # 20% ramp → rank 1; 5% ramp → rank 2; SPY flat (the baseline).
+    bars.daily["AAPL"] = daily_series(
+        "AAPL", sessions, Decimal("100"), Decimal("120")
+    )
+    bars.daily["MSFT"] = daily_series(
+        "MSFT", sessions, Decimal("200"), Decimal("210")
+    )
+    bars.daily["SPY"] = daily_series(
+        "SPY", sessions, Decimal("500"), Decimal("500"), volume=3_000_000
+    )
+    # $5 close — below the $10 minimum price → excluded.
+    bars.daily["JPM"] = daily_series(
+        "JPM", sessions, Decimal("5"), Decimal("5")
+    )
+    result = await service.run_screen()
+    assert "failed" not in result and "skipped" not in result
+    # The screen stamps the mode it ran in on its success event.
+    with session_factory() as session:
+        event = session.execute(
+            select(Event)
+            .where(Event.event_type == "universe_screen")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one()
+    assert event.details is not None and event.details["mode"] == "screened"
+
+    assert market_data.universe_mode() == "screened"
+    assert market_data.universe() == ["AAPL", "MSFT", "SPY"]
+    assert [r.symbol for r in market_data.screened_rows() or []] == [
+        "AAPL",
+        "MSFT",
+        "SPY",
+    ]
+    # describe() stops calling the list a preview once cycles use it.
+    assert service.describe()["preview"] is False
+
+
+async def test_screened_mode_applies_at_first_screen(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Mode screened without a screen yet: cycles still run the fixed
+    list — the switch only applies at the next daily screen."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
+    )
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config
+    )
+    assert market_data.universe_mode() == "fixed"
+    assert "AAPL" in market_data.universe() and "QQQ" in market_data.universe()
+    await service.run_screen()
+    assert market_data.universe_mode() == "screened"
+    rows = market_data.screened_rows()
+    assert rows is not None
+    assert market_data.universe()[: len(rows)] == [r.symbol for r in rows]
+
+
+async def test_mode_switch_back_to_fixed_applies_at_next_screen(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """A mode switch never applies mid-session: after saving fixed the
+    screened list stays in effect until a screen has run under fixed."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
+    )
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config
+    )
+    await service.run_screen()
+    screened = market_data.universe()
+    assert market_data.universe_mode() == "screened"
+
+    config.yaml["universe"]["mode"] = "fixed"
+    # The newest screen ran screened — its list is still the cycle list.
+    assert market_data.universe_mode() == "screened"
+    assert market_data.universe() == screened
+
+    result = await service.run_screen()  # runs under fixed mode now
+    assert "failed" not in result
+    assert market_data.universe_mode() == "fixed"
+    assert service.describe()["preview"] is True
+    assert market_data.universe() == [
+        "SPY", "QQQ", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"
+    ]
+
+
+async def test_failed_screen_keeps_previous_eligible_list(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """A failed screen never switches the cycle universe: the last
+    successful screened list stays in effect."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
+    )
+    bars = StubBars(calendar)
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars
+    )
+    await service.run_screen()
+    assert market_data.universe_mode() == "screened"
+    before = market_data.universe()
+
+    next_trading_day(clock, calendar)
+    bars.fail_all_daily = True
+    result = await service.run_screen()
+    assert "failed" in result
+    assert service.last_screen_failed()
+    assert market_data.universe_mode() == "screened"
+    assert market_data.universe() == before
+
+
+async def test_screened_universe_keeps_held_symbols(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """A held symbol outside the eligible list is still managed: it joins
+    the cycle universe after the ranked eligible symbols."""
+    config = make_config(tmp_path, [("AAPL", "Technology")])
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config
+    )
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="ZZZ",
+                qty=4,
+                avg_entry_price=Decimal("100"),
+                opened_at=clock.now(),
+            )
+        )
+        session.commit()
+    await service.run_screen()
+    universe = market_data.universe()
+    rows = market_data.screened_rows()
+    assert rows is not None
+    assert universe[: len(rows)] == [r.symbol for r in rows]
+    assert "ZZZ" in universe[len(rows) :]

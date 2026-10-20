@@ -121,12 +121,14 @@ async def refresh_daily_data_and_signals(
         bus.publish("watchlist", "header", "banners", "performance")
 
 
-def run_daily_backup(clock: Clock) -> None:
-    """Daily job (app timezone): copy the database and prune old copies.
+def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
+    """Daily job (app timezone): copy the database and prune old data.
 
-    A failed copy is logged and recorded as an event so a missed backup is
-    not silent; if the event write also fails, the job exception is left
-    for the scheduler log.
+    After the copy succeeds, cached 5-minute bars older than
+    ``bars_5m_keep_sessions`` sessions are pruned (docs/SPEC.md, Cycles at
+    scale). A failed copy is logged and recorded as an event so a missed
+    backup is not silent; if the event write also fails, the job exception
+    is left for the scheduler log.
     """
     try:
         create_backup()
@@ -144,6 +146,15 @@ def run_daily_backup(clock: Clock) -> None:
                 details={"error": str(exc)},
             )
             session.commit()
+        # No copy on disk — nothing older than the keep window is pruned
+        # until a backup has safely run.
+        return
+    try:
+        pruned = market_data.prune_5m_bars(clock.now())
+        if pruned:
+            logger.info("pruned %d cached 5m bars past the keep window", pruned)
+    except Exception:  # noqa: BLE001
+        logger.exception("5m bar pruning failed")
 
 
 async def run_scheduled_cycle(
@@ -161,10 +172,9 @@ async def run_universe_screen(
 ) -> None:
     """Scheduler entry point: the 08:10 New York liquidity screen.
 
-    The screen runs in fixed mode too — its eligible list is a preview
-    on the Universe screen until PR 12 wires it into cycles. A data
-    failure keeps the previous list and shows a banner (docs/SPEC.md,
-    Larger universe).
+    The screen runs in either mode — in ``screened`` mode its eligible
+    list is what cycles trade from that session on. A data failure keeps
+    the previous list and shows a banner (docs/SPEC.md, Larger universe).
     """
     await service.run_screen()
     if bus is not None:
@@ -500,10 +510,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await market_data.refresh_history(today)
 
     # The pool seeds once at startup; the daily screen runs from its
-    # 08:10 New York job as a preview while screened mode is blocked —
-    # the eligible list only reaches cycles when PR 12 lands
-    # (docs/SPEC.md §443). The simulated demo triggers it through
-    # POST /api/universe/screen.
+    # 08:10 New York job — in screened mode its eligible list is what
+    # cycles trade from that session on (docs/SPEC.md, Larger universe).
+    # The simulated demo triggers it through POST /api/universe/screen.
     universe_service.ensure_pool_loaded()
 
     # Trade updates → ledger; then reconcile once so the database starts
@@ -656,7 +665,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         run_daily_backup,
         CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
-        args=[clock],
+        args=[clock, market_data],
         id="daily-db-backup",
     )
     # Run the decision cycle at every configured cycle time; the runner

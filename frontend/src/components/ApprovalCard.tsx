@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { postApprove, postRejectApproval } from '../api/state';
 import { displayTime } from '../format';
@@ -36,6 +36,7 @@ export function ApprovalCard({
   paused?: boolean;
   onResolved: () => void;
 }) {
+  const location = useLocation();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,6 +105,7 @@ export function ApprovalCard({
       <div style={{ display: 'flex', gap: 'var(--sa-space-2)', alignItems: 'center' }}>
         <Link
           to={`/decisions/${approval.decision_id}`}
+          state={{ backgroundLocation: location }}
           style={{
             display: 'inline-flex',
             alignItems: 'center',

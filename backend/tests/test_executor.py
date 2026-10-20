@@ -1914,7 +1914,7 @@ class _NoBars:
     """A bar source that never returns data — only the cache matters."""
 
     async def fetch_5m_bars(
-        self, symbol: str, start: datetime, end: datetime
+        self, symbols: list[str], start: datetime, end: datetime
     ) -> DataResult[list[Bar5m]]:
         return DataResult(data=[], source="fake")
 

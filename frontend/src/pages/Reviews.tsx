@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
 import {
@@ -489,6 +489,7 @@ function VerdictsCard({
   items: VerdictItem[];
   onResolve: (id: number, v: VerdictValue) => void;
 }) {
+  const location = useLocation();
   return (
     <Card
       label="Verdicts to confirm"
@@ -529,6 +530,7 @@ function VerdictsCard({
               <div style={{ fontSize: 'var(--sa-text-md)' }}>
                 <Link
                   to={`/decisions/${v.decision_id}`}
+                  state={{ backgroundLocation: location }}
                   style={{ fontWeight: 600, color: 'var(--sa-text)', textDecoration: 'none' }}
                 >
                   {v.symbol}

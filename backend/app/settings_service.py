@@ -397,9 +397,6 @@ def _validate_universe(
         mode = str(body["mode"])
         if mode not in ("fixed", "screened"):
             return "universe.mode: must be fixed or screened"
-        if mode == "screened":
-            # The eligible list is not wired into cycles yet — docs/SPEC.md §443.
-            return "universe.mode: Screened pool arrives with PR 12"
         cleaned["mode"] = mode
         if mode != active_universe.get("mode"):
             changes.append(

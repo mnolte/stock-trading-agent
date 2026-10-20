@@ -47,6 +47,10 @@ export interface WatchlistRow {
   warming_up?: boolean;
   last_action: string | null;
   last_action_time: string | null;
+  // Liquidity-screen rank (screened mode only).
+  rank?: number | null;
+  // Trading days until the next earnings event, for the earnings filter.
+  days_to_earnings?: number | null;
 }
 
 export interface WatchlistResponse {
@@ -57,6 +61,12 @@ export interface WatchlistResponse {
     label: string;
     blocks_entries: boolean;
   } | null;
+  // Which list cycles run — "screened" once a screened screen ran.
+  universe_mode?: 'fixed' | 'screened';
+  // Rows shown before "Show all" in screened mode.
+  watchlist_rows?: number;
+  // The earnings filter threshold (trading days).
+  earnings_blackout_days?: number;
   rows: WatchlistRow[];
 }
 

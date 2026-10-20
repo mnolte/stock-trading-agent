@@ -1675,7 +1675,7 @@ export default function Settings() {
               label="Universe"
               help={
                 <>
-                  Fixed list: the {s.universe.symbols.length} symbols below. Screened pool — a daily liquidity screen picks the eligible symbols from a pool of up to {universe?.pool?.max ?? 150} — arrives with PR 12; the screen already runs as a preview.{' '}
+                  Fixed list: the {s.universe.symbols.length} symbols below. Screened pool: a daily liquidity screen picks the eligible symbols from a pool of up to {universe?.pool?.max ?? 150}. A switch applies at the next daily screen — never mid-session.{' '}
                   <Link to="/universe" style={{ color: 'var(--sa-accent)' }}>
                     Open Universe
                     {universe?.pool && universe?.counts
@@ -1693,29 +1693,26 @@ export default function Settings() {
               <div role="radiogroup" aria-label="Universe" style={{ display: 'inline-flex', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
                 {(
                   [
-                    ['fixed', 'Fixed list', false],
-                    ['screened', 'Screened pool', true],
+                    ['fixed', 'Fixed list'],
+                    ['screened', 'Screened pool'],
                   ] as const
-                ).map(([mode, label, unavailable]) => (
+                ).map(([mode, label]) => (
                   <button
                     key={mode}
                     type="button"
                     role="radio"
                     aria-checked={s.universe.mode === mode}
-                    disabled={unavailable}
-                    title={unavailable ? 'Screened pool arrives with PR 12' : undefined}
                     onClick={() => patch('universe', 'mode', mode)}
                     style={{
                       height: 38,
                       padding: '0 14px',
                       border: 0,
                       borderRadius: 'var(--sa-radius-sm)',
-                      cursor: unavailable ? 'not-allowed' : 'pointer',
+                      cursor: 'pointer',
                       fontSize: 'var(--sa-text-base)',
                       fontWeight: 600,
                       background: s.universe.mode === mode ? 'var(--sa-border-strong)' : 'transparent',
                       color: s.universe.mode === mode ? 'var(--sa-text)' : 'var(--sa-text-muted)',
-                      opacity: unavailable ? 0.5 : 1,
                     }}
                   >
                     {label}

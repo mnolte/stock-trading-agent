@@ -1246,9 +1246,9 @@ def test_settings_get_and_save_flow(client: TestClient) -> None:
         session.commit()
 
 
-def test_settings_rejects_screened_mode(client: TestClient) -> None:
-    """universe.mode=screened is refused until PR 12 wires the eligible
-    list into cycles (docs/SPEC.md §443)."""
+def test_settings_accepts_screened_mode(client: TestClient) -> None:
+    """universe.mode=screened is a valid save — the switch itself applies
+    at the next daily screen (docs/SPEC.md, Larger universe)."""
     saved = client.post(
         "/api/settings",
         json={
@@ -1256,9 +1256,8 @@ def test_settings_rejects_screened_mode(client: TestClient) -> None:
             "reason": "try the screened pool",
         },
     )
-    assert saved.status_code == 422
-    assert "Screened pool arrives with PR 12" in str(saved.json()["detail"])
-    # Fixed stays valid.
+    assert saved.status_code == 200
+    # Fixed stays valid too.
     assert (
         client.post(
             "/api/settings",

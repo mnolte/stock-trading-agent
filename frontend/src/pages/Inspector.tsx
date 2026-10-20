@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
 import { getDecision, getDecisions } from '../api/state';
 import { Card } from '../components/Card';
@@ -188,6 +188,7 @@ function MonoPre({ children }: { children: string }) {
 }
 
 function CallDetail({ decision }: { decision: DecisionDetail }) {
+  const location = useLocation();
   const validation = decision.validation_result;
   const ok =
     validation !== null &&
@@ -236,6 +237,7 @@ function CallDetail({ decision }: { decision: DecisionDetail }) {
           <span style={{ flex: 1 }} />
           <Link
             to={`/decisions/${decision.id}`}
+            state={{ backgroundLocation: location }}
             style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-accent)' }}
           >
             Open decision

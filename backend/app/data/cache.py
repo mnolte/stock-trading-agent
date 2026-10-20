@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data.models import Bar5m, CalendarDay, DailyBar
@@ -64,6 +64,20 @@ class BarCache:
             session.add_all(new_rows)
             session.commit()
             return len(new_rows)
+
+    def prune_5m(self, before: datetime) -> int:
+        """Delete every 5m bar starting before ``before``; returns count."""
+        with self._session_factory() as session:
+            count = session.execute(
+                select(func.count())
+                .select_from(Bar5mRow)
+                .where(Bar5mRow.start < _naive_utc(before))
+            ).scalar_one()
+            session.execute(
+                delete(Bar5mRow).where(Bar5mRow.start < _naive_utc(before))
+            )
+            session.commit()
+        return count
 
     def count(self, symbol: str) -> int:
         """Total cached bars for a symbol."""

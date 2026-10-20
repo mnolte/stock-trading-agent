@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
 import {
@@ -36,6 +36,7 @@ import { earningsChipLabel } from './decisionDetail';
 import { actionChip, feedText } from './dashboardFeed';
 
 function Feed({ items }: { items: DashboardFeedItem[] }) {
+  const location = useLocation();
   // Group by cycle time like the design's "Today's decisions".
   const groups = useMemo(() => {
     const map = new Map<string, DashboardFeedItem[]>();
@@ -81,6 +82,7 @@ function Feed({ items }: { items: DashboardFeedItem[] }) {
                 <Link
                   key={row.id}
                   to={`/decisions/${row.id}`}
+                  state={{ backgroundLocation: location }}
                   style={{ color: 'var(--sa-text-2)', display: 'inline-flex', gap: '6px', alignItems: 'center' }}
                 >
                   <Chip variant={chip.variant}>{chip.label}</Chip>
@@ -118,6 +120,7 @@ function toneStyle(tone: number): React.CSSProperties {
 }
 
 function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) {
+  const location = useLocation();
   const d = dashboard?.latest_decision ?? null;
   if (!d) {
     return (
@@ -248,6 +251,7 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
       )}
       <Link
         to={`/decisions/${d.id}`}
+        state={{ backgroundLocation: location }}
         style={{
           height: '44px',
           display: 'flex',
@@ -685,6 +689,9 @@ export default function Dashboard() {
         rows={watchlist?.rows ?? []}
         selected={chartSymbol}
         onSelect={setSelected}
+        universeMode={watchlist?.universe_mode ?? 'fixed'}
+        watchlistRows={watchlist?.watchlist_rows ?? 15}
+        earningsBlackoutDays={watchlist?.earnings_blackout_days ?? 3}
       />
 
       <OpenPositionsMini positions={positions} />

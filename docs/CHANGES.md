@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-10-20 — Decision detail opens as a drawer
+
+- GUI: `/decisions/:id` no longer navigates to a separate page. It renders the 560px decision drawer from `design/screens/Decision.dc.html` as an overlay on the page it was opened from — dashboard, inspector, reviews or approvals — dimmed behind a scrim, sliding in from the right, closed with the X button, a scrim click or Esc. A deep link to `/decisions/:id` shows the drawer over the dashboard. This matches the drawer the spec already described; no spec text changed.
+
+## 2026-10-20 — Cycles at scale (PR 12)
+
+- Larger universe: `universe.mode: screened` is live. After a screened-mode daily screen, cycles run the ranked eligible list; held symbols, symbols with a live entry order and SPY are always added on top. In fixed mode (or before the first screened screen) cycles keep the configured list — a mode switch applies at the next daily screen, never mid-session. The "Screened pool arrives with PR 12" refusal is gone.
+- Cycles at scale: the cycle universe's 5-min bars are fetched with one multi-symbol request; quotes cover the review set (held first, then rules-passing candidates); news is fetched only for the symbols that get a model call (the review order walked until `max_calls_per_cycle` fills). Review order — held positions, then candidates in screen rank — is unchanged. `rank` is part of the input snapshot ("unavailable" in fixed mode).
+- Data model: `cycles.duration_seconds` (migration `c4d5e6f7a8b9`). A cycle longer than `schedule.cycle_duration_warn_minutes` (10) writes a `cycle_slow` warning event and a dashboard banner. After the 03:00 backup, cached 5-min bars older than `schedule.bars_5m_keep_sessions` (120) sessions are deleted — only when the copy succeeded.
+- GUI: dashboard watchlist gets filter tabs (All, Pass rules, Held, Earnings ≤ N days), a "Find a symbol" search and a Universe link; in screened mode rows sort by rank and show `universe.watchlist_rows` (15) first, then "Show all". Settings → Trading's screened pool option is enabled. The Universe screen stops calling the eligible list a preview once cycles trade it.
+
 ## 2026-10-20 — Fresh quote before entries; screened mode blocked until PR 12
 
 - Alpaca integration, Entries: new "Fresh quote before every entry". The latest IEX quote is fetched right before each entry order (automatic and Approve, one shared function) and rejected if its own timestamp is older than 60 s; spread check, limit price and code checks are redone from it; any failure means no order, recorded as a failed "Fresh quote" gate. Exits never wait for a quote. Config: `execution.quote_max_age_seconds: 60`.

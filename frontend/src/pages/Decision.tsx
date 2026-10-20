@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import type { Location } from 'react-router-dom';
 
 import { getDecision, postVerdict } from '../api/state';
 import { Chip } from '../components/Chip';
@@ -593,12 +594,82 @@ function OutcomeSection({
 }
 
 // ---------------------------------------------------------------------------
+// drawer — design/screens/Decision.dc.html: 560px, docked right, over a scrim
+
+function DrawerShell({
+  label,
+  onClose,
+  children,
+}: {
+  label: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100 }}>
+      <div
+        aria-hidden
+        onClick={onClose}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0,0,0,0.6)',
+          animation: 'sa-fade-in 160ms ease-out',
+        }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 'var(--sa-drawer-width)',
+          maxWidth: '100%',
+          background: 'var(--sa-chrome)',
+          borderLeft: '1px solid var(--sa-border)',
+          color: 'var(--sa-text)',
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'sa-drawer-in 160ms ease-out',
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // page
 
 export default function Decision() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [decision, setDecision] = useState<DecisionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const background = (
+    location.state as { backgroundLocation?: Location } | null
+  )?.backgroundLocation;
+  const close = useCallback(() => {
+    navigate(
+      background
+        ? `${background.pathname}${background.search}${background.hash}`
+        : '/',
+    );
+  }, [navigate, background]);
 
   useEffect(() => {
     if (!id) return;
@@ -609,12 +680,9 @@ export default function Decision() {
 
   if (error) {
     return (
-      <div style={{ maxWidth: 'var(--sa-drawer-width)', margin: '0 auto' }}>
+      <DrawerShell label="Decision detail" onClose={close}>
         <div
           style={{
-            background: 'var(--sa-chrome)',
-            border: '1px solid var(--sa-border)',
-            borderRadius: 'var(--sa-radius-lg)',
             padding: 'var(--sa-space-5) var(--sa-space-6)',
             color: 'var(--sa-text-muted)',
           }}
@@ -624,10 +692,16 @@ export default function Decision() {
             Back to the dashboard
           </Link>
         </div>
-      </div>
+      </DrawerShell>
     );
   }
-  if (!decision) return null;
+  if (!decision) {
+    return (
+      <DrawerShell label="Decision detail" onClose={close}>
+        {muted('Loading…')}
+      </DrawerShell>
+    );
+  }
 
   const snapshot = (decision.input_snapshot ?? {}) as Record<string, unknown>;
   const regime = snapshot.regime;
@@ -649,20 +723,7 @@ export default function Decision() {
   const confidence = output?.confidence ?? null;
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center' }}>
-      <div
-        style={{
-          width: '100%',
-          maxWidth: 'var(--sa-drawer-width)',
-          boxSizing: 'border-box',
-          background: 'var(--sa-chrome)',
-          border: '1px solid var(--sa-border)',
-          borderRadius: 'var(--sa-radius-lg)',
-          color: 'var(--sa-text)',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-      >
+    <DrawerShell label={`${decision.symbol} decision`} onClose={close}>
         {/* header */}
         <div
           style={{
@@ -721,8 +782,9 @@ export default function Decision() {
               </span>
             </div>
           </div>
-          <Link
-            to="/"
+          <button
+            type="button"
+            onClick={close}
             aria-label="Close"
             title="Close"
             style={{
@@ -734,8 +796,10 @@ export default function Decision() {
               justifyContent: 'center',
               borderRadius: 'var(--sa-radius-md)',
               border: '1px solid var(--sa-border-strong)',
+              background: 'transparent',
               color: 'var(--sa-text-muted)',
-              textDecoration: 'none',
+              cursor: 'pointer',
+              padding: 0,
             }}
           >
             <svg
@@ -751,15 +815,18 @@ export default function Decision() {
               <line x1="6" y1="6" x2="18" y2="18" />
               <line x1="18" y1="6" x2="6" y2="18" />
             </svg>
-          </Link>
+          </button>
         </div>
 
-        {/* body */}
+        {/* body — scrolls between the pinned header and footer */}
         <div
           style={{
             padding: '0 var(--sa-space-6) var(--sa-space-6)',
             display: 'flex',
             flexDirection: 'column',
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
           }}
         >
           {/* action row */}
@@ -954,7 +1021,6 @@ export default function Decision() {
             </Link>
           </div>
         </div>
-      </div>
-    </div>
+    </DrawerShell>
   );
 }

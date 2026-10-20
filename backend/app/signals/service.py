@@ -63,6 +63,10 @@ class WatchlistRow:
     last_action: str | None
     last_action_time: datetime | None
     warming_up: bool = False
+    # Liquidity-screen rank (screened mode only; None in fixed mode).
+    rank: int | None = None
+    # Trading days until the next earnings event, for the earnings filter.
+    days_to_earnings: int | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,8 @@ class SymbolEval:
     price: Decimal | None
     day_change_pct: Decimal | None
     warming_up: bool = False
+    # Liquidity-screen rank of the list in effect — None in fixed mode.
+    rank: int | None = None
 
 
 @dataclass(frozen=True)
@@ -363,6 +369,10 @@ class SignalService:
             earnings_status is not None and earnings_status.error is None
         )
         last_cycle = self.is_last_cycle(today, now.astimezone(NY_TZ))
+        ranks = {
+            row.symbol: row.rank
+            for row in self.market_data.screened_rows() or []
+        }
 
         items: list[SymbolEval] = []
         for symbol in symbols:
@@ -422,6 +432,7 @@ class SignalService:
                     price=price,
                     day_change_pct=change,
                     warming_up=warming is not None,
+                    rank=ranks.get(symbol),
                 )
             )
         return Evaluation(
@@ -445,6 +456,8 @@ class SignalService:
                 last_action=last_actions.get(item.symbol, (None, None))[0],
                 last_action_time=last_actions.get(item.symbol, (None, None))[1],
                 warming_up=item.warming_up,
+                rank=item.rank,
+                days_to_earnings=item.snapshot.days_to_earnings,
             )
             for item in evaluation.items
         ]

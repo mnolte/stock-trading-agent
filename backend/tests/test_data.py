@@ -15,7 +15,10 @@ from app.data.fake import (
     FakeQuoteSource,
 )
 from app.data.models import (
+    Bar5m,
     CorporateActionEvent,
+    DailyBar,
+    DataResult,
     EarningsEvent,
     earnings_counts_as_before_open,
     normalise_earnings_hour,
@@ -79,7 +82,7 @@ async def test_fake_bars_cover_regular_session() -> None:
     session = calendar.session_for(date(2026, 10, 15))
     assert session is not None
     result = await source.fetch_5m_bars(
-        "AAPL", session.open.astimezone(UTC), session.close.astimezone(UTC)
+        ["AAPL"], session.open.astimezone(UTC), session.close.astimezone(UTC)
     )
     assert result.error is None
     assert len(result.data) == 78  # 6.5 hours of 5-minute bars
@@ -91,8 +94,8 @@ async def test_fake_bars_deterministic() -> None:
     session = calendar.session_for(date(2026, 10, 15))
     assert session is not None
     start, end = session.open.astimezone(UTC), session.close.astimezone(UTC)
-    a = await source.fetch_5m_bars("AAPL", start, end)
-    b = await source.fetch_5m_bars("AAPL", start, end)
+    a = await source.fetch_5m_bars(["AAPL"], start, end)
+    b = await source.fetch_5m_bars(["AAPL"], start, end)
     assert a.data == b.data
 
 
@@ -149,7 +152,7 @@ async def test_bar_cache_roundtrip(session_factory: sessionmaker[Session]) -> No
     session = calendar.session_for(date(2026, 10, 15))
     assert session is not None
     start, end = session.open.astimezone(UTC), session.close.astimezone(UTC)
-    bars = (await source.fetch_5m_bars("AAPL", start, end)).data
+    bars = (await source.fetch_5m_bars(["AAPL"], start, end)).data
 
     cache = BarCache(session_factory)
     inserted = cache.store(bars)
@@ -361,7 +364,7 @@ async def test_fake_daily_bars_match_5m_rollup() -> None:
     assert session is not None
     bars_5m = (
         await source.fetch_5m_bars(
-            "AAPL", session.open.astimezone(UTC), session.close.astimezone(UTC)
+            ["AAPL"], session.open.astimezone(UTC), session.close.astimezone(UTC)
         )
     ).data
     assert daily.open == bars_5m[0].open
@@ -406,7 +409,7 @@ async def test_bar_cache_batched_counts(
         for session in sessions[:count]:
             bars = (
                 await source.fetch_5m_bars(
-                    symbol,
+                    [symbol],
                     session.open.astimezone(UTC),
                     session.close.astimezone(UTC),
                 )
@@ -452,3 +455,113 @@ async def test_refresh_daily_fills_cache(
         daily = service.get_daily_bars(symbol, sessions)
         assert len(daily) == 5
         assert daily[0].date < daily[-1].date
+
+
+# ----------------------------------------------------------------------
+# cycles at scale (docs/SPEC.md, Cycles at scale)
+
+
+class _CountingBars(FakeBarSource):
+    """Records the symbol list of every 5m bar request."""
+
+    def __init__(self, calendar: FakeCalendarSource) -> None:
+        super().__init__(calendar)
+        self.calls: list[list[str]] = []
+
+    async def fetch_5m_bars(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> DataResult[list[Bar5m]]:
+        self.calls.append(list(symbols))
+        return await super().fetch_5m_bars(symbols, start, end)
+
+
+async def test_refresh_bars_uses_one_multi_symbol_request(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """One grouped request tops up the whole universe — SPY included —
+    and every requested symbol gets a per-symbol result."""
+    counting = _CountingBars(FakeCalendarSource())
+    fake_sources.bars = counting
+    config = AppConfig()
+    config.yaml["universe"]["symbols"] = ["MSFT", "AAPL"]
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), config,
+        session_factory=session_factory,
+    )
+    session = FakeCalendarSource().session_for(date(2026, 10, 15))
+    assert session is not None
+    results = await service.refresh_bars(session.open, session.close)
+    assert counting.calls == [["MSFT", "AAPL", "SPY"]]
+    assert set(results) == {"MSFT", "AAPL", "SPY"}
+    assert all(r.error is None for r in results.values())
+
+
+async def test_refresh_bars_request_failure_marks_all(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """When the grouped request fails, every symbol reports the error —
+    the cycle marks all refresh results errored."""
+
+    class FailingBars:
+        async def fetch_5m_bars(
+            self, symbols: list[str], start: datetime, end: datetime
+        ) -> DataResult[list[Bar5m]]:
+            return DataResult(data=[], error="source down", source="fake")
+
+        async def fetch_daily_bars(
+            self, symbol: str, start: date, end: date
+        ) -> DataResult[list[DailyBar]]:
+            return DataResult(data=[], error="source down", source="fake")
+
+    fake_sources.bars = FailingBars()
+    config = AppConfig()
+    config.yaml["universe"]["symbols"] = ["MSFT", "AAPL"]
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), config,
+        session_factory=session_factory,
+    )
+    session = FakeCalendarSource().session_for(date(2026, 10, 15))
+    assert session is not None
+    results = await service.refresh_bars(session.open, session.close)
+    assert set(results) == {"MSFT", "AAPL", "SPY"}
+    assert all(r.error == "source down" for r in results.values())
+
+
+async def test_prune_5m_bars_keeps_recent_sessions(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """5m bars older than ``bars_5m_keep_sessions`` sessions are deleted;
+    retained sessions survive."""
+    config = AppConfig()
+    config.yaml["schedule"]["bars_5m_keep_sessions"] = 2
+    calendar = FakeCalendarSource()
+    service = MarketDataService(
+        fake_sources, calendar, config, session_factory=session_factory
+    )
+    old_session = calendar.session_for(date(2026, 10, 12))  # Monday
+    new_session = calendar.session_for(date(2026, 10, 15))  # Thursday
+    assert old_session is not None and new_session is not None
+    old_bars = (
+        await fake_sources.bars.fetch_5m_bars(
+            ["AAPL"], old_session.open, old_session.close
+        )
+    ).data
+    new_bars = (
+        await fake_sources.bars.fetch_5m_bars(
+            ["AAPL"], new_session.open, new_session.close
+        )
+    ).data
+    assert old_bars and new_bars
+    cache = BarCache(session_factory)
+    cache.store(old_bars)
+    cache.store(new_bars)
+
+    now = datetime(2026, 10, 15, 20, 0, tzinfo=UTC)  # Thu 16:00 NY
+    removed = service.prune_5m_bars(now)
+    # keep=2 → Oct 14 + Oct 15 kept; Oct 12 pruned.
+    assert removed == len(old_bars)
+    assert cache.get("AAPL", old_session.open, old_session.close) == []
+    assert (
+        len(cache.get("AAPL", new_session.open, new_session.close))
+        == len(new_bars)
+    )
