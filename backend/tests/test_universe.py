@@ -25,7 +25,13 @@ from app.data.fake import (
 from app.data.models import Bar5m, CalendarDay, DailyBar, DataResult
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Event, Position, UniversePoolRow, UniverseScreenRow
+from app.db.models import (
+    Event,
+    Order,
+    Position,
+    UniversePoolRow,
+    UniverseScreenRow,
+)
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.universe.service import SYMBOL_RE, PoolError, UniverseService
 from sqlalchemy import create_engine, select
@@ -735,6 +741,58 @@ async def test_held_symbols_always_listed(
     held_row = next(r for r in payload["rows"] if r["symbol"] == "ZZZ")
     assert held_row["held"] and held_row["qty"] == 4
     assert payload["counts"]["held"] == 1
+
+
+def test_universe_includes_held_symbols(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """A held symbol is always in the universe — fetched, evaluated and
+    exited — even when it is not on the configured list. Covers an
+    adopted position and a symbol with a live entry order."""
+    config = make_config(tmp_path, mode="fixed")
+    _service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config
+    )
+    fixed = market_data.universe()
+    assert "ZZZ" not in fixed and "YYY" not in fixed
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="ZZZ",
+                qty=4,
+                avg_entry_price=Decimal("100"),
+                opened_at=clock.now(),
+                origin="adopted",
+            )
+        )
+        session.add(
+            Order(
+                alpaca_order_id="open-entry-1",
+                symbol="YYY",
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=2,
+                status="new",
+                created_at=clock.now().replace(tzinfo=None),
+            )
+        )
+        session.commit()
+    symbols = market_data.universe()
+    assert symbols[: len(fixed)] == fixed
+    assert set(symbols[len(fixed):]) == {"YYY", "ZZZ"}
+    with session_factory() as session:  # position closes → back to fixed
+        session.execute(
+            select(Position).where(Position.symbol == "ZZZ")
+        ).scalar_one().closed_at = clock.now()
+        session.execute(
+            select(Order).where(Order.symbol == "YYY")
+        ).scalar_one().status = "canceled"
+        session.commit()
+    assert market_data.universe() == fixed
 
 
 async def test_describe_warming_progress(
