@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-20 — Model cost was always $0.00000
+
+- Bug fix: `token_cost` read `decision.input_cost_per_mtok` / `decision.output_cost_per_mtok`, which were never in `config.example.yaml`, so both prices defaulted to 0 and every stored cost was $0. The keys are now in the config (gpt-4o-mini prices: 0.15 / 0.60 USD per 1M tokens) and apply to review calls too. Decisions and reviews already stored keep their 0 cost.
+
 ## 2026-10-20 — Decision detail opens as a drawer
 
 - GUI: `/decisions/:id` no longer navigates to a separate page. It renders the 560px decision drawer from `design/screens/Decision.dc.html` as an overlay on the page it was opened from — dashboard, inspector, reviews or approvals — dimmed behind a scrim, sliding in from the right, closed with the X button, a scrim click or Esc. A deep link to `/decisions/:id` shows the drawer over the dashboard. This matches the drawer the spec already described; no spec text changed.
