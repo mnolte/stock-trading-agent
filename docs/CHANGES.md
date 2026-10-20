@@ -1,10 +1,10 @@
-# Spec changes
+# Changes
 
 Newest first.
 
 ## 2026-10-20 — Model cost was always $0.00000
 
-- Bug fix: `token_cost` read `decision.input_cost_per_mtok` / `decision.output_cost_per_mtok`, which were never in `config.example.yaml`, so both prices defaulted to 0 and every stored cost was $0. The keys are now in the config (gpt-4o-mini prices: 0.15 / 0.60 USD per 1M tokens) and apply to review calls too. Decisions and reviews already stored keep their 0 cost.
+- Bug fix: `token_cost` read `decision.input_cost_per_mtok` / `decision.output_cost_per_mtok`, which were never in `config.example.yaml`, so both prices defaulted to 0 and every stored cost was $0. The keys are now in the config (gpt-4o-mini prices: 0.15 / 0.60 USD per 1M tokens), reviews price their own `reviews.*_cost_per_mtok` pair, and a config that lacks the keys falls back to gpt-4o-mini prices instead of silently recording $0. Decisions and reviews already stored keep their 0 cost.
 
 ## 2026-10-20 — Decision detail opens as a drawer
 

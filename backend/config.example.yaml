@@ -75,7 +75,7 @@ decision:
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
   input_cost_per_mtok: 0.15     # USD per 1M input tokens, for the configured model
-  output_cost_per_mtok: 0.60    # USD per 1M output tokens; used for review calls too
+  output_cost_per_mtok: 0.60    # USD per 1M output tokens
 
 risk:
   risk_per_trade_pct: 0.5
@@ -115,6 +115,8 @@ reviews:
   prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
+  input_cost_per_mtok: 0.15     # USD per 1M input tokens, for the review model
+  output_cost_per_mtok: 0.60    # USD per 1M output tokens
 
 notifications:
   repeat_limit_minutes: 30        # same subject; critical alerts are never held back
