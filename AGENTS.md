@@ -26,8 +26,6 @@ make lint        # ruff + mypy (backend), pnpm lint + pnpm typecheck (frontend)
 make test        # pytest with sockets blocked, vitest, playwright e2e when browsers are installed
 ```
 
-E2e needs Chromium once: `cd frontend && pnpm exec playwright install chromium`. A full `make test` takes about 40 minutes (most of it pytest); for one area run `cd backend && ../.venv/bin/pytest tests/<file>.py`. Every e2e spec writes screenshots into its own `docs/screenshots/pr-<n>/`; run the full suite with `SCREENSHOT_DIR=/tmp/e2e-shots make test` so older PRs' screenshots aren't rewritten.
-
 `make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
 
 ## Hard rules
