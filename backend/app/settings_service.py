@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data.cache import _naive_utc
+from app.decide.client import model_price
 from app.decide.prompt import load_prompt
 from app.market.clock import NY_TZ, SessionClock
 from app.notifications.events import EVENT_DEFS, EVENTS
@@ -357,6 +358,10 @@ async def validate_settings(
     decision = merged.get("decision", {})
     if float(decision.get("stop_atr_min", 0)) >= float(decision.get("stop_atr_max", 0)):
         errors.append("Stop distance from must be below stop distance to")
+    # A model without a price can't be selected (docs/SPEC.md, Cost).
+    model = str(decision.get("model", ""))
+    if model and model_price(merged.get("model_prices"), model) is None:
+        errors.append(f"Model {model!r} has no price in model_prices")
     prompt = str(decision.get("prompt", ""))
     if prompt:
         try:

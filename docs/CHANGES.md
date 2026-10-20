@@ -2,6 +2,25 @@
 
 Newest first.
 
+## 2026-10-20 — Strategies and shadows built (PR 13)
+
+- Built as specified; choices the spec leaves open are listed here and in the PR under "Questions".
+- Virtual fills: an entry fills at the limit, or at the bar's open when the bar opens below it. Stops and targets are checked from the bar after the fill bar. A gap through the stop fills at the open, and so does a gap above the target. Model exits, earnings exits and Stop & flatten fill at the open of the first 5-min bar that starts at or after the request. The order and exit time is the live cycle's scheduled time, so shadows act at the same moment as live.
+- Shadows read only cached bars. Position checks don't fetch bars, so a check only sees bars cached by the last cycle; the bars are replayed in time order, so the results are the same, just found later.
+- A shadow candidate without a price in the stored snapshot gets `no_call` (`quote_missing`), as live does. If the shadow cost cap is reached in the middle of a cycle, the rest of that cycle's LLM work is recorded as missed.
+- The shadow cost-cap warning uses the existing "Model failing or review cost cap reached" event, once per month.
+- A rules-only baseline can't be promoted, because live is always an LLM strategy.
+- `shadow_positions` also stores the status, limit, initial stop, a pending exit and the last bar checked. `shadow_decisions` also stores the rebuilt position block, rules result, validation, prompt hash and raw response.
+- The weekly review facts gain `strategies`: live and each shadow with adjusted return, vs SPY, closed trades won and lost, average R, max drawdown, model cost, "same as live" and missed work.
+- Fix: in simulated mode the 15:46 cycle was skipped, because at its own minute the session state already read "Last cycle done". Paper mode uses Alpaca's clock and was not affected.
+
+## 2026-10-20 — Answers to PR 13 questions
+
+- "Same as live" counts a symbol-cycle only if at least one side did more than a rules no_call; all no_call reasons are one action; missed shadow work excluded; shown with its count.
+- Shadows follow live's Pause, kill switch and reconciliation block for new entries (same gate name), keep managing virtual positions, and are flattened virtually by Stop & flatten; all other gates use the shadow's own portfolio; shock brake is market-wide. Shadows credit dividends.
+- Compare and the equity chart use live's adjusted return (Performance's function); raw on hover.
+- Prices: the `model_prices` config block is the only source from PR 13; the decision/reviews `*_cost_per_mtok` keys are removed; unpriced models refused at startup, in Settings, New shadow and the backtest picker; each call stores its cost when made.
+
 ## 2026-10-20 — Token prices in config
 
 - Decision layer, Prompt and Reviews, Model and cost (added by Devin): USD cost is computed from configured prices per million tokens, `decision.input_cost_per_mtok` / `output_cost_per_mtok` and the same keys under `reviews`. Added to `config.example.yaml` (gpt-4o-mini prices; check OpenAI's current prices).

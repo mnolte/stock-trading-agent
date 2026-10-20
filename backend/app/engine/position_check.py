@@ -10,6 +10,8 @@ Consecutive failures alert at the configured threshold.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -45,6 +47,7 @@ class PositionChecker:
         clock: Clock,
         outcomes: OutcomeWorker | None = None,
         session_factory: sessionmaker[Session] | None = None,
+        on_check_done: Callable[[], None] | None = None,
     ) -> None:
         self.executor = executor
         self.state = state
@@ -52,6 +55,9 @@ class PositionChecker:
         self.clock = clock
         self.outcomes = outcomes
         self._session_factory = session_factory or get_session_maker()
+        # Shadows replay new 5-min bars for their virtual stops and targets
+        # after each check — scheduled as their own task by main.
+        self.on_check_done = on_check_done or (lambda: None)
 
     async def run(self) -> CheckReport:
         now = self.clock.now()
@@ -97,6 +103,10 @@ class PositionChecker:
                         },
                     )
                     session.commit()
+        try:
+            self.on_check_done()
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("shadow hook failed after check")
         return report
 
     async def _run(self, session: Session, report: CheckReport) -> None:

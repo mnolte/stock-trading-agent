@@ -484,3 +484,136 @@ class Event(Base):
     details: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     # Blocking events (reconciliation mismatches) hold new entries until set.
     acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class Strategy(Base):
+    """A shadow strategy configuration (docs/SPEC.md, Strategies and shadows).
+
+    Live is not a row: it is the strategy defined by the current settings
+    version. ``overrides`` holds only the entry-rule and code-check keys a
+    strategy may change (RSI range, minimum confidence, stop distance range,
+    minimum reward to risk); risk gates, sizing, the day-trade rule and
+    earnings handling are never overridable.
+    """
+
+    __tablename__ = "strategies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # llm | rules_only
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    temperature: Mapped[float | None] = mapped_column(nullable=True)
+    overrides: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # active | paused | archived
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Settings version saved through "Promote to live", if any.
+    promoted_version: Mapped[int | None] = mapped_column(nullable=True)
+
+
+class ShadowDecision(Base):
+    """One shadow strategy's decision for one symbol in one live cycle.
+
+    The market part of the input is the live decision's stored snapshot
+    (``live_decision_id``); only the rebuilt position block is stored here.
+    ``missed`` marks work skipped because the next live cycle or position
+    check was due.
+    """
+
+    __tablename__ = "shadow_decisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_id", "cycle_id", "symbol", name="uq_shadow_decisions_scs"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(
+        ForeignKey("strategies.id"), nullable=False, index=True
+    )
+    cycle_id: Mapped[int] = mapped_column(
+        ForeignKey("cycles.id"), nullable=False, index=True
+    )
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    context: Mapped[str] = mapped_column(String(16), nullable=False)  # candidate | held
+    live_decision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("decisions.id"), nullable=True
+    )
+    position: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    rules_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    validation_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    gates_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    final_action: Mapped[str] = mapped_column(String(32), nullable=False)
+    no_call_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tokens: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    missed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class ShadowPosition(Base):
+    """A shadow's virtual entry order and the position it becomes.
+
+    ``status``: pending (limit working) → open → closed, or pending →
+    not_filled. ``entry`` and ``exit_price`` are the raw bar fill prices;
+    ``pnl`` is net of slippage per side plus dividends, like live's adjusted
+    P&L, and ``r`` is ``pnl`` over the risk at entry.
+    """
+
+    __tablename__ = "shadow_positions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(
+        ForeignKey("strategies.id"), nullable=False, index=True
+    )
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    entry_decision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shadow_decisions.id"), nullable=True
+    )
+    qty: Mapped[int] = mapped_column(nullable=False)
+    limit_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    entry: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    initial_stop: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    stop: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    target: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    opened_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    exit_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    pnl: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    r: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    deferred_exit: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # A pending exit (model, earnings or flatten) filled at the next bar's open.
+    exit_pending: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    exit_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Start of the last 5-min bar already checked for fills, stops, targets.
+    bars_through: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ShadowEquity(Base):
+    """A shadow's virtual equity, written at every cycle and position check."""
+
+    __tablename__ = "shadow_equity"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    strategy_id: Mapped[int] = mapped_column(
+        ForeignKey("strategies.id"), nullable=False, index=True
+    )
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    time: Mapped[datetime] = mapped_column(nullable=False)
+    equity: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    cash: Mapped[Decimal] = mapped_column(Money, nullable=False)

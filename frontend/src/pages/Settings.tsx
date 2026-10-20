@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
@@ -8,6 +8,7 @@ import {
   getKeys,
   getNotifications,
   getSettings,
+  getStrategyPromotion,
   getUniverse,
   postKey,
   postKeyTest,
@@ -26,6 +27,7 @@ import type {
   SettingsForm,
   SettingsResponse,
   SmtpStatus,
+  StrategyPromotion,
   UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
@@ -1231,6 +1233,12 @@ export default function Settings() {
   const [resetBusy, setResetBusy] = useState(false);
 
   const [universe, setUniverse] = useState<UniverseResponse | null>(null);
+  // Promote to live (docs/SPEC.md, Strategies and shadows): the shadow's
+  // differences arrive pre-filled as a new version; saving archives it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const promoteParam = searchParams.get('promote');
+  const [promotion, setPromotion] = useState<StrategyPromotion | null>(null);
+  const promotionApplied = useRef(false);
 
   const refresh = useCallback(() => {
     getSettings()
@@ -1266,6 +1274,29 @@ export default function Settings() {
       .map((p) => (fmt ? fmt(pendingMap[p]) : String(pendingMap[p])));
     return vals.length ? vals.join(join) : undefined;
   };
+
+  useEffect(() => {
+    if (!promoteParam || !form || promotionApplied.current) return;
+    promotionApplied.current = true;
+    getStrategyPromotion(Number(promoteParam))
+      .then((p) => {
+        if (!p.allowed) {
+          setErrors([`${p.name} can't be promoted yet: it needs at least ${p.needed} closed trades (has ${p.closed}).`]);
+          return;
+        }
+        setPromotion(p);
+        setForm((f) => {
+          if (!f) return f;
+          const next = structuredClone(f) as unknown as Record<string, Record<string, unknown>>;
+          for (const [section, body] of Object.entries(p.changes)) {
+            next[section] = { ...(next[section] ?? {}), ...body };
+          }
+          return next as unknown as SettingsForm;
+        });
+        setReason(p.reason);
+      })
+      .catch((e) => setErrors(errorMessages(e)));
+  }, [promoteParam, form]);
 
   const diffs = useMemo(
     () => (data && form ? diffSettings(data.settings, form) : []),
@@ -1385,6 +1416,10 @@ export default function Settings() {
     if (!data) return;
     setForm(structuredClone(data.settings));
     setReason('');
+    if (promotion) {
+      setPromotion(null);
+      setSearchParams({}, { replace: true });
+    }
   };
 
   const save = () => {
@@ -1423,11 +1458,19 @@ export default function Settings() {
     }
     if (Object.keys(screenSub).length > 0) universeSub.screen = screenSub;
     if (Object.keys(universeSub).length > 0) submission.universe = universeSub;
-    postSettings(submission, reason.trim())
+    postSettings(submission, reason.trim(), promotion?.strategy_id)
       .then((res) => {
         setForm(null);
         setReason('');
-        setNotice(`Saved as v${res.version} · applies at the next cycle.`);
+        setNotice(
+          promotion
+            ? `Saved as v${res.version} · applies at the next cycle. ${promotion.name} is archived.`
+            : `Saved as v${res.version} · applies at the next cycle.`,
+        );
+        if (promotion) {
+          setPromotion(null);
+          setSearchParams({}, { replace: true });
+        }
         refresh();
       })
       .catch((e) => setErrors(errorMessages(e)))
@@ -1532,6 +1575,12 @@ export default function Settings() {
 
       {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
       {notice && <Banner variant="info">{notice}</Banner>}
+      {promotion && (
+        <Banner variant="info">
+          Promote {promotion.name} to live: {promotion.lines.join(' · ')}. Nothing changes until you save it with a
+          reason; the shadow is archived when you do.
+        </Banner>
+      )}
       {data.pending_version !== null && (
         <Banner variant="info">
           v{data.pending_version} is pending — it applies at the next cycle
@@ -2186,7 +2235,7 @@ export default function Settings() {
                   onChange={(e) => patch('decision', 'model', e.target.value)}
                   style={selectStyle}
                 >
-                  {[s.decision.model, 'gpt-4o-mini']
+                  {[s.decision.model, ...(data.priced_models ?? [])]
                     .filter((v, i, a) => a.indexOf(v) === i)
                     .map((v) => (
                       <option key={v} value={v}>{v}</option>

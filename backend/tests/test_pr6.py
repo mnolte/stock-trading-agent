@@ -1179,6 +1179,8 @@ def test_dashboard_endpoint_shape(client: TestClient) -> None:
         "calls_cost_month",
         "reviews_cost_month",
         "reviews_cost_cap",
+        "shadows_cost_month",
+        "shadows_cost_cap",
     } <= set(stats)
     assert {"enabled", "next_at", "card"} <= set(body["briefing"])
     # Risk figures moved to /api/risk-budget with the risk budget card.

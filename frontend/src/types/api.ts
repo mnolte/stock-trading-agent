@@ -629,6 +629,7 @@ export interface SettingsResponse {
   pending_change?: string | null;
   next_version: number;
   held_symbols: string[];
+  priced_models?: string[];
   prompt_options: { version: string; hash: string }[];
   schedule: {
     rows: ScheduleRow[];
@@ -910,6 +911,8 @@ export interface DashboardStats {
   calls_cost_month: string;
   reviews_cost_month: string | null;
   reviews_cost_cap: string;
+  shadows_cost_month?: string | null;
+  shadows_cost_cap?: string;
 }
 
 // ---- Daily briefing card ---------------------------------------------------
@@ -1165,4 +1168,113 @@ export interface UniverseAddResult {
 export interface UniverseImportResult {
   added: number;
   skipped: number;
+}
+
+// ---- Strategies and shadows (PR 13) ----------------------------------------
+
+export interface StrategyCurvePoint {
+  date: string;
+  /** % of starting equity, adjusted (slippage per side and dividends). */
+  pct: string;
+}
+
+export interface StrategyDifference {
+  key: string;
+  label: string;
+  live: string;
+  shadow: string;
+}
+
+export interface StrategyDisagreement {
+  time: string;
+  date: string;
+  symbol: string;
+  live_action: string;
+  live_label: string;
+  shadow_action: string;
+  shadow_label: string;
+  live_decision_id: number;
+  result: string;
+  tone: 'positive' | 'negative' | 'neutral';
+}
+
+export interface StrategyRow {
+  id: number | null;
+  name: string;
+  short?: string;
+  kind: 'llm' | 'rules_only';
+  role: 'live' | 'shadow' | 'baseline';
+  status: 'active' | 'paused' | 'archived';
+  description: string;
+  started_at: string;
+  starting_equity: string;
+  return_pct: string | null;
+  raw_return_pct: string | null;
+  vs_spy_pts: string | null;
+  closed: number;
+  won: number;
+  lost: number;
+  avg_r: string | null;
+  max_drawdown_pct: string | null;
+  model_cost: string | null;
+  same_as_live_pct: string | null;
+  same_as_live_count: number | null;
+  curve: StrategyCurvePoint[];
+  // Shadows only.
+  prompt_version?: string | null;
+  model?: string | null;
+  temperature?: number | null;
+  overrides?: Record<string, number>;
+  calls?: number;
+  missed?: number;
+  open_positions?: { symbol: string; qty: number }[];
+  differences?: { differs: StrategyDifference[]; same: StrategyDifference[] };
+  promote?: { allowed: boolean; closed: number; needed: number; reason: string | null };
+  disagreements?: { total: number; sessions: number; items: StrategyDisagreement[] };
+}
+
+export interface StrategyOverrideOption {
+  key: string;
+  label: string;
+  live: number;
+  min: number | null;
+  max: number | null;
+  /** A code check (only applies to model answers). */
+  check: boolean;
+}
+
+export interface StrategiesResponse {
+  run: { id: number; started_at: string; sessions: number | null } | null;
+  rows: StrategyRow[];
+  spy_curve: StrategyCurvePoint[];
+  cost: { month_usd: string; cap_usd: string; cap_reached: boolean };
+  slots: { used: number; max: number };
+  promote_min_closed_trades: number;
+  rules_only: { stop_atr: number; target_r: number };
+  options: {
+    models: string[];
+    prompts: string[];
+    live: { prompt_version: string; model: string; temperature: number };
+    overrides: StrategyOverrideOption[];
+  };
+}
+
+export interface NewStrategyBody {
+  name: string;
+  kind: 'llm' | 'rules_only';
+  prompt_version?: string;
+  model?: string;
+  temperature?: number;
+  overrides?: Record<string, number>;
+}
+
+export interface StrategyPromotion {
+  strategy_id: number;
+  name: string;
+  allowed: boolean;
+  closed: number;
+  needed: number;
+  changes: Record<string, Record<string, unknown>>;
+  lines: string[];
+  reason: string;
 }

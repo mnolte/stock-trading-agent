@@ -547,6 +547,9 @@ export default function Dashboard() {
               ? `Decision calls today: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
                 (stats.reviews_cost_month !== null && stats.reviews_cost_month !== undefined
                   ? ` Reviews have their own $${stats.reviews_cost_cap} monthly cap: $${Number(stats.reviews_cost_month).toFixed(2)} used.`
+                  : '') +
+                (stats.shadows_cost_month !== null && stats.shadows_cost_month !== undefined
+                  ? ` Shadows have their own $${stats.shadows_cost_cap} monthly cap: $${Number(stats.shadows_cost_month).toFixed(2)} used.`
                   : '')
               : undefined
           }

@@ -11,6 +11,7 @@ import type {
   KeyGroup,
   KeysResponse,
   KillSwitchResponse,
+  NewStrategyBody,
   NotificationsResponse,
   OrdersResponse,
   PaperResetResult,
@@ -25,6 +26,8 @@ import type {
   SettingsResponse,
   SmtpStatus,
   StartRunResult,
+  StrategiesResponse,
+  StrategyPromotion,
   TestKeyResult,
   UniverseAddResult,
   UniverseImportResult,
@@ -119,8 +122,13 @@ export function getSettings(): Promise<SettingsResponse> {
 export function postSettings(
   settings: Record<string, Record<string, unknown>>,
   reason: string,
+  promoteStrategyId?: number,
 ): Promise<SaveSettingsResult> {
-  return post<SaveSettingsResult>('/api/settings', { settings, reason });
+  return post<SaveSettingsResult>('/api/settings', {
+    settings,
+    reason,
+    ...(promoteStrategyId !== undefined ? { promote_strategy_id: promoteStrategyId } : {}),
+  });
 }
 
 export function getNotifications(
@@ -224,4 +232,23 @@ export function postUniverseRemove(
 
 export function postUniverseScreen(): Promise<Record<string, unknown>> {
   return post<Record<string, unknown>>('/api/universe/screen', {});
+}
+
+export function getStrategies(): Promise<StrategiesResponse> {
+  return get<StrategiesResponse>('/api/strategies');
+}
+
+export function postStrategy(body: NewStrategyBody): Promise<{ id: number }> {
+  return post<{ id: number }>('/api/strategies', body);
+}
+
+export function postStrategyAction(
+  id: number,
+  action: 'pause' | 'resume' | 'archive',
+): Promise<{ id: number; status: string }> {
+  return post<{ id: number; status: string }>(`/api/strategies/${id}/${action}`, {});
+}
+
+export function getStrategyPromotion(id: number): Promise<StrategyPromotion> {
+  return get<StrategyPromotion>(`/api/strategies/${id}/promotion`);
 }

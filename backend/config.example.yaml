@@ -74,8 +74,6 @@ decision:
   min_reward_risk: 1.5
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
-  input_cost_per_mtok: 0.15     # USD per million tokens; check OpenAI's current prices
-  output_cost_per_mtok: 0.60
 
 risk:
   risk_per_trade_pct: 0.5
@@ -115,8 +113,6 @@ reviews:
   prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
-  input_cost_per_mtok: 0.15       # USD per million tokens, review calls
-  output_cost_per_mtok: 0.60
 
 notifications:
   repeat_limit_minutes: 30        # same subject; critical alerts are never held back
@@ -146,7 +142,7 @@ notifications:
     weekly_review: [email]
     verdicts_waiting: []
 
-model_prices:                   # v0.2, PR 13: replaces the decision/reviews price keys; USD per million tokens, check current prices
+model_prices:                   # the only price source (PR 13); USD per million tokens, check current prices; unpriced models are refused
   gpt-4o-mini: {input: 0.15, output: 0.60}
   gpt-4.1-mini: {input: 0.40, output: 1.60}
 

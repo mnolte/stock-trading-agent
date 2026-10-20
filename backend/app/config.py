@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 from pathlib import Path
 from typing import Any
@@ -141,6 +143,15 @@ class AppConfig:
         self.active_version = self.pending_version
         self.pending_version = None
         return self.active_version
+
+    def overlay(self, overrides: dict[str, Any]) -> AppConfig:
+        """A read-only view of the active settings with ``overrides`` merged
+        on top — how a shadow strategy runs the live functions with its own
+        rule and check values (docs/SPEC.md, Strategies and shadows)."""
+        view = copy.copy(self)
+        view._active = _deep_merge(self._active, overrides)
+        view._pending = None
+        return view
 
     @property
     def yaml(self) -> dict[str, Any]:

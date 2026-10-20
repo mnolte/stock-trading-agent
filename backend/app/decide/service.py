@@ -234,7 +234,15 @@ class DecisionService:
             tokens=response.tokens if response else None,
             tokens_in=response.tokens_in if response else None,
             tokens_out=response.tokens_out if response else None,
-            cost=token_cost(response, self.config) if response else None,
+            cost=(
+                token_cost(
+                    response,
+                    self.config,
+                    model=str(self.config.get("decision", "model", default="")),
+                )
+                if response
+                else None
+            ),
             latency_ms=response.latency_ms if response else None,
             raw_response=response.raw if response else None,
         )

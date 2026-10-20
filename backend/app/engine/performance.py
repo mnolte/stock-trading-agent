@@ -14,7 +14,6 @@ closed trades but kept out of the stats.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -35,6 +34,7 @@ from app.db.models import (
     Position,
     Run,
 )
+from app.engine.trades import _dividends, _trade_r
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 
@@ -250,39 +250,6 @@ def _initial_stop(
         if isinstance(stop, int | float):
             return Decimal(str(stop))
     return None
-
-
-def _trade_r(position: Position, stop: Decimal | None) -> Decimal | None:
-    """Reward-to-risk of a closed trade against its entry stop."""
-    if (
-        stop is None
-        or position.realized_pnl_raw is None
-        or position.qty == 0
-        or position.avg_entry_price <= stop
-    ):
-        return None
-    risk = (position.avg_entry_price - stop) * position.qty
-    return position.realized_pnl_raw / risk
-
-
-def _dividends(
-    actions: Sequence[CorporateAction],
-    symbol: str,
-    start: date,
-    end: date,
-    qty: int,
-) -> Decimal:
-    """Dividends the position was entitled to: ex-date inside the hold."""
-    total = Decimal(0)
-    for action in actions:
-        if (
-            action.symbol == symbol
-            and action.action_type == "dividend"
-            and start <= action.date.date() <= end
-            and action.ratio_or_amount is not None
-        ):
-            total += action.ratio_or_amount * qty
-    return total
 
 
 def compute_performance(

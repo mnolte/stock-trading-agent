@@ -10,6 +10,7 @@ error reconciliation decides what happened), and all money is Decimal.
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -46,6 +47,7 @@ from app.engine.state import ExecutionState, record_event
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
+from app.risk.earnings import exit_blocked_same_day
 from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates
 from app.risk.math import (
     WorkingEntry,
@@ -60,6 +62,8 @@ if TYPE_CHECKING:
     from app.config import AppConfig
 
 CENT = Decimal("0.01")
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -158,6 +162,8 @@ class Executor:
         self._order_nonce = secrets.token_hex(3)
         self._reconcile_failed = False
         self._reconcile_lock = asyncio.Lock()
+        # Set by main: closes every shadow's virtual positions on flatten.
+        self.on_flatten: Callable[[], object] = lambda: None
 
     # ------------------------------------------------------------------
     # account + brakes
@@ -497,6 +503,12 @@ class Executor:
             )
             session.commit()
         await self.reconcile()
+        # Shadows are flattened virtually too (docs/SPEC.md, Virtual
+        # trading); the hook only touches shadow tables, never the broker.
+        try:
+            self.on_flatten()
+        except Exception:  # noqa: BLE001
+            logger.exception("shadow flatten failed")
         self._notify({"banners", "header", "positions", "orders"})
         return {
             "cancelled_orders": cancelled.data,
@@ -2027,7 +2039,7 @@ class Executor:
         recorded as deferred and the next session's first cycle re-asks.
         """
         now = self.clock.now()
-        if _ny_date(position.opened_at) == _ny_date(now):
+        if exit_blocked_same_day(position.opened_at, now):
             position.deferred_exit = {
                 "at": now.isoformat(),
                 "reason": "day_trade_rule",

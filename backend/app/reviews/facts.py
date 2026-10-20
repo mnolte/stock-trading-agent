@@ -34,9 +34,9 @@ from app.engine.performance import (
     _EXIT_LABELS,
     _entry_regime,
     _initial_stop,
-    _trade_r,
 )
 from app.engine.state import ExecutionState
+from app.engine.trades import _trade_r
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
 from app.signals.service import SignalService
@@ -382,7 +382,25 @@ def weekly_facts(
         "verdicts": {**verdict_counts, "total": len(confirmed)},
         "by_regime": _group(lambda t, _p: t["regime"] or "Unknown"),
         "by_symbol": _group(lambda t, _p: t["symbol"]),
+        "strategies": _strategy_facts(session, config=config, clock=clock, calendar=calendar),
     }
+
+
+def _strategy_facts(
+    session: Session, *, config: AppConfig, clock: Clock, calendar: CalendarProvider
+) -> list[dict[str, Any]]:
+    """Live vs shadows for the current run (docs/SPEC.md, Strategies and
+    shadows — Comparing); empty while no shadow exists."""
+    from app.db.models import Strategy
+    from app.engine.performance import compute_performance
+    from app.shadows.compare import weekly_comparison
+
+    if session.execute(select(Strategy.id).limit(1)).first() is None:
+        return []
+    perf = compute_performance(
+        session, config=config, market_data=None, calendar=calendar, clock=clock
+    )
+    return weekly_comparison(session, config=config, perf=perf)
 
 
 def banner_facts(

@@ -11,6 +11,7 @@ import Performance from './pages/Performance';
 import Positions from './pages/Positions';
 import Reviews from './pages/Reviews';
 import Settings from './pages/Settings';
+import Strategies from './pages/Strategies';
 import States from './pages/States';
 import Universe from './pages/Universe';
 
@@ -28,6 +29,7 @@ function AppRoutes() {
           <Route path="performance" element={<Performance />} />
           <Route path="inspector" element={<Inspector />} />
           <Route path="reviews" element={<Reviews />} />
+          <Route path="strategies" element={<Strategies />} />
           {/* Deep links to /decisions/:id draw the dashboard under the drawer. */}
           <Route path="decisions/:id" element={<Dashboard />} />
           <Route path="settings" element={<Settings />} />
