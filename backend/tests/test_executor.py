@@ -2211,9 +2211,11 @@ async def test_enter_and_approve_share_the_fresh_quote_step(
     calls: list[str] = []
     real = executor._fresh_entry_check
 
-    async def spy(**kwargs: object) -> object:
-        calls.append(str(kwargs.get("symbol")))
-        return await real(**kwargs)
+    async def spy(
+        *, symbol: str, stop: Decimal, target: Decimal, atr_1h: Decimal | None
+    ) -> object:
+        calls.append(symbol)
+        return await real(symbol=symbol, stop=stop, target=target, atr_1h=atr_1h)
 
     monkeypatch.setattr(executor, "_fresh_entry_check", spy)
 

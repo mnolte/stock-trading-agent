@@ -18,6 +18,7 @@ from app.data.fake import (
     FakeQuoteSource,
 )
 from app.data.models import DataResult, Quote
+from app.data.protocols import QuoteSource
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Cycle, EquitySnapshot, Event
@@ -44,7 +45,7 @@ def session_factory(tmp_path: Path) -> sessionmaker[Session]:
 def _checker(
     session_factory: sessionmaker[Session],
     broker: FakeBroker,
-    quotes: object | None = None,
+    quotes: QuoteSource | None = None,
 ) -> PositionChecker:
     clock = FakeClock(NOW)
     config = AppConfig()

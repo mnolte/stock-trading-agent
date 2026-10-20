@@ -39,7 +39,7 @@ def test_decision_client_no_retries(
     assert calls[-1]["timeout"] == float(
         config.get("decision", "call_timeout_seconds", default=30)
     )
-    assert client._client.kwargs["api_key"] == "sk-test"
+    assert calls[-1]["api_key"] == "sk-test"
 
     client.update_key("sk-new")
     assert calls[-1]["max_retries"] == 0
