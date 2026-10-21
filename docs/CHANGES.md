@@ -2,15 +2,18 @@
 
 Newest first.
 
-## 2026-10-21 — PR 14 implementation notes
+## 2026-10-21 — PR 14 review follow-ups
 
-- The bar-store fill covers the run period plus the indicator lookback the live cache keeps (`schedule.history_sessions` 5-minute sessions and `schedule.daily_history_sessions` daily bars), so warmup and indicators work from the first session; the estimate's "bars to download" counts the same range. The stored calendar covers the same range so `recent_sessions` sees the lookback; news is fetched from the day before the start so the first session's 24-hour prompt window is complete.
-- Each strategy database primes its bar cache from the store (read-only) and loads the run's earnings once — the same paths live's `refresh_history`/`refresh_earnings` take.
-- `decisions.cached` marks answers replayed from `llm_cache`; their cost is zero and their stored token counts are kept.
+- Backtest downloads: calendar, news, corporate actions and bars all share one 40-calls/minute limiter.
+- Cancel: a run that ignores the cancel flag is stopped by its stored PID after `cancel_grace_seconds`; the run stays `cancelled` (not `interrupted`) and keeps partial results.
+- Live and shadows write through to `llm_cache` (live via `DecisionService`, shadows via `ShadowRunner`); only backtests read it.
+- Tests: `make test` skips `slow` tests (the 3-month determinism replay); `make test-slow` runs them. A ~10-session determinism test stays in the default suite. `tests/e2e_backtest_seed.py` writes a finished run folder so the e2e tests can open the Results panels.
 
-## 2026-10-21 — Local DB repair note
+## 2026-10-21 — PR 14 review
 
-- `shadow_positions.exit_requested_at` records when a shadow market exit (model, earnings, flatten, day-trade rule) was requested; the exit fills at the open of the first 5-minute bar at or after that time. The merged `d6e7f8a9b0c1` migration already had the column, but a database migrated by an early PR 13 branch version lacks it: downgrade to `c4d5e6f7a8b9` then upgrade to head recreates the shadow tables (all live data keeps).
+- Backtesting: the bar store is filled for the run period plus the indicator lookback, so signals work from the first session.
+- LLM cache: live and shadows write to it but never read from it; backtest decisions answered from it are marked `cached` (new `decisions.cached`, always false live).
+- AGENTS.md hard rule 13 audit (PR 14) fixed write locks held across I/O in the cycle's model call, reconciliation, adoption/protective-stop placement and verdict writing.
 
 ## 2026-10-21 — Answers to PR 14 questions
 
