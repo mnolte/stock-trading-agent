@@ -10,6 +10,7 @@ response. An empty ``outcomes`` row is created alongside; the outcome worker
 from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any, cast
 
@@ -19,6 +20,7 @@ from app.config import AppConfig
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
+from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     NO_CALL_REASONS,
     ModelOutput,
@@ -93,9 +95,9 @@ class DecisionService:
         session_factory: sessionmaker[Session] | None = None,
         api_key: str | None = None,
         notifier: Notifier | None = None,
-        llm_cache: Any = None,
+        llm_cache: LLMCacheStore | None = None,
         cache_reads: bool = False,
-        before_call: Any = None,
+        before_call: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.client = client
         self.config = config

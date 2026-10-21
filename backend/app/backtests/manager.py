@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -157,23 +158,40 @@ class BacktestManager:
         with self._sessions() as session:
             row = session.get(Backtest, run_id)
             if row is None or row.status not in ACTIVE_STATUSES:
+                # The child already wrote a terminal status itself.
                 return
-            if not _pid_alive(pid):
-                row.status = "interrupted"
-                row.finished_at = _naive_utc(self.clock.now())
-                session.commit()
-                return
-        try:
-            os.kill(pid, 15)
-        except OSError:
-            return
-        await asyncio.sleep(5)
+            requested = bool(row.cancel_requested)
+        if _pid_alive(pid):
+            # Stop only this process, by the PID the app recorded — never
+            # by name or pattern (hard rule 12).
+            with contextlib.suppress(OSError):
+                os.kill(pid, 15)
+            deadline = time.monotonic() + float(
+                self.config.get(
+                    "backtest", "cancel_kill_wait_seconds", default=5
+                )
+            )
+            while _pid_alive(pid) and time.monotonic() < deadline:
+                self._reap(run_id)
+                await asyncio.sleep(0.1)
+            self._reap(run_id)
+            if _pid_alive(pid):
+                with contextlib.suppress(OSError):
+                    os.kill(pid, 9)
+                await asyncio.sleep(0.05)
+                self._reap(run_id)
         with self._sessions() as session:
             row = session.get(Backtest, run_id)
             if row is not None and row.status in ACTIVE_STATUSES:
-                row.status = "interrupted"
+                row.status = "cancelled" if requested else "interrupted"
                 row.finished_at = _naive_utc(self.clock.now())
                 session.commit()
+
+    def _reap(self, run_id: int) -> None:
+        """Reap our own child if it exited — a zombie still answers
+        ``kill(pid, 0)`` until it's waited on."""
+        if self._run_id == run_id and self._process is not None:
+            self._process.poll()
 
     def delete(self, run_id: int) -> bool:
         """Remove the run's folder and its summary row; never while active."""

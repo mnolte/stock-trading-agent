@@ -119,10 +119,18 @@ def make_market_db(path: Path, config: AppConfig) -> sessionmaker[Session]:
 
 
 def _resolve(config: AppConfig, value: str) -> Path:
-    """Relative backtest paths live under the data dir (isolated in tests)."""
+    """Relative backtest paths live under the data dir (isolated in tests).
+
+    A leading component equal to the data dir's own name is dropped, so a
+    config value written as ``data/backtests`` means ``<data>/backtests``,
+    not ``<data>/data/backtests``.
+    """
     path = Path(value)
     if not path.is_absolute():
-        path = Path(config.env.sa_data_dir) / path
+        data_dir = Path(config.env.sa_data_dir)
+        if path.parts and path.parts[0] == data_dir.name:
+            path = Path(*path.parts[1:])
+        path = data_dir / path
     return path
 
 

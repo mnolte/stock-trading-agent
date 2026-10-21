@@ -46,6 +46,7 @@ from app.data.cache import BarCache, _naive_utc
 from app.data.models import Bar5m as Bar5mData
 from app.data.models import CalendarDay, DailyBar
 from app.data.protocols import EarningsSource
+from app.data.rate_limiter import RateLimitConfig, RateLimiter
 from app.db.base import get_session_maker
 from app.db.models import (
     Backtest,
@@ -147,6 +148,19 @@ def set_status(
 # download phase
 
 
+def _download_limiter(config: AppConfig) -> RateLimiter:
+    """One shared limiter for every Alpaca download call in a run — at
+    most ``backtest.alpaca_calls_per_minute`` (40) calls per minute in
+    total, so live keeps its own 150."""
+    return RateLimiter(
+        RateLimitConfig(
+            max_calls=int(
+                config.get("backtest", "alpaca_calls_per_minute", default=40)
+            )
+        )
+    )
+
+
 async def _fill_market_db(
     *,
     run: RunParams,
@@ -157,9 +171,12 @@ async def _fill_market_db(
     market_sf: sessionmaker[Session],
     gate: RunGate,
     wall: Clock,
+    config: AppConfig,
+    limiter: RateLimiter | None = None,
 ) -> list[str]:
     """Write the run's read-only inputs: calendar, earnings, news, CAs."""
     warnings: list[str] = []
+    limiter = limiter or _download_limiter(config)
     fetched = _naive_utc(wall.now())
     with market_sf() as session:
         for table in (MARKET_CALENDAR, MARKET_COVERAGE):
@@ -239,11 +256,16 @@ async def _fill_market_db(
         news_start = (run.start - NEWS_WINDOW) - timedelta(days=1)
         for symbol in symbols:
             await gate.wait_for_call()
-            result = await alpaca.fetch_news(
-                [symbol],
-                datetime.combine(news_start, datetime.min.time(), tzinfo=NY_TZ),
-                datetime.combine(run.end, datetime.max.time(), tzinfo=NY_TZ),
-            )
+            async with limiter.call_slot():
+                result = await alpaca.fetch_news(
+                    [symbol],
+                    datetime.combine(
+                        news_start, datetime.min.time(), tzinfo=NY_TZ
+                    ),
+                    datetime.combine(
+                        run.end, datetime.max.time(), tzinfo=NY_TZ
+                    ),
+                )
             if result.error is not None:
                 warnings.append(
                     f"news download failed for {symbol}: {result.error}"
@@ -272,7 +294,10 @@ async def _fill_market_db(
                 session.commit()
 
         await gate.wait_for_call()
-        ca = await alpaca.fetch_corporate_actions(symbols, run.start, run.end)
+        async with limiter.call_slot():
+            ca = await alpaca.fetch_corporate_actions(
+                symbols, run.start, run.end
+            )
         if ca.error is not None:
             warnings.append(f"corporate actions download failed: {ca.error}")
         else:
@@ -320,9 +345,11 @@ async def _fill_bar_store(
     alpaca: Any,
     store: BarCache,
     gate: RunGate,
+    limiter: RateLimiter | None = None,
 ) -> list[str]:
     """Copy what the live cache has, then download the rest — at most
     ``backtest.alpaca_calls_per_minute`` calls, paused during live jobs."""
+    limiter = limiter or _download_limiter(config)
     warnings: list[str] = []
     live_sf = get_session_maker()
     start_dt, end_dt = days[0].open, days[-1].close
@@ -386,11 +413,16 @@ async def _fill_bar_store(
         first, last = missing[0].date, missing[-1].date
         for chunk_start, chunk_end in _quarters(first, last):
             await gate.wait_for_call()
-            result = await alpaca.fetch_5m_bars(
-                [symbol],
-                datetime.combine(chunk_start, datetime.min.time(), tzinfo=NY_TZ),
-                datetime.combine(chunk_end, datetime.max.time(), tzinfo=NY_TZ),
-            )
+            async with limiter.call_slot():
+                result = await alpaca.fetch_5m_bars(
+                    [symbol],
+                    datetime.combine(
+                        chunk_start, datetime.min.time(), tzinfo=NY_TZ
+                    ),
+                    datetime.combine(
+                        chunk_end, datetime.max.time(), tzinfo=NY_TZ
+                    ),
+                )
             if result.error is not None:
                 warnings.append(
                     f"5m bars download failed for {symbol} "
@@ -399,7 +431,10 @@ async def _fill_bar_store(
                 continue
             store.store([b for b in result.data if b.start.date() in day_set])
         await gate.wait_for_call()
-        result = await alpaca.fetch_daily_bars(symbol, days[0].date, run.end)
+        async with limiter.call_slot():
+            result = await alpaca.fetch_daily_bars(
+                symbol, days[0].date, run.end
+            )
         if result.error is None:
             store.store_daily(result.data)
         else:
@@ -659,9 +694,11 @@ async def run_backtest(
             int(config.get("schedule", "daily_history_sessions", default=260)),
         ) * 2
         fill_start = run.start - timedelta(days=lookback)
+        limiter = _download_limiter(config)
         if alpaca is not None:
             await gate.wait_for_call()
-            cal = await alpaca.fetch_calendar(fill_start, run.end)
+            async with limiter.call_slot():
+                cal = await alpaca.fetch_calendar(fill_start, run.end)
             if cal.error is not None:
                 raise RuntimeError(f"calendar download failed: {cal.error}")
             all_days = cal.data
@@ -679,6 +716,8 @@ async def run_backtest(
             market_sf=market_sf,
             gate=gate,
             wall=wall,
+            config=config,
+            limiter=limiter,
         )
         warnings += await _fill_bar_store(
             config=config,
@@ -689,6 +728,7 @@ async def run_backtest(
             alpaca=alpaca,
             store=store,
             gate=gate,
+            limiter=limiter,
         )
         set_status(live_sf, run_id, "running", wall)
         with live_sf() as session:
@@ -860,7 +900,6 @@ def main() -> None:
     if config.env.mode != "simulated":
         from app.data.alpaca import AlpacaDataClient
         from app.data.finnhub import FinnhubEarningsSource
-        from app.data.rate_limiter import RateLimitConfig, RateLimiter
         from app.secrets_service import MISSING_KEY
 
         rpm = int(config.get("backtest", "alpaca_calls_per_minute", default=40))

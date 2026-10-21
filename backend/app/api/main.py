@@ -33,7 +33,7 @@ from app.config import ROOT, AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
-from app.db.base import check_schema_matches_models
+from app.db.base import check_schema_matches_models, get_session_maker
 from app.db.models import Strategy
 from app.decide.client import (
     DecisionClient,
@@ -42,6 +42,7 @@ from app.decide.client import (
     UnpricedModelError,
     make_decision_client,
 )
+from app.decide.llm_cache import LLMCacheStore
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
@@ -520,11 +521,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
+    # The llm_cache is shared: live and shadows write through to it (never
+    # read it), backtests read it — a rerun on identical inputs is free.
+    llm_cache = LLMCacheStore(get_session_maker(), clock)
     decision_service = DecisionService(
         make_decision_client(config, api_key=secrets_store.get("openai")),
         config,
         api_key=secrets_store.get("openai"),
         notifier=notification_service,
+        llm_cache=llm_cache,
     )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
@@ -599,6 +604,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         live_state=live_gate_state,
         notifier=notification_service,
         notify=lambda topics: bus.publish(*topics),
+        llm_cache=llm_cache,
     )
     shadow_tasks: set[asyncio.Task[object]] = set()
     cycle_runner.on_cycle_done = lambda report: spawn_background(
@@ -649,7 +655,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Fill any outcome targets that were due while the app was down, and
     # record the startup equity point.
-    from app.db.base import get_session_maker
     from app.db.models import Cycle
 
     with get_session_maker()() as session:

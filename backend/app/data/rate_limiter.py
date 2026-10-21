@@ -14,7 +14,7 @@ T = TypeVar("T")
 @dataclass
 class RateLimitConfig:
     max_calls: int = 150
-    window_seconds: int = 60
+    window_seconds: float = 60
     backoff_base_seconds: float = 1.0
     max_retries: int = 3
 
