@@ -1,4 +1,4 @@
-.PHONY: install dev run run-backend run-frontend lint test test-backend test-frontend test-e2e smoke-data smoke-decision smoke-execution
+.PHONY: install dev run run-backend run-frontend lint test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -46,7 +46,10 @@ lint:
 test: test-backend test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
-	cd backend && ../$(PYTEST) -v
+	cd backend && ../$(PYTEST) -v -m "not slow" -n auto
+
+test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
+	cd backend && ../$(PYTEST) -v -m slow -n auto
 
 test-frontend:
 	$(FE) test

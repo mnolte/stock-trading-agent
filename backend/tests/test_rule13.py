@@ -27,7 +27,7 @@ from app.data.fake import (
     FakeQuoteSource,
 )
 from app.data.service import MarketDataService
-from app.db.models import Order, Position
+from app.db.models import Order, Position, UniversePoolRow
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
@@ -256,6 +256,20 @@ async def test_reviews_and_universe_screen_commit_before_every_call(
     )
     broker = LockProbe("broker", FakeBroker(clock), db)
     probes.append(broker)
+    # A tiny pool exercises the same screen loop without seeding all of
+    # pool.csv — ``ensure_pool_loaded`` skips the file once default rows
+    # exist.
+    with session_factory() as session:
+        for symbol in ("AAA", "BBB", "CCC"):
+            session.add(
+                UniversePoolRow(
+                    symbol=symbol,
+                    sector="Technology",
+                    source="default",
+                    added_at=clock.now(),
+                )
+            )
+        session.commit()
     screen = UniverseService(
         market_data,
         sources,

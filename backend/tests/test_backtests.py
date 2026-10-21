@@ -573,6 +573,51 @@ async def test_llm_cache_hit_replays_answer_free_and_marked(tmp_path: Path) -> N
     assert d2.model_output == d1.model_output
 
 
+async def test_live_and_shadow_decide_never_reads_llm_cache() -> None:
+    """cache_reads stays off for live and shadows: a matching cache row is
+    written-through only — the model is still called (docs/SPEC.md,
+    Backtesting, Model calls)."""
+    config = AppConfig()
+    sf = get_session_maker()
+    clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
+    cache = LLMCacheStore(sf, clock)
+    cycle_id = _cycle(sf, clock.now())
+
+    # Seed the row a backtest hit would match.
+    client = FakeDecisionClient(enter_symbols={"AAA"})
+    seed = DecisionService(client, config, sf, llm_cache=cache, cache_reads=True)
+    snapshot = {"symbol": "AAA", "context": "candidate", "price": "100.00"}
+    rules = RulesResult("AAA", STATUS_PASS, None, [RuleCheck("fresh quote", True, "0s old")])
+    s0 = _new_session(sf)
+    await seed.decide(
+        session=s0, cycle_id=cycle_id, symbol="AAA", context="candidate",
+        snapshot_json=snapshot, rules=rules, price=Decimal("100"),
+        atr_1h=Decimal("1"), current_stop=None,
+    )
+    s0.commit()
+    s0.close()
+
+    calls = 0
+    real_complete = client.complete
+
+    async def counted(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return await real_complete(*args, **kwargs)
+
+    client.complete = counted  # type: ignore[method-assign]
+    # No cache_reads flag — exactly how live and the shadows construct it.
+    live = DecisionService(client, config, sf, llm_cache=cache)
+    s1 = _new_session(sf)
+    d = await live.decide(
+        session=s1, cycle_id=cycle_id, symbol="AAA", context="candidate",
+        snapshot_json=snapshot, rules=rules, price=Decimal("100"),
+        atr_1h=Decimal("1"), current_stop=None,
+    )
+    assert calls == 1  # fresh model call despite the matching row
+    assert d.cached is False
+
+
 def _new_session(sf: sessionmaker[Session]) -> Session:
     return sf()
 
@@ -972,13 +1017,24 @@ def _seed_live_bars(symbols: list[str], start: date, days: int) -> None:
         session.commit()
 
 
-async def test_rules_only_run_is_deterministic_and_never_touches_account() -> None:
+async def _run_deterministic_pair(
+    end: date, *, warmup_sessions: int, daily_history: int, history_5m: int
+) -> None:
+    """Two independent rules-only runs over the same seeded bars produce
+    byte-identical trade rows. Determinism is meaningless on an empty
+    book, so the run must trade."""
     config = AppConfig()
     config.yaml["universe"]["symbols"] = ["AAA"]
+    schedule = config.yaml.setdefault("schedule", {})
+    schedule["history_sessions"] = history_5m
+    schedule["daily_history_sessions"] = daily_history
     sf = get_session_maker()
-    # The 260-session warmup plus the ~3-month run, all as cached bars.
-    history_start = D0 - timedelta(days=380)
-    _seed_live_bars(["AAA", "SPY"], history_start, 345)
+    # The daily-indicator warmup plus the run window, all as cached bars.
+    window_days = (end - D0).days
+    seed_start = D0 - timedelta(days=warmup_sessions * 7 // 5 + 20)
+    _seed_live_bars(
+        ["AAA", "SPY"], seed_start, warmup_sessions + window_days * 5 // 7 + 5
+    )
 
     manager = BacktestManager(config, FakeClock(datetime.now(tz=NY_TZ)))
     specs = [
@@ -989,52 +1045,64 @@ async def test_rules_only_run_is_deterministic_and_never_touches_account() -> No
             "slug": "rules-only",
         }
     ]
-    run = manager.create(
-        name="deterministic",
-        start=D0,
-        end=D0 + timedelta(days=90),
-        universe_mode="fixed",
-        strategies=specs,
-        starting_equity=Decimal(10000),
-        slippage_pct=Decimal("0.05"),
-    )
+    runs: list[int] = []
+    for name in ("deterministic", "deterministic-2"):
+        row = manager.create(
+            name=name,
+            start=D0,
+            end=end,
+            universe_mode="fixed",
+            strategies=specs,
+            starting_equity=Decimal(10000),
+            slippage_pct=Decimal("0.05"),
+        )
+        await run_backtest(
+            row.id,
+            config=config,
+            live_sf=sf,
+            earnings=FakeEarningsSource(events=[]),
+            wall=FakeClock(datetime.now(tz=NY_TZ)),
+        )
+        with sf() as session:
+            done = session.get(Backtest, row.id)
+            assert done is not None
+            assert done.status == "done"
+            assert done.summary is not None
+        runs.append(row.id)
 
-    wall = FakeClock(datetime.now(tz=NY_TZ))
-    earnings = FakeEarningsSource(events=[])
-    await run_backtest(
-        run.id, config=config, live_sf=sf, earnings=earnings, wall=wall
-    )
-    with sf() as session:
-        row = session.get(Backtest, run.id)
-        assert row is not None
-        assert row.status == "done"
-        assert row.summary is not None
-
-    strat_db = run_dir_for(config, run.id) / "rules-only.db"
-    assert strat_db.exists()
-    trades1 = _trade_rows(strat_db, config)
+    db1 = run_dir_for(config, runs[0]) / "rules-only.db"
+    assert db1.exists()
+    trades1 = _trade_rows(db1, config)
     # Determinism is meaningless on an empty book — the run must trade.
-    assert trades1
-
-    # second run over the same bars: identical trades
-    run2 = manager.create(
-        name="deterministic-2",
-        start=D0,
-        end=D0 + timedelta(days=90),
-        universe_mode="fixed",
-        strategies=specs,
-        starting_equity=Decimal(10000),
-        slippage_pct=Decimal("0.05"),
-    )
-    await run_backtest(
-        run2.id, config=config, live_sf=sf, earnings=earnings, wall=wall
-    )
-    with sf() as session:
-        row2 = session.get(Backtest, run2.id)
-        assert row2 is not None
-        assert row2.status == "done"
-    trades2 = _trade_rows(run_dir_for(config, run2.id) / "rules-only.db", config)
+    assert len(trades1) >= 2
+    trades2 = _trade_rows(run_dir_for(config, runs[1]) / "rules-only.db", config)
     assert trades2 == trades1
+
+
+async def test_rules_only_short_window_is_deterministic() -> None:
+    """Default-suite determinism check: ~10 sessions over seeded data that
+    trades. The 3-month variant runs under -m slow (make test-slow)."""
+    # ~65 sessions of warmup: the warmup gate, daily SMA-50 and RSI all
+    # have history, and a sideways/unknown regime (no SMA-200 yet) does
+    # not block entries.
+    await _run_deterministic_pair(
+        D0 + timedelta(days=14),
+        warmup_sessions=65,
+        daily_history=55,
+        history_5m=30,
+    )
+
+
+@pytest.mark.slow
+async def test_rules_only_run_is_deterministic_and_never_touches_account() -> None:
+    """The spec's 3-month determinism run — moved behind `slow` for CI
+    time (docs/SPEC.md, Backtesting, Reproducibility)."""
+    await _run_deterministic_pair(
+        D0 + timedelta(days=90),
+        warmup_sessions=250,
+        daily_history=260,
+        history_5m=60,
+    )
 
 
 def _trade_rows(path: Path, config: AppConfig) -> list[tuple[object, ...]]:
@@ -1276,6 +1344,7 @@ async def test_missing_earnings_blocks_entries_and_is_listed(
         market_sf=market_sf,
         gate=RunGate(sf, run_id),
         wall=FakeClock(datetime(2024, 6, 3, 12, 0, tzinfo=NY_TZ)),
+        config=config,
     )
     assert any("AAA" in w and "arnings" in w for w in warnings)
     src = BacktestEarningsSource(market_sf)
@@ -1335,3 +1404,207 @@ async def test_cancel_mid_run_stops_cleanly_and_keeps_results(
         assert row.status == "cancelled"
         assert row.progress is not None
     assert (run_dir_for(config, run.id) / "rules-only.db").exists()
+
+
+class _FakeAlpacaDownload:
+    """Records every download call and serves deterministic fake bars."""
+
+    def __init__(self, days: list[CalendarDay]) -> None:
+        self.days = days
+        self.calls: list[tuple[str, Any, Any]] = []
+        self.times: list[float] = []
+
+    async def fetch_5m_bars(
+        self, symbols: list[str], start: datetime, end: datetime
+    ) -> Any:
+        import time as _time
+
+        from app.data.fake import _bars_for_session
+        from app.data.models import DataResult
+
+        self.calls.append(("5m", start, end))
+        self.times.append(_time.monotonic())
+        out: list[Bar5m] = []
+        for day in self.days:
+            if start.date() <= day.date <= end.date():
+                for s in symbols:
+                    out += _bars_for_session(s, day.date, day.open, day.close)
+        return DataResult(data=out, source="fake")
+
+    async def fetch_daily_bars(
+        self, symbol: str, start: date, end: date
+    ) -> Any:
+        import time as _time
+
+        from app.data.models import DailyBar, DataResult
+
+        self.calls.append(("1d", start, end))
+        self.times.append(_time.monotonic())
+        return DataResult(
+            data=[
+                DailyBar(
+                    symbol=symbol,
+                    date=d.date,
+                    open=Decimal(10),
+                    high=Decimal(11),
+                    low=Decimal(9),
+                    close=Decimal(10),
+                    volume=1000,
+                )
+                for d in self.days
+                if start <= d.date <= end
+            ],
+            source="fake",
+        )
+
+
+async def test_fill_bar_store_downloads_only_missing_at_rate_limit() -> None:
+    """Download branch: live-cached bars are copied, only the missing
+    range is fetched, the shared limiter caps calls/minute, and a set
+    pause flag blocks every call until it clears."""
+    from app.backtests.worker import RunParams, _fill_bar_store, _weekday_sessions
+    from app.data.rate_limiter import RateLimitConfig, RateLimiter
+
+    config = AppConfig()
+    sf = get_session_maker()
+    days = _weekday_sessions(D0, D0 + timedelta(days=6))  # 5 weekdays
+    # The live cache has only the first session; the other four download.
+    _seed_live_bars(["AAA", "BBB"], days[0].date, 1)
+    store = make_bar_store(bar_store_path(config), config)
+
+    with sf() as session:
+        row = Backtest(
+            name="dl",
+            start_date=D0,
+            end_date=days[-1].date,
+            universe_mode="fixed",
+            strategies=[],
+            starting_equity=Decimal(10),
+            slippage_pct=Decimal(0),
+            status="downloading",
+            run_dir="run-dl",
+            created_at=_naive_utc(datetime(2024, 6, 3, 14, 0)),
+            paused=True,
+        )
+        session.add(row)
+        session.commit()
+        run_id = row.id
+
+    alpaca = _FakeAlpacaDownload(days)
+    # 2 symbols × (1 chunk + 1 daily) = 4 calls; the limiter holds 2.
+    limiter = RateLimiter(RateLimitConfig(max_calls=2, window_seconds=0.3))
+    run = RunParams(
+        id=run_id,
+        name="dl",
+        start=D0,
+        end=days[-1].date,
+        universe_mode="fixed",
+        strategies=[],
+        starting_equity=Decimal(10),
+        slippage_pct=Decimal(0),
+    )
+    task = asyncio.create_task(
+        _fill_bar_store(
+            config=config,
+            run=run,
+            days=days,
+            run_days=days,
+            symbols=["AAA", "BBB"],
+            alpaca=alpaca,
+            store=store,
+            gate=RunGate(sf, run_id),
+            limiter=limiter,
+        )
+    )
+    await asyncio.sleep(0.8)
+    assert alpaca.calls == []  # paused: not a single download started
+    with sf() as session:
+        saved = session.get(Backtest, run_id)
+        assert saved is not None
+        saved.paused = False
+        session.commit()
+    warnings = await asyncio.wait_for(task, timeout=10)
+    assert warnings == []
+
+    calls_5m = [c for c in alpaca.calls if c[0] == "5m"]
+    assert len(calls_5m) == 2  # one chunk per symbol
+    # Only the missing range is downloaded — the first session was copied.
+    for _m, start, end in calls_5m:
+        assert start.date() == days[1].date
+        assert end.date() == days[-1].date
+    assert len([c for c in alpaca.calls if c[0] == "1d"]) == 2
+    # The limiter held: at most 2 calls inside any 0.3 s window.
+    for i in range(2, len(alpaca.times)):
+        assert alpaca.times[i] - alpaca.times[i - 2] >= 0.3
+    # And every session is now covered from the store alone.
+    for symbol in ("AAA", "BBB"):
+        assert store.covered_session_dates(symbol, days) == {
+            d.date for d in days
+        }
+
+
+async def test_cancel_kills_a_stubborn_child_by_pid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child that ignores the cancel flag is stopped by its own PID
+    after cancel_grace_seconds; the run is marked cancelled and keeps the
+    partial results written so far."""
+    import subprocess
+    import sys
+
+    from app.backtests.bundle import init_strategy_db
+    from app.backtests.manager import _pid_alive
+
+    config = AppConfig()
+    config.yaml["backtest"]["cancel_grace_seconds"] = 0.2
+    config.yaml["backtest"]["cancel_kill_wait_seconds"] = 0.5
+    manager = BacktestManager(config, FakeClock(datetime.now(tz=NY_TZ)))
+    specs = [
+        {
+            "ref": "rules_only",
+            "name": "Rules only",
+            "kind": "rules_only",
+            "slug": "rules-only",
+        }
+    ]
+    run = manager.create(
+        name="stubborn",
+        start=D0,
+        end=D0 + timedelta(days=5),
+        universe_mode="fixed",
+        strategies=specs,
+        starting_equity=Decimal(10000),
+        slippage_pct=Decimal("0.05"),
+    )
+    # Partial results the kill must keep: the run folder and a strategy db.
+    run_dir = run_dir_for(config, run.id)
+    run_dir.mkdir(parents=True)
+    init_strategy_db(run_dir / "rules-only.db")
+
+    def spawn_stub(session: Session, row: Backtest) -> None:
+        proc = subprocess.Popen(  # noqa: S603
+            [sys.executable, "-c", "import time; time.sleep(120)"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        row.process_id = proc.pid
+        row.status = "running"
+        manager._process = proc
+        manager._run_id = row.id
+
+    monkeypatch.setattr(manager, "_spawn", spawn_stub)
+    manager.tick()
+    sf = get_session_maker()
+    with sf() as session:
+        pid = session.get(Backtest, run.id).process_id  # type: ignore[union-attr]
+    assert pid is not None and _pid_alive(pid)
+
+    assert manager.cancel(run.id)
+    await asyncio.sleep(1.5)  # grace 0.2 + kill wait up to 0.5 + margin
+
+    assert not _pid_alive(pid)
+    with sf() as session:
+        row = session.get(Backtest, run.id)
+        assert row is not None
+        assert row.status == "cancelled"
+    assert (run_dir / "rules-only.db").exists()

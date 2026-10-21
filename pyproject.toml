@@ -32,6 +32,7 @@ dependencies = [
 dev = [
     "pytest>=8.3.0",
     "pytest-socket>=0.7.0",
+    "pytest-xdist>=3.6.0",
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "types-pyyaml>=6.0.12",
@@ -57,3 +58,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 addopts = "--disable-socket --allow-unix-socket"
+markers = [
+    "slow: multi-minute tests (e.g. the 3-month replay) — run with make test-slow",
+]

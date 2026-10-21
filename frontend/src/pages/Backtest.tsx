@@ -1031,7 +1031,8 @@ function ReadWithCare({
       <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
         <li>
           No historical quotes on the free data plan: spreads assumed at{' '}
-          {run.slippage_pct}%, so the spread check never blocked an entry.
+          {Number(run.slippage_pct)}%, so the spread check never blocked an
+          entry.
         </li>
         {warnings.map((w, i) => (
           <li key={i}>{w}</li>

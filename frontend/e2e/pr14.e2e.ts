@@ -10,14 +10,108 @@ const outDir = screenshotDir('pr-14');
 const shot = (base: string, project: string) =>
   path.join(outDir, `${base}-${project === 'mobile' ? '390' : '1440'}.png`);
 
+test('backtest: results panels from the seeded finished run', async ({
+  page,
+  request,
+}, testInfo) => {
+  // tests/e2e_backtest_seed.py leaves a `done` run (2026-09-14 – 2026-09-25,
+  // live + rules-only, 10 sessions) in the shared e2e database.
+  await page.goto('/backtest');
+  const runButton = page.getByRole('button', { name: /2026-09-14/ });
+  await expect(runButton).toBeVisible({ timeout: 60_000 });
+  await expect(runButton).toContainText('done');
+  await runButton.click();
+
+  // Metric row.
+  await expect(
+    page.getByText('Closed trades', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('vs SPY buy and hold, pts')).toBeVisible();
+  await expect(
+    page.getByText('Average R', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText('Time in market')).toBeVisible();
+
+  // Equity chart + legend (Lightweight Charts draws on a canvas).
+  await expect(page.getByText('% of starting equity')).toBeVisible();
+  await expect(
+    page.locator('canvas').first(),
+  ).toBeVisible();
+  await expect(page.getByText('SPY buy and hold').first()).toBeVisible();
+
+  // Regime table — the seed gives every entry an up · normal regime.
+  await expect(page.getByText('By market regime')).toBeVisible();
+  await expect(page.getByText('up · normal').first()).toBeVisible();
+
+  // Read-with-care notes.
+  await expect(page.getByText('Read with care')).toBeVisible();
+  await expect(
+    page.getByText(/came from the cache of earlier runs/),
+  ).toBeVisible();
+
+  await page.screenshot({ path: shot('backtest-results', testInfo.project.name) });
+
+  // Trades panel — both strategies, real rows.
+  await page.getByRole('button', { name: /Open trades/ }).click();
+  await expect(page.getByText('Trades · Live settings')).toBeVisible();
+  await expect(page.getByText('Trades · Rules only')).toBeVisible();
+  await expect(
+    page.getByRole('cell', { name: 'AAA' }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('cell', { name: 'target' }).first(),
+  ).toBeVisible();
+
+  // Decisions panel — skip row and a cache source tag.
+  await page.getByRole('button', { name: 'Open decisions' }).click();
+  await expect(page.getByText('Decisions · Live settings')).toBeVisible();
+  await expect(
+    page.getByRole('cell', { name: 'DDD' }).first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('cell', { name: 'cache' }).first(),
+  ).toBeVisible();
+
+  // A decision row opens the same drawer live decisions use.
+  await page
+    .getByRole('link', { name: /Sep 15|15 Sep/ })
+    .first()
+    .click();
+  await expect(
+    page.getByRole('heading', { name: /AAA decision/ }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press('Escape');
+
+  // CSV links exist and the endpoint serves real rows.
+  await page.getByRole('button', { name: 'Download CSV' }).click();
+  const tradesCsv = page.getByRole('link', { name: 'trades.csv' }).first();
+  await expect(tradesCsv).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'decisions.csv' }).first(),
+  ).toBeVisible();
+  const href = await tradesCsv.getAttribute('href');
+  expect(href).toContain('export.csv?kind=trades');
+  const csv = await request.get(href!);
+  expect(csv.ok()).toBeTruthy();
+  expect(await csv.text()).toContain('AAA');
+
+  await page.screenshot({
+    path: shot('backtest-panels', testInfo.project.name),
+    fullPage: true,
+  });
+});
+
 test('backtest: form with estimate and cutoff refusal, runs list', async ({
   page,
   request,
 }, testInfo) => {
-  // The e2e database is shared between runs: remove leftover run rows first.
+  // The e2e database is shared between runs: remove leftover refused
+  // rows from earlier runs of this test, but keep the seeded done run.
   const before = await (await request.get('/api/backtests')).json();
   for (const row of before.runs) {
-    await request.delete(`/api/backtests/${row.id}`);
+    if (row.name === 'Too early') {
+      await request.delete(`/api/backtests/${row.id}`);
+    }
   }
 
   await page.goto('/backtest');
@@ -67,7 +161,7 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
 
   await page.reload();
   await expect(
-    page.getByRole('button', { name: /Too early/ }),
+    page.getByRole('button', { name: /Too early/ }).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/refused/i).first()).toBeVisible();
   await page.screenshot({ path: shot('backtest-runs', testInfo.project.name) });
