@@ -71,6 +71,17 @@ const learn: NavItem[] = [
     ),
   },
   {
+    to: '/backtest',
+    label: 'Backtest',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 12a9 9 0 1 0 3-6.7" />
+        <polyline points="3 4 3 9 8 9" />
+        <polyline points="12 8 12 12 15 14" />
+      </svg>
+    ),
+  },
+  {
     to: '/inspector',
     label: 'LLM inspector',
     icon: (

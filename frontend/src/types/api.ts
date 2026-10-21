@@ -1278,3 +1278,144 @@ export interface StrategyPromotion {
   lines: string[];
   reason: string;
 }
+
+// --- Backtesting (PR 14) ---------------------------------------------------
+
+export type BacktestStatus =
+  | 'queued'
+  | 'downloading'
+  | 'running'
+  | 'done'
+  | 'cancelled'
+  | 'interrupted'
+  | 'refused'
+  | 'failed';
+
+export interface BacktestStrategyRef {
+  ref: string;
+  name: string;
+  kind: 'llm' | 'rules_only';
+  slug: string;
+  model?: string | null;
+  prompt_version?: string | null;
+  temperature?: number | null;
+}
+
+export interface BacktestStrategySummary {
+  slug: string;
+  name: string;
+  kind: 'llm' | 'rules_only';
+  colour?: string;
+  return_pct: number | null;
+  vs_spy_pts: number | null;
+  spy_return_pct: number | null;
+  max_drawdown_pct: number | null;
+  closed_trades: number;
+  win_rate: number | null;
+  avg_r: number | null;
+  profit_factor: number | null;
+  time_in_market: number | null;
+  decisions: number;
+  calls: number;
+  cache_hits: number;
+  cost_usd: number;
+  curve: { date: string; equity: number }[];
+  spy_curve: { date: string; equity: number }[];
+  by_symbol: Record<string, { trades: number; pnl: number }>;
+  by_regime: Record<string, { trades: number; avg_r?: number | null; pnl?: number }>;
+}
+
+export interface BacktestRun {
+  id: number;
+  name: string;
+  start: string;
+  end: string;
+  universe_mode: string;
+  strategies: BacktestStrategyRef[];
+  starting_equity: string;
+  slippage_pct: string;
+  status: BacktestStatus;
+  progress: string | null;
+  cost_usd: number;
+  process_id: number | null;
+  size_bytes: number | null;
+  warnings: string[] | null;
+  summary: Record<string, BacktestStrategySummary> | null;
+  refuse_reason: string | null;
+  created_at: string | null;
+  finished_at: string | null;
+}
+
+export interface BacktestsResponse {
+  runs: BacktestRun[];
+  store: { size_bytes: number; earliest: string | null; latest: string | null; month_spent_usd: number };
+  monthly_cap: number;
+  available: {
+    live: { ref: string; name: string; model: string | null; prompt_version: string | null };
+    rules_only: { ref: string; name: string };
+    shadows: { ref: string; name: string; kind: string; model: string | null; prompt_version: string | null }[];
+    priced_models: string[];
+    model_cutoffs: Record<string, string>;
+    universe: { mode: string; fixed_count: number };
+  };
+}
+
+export interface BacktestEstimateStrategy {
+  ref: string;
+  name: string;
+  kind: string;
+  model: string | null;
+  calls: number;
+  cache_hits: number;
+  cost_usd: number | null;
+  cutoff: string | null;
+}
+
+export interface BacktestEstimate {
+  sessions: number;
+  bars_to_download: number;
+  download_calls: number;
+  download_minutes: number;
+  calls: number;
+  cache_hits: number;
+  cost_usd: number;
+  cap_cost_usd: number;
+  cap_remaining_usd: number;
+  may_stop_early: boolean;
+  disabled_reason: string | null;
+  cutoff: string | null;
+  cutoff_label: string | null;
+  strategies: BacktestEstimateStrategy[];
+}
+
+export interface NewBacktestBody {
+  name?: string;
+  start: string;
+  end: string;
+  universe_mode: string;
+  strategies: string[];
+  starting_equity: number;
+  slippage_pct: number;
+}
+
+export interface BacktestTrade {
+  id: number;
+  symbol: string;
+  qty: number;
+  entry: string;
+  opened_at: string | null;
+  closed_at: string | null;
+  exit_reason: string | null;
+  pnl_raw: string | null;
+  pnl_adjusted: string | null;
+}
+
+export interface BacktestDecisionRow {
+  id: number;
+  cycle_time: string | null;
+  symbol: string;
+  context: string;
+  final_action: string;
+  no_call_reason: string | null;
+  cached: boolean;
+}

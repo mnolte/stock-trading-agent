@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-21 — PR 14 implementation notes
+
+- The bar-store fill covers the run period plus the indicator lookback the live cache keeps (`schedule.history_sessions` 5-minute sessions and `schedule.daily_history_sessions` daily bars), so warmup and indicators work from the first session; the estimate's "bars to download" counts the same range. The stored calendar covers the same range so `recent_sessions` sees the lookback; news is fetched from the day before the start so the first session's 24-hour prompt window is complete.
+- Each strategy database primes its bar cache from the store (read-only) and loads the run's earnings once — the same paths live's `refresh_history`/`refresh_earnings` take.
+- `decisions.cached` marks answers replayed from `llm_cache`; their cost is zero and their stored token counts are kept.
+
 ## 2026-10-21 — Local DB repair note
 
 - `shadow_positions.exit_requested_at` records when a shadow market exit (model, earnings, flatten, day-trade rule) was requested; the exit fills at the open of the first 5-minute bar at or after that time. The merged `d6e7f8a9b0c1` migration already had the column, but a database migrated by an early PR 13 branch version lacks it: downgrade to `c4d5e6f7a8b9` then upgrade to head recreates the shadow tables (all live data keeps).

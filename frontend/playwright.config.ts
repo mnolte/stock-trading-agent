@@ -16,7 +16,7 @@ export default defineConfig({
     {
       // tests/e2e_seed.py starts the e2e run on Monday 5 Oct so a weekly
       // review is due (the clock is frozen on Thursday 15 Oct).
-      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
+      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db SA_DATA_DIR=/tmp/stock-agent-e2e-data && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: true,
       timeout: 120_000,

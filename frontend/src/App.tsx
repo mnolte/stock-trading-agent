@@ -3,6 +3,7 @@ import type { Location } from 'react-router-dom';
 
 import { LiveUpdatesProvider } from './api/live';
 import { Layout } from './components/Layout';
+import Backtest from './pages/Backtest';
 import Dashboard from './pages/Dashboard';
 import Decision from './pages/Decision';
 import DevComponents from './pages/DevComponents';
@@ -30,6 +31,7 @@ function AppRoutes() {
           <Route path="inspector" element={<Inspector />} />
           <Route path="reviews" element={<Reviews />} />
           <Route path="strategies" element={<Strategies />} />
+          <Route path="backtest" element={<Backtest />} />
           {/* Deep links to /decisions/:id draw the dashboard under the drawer. */}
           <Route path="decisions/:id" element={<Dashboard />} />
           <Route path="settings" element={<Settings />} />

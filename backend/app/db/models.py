@@ -85,6 +85,9 @@ class Decision(Base):
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # True when the answer came from llm_cache (a backtest replay) — the
+    # call cost nothing and the row keeps the stored token counts.
+    cached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Order(Base):
@@ -622,3 +625,79 @@ class ShadowEquity(Base):
     time: Mapped[datetime] = mapped_column(nullable=False)
     equity: Mapped[Decimal] = mapped_column(Money, nullable=False)
     cash: Mapped[Decimal] = mapped_column(Money, nullable=False)
+
+
+class LLMCache(Base):
+    """A stored model answer, so a backtest rerun on the same inputs is free.
+
+    Keyed by model, temperature, prompt version + hash and input snapshot
+    hash; ``cycle_time`` is the decision's scheduled New York time, so the
+    estimate counts rows inside the requested period (docs/SPEC.md,
+    Backtesting, Model calls). Live and shadow calls write rows too — only
+    the backtest reads them.
+    """
+
+    __tablename__ = "llm_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "model",
+            "temperature",
+            "prompt_hash",
+            "input_hash",
+            name="uq_llm_cache_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    temperature: Mapped[float] = mapped_column(nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # SHA-256 of the exact user message (the serialised input snapshot).
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The scheduled cycle time this answer was produced for (UTC, naive).
+    cycle_time: Mapped[datetime | None] = mapped_column(nullable=True, index=True)
+    response: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    tokens: Mapped[int] = mapped_column(nullable=False, default=0)
+    tokens_in: Mapped[int] = mapped_column(nullable=False, default=0)
+    tokens_out: Mapped[int] = mapped_column(nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class Backtest(Base):
+    """One backtest run's summary row in the live database.
+
+    The run's real data lives in ``data/backtests/run-<id>/``: one
+    live-schema database per strategy plus a read-only ``market.db``
+    (docs/SPEC.md, Backtesting, Engine).
+    """
+
+    __tablename__ = "backtests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    start_date: Mapped[date] = mapped_column(nullable=False)
+    end_date: Mapped[date] = mapped_column(nullable=False)
+    universe_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    # [{ref, name, kind, slug, model, prompt_version, temperature}]
+    strategies: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    starting_equity: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    slippage_pct: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    # queued | downloading | running | done | cancelled
+    #   | stopped_at_cost_cap | interrupted | refused
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="queued")
+    # "session 41 of 230" — committed after each session.
+    progress: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cost_usd: Mapped[Decimal] = mapped_column(Money, nullable=False, default=Decimal(0))
+    run_dir: Mapped[str] = mapped_column(String(255), nullable=False)
+    process_id: Mapped[int | None] = mapped_column(nullable=True)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Set by the app while a live cycle or position check runs; the child
+    # waits before every Alpaca download and every model call.
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    size_bytes: Mapped[int | None] = mapped_column(nullable=True)
+    warnings: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    refuse_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
 from app.db.base import get_session_maker
-from app.db.models import Decision, Outcome
+from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.output import (
     NO_CALL_REASONS,
@@ -93,6 +93,9 @@ class DecisionService:
         session_factory: sessionmaker[Session] | None = None,
         api_key: str | None = None,
         notifier: Notifier | None = None,
+        llm_cache: Any = None,
+        cache_reads: bool = False,
+        before_call: Any = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -101,6 +104,14 @@ class DecisionService:
         self.api_key = api_key
         self._notifier = notifier or NullNotifier()
         self._session_factory = session_factory or get_session_maker()
+        # The shared answer cache: every successful call writes a row; a
+        # backtest also reads it so a rerun on the same inputs is free
+        # (docs/SPEC.md, Backtesting, Model calls).
+        self._cache = llm_cache
+        self._cache_reads = cache_reads
+        # An optional async gate before a real call — the backtest worker
+        # waits here while the app's pause flag is set.
+        self._before_call = before_call
         version = str(config.get("decision", "prompt", default="decision.v1"))
         self._prompt: Prompt = cached_prompt(version)
 
@@ -130,9 +141,56 @@ class DecisionService:
         current_stop: Decimal | None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
-        response = await self.client.complete(
-            system=self._prompt.text, user=json.dumps(snapshot_json, indent=2)
-        )
+        user = json.dumps(snapshot_json, indent=2)
+        response: ModelResponse | None = None
+        from_cache = False
+        if self._cache is not None and self._cache_reads:
+            hit = self._cache.lookup(
+                model=str(self.config.get("decision", "model", default="")),
+                temperature=float(
+                    self.config.get("decision", "temperature", default=0.2)
+                ),
+                prompt_hash=self._prompt.sha256,
+                user=user,
+            )
+            if hit is not None:
+                response = ModelResponse(
+                    raw=hit["response"],
+                    model=str(self.config.get("decision", "model", default="")),
+                    tokens_in=hit["tokens_in"],
+                    tokens_out=hit["tokens_out"],
+                    latency_ms=0,
+                )
+                from_cache = True
+        if response is None:
+            if self._before_call is not None:
+                await self._before_call()
+            response = await self.client.complete(
+                system=self._prompt.text, user=user
+            )
+            if (
+                self._cache is not None
+                and response.error is None
+                and response.raw is not None
+            ):
+                cycle = session.get(Cycle, cycle_id)
+                self._cache.store(
+                    model=str(
+                        self.config.get("decision", "model", default="")
+                    ),
+                    temperature=float(
+                        self.config.get("decision", "temperature", default=0.2)
+                    ),
+                    prompt_version=self._prompt.version,
+                    prompt_hash=self._prompt.sha256,
+                    user=user,
+                    cycle_time=(
+                        cycle.scheduled_time if cycle is not None else None
+                    ),
+                    response=response.raw,
+                    tokens_in=response.tokens_in,
+                    tokens_out=response.tokens_out,
+                )
         validation = validate_model_output(
             response.raw,
             symbol=symbol,
@@ -162,6 +220,7 @@ class DecisionService:
             validation=validation,
             final_action=NO_CALL if failed else validation.final_action,
             no_call_reason="model_error" if failed else None,
+            cached=from_cache,
         )
         return decision
 
@@ -214,6 +273,7 @@ class DecisionService:
         validation: ValidationResult,
         final_action: str,
         no_call_reason: str | None = None,
+        cached: bool = False,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -235,16 +295,17 @@ class DecisionService:
             tokens_in=response.tokens_in if response else None,
             tokens_out=response.tokens_out if response else None,
             cost=(
-                token_cost(
+                None
+                if cached or response is None
+                else token_cost(
                     response,
                     self.config,
                     model=str(self.config.get("decision", "model", default="")),
                 )
-                if response
-                else None
             ),
             latency_ms=response.latency_ms if response else None,
             raw_response=response.raw if response else None,
+            cached=cached,
         )
         session.add(decision)
         session.flush()

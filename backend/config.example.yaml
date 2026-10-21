@@ -158,8 +158,8 @@ backtest:                         # v0.2, PR 14
   alpaca_calls_per_minute: 40     # live keeps 150 of Alpaca's 200; paused during live cycles and checks
   assumed_spread_pct: 0.05        # no historical quotes on the free plan
   same_bar_stop_and_target: stop
-  data_dir: data/backtests        # run-<id>/<strategy>.db + market.db per run
-  bar_store: data/backtests/bars.db   # never pruned automatically; not in the 03:00 backup
+  data_dir: backtests              # run-<id>/<strategy>.db + market.db per run (under data/)
+  bar_store: backtests/bars.db      # never pruned automatically; not in the 03:00 backup
   cancel_grace_seconds: 60        # then the app stops the child by PID
   process_nice: 10
   model_cutoffs:                  # LLM strategies only from the day after

@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
 
-import { getDecision, postVerdict } from '../api/state';
+import { getBacktestDecision, getDecision, postVerdict } from '../api/state';
 import { Chip } from '../components/Chip';
 import { displayDayTime, nyTime } from '../format';
 import type { DecisionDetail, VerdictValue } from '../types/api';
@@ -655,6 +655,17 @@ function DrawerShell({
 
 export default function Decision() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  // A backtest decision lives in the run's own database: ?bt=<run>&s=<slug>.
+  const btRun = searchParams.get('bt');
+  const btSlug = searchParams.get('s');
+  const fetchDecision = useCallback(
+    (decisionId: number) =>
+      btRun && btSlug
+        ? getBacktestDecision(Number(btRun), btSlug, decisionId)
+        : getDecision(decisionId),
+    [btRun, btSlug],
+  );
   const location = useLocation();
   const navigate = useNavigate();
   const [decision, setDecision] = useState<DecisionDetail | null>(null);
@@ -673,10 +684,10 @@ export default function Decision() {
 
   useEffect(() => {
     if (!id) return;
-    getDecision(Number(id))
+    fetchDecision(Number(id))
       .then(setDecision)
       .catch(() => setError('Decision not found.'));
-  }, [id]);
+  }, [id, fetchDecision]);
 
   if (error) {
     return (
@@ -984,7 +995,7 @@ export default function Decision() {
             decision={decision}
             onVerdictResolved={() => {
               if (id)
-                getDecision(Number(id))
+                fetchDecision(Number(id))
                   .then(setDecision)
                   .catch(console.error);
             }}

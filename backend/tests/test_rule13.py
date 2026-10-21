@@ -38,6 +38,7 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, FakeClock
 from app.reviews.client import FakeReviewClient
 from app.reviews.service import ReviewService
+from app.signals.service import Evaluation
 from app.universe.service import UniverseService
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -151,7 +152,7 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
     signals.refresh_eval = lambda: _eval(evaluation)  # type: ignore[method-assign]
     client = LockProbe("decide", FakeDecisionClient(enter_symbols={"AAPL"}), db)
     probes.append(client)
-    decide = DecisionService(client, config, session_factory)  # type: ignore[arg-type]
+    decide = DecisionService(client, config, session_factory)
     fake = FakeBroker(clock)
     executor = _probed_executor(
         session_factory, clock, sources, market_data, probes, config, broker=fake
@@ -221,7 +222,7 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
     assert violations == []
 
 
-async def _eval(evaluation):
+async def _eval(evaluation: Evaluation) -> Evaluation:
     return evaluation
 
 
@@ -237,7 +238,7 @@ async def test_reviews_and_universe_screen_commit_before_every_call(
     client = LockProbe("review", FakeReviewClient(), db)
     probes.append(client)
     reviews = ReviewService(
-        client=client,  # type: ignore[arg-type]
+        client=client,
         config=config,
         clock=clock,
         calendar=cast(CalendarProvider, calendar),
@@ -259,7 +260,7 @@ async def test_reviews_and_universe_screen_commit_before_every_call(
         market_data,
         sources,
         cast(CalendarProvider, sources.calendar),
-        broker,  # type: ignore[arg-type]
+        broker,
         config,
         clock,
         session_factory=session_factory,
