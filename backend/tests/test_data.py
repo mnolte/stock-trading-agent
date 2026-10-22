@@ -14,6 +14,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
+from app.data.finnhub import FinnhubEarningsSource
 from app.data.models import (
     Bar5m,
     CorporateActionEvent,
@@ -25,6 +26,7 @@ from app.data.models import (
 )
 from app.data.service import MarketDataService
 from app.db.base import Base
+from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
 from app.market.clock import UTC
 from sqlalchemy import create_engine, select
@@ -289,6 +291,171 @@ async def test_refresh_earnings_upserts_and_prunes(
         assert session.execute(select(EarningRow)).scalars().all() == []
 
 
+async def test_finnhub_earnings_one_call_for_whole_calendar() -> None:
+    """The whole calendar is fetched in one call and filtered to the
+    universe locally — a per-symbol burst overruns the free-tier rate
+    limit and the fetch comes back 429."""
+    calls: list[tuple[str, str, str | None]] = []
+
+    class StubClient:
+        def earnings_calendar(
+            self, _from: str, to: str, symbol: str | None
+        ) -> dict[str, object]:
+            calls.append((_from, to, symbol))
+            return {
+                "earningsCalendar": [
+                    {"symbol": "AAPL", "date": "2026-10-30", "hour": "amc"},
+                    {"symbol": "TSLA", "date": "2026-10-30", "hour": "bmo"},
+                ]
+            }
+
+    source = FinnhubEarningsSource("test-key")
+    source._client = StubClient()
+    result = await source.fetch_earnings(
+        ["AAPL"], date(2026, 10, 1), date(2026, 10, 31)
+    )
+    assert result.error is None
+    assert calls == [("2026-10-01", "2026-10-31", None)]
+    assert [e.symbol for e in result.data] == ["AAPL"]
+    assert result.data[0].time_of_day == "after_close"
+    assert result.data[0].hour_raw == "amc"
+
+
+async def test_refresh_earnings_dedupes_double_listed_report(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A fetch listing one report twice commits one row, not two —
+    sessions never autoflush, so the first pending insert is invisible
+    to the exists check (regression: duplicate rows, then every refresh
+    crashed on scalar_one_or_none)."""
+    events = [
+        EarningsEvent(
+            symbol="AAPL",
+            date=date(2026, 10, 30),
+            time_of_day="before_open",
+            hour_raw="bmo",
+            fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+        ),
+        EarningsEvent(
+            symbol="AAPL",
+            date=date(2026, 10, 30),
+            time_of_day="after_close",
+            hour_raw="amc",
+            fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+        ),
+    ]
+    calendar = FakeCalendarSource()
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource(events),
+        fx=FakeFXSource(),
+        corporate_actions=FakeCorporateActionSource(),
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    result = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+    assert result.data == 1
+    with session_factory() as session:
+        row = session.execute(select(EarningRow)).scalars().one()
+    assert row.hour_raw == "amc"  # the later listing wins
+
+    # A second refresh updates in place instead of crashing on a dup.
+    again = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+    assert again.data == 0
+
+
+async def test_refresh_earnings_repairs_existing_duplicate_rows(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A database written before the dedupe may already hold two rows for
+    one (symbol, date): the refresh keeps the first and drops the extras."""
+    day = datetime(2026, 10, 30)
+    with session_factory() as session:
+        for _ in range(2):
+            session.add(
+                EarningRow(
+                    symbol="AAPL",
+                    date=day,
+                    time_of_day="before_open",
+                    hour_raw="bmo",
+                    fetched_at=datetime(2026, 10, 15),
+                )
+            )
+        session.commit()
+    event = EarningsEvent(
+        symbol="AAPL",
+        date=date(2026, 10, 30),
+        time_of_day="after_close",
+        hour_raw="amc",
+        fetched_at=datetime(2026, 10, 16, tzinfo=UTC),
+    )
+    calendar = FakeCalendarSource()
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource([event]),
+        fx=FakeFXSource(),
+        corporate_actions=FakeCorporateActionSource(),
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    result = await service.refresh_earnings(date(2026, 10, 1), date(2026, 10, 31))
+    assert result.data == 0
+    with session_factory() as session:
+        rows = session.execute(select(EarningRow)).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].hour_raw == "amc"
+
+
+async def test_refresh_corporate_actions_dedupes_double_listed_action(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Same dedupe as earnings: one action listed twice in a single fetch
+    commits one row, and the next refresh does not crash."""
+    action = CorporateActionEvent(
+        symbol="AAPL",
+        action_type="split",
+        ex_date=date(2026, 11, 1),
+        amount_or_ratio=None,
+        fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+    )
+    calendar = FakeCalendarSource()
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource(),
+        fx=FakeFXSource(),
+        corporate_actions=FakeCorporateActionSource([action, action]),
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    result = await service.refresh_corporate_actions(
+        date(2026, 10, 1), date(2026, 11, 30)
+    )
+    assert result.data == 1
+    with session_factory() as session:
+        rows = session.execute(select(CorporateActionRow)).scalars().all()
+    assert len(rows) == 1
+    # Idempotent: the second refresh neither duplicates nor crashes.
+    again = await service.refresh_corporate_actions(
+        date(2026, 10, 1), date(2026, 11, 30)
+    )
+    assert again.data == 0
+
+
 async def test_refresh_corporate_actions_stores_rows(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -331,6 +498,38 @@ async def test_refresh_history_uses_configured_sessions(
     for symbol in ("SPY", "AAPL"):
         assert results[symbol].error is None
         assert results[symbol].data == 5 * 78
+
+
+async def test_refresh_history_fetches_only_missing_sessions(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A warm cache re-fetches only the forming latest session per symbol,
+    not the whole window."""
+    calendar = FakeCalendarSource()
+    config = AppConfig()
+    config.yaml["schedule"]["history_sessions"] = 5
+    service = MarketDataService(
+        fake_sources, calendar, config, session_factory=session_factory
+    )
+    await service.refresh_history(date(2026, 10, 15))
+    starts: list[datetime] = []
+    original = fake_sources.bars.fetch_5m_bars
+
+    async def spy(
+        symbols: list[str], start: datetime, end: datetime
+    ) -> DataResult[list[Bar5m]]:
+        starts.append(start)
+        return await original(symbols, start, end)
+
+    fake_sources.bars.fetch_5m_bars = spy  # type: ignore[method-assign]
+    again = await service.refresh_history(date(2026, 10, 15))
+    last = calendar.session_for(date(2026, 10, 15))
+    assert last is not None
+    # Only the forming latest session is fetched — never the full window.
+    assert starts == [last.open.astimezone(UTC)] * len(starts)
+    for symbol in ("SPY", "AAPL"):
+        assert again[symbol].error is None
+        assert again[symbol].data == 0  # refetched, already stored
 
 
 async def test_fake_daily_bars_cover_sessions() -> None:

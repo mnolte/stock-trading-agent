@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -11,7 +12,16 @@ from app.config import AppConfig
 from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.cache import BarCache, _naive_utc
 from app.data.factory import DataSources
-from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar, DataResult, FXRate
+from app.data.models import (
+    Bar1h,
+    Bar5m,
+    CalendarDay,
+    CorporateActionEvent,
+    DailyBar,
+    DataResult,
+    EarningsEvent,
+    FXRate,
+)
 from app.db.base import get_session_maker
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
@@ -167,7 +177,15 @@ class MarketDataService:
         }
 
     async def refresh_history(self, today: date) -> dict[str, DataResult[int]]:
-        """Fill the cache with ``history_sessions`` sessions of 5-minute bars."""
+        """Fill the cache with ``history_sessions`` sessions of 5-minute bars.
+
+        Only the uncovered tail is fetched: each symbol's request starts at
+        its earliest missing session (every later missing session sits
+        inside the range, so mid-range holes are re-downloaded too). The
+        newest session is always refetched — a live session's cached bars
+        are still forming. A warm cache costs one small request instead of
+        re-downloading the whole window (docs/SPEC.md, Cycles at scale).
+        """
         sessions = int(self.config.get("schedule", "history_sessions", default=60))
         # Walk back through the trading calendar until we have enough sessions.
         days = self.recent_sessions(today, sessions)
@@ -176,9 +194,28 @@ class MarketDataService:
                 symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
                 for symbol in self.universe()
             }
-        start = min(days, key=lambda d: d.open).open.astimezone(UTC)
+        symbols = self.universe()
         end = max(days, key=lambda d: d.close).close.astimezone(UTC)
-        return await self.refresh_bars(start, end)
+        # Batched coverage first: only symbols short of the full window
+        # get the per-symbol date query.
+        covered_counts = self.bars_cache.covered_session_counts(symbols, days)
+        results: dict[str, DataResult[int]] = {}
+        groups: dict[datetime, list[str]] = {}
+        for symbol in symbols:
+            if covered_counts.get(symbol, 0) == len(days):
+                missing: list[CalendarDay] = []
+            else:
+                covered = self.bars_cache.covered_session_dates(symbol, days)
+                missing = [d for d in days if d.date not in covered]
+            # The newest session's bars are still forming — refetch it
+            # even when the cache has rows for it.
+            if days[-1] not in missing:
+                missing.append(days[-1])
+            start = min(missing, key=lambda d: d.open).open.astimezone(UTC)
+            groups.setdefault(start, []).append(symbol)
+        for start, group in groups.items():
+            results.update(await self.refresh_bars(start, end, symbols=group))
+        return results
 
     def prune_5m_bars(self, now: datetime) -> int:
         """Drop cached 5m bars older than ``bars_5m_keep_sessions`` sessions.
@@ -226,7 +263,12 @@ class MarketDataService:
         ]
 
     async def refresh_daily(self, today: date) -> dict[str, DataResult[int]]:
-        """Fetch and cache daily bars for ``daily_history_sessions`` sessions."""
+        """Fetch and cache daily bars for ``daily_history_sessions`` sessions.
+
+        Fetches run a few at a time: the per-symbol calls keep per-symbol
+        error reporting, and the shared rate limiter releases its lock
+        after acquiring a slot, so the SDK calls overlap.
+        """
         count = int(
             self.config.get("schedule", "daily_history_sessions", default=260)
         )
@@ -237,14 +279,26 @@ class MarketDataService:
                 for symbol in self.universe()
             }
         start, end = sessions[0].date, sessions[-1].date
+        semaphore = asyncio.Semaphore(10)
+
+        async def fetch(symbol: str) -> tuple[str, DataResult[list[DailyBar]]]:
+            async with semaphore:
+                return symbol, await self.sources.bars.fetch_daily_bars(
+                    symbol, start, end
+                )
+
+        fetched = await asyncio.gather(
+            *(fetch(symbol) for symbol in self.universe())
+        )
         results: dict[str, DataResult[int]] = {}
-        for symbol in self.universe():
-            fetched = await self.sources.bars.fetch_daily_bars(symbol, start, end)
-            if fetched.error is not None:
-                results[symbol] = DataResult(data=0, error=fetched.error, source=fetched.source)
+        for symbol, result in fetched:
+            if result.error is not None:
+                results[symbol] = DataResult(
+                    data=0, error=result.error, source=result.source
+                )
                 continue
-            inserted = self.bars_cache.store_daily(fetched.data)
-            results[symbol] = DataResult(data=inserted, source=fetched.source)
+            inserted = self.bars_cache.store_daily(result.data)
+            results[symbol] = DataResult(data=inserted, source=result.source)
         return results
 
     def get_daily_bars(
@@ -275,19 +329,27 @@ class MarketDataService:
             # report cancelled or moved out of the window is pruned — a stale
             # row would still trigger blackouts and earnings exits.
             seen: set[tuple[str, datetime]] = set()
+            # One report can appear twice in a single fetch (a revised
+            # hour); the later entry wins. Sessions never autoflush, so a
+            # pending insert is invisible to the exists check — without
+            # this dedupe a duplicated event commits two rows and every
+            # later refresh crashes on scalar_one_or_none.
+            latest: dict[tuple[str, datetime], EarningsEvent] = {}
             for event in result.data:
-                day = datetime.combine(event.date, time.min)
-                seen.add((event.symbol, day))
-                exists = session.execute(
+                key = (event.symbol, datetime.combine(event.date, time.min))
+                latest[key] = event
+            for (symbol, day), event in latest.items():
+                seen.add((symbol, day))
+                rows = session.execute(
                     select(EarningRow).where(
-                        EarningRow.symbol == event.symbol,
+                        EarningRow.symbol == symbol,
                         EarningRow.date == day,
                     )
-                ).scalar_one_or_none()
-                if exists is None:
+                ).scalars().all()
+                if not rows:
                     session.add(
                         EarningRow(
-                            symbol=event.symbol,
+                            symbol=symbol,
                             date=day,
                             time_of_day=event.time_of_day,
                             hour_raw=event.hour_raw,
@@ -296,9 +358,14 @@ class MarketDataService:
                     )
                     stored += 1
                 else:
+                    exists = rows[0]
                     exists.time_of_day = event.time_of_day
                     exists.hour_raw = event.hour_raw
                     exists.fetched_at = _naive_utc(event.fetched_at)
+                    # A database that already committed a duplicate keeps
+                    # the first row; the extras are dropped here.
+                    for extra in rows[1:]:
+                        session.delete(extra)
             stale = session.execute(
                 select(EarningRow).where(
                     EarningRow.symbol.in_(self.universe()),
@@ -321,24 +388,37 @@ class MarketDataService:
             return DataResult(data=0, error=result.error, source=result.source)
         stored = 0
         with self._session_factory() as session:
+            # Same dedupe as refresh_earnings: sessions never autoflush, so
+            # a duplicated action in one fetch would otherwise commit two
+            # rows and crash every later refresh on scalar_one_or_none.
+            latest: dict[tuple[str, str, datetime], CorporateActionEvent] = {}
             for action in result.data:
-                day = datetime.combine(action.ex_date, time.min)
-                exists = session.execute(
+                key = (
+                    action.symbol,
+                    action.action_type,
+                    datetime.combine(action.ex_date, time.min),
+                )
+                latest[key] = action
+            for (symbol, action_type, day), action in latest.items():
+                rows = session.execute(
                     select(CorporateActionRow).where(
-                        CorporateActionRow.symbol == action.symbol,
-                        CorporateActionRow.action_type == action.action_type,
+                        CorporateActionRow.symbol == symbol,
+                        CorporateActionRow.action_type == action_type,
                         CorporateActionRow.date == day,
                     )
-                ).scalar_one_or_none()
-                if exists is None:
+                ).scalars().all()
+                if not rows:
                     session.add(
                         CorporateActionRow(
-                            symbol=action.symbol,
-                            action_type=action.action_type,
+                            symbol=symbol,
+                            action_type=action_type,
                             date=day,
                             ratio_or_amount=action.amount_or_ratio,
                         )
                     )
                     stored += 1
+                else:
+                    for extra in rows[1:]:
+                        session.delete(extra)
             session.commit()
         return DataResult(data=stored, source=result.source)

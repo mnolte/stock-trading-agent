@@ -1383,7 +1383,7 @@ def banners(request: Request) -> dict[str, object]:
                         "message": "Position checks are failing. "
                         "Stops at Alpaca stay in place.",
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
-                        "actions": [],
+                        "actions": ["acknowledge"],
                     }
                 )
 

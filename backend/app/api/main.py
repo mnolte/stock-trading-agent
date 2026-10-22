@@ -110,12 +110,18 @@ async def refresh_calendar_and_daily_data(
     today = clock.now().astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
-    await market_data.refresh_earnings(today - timedelta(days=30), today + timedelta(days=90))
-    await market_data.refresh_corporate_actions(
-        today - timedelta(days=30), today + timedelta(days=90)
+    # Independent sources fetched together — the calendar must load first
+    # (the daily refresh resolves sessions through it).
+    _, _, _, fx = await asyncio.gather(
+        market_data.refresh_earnings(
+            today - timedelta(days=30), today + timedelta(days=90)
+        ),
+        market_data.refresh_corporate_actions(
+            today - timedelta(days=30), today + timedelta(days=90)
+        ),
+        market_data.refresh_daily(today),
+        sources.fx.fetch_fx(today),
     )
-    await market_data.refresh_daily(today)
-    fx = await sources.fx.fetch_fx(today)
     market_data.latest_fx = fx
 
 

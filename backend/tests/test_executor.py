@@ -699,6 +699,62 @@ async def test_position_with_live_stop_needs_no_new_order(
     assert len(broker.orders) == 1
 
 
+async def test_held_bracket_stop_leg_counts_as_coverage(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Alpaca keeps a bracket's stop leg `held` under its filled parent
+    and out of the open-orders list — the leg is live and still covers
+    the position. Reconcile refetches it by id; no protective stop goes
+    out (Alpaca would reject it: the shares are already held)."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    submitted = await broker.submit_bracket_entry(
+        symbol="MSFT",
+        qty=4,
+        limit_price=Decimal("421"),
+        stop_price=Decimal("410"),
+        target_price=Decimal("435"),
+        client_order_id="sa-entry-1-MSFT-1",
+    )
+    await broker.tick("MSFT", Decimal("420"))  # entry fills; legs go live
+    stop_leg = next(
+        leg for leg in submitted.data.legs if leg.order_type == "stop"
+    )
+    broker.orders[stop_leg.id].status = "held"  # as Alpaca leaves it
+    assert stop_leg.id not in {
+        order.id for order in (await broker.get_open_orders()).data
+    }
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="420", stop="410")
+        for leg_order in submitted.data.legs:
+            session.add(
+                Order(
+                    alpaca_order_id=leg_order.id,
+                    parent_alpaca_order_id=submitted.data.id,
+                    symbol="MSFT",
+                    side="sell",
+                    order_type=leg_order.order_type,
+                    leg="stop" if leg_order.order_type == "stop" else "target",
+                    qty=4,
+                    limit_price=leg_order.limit_price,
+                    stop_price=leg_order.stop_price,
+                    status=broker.orders[leg_order.id].status,
+                    created_at=YESTERDAY,
+                )
+            )
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.ok
+    assert report.protective_stops == []
+    assert broker.submit_calls == 1  # only the bracket; no resend
+    with session_factory() as session:
+        assert not _events(session, "protective_stop")
+        assert not _events(session, "protective_stop_failed")
+
+
 # ----------------------------------------------------------------------
 # entries
 

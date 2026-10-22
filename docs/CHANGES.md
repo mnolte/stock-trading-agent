@@ -2,12 +2,17 @@
 
 Newest first.
 
-## 2026-10-21 — PR 14 review follow-ups
+## 2026-10-23 — Integrity fixes from the 22 October analysis (PR 15)
 
-- Backtest downloads: calendar, news, corporate actions and bars all share one 40-calls/minute limiter.
-- Cancel: a run that ignores the cancel flag is stopped by its stored PID after `cancel_grace_seconds`; the run stays `cancelled` (not `interrupted`) and keeps partial results.
-- Live and shadows write through to `llm_cache` (live via `DecisionService`, shadows via `ShadowRunner`); only backtests read it.
-- Tests: `make test` skips `slow` tests (the 3-month determinism replay); `make test-slow` runs them. A ~10-session determinism test stays in the default suite. `tests/e2e_backtest_seed.py` writes a finished run folder so the e2e tests can open the Results panels.
+- Entries: usable quotes only (quote timestamp, never the trade's or fetch time; missing or zero bid/ask → quote_missing; ask > 1% from the last bar close → quote_suspect; both before any model call); quote provenance stored per decision; size, order value and all gates redone on the final limit; stop must sit ≥ 1.5 × ATR below the lowest of ask, last trade and bar close before submit. Config: `execution.quote_max_deviation_pct`.
+- Code checks: tighten_stop must be ≥ 0.25 × ATR below the lowest of bid, last trade and bar close, rechecked before replacement. Config: `decision.tighten_min_atr_below_price`.
+- Risk gates: one sector resolver (pool or config) for gates, shadows and dashboard; unknown sector fails the gate. Daily loss limit latched for the rest of the New York session, survives restarts.
+- Snapshot: quote and signal-bar times; held positions get initial stop, original thesis and invalidation, R against initial risk; per-symbol news status (complete, empty, truncated, failed), no shared cap.
+- Outcomes: first touch judged against the stop active at each bar's time. Data model: `positions.initial_stop`.
+- Reviews: status facts written by code; known-empty never called unavailable.
+- Schedule: every incomplete cycle stored with its reason; no restarts or deploys during regular hours except emergencies.
+- Decision cost stored with its source (priced, cached, legacy). AGENTS.md: new hard rule 14, no restarts during the session.
+- Build plan: PR 15 Integrity fixes.
 
 ## 2026-10-21 — PR 14 review
 

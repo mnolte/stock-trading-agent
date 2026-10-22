@@ -50,6 +50,7 @@ execution:
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
   max_spread_pct: 0.15
+  quote_max_deviation_pct: 1.0   # ask vs last closed 5-min bar close; beyond = quote_suspect, no model call
   quote_max_age_seconds: 60    # fresh IEX quote fetched right before each entry; older = no order
   time_in_force: gtc
 
@@ -72,6 +73,7 @@ decision:
   stop_atr_min: 1.5
   stop_atr_max: 4.0
   min_reward_risk: 1.5
+  tighten_min_atr_below_price: 0.25   # new stop must sit this far below bid/last/bar close
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
 
@@ -161,7 +163,6 @@ backtest:                         # v0.2, PR 14
   data_dir: data/backtests        # run-<id>/<strategy>.db + market.db per run
   bar_store: data/backtests/bars.db   # never pruned automatically; not in the 03:00 backup
   cancel_grace_seconds: 60        # then the app stops the child by PID
-  cancel_kill_wait_seconds: 5     # wait for SIGTERM to take, then SIGKILL
   process_nice: 10
   model_cutoffs:                  # LLM strategies only from the day after
     gpt-4o-mini: "2023-10-31"

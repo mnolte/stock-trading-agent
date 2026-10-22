@@ -995,6 +995,10 @@ class Executor:
             row.status = order.status
             if order.filled_at is not None:
                 row.filled_at = _naive_utc(order.filled_at)
+            if row.parent_alpaca_order_id is None and parent is not None:
+                # First seen flat (a released leg), now nested under its
+                # parent — restore the link.
+                row.parent_alpaca_order_id = parent.id
         if order.filled_qty > 0 and order.filled_avg_price is not None:
             self._record_fills(session, row, order)
         for leg_order in order.legs:
@@ -1130,6 +1134,14 @@ class Executor:
                     continue
                 self._store_broker_order(session, fetched.data, row.decision_id)
                 report.orders_synced += 1
+                # Live orders the open list missed — Alpaca's open filter
+                # never returns `held`, so a bracket's working stop leg
+                # only surfaces here. They still count as coverage.
+                if fetched.data.is_open:
+                    broker_open[fetched.data.id] = fetched.data
+                    for leg in fetched.data.legs:
+                        if leg.is_open:
+                            broker_open[leg.id] = leg
             session.flush()
 
             # 3. An entry fill opens the DB position (qty/avg are then
@@ -1177,9 +1189,13 @@ class Executor:
             open_stops: dict[str, Decimal] = {}
             broker_stops: dict[str, list[BrokerOrder]] = {}
             for order in broker_open.values():
-                if order.side == "sell" and order.order_type in (
-                    "stop",
-                    "stop_limit",
+                if (
+                    order.is_open
+                    and order.side == "sell"
+                    and order.order_type in (
+                        "stop",
+                        "stop_limit",
+                    )
                 ):
                     open_stops[order.symbol] = open_stops.get(
                         order.symbol, Decimal(0)
@@ -1326,6 +1342,25 @@ class Executor:
             target = next(
                 (o.limit_price for o in legs if o.leg == "target"), None
             )
+            if stop is None or target is None:
+                # Released legs carry no parent link: once the entry is
+                # closed they arrive flat, so the position's stop and
+                # target are found as the symbol's open sell legs.
+                siblings = session.execute(
+                    select(Order).where(
+                        Order.symbol == order.symbol,
+                        Order.side == "sell",
+                        Order.leg.in_(("stop", "target")),
+                        Order.status.in_(OPEN_ORDER_STATUSES),
+                    )
+                ).scalars().all()
+                stop = stop or next(
+                    (o.stop_price for o in siblings if o.leg == "stop"), None
+                )
+                target = target or next(
+                    (o.limit_price for o in siblings if o.leg == "target"),
+                    None,
+                )
             session.add(
                 Position(
                     symbol=order.symbol,

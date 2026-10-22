@@ -245,7 +245,10 @@ class FakeBroker:
             data=[
                 self._to_broker_order(rec)
                 for rec in self.orders.values()
-                if rec.status in OPEN_ORDER_STATUSES and rec.parent_id is None
+                # Alpaca's open filter never returns `held` orders; a
+                # bracket stop leg stays `held` under its filled parent
+                # and surfaces only via get_order or a closed-orders query.
+                if rec.status in OPEN_ORDER_STATUSES and rec.status != "held"
             ],
             source="fake",
         )

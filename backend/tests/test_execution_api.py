@@ -195,6 +195,35 @@ def test_acknowledge_unknown_position_404s(client: TestClient) -> None:
     assert client.post("/api/events/99999/acknowledge").status_code == 404
 
 
+def test_position_check_failed_banner_clears_on_acknowledge(
+    client: TestClient,
+) -> None:
+    """Failed checks keep a critical banner until it is acknowledged."""
+    from app.db.base import get_session_maker
+    from app.db.models import Event
+
+    with get_session_maker()() as session:
+        event = Event(
+            time=datetime(2026, 10, 15, 17, 0),
+            level="critical",
+            event_type="position_check_failed",
+            details={"consecutive": 3, "errors": ["broker timeout"]},
+        )
+        session.add(event)
+        session.commit()
+        event_id = event.id
+
+    banners = client.get("/api/banners").json()["items"]
+    item = next(b for b in banners if b["kind"] == "position_check_failed")
+    assert item["level"] == "critical"
+    assert "Position checks are failing" in item["message"]
+    assert item["actions"] == ["acknowledge"]
+
+    assert client.post(f"/api/events/{event_id}/acknowledge").status_code == 200
+    banners = client.get("/api/banners").json()["items"]
+    assert not any(b["kind"] == "position_check_failed" for b in banners)
+
+
 def test_flatten_sell_rejected_shows_critical_banner(client: TestClient) -> None:
     """A rejected flatten sale is a critical, ack-able banner."""
     from app.db.base import get_session_maker
