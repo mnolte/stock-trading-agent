@@ -303,14 +303,16 @@ async def test_held_snapshot_uses_initial_risk_and_full_provenance(
     position = cast(dict[str, object], snapshot["position"])
     assert position["initial_stop"] == 410.0
     assert position["stop"] == 412.0
-    assert position["remaining_downside_usd"] == 32.03
-    assert position["r_so_far"] == 1.0
+    assert position["remaining_downside_usd"] == 31.86
+    assert position["r_so_far"] == 0.99
     assert position["original_thesis"] == "Breakout above consolidation"
     assert position["original_invalidation"] == "Close below 410"
     quote = cast(dict[str, object], snapshot["quote"])
     assert quote["feed"] == "fake"
     assert quote["quote_timestamp"] == NOW_13H.isoformat()
-    assert quote["trade_timestamp"] is None
+    assert quote["trade_timestamp"] == NOW_13H.isoformat()
+    assert quote["plausible"] is True
+    assert quote["spread_unknown"] is False
     assert quote["signal_bar_time"] == signal_bar.end.isoformat()
     assert snapshot["signal_bar_time"] == signal_bar.end.isoformat()
     assert snapshot["last_bar_time"] is not None
@@ -403,38 +405,44 @@ async def test_cycle_candidate_without_quote_gets_no_call(
     assert "failed" not in report.data_source_health["quotes"]
     (decision,) = _decisions(session_factory)
     assert decision.final_action == "no_call"
-    assert decision.no_call_reason == "quote_missing"
+    assert decision.no_call_reason == "price_stale"
+
+
+def _quote(
+    bid: str = "419", ask: str = "420", last: str = "420",
+    quote_ts: datetime | None = NOW_13H,
+    trade_ts: datetime | None = NOW_13H,
+) -> Quote:
+    return Quote(
+        symbol="MSFT", bid=Decimal(bid), ask=Decimal(ask),
+        last=Decimal(last), timestamp=quote_ts, feed="iex",
+        trade_timestamp=trade_ts, fetched_at=NOW_13H,
+    )
 
 
 @pytest.mark.parametrize(
-    ("bid", "ask", "timestamp", "reason"),
+    ("quote", "reason"),
     [
-        ("0", "420", NOW_13H, "quote_missing"),
-        ("419", "0", NOW_13H, "quote_missing"),
-        ("419", "420", None, "quote_missing"),
-        ("419", "420", NOW_13H - timedelta(hours=2), "quote_stale"),
-        ("439", "440", NOW_13H, "quote_suspect"),
+        (_quote(last="0"), "price_stale"),
+        (_quote(trade_ts=None), "price_stale"),
+        (_quote(trade_ts=NOW_13H - timedelta(seconds=61)), "price_stale"),
+        (_quote(last="426"), "price_suspect"),
     ],
 )
-@pytest.mark.parametrize("status", ["pass", "held"])
-async def test_cycle_rejects_unusable_quotes_before_model(
+async def test_cycle_rejects_unusable_price_before_model(
     session_factory: sessionmaker[Session],
-    status: str,
-    bid: str,
-    ask: str,
-    timestamp: datetime | None,
+    quote: Quote,
     reason: str,
 ) -> None:
+    """A candidate gets no model call when the market price (the IEX
+    last trade) is missing, stale or off the last closed bar."""
+
     class Quotes:
         async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
-            return DataResult(data={"MSFT": Quote(
-                symbol="MSFT", bid=Decimal(bid), ask=Decimal(ask),
-                last=Decimal("420"), timestamp=timestamp, feed="iex",
-                trade_timestamp=NOW_13H, fetched_at=NOW_13H,
-            )})
+            return DataResult(data={"MSFT": quote})
 
     runner = _runner(
-        session_factory, _evaluation(_item("MSFT", status)),
+        session_factory, _evaluation(_item("MSFT", "pass")),
         sources=_sources(quotes=Quotes()), universe=["MSFT"],
     )
     report = await runner.run(CYCLE_1246)
@@ -443,8 +451,69 @@ async def test_cycle_rejects_unusable_quotes_before_model(
     (decision,) = _decisions(session_factory)
     assert decision.no_call_reason == reason
     assert decision.input_snapshot is not None
-    provenance = cast("dict[str, str]", decision.input_snapshot["quote"])
-    assert provenance["trade_timestamp"] == NOW_13H.isoformat()
+    provenance = cast("dict[str, object]", decision.input_snapshot["quote"])
+    assert provenance["fetched_at"] == NOW_13H.isoformat()
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        _quote(last="0"),
+        _quote(trade_ts=None),
+        _quote(trade_ts=NOW_13H - timedelta(seconds=61)),
+        _quote(last="426"),
+    ],
+)
+async def test_cycle_reviews_held_despite_unusable_price(
+    session_factory: sessionmaker[Session],
+    quote: Quote,
+) -> None:
+    """Held positions are always reviewed; an unusable market price only
+    blocks a tighten_stop later (docs/SPEC.md, Entries — Market price)."""
+
+    class Quotes:
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={"MSFT": quote})
+
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", "held"), held={"MSFT"}),
+        sources=_sources(quotes=Quotes()), universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 1
+    (decision,) = _decisions(session_factory)
+    assert decision.final_action != "no_call"
+    assert decision.no_call_reason is None
+
+
+async def test_cycle_calls_model_on_thin_iex_book(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An IEX ask 3% off the tape is spread_unknown, not a block: the
+    candidate still gets its model call and the entry limit comes from
+    the last trade (docs/SPEC.md, Entries — IEX bid and ask)."""
+
+    class Quotes:
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={
+                "MSFT": _quote(bid="405", ask="432.6", last="420"),
+            })
+
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", "pass")),
+        sources=_sources(quotes=Quotes()), universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 1
+    (decision,) = _decisions(session_factory)
+    assert decision.no_call_reason is None
+    assert decision.input_snapshot is not None
+    quote_block = cast("dict[str, object]", decision.input_snapshot["quote"])
+    assert quote_block["plausible"] is False
+    assert quote_block["spread_unknown"] is True
+    assert decision.input_snapshot["price"] == 420.0
 
 
 async def test_cycle_skips_when_market_closed(
@@ -600,11 +669,11 @@ async def test_call_cap_reviews_held_positions_before_candidates(
         assert decisions[symbol].model == "none"
 
 
-async def test_quote_missing_does_not_consume_call_slot(
+async def test_price_failure_does_not_consume_call_slot(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """A candidate with no quote makes no model call, so the cap slot stays
-    free for the next candidate."""
+    """A candidate with no market price makes no model call, so the cap slot
+    stays free for the next candidate."""
 
     class MsftOnlyQuotes:
         async def fetch_quotes(
@@ -619,6 +688,8 @@ async def test_quote_missing_does_not_consume_call_slot(
                         last=Decimal("420.10"),
                         timestamp=NOW_13H,
                         feed="iex",
+                        trade_timestamp=NOW_13H,
+                        fetched_at=NOW_13H,
                     )
                 },
                 source="fake",
@@ -627,7 +698,7 @@ async def test_quote_missing_does_not_consume_call_slot(
     runner = _runner(
         session_factory,
         _evaluation(
-            _item("AAPL", "pass"),  # no quote → quote_missing
+            _item("AAPL", "pass"),  # no quote → price_stale
             _item("MSFT", "pass"),  # gets the one call slot
             _item("XOM", "pass"),   # past the cap → call_cap
         ),
@@ -641,7 +712,7 @@ async def test_quote_missing_does_not_consume_call_slot(
     assert report.calls == 1
     decisions = {d.symbol: d for d in _decisions(session_factory)}
     assert decisions["AAPL"].final_action == "no_call"
-    assert decisions["AAPL"].no_call_reason == "quote_missing"
+    assert decisions["AAPL"].no_call_reason == "price_stale"
     assert decisions["MSFT"].model != "none"
     assert decisions["XOM"].final_action == "no_call"
     assert decisions["XOM"].no_call_reason == "call_cap"
@@ -916,6 +987,94 @@ async def test_paused_cycle_reviews_held_and_blocks_entries(
         ).scalars().all()
     assert orders == []
     assert any(o.leg == "exit" for o in sells)
+
+
+async def test_missing_earnings_calendar_blocks_entries(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Degradation rule (docs/SPEC.md): when the earnings calendar was
+    never fetched or failed, entries fail closed — a candidate enter is
+    blocked at the earnings gate, not treated as "no earnings ahead"."""
+    client = FakeDecisionClient(enter_symbols={"AAPL"})
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("AAPL", "pass")),
+        client=client,
+        universe=["AAPL"],
+        with_executor=True,
+    )
+    # The daily refresh never ran: latest_earnings is None.
+    assert runner.market_data.latest_earnings is None
+    report = await runner.run(CYCLE_1246)
+
+    assert report.status == "done"
+    (decision,) = _decisions(session_factory)
+    assert decision.final_action == "blocked"
+    assert decision.gates_result is not None
+    assert decision.gates_result["blocked_by"] == "earnings_blackout"
+    with session_factory() as session:
+        assert session.execute(select(Order)).scalars().all() == []
+
+
+async def test_fetched_earnings_calendar_allows_entries(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The same entry goes through once the earnings calendar has been
+    fetched without error — the block is about availability, not a
+    blackout date."""
+    client = FakeDecisionClient(enter_symbols={"AAPL"})
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("AAPL", "pass")),
+        client=client,
+        universe=["AAPL"],
+        with_executor=True,
+    )
+    today = CYCLE_1246.date()
+    await runner.market_data.refresh_earnings(today, today + timedelta(days=90))
+    report = await runner.run(CYCLE_1246)
+
+    assert report.status == "done"
+    (decision,) = _decisions(session_factory)
+    assert decision.final_action == "enter"
+    assert decision.gates_result is not None
+    assert decision.gates_result["allowed"]
+
+
+async def test_pending_ack_held_position_recorded_as_held(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An adopted/mismatched position awaiting acknowledgment gets no
+    model call, but its stored decision is a held-context no_call — not
+    a mislabeled candidate."""
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="MSFT",
+                qty=4,
+                avg_entry_price=Decimal("415.00"),
+                current_stop_price=Decimal("410.00"),
+                target_price=Decimal("435.00"),
+                opened_at=datetime(2026, 10, 14, 15, 0),
+                pending_ack=True,
+            )
+        )
+        session.commit()
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "held"), held={"MSFT"}),
+        universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+
+    assert report.status == "done"
+    (decision,) = _decisions(session_factory)
+    assert decision.symbol == "MSFT"
+    assert decision.context == "held"
+    assert decision.final_action == "no_call"
+    assert decision.no_call_reason == "rules"
+    assert decision.validation_result is not None
+    assert "pending acknowledgment" in str(decision.validation_result.get("error"))
 
 
 # ----------------------------------------------------------------------

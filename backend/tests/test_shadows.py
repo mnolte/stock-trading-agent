@@ -447,22 +447,26 @@ async def test_shadow_without_live_quote_marks_synthetic_entry(sf: sessionmaker[
     assert gates["quote"]["synthetic"] is True
 
 
-async def test_shadow_cannot_replace_suspect_live_quote_with_synthetic(
+async def test_shadow_cannot_replace_suspect_live_price_with_synthetic(
     sf: sessionmaker[Session],
 ) -> None:
+    """A live market price that failed the tape check stays blocked in the
+    shadow — it is never swapped for a synthetic bar close."""
     snapshot = _snap("MSFT", price=105, atr=1)
     snapshot["last_bar_close"] = 100
     snapshot["quote"] = {
         "bid": "104.99", "ask": "105", "last": "105", "feed": "iex",
-        "quote_timestamp": CYCLE.isoformat(), "fetched_at": CYCLE.isoformat(),
+        "quote_timestamp": CYCLE.isoformat(),
+        "trade_timestamp": CYCLE.isoformat(),
+        "fetched_at": CYCLE.isoformat(),
     }
-    cycle_id = _seed(sf, [("MSFT", "no_call", "quote_suspect", snapshot)])
+    cycle_id = _seed(sf, [("MSFT", "no_call", "price_suspect", snapshot)])
     sid = _strategy(sf, "Rules only", kind="rules_only")
     await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1))).after_cycle(cycle_id)
     assert _positions(sf, sid) == []
     gates = _rows(sf, sid)["MSFT"].gates_result
     assert gates is not None
-    assert gates["blocked_by"] == "quote_suspect"
+    assert gates["blocked_by"] == "price_suspect"
 
 
 async def test_shadow_rejects_stop_too_close_to_bar_close(sf: sessionmaker[Session]) -> None:
@@ -470,7 +474,9 @@ async def test_shadow_rejects_stop_too_close_to_bar_close(sf: sessionmaker[Sessi
     snapshot["last_bar_close"] = 100
     snapshot["quote"] = {
         "bid": "100.99", "ask": "101", "last": "101", "feed": "iex",
-        "quote_timestamp": CYCLE.isoformat(), "fetched_at": CYCLE.isoformat(),
+        "quote_timestamp": CYCLE.isoformat(),
+        "trade_timestamp": CYCLE.isoformat(),
+        "fetched_at": CYCLE.isoformat(),
     }
     cycle_id = _seed(sf, [("MSFT", "skip", None, snapshot)])
     sid = _strategy(sf, "B")
@@ -926,7 +932,7 @@ def test_same_as_live_counts_per_spec(sf: sessionmaker[Session]) -> None:
     _pair(sf, sid, cycle_id, "SPY", "no_call", "rules")
     _pair(sf, sid, cycle_id, "MSFT", "no_call", "call_cap")
     _pair(sf, sid, cycle_id, "AAPL", "skip")
-    _pair(sf, sid, cycle_id, "NVDA", "no_call", "quote_missing")
+    _pair(sf, sid, cycle_id, "NVDA", "no_call", "price_stale")
     _pair(sf, sid, cycle_id, "META", "no_call", missed=True)
     _pair(sf, sid, cycle_id, "JPM", "no_call", "rules")
     with sf() as session:

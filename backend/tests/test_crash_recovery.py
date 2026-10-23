@@ -349,3 +349,67 @@ def test_restart_after_resume_is_paused_again(
     assert not state.kill_switch_on
     assert state.paused
     assert state.paused_at_startup
+
+
+def test_load_state_peak_includes_run_starting_equity(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """The run's starting equity is a point on its own curve: a run that
+    dipped before its first snapshot must still peak where it started,
+    or the drawdown kill measures from too low a high-water mark."""
+    from decimal import Decimal
+
+    from app.db.models import EquitySnapshot, Run
+
+    run_start = datetime.now(UTC) - timedelta(hours=1)
+    with session_factory() as session:
+        session.add(
+            Run(
+                started_at=run_start,
+                starting_equity=Decimal("10000.00"),
+                spy_close=None,
+            )
+        )
+        session.add(
+            EquitySnapshot(
+                time=run_start + timedelta(minutes=10),
+                equity=Decimal("9800.00"),
+                cash=Decimal("9800.00"),
+            )
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.peak_equity == Decimal("10000.00")
+
+
+def test_load_state_peak_uses_snapshots_above_starting_equity(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    """Snapshots still win when they exceed the starting equity."""
+    from decimal import Decimal
+
+    from app.db.models import EquitySnapshot, Run
+
+    run_start = datetime.now(UTC) - timedelta(hours=1)
+    with session_factory() as session:
+        session.add(
+            Run(
+                started_at=run_start,
+                starting_equity=Decimal("10000.00"),
+                spy_close=None,
+            )
+        )
+        session.add(
+            EquitySnapshot(
+                time=run_start + timedelta(minutes=10),
+                equity=Decimal("10500.00"),
+                cash=Decimal("10500.00"),
+            )
+        )
+        session.commit()
+
+    state = load_execution_state(clock, get_config(), session_factory)
+
+    assert state.peak_equity == Decimal("10500.00")

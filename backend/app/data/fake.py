@@ -234,6 +234,8 @@ class FakeQuoteSource:
                 last=_to_decimal(last),
                 timestamp=now,
                 feed="fake",
+                trade_timestamp=now,
+                fetched_at=now,
             )
         return DataResult(data=quotes, source="fake")
 

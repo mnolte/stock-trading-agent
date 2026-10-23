@@ -22,6 +22,14 @@ def test_cycle_jobs_coalesce_with_configured_misfire_grace(
         assert job.coalesce is True
 
 
+def test_backtests_tick_tolerates_a_late_wakeup(client: TestClient) -> None:
+    """The 10-second tick still runs when up to one interval late."""
+    scheduler = cast(FastAPI, client.app).state.scheduler
+    job = next(j for j in scheduler.get_jobs() if j.id == "backtests-tick")
+    assert job.misfire_grace_time == 10
+    assert job.coalesce is True
+
+
 def test_startup_catch_up_only_in_simulated_mode() -> None:
     """Paper mode never runs a missed cycle late, not even at startup."""
     config = AppConfig()

@@ -94,7 +94,7 @@ def parse_order(item: Any) -> BrokerOrder:
         order_type=str(raw.get("type", raw.get("order_type", ""))),
         order_class=str(raw.get("order_class", "") or ""),
         status=str(raw.get("status", "")),
-        qty=int(qty_raw) if qty_raw is not None else 0,
+        qty=int(Decimal(str(qty_raw))) if qty_raw is not None else 0,
         filled_qty=int(Decimal(str(filled_qty_raw))) if filled_qty_raw else 0,
         filled_avg_price=_dec(raw.get("filled_avg_price")),
         limit_price=_dec(raw.get("limit_price")),

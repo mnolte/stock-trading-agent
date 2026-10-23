@@ -171,14 +171,21 @@ def _item(symbol: str) -> SymbolEval:
     )
 
 
-def _quote(symbol: str, ask: str = "420.10", bid: str = "420.00") -> Quote:
+def _quote(
+    symbol: str,
+    ask: str = "420.10",
+    bid: str = "420.00",
+    last: str | None = None,
+) -> Quote:
     return Quote(
         symbol=symbol,
         bid=Decimal(bid),
         ask=Decimal(ask),
-        last=Decimal(ask),
+        last=Decimal(last) if last is not None else Decimal(ask),
         timestamp=NOW,
         feed="iex",
+        trade_timestamp=NOW,
+        fetched_at=NOW,
     )
 
 
@@ -1222,6 +1229,8 @@ async def test_partially_filled_entry_counts_unfilled_only(
                         last=Decimal("100.00"),
                         timestamp=NOW,
                         feed="iex",
+                        trade_timestamp=NOW,
+                        fetched_at=NOW,
                     )
                 }
             )
@@ -1619,6 +1628,118 @@ async def test_exit_aborted_when_broker_leg_cancel_unconfirmed(
     assert broker.orders[stop.data.id].status == "new"
 
 
+async def test_exit_cancels_working_entry_order(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A still-working buy order for the same symbol — a partially filled
+    bracket parent or a foreign order — is cancelled before the sell:
+    left alone it would add shares right back after the exit."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    bracket = await broker.submit_bracket_entry(
+        symbol="MSFT", qty=10, limit_price=Decimal("420"),
+        stop_price=Decimal("410"), target_price=Decimal("435"),
+        client_order_id="sa-entry-x",
+    )
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.add(
+            Order(
+                alpaca_order_id=bracket.data.id,
+                client_order_id="sa-entry-x",
+                symbol="MSFT",
+                decision_id=None,
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=10,
+                limit_price=Decimal("420"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "exit"
+        entry_row = session.execute(
+            select(Order).where(Order.alpaca_order_id == bracket.data.id)
+        ).scalar_one()
+        assert entry_row.status == "canceled"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.status == "filled"
+    assert broker.orders[bracket.data.id].status == "canceled"
+    sells = [o for o in broker.orders.values() if o.order_type == "market"]
+    assert len(sells) == 1
+
+
+async def test_exit_aborted_when_leg_state_unreadable(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A cancel whose final state can't be verified — the read fails —
+    counts as unconfirmed: no market sell goes out past it."""
+
+    class UnreadableOrders(FakeBroker):
+        async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:
+            return DataResult(data=None, error="fake read failure", source="fake")
+
+    broker = UnreadableOrders(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+        decision = _decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            position,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        events = _events(session, "leg_cancel_unconfirmed")
+        assert events and events[0].level == "critical"
+        assert position.closed_at is None
+    # The leg was never cancelled and no market sell went out.
+    assert all(o.order_type != "market" for o in broker.orders.values())
+    assert broker.orders[stop.data.id].status == "new"
+
+
 async def test_earnings_exit_sells_held_position(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -1725,7 +1846,10 @@ async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
     stop = await broker.submit_stop_order(
         symbol="MSFT", qty=4, stop_price=Decimal("95"), client_order_id="original",
     )
-    quote = Quote("MSFT", Decimal(bid), Decimal("100"), Decimal("0"), NOW, "iex")
+    quote = Quote(
+        "MSFT", Decimal(bid), Decimal("100"), Decimal("100"), NOW, "iex",
+        trade_timestamp=NOW, fetched_at=NOW,
+    )
     executor = _executor(
         session_factory, broker, clock,
         sources=_sources(quotes=_StaticQuotes({"MSFT": quote})), reference_bar=has_bar,
@@ -1754,23 +1878,26 @@ async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
     [
         (
             Quote(
-                "MSFT", Decimal("100"), Decimal("100"), Decimal("0"),
-                NOW - timedelta(minutes=2), "iex",
+                "MSFT", Decimal("100"), Decimal("100"), Decimal("100"),
+                NOW, "iex",
+                trade_timestamp=NOW - timedelta(minutes=2), fetched_at=NOW,
             ),
-            "quote_stale",
+            "price_stale",
         ),
         (
             Quote(
-                "MSFT", Decimal("100"), Decimal("102"), Decimal("0"),
-                NOW, "iex",
+                "MSFT", Decimal("100"), Decimal("102"), Decimal("102"),
+                NOW, "iex", trade_timestamp=NOW, fetched_at=NOW,
             ),
-            "quote_suspect",
+            "price_suspect",
         ),
     ],
 )
-async def test_tighten_rechecks_quote_quality_before_replacement(
+async def test_tighten_rechecks_price_before_replacement(
     session_factory: sessionmaker[Session], quote: Quote, reason: str,
 ) -> None:
+    """A stale or suspect market price vetoes the tighten — the position
+    review itself already happened (docs/SPEC.md, tighten_stop)."""
     clock = FakeClock(NOW)
     broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
     stop = await broker.submit_stop_order(
@@ -1795,6 +1922,43 @@ async def test_tighten_rechecks_quote_quality_before_replacement(
         assert position.current_stop_price == Decimal("95")
         assert decision.gates_result is not None
         assert decision.gates_result["reason"] == reason
+
+
+async def test_tighten_ignores_implausible_low_bid(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A resting bid 10% below the tape is not a plausible book side: the
+    tighten reference is min(last trade, bar close) = 100, not 90, so the
+    new stop clears the market-distance margin and the replace goes out."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("100"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("95"), client_order_id="original",
+    )
+    quote = Quote(
+        "MSFT", Decimal("90"), Decimal("100"), Decimal("100"), NOW, "iex",
+        trade_timestamp=NOW, fetched_at=NOW,
+    )
+    executor = _executor(
+        session_factory, broker, clock,
+        sources=_sources(quotes=_StaticQuotes({"MSFT": quote})),
+    )
+    assert stop.data is not None
+    with session_factory() as session:
+        position = _open_position(session, entry="100", stop="95")
+        executor._store_broker_order(session, stop.data, None, leg="stop")
+        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        item = replace(
+            _item("MSFT"),
+            snapshot=replace(_snapshot("MSFT"), atr_1h=Decimal("1")),
+        )
+        await executor.apply_decision(
+            session, decision, item, position, quote, NOW,
+            account=_account(), earnings_known=True,
+        )
+        session.commit()
+        assert position.current_stop_price == Decimal("99.5")
 
 
 async def test_tighten_stop_moves_only_upward(
@@ -2326,6 +2490,28 @@ async def test_shock_brake_session_quiet_quote_no_trip(
     assert executor.state.shock_brake_1h is False
 
 
+async def test_shock_brake_session_ignores_missing_last_trade(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A quote without a last trade (last = 0) is not a −100 % crash —
+    the session leg of the brake must not trip on it."""
+    no_last_quote = Quote(
+        symbol="SPY",
+        bid=Decimal("579"),
+        ask=Decimal("580"),
+        last=Decimal("0"),
+        timestamp=NOW,
+        feed="iex",
+    )
+    sources = _sources(quotes=_StaticQuotes({"SPY": no_last_quote}))
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)), sources=sources)
+
+    await executor.update_session_brakes()
+
+    assert executor.state.shock_brake_session is False
+    assert executor.state.shock_brake_1h is False
+
+
 async def test_shock_brake_1h_runs_only_with_flag(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -2385,7 +2571,8 @@ async def test_shock_brake_1h_ignores_partial_bar(
 
 
 class _AgedQuotes:
-    """Quotes stamped ``age`` seconds behind the executor clock."""
+    """Quotes whose last trade is stamped ``age`` seconds behind the
+    executor clock."""
 
     def __init__(
         self,
@@ -2393,11 +2580,13 @@ class _AgedQuotes:
         age: int,
         ask: str = "420.10",
         bid: str = "420.00",
+        last: str | None = None,
     ) -> None:
         self._clock = clock
         self._age = age
         self._ask = Decimal(ask)
         self._bid = Decimal(bid)
+        self._last = Decimal(last) if last is not None else self._ask
 
     async def fetch_quotes(
         self, symbols: list[str]
@@ -2409,9 +2598,11 @@ class _AgedQuotes:
                     symbol=s,
                     bid=self._bid,
                     ask=self._ask,
-                    last=self._ask,
+                    last=self._last,
                     timestamp=ts,
                     feed="iex",
+                    trade_timestamp=ts,
+                    fetched_at=self._clock.now(),
                 )
                 for s in symbols
             },
@@ -2494,21 +2685,19 @@ async def test_entry_sizes_against_final_limit(
 async def test_fresh_entry_stop_distance_uses_lowest_reference(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """The stop-distance check runs against the lowest of market price,
+    plausible ask and last closed bar — here the bar close (99) drags the
+    reference below the 1.5 × ATR minimum even though the limit (99.55)
+    itself is far enough from the stop."""
     clock = FakeClock(NOW)
-
-    class Quotes(_AgedQuotes):
-        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
-            result = await super().fetch_quotes(symbols)
-            return DataResult(
-                data={s: replace(q, last=Decimal("99")) for s, q in result.data.items()}
-            )
-
     executor = _executor(
         session_factory, FakeBroker(clock), clock,
-        sources=_sources(quotes=Quotes(clock, 0, ask="100", bid="100")),
+        sources=_sources(
+            quotes=_AgedQuotes(clock, 0, ask="99.5", bid="99.5", last="99.5")
+        ),
         reference_bar=False,
     )
-    _store_reference(executor, "MSFT", Decimal("100"))
+    _store_reference(executor, "MSFT", Decimal("99"))
     _, limit, reason = await executor._fresh_entry_check(
         symbol="MSFT", stop=Decimal("98"), target=Decimal("108"), atr_1h=Decimal("1"),
     )
@@ -2517,19 +2706,25 @@ async def test_fresh_entry_stop_distance_uses_lowest_reference(
 
 
 @pytest.mark.parametrize(
-    ("has_bar", "atr", "expected"),
-    [(False, Decimal("1"), "reference_missing"), (True, None, "reference_missing"),
-     (True, Decimal("1"), None)],
+    ("missing_last", "has_bar", "atr", "expected"),
+    [(True, True, Decimal("1"), "price_stale"),
+     (False, False, Decimal("1"), "reference_missing"),
+     (False, True, None, "reference_missing"),
+     (False, True, Decimal("1"), None)],
 )
-async def test_fresh_entry_required_references_and_optional_last_trade(
-    session_factory: sessionmaker[Session], has_bar: bool,
+async def test_fresh_entry_market_price_and_required_references(
+    session_factory: sessionmaker[Session], missing_last: bool, has_bar: bool,
     atr: Decimal | None, expected: str | None,
 ) -> None:
+    """The last trade IS the market price — it is required, like the bar
+    and ATR for the stop-distance reference (docs/SPEC.md, Entries)."""
     clock = FakeClock(NOW)
 
     class Quotes(_AgedQuotes):
         async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
             result = await super().fetch_quotes(symbols)
+            if not missing_last:
+                return result
             return DataResult(
                 data={s: replace(q, last=Decimal("0")) for s, q in result.data.items()}
             )
@@ -2548,7 +2743,32 @@ async def test_fresh_entry_required_references_and_optional_last_trade(
     assert (limit is None) == (expected is not None)
     if expected is None:
         assert quote is not None
-        assert quote.provenance()["last_trade"] == "missing"
+        assert quote.last == Decimal("100")
+        assert limit == Decimal("100.05")
+
+
+async def test_fresh_entry_thin_book_keeps_entry_and_limit_from_last_trade(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An IEX ask 3% above the tape makes the book implausible: the entry
+    is NOT blocked (spread_unknown), the spread gate is skipped, and the
+    limit is the last trade plus the configured offset — not the ask."""
+    clock = FakeClock(NOW)
+    executor = _executor(
+        session_factory, FakeBroker(clock), clock,
+        sources=_sources(
+            quotes=_AgedQuotes(clock, 0, ask="103", bid="99.5", last="100")
+        ),
+        reference_bar=False,
+    )
+    _store_reference(executor, "MSFT", Decimal("100"))
+    quote, limit, reason = await executor._fresh_entry_check(
+        symbol="MSFT", stop=Decimal("98"), target=Decimal("108"), atr_1h=Decimal("1"),
+    )
+    assert reason is None
+    assert quote is not None
+    assert quote.quote_plausible(Decimal("1")) is False
+    assert limit == Decimal("100.05")
 
 
 async def test_entry_does_not_use_old_budgets_when_account_refresh_fails(
@@ -2589,7 +2809,7 @@ async def test_fresh_quote_gate_rejects_stale_quote(
         assert decision.gates_result["blocked_by"] == "fresh_quote"
         checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
         assert checks[-1]["name"] == "fresh_quote"
-        assert checks[-1]["detail"] == "quote_stale"
+        assert checks[-1]["detail"] == "price_stale"
         assert decision.gates_result["quote"] is not None
     assert broker.submit_calls == 0
 
@@ -2616,7 +2836,7 @@ async def test_fresh_quote_gate_accepts_quote_within_max_age(
 async def test_fresh_quote_gate_rejects_fetch_failure(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """No quote at order time → quote_missing, no order sent."""
+    """No quote at order time → no market price → price_stale, no order sent."""
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(
         session_factory,
@@ -2630,7 +2850,7 @@ async def test_fresh_quote_gate_rejects_fetch_failure(
         assert decision.gates_result is not None
         assert decision.gates_result["blocked_by"] == "fresh_quote"
         checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
-        assert checks[-1]["detail"] == "quote_missing"
+        assert checks[-1]["detail"] == "price_stale"
     assert broker.submit_calls == 0
 
 

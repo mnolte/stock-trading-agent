@@ -137,6 +137,43 @@ def test_first_touch_uses_the_stop_leg_active_at_each_bar() -> None:
     assert _first_touch([early, late], position, history) == "stop"
 
 
+def test_first_touch_ignores_target_leg_after_it_ended() -> None:
+    """The target gets the same retroactive protection the stop already
+    had: a cancelled target leg no longer counts for later bars."""
+    from app.engine.outcomes import _first_touch
+
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    position = Position(
+        symbol="WMT", qty=16, avg_entry_price=Decimal("100"),
+        initial_stop=Decimal("95"), current_stop_price=Decimal("99"),
+        target_price=Decimal("110"), opened_at=at,
+        entry_decision_id=7,
+    )
+    history = [
+        Order(
+            alpaca_order_id="tp", symbol="WMT", side="sell",
+            order_type="limit", leg="target", qty=16,
+            limit_price=Decimal("110"), status="canceled",
+            decision_id=7,
+            created_at=at.replace(tzinfo=None),
+            active_until=(at + timedelta(minutes=5)).replace(tzinfo=None),
+        ),
+    ]
+    live = Bar5m(
+        "WMT", at, Decimal("100"), Decimal("111"), Decimal("98"),
+        Decimal("100"), 100, "sip",
+    )
+    dead = Bar5m(
+        "WMT", at + timedelta(minutes=5), Decimal("100"), Decimal("111"),
+        Decimal("98"), Decimal("100"), 100, "sip",
+    )
+    # While the leg was live a touch counts; after its cancel the same
+    # high is ignored — the old code counted it as "target".
+    assert _first_touch([live], position, history) == "target"
+    assert _first_touch([dead], position, history) == "neither"
+    assert _first_touch([live, dead], position, history) == "target"
+
+
 def _naive(dt: datetime) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None)
 
@@ -640,6 +677,95 @@ async def test_first_touch_same_bar_counts_as_stop(
         session.commit()
 
     assert _outcome(session_factory, decision_id).first_touch == "stop"
+
+
+async def test_first_touch_ignores_target_after_leg_ended(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The position's stored target_price must not apply after its leg
+    was cancelled — a bar reaching the old level records no target."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    cancelled_at = datetime(2026, 10, 15, 15, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    with session_factory() as session:
+        session.add(
+            Order(
+                alpaca_order_id="tp-msft",
+                client_order_id=None,
+                symbol="MSFT",
+                decision_id=decision_id,
+                side="sell",
+                order_type="limit",
+                leg="target",
+                qty=3,
+                limit_price=Decimal("435"),
+                status="canceled",
+                created_at=_naive(opened),
+                active_until=_naive(cancelled_at),
+            )
+        )
+        session.commit()
+    _seed_bars(
+        session_factory,
+        [
+            # Reaches the old target only after the leg was dead.
+            (datetime(2026, 10, 15, 16, 0, tzinfo=UTC), 420, 436, 415, 430),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "neither"
+
+
+async def test_first_touch_uses_the_live_target_leg_price(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """With a target-leg row on file its limit is the level that counts —
+    not the position's stored target_price."""
+    opened = datetime(2026, 10, 15, 14, 30, tzinfo=UTC)
+    now = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
+    clock = FakeClock(now)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)  # target 435
+    with session_factory() as session:
+        # The working leg sits higher than the stored target.
+        session.add(
+            Order(
+                alpaca_order_id="tp-msft",
+                client_order_id=None,
+                symbol="MSFT",
+                decision_id=decision_id,
+                side="sell",
+                order_type="limit",
+                leg="target",
+                qty=3,
+                limit_price=Decimal("438"),
+                status="new",
+                created_at=_naive(opened),
+            )
+        )
+        session.commit()
+    _seed_bars(
+        session_factory,
+        [
+            # Above the stored 435, below the live leg's 438.
+            (datetime(2026, 10, 15, 16, 0, tzinfo=UTC), 420, 436, 415, 430),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, now)
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).first_touch == "neither"
 
 
 async def test_first_touch_none_for_skips(

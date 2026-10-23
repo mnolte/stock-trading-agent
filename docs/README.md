@@ -30,6 +30,7 @@
 | 13 | Strategies and shadows (v0.2) | Strategies and shadows; Decision layer; Data model | `Strategies` |
 | 14 | Backtesting (v0.2) | Backtesting; Decision layer; Risk management; Data model | `Backtest` |
 | 15 | Integrity fixes | Alpaca integration (Entries); Decision layer (code checks, prompt, outcome tracking); Risk management (gates); Reviews (number check); Market, schedule and data | none |
+| 16 | Readiness | Readiness; Notifications; Data model | `Readiness`, Readiness section in `Settings` |
 
 ## PR description template
 

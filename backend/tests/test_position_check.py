@@ -46,8 +46,9 @@ def _checker(
     session_factory: sessionmaker[Session],
     broker: FakeBroker,
     quotes: QuoteSource | None = None,
+    now: datetime = NOW,
 ) -> PositionChecker:
-    clock = FakeClock(NOW)
+    clock = FakeClock(now)
     config = AppConfig()
     calendar = FakeCalendarSource()
     sources = DataSources(
@@ -190,3 +191,78 @@ async def test_position_check_quiet_spy_no_brake(
     assert report.ok
     assert checker.state.shock_brake_session is False
     assert checker.state.shock_brake_1h is False
+
+
+async def test_check_skipped_on_non_trading_day(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A weekend check does nothing: no cycle row, no broker call, no
+    snapshot. The broker-side stops keep working without the polling."""
+    saturday = datetime(2026, 10, 17, 17, 0, tzinfo=UTC)
+    broker = FakeBroker(FakeClock(saturday), cash=Decimal("10000"))
+    # Any broker read would fail — a clean report proves none happened.
+    broker.fail_reads = True
+    checker = _checker(session_factory, broker, now=saturday)
+
+    report = await checker.run()
+
+    assert report.ok
+    assert report.errors == []
+    with session_factory() as session:
+        assert session.execute(select(Cycle)).first() is None
+        assert session.execute(select(EquitySnapshot)).first() is None
+    assert checker.state.failed_checks == 0
+
+
+async def test_check_skipped_after_session_close(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Same guard after the close on a trading day — a 17:00 ET check
+    makes no broker calls and writes nothing."""
+    after_close = datetime(2026, 10, 15, 21, 0, tzinfo=UTC)  # 17:00 ET
+    broker = FakeBroker(FakeClock(after_close), cash=Decimal("10000"))
+    broker.fail_reads = True
+    checker = _checker(session_factory, broker, now=after_close)
+
+    report = await checker.run()
+
+    assert report.ok
+    with session_factory() as session:
+        assert session.execute(select(Cycle)).first() is None
+        assert session.execute(select(EquitySnapshot)).first() is None
+
+
+async def test_check_skipped_before_session_open(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Same guard before the open on a trading day — an 08:00 ET check
+    makes no broker calls and writes nothing."""
+    pre_open = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)  # 08:00 ET
+    broker = FakeBroker(FakeClock(pre_open), cash=Decimal("10000"))
+    broker.fail_reads = True
+    checker = _checker(session_factory, broker, now=pre_open)
+
+    report = await checker.run()
+
+    assert report.ok
+    with session_factory() as session:
+        assert session.execute(select(Cycle)).first() is None
+        assert session.execute(select(EquitySnapshot)).first() is None
+
+
+async def test_reconcile_errors_reported_once(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Each reconcile error lands in the cycle row exactly once."""
+    broker = FakeBroker(FakeClock(NOW))
+    broker.fail_reads = True
+    checker = _checker(session_factory, broker)
+
+    report = await checker.run()
+
+    assert not report.ok
+    assert len(report.errors) == len(set(report.errors))
+    with session_factory() as session:
+        cycle = session.execute(select(Cycle)).scalar_one()
+        assert cycle.errors is not None
+        assert len(cycle.errors) == len(set(cycle.errors))

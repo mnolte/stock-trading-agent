@@ -9,7 +9,7 @@ write lock (BEGIN IMMEDIATE, no busy-wait) before every awaited call.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import cast
 
@@ -182,6 +182,12 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
             )
         )
         session.commit()
+    # Entries need a successful earnings fetch first — the same
+    # precondition the startup daily refresh provides in production.
+    await market_data.refresh_earnings(
+        NOW_13H.date() - timedelta(days=30),
+        NOW_13H.date() + timedelta(days=90),
+    )
 
     report = await runner.run(CYCLE_1246)
     assert report.status == "done", report.errors

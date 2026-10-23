@@ -31,7 +31,7 @@ from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
-from app.market.clock import UTC
+from app.market.clock import NY_TZ, UTC
 from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -518,6 +518,101 @@ async def test_refresh_corporate_actions_stores_rows(
     assert result.data == 1
 
 
+async def test_refresh_corporate_actions_upserts_and_prunes(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Same as earnings: a revised amount updates in place, and an
+    action that vanishes from the source window is pruned — a stale
+    dividend would keep being credited in trade and shadow P&L."""
+    action = CorporateActionEvent(
+        symbol="AAPL",
+        action_type="dividend",
+        ex_date=date(2026, 11, 1),
+        amount_or_ratio=Decimal("0.25"),
+        fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+    )
+    calendar = FakeCalendarSource()
+    corporate_actions = FakeCorporateActionSource([action])
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource(),
+        fx=FakeFXSource(),
+        corporate_actions=corporate_actions,
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    await service.refresh_corporate_actions(date(2026, 10, 1), date(2026, 11, 30))
+
+    # Alpaca revises the dividend amount: the stored row must follow.
+    corporate_actions.actions = [
+        CorporateActionEvent(
+            symbol="AAPL",
+            action_type="dividend",
+            ex_date=date(2026, 11, 1),
+            amount_or_ratio=Decimal("0.28"),
+            fetched_at=datetime(2026, 10, 16, tzinfo=UTC),
+        )
+    ]
+    await service.refresh_corporate_actions(date(2026, 10, 1), date(2026, 11, 30))
+    with session_factory() as session:
+        row = session.execute(select(CorporateActionRow)).scalars().one()
+        assert row.ratio_or_amount == Decimal("0.28")
+
+    # The action is cancelled: the row is pruned, not left to be paid.
+    corporate_actions.actions = []
+    await service.refresh_corporate_actions(date(2026, 10, 1), date(2026, 11, 30))
+    with session_factory() as session:
+        assert session.execute(select(CorporateActionRow)).scalars().all() == []
+
+
+async def test_refresh_corporate_actions_keeps_rows_on_source_error(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A failed fetch must not prune the existing window — same guard
+    as refresh_earnings."""
+    action = CorporateActionEvent(
+        symbol="AAPL",
+        action_type="dividend",
+        ex_date=date(2026, 11, 1),
+        amount_or_ratio=Decimal("0.25"),
+        fetched_at=datetime(2026, 10, 15, tzinfo=UTC),
+    )
+    calendar = FakeCalendarSource()
+    corporate_actions = FakeCorporateActionSource([action])
+    sources = DataSources(
+        bars=FakeBarSource(calendar),
+        quotes=FakeQuoteSource(),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource(),
+        fx=FakeFXSource(),
+        corporate_actions=corporate_actions,
+        calendar=calendar,
+        alpaca=None,
+    )
+    service = MarketDataService(
+        sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    await service.refresh_corporate_actions(date(2026, 10, 1), date(2026, 11, 30))
+
+    async def _fail(
+        symbols: list[str], start: date, end: date
+    ) -> DataResult[list[CorporateActionEvent]]:
+        return DataResult(data=[], error="fake failure", source="fake")
+
+    corporate_actions.fetch_corporate_actions = _fail  # type: ignore[method-assign]
+    result = await service.refresh_corporate_actions(
+        date(2026, 10, 1), date(2026, 11, 30)
+    )
+    assert result.error is not None
+    with session_factory() as session:
+        assert len(session.execute(select(CorporateActionRow)).scalars().all()) == 1
+
+
 async def test_refresh_history_uses_configured_sessions(
     session_factory: sessionmaker[Session], fake_sources: DataSources
 ) -> None:
@@ -797,4 +892,49 @@ async def test_prune_5m_bars_keeps_recent_sessions(
     assert (
         len(cache.get("AAPL", new_session.open, new_session.close))
         == len(new_bars)
+    )
+
+
+async def test_refresh_bars_drops_extended_hours(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """SIP returns the whole 04:00-20:00 NY session; only regular-session
+    bars are cached — coverage counts, outcome reads and shadow replay
+    all assume it."""
+
+    class ExtendedBars(FakeBarSource):
+        async def fetch_5m_bars(
+            self, symbols: list[str], start: datetime, end: datetime
+        ) -> DataResult[list[Bar5m]]:
+            result = await super().fetch_5m_bars(symbols, start, end)
+            extra = [
+                Bar5m(
+                    symbol=symbol,
+                    # 04:00 New York — the first SIP bar of the day.
+                    start=datetime(2026, 10, 15, 4, 0, tzinfo=NY_TZ).astimezone(UTC),
+                    open=Decimal("1"),
+                    high=Decimal("1"),
+                    low=Decimal("1"),
+                    close=Decimal("1"),
+                    volume=1,
+                    feed="sip",
+                )
+                for symbol in symbols
+            ]
+            return DataResult(data=(result.data or []) + extra, source="fake")
+
+    calendar = FakeCalendarSource()
+    fake_sources.bars = ExtendedBars(calendar)
+    service = MarketDataService(
+        fake_sources, calendar, AppConfig(), session_factory=session_factory
+    )
+    session = calendar.session_for(date(2026, 10, 15))
+    assert session is not None
+    await service.refresh_bars(session.open, session.close)
+    cached = service.get_5m_bars(
+        "AAPL", session.open - timedelta(hours=12), session.close + timedelta(hours=12)
+    )
+    assert len(cached) == 78
+    assert all(
+        session.open <= bar.start.astimezone(NY_TZ) < session.close for bar in cached
     )

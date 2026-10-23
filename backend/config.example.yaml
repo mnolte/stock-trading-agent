@@ -50,8 +50,8 @@ execution:
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
   max_spread_pct: 0.15
-  quote_max_deviation_pct: 1.0   # ask vs last closed 5-min bar close; beyond = quote_suspect, no model call
-  quote_max_age_seconds: 60    # fresh IEX quote fetched right before each entry; older = no order
+  quote_max_deviation_pct: 1.0   # last trade vs last closed 5-min bar (price_suspect); bid/ask vs market price (plausible quote)
+  quote_max_age_seconds: 60    # IEX last trade must be this fresh (market price); older = price_stale
   time_in_force: gtc
 
 rules:
@@ -167,6 +167,19 @@ backtest:                         # v0.2, PR 14
   model_cutoffs:                  # LLM strategies only from the day after
     gpt-4o-mini: "2023-10-31"
     gpt-4.1-mini: "2024-06-01"
+
+readiness:                      # PR 16; evidence from the current run, adjusted P&L
+  min_closed_trades: 100
+  min_sessions: 60
+  max_drawdown_pct: 6
+  min_avg_r: 0.2
+  min_profit_factor: 1.3
+  ratio_min_trades: 30            # average R, profit factor, beats rules-only
+  min_proposal_pass_pct: 75       # last 100 model entry proposals; needs 30
+  max_calibration_gap_pts: 10     # needs 50 filled entries; groups of 0.1 with >= 10 entries
+  min_cycles_completed_pct: 98    # last 20 sessions
+  max_price_blocked_pct: 5        # price_stale + price_suspect, last 20 sessions
+  error_auto_resolve_minutes: 60
 
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check

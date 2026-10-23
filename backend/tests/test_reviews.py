@@ -93,6 +93,37 @@ async def test_briefing_report_four_rejects_known_empty_as_unavailable(
     assert review.text.startswith("Positions: none.")
 
 
+async def test_briefing_rejects_unavailable_claim_when_facts_exist(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An open position makes 'positions are unavailable' a false claim —
+    the fact check rejects it the same way it does a known-empty list."""
+    day = date(2026, 10, 22)
+    with session_factory() as session:
+        session.add(
+            Position(
+                symbol="MSFT",
+                origin="agent",
+                qty=4,
+                avg_entry_price=Decimal("415.00"),
+                current_stop_price=Decimal("410.00"),
+                target_price=Decimal("435.00"),
+                opened_at=_naive(_ny(day)),
+            )
+        )
+        session.commit()
+    service = _service(
+        session_factory, FakeClock(_ny(day)),
+        client=FakeReviewClient(handler=lambda _s, _u: json.dumps({
+            "text": "Open positions are unavailable right now.",
+        })),
+    )
+    review = await service.write_briefing_for(day)
+    assert review is not None
+    assert review.source == "template"
+    assert review.reason == "fact check failed"
+
+
 async def test_briefing_status_line_is_written_by_code(
     session_factory: sessionmaker[Session],
 ) -> None:

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
@@ -64,34 +64,59 @@ def _aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+def _active_order(
+    orders: list[Order], start: datetime
+) -> Order | None:
+    """The latest-created order live at ``start`` (created before the bar,
+    not yet ended by ``active_until``)."""
+    live = [
+        o
+        for o in orders
+        if _aware_utc(o.created_at) <= start
+        and (o.active_until is None or start < _aware_utc(o.active_until))
+    ]
+    return max(live, key=lambda o: (o.created_at, o.id)) if live else None
+
+
 def _first_touch(
     bars: list[Bar5m], position: Position, history: list[Order] | None = None,
 ) -> str:
     """Which of the position's stop or target the 5m bars touched first.
 
-    The stop checked for each bar is the stop-leg order active at that bar's
-    timestamp; without order history the initial stop is the only known level.
-    A bar that touches both counts as a stop touch — intrabar order is
-    unknowable, so the pessimistic read wins.
+    Both sides follow the order live at each bar's timestamp: the stop-leg
+    price and the target leg's limit apply only between the order's
+    creation and its ``active_until``, so a cancelled or replaced leg no
+    longer counts retroactively. Without stop history the initial stop is
+    the only known level; without a recorded target leg the position's
+    stored target price is used. A bar that touches both counts as a stop
+    touch — intrabar order is unknowable, so the pessimistic read wins.
     """
-    target = position.target_price
+    stops = [o for o in history or [] if o.leg == "stop"]
+    # Only legs of this position's own entry decision count as its
+    # take-profit: an unrelated sell-limit stored with the "target" label
+    # is not the bracket's target.
+    targets = [
+        o
+        for o in history or []
+        if o.leg == "target"
+        and position.entry_decision_id is not None
+        and o.decision_id == position.entry_decision_id
+    ]
     for bar in sorted(bars, key=lambda b: b.start):
-        stop = position.initial_stop
-        if history:
-            active = [
-                o
-                for o in history
-                if _aware_utc(o.created_at) <= bar.start
-                and (
-                    o.active_until is None
-                    or bar.start < _aware_utc(o.active_until)
-                )
-            ]
-            stop = (
-                max(active, key=lambda o: (o.created_at, o.id)).stop_price
-                if active
+        if stops:
+            current = _active_order(stops, bar.start)
+            stop = current.stop_price if current is not None else None
+        else:
+            stop = position.initial_stop
+        if targets:
+            current_t = _active_order(targets, bar.start)
+            target = (
+                current_t.limit_price
+                if current_t is not None
                 else None
             )
+        else:
+            target = position.target_price
         stop_hit = stop is not None and bar.low <= stop
         target_hit = target is not None and bar.high >= target
         if stop_hit:
@@ -303,12 +328,20 @@ class OutcomeWorker:
             outcome.worst_price = worst.low
             outcome.worst_price_at = _naive_utc(worst.start)
             changed = True
+        # Legs of this position: everything its entry decision produced,
+        # plus decision-less orders (protective stops, adopted orders the
+        # broker already had) created while it was open. Another entry
+        # decision's legs for the same symbol never leak in.
         history = list(session.execute(select(Order).where(
-            Order.symbol == position.symbol, Order.leg == "stop",
+            Order.symbol == position.symbol,
+            Order.leg.in_(("stop", "target")),
             Order.created_at <= _naive_utc(end),
             or_(
                 Order.decision_id == position.entry_decision_id,
-                Order.created_at >= _naive_utc(opened),
+                and_(
+                    Order.decision_id.is_(None),
+                    Order.created_at >= _naive_utc(opened),
+                ),
             ),
         )).scalars())
         touch = _first_touch(bars, position, history)

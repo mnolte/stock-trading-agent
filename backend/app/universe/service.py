@@ -40,6 +40,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.broker.base import Broker
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, _resolve_path
+from app.data.aggregate import session_bars
 from app.data.factory import DataSources
 from app.data.models import CalendarDay, DailyBar
 from app.data.service import MarketDataService
@@ -530,7 +531,7 @@ class UniverseService:
         if res.error is not None:
             return res.error
         if res.data is not None:
-            self._market_data.bars_cache.store(res.data)
+            self._market_data.bars_cache.store(session_bars(res.data, sessions))
         return None
 
     async def warm_up(

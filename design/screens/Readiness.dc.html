@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Agent — Readiness</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input,select{font-family:inherit}
+table{border-collapse:collapse}
+</style>
+</helmet>
+<div style="min-height: 2000px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: stretch">
+
+  <aside aria-label="Sidebar" style="{{nav.aside}}">
+    <div style="{{nav.brandRow}}">
+      <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
+      <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
+        </div>
+      </sc-if>
+    </div>
+    <nav aria-label="Main" style="display: flex; flex-direction: column; gap: 2px">
+      <div style="{{nav.group}}">Monitor</div>
+      <a href="Main.dc.html" aria-label="Dashboard" title="Dashboard" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Dashboard</span></sc-if></a>
+      <a href="Positions.dc.html" aria-label="Positions & orders" title="Positions & orders" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="10" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Positions & orders</span></sc-if></a>
+      <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
+      <div style="{{nav.group}}">Learn</div>
+      <a href="Reviews.dc.html" aria-label="Reviews" title="Reviews" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="5" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="8" y1="3" x2="8" y2="7"></line><line x1="16" y1="3" x2="16" y2="7"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Reviews</span></sc-if></a>
+      <a href="Strategies.dc.html" aria-label="Strategies" title="Strategies" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="9" r="2"></circle><line x1="6" y1="7" x2="6" y2="17"></line><path d="M18 11c0 4-6 3-12 6"></path></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Strategies</span></sc-if></a>
+      <a href="Backtest.dc.html" aria-label="Backtest" title="Backtest" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M3 12a9 9 0 1 0 3-6.7"></path><polyline points="3 4 3 9 8 9"></polyline><polyline points="12 8 12 12 15 14"></polyline></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Backtest</span></sc-if></a>
+      <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
+      <div style="{{nav.group}}">Control</div>
+      <a href="Readiness.dc.html" aria-current="page" aria-label="Readiness" title="Readiness" style="{{nav.active}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path><polyline points="9 12 11 14 15 10"></polyline></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Readiness</span></sc-if></a>
+      <a href="Universe.dc.html" aria-label="Universe" title="Universe" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="6" r="2"></circle><circle cx="12" cy="6" r="2"></circle><circle cx="18" cy="6" r="2"></circle><circle cx="6" cy="12" r="2"></circle><circle cx="12" cy="12" r="2"></circle><circle cx="18" cy="12" r="2"></circle><circle cx="6" cy="18" r="2"></circle><circle cx="12" cy="18" r="2"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Universe</span></sc-if></a>
+      <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
+    </nav>
+    <div style="flex: 1"></div>
+    <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
+    <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
+  </aside>
+
+  <div style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 14px 24px; border-bottom: 1px solid #232A35; background: #0F131A">
+    <div style="display: flex; align-items: center; gap: 12px; flex: 1 1 300px; min-width: 0; flex-wrap: wrap">
+      <div style="display: flex; flex-direction: column; gap: 2px"><h1 style="margin: 0; font-size: 18px; font-weight: 600">Readiness</h1><div style="font-size: 13px; color: #98A2AF">Whether the paper evidence would justify live trading</div></div>
+      <span title="Orders go to Alpaca's paper account. Real-money trading is not built." style="display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+      <div title="New York 12:52 · market closes 16:00 New York (22:00 Amsterdam)" style="display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 999px; background: #171C24; border: 1px solid #232A35; font-size: 13px; white-space: nowrap">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #3DD68C"></span>
+        <span>Market open</span>
+        <span style="color: #98A2AF">· next cycle 19:46 · in 54 min</span>
+      </div>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Equity</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #E7EAEE; white-space: nowrap">$10,184.30 <span style="color: #98A2AF; font-size: 12px">€8,749.40</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em">Today</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: #3DD68C; white-space: nowrap">+$42.10 <span style="color: #98A2AF; font-size: 12px">+€36.17</span></span></div>
+      <div style="display: flex; flex-direction: column; gap: 2px">
+        <span title="Market regime from SPY: trend × volatility" style="font-size: 11px; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.06em; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; align-self: flex-start">Regime</span>
+        <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">Up · normal vol</span>
+      </div>
+      <a href="States.dc.html" title="Pause new entries. Stops, targets and position checks keep working." style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><line x1="8" y1="5" x2="8" y2="19"></line><line x1="16" y1="5" x2="16" y2="19"></line></svg><span>Pause</span></a>
+      <a href="States.dc.html" title="Stop new entries, or stop and sell everything" style="height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px; border-radius: 8px; border: 1px solid #7A2A2E; background: #3A1416; color: #FFB3B6; font-size: 14px; font-weight: 600; text-decoration: none; white-space: nowrap"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="7" x2="12" y2="13"></line><line x1="12" y1="17" x2="12" y2="17"></line></svg><span>Kill switch</span></a>
+    </div>
+  </header>
+  <main style="max-width: 1440px; width: 100%; margin: 0 auto; padding: 24px; box-sizing: border-box; display: flex; flex-direction: column; gap: 20px">
+
+<section aria-label="Readiness verdict" style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; padding: 16px 20px; border: 1px solid #7A2A2E; background: #3A1416; border-radius: 10px">
+  <span style="color: #FFB3B6"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 22px"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path><polyline points="9 12 11 14 15 10"></polyline></svg></span>
+  <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 4px">
+    <span style="font-size: 16px; font-weight: 600; color: #FFB3B6">Not ready for live trading</span>
+    <span style="font-size: 13px; color: #C9CFD6; line-height: 1.5">Live trading isn't built. This page shows when the paper evidence is strong enough to start the live spec. Every criterion must pass and every manual item must be done; nothing unlocks automatically.</span>
+  </div>
+  <span style="font-size: 12px; color: #98A2AF">Checked after the close · 15 Oct 22:05 · run since 5 Oct</span>
+</section>
+<section aria-label="Readiness summary" style="display: flex; flex-wrap: wrap; gap: 12px">
+  <div style="flex: 1 1 150px; padding: 14px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+  <span style="font-size: 12px; color: #98A2AF">Pass</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 24px; color: #3DD68C">7</span><span style="font-size: 12px; color: #98A2AF">of 15 criteria</span></div>
+  <div style="flex: 1 1 150px; padding: 14px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+  <span style="font-size: 12px; color: #98A2AF">Not yet</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 24px; color: #FF8A8F">4</span><span style="font-size: 12px; color: #98A2AF">below target</span></div>
+  <div style="flex: 1 1 150px; padding: 14px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+  <span style="font-size: 12px; color: #98A2AF">Waiting for data</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 24px; color: #FFD58A">4</span><span style="font-size: 12px; color: #98A2AF">samples too small</span></div>
+  <div style="flex: 1 1 150px; padding: 14px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+  <span style="font-size: 12px; color: #98A2AF">Manual items</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 24px; color: #E7EAEE">0 of 5</span><span style="font-size: 12px; color: #98A2AF">done</span></div>
+  <div style="flex: 1 1 150px; padding: 14px 16px; background: #12161D; border: 1px solid #232A35; border-radius: 10px; display: flex; flex-direction: column; gap: 4px">
+  <span style="font-size: 12px; color: #98A2AF">Earliest possible</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 24px; color: #E7EAEE">≈ Q4 2027</span><span style="font-size: 12px; color: #98A2AF">limited by closed trades</span></div>
+</section>
+<section aria-label="Evidence" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Evidence</h2><div style="font-size: 13px; color: #98A2AF"><a href="Performance.dc.html">Performance</a></div></div>
+<div style="font-size: 13px; color: #98A2AF; margin-top: -6px">From this run, after slippage. Ratios need enough closed trades before they can pass.</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Trades closed in this run." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Closed trades</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">≈ 290 sessions at the current pace</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">3</span><span style="color: #98A2AF">target ≥ 100</span></div><div style="height: 6px; border-radius: 3px; background: #232A35; margin-top: 6px"><div style="width: 3%; height: 6px; border-radius: 3px; background: #9FB4CC"></div></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A1416; color: #FF8A8F; border: 1px solid #7A2A2E">not yet</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Trading sessions since Start new run." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Paper sessions in this run</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">≈ 4 Jan 2027</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">9</span><span style="color: #98A2AF">target ≥ 60</span></div><div style="height: 6px; border-radius: 3px; background: #232A35; margin-top: 6px"><div style="width: 15%; height: 6px; border-radius: 3px; background: #9FB4CC"></div></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A1416; color: #FF8A8F; border: 1px solid #7A2A2E">not yet</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Adjusted return of this run minus SPY buy and hold over the same sessions." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Return vs SPY (adjusted)</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">+0.63 pts</span><span style="color: #98A2AF">target > 0</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Largest fall from a peak in this run, adjusted." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Max drawdown</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">−0.49%</span><span style="color: #98A2AF">target under 6%</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Average result per closed trade in R, after slippage. Needs 30 closed trades." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Average R (adjusted)</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">needs 30 closed trades</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">+1.07R · 3 trades</span><span style="color: #98A2AF">target ≥ +0.2R</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">waiting for data</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Gross wins ÷ gross losses, adjusted. Needs 30 closed trades." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Profit factor</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">needs 30 closed trades</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">— · 3 trades</span><span style="color: #98A2AF">target ≥ 1.3</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">waiting for data</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Average R of live above the rules-only shadow over the same sessions. Needs 30 closed trades each." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Beats rules-only</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">the question this run must answer: does the model add value?</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">— · 3 vs 9 trades</span><span style="color: #98A2AF">target live > rules-only</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">waiting for data</span></div>
+</div>
+</section>
+<section aria-label="Model" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Model</h2><div style="font-size: 13px; color: #98A2AF"><a href="Strategies.dc.html">Strategies</a></div></div>
+<div style="font-size: 13px; color: #98A2AF; margin-top: -6px">Whether the model’s proposals and confidence can be trusted.</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Share of the last 100 model entries that passed stop distance and reward to risk." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Entry proposals that pass code checks</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">decision.v2 (code-built stop and target options) targets this</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">3% · 1 of 33</span><span style="color: #98A2AF">target ≥ 75%</span></div><div style="height: 6px; border-radius: 3px; background: #232A35; margin-top: 6px"><div style="width: 4%; height: 6px; border-radius: 3px; background: #9FB4CC"></div></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A1416; color: #FF8A8F; border: 1px solid #7A2A2E">not yet</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Average gap between stated confidence and actual win rate per confidence group, weighted by group size. Needs 50 filled entries." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Confidence calibration</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">needs 50 filled entries</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">— · 3 entries</span><span style="color: #98A2AF">target within 10 pts</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">waiting for data</span></div>
+</div>
+</section>
+<section aria-label="Operations" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Operations</h2></div>
+<div style="font-size: 13px; color: #98A2AF; margin-top: -6px">Whether the agent runs safely without you watching.</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Scheduled cycles that completed, last 20 sessions. Missed cycles show their reason." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Cycles completed</div><div style="font-size: 12px; color: #98A2AF; margin-top: 4px">2 missed: shutdown during the session (14 Oct)</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">96% · 52 of 54</span><span style="color: #98A2AF">target ≥ 98%</span></div><div style="height: 6px; border-radius: 3px; background: #232A35; margin-top: 6px"><div style="width: 96%; height: 6px; border-radius: 3px; background: #9FB4CC"></div></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #3A1416; color: #FF8A8F; border: 1px solid #7A2A2E">not yet</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Times a position had no live stop at Alpaca for longer than one position check, last 30 sessions." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Positions without a stop</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">0</span><span style="color: #98A2AF">target 0</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Kill switch turned on, manually or automatically, last 30 sessions." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Kill switch events</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">0</span><span style="color: #98A2AF">target 0</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Errors that affected a decision, order or fill and are not resolved, last 10 sessions. An error resolves itself after 1 hour without recurring, or you dismiss it with a note." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Unresolved errors</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">0</span><span style="color: #98A2AF">target 0</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Candidate checks blocked as price_stale or price_suspect, last 20 sessions." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Price data quality</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">2.1%</span><span style="color: #98A2AF">target ≤ 5%</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div><div style="display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <div style="flex: 1.6 1 260px; min-width: 0"><div title="Unacknowledged reconciliation mismatches right now." style="font-size: 14px; text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: #2E3643; cursor: help; display: inline">Reconciliation</div></div>
+  <div style="flex: 1 1 200px; min-width: 0"><div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><span style="font-family: 'IBM Plex Mono', monospace">0</span><span style="color: #98A2AF">target 0</span></div></div>
+  <div style="flex: 0 1 140px; margin-left: auto; display: flex; justify-content: flex-end"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">pass</span></div>
+</div>
+</section>
+<section aria-label="Manual items" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Manual items</h2><div style="font-size: 13px; color: #98A2AF">0 of 5 done</div></div>
+<div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <button type="button" role="checkbox" aria-checked="false" aria-label="Real-time SIP market data" style="width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; border: 1px solid #2E3643; background: #0B0E13; padding: 0"></button>
+  <div style="flex: 1; min-width: 0"><div style="font-size: 14px">Real-time SIP market data</div><div style="font-size: 12px; color: #98A2AF">Paid Alpaca data, so entries use the consolidated quote instead of the IEX last trade.</div></div>
+  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">to do</span>
+</div><div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <button type="button" role="checkbox" aria-checked="false" aria-label="Dutch tax treatment checked" style="width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; border: 1px solid #2E3643; background: #0B0E13; padding: 0"></button>
+  <div style="flex: 1; min-width: 0"><div style="font-size: 14px">Dutch tax treatment checked</div><div style="font-size: 12px; color: #98A2AF">With an advisor, before any real money is traded.</div></div>
+  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">to do</span>
+</div><div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <button type="button" role="checkbox" aria-checked="false" aria-label="Live-trading spec written and reviewed" style="width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; border: 1px solid #2E3643; background: #0B0E13; padding: 0"></button>
+  <div style="flex: 1; min-width: 0"><div style="font-size: 14px">Live-trading spec written and reviewed</div><div style="font-size: 12px; color: #98A2AF">Live trading is a separate spec; passing this page is necessary, not sufficient.</div></div>
+  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">to do</span>
+</div><div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <button type="button" role="checkbox" aria-checked="false" aria-label="Hosting with login" style="width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; border: 1px solid #2E3643; background: #0B0E13; padding: 0"></button>
+  <div style="flex: 1; min-width: 0"><div style="font-size: 14px">Hosting with login</div><div style="font-size: 12px; color: #98A2AF">VPS with HTTPS and login, so the agent no longer depends on this computer.</div></div>
+  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">to do</span>
+</div><div style="display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid #232A35">
+  <button type="button" role="checkbox" aria-checked="false" aria-label="First live size and loss limit decided" style="width: 22px; height: 22px; flex: 0 0 22px; border-radius: 5px; border: 1px solid #2E3643; background: #0B0E13; padding: 0"></button>
+  <div style="flex: 1; min-width: 0"><div style="font-size: 14px">First live size and loss limit decided</div><div style="font-size: 12px; color: #98A2AF">Start small; written down before the switch exists.</div></div>
+  <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">to do</span>
+</div><div style="font-size: 12px; color: #98A2AF; padding-top: 10px">Ticking an item asks for a short note; it is stored with the date and shown in History.</div>
+</section>
+<section aria-label="History" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">History</h2><div style="font-size: 13px; color: #98A2AF">first pass and fail per criterion</div></div>
+<div style="overflow-x: auto"><table style="width: 100%; min-width: 420px">
+<thead><tr><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Date</th><th scope="col" style="text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 500; color: #98A2AF; border-bottom: 1px solid #232A35; white-space: nowrap">Change</th></tr></thead>
+<tbody><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">15 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Price data quality passes (2.1%)</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">14 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Return vs SPY passes</td></tr><tr style=""><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top; font-family: 'IBM Plex Mono', monospace;">5 Oct</td><td style="text-align: left; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; vertical-align: top;">Run started; all counters reset</td></tr></tbody>
+</table></div><div style="font-size: 12px; color: #98A2AF">Thresholds are in Settings → Readiness; changing one is a settings change with a reason.</div>
+</section>
+
+  </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 2000}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = {};
+  }
+  renderVals() {
+    var self = this;
+
+    var navCollapsed = !!(this.state && this.state.navCollapsed);
+    var navBase = 'height:44px;display:flex;align-items:center;gap:12px;border-radius:8px;text-decoration:none;font-size:14px;font-weight:500;box-sizing:border-box;white-space:nowrap;' + (navCollapsed ? 'justify-content:center;padding:0;' : 'padding:0 12px;');
+    var nav = {
+      expanded: !navCollapsed,
+      expandedStr: String(!navCollapsed),
+      toggle: function () { self.setState({ navCollapsed: !navCollapsed }); },
+      toggleLabel: navCollapsed ? 'Expand sidebar' : 'Collapse sidebar',
+      aside: 'flex:0 0 ' + (navCollapsed ? '72px' : '232px') + ';box-sizing:border-box;display:flex;flex-direction:column;gap:16px;padding:16px ' + (navCollapsed ? '12px' : '16px') + ';background:#0F131A;border-right:1px solid #232A35',
+      brandRow: 'display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #232A35;' + (navCollapsed ? 'justify-content:center' : ''),
+      item: navBase + 'color:#98A2AF',
+      active: navBase + 'background:#1C222C;color:#E7EAEE',
+      status: 'display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#171C24;border:1px solid #232A35;font-size:13px;' + (navCollapsed ? 'justify-content:center' : ''),
+      dot: 'width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#3DD68C',
+      toggleStyle: navBase + 'width:100%;border:1px solid #232A35;background:transparent;color:#98A2AF;cursor:pointer;font-family:inherit'
+    };
+    nav.group = navCollapsed ? 'height:1px;background:#232A35;margin:8px 4px;overflow:hidden;color:transparent;font-size:0' : 'font-size:11px;font-weight:600;color:#8A94A1;text-transform:uppercase;letter-spacing:0.08em;padding:12px 12px 4px';
+
+    return { nav: nav };
+  }
+}
+</script>
+</body>
+</html>

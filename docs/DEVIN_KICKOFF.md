@@ -161,6 +161,63 @@ in the PR before guessing.
 
 PR 14 (Backtesting) uses the "Each later PR" message below.
 
+## Readiness (PR 16)
+
+```
+PR 16 (Readiness) is next — start it only after PR 15 is merged. Pull the
+latest spec and design packages, then read, in this order:
+1. docs/CHANGES.md, entry 2026-10-24 "Readiness (PR 16)"
+2. docs/SPEC.md → "Readiness", Notifications (new "Readiness changed" event),
+   Data model (readiness_snapshots, readiness_manual, events columns),
+   Build plan item 16
+3. backend/config.example.yaml → readiness block
+4. design/screens/Readiness.dc.html and Settings.dc.html (Readiness section),
+   screenshots Readiness.png, Readiness-390.png
+
+Build PR 16 only:
+- New Alembic revision: readiness_snapshots, readiness_manual, and on events:
+  affects (decision | order | fill | none), resolved_at, resolution
+  (auto | dismissed), note. Backfill affects where the event already links
+  to a decision, order or fill; otherwise none.
+- Readiness evaluator: one function that computes all 15 criteria for the
+  current run from stored data (adjusted P&L via the Performance function,
+  rules-only shadow via the Strategies comparison, cycles and their
+  missed reasons, events, price_stale/price_suspect decisions). Each result:
+  value, target, status (pass | not_yet | waiting), sample size, and an
+  estimate for counts (pace = closed trades per session; sessions via the
+  trading calendar). Run it after each session's close and store a snapshot
+  (hard rule 13: no write lock across I/O). The screen reads the latest
+  snapshot only.
+- Minimum samples exactly as in the spec table: below the minimum the status
+  is waiting, never pass or fail.
+- Errors: auto-resolve after readiness.error_auto_resolve_minutes without
+  recurrence; dismiss with a required note from the banner and the events
+  list. Only affects != none counts.
+- Manual items (five, fixed by the spec): tick/untick with a required note,
+  stored with date, shown in History.
+- History: every status change per criterion and every manual change, dated.
+- Settings → Readiness: the configurable thresholds as versioned settings;
+  zero-tolerance criteria and manual items are not editable.
+- Notification "Readiness changed" (Info, browser on, email off) through the
+  existing notification service.
+- Readiness screen in the Control group, as in the design: verdict banner,
+  summary tiles, three groups with value / target / bar / status and hover
+  text, manual items, History.
+- Nothing may enable live trading: no live switch, no live base URL (the
+  existing test must still pass).
+
+Tests (fixtures, injected clock, no network): every criterion pass / not_yet
+/ waiting at its boundaries (e.g. 29 vs 30 closed trades, 97.9% vs 98%
+cycles); calibration with groups under 10 skipped; beats-rules-only waiting
+when the rules-only shadow started after the run; estimates from pace and
+calendar; error auto-resolve after 60 min and dismiss-with-note; a new run
+resets evidence; snapshot written after the close and survives a restart;
+the screen makes no evaluation per request.
+
+Use the PR template, save screenshots in docs/screenshots/pr-16/ next to the
+design PNGs, and ask in the PR before guessing.
+```
+
 ## Each later PR
 
 ```

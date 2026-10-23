@@ -23,7 +23,11 @@ from app.db.models import Cycle, EquitySnapshot
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import ExecutionState, record_event
-from app.market.clock import Clock
+from app.market.clock import NY_TZ, Clock
+
+
+class _ReconcileFailed(Exception):
+    """Reconcile errors are already in report.errors — nothing to append."""
 
 
 @dataclass
@@ -62,6 +66,15 @@ class PositionChecker:
     async def run(self) -> CheckReport:
         now = self.clock.now()
         report = CheckReport()
+        # Outside the session (weekend, holiday, pre-open, post-close):
+        # the broker-side stops keep working without 15-minute broker
+        # calls — the agent stays idle (docs/SPEC.md, Session).
+        ny_now = now.astimezone(NY_TZ)
+        session_day = self.executor.calendar.session_for(ny_now.date())
+        if session_day is None or not (
+            session_day.open <= ny_now < session_day.close
+        ):
+            return report
         with self._session_factory() as session:
             cycle = Cycle(
                 kind="position_check",
@@ -73,6 +86,8 @@ class PositionChecker:
             session.commit()
             try:
                 await self._run(session, report)
+            except _ReconcileFailed:
+                report.ok = False
             except Exception as exc:  # noqa: BLE001
                 report.ok = False
                 report.errors.append(str(exc))
@@ -116,7 +131,7 @@ class PositionChecker:
         report.entries_cancelled = len(rec.entries_cancelled)
         if rec.errors:
             report.errors.extend(rec.errors)
-            raise RuntimeError("; ".join(rec.errors))
+            raise _ReconcileFailed
         # Since-open shock brake, daily loss and drawdown kill from the
         # real-time quote and account; the 1h leg stays on the cycle.
         await self.executor.update_session_brakes()

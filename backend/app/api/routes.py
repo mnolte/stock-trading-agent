@@ -2668,8 +2668,10 @@ def _latest_box(
             )
         elif reason == "call_cap":
             label, tone, detail = "Call cap", 0, "reached"
-        elif reason == "quote_missing":
-            label, tone, detail = "Quote", -1, "unavailable"
+        elif reason == "price_stale":
+            label, tone, detail = "Price", -1, "stale"
+        elif reason == "price_suspect":
+            label, tone, detail = "Price", -1, "suspect"
         else:
             label, tone = "Model call", -1
             detail = str(validation.get("error") or "failed")

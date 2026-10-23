@@ -91,11 +91,11 @@ def _iso(dt: datetime | None) -> str | None:
 
 def _decision_category(decision: Decision) -> str:
     """Group key for the "Decisions and outcomes" table."""
+    if decision.final_action == "no_call":
+        return "model_error" if decision.no_call_reason == "model_error" else "no_call"
     valid = (decision.validation_result or {}).get("valid")
     if decision.model != "none" and valid is False:
         return "invalid"
-    if decision.final_action == "no_call":
-        return "model_error" if decision.no_call_reason == "model_error" else "no_call"
     return decision.final_action
 
 

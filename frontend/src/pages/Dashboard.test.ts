@@ -21,7 +21,7 @@ describe('actionChip', () => {
     expect(actionChip('no_call', null).label).toBe('RULES');
   });
   it('labels non-rules no-calls as NO CALL', () => {
-    for (const reason of ['call_cap', 'quote_missing', 'model_error']) {
+    for (const reason of ['call_cap', 'price_stale', 'model_error']) {
       expect(actionChip('no_call', reason).label).toBe('NO CALL');
     }
   });

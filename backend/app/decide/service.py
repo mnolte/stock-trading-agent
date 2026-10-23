@@ -33,7 +33,7 @@ from app.rules.prefilter import RulesResult
 
 # Final action recorded when no usable model answer exists (no call made,
 # or the call failed). ``no_call_reason`` says why: rules, call_cap,
-# quote_missing or model_error.
+# price_stale, price_suspect or model_error.
 NO_CALL = "no_call"
 
 

@@ -884,6 +884,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         backtest_manager.tick,
         IntervalTrigger(seconds=10),
         id="backtests-tick",
+        misfire_grace_time=10,
         coalesce=True,
     )
     scheduler.start()

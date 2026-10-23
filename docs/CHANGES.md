@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-10-24 — Readiness (PR 16)
+
+- New "Readiness" section: a screen in the Control group showing whether the current run's paper evidence would justify live trading. 15 criteria in Evidence, Model and Operations (closed trades, sessions, return vs SPY, drawdown, average R, profit factor, beats rules-only, proposals passing code checks, calibration, cycle coverage, stops, kill switch, errors, price checks, reconciliation) with minimum samples ("waiting for data"), estimates at the current pace, and five manual items. Nothing unlocks automatically; live trading needs its own spec.
+- Errors resolve after 1 hour without recurring or are dismissed with a note; only errors affecting a decision, order or fill count.
+- Data model: `readiness_snapshots`, `readiness_manual`; `events` gains affects, resolved at, resolution, note. Config: `readiness` block. Settings: Readiness section. Notifications: "Readiness changed".
+- Build plan: PR 16.
+
+## 2026-10-23 — Market price instead of the IEX ask (PR 15 question)
+
+- Entries: the IEX quote on the free plan is one small exchange's book and often shows thin orders 2.5–7% off the tape, so it is no longer the market price. Market price = IEX last trade, ≤ 60 s old and within 1% of the last closed 5-min bar (`price_stale` / `price_suspect` otherwise: no model call, no entry). IEX bid/ask used only when plausible (both within 1% of the market price); a thin book is `spread_unknown` and doesn't block. Entry limit = market price + 0.05%. Stop distance from the lowest of market price, plausible ask and bar close; tighten_stop from the lowest of market price, plausible bid and bar close. Held positions are always reviewed. Replaces the `quote_missing` / `quote_suspect` rules of the 2026-10-23 integrity entry.
+- Shadows: use live's price and quote when fetched (same rules); otherwise the bar close as a synthetic market price; count shown on Strategies.
+- Later versions: live readiness includes real-time SIP data.
+
 ## 2026-10-23 — Integrity fixes from the 22 October analysis (PR 15)
 
 - Entries: usable quotes only (quote timestamp, never the trade's or fetch time; missing or zero bid/ask → quote_missing; ask > 1% from the last bar close → quote_suspect; both before any model call); quote provenance stored per decision; size, order value and all gates redone on the final limit; stop must sit ≥ 1.5 × ATR below the lowest of ask, last trade and bar close before submit. Config: `execution.quote_max_deviation_pct`.

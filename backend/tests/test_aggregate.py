@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from app.data.aggregate import aggregate_1h, session_1h_windows
+from app.data.aggregate import aggregate_1h, session_1h_windows, session_bars
 from app.data.models import Bar5m, CalendarDay
 from app.market.clock import NY_TZ, UTC
 
@@ -118,3 +118,26 @@ def test_aggregate_early_close_final_partial_bar() -> None:
     last = result[-1]
     assert last.end == session.close
     assert last.complete is True
+
+
+def test_session_bars_drops_extended_hours() -> None:
+    """SIP returns 04:00-20:00 NY; only regular-session bars are kept —
+    including the post-market tail of an early-close day."""
+    day = date(2026, 10, 15)
+    session = _session(day)
+    early = _session(date(2026, 11, 27), close=time(13, 0))
+    bars = [
+        _bar("AAPL", datetime(2026, 10, 15, 8, 0, tzinfo=NY_TZ), "99"),  # pre-market
+        _bar("AAPL", session.open, "100"),
+        _bar("AAPL", session.close - timedelta(minutes=5), "101"),
+        _bar("AAPL", session.close, "102"),  # first post-market bar
+        _bar("AAPL", datetime(2026, 10, 15, 19, 0, tzinfo=NY_TZ), "103"),  # post-market
+        _bar("AAPL", datetime(2026, 11, 27, 13, 5, tzinfo=NY_TZ), "104"),  # early-close post-market
+        _bar("AAPL", early.open, "105"),
+    ]
+    kept = session_bars(bars, [session, early])
+    assert [b.start for b in kept] == [
+        session.open.astimezone(UTC),
+        (session.close - timedelta(minutes=5)).astimezone(UTC),
+        early.open.astimezone(UTC),
+    ]

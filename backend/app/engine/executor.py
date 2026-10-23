@@ -29,6 +29,7 @@ from app.broker.models import (
     BrokerPosition,
     TradeUpdateInfo,
 )
+from app.data.aggregate import session_bars
 from app.data.cache import _naive_utc
 from app.data.models import CalendarDay, Quote
 from app.data.service import MarketDataService
@@ -234,7 +235,7 @@ class Executor:
             ["SPY"], session.open, now
         )
         if bars.error is None and bars.data:
-            self.market_data.bars_cache.store(bars.data)
+            self.market_data.bars_cache.store(session_bars(bars.data, [session]))
         todays_5m = self.market_data.get_5m_bars(
             "SPY", session.open, session.close
         )
@@ -249,6 +250,8 @@ class Executor:
         move_session = (
             (quote.last - session_open) / session_open * 100
             if quote is not None
+            and quote.last.is_finite()
+            and quote.last > 0
             and session_open is not None
             and session_open > 0
             else None
@@ -603,6 +606,12 @@ class Executor:
             return f"reward to risk {reward_to_risk or 0:.2f} below {min_rr}"
         return None
 
+    def _quote_provenance(self, quote: Quote) -> dict[str, str | bool | None]:
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
+        return quote.provenance(quote.quote_plausible(dev_pct))
+
     async def _fresh_entry_check(
         self,
         *,
@@ -613,10 +622,11 @@ class Executor:
     ) -> tuple[Quote | None, Decimal | None, str | None]:
         """The "Fresh quote" gate right before an entry order is sent.
 
-        Fetches the latest IEX quote, rejects a missing quote
-        (``quote_missing``) or one whose own timestamp is older than
-        ``execution.quote_max_age_seconds`` (``quote_stale``), and on a
-        fresh quote re-runs the spread check, recomputes the limit price
+        Fetches the latest IEX quote, rejects a missing or older last
+        trade (``price_stale``) or one more than
+        ``execution.quote_max_deviation_pct`` off the last closed bar
+        (``price_suspect``), and on a usable market price re-runs the
+        spread check on a plausible quote, recomputes the limit price
         and re-runs the code checks (stop distance, reward to risk) from
         the new entry. Returns ``(quote, limit, reason)`` — on failure
         ``limit`` is None and ``reason`` names the failing check.
@@ -630,35 +640,40 @@ class Executor:
             else None
         )
         if quote is None:
-            return None, None, "quote_missing"
+            return None, None, "price_stale"
         now = self.clock.now()
         bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
-        reason = quote.quality_reason(
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
+        reason = quote.price_reason(
             now=now,
             max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
             bar_close=bar.close if bar is not None else None,
-            max_deviation_pct=Decimal(str(self.config.get("execution", "quote_max_deviation_pct"))),
+            max_deviation_pct=dev_pct,
         )
         if reason is not None:
             return quote, None, reason
-        reference = quote.stop_reference(bar.close if bar else None, atr_1h, entry=True)
+        reference = quote.stop_reference(
+            bar.close if bar else None, atr_1h, entry=True,
+            max_deviation_pct=dev_pct,
+        )
         if reference is None:
             return quote, None, "reference_missing"
-        max_spread = Decimal(
-            str(self.config.get("execution", "max_spread_pct", default=0.15))
-        )
-        mid = (quote.ask + quote.bid) / 2
-        if mid <= 0:
-            return quote, None, "quote midpoint is zero or negative"
-        spread_pct = (quote.ask - quote.bid) / mid * 100
-        if spread_pct > max_spread:
-            return quote, None, f"spread {spread_pct:.3f}% > {max_spread}%"
+        if quote.quote_plausible(dev_pct):
+            max_spread = Decimal(
+                str(self.config.get("execution", "max_spread_pct", default=0.15))
+            )
+            mid = (quote.ask + quote.bid) / 2
+            spread_pct = (quote.ask - quote.bid) / mid * 100
+            if spread_pct > max_spread:
+                return quote, None, f"spread {spread_pct:.3f}% > {max_spread}%"
         offset = Decimal(
             str(
                 self.config.get("execution", "entry_limit_offset_pct", default=0.05)
             )
         )
-        limit = _cents(quote.ask * (1 + offset / 100))
+        limit = _cents(quote.last * (1 + offset / 100))
         risk = trade_risk(limit, stop, target, atr_1h)
         fail = self._code_check_failure(
             atr_multiple=risk.atr_multiple,
@@ -728,7 +743,7 @@ class Executor:
                     decision.gates_result = {
                         "allowed": False, "blocked_by": "fresh_quote",
                         "checks": [{"name": "fresh_quote", "passed": False, "detail": fail}],
-                        "quote": quote.provenance() if quote is not None else None,
+                        "quote": self._quote_provenance(quote) if quote is not None else None,
                     }
                 session.commit()
                 self._notify({"approvals", "decisions"})
@@ -749,7 +764,7 @@ class Executor:
             )
             if decision is not None:
                 decision.gates_result = result.to_json() | {
-                    "entry_limit": str(limit), "quote": quote.provenance(),
+                    "entry_limit": str(limit), "quote": self._quote_provenance(quote),
                 }
             if not result.allowed:
                 blocked = result.blocked_by or "gate"
@@ -1893,7 +1908,7 @@ class Executor:
             return
         stop = _cents(Decimal(str(stop)))
         target = _cents(Decimal(str(target)))
-        entry = _cents(quote.ask * (1 + Decimal(str(
+        entry = _cents(quote.last * (1 + Decimal(str(
             self.config.get("execution", "entry_limit_offset_pct", default=0.05)
         )) / 100))
         result = evaluate_entry_gates(
@@ -1922,6 +1937,11 @@ class Executor:
 
         # Spread and entry limit from the decision-time IEX quote; the
         # automatic branch re-fetches a fresh quote before submitting.
+        # The spread gate runs only on a plausible quote — a thin IEX
+        # book is recorded as spread_unknown, never a block.
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
         max_spread = Decimal(
             str(self.config.get("execution", "max_spread_pct", default=0.15))
         )
@@ -1930,29 +1950,19 @@ class Executor:
                 self.config.get("execution", "entry_limit_offset_pct", default=0.05)
             )
         )
-        mid = (quote.ask + quote.bid) / 2
-        if mid <= 0:
-            # A zeroed/negative quote midpoint would divide by zero below;
-            # the quote is unusable, so the entry is blocked.
-            decision.gates_result = result.to_json() | {
-                "allowed": False,
-                "blocked_by": "missing_data",
-                "detail": "quote midpoint is zero or negative",
-            }
-            decision.final_action = "blocked"
-            session.flush()
-            return
-        spread_pct = (quote.ask - quote.bid) / mid * 100
-        if spread_pct > max_spread:
-            decision.gates_result = result.to_json() | {
-                "allowed": False,
-                "blocked_by": "spread",
-                "detail": f"spread {spread_pct:.3f}% > {max_spread}%",
-            }
-            decision.final_action = "blocked"
-            session.flush()
-            return
-        limit = _cents(quote.ask * (1 + offset / 100))
+        if quote.quote_plausible(dev_pct):
+            mid = (quote.ask + quote.bid) / 2
+            spread_pct = (quote.ask - quote.bid) / mid * 100
+            if spread_pct > max_spread:
+                decision.gates_result = result.to_json() | {
+                    "allowed": False,
+                    "blocked_by": "spread",
+                    "detail": f"spread {spread_pct:.3f}% > {max_spread}%",
+                }
+                decision.final_action = "blocked"
+                session.flush()
+                return
+        limit = _cents(quote.last * (1 + offset / 100))
 
         if str(self.config.get("execution", "mode", default="automatic")) == (
             "supervised"
@@ -2020,7 +2030,9 @@ class Executor:
                 ],
             )
             decision.gates_result = failed.to_json() | {
-                "quote": fresh_quote.provenance() if fresh_quote is not None else None,
+                "quote": self._quote_provenance(fresh_quote)
+                if fresh_quote is not None
+                else None,
             }
             decision.final_action = "blocked"
             session.flush()
@@ -2033,7 +2045,8 @@ class Executor:
             ctx, entry=fresh_limit, stop=Decimal(str(stop)), config=self.config,
         )
         decision.gates_result = result.to_json() | {
-            "entry_limit": str(fresh_limit), "quote": fresh_quote.provenance(),
+            "entry_limit": str(fresh_limit),
+            "quote": self._quote_provenance(fresh_quote),
         }
         if not result.allowed or result.sizing is None:
             decision.final_action = "blocked"
@@ -2134,9 +2147,9 @@ class Executor:
         reason = None
         reference = None
         if quote is None:
-            reason = "reference_missing"
+            reason = "price_stale"
         else:
-            reason = quote.quality_reason(
+            reason = quote.price_reason(
                 now=now,
                 max_age_seconds=float(
                     self.config.get("execution", "quote_max_age_seconds")
@@ -2148,7 +2161,10 @@ class Executor:
             )
             if reason is None:
                 reference = quote.stop_reference(
-                    bar.close if bar else None, atr_1h, entry=False
+                    bar.close if bar else None, atr_1h, entry=False,
+                    max_deviation_pct=Decimal(
+                        str(self.config.get("execution", "quote_max_deviation_pct"))
+                    ),
                 )
         margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
         if reason is None:
@@ -2188,6 +2204,37 @@ class Executor:
         session.flush()
         self._notify({"positions", "orders"})
 
+    async def _ensure_dead(
+        self, order_id: str
+    ) -> tuple[bool, BrokerOrder | None, str | None]:
+        """Cancel one broker order if still live; confirm it can't fill.
+
+        ``(True, order, None)`` — terminal now; ``(True, None, None)`` —
+        the broker has no such order, so nothing can fill; ``(False,
+        None, error)`` — the cancel write failed (error carries the
+        broker's message); ``(False, None, None)`` — a read failed or
+        the order is still live, so its state stays unconfirmed. A leg a
+        cancelled parent took down reads as already terminal and passes.
+        The market sell must never go out before every leg is confirmed
+        done (docs/SPEC.md, Exits).
+        """
+        checked = await self.broker.get_order(order_id)
+        if checked.error is not None:
+            return False, None, None
+        if checked.data is not None and checked.data.is_open:
+            cancelled = await self.broker.cancel_order(order_id)
+            if cancelled.error is not None:
+                return False, None, cancelled.error
+            checked = await self.broker.get_order(order_id)
+            if checked.error is not None:
+                return False, None, None
+        order = checked.data
+        if order is None:
+            return True, None, None
+        if order.is_open:
+            return False, None, None
+        return True, order, None
+
     async def _exit(
         self,
         session: Session,
@@ -2224,50 +2271,46 @@ class Executor:
             session.flush()
             return
 
-        # Cancel every open leg for the symbol and confirm before selling.
-        legs = session.execute(
+        # Cancel every open order for the symbol and confirm each is dead
+        # before selling — both sides: a still-working buy parent (a
+        # partially filled entry, or an order placed outside the agent)
+        # would keep adding shares after the exit, and its nested legs
+        # could still fire.
+        open_orders = session.execute(
             select(Order).where(
                 Order.symbol == position.symbol,
-                Order.side == "sell",
                 Order.status.in_(OPEN_ORDER_STATUSES),
             )
         ).scalars().all()
-        for leg in legs:
-            cancelled = await self.broker.cancel_order(leg.alpaca_order_id)
-            if cancelled.error is not None:
+        for row in open_orders:
+            ok, final, error = await self._ensure_dead(row.alpaca_order_id)
+            if not ok:
                 record_event(
                     session,
                     self.clock,
                     level="critical",
-                    event_type="order_submit_failed",
+                    event_type=(
+                        "order_submit_failed" if error
+                        else "leg_cancel_unconfirmed"
+                    ),
                     details={
                         "symbol": position.symbol,
-                        "order": leg.alpaca_order_id,
-                        "error": cancelled.error,
+                        "order": row.alpaca_order_id,
+                        **({"error": error} if error else {}),
                     },
                 )
                 session.flush()
                 return
-            confirmed = await self.broker.get_order(leg.alpaca_order_id)
-            if confirmed.data is not None:
-                leg.status = confirmed.data.status
-            if confirmed.data is not None and confirmed.data.is_open:
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="leg_cancel_unconfirmed",
-                    details={
-                        "symbol": position.symbol,
-                        "order": leg.alpaca_order_id,
-                    },
-                )
-                session.flush()
-                return
+            if final is not None:
+                row.status = final.status
+                if row.active_until is None:
+                    row.active_until = _naive_utc(
+                        final.updated_at or self.clock.now()
+                    )
 
-        # Broker-side legs the DB never recorded (e.g. a crash between the
-        # broker's accept and our store) must be cancelled and confirmed
-        # too — the market sell must never go past a live leg.
+        # Broker-side orders the DB never recorded (e.g. a crash between
+        # the broker's accept and our store) must be cancelled and
+        # confirmed too — the market sell must never go past a live leg.
         broker_open = await self.broker.get_open_orders()
         if broker_open.error is not None:
             record_event(
@@ -2282,10 +2325,10 @@ class Executor:
             )
             session.flush()
             return
-        known_ids = {leg.alpaca_order_id for leg in legs}
+        known_ids = {row.alpaca_order_id for row in open_orders}
         extra_legs: list[BrokerOrder] = []
         for order in broker_open.data:
-            if order.symbol != position.symbol or order.side != "sell":
+            if order.symbol != position.symbol:
                 continue
             if order.is_open and order.id not in known_ids:
                 extra_legs.append(order)
@@ -2295,36 +2338,27 @@ class Executor:
                 if leg_order.is_open and leg_order.id not in known_ids
             )
         for order in extra_legs:
-            cancelled = await self.broker.cancel_order(order.id)
-            if cancelled.error is not None:
+            ok, final, error = await self._ensure_dead(order.id)
+            if not ok:
                 record_event(
                     session,
                     self.clock,
                     level="critical",
-                    event_type="order_submit_failed",
+                    event_type=(
+                        "order_submit_failed" if error
+                        else "leg_cancel_unconfirmed"
+                    ),
                     details={
                         "symbol": position.symbol,
                         "order": order.id,
-                        "error": cancelled.error,
+                        **({"error": error} if error else {}),
                     },
                 )
                 session.flush()
                 return
-            confirmed = await self.broker.get_order(order.id)
-            if confirmed.data is not None and confirmed.data.is_open:
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="leg_cancel_unconfirmed",
-                    details={
-                        "symbol": position.symbol,
-                        "order": order.id,
-                    },
-                )
-                session.flush()
-                return
-        # Hard rule 13: the leg statuses are durable before the market sell.
+            if final is not None:
+                self._store_broker_order(session, final, None)
+        # Hard rule 13: the order statuses are durable before the market sell.
         session.commit()
 
         ny_now = now.astimezone(NY_TZ)

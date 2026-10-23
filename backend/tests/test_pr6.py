@@ -564,7 +564,7 @@ async def test_pending_approvals_expire_at_next_cycle(
 
 
 class _StaleQuotes:
-    """Quotes stamped ``age`` seconds behind the clock."""
+    """Quotes whose last trade is stamped ``age`` seconds behind the clock."""
 
     def __init__(self, clock: FakeClock, age: int) -> None:
         self._clock = clock
@@ -583,6 +583,8 @@ class _StaleQuotes:
                     last=Decimal("420.10"),
                     timestamp=ts,
                     feed="iex",
+                    trade_timestamp=ts,
+                    fetched_at=self._clock.now(),
                 )
                 for s in symbols
             },
@@ -593,7 +595,7 @@ class _StaleQuotes:
 async def test_approve_rejects_on_stale_quote(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """A 61s-old quote at approve time → rejected with quote_stale."""
+    """A 61s-old last trade at approve time → rejected with price_stale."""
     clock = FakeClock(NOW)
     broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
     config = AppConfig()
@@ -609,16 +611,16 @@ async def test_approve_rejects_on_stale_quote(
     result = await executor.approve(approval_id)
 
     assert result["ok"] is False
-    assert result["error"] == "quote_stale"
+    assert result["error"] == "price_stale"
     with session_factory() as session:
         stored = session.get(Approval, approval_id)
         assert stored is not None
         assert stored.status == "rejected"
-        assert stored.reason == "quote_stale"
+        assert stored.reason == "price_stale"
     assert broker.submit_calls == 0
 
 
-async def test_approve_rejects_when_quote_missing(
+async def test_approve_rejects_without_market_price(
     session_factory: sessionmaker[Session],
 ) -> None:
     class _NoQuotes:
@@ -642,7 +644,7 @@ async def test_approve_rejects_when_quote_missing(
     result = await executor.approve(approval_id)
 
     assert result["ok"] is False
-    assert result["error"] == "quote_missing"
+    assert result["error"] == "price_stale"
     assert broker.submit_calls == 0
 
 

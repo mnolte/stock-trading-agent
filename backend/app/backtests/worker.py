@@ -42,6 +42,7 @@ from app.backtests.store import (
     session_maker_for,
 )
 from app.config import AppConfig
+from app.data.aggregate import session_bars
 from app.data.cache import BarCache, _naive_utc
 from app.data.models import Bar5m as Bar5mData
 from app.data.models import CalendarDay, DailyBar
@@ -372,20 +373,25 @@ async def _fill_bar_store(
                 Bar1d.date <= run.end,
             )
         ).scalars().all()
+    # Defence in depth: the live cache is regular-hours only by
+    # convention, but a dirty row must not leak into the store.
     store.store(
-        [
-            Bar5mData(
-                symbol=r.symbol,
-                start=_aware(r.start),
-                open=r.open,
-                high=r.high,
-                low=r.low,
-                close=r.close,
-                volume=r.volume,
-                feed=r.feed,
-            )
-            for r in rows5
-        ]
+        session_bars(
+            [
+                Bar5mData(
+                    symbol=r.symbol,
+                    start=_aware(r.start),
+                    open=r.open,
+                    high=r.high,
+                    low=r.low,
+                    close=r.close,
+                    volume=r.volume,
+                    feed=r.feed,
+                )
+                for r in rows5
+            ],
+            days,
+        )
     )
     store.store_daily(
         [
@@ -405,7 +411,6 @@ async def _fill_bar_store(
     if alpaca is None:
         return warnings
 
-    day_set = {s.date for s in days}
     for symbol in symbols:
         missing = [
             s
@@ -433,7 +438,9 @@ async def _fill_bar_store(
                     f"{chunk_start}…{chunk_end}: {result.error}"
                 )
                 continue
-            store.store([b for b in result.data if b.start.date() in day_set])
+            # SIP returns the whole extended session; bundles keep the
+            # regular session only, same as the live cache.
+            store.store(session_bars(result.data, days))
         await gate.wait_for_call()
         async with limiter.call_slot():
             result = await alpaca.fetch_daily_bars(
@@ -815,7 +822,9 @@ def _prime_bars(
     start_dt, end_dt = days[0].open, days[-1].close
     cache = bundle.market_data.bars_cache
     for symbol in symbols:
-        cache.store(store.get(symbol, start_dt, end_dt))
+        # Defence in depth, same as the live-cache copy above: an
+        # extended-hours row in the store must not reach the replay.
+        cache.store(session_bars(store.get(symbol, start_dt, end_dt), days))
         cache.store_daily(store.get_daily(symbol, days[0].date, days[-1].date))
 
 

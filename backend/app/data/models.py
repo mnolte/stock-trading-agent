@@ -61,48 +61,69 @@ class Quote:
     trade_timestamp: datetime | None = None
     fetched_at: datetime | None = None
 
-    def quality_reason(
+    def price_reason(
         self, *, now: datetime, max_age_seconds: float,
         bar_close: Decimal | None, max_deviation_pct: Decimal,
     ) -> str | None:
+        """Market-price quality: the IEX last trade is the market price
+        (docs/SPEC.md, Entries — Market price)."""
+        ts = self.trade_timestamp
+        if ts is None or not self.last.is_finite() or self.last <= 0:
+            return "price_stale"
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        if (now - ts).total_seconds() > max_age_seconds:
+            return "price_stale"
+        if (
+            bar_close is not None and bar_close.is_finite() and bar_close > 0
+            and abs(self.last - bar_close) / bar_close * 100 > max_deviation_pct
+        ):
+            return "price_suspect"
+        return None
+
+    def quote_plausible(self, max_deviation_pct: Decimal) -> bool:
+        """Both sides of the IEX book present, timestamped and within the
+        deviation band of the market price (docs/SPEC.md, Entries — IEX
+        bid and ask)."""
         if (
             self.timestamp is None
             or not self.bid.is_finite() or self.bid <= 0
             or not self.ask.is_finite() or self.ask <= 0
+            or not self.last.is_finite() or self.last <= 0
         ):
-            return "quote_missing"
-        timestamp = self.timestamp
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=UTC)
-        if (now - timestamp).total_seconds() > max_age_seconds:
-            return "quote_stale"
-        if (
-            bar_close is not None and bar_close.is_finite() and bar_close > 0
-            and abs(self.ask - bar_close) / bar_close * 100 > max_deviation_pct
-        ):
-            return "quote_suspect"
-        return None
+            return False
+        return (
+            abs(self.bid - self.last) / self.last * 100 <= max_deviation_pct
+            and abs(self.ask - self.last) / self.last * 100 <= max_deviation_pct
+        )
 
     def stop_reference(
-        self, bar_close: Decimal | None, atr: Decimal | None, *, entry: bool,
+        self, bar_close: Decimal | None, atr: Decimal | None, *,
+        entry: bool, max_deviation_pct: Decimal,
     ) -> Decimal | None:
-        required = (self.bid, self.ask, bar_close, atr)
-        if self.timestamp is None or any(
+        """Lowest of market price, the plausible book side (ask for
+        entries, bid for tighten) and the last closed bar."""
+        required = (self.last, bar_close, atr)
+        if any(
             value is None or not value.is_finite() or value <= 0 for value in required
         ):
             return None
         assert bar_close is not None
-        values = [self.ask if entry else self.bid, bar_close]
-        if self.last.is_finite() and self.last > 0:
-            values.append(self.last)
+        values = [self.last, bar_close]
+        if self.quote_plausible(max_deviation_pct):
+            values.append(self.ask if entry else self.bid)
         return min(values)
 
-    def provenance(self) -> dict[str, str | None]:
+    def provenance(self, plausible: bool) -> dict[str, str | bool | None]:
         return {
-            "bid": str(self.bid), "ask": str(self.ask), "last": str(self.last),
-            "last_trade": "present" if self.last.is_finite() and self.last > 0 else "missing",
+            "last": str(self.last),
+            "trade_timestamp": (
+                self.trade_timestamp.isoformat() if self.trade_timestamp else None
+            ),
+            "bid": str(self.bid), "ask": str(self.ask),
             "quote_timestamp": self.timestamp.isoformat() if self.timestamp else None,
-            "trade_timestamp": self.trade_timestamp.isoformat() if self.trade_timestamp else None,
+            "plausible": plausible,
+            "spread_unknown": not plausible,
             "feed": self.feed,
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
         }

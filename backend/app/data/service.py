@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h, bars_per_session
+from app.data.aggregate import aggregate_1h, bars_per_session, session_bars
 from app.data.cache import BarCache, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import (
@@ -128,6 +128,24 @@ class MarketDataService:
             )
         return held
 
+    def _sessions_spanning(
+        self, start: datetime, end: datetime
+    ) -> list[CalendarDay]:
+        """Every trading session whose New York date falls in [start, end]."""
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=UTC)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=UTC)
+        days: list[CalendarDay] = []
+        day = start.astimezone(NY_TZ).date()
+        last = end.astimezone(NY_TZ).date()
+        while day <= last:
+            found = self.calendar.session_for(day)
+            if found is not None:
+                days.append(found)
+            day += timedelta(days=1)
+        return days
+
     def recent_sessions(self, today: date, count: int) -> list[CalendarDay]:
         """The ``count`` most recent trading sessions ending at ``today``."""
         days: list[CalendarDay] = []
@@ -165,8 +183,15 @@ class MarketDataService:
                 )
                 for symbol in wanted
             }
+        # SIP bars cover the full extended session (04:00-20:00 NY); the
+        # cache is regular-hours only — the coverage counters, outcome
+        # reads and shadow replay all assume it (docs/SPEC.md, Market
+        # data).
+        in_session = session_bars(
+            fetched.data or [], self._sessions_spanning(start, end)
+        )
         grouped: dict[str, list[Bar5m]] = {symbol: [] for symbol in wanted}
-        for bar in fetched.data or []:
+        for bar in in_session:
             grouped.setdefault(bar.symbol, []).append(bar)
         return {
             symbol: DataResult(
@@ -388,6 +413,11 @@ class MarketDataService:
             return DataResult(data=0, error=result.error, source=result.source)
         stored = 0
         with self._session_factory() as session:
+            # Same upsert and prune as refresh_earnings: a revised ratio or
+            # amount updates the row in place, and an action cancelled or
+            # moved out of the window is deleted — a stale dividend would
+            # still be credited in trade and shadow P&L.
+            seen: set[tuple[str, str, datetime]] = set()
             # Same dedupe as refresh_earnings: sessions never autoflush, so
             # a duplicated action in one fetch would otherwise commit two
             # rows and crash every later refresh on scalar_one_or_none.
@@ -400,6 +430,7 @@ class MarketDataService:
                 )
                 latest[key] = action
             for (symbol, action_type, day), action in latest.items():
+                seen.add((symbol, action_type, day))
                 rows = session.execute(
                     select(CorporateActionRow).where(
                         CorporateActionRow.symbol == symbol,
@@ -418,7 +449,18 @@ class MarketDataService:
                     )
                     stored += 1
                 else:
+                    rows[0].ratio_or_amount = action.amount_or_ratio
                     for extra in rows[1:]:
                         session.delete(extra)
+            stale = session.execute(
+                select(CorporateActionRow).where(
+                    CorporateActionRow.symbol.in_(self.universe()),
+                    CorporateActionRow.date >= datetime.combine(start, time.min),
+                    CorporateActionRow.date <= datetime.combine(end, time.max),
+                )
+            ).scalars().all()
+            for row in stale:
+                if (row.symbol, row.action_type, row.date) not in seen:
+                    session.delete(row)
             session.commit()
         return DataResult(data=stored, source=result.source)

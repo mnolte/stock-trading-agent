@@ -187,11 +187,11 @@ class CycleRunner:
         )
         return quotes_result.data if quotes_result.error is None else {}
 
-    def _quote_reason(self, symbol: str, quote: Quote | None, now: datetime) -> str | None:
+    def _price_reason(self, symbol: str, quote: Quote | None, now: datetime) -> str | None:
         if quote is None:
-            return "quote_missing"
+            return "price_stale"
         bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
-        return quote.quality_reason(
+        return quote.price_reason(
             now=now,
             max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
             bar_close=bar.close if bar is not None else None,
@@ -529,10 +529,11 @@ class CycleRunner:
             if item.rules.status == STATUS_PASS
         ]
 
-        # Quotes cover the review set — a candidate without a quote can
-        # never enter and skips its model call. The called set is the
-        # review order walked until the call cap fills; news is fetched
-        # for exactly those symbols (docs/SPEC.md, Cycles at scale).
+        # Quotes cover the review set — a candidate without a usable
+        # market price can never enter and skips its model call. The
+        # called set is the review order walked until the call cap fills;
+        # news is fetched for exactly those symbols (docs/SPEC.md, Cycles
+        # at scale).
         quotes = await self._fetch_quotes(
             [item.symbol for item in reviews], report
         )
@@ -543,7 +544,13 @@ class CycleRunner:
         for item in reviews:
             if len(called) >= max_calls:
                 break
-            if self._quote_reason(item.symbol, quotes.get(item.symbol), now) is None:
+            # Held positions are always reviewed; a stale or suspect
+            # market price only blocks a tighten_stop (docs/SPEC.md,
+            # Entries — Market price).
+            if (
+                item.rules.status == STATUS_HELD
+                or self._price_reason(item.symbol, quotes.get(item.symbol), now) is None
+            ):
                 called.append(item.symbol)
         news = await self._fetch_news(called, now, report)
 
@@ -552,8 +559,11 @@ class CycleRunner:
         )
         last_cycle = self._is_last_cycle(now)
         earnings_result = self.market_data.latest_earnings
+        # None means the calendar was never fetched — same unavailable as a
+        # failed refresh; missing earnings data blocks entries (docs/SPEC.md,
+        # Degradation rules). The signals service reads it identically.
         earnings_known = (
-            earnings_result is None or earnings_result.error is None
+            earnings_result is not None and earnings_result.error is None
         )
         if not earnings_known and earnings_result is not None:
             self._notifier.notify(
@@ -564,21 +574,25 @@ class CycleRunner:
                 link="/settings",
             )
 
-        # Symbols the rules reject still get a stored decision — "no_call"
-        # with reason "rules" — so the inspector shows why they were skipped.
+        # Symbols the rules reject — and held positions skipped for a
+        # pending acknowledgment — still get a stored decision: "no_call"
+        # with reason "rules", so the inspector shows why they were skipped.
         review_symbols = {item.symbol for item in reviews}
         for item in evaluation.items:
             if item.symbol in review_symbols:
                 continue
+            position = positions.get(item.symbol)
+            held = item.rules.status == STATUS_HELD
+            context = "held" if held else "candidate"
             snapshot_json = build_input_snapshot(
                 symbol=item.symbol,
-                context="candidate",
+                context=context,
                 cycle_time_ny=scheduled_ny,
-                price=item.price,
+                price=item.price if not held else None,
                 regime=evaluation.regime,
                 snapshot=item.snapshot,
                 bars_1h=item.bars_1h,
-                position=None,
+                position=position,
                 news=None,
                 rank=item.rank,
                 last_bar=self.market_data.bars_cache.latest(
@@ -589,11 +603,15 @@ class CycleRunner:
                 session,
                 cycle_id=cycle_id,
                 symbol=item.symbol,
-                context="candidate",
+                context=context,
                 snapshot_json=snapshot_json,
                 rules=item.rules,
                 reason="rules",
-                detail=f"rules: {item.rules.status}",
+                detail=(
+                    "pending acknowledgment"
+                    if held and position is not None and position.pending_ack
+                    else f"rules: {item.rules.status}"
+                ),
             )
             report.decisions.append(decision.id)
         # Hard rule 13: the recorded no_call decisions are durable before
@@ -605,10 +623,17 @@ class CycleRunner:
                 capped_at = i
                 break
             quote = quotes.get(item.symbol)
-            quote_reason = self._quote_reason(item.symbol, quote, now)
-            price = quote.ask if quote is not None and quote_reason is None else None
-            position = positions.get(item.symbol)
             context = "held" if item.rules.status == STATUS_HELD else "candidate"
+            price_reason = self._price_reason(item.symbol, quote, now)
+            price = (
+                quote.last
+                if quote is not None and price_reason is None
+                else None
+            )
+            position = positions.get(item.symbol)
+            dev_pct = Decimal(
+                str(self.config.get("execution", "quote_max_deviation_pct"))
+            )
             snapshot_json = build_input_snapshot(
                 symbol=item.symbol,
                 context=context,
@@ -624,21 +649,26 @@ class CycleRunner:
                     item.symbol, now - timedelta(minutes=5),
                 ),
                 quote=quote,
+                quote_plausible=(
+                    quote.quote_plausible(dev_pct) if quote is not None else False
+                ),
                 news_status=self._news_status.get(item.symbol, "failed"),
             )
             bar = self.market_data.bars_cache.latest(item.symbol, now - timedelta(minutes=5))
             reference = quote.stop_reference(
                 bar.close if bar else None, item.snapshot.atr_1h,
                 entry=context == "candidate",
+                max_deviation_pct=dev_pct,
             ) if quote else None
             snapshot_json["stop_reference_price"] = (
                 str(reference) if reference is not None else None
             )
             snapshot_json["last_bar_close"] = str(bar.close) if bar else None
             snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
-            if quote_reason is not None:
-                # Missing quotes mean no new entries this cycle — and no
-                # model call, so the cap slot stays free for the next one.
+            if price_reason is not None and context == "candidate":
+                # An unusable market price means no new entries this
+                # cycle — and no model call, so the cap slot stays free
+                # for the next one. Held positions are always reviewed.
                 decision = self.decide.record_no_call(
                     session,
                     cycle_id=cycle_id,
@@ -646,8 +676,8 @@ class CycleRunner:
                     context=context,
                     snapshot_json=snapshot_json,
                     rules=item.rules,
-                    reason=quote_reason,
-                    detail=quote_reason,
+                    reason=price_reason,
+                    detail=price_reason,
                 )
             else:
                 report.calls += 1

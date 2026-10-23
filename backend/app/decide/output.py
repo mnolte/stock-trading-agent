@@ -28,7 +28,7 @@ FALLBACK = {"candidate": "skip", "held": "hold"}
 
 # Reasons a decision was stored without a usable model answer.
 NO_CALL_REASONS = {
-    "rules", "call_cap", "quote_missing", "quote_stale", "quote_suspect", "model_error",
+    "rules", "call_cap", "price_stale", "price_suspect", "model_error",
 }
 
 # OpenAI structured-outputs schema for the decision object (strict mode).

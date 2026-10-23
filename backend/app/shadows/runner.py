@@ -622,20 +622,26 @@ class ShadowRunner:
                 reasoning = entry.model_output or {}
                 position_json["original_thesis"] = reasoning.get("thesis", UNAVAILABLE)
                 position_json["original_invalidation"] = reasoning.get("invalidation", UNAVAILABLE)
-            quote, synthetic, quote_failure = self._market_quote(d.symbol, snap_json, scheduled)
+            quote, synthetic, price_failure = self._market_quote(
+                d.symbol, snap_json, scheduled
+            )
+            dev_pct = Decimal(
+                str(self.config.get("execution", "quote_max_deviation_pct"))
+            )
             reference = quote.stop_reference(
                 _dec(snap_json.get("last_bar_close")),
                 indicators_from_snapshot(d.symbol, snap_json).atr_1h, entry=False,
-            ) if quote else None
+                max_deviation_pct=dev_pct,
+            ) if quote is not None and price_failure is None else None
             snap_json["stop_reference_price"] = str(reference) if reference is not None else None
             if quote is not None:
-                snap_json["quote"] = quote.provenance() | {"synthetic": synthetic}
-            if quote_failure in ("quote_missing", "quote_stale", "quote_suspect", "spread"):
-                row = self._row(strategy, cycle, d, "held", final_action="no_call")
-                row.no_call_reason = quote_failure
-                session.add(row)
-                sr.decisions += 1
-                continue
+                snap_json["quote"] = (
+                    quote.provenance(quote.quote_plausible(dev_pct))
+                    | {"synthetic": synthetic}
+                )
+            # Held positions are always reviewed; a stale or suspect
+            # market price only blocks a tighten_stop (docs/SPEC.md,
+            # Entries — Market price).
             if out_of_time():
                 self._missed(session, strategy, cycle, d, "held", sr, str(state["out"]))
                 continue
@@ -665,6 +671,7 @@ class ShadowRunner:
             self._apply_held(
                 row, sp, scheduled, reference,
                 indicators_from_snapshot(d.symbol, snap_json).atr_1h,
+                price_failure=price_failure,
             )
             sr.decisions += 1
 
@@ -675,7 +682,13 @@ class ShadowRunner:
                 continue
             snap = copy.deepcopy(d.snapshot)
             quote, synthetic, quote_failure = self._market_quote(d.symbol, snap, scheduled)
-            provenance = quote.provenance() | {"synthetic": synthetic} if quote else None
+            dev_pct = Decimal(
+                str(self.config.get("execution", "quote_max_deviation_pct"))
+            )
+            provenance = (
+                quote.provenance(quote.quote_plausible(dev_pct))
+                | {"synthetic": synthetic}
+            ) if quote else None
             if quote_failure is not None:
                 row = self._row(
                     strategy, cycle, d, "candidate", final_action="blocked", rules=rules,
@@ -687,7 +700,7 @@ class ShadowRunner:
                 sr.decisions += 1
                 continue
             assert quote is not None
-            price = quote.ask
+            price = quote.last
             snap["price"] = float(price)
             snap["quote"] = provenance
             d = replace(d, snapshot=snap)
@@ -816,6 +829,7 @@ class ShadowRunner:
     def _apply_held(
         self, row: ShadowDecision, sp: ShadowPosition, at: datetime,
         reference: Decimal | None, atr: Decimal | None,
+        price_failure: str | None = None,
     ) -> None:
         output = row.model_output or {}
         if sp.exit_pending:
@@ -823,7 +837,10 @@ class ShadowRunner:
         if row.final_action == "tighten_stop":
             new_stop = _dec(output.get("stop_price"))
             margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
-            if reference is None or atr is None:
+            if price_failure is not None:
+                row.final_action = "hold"
+                row.gates_result = {"tighten_noop": True, "reason": price_failure}
+            elif reference is None or atr is None:
                 row.final_action = "hold"
                 row.gates_result = {"tighten_noop": True, "reason": "reference_missing"}
             elif new_stop is not None and reference - cents(new_stop) < margin * atr:
@@ -845,6 +862,14 @@ class ShadowRunner:
     def _market_quote(
         self, symbol: str, snapshot: dict[str, Any], at: datetime,
     ) -> tuple[Quote | None, bool, str | None]:
+        """Live's fetched quote rebuilt from the stored snapshot, or a
+        synthetic market price from the last closed bar when live fetched
+        none (docs/SPEC.md, Virtual trading). Returns ``(quote,
+        synthetic, failure)`` where failure is the market-price check —
+        a stale or suspect price blocks the shadow the way it blocked
+        live; order-time checks (spread, references) run in ``_enter``.
+        A synthetic quote is never freshness-checked: the bar close is
+        the price."""
         def timestamp(value: object) -> datetime | None:
             try:
                 return aware(datetime.fromisoformat(str(value))) if value else None
@@ -858,43 +883,37 @@ class ShadowRunner:
         if synthetic:
             if bar is None or not bar.is_finite() or bar <= 0 or bar_time is None:
                 return None, True, "reference_missing"
-            quote = Quote(
-                symbol, bar, bar, Decimal(0), bar_time + timedelta(minutes=5), "synthetic_bar",
+            close_time = bar_time + timedelta(minutes=5)
+            return (
+                Quote(
+                    symbol, bar, bar, bar, close_time, "synthetic_bar",
+                    close_time, close_time,
+                ),
+                True,
+                None,
             )
-        else:
-            raw_quote = cast(dict[str, Any], raw)
-            quote = Quote(
-                symbol,
-                _dec(raw_quote.get("bid")) or Decimal(0),
-                _dec(raw_quote.get("ask")) or Decimal(0),
-                _dec(raw_quote.get("last")) or Decimal(0),
-                timestamp(raw_quote.get("quote_timestamp")),
-                str(raw_quote.get("feed", "iex")),
-                timestamp(raw_quote.get("trade_timestamp")),
-                timestamp(raw_quote.get("fetched_at")),
-            )
-            reason = quote.quality_reason(
-                now=quote.fetched_at or at,
-                max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
-                bar_close=bar,
-                max_deviation_pct=Decimal(str(
-                    self.config.get("execution", "quote_max_deviation_pct")
-                )),
-            )
-            if reason is not None:
-                return quote, False, reason
-            mid = (quote.ask + quote.bid) / 2
-            if (quote.ask - quote.bid) / mid * 100 > Decimal(str(
-                self.config.get("execution", "max_spread_pct")
-            )):
-                return quote, False, "spread"
-        atr = indicators_from_snapshot(symbol, snapshot).atr_1h
-        if (
-            bar_time is None or bar_time + timedelta(minutes=5) > at
-            or quote.stop_reference(bar, atr, entry=True) is None
-        ):
-            return quote, synthetic, "reference_missing"
-        return quote, synthetic, None
+        raw_quote = cast(dict[str, Any], raw)
+        quote = Quote(
+            symbol,
+            _dec(raw_quote.get("bid")) or Decimal(0),
+            _dec(raw_quote.get("ask")) or Decimal(0),
+            _dec(raw_quote.get("last")) or Decimal(0),
+            timestamp(raw_quote.get("quote_timestamp")),
+            str(raw_quote.get("feed", "iex")),
+            timestamp(raw_quote.get("trade_timestamp")),
+            timestamp(raw_quote.get("fetched_at")),
+        )
+        reason = quote.price_reason(
+            now=quote.fetched_at or at,
+            max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+            bar_close=bar,
+            max_deviation_pct=Decimal(str(
+                self.config.get("execution", "quote_max_deviation_pct")
+            )),
+        )
+        if reason is not None:
+            return quote, False, reason
+        return quote, False, None
 
     def _enter(
         self,
@@ -917,15 +936,50 @@ class ShadowRunner:
         stop = cents(stop)
         target = cents(target) if target is not None else None
         quote, synthetic, failure = self._market_quote(d.symbol, d.snapshot, at)
-        provenance = quote.provenance() | {"synthetic": synthetic} if quote else None
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
+        provenance = (
+            quote.provenance(quote.quote_plausible(dev_pct))
+            | {"synthetic": synthetic}
+        ) if quote else None
         if failure is not None or quote is None:
             row.final_action = "blocked"
             row.gates_result = {"allowed": False, "blocked_by": failure, "quote": provenance}
             return
-        price = quote.ask
+        # The spread gate mirrors live's order-time check: it runs only
+        # on a plausible quote; a thin book is recorded, never blocking.
+        if quote.quote_plausible(dev_pct):
+            max_spread = Decimal(
+                str(self.config.get("execution", "max_spread_pct", default=0.15))
+            )
+            mid = (quote.ask + quote.bid) / 2
+            if (quote.ask - quote.bid) / mid * 100 > max_spread:
+                row.final_action = "blocked"
+                row.gates_result = {
+                    "allowed": False, "blocked_by": "spread", "quote": provenance,
+                }
+                return
+        bar_time_str = d.snapshot.get("last_bar_time")
+        bar_time = None
+        try:
+            bar_time = (
+                aware(datetime.fromisoformat(str(bar_time_str)))
+                if bar_time_str else None
+            )
+        except ValueError:
+            bar_time = None
+        price = quote.last
         reference = quote.stop_reference(
             _dec(d.snapshot.get("last_bar_close")), ind.atr_1h, entry=True,
+            max_deviation_pct=dev_pct,
         )
+        if bar_time is None or bar_time + timedelta(minutes=5) > at or reference is None:
+            row.final_action = "blocked"
+            row.gates_result = {
+                "allowed": False, "blocked_by": "reference_missing", "quote": provenance,
+            }
+            return
         minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
         market_risk = trade_risk(reference, stop, target, ind.atr_1h) if (
             reference is not None and target is not None

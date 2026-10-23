@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-24 — Readiness
+
+- New screen `Readiness.dc.html` in the Control group (every sidebar updated, shield icon): red "Not ready for live trading" banner, five summary tiles, Evidence (7), Model (2) and Operations (6) criteria with current value, target, progress bar for counts and a status chip (pass, not yet, waiting for data), five manual items with checkboxes, and History.
+- `Settings.dc.html`: new Readiness section with the configurable thresholds; zero-tolerance criteria noted as fixed.
+- All screenshots re-rendered.
+
 ## 2026-10-21 — Backtest: process, bar store, estimate
 
 - `Backtest.dc.html`: the estimate shows "≈" and the cost at the 10-call cap; the note under Run says separate process, one database per strategy, 40 Alpaca calls per minute and pausing during live cycles and checks; the Runs card shows the bar store size with "Clear bar store" (disabled while a run is active).

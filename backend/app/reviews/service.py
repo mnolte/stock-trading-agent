@@ -366,8 +366,12 @@ class ReviewService:
                 detail=(response.raw or "")[:200],
             )
         text = "\n".join(self._content_texts(content)).lower()
+        # A fact the code produced — an empty list included — is known,
+        # never "unavailable"; the model may not call it that.
         if kind == "briefing" and any(
-            "unavailable" in clause and facts.get(key) == [] and label in clause
+            "unavailable" in clause
+            and isinstance(facts.get(key), list)
+            and label in clause
             for clause in text.replace(";", ".").replace("\n", ".").split(".")
             for key, label in (("positions", "position"), ("earnings_today", "earnings today"),
                                ("earnings_tomorrow", "earnings tomorrow"), ("banners", "banner"))

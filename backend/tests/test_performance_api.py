@@ -415,3 +415,44 @@ def test_performance_unknown_run_404s(
 ) -> None:
     _seed()
     assert client.get("/api/performance?run=99999").status_code == 404
+
+
+def test_decision_category_model_error_beats_invalid() -> None:
+    """A failed model call stores a real model name and valid=False —
+    it must count as a model error in the decisions table, not as
+    invalid output."""
+    from app.engine.performance import _decision_category
+
+    decision = Decision(
+        cycle_id=1,
+        symbol="MSFT",
+        context="candidate",
+        model_output=None,
+        validation_result={"valid": False, "error": "timeout after 60s"},
+        final_action="no_call",
+        no_call_reason="model_error",
+        prompt_version="decision.v1",
+        prompt_hash="abc",
+        model="fake-decision",
+    )
+    assert _decision_category(decision) == "model_error"
+
+
+def test_decision_category_invalid_output_still_counts() -> None:
+    """A call that returned output failing validation still counts as
+    invalid — the reorder only protects the no_call bucket."""
+    from app.engine.performance import _decision_category
+
+    decision = Decision(
+        cycle_id=1,
+        symbol="MSFT",
+        context="candidate",
+        model_output=None,
+        validation_result={"valid": False, "error": "bad schema"},
+        final_action="skip",
+        no_call_reason=None,
+        prompt_version="decision.v1",
+        prompt_hash="abc",
+        model="fake-decision",
+    )
+    assert _decision_category(decision) == "invalid"

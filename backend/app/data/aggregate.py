@@ -25,6 +25,20 @@ def bars_per_session(
     return result
 
 
+def session_bars(bars_5m: list[Bar5m], sessions: list[CalendarDay]) -> list[Bar5m]:
+    """Only the bars inside one of the given session windows, in order.
+
+    Alpaca's SIP feed returns the full extended session (04:00-20:00 New
+    York); the cache and everything reading it is regular-hours only, so
+    fetched bars are filtered here before they are stored.
+    """
+    return [
+        bar
+        for day_bars in bars_per_session(bars_5m, sessions).values()
+        for bar in day_bars
+    ]
+
+
 def session_1h_windows(session: CalendarDay) -> list[tuple[datetime, datetime]]:
     """Session-aligned 1h windows: 09:30-10:30, ..., plus the final partial bar."""
     windows: list[tuple[datetime, datetime]] = []

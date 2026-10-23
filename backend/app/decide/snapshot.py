@@ -138,6 +138,7 @@ def build_input_snapshot(
     news: list[NewsItem] | None,
     rank: int | None = None,
     quote: Quote | None = None,
+    quote_plausible: bool = False,
     news_status: str | None = None,
     last_bar: Bar5m | None = None,
 ) -> dict[str, Any]:
@@ -148,7 +149,7 @@ def build_input_snapshot(
     )
     signal_bar_time = bars_1h[-1].end.isoformat() if bars_1h else None
     quote_block = (
-        quote.provenance() | {
+        quote.provenance(quote_plausible) | {
             "last_bar_time": last_bar.start.isoformat() if last_bar else None,
             "signal_bar_time": signal_bar_time,
         }

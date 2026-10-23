@@ -81,6 +81,29 @@ def test_trading_client_is_paper() -> None:
     assert client.trading._base_url == BaseURL.TRADING_PAPER
 
 
+def test_parse_order_tolerates_fractional_qty_strings() -> None:
+    """Alpaca reports qty as a string and can return fractional values
+    on orders outside our whole-share flow — the parser must read them
+    through Decimal instead of crashing on ``int("4.5")``."""
+    from app.broker.alpaca import parse_order
+
+    order = parse_order(
+        {
+            "id": "o-1",
+            "client_order_id": "sa-x",
+            "symbol": "MSFT",
+            "side": "sell",
+            "type": "market",
+            "order_class": "",
+            "status": "filled",
+            "qty": "4.5",
+            "filled_qty": "4.5",
+        }
+    )
+    assert order.qty == 4
+    assert order.filled_qty == 4
+
+
 async def test_get_asset_reads_raw_class_field() -> None:
     """Alpaca's raw JSON calls the field "class", not "asset_class"
     (raw_data=True on the trading client)."""

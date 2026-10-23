@@ -273,8 +273,13 @@ def load_execution_state(
         peak: Decimal | None = session.execute(peak_query).scalar()
         if peak is not None:
             state.peak_equity = Decimal(str(peak))
-        elif latest_run is not None:
-            state.peak_equity = Decimal(str(latest_run.starting_equity))
+        if latest_run is not None:
+            # The run's starting equity is a point on its own curve: a run
+            # that dipped before its first snapshot would otherwise peak
+            # below where it started and kill the drawdown brake early.
+            state.peak_equity = max(
+                state.peak_equity, Decimal(str(latest_run.starting_equity))
+            )
         last_kill = session.execute(
             select(Event)
             .where(Event.event_type.in_(("kill_switch", "kill_switch_resume")))
