@@ -34,6 +34,7 @@ from app.db.models import (
     Cycle,
     Decision,
     EquitySnapshot,
+    Order,
     Outcome,
     Position,
     Run,
@@ -63,16 +64,34 @@ def _aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
-def _first_touch(bars: list[Bar5m], position: Position) -> str:
+def _first_touch(
+    bars: list[Bar5m], position: Position, history: list[Order] | None = None,
+) -> str:
     """Which of the position's stop or target the 5m bars touched first.
 
-    Compared against the position's current levels: a tightened stop is the
-    level that would actually fire. A bar that touches both counts as a stop
-    touch — intrabar order is unknowable, so the pessimistic read wins.
+    The stop checked for each bar is the stop-leg order active at that bar's
+    timestamp; without order history the initial stop is the only known level.
+    A bar that touches both counts as a stop touch — intrabar order is
+    unknowable, so the pessimistic read wins.
     """
-    stop = position.current_stop_price
     target = position.target_price
     for bar in sorted(bars, key=lambda b: b.start):
+        stop = position.initial_stop
+        if history:
+            active = [
+                o
+                for o in history
+                if _aware_utc(o.created_at) <= bar.start
+                and (
+                    o.active_until is None
+                    or bar.start < _aware_utc(o.active_until)
+                )
+            ]
+            stop = (
+                max(active, key=lambda o: (o.created_at, o.id)).stop_price
+                if active
+                else None
+            )
         stop_hit = stop is not None and bar.low <= stop
         target_hit = target is not None and bar.high >= target
         if stop_hit:
@@ -284,7 +303,15 @@ class OutcomeWorker:
             outcome.worst_price = worst.low
             outcome.worst_price_at = _naive_utc(worst.start)
             changed = True
-        touch = _first_touch(bars, position)
+        history = list(session.execute(select(Order).where(
+            Order.symbol == position.symbol, Order.leg == "stop",
+            Order.created_at <= _naive_utc(end),
+            or_(
+                Order.decision_id == position.entry_decision_id,
+                Order.created_at >= _naive_utc(opened),
+            ),
+        )).scalars())
+        touch = _first_touch(bars, position, history)
         if (
             outcome.first_touch not in (_TOUCH_STOP, _TOUCH_TARGET)
             and outcome.first_touch != touch

@@ -75,6 +75,8 @@ def _snap(
         "time_ny": CYCLE.isoformat(),
         "rank": rank,
         "price": price,
+        "last_bar_close": price,
+        "last_bar_time": (CYCLE - timedelta(minutes=20)).isoformat(),
         "regime": {"trend": "up", "volatility": "normal"},
         "indicators_1h": {
             "ema20": 101.0,
@@ -432,6 +434,90 @@ async def test_llm_shadow_enters_with_its_own_model_and_live_limit(
     assert sp.limit_price == Decimal("100.05")
     assert sp.status == "pending"
     assert report.strategies[0].calls == 1
+
+
+async def test_shadow_without_live_quote_marks_synthetic_entry(sf: sessionmaker[Session]) -> None:
+    cycle_id = _seed(sf, [("MSFT", "no_call", "rules", _snap("MSFT", atr=1))])
+    sid = _strategy(sf, "Rules only", kind="rules_only")
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1))).after_cycle(cycle_id)
+    (position,) = _positions(sf, sid)
+    assert position.limit_price == Decimal("100.05")
+    gates = _rows(sf, sid)["MSFT"].gates_result
+    assert gates is not None
+    assert gates["quote"]["synthetic"] is True
+
+
+async def test_shadow_cannot_replace_suspect_live_quote_with_synthetic(
+    sf: sessionmaker[Session],
+) -> None:
+    snapshot = _snap("MSFT", price=105, atr=1)
+    snapshot["last_bar_close"] = 100
+    snapshot["quote"] = {
+        "bid": "104.99", "ask": "105", "last": "105", "feed": "iex",
+        "quote_timestamp": CYCLE.isoformat(), "fetched_at": CYCLE.isoformat(),
+    }
+    cycle_id = _seed(sf, [("MSFT", "no_call", "quote_suspect", snapshot)])
+    sid = _strategy(sf, "Rules only", kind="rules_only")
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1))).after_cycle(cycle_id)
+    assert _positions(sf, sid) == []
+    gates = _rows(sf, sid)["MSFT"].gates_result
+    assert gates is not None
+    assert gates["blocked_by"] == "quote_suspect"
+
+
+async def test_shadow_rejects_stop_too_close_to_bar_close(sf: sessionmaker[Session]) -> None:
+    snapshot = _snap("MSFT", price=101, atr=1)
+    snapshot["last_bar_close"] = 100
+    snapshot["quote"] = {
+        "bid": "100.99", "ask": "101", "last": "101", "feed": "iex",
+        "quote_timestamp": CYCLE.isoformat(), "fetched_at": CYCLE.isoformat(),
+    }
+    cycle_id = _seed(sf, [("MSFT", "skip", None, snapshot)])
+    sid = _strategy(sf, "B")
+    response = {
+        "symbol": "MSFT", "action": "enter", "confidence": 0.9,
+        "stop_price": 99, "target_price": 106, "thesis": "test", "invalidation": "test",
+        "risks": [], "news_used": [],
+    }
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)), clients={
+        "B": FakeDecisionClient(responses={"MSFT": json.dumps(response)}),
+    }).after_cycle(cycle_id)
+    assert _positions(sf, sid) == []
+    gates = _rows(sf, sid)["MSFT"].gates_result
+    assert gates is not None
+    assert gates["blocked_by"] == "stop_market_distance"
+
+
+async def test_shadow_rechecks_reward_to_risk_on_final_limit(sf: sessionmaker[Session]) -> None:
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT", atr=1))])
+    sid = _strategy(sf, "Final")
+    response = {
+        "symbol": "MSFT", "action": "enter", "confidence": 0.9,
+        "stop_price": 98, "target_price": 103, "thesis": "test", "invalidation": "test",
+        "risks": [], "news_used": [],
+    }
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)), clients={
+        "Final": FakeDecisionClient(responses={"MSFT": json.dumps(response)}),
+    }).after_cycle(cycle_id)
+    assert _positions(sf, sid) == []
+    gates = _rows(sf, sid)["MSFT"].gates_result
+    assert gates is not None
+    assert gates["blocked_by"] == "code_checks"
+
+
+async def test_shadow_sizes_on_final_limit_not_snapshot_ask(sf: sessionmaker[Session]) -> None:
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT", atr=1))])
+    sid = _strategy(sf, "Rules only", kind="rules_only")
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1))).after_cycle(cycle_id)
+    (position,) = _positions(sf, sid)
+    assert position.qty == 19
+    assert position.limit_price is not None
+    assert position.qty * position.limit_price <= Decimal("2000")
+    gates = _rows(sf, sid)["MSFT"].gates_result
+    assert gates is not None
+    sizing = gates["sizing"]
+    assert isinstance(sizing, dict)
+    assert sizing["shares"] == position.qty
 
 
 async def test_rules_only_baseline_stop_two_atr_target_two_r(sf: sessionmaker[Session]) -> None:

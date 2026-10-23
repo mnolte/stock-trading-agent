@@ -12,9 +12,10 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
@@ -30,7 +31,7 @@ from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import record_event
 from app.market.calendar import CalendarProvider
-from app.market.clock import NY_TZ, Clock, SessionClock
+from app.market.clock import NY_TZ, UTC, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, next_earnings
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
@@ -186,10 +187,22 @@ class CycleRunner:
         )
         return quotes_result.data if quotes_result.error is None else {}
 
+    def _quote_reason(self, symbol: str, quote: Quote | None, now: datetime) -> str | None:
+        if quote is None:
+            return "quote_missing"
+        bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
+        return quote.quality_reason(
+            now=now,
+            max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+            bar_close=bar.close if bar is not None else None,
+            max_deviation_pct=Decimal(str(self.config.get("execution", "quote_max_deviation_pct"))),
+        )
+
     async def _fetch_news(
         self, symbols: list[str], now: datetime, report: CycleReport
     ) -> dict[str, list[NewsItem]] | None:
         """Headlines for the symbols that get a model call; None on error."""
+        self._news_status: dict[str, str] = {}
         if not symbols:
             return {}
         news_result = await self.sources.news.fetch_news(
@@ -201,7 +214,15 @@ class CycleRunner:
         news: dict[str, list[NewsItem]] = {symbol: [] for symbol in symbols}
         for item in news_result.data:
             news.setdefault(item.symbol, []).append(item)
-        report.data_source_health["news"] = "ok"
+        self._news_status = news_result.statuses or {
+            symbol: "complete" if news[symbol] else "empty" for symbol in symbols
+        }
+        incomplete = [
+            s for s, status in self._news_status.items() if status in ("failed", "truncated")
+        ]
+        report.data_source_health["news"] = (
+            f"incomplete: {', '.join(incomplete)}" if incomplete else "ok"
+        )
         return news
 
     # ------------------------------------------------------------------
@@ -237,6 +258,36 @@ class CycleRunner:
     # ------------------------------------------------------------------
     # the cycle
 
+    def record_missing_cycles(self, reason: str) -> int:
+        now = self.clock.now()
+        today = now.astimezone(NY_TZ).date()
+        grace = timedelta(seconds=int(self.config.get("schedule", "misfire_grace_seconds")))
+        schedule = SessionClock(self.clock, self.config, self.calendar)
+        count = 0
+        with self._session_factory() as session:
+            latest = session.execute(
+                select(func.max(Cycle.scheduled_time)).where(Cycle.kind == "cycle")
+            ).scalar_one()
+            day = latest.replace(tzinfo=UTC).astimezone(NY_TZ).date() if latest else today
+            existing = set(session.execute(select(Cycle.scheduled_time).where(
+                Cycle.kind == "cycle", Cycle.scheduled_time >= _naive_utc(
+                    datetime.combine(day, datetime.min.time(), tzinfo=NY_TZ)
+                ),
+            )).scalars())
+            while day <= today:
+                trading = self.calendar.session_for(day)
+                if trading is not None:
+                    for at in schedule.active_cycles(trading):
+                        if at < now - grace and _naive_utc(at) not in existing:
+                            session.add(Cycle(
+                                kind="cycle", scheduled_time=_naive_utc(at), status="skipped",
+                                finished_at=_naive_utc(now), errors=[reason],
+                            ))
+                            count += 1
+                day += timedelta(days=1)
+            session.commit()
+        return count
+
     async def run(self, scheduled_ny: datetime) -> CycleReport:
         """Run one cycle for the given New York scheduled time."""
         now = self.clock.now()
@@ -262,25 +313,38 @@ class CycleRunner:
                 report.errors.append(str(exc))
                 logger.error(
                     "Cycle %s failed at %s: %s",
-                    cycle.id,
+                    report.cycle_id,
                     scheduled_ny,
                     exc,
                     exc_info=True,
                 )
+                session.rollback()
+                stored = session.get(Cycle, report.cycle_id)
+                assert stored is not None
+                cycle = stored
 
             # Post-decision outcomes and the equity snapshot are part of
             # every cycle, whatever the decision stage produced.
             if self.outcomes is not None:
-                self.outcomes.fill(session, self.clock.now())
-                account = (
-                    self.executor.state.account
-                    if self.executor is not None
-                    else None
-                )
-                if account is not None:
-                    self.outcomes.write_equity_snapshot(
-                        session, equity=account.equity, cash=account.cash
+                try:
+                    self.outcomes.fill(session, self.clock.now())
+                    account = (
+                        self.executor.state.account
+                        if self.executor is not None
+                        else None
                     )
+                    if account is not None:
+                        self.outcomes.write_equity_snapshot(
+                            session, equity=account.equity, cash=account.cash
+                        )
+                except Exception as exc:
+                    report.status = "error"
+                    report.errors.append(str(exc))
+                    logger.exception("cycle %s outcomes failed", report.cycle_id)
+                    session.rollback()
+                    stored = session.get(Cycle, report.cycle_id)
+                    assert stored is not None
+                    cycle = stored
 
             cycle.status = report.status
             cycle.finished_at = _naive_utc(self.clock.now())
@@ -432,6 +496,9 @@ class CycleRunner:
                         bars_1h=bars_1h,
                         position=None,
                         news=None,
+                        last_bar=self.market_data.bars_cache.latest(
+                            symbol, now - timedelta(minutes=5),
+                        ),
                     )
             except Exception:  # noqa: BLE001
                 # Never let shadow inputs affect the live cycle.
@@ -476,7 +543,7 @@ class CycleRunner:
         for item in reviews:
             if len(called) >= max_calls:
                 break
-            if item.rules.status == STATUS_HELD or item.symbol in quotes:
+            if self._quote_reason(item.symbol, quotes.get(item.symbol), now) is None:
                 called.append(item.symbol)
         news = await self._fetch_news(called, now, report)
 
@@ -514,6 +581,9 @@ class CycleRunner:
                 position=None,
                 news=None,
                 rank=item.rank,
+                last_bar=self.market_data.bars_cache.latest(
+                    item.symbol, now - timedelta(minutes=5),
+                ),
             )
             decision = self.decide.record_no_call(
                 session,
@@ -535,7 +605,8 @@ class CycleRunner:
                 capped_at = i
                 break
             quote = quotes.get(item.symbol)
-            price = quote.ask if quote is not None else None
+            quote_reason = self._quote_reason(item.symbol, quote, now)
+            price = quote.ask if quote is not None and quote_reason is None else None
             position = positions.get(item.symbol)
             context = "held" if item.rules.status == STATUS_HELD else "candidate"
             snapshot_json = build_input_snapshot(
@@ -549,8 +620,23 @@ class CycleRunner:
                 position=position,
                 news=None if news is None else news.get(item.symbol),
                 rank=item.rank,
+                last_bar=self.market_data.bars_cache.latest(
+                    item.symbol, now - timedelta(minutes=5),
+                ),
+                quote=quote,
+                news_status=self._news_status.get(item.symbol, "failed"),
             )
-            if context == "candidate" and price is None:
+            bar = self.market_data.bars_cache.latest(item.symbol, now - timedelta(minutes=5))
+            reference = quote.stop_reference(
+                bar.close if bar else None, item.snapshot.atr_1h,
+                entry=context == "candidate",
+            ) if quote else None
+            snapshot_json["stop_reference_price"] = (
+                str(reference) if reference is not None else None
+            )
+            snapshot_json["last_bar_close"] = str(bar.close) if bar else None
+            snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
+            if quote_reason is not None:
                 # Missing quotes mean no new entries this cycle — and no
                 # model call, so the cap slot stays free for the next one.
                 decision = self.decide.record_no_call(
@@ -560,8 +646,8 @@ class CycleRunner:
                     context=context,
                     snapshot_json=snapshot_json,
                     rules=item.rules,
-                    reason="quote_missing",
-                    detail="quote unavailable",
+                    reason=quote_reason,
+                    detail=quote_reason,
                 )
             else:
                 report.calls += 1
@@ -627,6 +713,9 @@ class CycleRunner:
                     position=positions.get(item.symbol),
                     news=None,
                     rank=item.rank,
+                last_bar=self.market_data.bars_cache.latest(
+                    item.symbol, now - timedelta(minutes=5),
+                ),
                 ),
                 rules=item.rules,
                 reason="call_cap",

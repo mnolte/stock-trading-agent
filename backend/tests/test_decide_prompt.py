@@ -149,12 +149,29 @@ def test_input_snapshot_marks_unavailable() -> None:
     assert snap["levels"] == UNAVAILABLE
 
 
+def test_report_r_uses_initial_risk_after_stop_moves() -> None:
+    from app.decide.snapshot import _position_block
+
+    position = Position(
+        symbol="WMT", qty=16, avg_entry_price=Decimal("100"),
+        current_stop_price=Decimal("99"), opened_at=datetime(2026, 10, 22, 15),
+    )
+    position.initial_stop = Decimal("95")
+    for stop in ("95", "99", "100", "101"):
+        position.current_stop_price = Decimal(stop)
+        block = _position_block(position, Decimal("105"))
+        assert block is not None
+        assert block["r_so_far"] == 1
+        assert block["remaining_downside_usd"] == float((Decimal("105") - Decimal(stop)) * 16)
+
+
 def test_input_snapshot_position_block() -> None:
     position = Position(
         symbol="MSFT",
         entry_decision_id=None,
         qty=4,
         avg_entry_price=Decimal("418.20"),
+        initial_stop=Decimal("409.60"),
         current_stop_price=Decimal("409.60"),
         target_price=Decimal("435.40"),
         opened_at=datetime(2026, 10, 15, 14, 48),  # naive UTC

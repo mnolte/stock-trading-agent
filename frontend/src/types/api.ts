@@ -1244,6 +1244,7 @@ export interface StrategyOverrideOption {
 }
 
 export interface StrategiesResponse {
+  synthetic_quote_entries: number;
   run: { id: number; started_at: string; sessions: number | null } | null;
   rows: StrategyRow[];
   spy_curve: StrategyCurvePoint[];

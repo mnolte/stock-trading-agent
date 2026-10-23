@@ -13,7 +13,10 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from app.db.models import Position
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.db.models import Position, UniversePoolRow
 from app.risk.math import (
     Sizing,
     WorkingEntry,
@@ -59,6 +62,8 @@ class GateContext:
     paused: bool  # new entries paused (startup pause or header Pause)
     pending_ack: bool  # unacknowledged reconciliation/adoption blockers
     orders_this_cycle: int  # orders already submitted in this cycle
+    sectors: dict[str, str] | None = None
+    daily_loss_hit: bool = False
 
 
 @dataclass(frozen=True)
@@ -84,14 +89,21 @@ class GateResult:
                 else None
             ),
             "checks": [
-                {"name": c.name, "passed": c.passed, "detail": c.detail}
-                for c in self.checks
+                {"name": c.name, "passed": c.passed, "detail": c.detail} for c in self.checks
             ],
         }
 
 
 def _pct(value: Decimal) -> str:
     return str(value.quantize(Decimal("0.01")))
+
+
+def resolve_sectors(config: AppConfig, session: Session | None = None) -> dict[str, str]:
+    if config.get("universe", "mode", default="fixed") != "screened":
+        return dict(config.get("universe", "sectors", default={}) or {})
+    if session is None:
+        return {}
+    return dict(session.execute(select(UniversePoolRow.symbol, UniversePoolRow.sector)).all())
 
 
 def evaluate_entry_gates(
@@ -122,9 +134,7 @@ def evaluate_entry_gates(
         return block("kill_switch", "kill switch is on; no new entries")
     ok("kill_switch", "off")
     if ctx.paused:
-        return block(
-            "paused", "new entries are paused; press Resume in the header"
-        )
+        return block("paused", "new entries are paused; press Resume in the header")
     ok("paused", "entries active")
     if ctx.pending_ack:
         return block(
@@ -148,42 +158,35 @@ def evaluate_entry_gates(
     ok("max_open_positions", f"{open_count} of {max_positions}")
 
     max_per_sector = int(config.get("risk", "max_per_sector", default=2))
-    sectors = config.get("universe", "sectors", default={}) or {}
+    sectors = ctx.sectors if ctx.sectors is not None else resolve_sectors(config)
     sector = sectors.get(ctx.symbol)
     if sector is not None:
-        in_sector = sum(
-            1 for p in ctx.open_positions if sectors.get(p.symbol) == sector
-        )
-        in_sector += sum(
-            1 for e in ctx.working_entries if sectors.get(e.symbol) == sector
-        )
+        in_sector = sum(1 for p in ctx.open_positions if sectors.get(p.symbol) == sector)
+        in_sector += sum(1 for e in ctx.working_entries if sectors.get(e.symbol) == sector)
         if in_sector >= max_per_sector:
             return block(
                 "sector_cap",
-                f"{in_sector} {sector} positions or pending entries "
-                f"≥ {max_per_sector}",
+                f"{in_sector} {sector} positions or pending entries ≥ {max_per_sector}",
             )
         ok("sector_cap", f"{in_sector} of {max_per_sector} in {sector}")
     else:
-        ok("sector_cap", "no sector configured")
+        return block("sector_unknown", f"sector unknown for {ctx.symbol}")
 
     # Daily loss limit: session P&L vs the previous close's equity.
-    daily_limit_pct = Decimal(
-        str(config.get("risk", "daily_loss_limit_pct", default=2))
-    )
+    daily_limit_pct = Decimal(str(config.get("risk", "daily_loss_limit_pct", default=2)))
     pnl_pct = session_pnl_pct(ctx.equity, ctx.last_equity)
-    if pnl_pct <= -daily_limit_pct:
+    if ctx.daily_loss_hit or pnl_pct <= -daily_limit_pct:
         return block(
             "daily_loss_limit",
-            f"session P&L {_pct(pnl_pct)}% ≤ −{_pct(daily_limit_pct)}%",
+            "daily loss limit latched for this NY session"
+            if ctx.daily_loss_hit
+            else f"session P&L {_pct(pnl_pct)}% ≤ −{_pct(daily_limit_pct)}%",
         )
     ok("daily_loss_limit", f"session P&L {_pct(pnl_pct)}%")
 
     # Shock brake: SPY down hard in the last hour or since the open.
     shock_1h = Decimal(str(config.get("risk", "shock_brake_1h_pct", default=1.5)))
-    shock_session = Decimal(
-        str(config.get("risk", "shock_brake_session_pct", default=2.5))
-    )
+    shock_session = Decimal(str(config.get("risk", "shock_brake_session_pct", default=2.5)))
     if ctx.shock_brake_1h or ctx.shock_brake_session:
         which = "last hour" if ctx.shock_brake_1h else "since the open"
         limit = shock_1h if ctx.shock_brake_1h else shock_session
@@ -193,9 +196,7 @@ def evaluate_entry_gates(
     # Earnings blackout: earnings within the next N trading days.
     blackout = int(config.get("risk", "earnings_blackout_days", default=3))
     if not ctx.earnings_known:
-        return block(
-            "earnings_blackout", "earnings calendar unavailable; entry blocked"
-        )
+        return block("earnings_blackout", "earnings calendar unavailable; entry blocked")
     if ctx.days_to_earnings is not None and ctx.days_to_earnings <= blackout:
         return block(
             "earnings_blackout",
@@ -213,9 +214,7 @@ def evaluate_entry_gates(
     # PDT guard: N day trades in the last 5 trading days block entries.
     pdt_max = int(config.get("risk", "pdt_max_day_trades", default=3))
     if ctx.day_trades_5d >= pdt_max:
-        return block(
-            "pdt_guard", f"{ctx.day_trades_5d} day trades in 5 days ≥ {pdt_max}"
-        )
+        return block("pdt_guard", f"{ctx.day_trades_5d} day trades in 5 days ≥ {pdt_max}")
     ok("pdt_guard", f"{ctx.day_trades_5d} day trades in 5 days")
 
     # Drawdown kill: equity below peak by the configured pct turns the
@@ -252,10 +251,13 @@ def evaluate_entry_gates(
     # limit toward cash; an entry whose stop leg is missing counts its full
     # committed value as risk — the conservative worst case.
     working_risk, working_cash = committed_entries(ctx.working_entries)
-    current_open_risk = open_risk(
-        (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
-        for p in ctx.open_positions
-    ) + working_risk
+    current_open_risk = (
+        open_risk(
+            (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
+            for p in ctx.open_positions
+        )
+        + working_risk
+    )
     sizing = position_size(
         ctx.equity,
         entry,
@@ -273,10 +275,7 @@ def evaluate_entry_gates(
         GateCheck(
             "position_size",
             sizing.shares >= 1,
-            (
-                f"{sizing.shares} shares, limited by "
-                f"{', '.join(sizing.limited_by)}"
-            ),
+            (f"{sizing.shares} shares, limited by {', '.join(sizing.limited_by)}"),
         )
     )
     if sizing.shares < 1:

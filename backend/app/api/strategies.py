@@ -7,13 +7,13 @@ from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import Run, Strategy
+from app.db.models import Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.performance import compute_performance
@@ -118,8 +118,18 @@ def strategies(request: Request) -> dict[str, Any]:
         spend = runner.monthly_spend(session) if runner is not None else Decimal(0)
         cap = Decimal(str(config.get("shadows", "monthly_cost_cap_usd", default=5)))
         used = slots_used(session)
+        synthetic_entries = session.execute(
+            select(func.count(ShadowPosition.id)).join(
+                ShadowDecision, ShadowPosition.entry_decision_id == ShadowDecision.id,
+            ).where(
+                ShadowPosition.run_id == run.id if run else ShadowPosition.id < 0,
+                ShadowPosition.entry.is_not(None),
+                func.json_extract(ShadowDecision.gates_result, "$.quote.synthetic") == 1,
+            )
+        ).scalar_one()
     return {
         **data,
+        "synthetic_quote_entries": synthetic_entries,
         "cost": {
             "month_usd": str(spend),
             "cap_usd": str(cap),

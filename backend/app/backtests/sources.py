@@ -118,6 +118,8 @@ class BacktestQuoteSource:
                 last=last,
                 timestamp=now,
                 feed="backtest",
+                trade_timestamp=closed[-1].start + timedelta(minutes=5),
+                fetched_at=now,
             )
         return DataResult(data=out, source="backtest")
 
@@ -145,6 +147,14 @@ class BacktestNewsSource:
                 )
                 .order_by(MARKET_NEWS.c.created_at)
             ).all()
+            coverage = dict(session.execute(select(
+                MARKET_COVERAGE.c.symbol, MARKET_COVERAGE.c.status,
+            ).where(MARKET_COVERAGE.c.kind == "news", MARKET_COVERAGE.c.symbol.in_(symbols))).all())
+        statuses = {
+            symbol: ("complete" if any(r.symbol == symbol for r in rows) else "empty")
+            if coverage.get(symbol) in ("complete", "empty") else coverage.get(symbol, "failed")
+            for symbol in symbols
+        }
         return DataResult(
             data=[
                 NewsItem(
@@ -156,7 +166,7 @@ class BacktestNewsSource:
                 )
                 for r in rows
             ],
-            source="market.db",
+            source="market.db", statuses=statuses,
         )
 
 
