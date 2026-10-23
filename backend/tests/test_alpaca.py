@@ -25,6 +25,57 @@ from app.market.clock import NY_TZ, UTC, FakeClock
 pytestmark = pytest.mark.anyio
 
 
+async def test_news_more_than_fifty_stories_keeps_per_symbol_coverage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AlpacaDataClient("test-key", "test-secret")
+    stories = [
+        {"id": str(i), "headline": str(i), "source": "fake", "symbols": ["AAPL"],
+         "created_at": "2026-10-22T14:00:00Z"} for i in range(60)
+    ] + [{"id": "msft", "headline": "MSFT", "source": "fake", "symbols": ["MSFT"],
+          "created_at": "2026-10-22T14:00:00Z"}]
+
+    def page(path: str, data: dict[str, Any]) -> dict[str, Any]:
+        rows = [s for s in stories if data["symbols"] in s["symbols"]]
+        offset = int(data.get("page_token") or 0)
+        return {"news": rows[offset:offset + 50],
+                "next_page_token": str(offset + 50) if len(rows) > offset + 50 else None}
+
+    monkeypatch.setattr(client.news, "get", page)
+    monkeypatch.setattr(client.news, "get_news", lambda request: {"news": stories[:50]})
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    result = await client.fetch_news(["AAPL", "MSFT", "JPM"], at - timedelta(hours=24), at)
+    assert len(result.data) == 61
+    assert result.statuses == {"AAPL": "complete", "MSFT": "complete", "JPM": "empty"}
+
+
+async def test_news_status_distinguishes_failed_and_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = AlpacaDataClient("test-key", "test-secret")
+    story = {
+        "id": "one", "headline": "One", "source": "fake",
+        "symbols": ["TRUNC"], "created_at": "2026-10-22T14:00:00Z",
+    }
+
+    def page(path: str, data: dict[str, Any]) -> dict[str, Any]:
+        symbol = str(data["symbols"])
+        if symbol == "FAIL":
+            raise RuntimeError("news unavailable")
+        if symbol == "TRUNC":
+            return {"news": [story], "next_page_token": "repeat"}
+        return {"news": [], "next_page_token": None}
+
+    monkeypatch.setattr(client.news, "get", page)
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    result = await client.fetch_news(
+        ["FAIL", "TRUNC", "DONE"], at - timedelta(hours=24), at
+    )
+    assert result.statuses == {
+        "FAIL": "failed", "TRUNC": "truncated", "DONE": "empty",
+    }
+
+
 def test_trading_client_is_paper() -> None:
     client = AlpacaDataClient("test-key", "test-secret")
     assert client.trading._base_url == BaseURL.TRADING_PAPER
@@ -288,10 +339,24 @@ def test_parse_quotes_missing_trade_uses_quote_time() -> None:
     assert quote.timestamp == datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
 
 
-def test_parse_quotes_missing_both_uses_now() -> None:
+def test_parse_quotes_missing_both_has_no_market_timestamp() -> None:
     now = datetime(2026, 10, 15, 14, 0, 2, tzinfo=UTC)
     quotes = parse_quotes({}, {}, ["JPM"], now)
-    assert quotes["JPM"].timestamp == now
+    assert quotes["JPM"].timestamp is None
+
+
+def test_parse_quotes_recent_trade_does_not_refresh_two_hour_old_quote() -> None:
+    now = datetime(2026, 10, 22, 15, 46, tzinfo=UTC)
+    quotes = parse_quotes(
+        {"COP": {"t": "2026-10-22T13:46:00Z", "bp": "149.55", "ap": "149.57"}},
+        {"COP": {"t": "2026-10-22T15:46:00Z", "p": "144.34"}},
+        ["COP"],
+        now,
+    )
+    quote = quotes["COP"]
+    assert quote.timestamp == datetime(2026, 10, 22, 13, 46, tzinfo=UTC)
+    assert quote.trade_timestamp == now
+    assert quote.fetched_at == now
 
 
 def test_parse_news_maps_symbols() -> None:

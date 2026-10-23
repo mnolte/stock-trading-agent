@@ -38,6 +38,10 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
     timeout: 60_000,
   });
   await expect(page.getByTestId('shadow-cost')).toContainText('2 of 3 slots');
+  const current = await (await request.get('/api/strategies')).json();
+  await expect(page.getByTestId('synthetic-quote-count')).toContainText(
+    `${current.synthetic_quote_entries} synthetic-quote entries this run`,
+  );
 
   // New shadow dialog: name, kind, prompt, model, temperature, overrides.
   await page.getByRole('button', { name: 'New shadow…' }).click();

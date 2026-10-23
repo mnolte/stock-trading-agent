@@ -729,6 +729,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.key_testers = key_testers
     app.state.market_data = market_data
     app.state.signal_service = signal_service
+    if config.env.mode != "simulated":
+        cycle_runner.record_missing_cycles("app down")
     app.state.cycle_runner = cycle_runner
     app.state.broker = broker
     app.state.executor = executor
@@ -747,6 +749,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.backtests = backtest_manager
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
+    scheduler.add_job(
+        cycle_runner.record_missing_cycles, IntervalTrigger(minutes=1),
+        args=["error: scheduled cycle not started"], id="scheduled-cycle-audit",
+    )
     # When promoted settings move cycle times the cron jobs are rebuilt.
     cycle_runner._on_settings_promoted = (
         lambda: schedule_cycle_jobs(

@@ -450,6 +450,8 @@ async def test_quote_source_uses_last_close_and_assumed_spread() -> None:
     half = Decimal("100") * Decimal("0.05") / Decimal(200)
     assert q.bid == Decimal("100") - half
     assert q.ask == Decimal("100") + half
+    assert q.trade_timestamp == t0 + timedelta(minutes=5)
+    assert q.fetched_at == clock.now()
 
 
 async def test_calendar_source_from_market_db(tmp_path: Path) -> None:
@@ -551,6 +553,7 @@ async def test_llm_cache_hit_replays_answer_free_and_marked(tmp_path: Path) -> N
     s1.commit()
     assert calls == 1
     assert d1.cached is False
+    assert d1.cost_source == "priced"
 
     # A second decision on identical inputs is a cache hit: no client call,
     # same stored output, cost zero, marked cached.
@@ -569,6 +572,7 @@ async def test_llm_cache_hit_replays_answer_free_and_marked(tmp_path: Path) -> N
     )
     assert calls == 1
     assert d2.cached is True
+    assert d2.cost_source == "cached"
     assert d2.cost in (None, Decimal(0))
     assert d2.model_output == d1.model_output
 
@@ -1025,6 +1029,7 @@ async def _run_deterministic_pair(
     book, so the run must trade."""
     config = AppConfig()
     config.yaml["universe"]["symbols"] = ["AAA"]
+    config.yaml["universe"]["sectors"]["AAA"] = "Technology"
     schedule = config.yaml.setdefault("schedule", {})
     schedule["history_sessions"] = history_5m
     schedule["daily_history_sessions"] = daily_history

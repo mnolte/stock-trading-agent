@@ -48,7 +48,7 @@ from app.reviews.facts import (
     weekly_period,
 )
 from app.reviews.numbercheck import bad_numbers
-from app.reviews.templates import plain_content
+from app.reviews.templates import briefing_status, plain_content
 from app.signals.service import SignalService
 
 logger = logging.getLogger(__name__)
@@ -365,6 +365,16 @@ class ReviewService:
                 prompt=prompt,
                 detail=(response.raw or "")[:200],
             )
+        text = "\n".join(self._content_texts(content)).lower()
+        if kind == "briefing" and any(
+            "unavailable" in clause and facts.get(key) == [] and label in clause
+            for clause in text.replace(";", ".").replace("\n", ".").split(".")
+            for key, label in (("positions", "position"), ("earnings_today", "earnings today"),
+                               ("earnings_tomorrow", "earnings tomorrow"), ("banners", "banner"))
+        ):
+            return self._fallback(
+                session, kind=kind, ref=ref, facts=facts, reason="fact check failed", prompt=prompt,
+            )
         bad = bad_numbers("\n".join(self._content_texts(content)), facts)
         if bad:
             return self._fallback(
@@ -492,6 +502,11 @@ class ReviewService:
             composed = await self._compose(
                 session, kind="briefing", ref=period, facts=facts
             )
+            composed.content["status_line"] = briefing_status(facts)
+            if composed.source == "model":
+                composed.content["text"] = (
+                    briefing_status(facts) + " " + str(composed.content.get("text", ""))
+                )
             review = Review(
                 kind="briefing",
                 period=period,

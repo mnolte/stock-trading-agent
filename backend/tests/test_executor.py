@@ -2,6 +2,7 @@
 kill switch — all offline and deterministic (docs/SPEC.md, Alpaca
 integration + Risk management)."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -24,7 +25,7 @@ from app.data.fake import (
 from app.data.models import Bar5m, DailyBar, DataResult, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
-from app.db.models import Cycle, DayTrade, Decision, Event, Order, Position
+from app.db.models import Approval, Cycle, DayTrade, Decision, Event, Order, Position
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
@@ -72,6 +73,7 @@ def _executor(
     clock: FakeClock | None = None,
     config: AppConfig | None = None,
     sources: DataSources | None = None,
+    reference_bar: bool = True,
 ) -> Executor:
     clock = clock or FakeClock(NOW)
     config = config or AppConfig()
@@ -81,7 +83,7 @@ def _executor(
         sources, calendar, config, session_factory=session_factory
     )
     signals = SignalService(market_data, calendar, config, clock, session_factory)
-    return Executor(
+    executor = Executor(
         broker=broker,
         market_data=market_data,
         signals=signals,
@@ -91,6 +93,10 @@ def _executor(
         state=ExecutionState(clock=clock),
         session_factory=session_factory,
     )
+    if reference_bar:
+        for symbol, price in (broker.prices or {"MSFT": Decimal("420.10")}).items():
+            _store_reference(executor, symbol, price)
+    return executor
 
 
 def _account(
@@ -176,6 +182,13 @@ def _quote(symbol: str, ask: str = "420.10", bid: str = "420.00") -> Quote:
     )
 
 
+def _store_reference(executor: Executor, symbol: str, price: Decimal) -> None:
+    executor.market_data.bars_cache.store([Bar5m(
+        symbol=symbol, start=NOW - timedelta(minutes=30),
+        open=price, high=price, low=price, close=price, volume=100, feed="sip",
+    )])
+
+
 def _open_position(
     session: Session,
     symbol: str = "MSFT",
@@ -242,6 +255,7 @@ async def test_reconcile_adopts_unknown_position_with_atr(
         # 3 × 1h ATR below the current price — tighter than the 3% fallback.
         assert position.current_stop_price is not None
         assert Decimal("97") < position.current_stop_price < Decimal("100")
+        assert position.initial_stop == position.current_stop_price
         events = _events(session, "reconciliation")
         assert any(e.details and e.details.get("kind") == "adopted_position" for e in events)
     # A standalone stop sits at the broker.
@@ -677,6 +691,10 @@ async def test_position_without_stop_gets_protective_stop(
     assert len(stops) == 1
     assert stops[0].stop_price == Decimal("410")  # the stored stop price
     with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.initial_stop == Decimal("410")
         assert _events(session, "protective_stop")
 
 
@@ -1112,10 +1130,12 @@ def _wide_config() -> AppConfig:
     """Sizing config where only the shared budgets can bind."""
     config = AppConfig()
     config.yaml["risk"]["max_open_positions"] = 10
+    config.yaml["risk"]["risk_per_trade_pct"] = 0.505
     config.yaml["risk"]["max_per_sector"] = 10
     config.yaml["risk"]["max_position_pct"] = 100
     config.yaml["risk"]["max_order_pct"] = 100
     config.yaml["risk"]["max_orders_per_cycle"] = 10
+    config.yaml["universe"]["sectors"].update({f"S{i}": "Technology" for i in range(10)})
     return config
 
 
@@ -1124,6 +1144,11 @@ async def _enter_symbol(
     session: Session,
     symbol: str,
 ) -> Decision:
+    session.commit()
+    _store_reference(executor, symbol, Decimal("100"))
+    executor.market_data.sources.quotes = _StaticQuotes({
+        symbol: _quote(symbol, ask="100.00", bid="99.95"),
+    })
     decision = _decision(
         session,
         symbol,
@@ -1683,6 +1708,95 @@ async def test_earnings_exit_runs_for_acknowledged_adopted_position(
     assert "XYZ" not in broker.positions
 
 
+@pytest.mark.parametrize(
+    ("bid", "has_bar", "atr", "reason"),
+    [("100", True, Decimal("1"), None),
+     ("99.6", True, Decimal("1"), "tighten_market_distance"),
+     ("100", False, Decimal("1"), "reference_missing"),
+     ("100", True, None, "reference_missing")],
+)
+async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
+    session_factory: sessionmaker[Session], bid: str, has_bar: bool,
+    atr: Decimal | None, reason: str | None,
+) -> None:
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("100"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("95"), client_order_id="original",
+    )
+    quote = Quote("MSFT", Decimal(bid), Decimal("100"), Decimal("0"), NOW, "iex")
+    executor = _executor(
+        session_factory, broker, clock,
+        sources=_sources(quotes=_StaticQuotes({"MSFT": quote})), reference_bar=has_bar,
+    )
+    assert stop.data is not None
+    with session_factory() as session:
+        position = _open_position(session, entry="100", stop="95")
+        executor._store_broker_order(session, stop.data, None, leg="stop")
+        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        item = replace(_item("MSFT"), snapshot=replace(_snapshot("MSFT"), atr_1h=atr))
+        await executor.apply_decision(
+            session, decision, item, position, _quote("MSFT"), NOW,
+            account=_account(), earnings_known=True,
+        )
+        session.commit()
+        if reason is None:
+            assert position.current_stop_price == Decimal("99.5")
+        else:
+            assert position.current_stop_price == Decimal("95")
+            assert decision.gates_result is not None
+            assert decision.gates_result["reason"] == reason
+
+
+@pytest.mark.parametrize(
+    ("quote", "reason"),
+    [
+        (
+            Quote(
+                "MSFT", Decimal("100"), Decimal("100"), Decimal("0"),
+                NOW - timedelta(minutes=2), "iex",
+            ),
+            "quote_stale",
+        ),
+        (
+            Quote(
+                "MSFT", Decimal("100"), Decimal("102"), Decimal("0"),
+                NOW, "iex",
+            ),
+            "quote_suspect",
+        ),
+    ],
+)
+async def test_tighten_rechecks_quote_quality_before_replacement(
+    session_factory: sessionmaker[Session], quote: Quote, reason: str,
+) -> None:
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("95"), client_order_id="original",
+    )
+    executor = _executor(
+        session_factory,
+        broker,
+        clock,
+        sources=_sources(quotes=_StaticQuotes({"MSFT": quote})),
+    )
+    assert stop.data is not None
+    with session_factory() as session:
+        position = _open_position(session, entry="100", stop="95")
+        executor._store_broker_order(session, stop.data, None, leg="stop")
+        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        await executor.apply_decision(
+            session, decision, _item("MSFT"), position, quote, NOW,
+            account=_account(), earnings_known=True,
+        )
+        session.commit()
+        assert position.current_stop_price == Decimal("95")
+        assert decision.gates_result is not None
+        assert decision.gates_result["reason"] == reason
+
+
 async def test_tighten_stop_moves_only_upward(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -1725,6 +1839,10 @@ async def test_tighten_stop_moves_only_upward(
         session.commit()
         assert position.current_stop_price == Decimal("415")
         assert broker.submit_calls == calls_before + 1  # one replace call
+        history = session.execute(
+            select(Order).where(Order.leg == "stop").order_by(Order.id)
+        ).scalars().all()
+        assert [row.stop_price for row in history] == [Decimal("410"), Decimal("415")]
 
 
 # ----------------------------------------------------------------------
@@ -1921,6 +2039,35 @@ async def test_resume_requires_a_reason(
         events = _events(session, "kill_switch_resume")
         assert events[0].details is not None
         assert events[0].details["reason"] == "checked, all good"
+
+
+async def test_daily_loss_latch_survives_recovery_restart_and_resets_next_ny_day(
+    session_factory: sessionmaker[Session],
+) -> None:
+    from app.engine.state import load_execution_state
+    from app.risk.gates import evaluate_entry_gates
+
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, cash=Decimal("10000"))
+    broker.cash = Decimal("9700")
+    executor = _executor(session_factory, broker, clock)
+    await executor.update_session_brakes()
+    broker.cash = Decimal("9900")
+    await executor.refresh_account()
+    restarted = load_execution_state(clock, executor.config, session_factory)
+    assert restarted.daily_loss_hit
+    executor.state = restarted
+    executor.state.paused = False
+    with session_factory() as session:
+        ctx = executor.budget_context(session)
+        ctx = replace(ctx, symbol="MSFT")
+        result = evaluate_entry_gates(
+            ctx, entry=Decimal("100"), stop=Decimal("98"), config=executor.config,
+        )
+    assert result.blocked_by == "daily_loss_limit"
+    clock.advance(timedelta(days=1))
+    next_day = load_execution_state(clock, executor.config, session_factory)
+    assert not next_day.daily_loss_hit
 
 
 async def test_daily_loss_limit_trips_the_brake(
@@ -2282,6 +2429,8 @@ class _DownQuotes:
 
 
 async def _apply_enter(executor: Executor, session: Session) -> Decision:
+    session.commit()
+    _store_reference(executor, "MSFT", Decimal("420.10"))
     decision = _decision(
         session,
         "MSFT",
@@ -2299,6 +2448,125 @@ async def _apply_enter(executor: Executor, session: Session) -> Decision:
         earnings_known=True,
     )
     return decision
+
+
+@pytest.mark.parametrize(("ask", "expected_qty"), [("100", 19), ("101", 16)])
+@pytest.mark.parametrize("mode", ["automatic", "supervised"])
+async def test_entry_sizes_against_final_limit(
+    session_factory: sessionmaker[Session], ask: str, expected_qty: int,
+    mode: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
+    executor = _executor(
+        session_factory, broker, clock,
+        sources=_sources(quotes=_AgedQuotes(clock, 0, ask=ask, bid=ask)),
+    )
+    executor.config.yaml["execution"]["mode"] = mode
+    monkeypatch.setattr(executor, "_atr_1h", lambda _symbol: Decimal("1"))
+    _store_reference(executor, "MSFT", Decimal(ask))
+    with session_factory() as session:
+        decision = _decision(session, "MSFT", "enter", {
+            "stop_price": "98", "target_price": "108",
+        })
+        item = replace(_item("MSFT"), snapshot=replace(_snapshot("MSFT"), atr_1h=Decimal("1")))
+        await executor.apply_decision(
+            session, decision, item, None,
+            Quote("MSFT", Decimal("100"), Decimal("100"), Decimal("100"), NOW, "iex"),
+            NOW, account=_account(), earnings_known=True,
+        )
+        session.commit()
+        if mode == "supervised":
+            approval = session.execute(select(Approval)).scalar_one()
+            result = await executor.approve(approval.id)
+            assert result["ok"] is True
+            session.expire_all()
+        order = session.execute(select(Order).where(Order.side == "buy")).scalar_one()
+        assert order.qty == expected_qty
+        assert order.limit_price is not None
+        assert order.qty * order.limit_price <= Decimal("2000")
+        assert order.qty * (order.limit_price - Decimal("98")) <= Decimal("50")
+        assert decision.gates_result is not None
+        sizing = cast("dict[str, object]", decision.gates_result["sizing"])
+        assert sizing["shares"] == order.qty
+
+
+async def test_fresh_entry_stop_distance_uses_lowest_reference(
+    session_factory: sessionmaker[Session],
+) -> None:
+    clock = FakeClock(NOW)
+
+    class Quotes(_AgedQuotes):
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            result = await super().fetch_quotes(symbols)
+            return DataResult(
+                data={s: replace(q, last=Decimal("99")) for s, q in result.data.items()}
+            )
+
+    executor = _executor(
+        session_factory, FakeBroker(clock), clock,
+        sources=_sources(quotes=Quotes(clock, 0, ask="100", bid="100")),
+        reference_bar=False,
+    )
+    _store_reference(executor, "MSFT", Decimal("100"))
+    _, limit, reason = await executor._fresh_entry_check(
+        symbol="MSFT", stop=Decimal("98"), target=Decimal("108"), atr_1h=Decimal("1"),
+    )
+    assert limit is None
+    assert reason == "stop_market_distance"
+
+
+@pytest.mark.parametrize(
+    ("has_bar", "atr", "expected"),
+    [(False, Decimal("1"), "reference_missing"), (True, None, "reference_missing"),
+     (True, Decimal("1"), None)],
+)
+async def test_fresh_entry_required_references_and_optional_last_trade(
+    session_factory: sessionmaker[Session], has_bar: bool,
+    atr: Decimal | None, expected: str | None,
+) -> None:
+    clock = FakeClock(NOW)
+
+    class Quotes(_AgedQuotes):
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            result = await super().fetch_quotes(symbols)
+            return DataResult(
+                data={s: replace(q, last=Decimal("0")) for s, q in result.data.items()}
+            )
+
+    executor = _executor(
+        session_factory, FakeBroker(clock), clock,
+        sources=_sources(quotes=Quotes(clock, 0, ask="100", bid="100")),
+        reference_bar=False,
+    )
+    if has_bar:
+        _store_reference(executor, "MSFT", Decimal("100"))
+    quote, limit, reason = await executor._fresh_entry_check(
+        symbol="MSFT", stop=Decimal("98"), target=Decimal("108"), atr_1h=atr,
+    )
+    assert reason == expected
+    assert (limit is None) == (expected is not None)
+    if expected is None:
+        assert quote is not None
+        assert quote.provenance()["last_trade"] == "missing"
+
+
+async def test_entry_does_not_use_old_budgets_when_account_refresh_fails(
+    session_factory: sessionmaker[Session],
+) -> None:
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.fail_reads = True
+    executor = _executor(
+        session_factory, broker, clock, sources=_sources(quotes=_AgedQuotes(clock, 0)),
+    )
+    executor.state.account = _account()
+    with session_factory() as session:
+        decision = await _apply_enter(executor, session)
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "account_unavailable"
+    assert broker.submit_calls == 0
 
 
 async def test_fresh_quote_gate_rejects_stale_quote(
@@ -2322,6 +2590,7 @@ async def test_fresh_quote_gate_rejects_stale_quote(
         checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
         assert checks[-1]["name"] == "fresh_quote"
         assert checks[-1]["detail"] == "quote_stale"
+        assert decision.gates_result["quote"] is not None
     assert broker.submit_calls == 0
 
 

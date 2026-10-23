@@ -46,6 +46,14 @@ def _validate(
     )
 
 
+def test_report_above_market_tighten_becomes_hold() -> None:
+    result = _validate(
+        _enter(action="tighten_stop", stop_price=110), context="held",
+        price=Decimal("105"), atr=Decimal("1"), stop=Decimal("95"),
+    )
+    assert result.final_action == "hold"
+
+
 def test_valid_enter_passes_all_checks() -> None:
     result = _validate(_enter())
     assert result.valid

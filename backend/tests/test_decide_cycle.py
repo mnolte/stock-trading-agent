@@ -1,6 +1,7 @@
 """The decision cycle end to end on fakes: stored decisions, no network."""
 
 import json
+from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -18,7 +19,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Bar5m, DataResult, NewsItem, Quote
+from app.data.models import Bar1h, Bar5m, DataResult, NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import Base
 from app.db.models import Cycle, Decision, Event, Order, Outcome, Position
@@ -241,6 +242,80 @@ async def test_cycle_stores_decisions_for_candidates_and_held(
     assert cycles[0].scheduled_time == CYCLE_1246.astimezone(UTC).replace(tzinfo=None)
 
 
+async def test_held_snapshot_uses_initial_risk_and_full_provenance(
+    session_factory: sessionmaker[Session],
+) -> None:
+    signal_bar = Bar1h(
+        symbol="MSFT",
+        start=CYCLE_1246 - timedelta(hours=1),
+        end=CYCLE_1246,
+        open=Decimal("415"), high=Decimal("421"), low=Decimal("414"),
+        close=Decimal("420"), volume=1000, feed="fake", complete=True,
+    )
+    with session_factory() as session:
+        entry_cycle = Cycle(
+            kind="cycle",
+            scheduled_time=CYCLE_1246 - timedelta(days=1),
+            status="done",
+        )
+        session.add(entry_cycle)
+        session.flush()
+        entry = Decision(
+            cycle_id=entry_cycle.id,
+            symbol="MSFT",
+            context="candidate",
+            model_output={
+                "thesis": "Breakout above consolidation",
+                "invalidation": "Close below 410",
+            },
+            final_action="enter",
+            prompt_version="decision.v1",
+            prompt_hash="a" * 64,
+            model="fake",
+        )
+        session.add(entry)
+        session.flush()
+        session.add(
+            Position(
+                symbol="MSFT",
+                qty=4,
+                avg_entry_price=Decimal("415"),
+                initial_stop=Decimal("410"),
+                current_stop_price=Decimal("412"),
+                target_price=Decimal("430"),
+                opened_at=CYCLE_1246 - timedelta(days=1),
+                entry_decision_id=entry.id,
+            )
+        )
+        session.commit()
+
+    item = replace(_item("MSFT", "held"), bars_1h=[signal_bar])
+    runner = _runner(
+        session_factory,
+        _evaluation(item, held={"MSFT"}),
+        universe=["MSFT"],
+    )
+    await runner.run(CYCLE_1246)
+
+    decision = max(_decisions(session_factory), key=lambda row: row.id)
+    assert decision.input_snapshot is not None
+    snapshot = decision.input_snapshot
+    position = cast(dict[str, object], snapshot["position"])
+    assert position["initial_stop"] == 410.0
+    assert position["stop"] == 412.0
+    assert position["remaining_downside_usd"] == 32.03
+    assert position["r_so_far"] == 1.0
+    assert position["original_thesis"] == "Breakout above consolidation"
+    assert position["original_invalidation"] == "Close below 410"
+    quote = cast(dict[str, object], snapshot["quote"])
+    assert quote["feed"] == "fake"
+    assert quote["quote_timestamp"] == NOW_13H.isoformat()
+    assert quote["trade_timestamp"] is None
+    assert quote["signal_bar_time"] == signal_bar.end.isoformat()
+    assert snapshot["signal_bar_time"] == signal_bar.end.isoformat()
+    assert snapshot["last_bar_time"] is not None
+
+
 async def test_cycle_invalid_output_becomes_skip_and_keeps_raw(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -278,6 +353,37 @@ async def test_cycle_failed_call_records_no_call(
     assert "timeout" in str(decision.validation_result["error"])
 
 
+async def test_scheduled_cycle_outcome_failure_is_stored_with_reason(
+    session_factory: sessionmaker[Session],
+) -> None:
+    class BrokenOutcomes:
+        def fill(self, session: Session, now: datetime) -> None:
+            raise RuntimeError("outcome failure")
+
+    runner = _runner(session_factory, _evaluation(), universe=["MSFT"])
+    runner.outcomes = cast(Any, BrokenOutcomes())
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "error"
+    with session_factory() as session:
+        row = session.get(Cycle, report.cycle_id)
+        assert row is not None
+        assert row.status == "error"
+        assert row.errors is not None and "outcome failure" in row.errors[0]
+
+
+async def test_missing_scheduled_cycles_are_stored_once_with_reason(
+    session_factory: sessionmaker[Session],
+) -> None:
+    runner = _runner(session_factory, _evaluation(), universe=["MSFT"])
+    count = runner.record_missing_cycles("app down")
+    assert count == 3
+    assert runner.record_missing_cycles("app down") == 0
+    with session_factory() as session:
+        rows = session.execute(select(Cycle).order_by(Cycle.scheduled_time)).scalars().all()
+        assert all(row.status == "skipped" and row.errors == ["app down"] for row in rows)
+        assert [row.scheduled_time.hour for row in rows] == [14, 15, 16]
+
+
 async def test_cycle_candidate_without_quote_gets_no_call(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -298,6 +404,47 @@ async def test_cycle_candidate_without_quote_gets_no_call(
     (decision,) = _decisions(session_factory)
     assert decision.final_action == "no_call"
     assert decision.no_call_reason == "quote_missing"
+
+
+@pytest.mark.parametrize(
+    ("bid", "ask", "timestamp", "reason"),
+    [
+        ("0", "420", NOW_13H, "quote_missing"),
+        ("419", "0", NOW_13H, "quote_missing"),
+        ("419", "420", None, "quote_missing"),
+        ("419", "420", NOW_13H - timedelta(hours=2), "quote_stale"),
+        ("439", "440", NOW_13H, "quote_suspect"),
+    ],
+)
+@pytest.mark.parametrize("status", ["pass", "held"])
+async def test_cycle_rejects_unusable_quotes_before_model(
+    session_factory: sessionmaker[Session],
+    status: str,
+    bid: str,
+    ask: str,
+    timestamp: datetime | None,
+    reason: str,
+) -> None:
+    class Quotes:
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={"MSFT": Quote(
+                symbol="MSFT", bid=Decimal(bid), ask=Decimal(ask),
+                last=Decimal("420"), timestamp=timestamp, feed="iex",
+                trade_timestamp=NOW_13H, fetched_at=NOW_13H,
+            )})
+
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", status)),
+        sources=_sources(quotes=Quotes()), universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 0
+    (decision,) = _decisions(session_factory)
+    assert decision.no_call_reason == reason
+    assert decision.input_snapshot is not None
+    provenance = cast("dict[str, str]", decision.input_snapshot["quote"])
+    assert provenance["trade_timestamp"] == NOW_13H.isoformat()
 
 
 async def test_cycle_skips_when_market_closed(
@@ -867,7 +1014,7 @@ async def test_cycle_fetches_news_for_called_symbols_only(
             _item("MSFT", "pass"),
             _item("XOM", "pass"),
         ),
-        sources=_sources(news=news),
+        sources=_sources(news=news, quotes=FakeQuoteSource(FakeClock(NOW_13H))),
         universe=["AAPL", "MSFT", "XOM"],
     )
     runner.config.yaml["decision"]["max_calls_per_cycle"] = 2

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
@@ -50,6 +50,13 @@ def _field(item: Any, key: str) -> Any:
     if isinstance(item, dict):
         return item[key]
     return getattr(item, key)
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value)) if value is not None else Decimal(0)
+    except (ArithmeticError, ValueError):
+        return Decimal(0)
 
 
 def parse_calendar(raw: list[Any]) -> list[CalendarDay]:
@@ -119,15 +126,17 @@ def parse_quotes(
     for symbol in symbols:
         q = raw_quotes.get(symbol, {})
         t = raw_trades.get(symbol, {})
-        ts_value = t.get("t") or q.get("t")
-        ts = _parse_timestamp(ts_value) if ts_value is not None else now
+        ts_value = q.get("t")
+        ts = _parse_timestamp(ts_value) if ts_value is not None else None
         quotes[symbol] = Quote(
             symbol=symbol,
-            bid=Decimal(str(q.get("bp", "0"))),
-            ask=Decimal(str(q.get("ap", "0"))),
-            last=Decimal(str(t.get("p", "0"))),
+            bid=_decimal_or_zero(q.get("bp")),
+            ask=_decimal_or_zero(q.get("ap")),
+            last=_decimal_or_zero(t.get("p")),
             timestamp=ts,
             feed="iex",
+            trade_timestamp=_parse_timestamp(t["t"]) if t.get("t") else None,
+            fetched_at=now,
         )
     return quotes
 
@@ -359,18 +368,39 @@ class AlpacaDataClient:
     async def fetch_news(
         self, symbols: list[str], start: datetime, end: datetime
     ) -> DataResult[list[NewsItem]]:
-        try:
-            raw = await self.limiter.run_read(
-                self.news.get_news,
-                NewsRequest(symbols=",".join(symbols), start=start, end=end, limit=50),
-            )
-            news_raw = dict(raw) if isinstance(raw, dict) else {}
-            return DataResult(
-                data=parse_news(news_raw, symbols, self.clock.now()),
-                source="alpaca",
-            )
-        except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+        items: dict[tuple[str, str], NewsItem] = {}
+        statuses: dict[str, str] = {}
+        for symbol in symbols:
+            token: str | None = None
+            seen: set[str] = set()
+            received = False
+            while True:
+                try:
+                    params = NewsRequest(symbols=symbol, start=start, end=end, page_token=token)
+                    raw_response = await self.limiter.run_read(
+                        self.news.get, path="/news", data=params.to_request_fields(),
+                    )
+                    raw = cast(
+                        dict[str, Any],
+                        raw_response if isinstance(raw_response, dict) else {},
+                    )
+                    received = True
+                    for item in parse_news(raw, [symbol], self.clock.now()):
+                        items[(symbol, item.id)] = item
+                    token = raw.get("next_page_token")
+                    if token is None:
+                        statuses[symbol] = (
+                            "complete" if any(s == symbol for s, _ in items) else "empty"
+                        )
+                        break
+                    if token in seen:
+                        statuses[symbol] = "truncated"
+                        break
+                    seen.add(token)
+                except Exception:  # noqa: BLE001
+                    statuses[symbol] = "truncated" if received else "failed"
+                    break
+        return DataResult(data=list(items.values()), source="alpaca", statuses=statuses)
 
     async def fetch_corporate_actions(
         self, symbols: list[str], start: date, end: date

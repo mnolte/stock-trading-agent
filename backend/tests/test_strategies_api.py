@@ -9,7 +9,7 @@ import pytest
 from app.api.main import check_model_prices_at_startup, run_migrations
 from app.config import get_config
 from app.db.base import get_session_maker
-from app.db.models import Run, ShadowPosition, Strategy
+from app.db.models import Cycle, Run, ShadowDecision, ShadowPosition, Strategy
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -46,6 +46,31 @@ def _closed_trades(strategy_id: int, n: int) -> None:
                 )
             )
         session.commit()
+
+
+def test_synthetic_quote_entry_count_is_for_filled_positions_in_current_run(
+    client: TestClient,
+) -> None:
+    sid = _new(client)
+    assert client.get("/api/strategies").json()["synthetic_quote_entries"] == 0
+    _closed_trades(sid, 1)
+    with get_session_maker()() as session:
+        position = session.execute(select(ShadowPosition).where(
+            ShadowPosition.strategy_id == sid,
+        )).scalar_one()
+        cycle = Cycle(kind="cycle", status="done", scheduled_time=position.created_at)
+        session.add(cycle)
+        session.flush()
+        decision = ShadowDecision(
+            strategy_id=sid, cycle_id=cycle.id, symbol="MSFT", context="candidate",
+            final_action="enter", gates_result={"quote": {"synthetic": True}},
+            created_at=position.created_at,
+        )
+        session.add(decision)
+        session.flush()
+        position.entry_decision_id = decision.id
+        session.commit()
+    assert client.get("/api/strategies").json()["synthetic_quote_entries"] == 1
 
 
 def test_new_shadow_validation(client: TestClient) -> None:

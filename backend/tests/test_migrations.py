@@ -16,6 +16,44 @@ def _upgrade(db: Path, revision: str, monkeypatch: pytest.MonkeyPatch) -> None:
     command.upgrade(Config(str(ALEMBIC_INI)), revision)
 
 
+def test_integrity_migration_backfills_initial_stop_and_preserves_legacy_costs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = tmp_path / "integrity.db"
+    _upgrade(db, "f1a2b3c4d5e6", monkeypatch)
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO cycles (id, kind, scheduled_time, status) "
+            "VALUES (1, 'cycle', '2026-10-22 15:46:00', 'done')"
+        ))
+        for decision_id, cost, cached in ((1, "0", 0), (2, "0.001", 0), (3, "0", 1)):
+            conn.execute(text(
+                "INSERT INTO decisions (id, cycle_id, symbol, context, final_action, model_output, "
+                "prompt_version, prompt_hash, model, tokens, cost, cached) "
+                "VALUES (:id, 1, 'WMT', 'candidate', 'enter', :output, 'decision.v1', 'hash', "
+                "'fake', 30, :cost, :cached)"
+            ), {
+                "id": decision_id, "cost": cost, "cached": cached,
+                "output": '{"stop_price": "95"}',
+            })
+        conn.execute(text(
+            "INSERT INTO positions (symbol, origin, pending_ack, entry_decision_id, qty, "
+            "avg_entry_price, current_stop_price, opened_at) VALUES "
+            "('WMT', 'agent', 0, 1, 16, 100, 99, '2026-10-22 15:47:00')"
+        ))
+        before = conn.execute(text("SELECT id, cost FROM decisions ORDER BY id")).all()
+    _upgrade(db, "head", monkeypatch)
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT initial_stop FROM positions")).scalar_one() == 95
+        assert conn.execute(text("SELECT id, cost FROM decisions ORDER BY id")).all() == before
+        sources = conn.execute(
+            text("SELECT cost_source FROM decisions ORDER BY id")
+        ).scalars().all()
+        assert sources == ["legacy", "priced", "cached"]
+    engine.dispose()
+
+
 def test_head_schema_has_earnings_hour_raw(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -13,6 +13,8 @@ Newest first.
 - Schedule: every incomplete cycle stored with its reason; no restarts or deploys during regular hours except emergencies.
 - Decision cost stored with its source (priced, cached, legacy). AGENTS.md: new hard rule 14, no restarts during the session.
 - Build plan: PR 15 Integrity fixes.
+- Reference prices for the entry and tighten-stop distance checks: usable quote and last closed 5-min bar required, last trade optional (used when present); a missing required reference fails closed (`reference_missing`).
+- The two source reports are in `docs/analysis/` (2026-10-22-live-data-and-llm.md, 2026-10-22-bugs-and-faulty-logic.md). The twelve items in the PR 15 kickoff are the acceptance list; the reports give the evidence and reproductions.
 
 ## 2026-10-21 — PR 14 review
 

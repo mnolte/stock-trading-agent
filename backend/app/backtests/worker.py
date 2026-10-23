@@ -274,6 +274,10 @@ async def _fill_market_db(
             from app.backtests.store import MARKET_NEWS
 
             with market_sf() as session:
+                status = (result.statuses or {}).get(symbol, "complete" if result.data else "empty")
+                session.execute(MARKET_COVERAGE.insert().values(
+                    kind="news", symbol=symbol, status=status,
+                ))
                 for item in result.data:
                     exists = session.execute(
                         select(MARKET_NEWS.c.id).where(

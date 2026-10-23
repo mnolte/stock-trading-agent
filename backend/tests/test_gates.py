@@ -66,13 +66,38 @@ def _entry(
 def _run(
     ctx: GateContext, entry: str = "100", stop: str = "98", config: AppConfig = CONFIG
 ) -> GateResult:
-    return evaluate_entry_gates(
-        ctx, entry=Decimal(entry), stop=Decimal(stop), config=config
-    )
+    return evaluate_entry_gates(ctx, entry=Decimal(entry), stop=Decimal(stop), config=config)
 
 
 def _check_names(result: GateResult) -> list[str]:
     return [c.name for c in result.checks]
+
+
+def test_unknown_sector_blocks_instead_of_bypassing_cap() -> None:
+    result = _run(_ctx(symbol="UNKNOWN"))
+    assert not result.allowed
+    assert result.blocked_by == "sector_unknown"
+
+
+def test_screened_ibm_cannot_bypass_two_technology_positions() -> None:
+    config = AppConfig()
+    config.yaml["universe"]["mode"] = "screened"
+    result = _run(
+        _ctx(
+            symbol="IBM",
+            open_positions=[_position("AAPL"), _position("MSFT")],
+            sectors={"IBM": "Technology", "AAPL": "Technology", "MSFT": "Technology"},
+        ),
+        config=config,
+    )
+    assert not result.allowed
+    assert result.blocked_by == "sector_cap"
+
+
+def test_daily_loss_latch_blocks_after_equity_recovers() -> None:
+    result = _run(_ctx(equity=Decimal("9900"), daily_loss_hit=True))
+    assert not result.allowed
+    assert result.blocked_by == "daily_loss_limit"
 
 
 def test_all_gates_pass() -> None:
@@ -149,11 +174,7 @@ def test_working_entry_counts_toward_open_risk() -> None:
     config = AppConfig()
     config.yaml["risk"]["max_position_pct"] = 100  # isolate open_risk
     result = _run(
-        _ctx(
-            working_entries=(
-                _entry("NVDA", unfilled_qty=110, limit="10", stop="8"),
-            )
-        ),
+        _ctx(working_entries=(_entry("NVDA", unfilled_qty=110, limit="10", stop="8"),)),
         entry="10",
         stop="9",
         config=config,
@@ -170,11 +191,7 @@ def test_working_entry_can_exhaust_open_risk() -> None:
     config = AppConfig()
     config.yaml["risk"]["max_position_pct"] = 100  # isolate open_risk
     result = _run(
-        _ctx(
-            working_entries=(
-                _entry("NVDA", unfilled_qty=500, limit="1", stop="0.5"),
-            )
-        ),
+        _ctx(working_entries=(_entry("NVDA", unfilled_qty=500, limit="1", stop="0.5"),)),
         entry="100",
         stop="99",
         config=config,

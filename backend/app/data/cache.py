@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from itertools import batched
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
@@ -36,17 +37,20 @@ class BarCache:
         """Upsert bars; returns number of new rows inserted."""
         if not bars:
             return 0
+        bars = list({(b.symbol, _naive_utc(b.start)): b for b in bars}.values())
         symbols = {b.symbol for b in bars}
-        naive_starts = [_naive_utc(b.start) for b in bars]
+        naive_starts = list({_naive_utc(b.start) for b in bars})
         with self._session_factory() as session:
-            existing = set(
-                session.execute(
+            existing = {
+                (symbol, start)
+                for symbol_chunk in batched(symbols, 400)
+                for time_chunk in batched(naive_starts, 400)
+                for symbol, start in session.execute(
                     select(Bar5mRow.symbol, Bar5mRow.start).where(
-                        Bar5mRow.symbol.in_(symbols),
-                        Bar5mRow.start.in_(naive_starts),
+                        Bar5mRow.symbol.in_(symbol_chunk), Bar5mRow.start.in_(time_chunk),
                     )
                 ).all()
-            )
+            }
             new_rows = [
                 Bar5mRow(
                     symbol=b.symbol,
@@ -92,17 +96,20 @@ class BarCache:
         """Upsert daily bars; returns number of new rows inserted."""
         if not bars:
             return 0
+        bars = list({(b.symbol, b.date): b for b in bars}.values())
         symbols = {b.symbol for b in bars}
-        dates = [b.date for b in bars]
+        dates = list({b.date for b in bars})
         with self._session_factory() as session:
-            existing = set(
-                session.execute(
+            existing = {
+                (symbol, day)
+                for symbol_chunk in batched(symbols, 400)
+                for date_chunk in batched(dates, 400)
+                for symbol, day in session.execute(
                     select(Bar1dRow.symbol, Bar1dRow.date).where(
-                        Bar1dRow.symbol.in_(symbols),
-                        Bar1dRow.date.in_(dates),
+                        Bar1dRow.symbol.in_(symbol_chunk), Bar1dRow.date.in_(date_chunk),
                     )
                 ).all()
-            )
+            }
             new_rows = [
                 Bar1dRow(
                     symbol=b.symbol,
@@ -249,6 +256,22 @@ class BarCache:
                 )
                 for r in rows
             ]
+
+    def latest(self, symbol: str, before: datetime) -> Bar5m | None:
+        with self._session_factory() as session:
+            row = session.execute(
+                select(Bar5mRow).where(
+                    Bar5mRow.symbol == symbol,
+                    Bar5mRow.start <= _naive_utc(before),
+                ).order_by(Bar5mRow.start.desc()).limit(1)
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return Bar5m(
+                symbol=row.symbol, start=_aware_utc(row.start), open=row.open,
+                high=row.high, low=row.low, close=row.close,
+                volume=row.volume, feed=row.feed,
+            )
 
     def get(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
         """Return cached bars for a symbol in [start, end], sorted by start."""

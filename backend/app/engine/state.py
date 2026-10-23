@@ -138,9 +138,7 @@ def record_event(
     return event
 
 
-def recover_interrupted_cycles(
-    session: Session, state: ExecutionState, clock: Clock
-) -> int:
+def recover_interrupted_cycles(session: Session, state: ExecutionState, clock: Clock) -> int:
     """Startup recovery after a crash mid-cycle (docs/SPEC.md, Errors). A
     row still ``running`` at startup means the process died — a real crash,
     so it counts as a failure: decision cycles toward the failed-cycles
@@ -150,9 +148,7 @@ def recover_interrupted_cycles(
     """
     from app.data.cache import _naive_utc
 
-    running = session.execute(
-        select(Cycle).where(Cycle.status == "running")
-    ).scalars().all()
+    running = session.execute(select(Cycle).where(Cycle.status == "running")).scalars().all()
     for cycle in running:
         cycle.status = "error"
         cycle.errors = [*(cycle.errors or []), "interrupted by app crash"]
@@ -183,9 +179,9 @@ async def finalize_interrupted_cycles(
     deadline = time.monotonic() + grace_seconds
     while True:
         with session_factory() as session:
-            running = session.execute(
-                select(Cycle).where(Cycle.status == "running")
-            ).scalars().all()
+            running = (
+                session.execute(select(Cycle).where(Cycle.status == "running")).scalars().all()
+            )
             if not running:
                 return 0
             if time.monotonic() >= deadline:
@@ -217,19 +213,33 @@ def load_execution_state(
     """Rebuild the runtime state from the events log after a restart."""
     factory = session_factory or get_session_maker()
     state = ExecutionState(clock=clock)
+    state.reset_session_if_new_day()
     with factory() as session:
+        last_loss = session.execute(
+            select(Event)
+            .where(Event.event_type == "daily_loss_limit")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        state.daily_loss_hit = last_loss is not None and (last_loss.details or {}).get(
+            "session_date"
+        ) == str(state.session_date)
         # Consecutive failed decision cycles at the tail of the table keep
         # counting across restarts (three in a row kill the switch). Only a
         # completed cycle resets the count (docs/SPEC.md, Errors): "skipped"
         # (market closed/holiday), "interrupted" (clean shutdown) and
         # "running" (crash leftover — counted by recover_interrupted_cycles,
         # not again here) all leave the streak unchanged.
-        tail_statuses = session.execute(
-            select(Cycle.status)
-            .where(Cycle.kind == "cycle")
-            .order_by(Cycle.id.desc())
-            .limit(20)
-        ).scalars().all()
+        tail_statuses = (
+            session.execute(
+                select(Cycle.status)
+                .where(Cycle.kind == "cycle")
+                .order_by(Cycle.id.desc())
+                .limit(20)
+            )
+            .scalars()
+            .all()
+        )
         for status in tail_statuses:
             if status == "error":
                 state.failed_cycles += 1
@@ -237,12 +247,16 @@ def load_execution_state(
                 break
         # Same tail scan for position checks, whose consecutive failures
         # feed the failed-checks alert (schedule.position_check_failures_alert).
-        tail_checks = session.execute(
-            select(Cycle.status)
-            .where(Cycle.kind == "position_check")
-            .order_by(Cycle.id.desc())
-            .limit(20)
-        ).scalars().all()
+        tail_checks = (
+            session.execute(
+                select(Cycle.status)
+                .where(Cycle.kind == "position_check")
+                .order_by(Cycle.id.desc())
+                .limit(20)
+            )
+            .scalars()
+            .all()
+        )
         for status in tail_checks:
             if status == "error":
                 state.failed_checks += 1
