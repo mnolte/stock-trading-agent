@@ -27,7 +27,9 @@ HELD_ACTIONS = {"hold", "tighten_stop", "exit"}
 FALLBACK = {"candidate": "skip", "held": "hold"}
 
 # Reasons a decision was stored without a usable model answer.
-NO_CALL_REASONS = {"rules", "call_cap", "quote_missing", "model_error"}
+NO_CALL_REASONS = {
+    "rules", "call_cap", "quote_missing", "quote_stale", "quote_suspect", "model_error",
+}
 
 # OpenAI structured-outputs schema for the decision object (strict mode).
 # Mirrors ModelOutput; Pydantic still validates the returned JSON.
@@ -281,8 +283,21 @@ def validate_model_output(
             ),
             value=_fmt(output.stop_price),
         )
-        checks = [check, json_check]
-        if raises:
+        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        distance_ok = (
+            price is not None and atr_1h is not None and atr_1h > 0
+            and output.stop_price is not None
+            and price - output.stop_price >= margin * atr_1h
+        )
+        distance = CodeCheck(
+            "Tighten stop market distance", passed=distance_ok,
+            detail="passed" if distance_ok else (
+                "reference_missing" if price is None or atr_1h is None
+                else "tighten_market_distance"
+            ), value=_fmt(output.stop_price),
+        )
+        checks = [check, distance, json_check]
+        if raises and distance_ok:
             return ValidationResult(
                 valid=True,
                 output=output,

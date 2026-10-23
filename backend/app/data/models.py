@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 
@@ -56,8 +56,56 @@ class Quote:
     bid: Decimal
     ask: Decimal
     last: Decimal
-    timestamp: datetime
+    timestamp: datetime | None
     feed: str
+    trade_timestamp: datetime | None = None
+    fetched_at: datetime | None = None
+
+    def quality_reason(
+        self, *, now: datetime, max_age_seconds: float,
+        bar_close: Decimal | None, max_deviation_pct: Decimal,
+    ) -> str | None:
+        if (
+            self.timestamp is None
+            or not self.bid.is_finite() or self.bid <= 0
+            or not self.ask.is_finite() or self.ask <= 0
+        ):
+            return "quote_missing"
+        timestamp = self.timestamp
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=UTC)
+        if (now - timestamp).total_seconds() > max_age_seconds:
+            return "quote_stale"
+        if (
+            bar_close is not None and bar_close.is_finite() and bar_close > 0
+            and abs(self.ask - bar_close) / bar_close * 100 > max_deviation_pct
+        ):
+            return "quote_suspect"
+        return None
+
+    def stop_reference(
+        self, bar_close: Decimal | None, atr: Decimal | None, *, entry: bool,
+    ) -> Decimal | None:
+        required = (self.bid, self.ask, bar_close, atr)
+        if self.timestamp is None or any(
+            value is None or not value.is_finite() or value <= 0 for value in required
+        ):
+            return None
+        assert bar_close is not None
+        values = [self.ask if entry else self.bid, bar_close]
+        if self.last.is_finite() and self.last > 0:
+            values.append(self.last)
+        return min(values)
+
+    def provenance(self) -> dict[str, str | None]:
+        return {
+            "bid": str(self.bid), "ask": str(self.ask), "last": str(self.last),
+            "last_trade": "present" if self.last.is_finite() and self.last > 0 else "missing",
+            "quote_timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "trade_timestamp": self.trade_timestamp.isoformat() if self.trade_timestamp else None,
+            "feed": self.feed,
+            "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
+        }
 
 
 @dataclass(frozen=True)
@@ -147,3 +195,4 @@ class DataResult[T]:
     data: T
     error: str | None = None
     source: str = ""
+    statuses: dict[str, str] | None = None

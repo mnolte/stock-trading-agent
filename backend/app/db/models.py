@@ -83,6 +83,7 @@ class Decision(Base):
     tokens_in: Mapped[int | None] = mapped_column(nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     # True when the answer came from llm_cache (a backtest replay) — the
@@ -114,6 +115,7 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     submitted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    active_until: Mapped[datetime | None] = mapped_column(nullable=True)
     filled_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
@@ -145,6 +147,7 @@ class Position(Base):
     entry_decision_id: Mapped[int | None] = mapped_column(ForeignKey("decisions.id"), nullable=True)
     qty: Mapped[int] = mapped_column(nullable=False)
     avg_entry_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    initial_stop: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     current_stop_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     target_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # A same-day exit decision deferred by the day-trade rule: {at, reason}.
@@ -386,6 +389,7 @@ class Review(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     tokens: Mapped[int | None] = mapped_column(nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     due_at: Mapped[datetime] = mapped_column(
         nullable=False
     )  # scheduled instant; a caught-up review keeps its original date
@@ -417,6 +421,7 @@ class Verdict(Base):
     )
     # Draft-call spend; the review monthly cap covers verdict calls too.
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
@@ -558,6 +563,7 @@ class ShadowDecision(Base):
     tokens_in: Mapped[int | None] = mapped_column(nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     missed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

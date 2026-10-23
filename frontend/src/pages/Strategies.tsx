@@ -337,6 +337,10 @@ export default function Strategies() {
           Shadows never trade. They see exactly what live saw each cycle, decide after it, and fill on the same
           5-min bars with the same slippage.
         </span>
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }} data-testid="synthetic-quote-count">
+          Live quotes use live entry checks; synthetic quotes assume no spread.{' '}
+          {data.synthetic_quote_entries} synthetic-quote entries this run.
+        </span>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }} data-testid="shadow-cost">
           Shadow model cost{' '}

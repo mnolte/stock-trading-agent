@@ -220,11 +220,15 @@ async def _pending_approval_id(
             earnings_known=True,
         )
         session.commit()
-        return session.execute(
+        approval_id = session.execute(
             select(Approval.id).where(
                 Approval.symbol == symbol, Approval.status == "pending"
             )
         ).scalar_one()
+    await executor.market_data.refresh_bars(
+        NOW - timedelta(hours=2), NOW, [symbol]
+    )
+    return approval_id
 
 
 # ----------------------------------------------------------------------
@@ -278,6 +282,9 @@ async def test_automatic_entry_still_sends_order(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     await executor.reconcile()
+    await executor.market_data.refresh_bars(
+        NOW - timedelta(hours=2), NOW, ["MSFT"]
+    )
     with session_factory() as session:
         decision = _decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}

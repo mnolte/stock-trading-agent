@@ -35,7 +35,7 @@ from app.db.models import CorporateAction, Position, ShadowEquity, ShadowPositio
 from app.engine.trades import _dividends
 from app.market.clock import NY_TZ, UTC
 from app.risk.gates import GateContext
-from app.risk.math import WorkingEntry
+from app.risk.math import WorkingEntry, session_pnl_pct
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -293,6 +293,7 @@ def gate_context(
     days_to_earnings: int | None,
     earnings_known: bool,
     orders_this_cycle: int,
+    config: AppConfig,
 ) -> GateContext:
     """The live ``GateContext`` filled from the shadow's own portfolio.
 
@@ -363,6 +364,11 @@ def gate_context(
         paused=live.paused,
         pending_ack=live.pending_ack,
         orders_this_cycle=orders_this_cycle,
+        daily_loss_hit=any(
+            ny_date(t) == today and session_pnl_pct(e, last_equity) <= -Decimal(str(
+                config.get("risk", "daily_loss_limit_pct")
+            )) for t, e in eq_rows
+        ),
     )
 
 

@@ -33,6 +33,7 @@ from app.db.models import (
     Cycle,
     Decision,
     EquitySnapshot,
+    Order,
     Outcome,
     Position,
     Run,
@@ -85,6 +86,55 @@ def _worker(
         session_factory=session_factory,
     )
     return worker, market_data
+
+
+def test_report_later_stop_does_not_back_apply_to_earlier_bar() -> None:
+    from app.engine.outcomes import _first_touch
+
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    position = Position(
+        symbol="WMT", qty=16, avg_entry_price=Decimal("100"), initial_stop=Decimal("95"),
+        current_stop_price=Decimal("99"), target_price=Decimal("110"), opened_at=at,
+    )
+    bars = [Bar5m("WMT", at, Decimal("100"), Decimal("101"), Decimal("96"),
+                  Decimal("100"), 100, "sip")]
+    assert _first_touch(bars, position) == "neither"
+
+
+def test_first_touch_uses_the_stop_leg_active_at_each_bar() -> None:
+    from app.engine.outcomes import _first_touch
+
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    position = Position(
+        symbol="WMT", qty=16, avg_entry_price=Decimal("100"),
+        initial_stop=Decimal("95"), current_stop_price=Decimal("99"),
+        target_price=Decimal("110"), opened_at=at,
+    )
+    history = [
+        Order(
+            alpaca_order_id="old", symbol="WMT", side="sell",
+            order_type="stop", leg="stop", qty=16,
+            stop_price=Decimal("95"), status="replaced",
+            created_at=at.replace(tzinfo=None),
+            active_until=(at + timedelta(minutes=5)).replace(tzinfo=None),
+        ),
+        Order(
+            alpaca_order_id="new", symbol="WMT", side="sell",
+            order_type="stop", leg="stop", qty=16,
+            stop_price=Decimal("99"), status="new",
+            created_at=(at + timedelta(minutes=5)).replace(tzinfo=None),
+        ),
+    ]
+    early = Bar5m(
+        "WMT", at, Decimal("100"), Decimal("101"), Decimal("96"),
+        Decimal("100"), 100, "sip",
+    )
+    late = Bar5m(
+        "WMT", at + timedelta(minutes=5), Decimal("100"), Decimal("101"),
+        Decimal("98"), Decimal("100"), 100, "sip",
+    )
+    assert _first_touch([early], position, history) == "neither"
+    assert _first_touch([early, late], position, history) == "stop"
 
 
 def _naive(dt: datetime) -> datetime:
@@ -463,6 +513,7 @@ def _seed_position(
                 entry_decision_id=decision_id,
                 qty=3,
                 avg_entry_price=420,
+                initial_stop=stop,
                 current_stop_price=stop,
                 target_price=target,
                 opened_at=_naive(opened),

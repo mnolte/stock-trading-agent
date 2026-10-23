@@ -23,10 +23,10 @@ import copy
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
 from app.data.cache import BarCache, _naive_utc
+from app.data.models import Quote
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import DecisionClient, token_cost
@@ -46,7 +47,8 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, exit_blocked_same_day, next_earnings
-from app.risk.gates import evaluate_entry_gates
+from app.risk.gates import evaluate_entry_gates, resolve_sectors
+from app.risk.math import trade_risk
 from app.rules.prefilter import STATUS_PASS, RulesResult, evaluate_entry_rules
 from app.shadows.portfolio import (
     BarReader,
@@ -150,6 +152,7 @@ def _virtual_position(sp: ShadowPosition) -> Position:
         symbol=sp.symbol,
         qty=sp.qty,
         avg_entry_price=sp.entry,
+        initial_stop=sp.initial_stop,
         current_stop_price=sp.stop,
         target_price=sp.target,
         opened_at=sp.opened_at,
@@ -572,7 +575,7 @@ class ShadowRunner:
                 response.raw,
                 symbol=d.symbol,
                 context=context,
-                price=price,
+                price=_dec(snap_json.get("stop_reference_price")) if context == "held" else price,
                 atr_1h=ind.atr_1h,
                 current_stop=current_stop,
                 call_error=response.error,
@@ -588,6 +591,8 @@ class ShadowRunner:
                 rules=rules,
                 position=snap_json.get("position"),
             )
+            if (snap_json.get("quote") or {}).get("synthetic"):
+                row.input_snapshot = snap_json
             row.model_output = model_output_json(validation.output) if validation.output else None
             row.validation_result = validation_result_json(validation)
             row.prompt_version = prompt.version
@@ -610,6 +615,27 @@ class ShadowRunner:
             snap_json: dict[str, Any] = copy.deepcopy(dict(snap))
             snap_json["context"] = "held"
             snap_json["position"] = position_json
+            entry = (
+                session.get(ShadowDecision, sp.entry_decision_id) if sp.entry_decision_id else None
+            )
+            if position_json is not None and entry is not None:
+                reasoning = entry.model_output or {}
+                position_json["original_thesis"] = reasoning.get("thesis", UNAVAILABLE)
+                position_json["original_invalidation"] = reasoning.get("invalidation", UNAVAILABLE)
+            quote, synthetic, quote_failure = self._market_quote(d.symbol, snap_json, scheduled)
+            reference = quote.stop_reference(
+                _dec(snap_json.get("last_bar_close")),
+                indicators_from_snapshot(d.symbol, snap_json).atr_1h, entry=False,
+            ) if quote else None
+            snap_json["stop_reference_price"] = str(reference) if reference is not None else None
+            if quote is not None:
+                snap_json["quote"] = quote.provenance() | {"synthetic": synthetic}
+            if quote_failure in ("quote_missing", "quote_stale", "quote_suspect", "spread"):
+                row = self._row(strategy, cycle, d, "held", final_action="no_call")
+                row.no_call_reason = quote_failure
+                session.add(row)
+                sr.decisions += 1
+                continue
             if out_of_time():
                 self._missed(session, strategy, cycle, d, "held", sr, str(state["out"]))
                 continue
@@ -636,7 +662,10 @@ class ShadowRunner:
                 )
             session.add(row)
             session.flush()
-            self._apply_held(row, sp, scheduled)
+            self._apply_held(
+                row, sp, scheduled, reference,
+                indicators_from_snapshot(d.symbol, snap_json).atr_1h,
+            )
             sr.decisions += 1
 
         # ---- candidates that pass this strategy's rules, in rank order
@@ -644,22 +673,28 @@ class ShadowRunner:
             if out_of_time():
                 self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
                 continue
-            snap = d.snapshot
-            price = _dec(snap.get("price"))
+            snap = copy.deepcopy(d.snapshot)
+            quote, synthetic, quote_failure = self._market_quote(d.symbol, snap, scheduled)
+            provenance = quote.provenance() | {"synthetic": synthetic} if quote else None
+            if quote_failure is not None:
+                row = self._row(
+                    strategy, cycle, d, "candidate", final_action="blocked", rules=rules,
+                )
+                row.gates_result = {
+                    "allowed": False, "blocked_by": quote_failure, "quote": provenance,
+                }
+                session.add(row)
+                sr.decisions += 1
+                continue
+            assert quote is not None
+            price = quote.ask
+            snap["price"] = float(price)
+            snap["quote"] = provenance
+            d = replace(d, snapshot=snap)
             stop: Decimal | None = None
             target: Decimal | None = None
             if llm:
-                if price is None:
-                    row = self._row(
-                        strategy,
-                        cycle,
-                        d,
-                        "candidate",
-                        final_action="no_call",
-                        no_call_reason="quote_missing",
-                        rules=rules,
-                    )
-                elif int(state["calls"]) >= max_calls:
+                if int(state["calls"]) >= max_calls:
                     row = self._row(
                         strategy,
                         cycle,
@@ -778,13 +813,23 @@ class ShadowRunner:
         session.add(row)
         sr.missed += 1
 
-    def _apply_held(self, row: ShadowDecision, sp: ShadowPosition, at: datetime) -> None:
+    def _apply_held(
+        self, row: ShadowDecision, sp: ShadowPosition, at: datetime,
+        reference: Decimal | None, atr: Decimal | None,
+    ) -> None:
         output = row.model_output or {}
         if sp.exit_pending:
             return  # an earnings exit is already on its way
         if row.final_action == "tighten_stop":
             new_stop = _dec(output.get("stop_price"))
-            if new_stop is not None and new_stop > sp.stop:
+            margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
+            if reference is None or atr is None:
+                row.final_action = "hold"
+                row.gates_result = {"tighten_noop": True, "reason": "reference_missing"}
+            elif new_stop is not None and reference - cents(new_stop) < margin * atr:
+                row.final_action = "hold"
+                row.gates_result = {"tighten_noop": True, "reason": "tighten_market_distance"}
+            elif new_stop is not None and new_stop > sp.stop:
                 sp.stop = cents(new_stop)  # stops only move up
             else:
                 row.gates_result = {"tighten_noop": True}
@@ -796,6 +841,60 @@ class ShadowRunner:
             else:
                 sp.exit_pending = "exit"
                 sp.exit_requested_at = _naive_utc(at)
+
+    def _market_quote(
+        self, symbol: str, snapshot: dict[str, Any], at: datetime,
+    ) -> tuple[Quote | None, bool, str | None]:
+        def timestamp(value: object) -> datetime | None:
+            try:
+                return aware(datetime.fromisoformat(str(value))) if value else None
+            except ValueError:
+                return None
+
+        bar = _dec(snapshot.get("last_bar_close"))
+        bar_time = timestamp(snapshot.get("last_bar_time"))
+        raw = snapshot.get("quote")
+        synthetic = not isinstance(raw, dict) or raw.get("synthetic") is True
+        if synthetic:
+            if bar is None or not bar.is_finite() or bar <= 0 or bar_time is None:
+                return None, True, "reference_missing"
+            quote = Quote(
+                symbol, bar, bar, Decimal(0), bar_time + timedelta(minutes=5), "synthetic_bar",
+            )
+        else:
+            raw_quote = cast(dict[str, Any], raw)
+            quote = Quote(
+                symbol,
+                _dec(raw_quote.get("bid")) or Decimal(0),
+                _dec(raw_quote.get("ask")) or Decimal(0),
+                _dec(raw_quote.get("last")) or Decimal(0),
+                timestamp(raw_quote.get("quote_timestamp")),
+                str(raw_quote.get("feed", "iex")),
+                timestamp(raw_quote.get("trade_timestamp")),
+                timestamp(raw_quote.get("fetched_at")),
+            )
+            reason = quote.quality_reason(
+                now=quote.fetched_at or at,
+                max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+                bar_close=bar,
+                max_deviation_pct=Decimal(str(
+                    self.config.get("execution", "quote_max_deviation_pct")
+                )),
+            )
+            if reason is not None:
+                return quote, False, reason
+            mid = (quote.ask + quote.bid) / 2
+            if (quote.ask - quote.bid) / mid * 100 > Decimal(str(
+                self.config.get("execution", "max_spread_pct")
+            )):
+                return quote, False, "spread"
+        atr = indicators_from_snapshot(symbol, snapshot).atr_1h
+        if (
+            bar_time is None or bar_time + timedelta(minutes=5) > at
+            or quote.stop_reference(bar, atr, entry=True) is None
+        ):
+            return quote, synthetic, "reference_missing"
+        return quote, synthetic, None
 
     def _enter(
         self,
@@ -815,6 +914,31 @@ class ShadowRunner:
         """Live gates and sizing on the virtual portfolio, then a working
         limit entry at the live limit price and timeout."""
         ind = indicators_from_snapshot(d.symbol, d.snapshot)
+        stop = cents(stop)
+        target = cents(target) if target is not None else None
+        quote, synthetic, failure = self._market_quote(d.symbol, d.snapshot, at)
+        provenance = quote.provenance() | {"synthetic": synthetic} if quote else None
+        if failure is not None or quote is None:
+            row.final_action = "blocked"
+            row.gates_result = {"allowed": False, "blocked_by": failure, "quote": provenance}
+            return
+        price = quote.ask
+        reference = quote.stop_reference(
+            _dec(d.snapshot.get("last_bar_close")), ind.atr_1h, entry=True,
+        )
+        minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
+        market_risk = trade_risk(reference, stop, target, ind.atr_1h) if (
+            reference is not None and target is not None
+        ) else None
+        if (
+            market_risk is None or market_risk.atr_multiple is None
+            or market_risk.atr_multiple < minimum
+        ):
+            row.final_action = "blocked"
+            row.gates_result = {
+                "allowed": False, "blocked_by": "stop_market_distance", "quote": provenance,
+            }
+            return
         ctx = gate_context(
             session,
             symbol=d.symbol,
@@ -827,14 +951,32 @@ class ShadowRunner:
             days_to_earnings=ind.days_to_earnings,
             earnings_known=ind.earnings_available,
             orders_this_cycle=int(state["orders"]),
+            config=self.config,
         )
+        ctx = replace(ctx, sectors=resolve_sectors(self.config, session))
         # Gates always run on live's config: they are never overridable.
-        result = evaluate_entry_gates(ctx, entry=price, stop=stop, config=self.config)
-        row.gates_result = result.to_json()
+        offset = Decimal(str(self.config.get("execution", "entry_limit_offset_pct", default=0.05)))
+        limit = cents(price * (1 + offset / 100))
+        cfg = strategy_config(self.config, strategy)
+        risk = trade_risk(limit, stop, target, ind.atr_1h) if target is not None else None
+        if (
+            risk is None or not risk.valid or risk.atr_multiple is None
+            or risk.atr_multiple < Decimal(str(cfg.get("decision", "stop_atr_min")))
+            or risk.atr_multiple > Decimal(str(cfg.get("decision", "stop_atr_max")))
+            or risk.reward_to_risk is None
+            or risk.reward_to_risk < Decimal(str(cfg.get("decision", "min_reward_risk")))
+        ):
+            row.final_action = "blocked"
+            row.gates_result = {
+                "allowed": False, "blocked_by": "code_checks",
+                "entry_limit": str(limit), "quote": provenance,
+            }
+            return
+        result = evaluate_entry_gates(ctx, entry=limit, stop=stop, config=self.config)
+        row.gates_result = result.to_json() | {"entry_limit": str(limit), "quote": provenance}
         if not result.allowed or result.sizing is None:
             row.final_action = "blocked"
             return
-        offset = Decimal(str(self.config.get("execution", "entry_limit_offset_pct", default=0.05)))
         timeout = int(self.config.get("execution", "entry_timeout_minutes", default=10))
         sp = ShadowPosition(
             strategy_id=strategy.id,
@@ -843,7 +985,7 @@ class ShadowRunner:
             status="pending",
             entry_decision_id=row.id,
             qty=result.sizing.shares,
-            limit_price=cents(price * (1 + offset / 100)),
+            limit_price=limit,
             initial_stop=cents(stop),
             stop=cents(stop),
             target=cents(target) if target is not None else None,

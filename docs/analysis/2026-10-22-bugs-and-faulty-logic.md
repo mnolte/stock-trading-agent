@@ -411,4 +411,7 @@ In-memory reproductions of quote freshness, missing quotes, sector bypass, sizin
 Not performed: external API checks, new LLM calls, broker actions, the full test suite, or any changes to files, settings, prompts, or runtime data.
 
 Bottom line: fix the deterministic risk and data defects first. Improving the prompt alone would increase the number of executable recommendations while leaving several important enforcement gaps in place.
+<<<<<<< HEAD
 
+=======
+>>>>>>> 8a60df51c3e8e63c88627d89c66fb5209e7019b1

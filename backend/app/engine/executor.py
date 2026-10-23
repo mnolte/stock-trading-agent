@@ -48,7 +48,7 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import exit_blocked_same_day
-from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates
+from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates, resolve_sectors
 from app.risk.math import (
     WorkingEntry,
     drawdown_pct,
@@ -174,6 +174,22 @@ class Executor:
             return None
         account = result.data
         self.state.account = account
+        self.state.reset_session_if_new_day()
+        limit = Decimal(str(self.config.get("risk", "daily_loss_limit_pct", default=2)))
+        pnl_pct = session_pnl_pct(account.equity, account.last_equity)
+        if pnl_pct <= -limit and not self.state.daily_loss_hit:
+            with self._session_factory() as session:
+                record_event(
+                    session, self.clock, level="warning", event_type="daily_loss_limit",
+                    details={"session_date": str(self.state.session_date), "pnl_pct": str(pnl_pct)},
+                )
+                session.commit()
+            self.state.daily_loss_hit = True
+            self._notifier.notify(
+                "daily_loss_limit",
+                f"session P&L {pnl_pct:.2f}% ≤ −{limit}% — no new entries today",
+                link="/",
+            )
         if account.equity > self.state.peak_equity:
             self.state.peak_equity = account.equity
         return account
@@ -189,18 +205,6 @@ class Executor:
         self.state.reset_session_if_new_day()
         account = await self.refresh_account()
         if account is not None:
-            limit = Decimal(
-                str(self.config.get("risk", "daily_loss_limit_pct", default=2))
-            )
-            pnl_pct = session_pnl_pct(account.equity, account.last_equity)
-            if pnl_pct <= -limit and not self.state.daily_loss_hit:
-                self.state.daily_loss_hit = True
-                self._notifier.notify(
-                    "daily_loss_limit",
-                    f"session P&L {pnl_pct:.2f}% ≤ −{limit}% — "
-                    "no new entries today",
-                    link="/",
-                )
             kill_pct = Decimal(
                 str(self.config.get("risk", "drawdown_kill_pct", default=8))
             )
@@ -627,14 +631,19 @@ class Executor:
         )
         if quote is None:
             return None, None, "quote_missing"
-        ts = quote.timestamp
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=UTC)
-        max_age = float(
-            self.config.get("execution", "quote_max_age_seconds", default=60)
+        now = self.clock.now()
+        bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
+        reason = quote.quality_reason(
+            now=now,
+            max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+            bar_close=bar.close if bar is not None else None,
+            max_deviation_pct=Decimal(str(self.config.get("execution", "quote_max_deviation_pct"))),
         )
-        if (self.clock.now() - ts).total_seconds() > max_age:
-            return quote, None, "quote_stale"
+        if reason is not None:
+            return quote, None, reason
+        reference = quote.stop_reference(bar.close if bar else None, atr_1h, entry=True)
+        if reference is None:
+            return quote, None, "reference_missing"
         max_spread = Decimal(
             str(self.config.get("execution", "max_spread_pct", default=0.15))
         )
@@ -657,6 +666,10 @@ class Executor:
         )
         if fail is not None:
             return quote, None, fail
+        market_risk = trade_risk(reference, stop, target, atr_1h)
+        minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
+        if market_risk.atr_multiple is None or market_risk.atr_multiple < minimum:
+            return quote, None, "stop_market_distance"
         return quote, limit, None
 
     async def approve(self, approval_id: int) -> dict[str, object]:
@@ -674,24 +687,16 @@ class Executor:
             if self.state.paused:
                 return {"ok": False, "error": "new entries are paused"}
 
-            # The shared "Fresh quote" gate: latest IEX quote, freshness,
-            # spread, limit recompute and code checks — the same function
-            # automatic entries use (docs/SPEC.md, Entries).
-            quote, limit, fail = await self._fresh_entry_check(
-                symbol=approval.symbol,
-                stop=approval.stop_price,
-                target=approval.target_price,
-                atr_1h=self._atr_1h(approval.symbol),
-            )
-            if fail is not None:
-                self._resolve_approval(approval, "rejected", fail)
-                session.commit()
-                self._notify({"approvals", "decisions"})
-                return {"ok": False, "error": fail}
-            assert quote is not None and limit is not None
-
+            decision = session.get(Decision, approval.decision_id)
             # All risk gates again with fresh equity + the fresh ask.
             account = await self.refresh_account()
+            if account is None:
+                self._resolve_approval(approval, "rejected", "account_unavailable")
+                if decision is not None:
+                    decision.final_action = "blocked"
+                    decision.gates_result = {"allowed": False, "blocked_by": "account_unavailable"}
+                session.commit()
+                return {"ok": False, "error": "account_unavailable"}
             # Fresh earnings, not the decision-time snapshot: a report
             # announced since then must still block the entry.
             today = self.clock.now().astimezone(NY_TZ).date()
@@ -707,6 +712,28 @@ class Executor:
                 if next_date is not None
                 else None
             )
+            # The shared "Fresh quote" gate: latest IEX quote, freshness,
+            # spread, limit recompute and code checks — the same function
+            # automatic entries use (docs/SPEC.md, Entries).
+            quote, limit, fail = await self._fresh_entry_check(
+                symbol=approval.symbol,
+                stop=approval.stop_price,
+                target=approval.target_price,
+                atr_1h=self._atr_1h(approval.symbol),
+            )
+            if fail is not None:
+                self._resolve_approval(approval, "rejected", fail)
+                if decision is not None:
+                    decision.final_action = "blocked"
+                    decision.gates_result = {
+                        "allowed": False, "blocked_by": "fresh_quote",
+                        "checks": [{"name": "fresh_quote", "passed": False, "detail": fail}],
+                        "quote": quote.provenance() if quote is not None else None,
+                    }
+                session.commit()
+                self._notify({"approvals", "decisions"})
+                return {"ok": False, "error": fail}
+            assert quote is not None and limit is not None
             ctx = self._gate_context(
                 session,
                 account,
@@ -716,10 +743,14 @@ class Executor:
             )
             result = evaluate_entry_gates(
                 ctx,
-                entry=quote.ask,
+                entry=limit,
                 stop=approval.stop_price,
                 config=self.config,
             )
+            if decision is not None:
+                decision.gates_result = result.to_json() | {
+                    "entry_limit": str(limit), "quote": quote.provenance(),
+                }
             if not result.allowed:
                 blocked = result.blocked_by or "gate"
                 detail = next(
@@ -727,7 +758,11 @@ class Executor:
                 )
                 fail = f"{blocked}: {detail}".rstrip(": ")
                 self._resolve_approval(approval, "rejected", fail)
+                if decision is not None:
+                    decision.final_action = "blocked"
                 session.commit()
+                if result.blocked_by == "drawdown_kill":
+                    await self.activate_kill_switch(reason="drawdown kill gate", automatic=True)
                 self._notify({"approvals", "decisions"})
                 return {"ok": False, "error": fail}
             assert result.sizing is not None
@@ -737,6 +772,7 @@ class Executor:
             client_id = self._client_id(
                 "entry", approval.decision_id, approval.symbol
             )
+            session.commit()
             submitted = await self.broker.submit_bracket_entry(
                 symbol=approval.symbol,
                 qty=qty,
@@ -969,10 +1005,6 @@ class Executor:
         row = session.execute(
             select(Order).where(Order.alpaca_order_id == order.id)
         ).scalar_one_or_none()
-        if row is None and order.client_order_id:
-            row = session.execute(
-                select(Order).where(Order.client_order_id == order.client_order_id)
-            ).scalar_one_or_none()
         if row is None:
             row = Order(
                 alpaca_order_id=order.id,
@@ -999,6 +1031,8 @@ class Executor:
                 # First seen flat (a released leg), now nested under its
                 # parent — restore the link.
                 row.parent_alpaca_order_id = parent.id
+        if order.status not in OPEN_ORDER_STATUSES and row.active_until is None:
+            row.active_until = _naive_utc(order.updated_at or self.clock.now())
         if order.filled_qty > 0 and order.filled_avg_price is not None:
             self._record_fills(session, row, order)
         for leg_order in order.legs:
@@ -1369,6 +1403,7 @@ class Executor:
                     entry_decision_id=order.decision_id,
                     qty=filled_qty,
                     avg_entry_price=avg_price,
+                    initial_stop=stop,
                     current_stop_price=stop,
                     target_price=target,
                     opened_at=first_fill,
@@ -1541,6 +1576,7 @@ class Executor:
             entry_decision_id=None,
             qty=bp.qty,
             avg_entry_price=bp.avg_entry_price,
+            initial_stop=stop,
             current_stop_price=stop,
             target_price=None,
             opened_at=_naive_utc(self.clock.now()),
@@ -1618,6 +1654,8 @@ class Executor:
             )
             stop = _cents(mark * (1 - fallback / 100))
             position.current_stop_price = stop
+        if position.initial_stop is None:
+            position.initial_stop = stop
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
         result = await self.broker.submit_stop_order(
@@ -1774,6 +1812,8 @@ class Executor:
             paused=self.state.paused,
             pending_ack=self.state.pending_ack(session) or self._reconcile_failed,
             orders_this_cycle=self._orders_this_cycle,
+            sectors=resolve_sectors(self.config, session),
+            daily_loss_hit=self.state.daily_loss_hit,
         )
 
     def budget_context(self, session: Session) -> GateContext:
@@ -1810,7 +1850,8 @@ class Executor:
             await self._tighten(
                 session, decision, position, Decimal(str(new_stop))
                 if new_stop is not None
-                else None
+                else None,
+                atr_1h=item.snapshot.atr_1h,
             )
         elif action == "exit" and position is not None:
             await self._exit(
@@ -1850,7 +1891,11 @@ class Executor:
             }
             decision.final_action = "blocked"
             return
-        entry = Decimal(str(quote.ask))
+        stop = _cents(Decimal(str(stop)))
+        target = _cents(Decimal(str(target)))
+        entry = _cents(quote.ask * (1 + Decimal(str(
+            self.config.get("execution", "entry_limit_offset_pct", default=0.05)
+        )) / 100))
         result = evaluate_entry_gates(
             ctx, entry=entry, stop=Decimal(str(stop)), config=self.config
         )
@@ -1951,7 +1996,13 @@ class Executor:
         # Hard rule 13: the gate result is durable before the fresh-quote
         # fetch and the order call below.
         session.commit()
-        _, fresh_limit, fresh_fail = await self._fresh_entry_check(
+        account = await self.refresh_account()
+        if account is None:
+            decision.final_action = "blocked"
+            decision.gates_result = {"allowed": False, "blocked_by": "account_unavailable"}
+            session.flush()
+            return
+        fresh_quote, fresh_limit, fresh_fail = await self._fresh_entry_check(
             symbol=decision.symbol,
             stop=Decimal(str(stop)),
             target=Decimal(str(target)),
@@ -1968,11 +2019,30 @@ class Executor:
                     GateCheck("fresh_quote", False, fresh_fail),
                 ],
             )
-            decision.gates_result = failed.to_json()
+            decision.gates_result = failed.to_json() | {
+                "quote": fresh_quote.provenance() if fresh_quote is not None else None,
+            }
             decision.final_action = "blocked"
             session.flush()
             return
-        assert fresh_limit is not None
+        assert fresh_limit is not None and fresh_quote is not None
+        ctx = self._gate_context(
+            session, account, decision.symbol, item.snapshot.days_to_earnings, earnings_known,
+        )
+        result = evaluate_entry_gates(
+            ctx, entry=fresh_limit, stop=Decimal(str(stop)), config=self.config,
+        )
+        decision.gates_result = result.to_json() | {
+            "entry_limit": str(fresh_limit), "quote": fresh_quote.provenance(),
+        }
+        if not result.allowed or result.sizing is None:
+            decision.final_action = "blocked"
+            if result.blocked_by == "drawdown_kill":
+                session.commit()
+                await self.activate_kill_switch(reason="drawdown kill gate", automatic=True)
+            session.flush()
+            return
+        qty = result.sizing.shares
 
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
@@ -2025,6 +2095,7 @@ class Executor:
         decision: Decision,
         position: Position,
         new_stop: Decimal | None,
+        *, atr_1h: Decimal | None,
     ) -> None:
         """Move the stop leg in place; stops only move in the position's favour."""
         if (
@@ -2053,6 +2124,45 @@ class Executor:
                 "reason": "no open stop leg for this position",
             }
             return
+        session.commit()
+        quotes = await self.market_data.sources.quotes.fetch_quotes([position.symbol])
+        quote = quotes.data.get(position.symbol) if quotes.error is None and quotes.data else None
+        now = self.clock.now()
+        bar = self.market_data.bars_cache.latest(
+            position.symbol, now - timedelta(minutes=5),
+        )
+        reason = None
+        reference = None
+        if quote is None:
+            reason = "reference_missing"
+        else:
+            reason = quote.quality_reason(
+                now=now,
+                max_age_seconds=float(
+                    self.config.get("execution", "quote_max_age_seconds")
+                ),
+                bar_close=bar.close if bar is not None else None,
+                max_deviation_pct=Decimal(
+                    str(self.config.get("execution", "quote_max_deviation_pct"))
+                ),
+            )
+            if reason is None:
+                reference = quote.stop_reference(
+                    bar.close if bar else None, atr_1h, entry=False
+                )
+        margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
+        if reason is None:
+            reason = (
+                "reference_missing" if reference is None or atr_1h is None
+                else "tighten_market_distance"
+                if reference - _cents(new_stop) < margin * atr_1h
+                else None
+            )
+        if reason is not None:
+            decision.final_action = "hold"
+            decision.gates_result = {"tighten_noop": True, "reason": reason}
+            session.flush()
+            return
         result = await self.broker.replace_stop(
             stop_row.alpaca_order_id, stop_price=_cents(new_stop)
         )
@@ -2072,6 +2182,7 @@ class Executor:
             session.flush()
             return
         stop_row.status = "replaced"
+        stop_row.active_until = _naive_utc(self.clock.now())
         self._store_broker_order(session, result.data, stop_row.decision_id, leg="stop")
         position.current_stop_price = _cents(new_stop)
         session.flush()

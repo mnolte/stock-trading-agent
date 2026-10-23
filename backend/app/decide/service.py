@@ -197,7 +197,10 @@ class DecisionService:
             response.raw,
             symbol=symbol,
             context=context,
-            price=price,
+            price=(
+                Decimal(str(snapshot_json["stop_reference_price"]))
+                if snapshot_json.get("stop_reference_price") is not None else None
+            ) if context == "held" else price,
             atr_1h=atr_1h,
             current_stop=current_stop,
             call_error=response.error,
@@ -308,6 +311,7 @@ class DecisionService:
             latency_ms=response.latency_ms if response else None,
             raw_response=response.raw if response else None,
             cached=cached,
+            cost_source="cached" if cached else "priced",
         )
         session.add(decision)
         session.flush()

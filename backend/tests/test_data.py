@@ -1,5 +1,8 @@
-from datetime import date, datetime
+import sqlite3
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from app.config import AppConfig
@@ -29,7 +32,7 @@ from app.db.base import Base
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
 from app.market.clock import UTC
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -55,6 +58,37 @@ def fake_sources() -> DataSources:
         calendar=calendar,
         alpaca=None,
     )
+
+
+def test_bar_cache_duplicate_batches_are_idempotent(session_factory: sessionmaker[Session]) -> None:
+    cache = BarCache(session_factory)
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    bar = Bar5m("WMT", at, Decimal("100"), Decimal("101"), Decimal("99"), Decimal("100"), 10, "sip")
+    assert cache.store([bar, bar]) == 1
+    assert cache.store([bar]) == 0
+    daily = DailyBar("WMT", at.date(), bar.open, bar.high, bar.low, bar.close, bar.volume)
+    assert cache.store_daily([daily, daily]) == 1
+    assert cache.store_daily([daily]) == 0
+
+
+def test_large_bar_cache_batch_respects_sqlite_variable_limit(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'large.db'}")
+
+    @event.listens_for(engine, "connect")
+    def limit_variables(connection: Any, _record: Any) -> None:
+        connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+
+    Base.metadata.create_all(engine)
+    cache = BarCache(sessionmaker(bind=engine))
+    at = datetime(2026, 1, 1, tzinfo=UTC)
+    bars = [Bar5m("WMT", at + timedelta(minutes=5 * i), Decimal("100"), Decimal("101"),
+                  Decimal("99"), Decimal("100"), 10, "sip") for i in range(2000)]
+    assert cache.store(bars) == 2000
+    assert cache.store(bars) == 0
+    daily = [DailyBar("WMT", (at + timedelta(days=i)).date(), Decimal("100"), Decimal("101"),
+                      Decimal("99"), Decimal("100"), 10) for i in range(2000)]
+    assert cache.store_daily(daily) == 2000
+    engine.dispose()
 
 
 def test_make_data_sources_simulated_uses_fakes() -> None:

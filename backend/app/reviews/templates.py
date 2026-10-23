@@ -114,6 +114,21 @@ def _fmt_signed(value: object, digits: int = 2) -> str:
     return f"{float(value):+.{digits}f}" if isinstance(value, int | float) else "—"
 
 
+def briefing_status(facts: dict[str, Any]) -> str:
+    def names(key: str, field: str) -> str:
+        rows = facts.get(key)
+        if not isinstance(rows, list):
+            return "unavailable"
+        return ", ".join(str(row.get(field, "")) for row in rows) or "none"
+
+    return (
+        f"Positions: {names('positions', 'symbol')}. "
+        f"Earnings today: {names('earnings_today', 'symbol')}; "
+        f"tomorrow: {names('earnings_tomorrow', 'symbol')}. "
+        f"Banners: {names('banners', 'kind')}."
+    )
+
+
 def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
     """{text} for the daily briefing template."""
     pos = facts.get("positions") or []

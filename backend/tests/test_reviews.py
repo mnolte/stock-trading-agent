@@ -76,6 +76,38 @@ def _service(
     )
 
 
+async def test_briefing_report_four_rejects_known_empty_as_unavailable(
+    session_factory: sessionmaker[Session],
+) -> None:
+    day = date(2026, 10, 22)
+    service = _service(
+        session_factory, FakeClock(_ny(day)),
+        client=FakeReviewClient(handler=lambda _s, _u: json.dumps({
+            "text": "Open positions, earnings today, and earnings tomorrow are all unavailable.",
+        })),
+    )
+    review = await service.write_briefing_for(day)
+    assert review is not None
+    assert review.source == "template"
+    assert review.reason == "fact check failed"
+    assert review.text.startswith("Positions: none.")
+
+
+async def test_briefing_status_line_is_written_by_code(
+    session_factory: sessionmaker[Session],
+) -> None:
+    service = _service(
+        session_factory, FakeClock(_ny(date(2026, 10, 22))),
+        client=FakeReviewClient(handler=lambda _s, _u: json.dumps({"text": "Watch the market."})),
+    )
+    review = await service.write_briefing_for(date(2026, 10, 22))
+    assert review is not None
+    assert review.source == "model"
+    assert review.text.startswith("Positions: none.")
+    assert "Earnings today: none; tomorrow: none." in review.text
+    assert "Banners:" in review.text
+
+
 def _naive(dt: datetime) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None)
 

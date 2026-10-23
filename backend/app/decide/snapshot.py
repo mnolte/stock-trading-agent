@@ -14,8 +14,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from app.data.models import Bar1h, NewsItem
-from app.db.models import Position
+from sqlalchemy.orm import object_session
+
+from app.data.models import Bar1h, Bar5m, NewsItem, Quote
+from app.db.models import Decision, Position
 from app.market.clock import NY_TZ, UTC
 from app.signals.regime import MarketRegime
 from app.signals.snapshot import IndicatorSnapshot
@@ -78,12 +80,24 @@ def _position_block(
     if position is None:
         return None
     r_so_far: float | str = UNAVAILABLE
-    if price is not None:
-        risk = position.avg_entry_price - (position.current_stop_price or Decimal(0))
+    if price is not None and position.initial_stop is not None:
+        risk = position.avg_entry_price - position.initial_stop
         if risk > 0:
             r_so_far = float(round((price - position.avg_entry_price) / risk, 2))
+    session = object_session(position)
+    decision = session.get(Decision, position.entry_decision_id) if (
+        session is not None and position.entry_decision_id is not None
+    ) else None
+    reasoning = (decision.model_output or {}) if decision is not None else {}
+    downside = max(Decimal(0), price - position.current_stop_price) * position.qty if (
+        price is not None and position.current_stop_price is not None
+    ) else None
     block: dict[str, Any] = {
         "entry": _num(position.avg_entry_price, 2),
+        "initial_stop": _num(position.initial_stop, 2),
+        "original_thesis": reasoning.get("thesis", UNAVAILABLE),
+        "original_invalidation": reasoning.get("invalidation", UNAVAILABLE),
+        "remaining_downside_usd": _num(downside, 2),
         "qty": position.qty,
         "stop": _num(position.current_stop_price, 2),
         "target": _num(position.target_price, 2),
@@ -123,11 +137,23 @@ def build_input_snapshot(
     position: Position | None,
     news: list[NewsItem] | None,
     rank: int | None = None,
+    quote: Quote | None = None,
+    news_status: str | None = None,
+    last_bar: Bar5m | None = None,
 ) -> dict[str, Any]:
     """The JSON snapshot for one model call; also stored on the decision row."""
     # None = none scheduled; "unavailable" = the earnings source failed.
     days_to_earnings: int | str | None = (
         UNAVAILABLE if not snapshot.earnings_available else snapshot.days_to_earnings
+    )
+    signal_bar_time = bars_1h[-1].end.isoformat() if bars_1h else None
+    quote_block = (
+        quote.provenance() | {
+            "last_bar_time": last_bar.start.isoformat() if last_bar else None,
+            "signal_bar_time": signal_bar_time,
+        }
+        if quote is not None
+        else None
     )
 
     return {
@@ -137,6 +163,10 @@ def build_input_snapshot(
         # Liquidity-screen rank — "unavailable" in fixed mode or off-list.
         "rank": rank if rank is not None else UNAVAILABLE,
         "price": _num(price, 2),
+        "quote": quote_block,
+        "last_bar_close": str(last_bar.close) if last_bar else None,
+        "last_bar_time": last_bar.start.isoformat() if last_bar else None,
+        "signal_bar_time": signal_bar_time,
         "regime": {"trend": regime.trend, "volatility": regime.volatility},
         "indicators_1h": {
             "ema20": _num(snapshot.ema_fast, 2),
@@ -157,5 +187,10 @@ def build_input_snapshot(
         "levels": swing_levels(bars_1h),
         "position": _position_block(position, price),
         "days_to_earnings": days_to_earnings,
-        "headlines": _headlines_block(news),
+        "headlines": _headlines_block(
+            None if not news and news_status in ("failed", "truncated") else news
+        ),
+        "news_status": news_status or (
+            "failed" if news is None else "complete" if news else "empty"
+        ),
     }
