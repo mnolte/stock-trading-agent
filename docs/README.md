@@ -29,6 +29,7 @@
 | 12 | Cycles at scale (v0.2) | Larger universe (cycles at scale); Decision layer (one cycle) | Watchlist filters in `Main` |
 | 13 | Strategies and shadows (v0.2) | Strategies and shadows; Decision layer; Data model | `Strategies` |
 | 14 | Backtesting (v0.2) | Backtesting; Decision layer; Risk management; Data model | `Backtest` |
+| 15 | Integrity fixes | Alpaca integration (Entries); Decision layer (code checks, prompt, outcome tracking); Risk management (gates); Reviews (number check); Market, schedule and data | none |
 
 ## PR description template
 

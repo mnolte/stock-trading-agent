@@ -995,6 +995,10 @@ class Executor:
             row.status = order.status
             if order.filled_at is not None:
                 row.filled_at = _naive_utc(order.filled_at)
+            if row.parent_alpaca_order_id is None and parent is not None:
+                # First seen flat (a released leg), now nested under its
+                # parent — restore the link.
+                row.parent_alpaca_order_id = parent.id
         if order.filled_qty > 0 and order.filled_avg_price is not None:
             self._record_fills(session, row, order)
         for leg_order in order.legs:
@@ -1119,6 +1123,8 @@ class Executor:
             for row in db_open:
                 if row.alpaca_order_id in broker_open:
                     continue
+                # Hard rule 13: step 1's writes are durable before this call.
+                session.commit()
                 fetched = await self.broker.get_order(row.alpaca_order_id)
                 if fetched.error is not None or fetched.data is None:
                     report.errors.append(
@@ -1128,6 +1134,14 @@ class Executor:
                     continue
                 self._store_broker_order(session, fetched.data, row.decision_id)
                 report.orders_synced += 1
+                # Live orders the open list missed — Alpaca's open filter
+                # never returns `held`, so a bracket's working stop leg
+                # only surfaces here. They still count as coverage.
+                if fetched.data.is_open:
+                    broker_open[fetched.data.id] = fetched.data
+                    for leg in fetched.data.legs:
+                        if leg.is_open:
+                            broker_open[leg.id] = leg
             session.flush()
 
             # 3. An entry fill opens the DB position (qty/avg are then
@@ -1175,9 +1189,13 @@ class Executor:
             open_stops: dict[str, Decimal] = {}
             broker_stops: dict[str, list[BrokerOrder]] = {}
             for order in broker_open.values():
-                if order.side == "sell" and order.order_type in (
-                    "stop",
-                    "stop_limit",
+                if (
+                    order.is_open
+                    and order.side == "sell"
+                    and order.order_type in (
+                        "stop",
+                        "stop_limit",
+                    )
                 ):
                     open_stops[order.symbol] = open_stops.get(
                         order.symbol, Decimal(0)
@@ -1186,6 +1204,8 @@ class Executor:
 
             for symbol, bp in broker_positions.items():
                 if symbol not in known_symbols:
+                    # Hard rule 13.
+                    session.commit()
                     placed = await self._adopt_position(
                         session, bp, report, broker_stops.get(symbol, [])
                     )
@@ -1201,6 +1221,8 @@ class Executor:
                 covered = open_stops.get(position.symbol, Decimal(0))
                 if covered >= position.qty:
                     continue
+                # Hard rule 13.
+                session.commit()
                 placed = await self._place_protective_stop(
                     session, position, broker_positions.get(position.symbol), report
                 )
@@ -1224,6 +1246,9 @@ class Executor:
                 created = row.created_at.replace(tzinfo=UTC)
                 if (now - created).total_seconds() < timeout * 60:
                     continue
+                # Hard rule 13: earlier steps' writes are durable before
+                # this call.
+                session.commit()
                 result = await self.broker.cancel_order(row.alpaca_order_id)
                 if result.error is None:
                     row.status = "canceled"
@@ -1317,6 +1342,25 @@ class Executor:
             target = next(
                 (o.limit_price for o in legs if o.leg == "target"), None
             )
+            if stop is None or target is None:
+                # Released legs carry no parent link: once the entry is
+                # closed they arrive flat, so the position's stop and
+                # target are found as the symbol's open sell legs.
+                siblings = session.execute(
+                    select(Order).where(
+                        Order.symbol == order.symbol,
+                        Order.side == "sell",
+                        Order.leg.in_(("stop", "target")),
+                        Order.status.in_(OPEN_ORDER_STATUSES),
+                    )
+                ).scalars().all()
+                stop = stop or next(
+                    (o.stop_price for o in siblings if o.leg == "stop"), None
+                )
+                target = target or next(
+                    (o.limit_price for o in siblings if o.leg == "target"),
+                    None,
+                )
             session.add(
                 Position(
                     symbol=order.symbol,
@@ -1502,7 +1546,8 @@ class Executor:
             opened_at=_naive_utc(self.clock.now()),
         )
         session.add(position)
-        session.flush()
+        # Hard rule 13: the adopted row exists before the stop order call.
+        session.commit()
         placed: Decimal | None = Decimal(0)
         if not covered:
             result = await self.broker.submit_stop_order(
@@ -1573,6 +1618,8 @@ class Executor:
             )
             stop = _cents(mark * (1 - fallback / 100))
             position.current_stop_price = stop
+        # Hard rule 13: the chosen stop is durable before the order call.
+        session.commit()
         result = await self.broker.submit_stop_order(
             symbol=position.symbol,
             qty=position.qty,
@@ -1811,6 +1858,7 @@ class Executor:
         if not result.allowed:
             decision.final_action = "blocked"
             if result.blocked_by == "drawdown_kill":
+                session.commit()  # hard rule 13: gate result durable first
                 await self.activate_kill_switch(
                     reason="drawdown kill gate", automatic=True
                 )
@@ -1900,6 +1948,9 @@ class Executor:
         # then re-run the spread check, recompute the limit and re-run
         # the code checks from the new entry. A failure is recorded on
         # the gates result; no order is sent, no retry this cycle.
+        # Hard rule 13: the gate result is durable before the fresh-quote
+        # fetch and the order call below.
+        session.commit()
         _, fresh_limit, fresh_fail = await self._fresh_entry_check(
             symbol=decision.symbol,
             stop=Decimal(str(stop)),
@@ -1925,6 +1976,7 @@ class Executor:
 
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
+        session.commit()  # hard rule 13
         submitted = await self.broker.submit_bracket_entry(
             symbol=decision.symbol,
             qty=qty,
@@ -2161,7 +2213,8 @@ class Executor:
                 )
                 session.flush()
                 return
-        session.flush()
+        # Hard rule 13: the leg statuses are durable before the market sell.
+        session.commit()
 
         ny_now = now.astimezone(NY_TZ)
         today_session = self.calendar.session_for(ny_now.date())

@@ -1,16 +1,12 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR screenshots land in docs/screenshots/pr-10/ (design/ stays untouched):
+import { screenshotDir } from './shots';
+
+// PR screenshots are for docs/screenshots/pr-10/ (pass SCREENSHOT_DIR, see ./shots) (design/ stays untouched):
 // the paused-at-startup header state and the "Started paused" banner.
-const outDir =
-  process.env.SCREENSHOT_DIR ??
-  path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../docs/screenshots/pr-10'
-  );
+const outDir = screenshotDir('pr-10');
 
 test('paused at startup: banner, paused pill, one-click resume', async ({
   page,

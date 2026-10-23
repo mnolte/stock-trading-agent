@@ -120,6 +120,10 @@ class SignalService:
         self.clock = clock
         self.session_clock = SessionClock(clock, config, calendar)
         self._session_factory = session_factory or get_session_maker()
+        # Symbols whose earnings coverage is known to be missing (set by the
+        # backtest worker); their snapshots get earnings_available=False so
+        # the rules block entries for exactly those symbols.
+        self.earnings_missing: set[str] = set()
         # The stored snapshot the GUI serves; refreshed at startup, after each
         # cycle and after each daily refresh — never recomputed per request.
         self._latest: Watchlist | None = None
@@ -269,7 +273,7 @@ class SignalService:
         daily_sessions = self._daily_sessions_for(today)
         spy_1h = self.hourly_bars("SPY", sessions, now)
         earnings_status = self.market_data.latest_earnings
-        earnings_available = earnings_status is not None and earnings_status.error is None
+        earnings_ok = earnings_status is not None and earnings_status.error is None
         earnings_next = self.next_earnings(symbols, today)
         out: dict[str, tuple[IndicatorSnapshot, list[Bar1h]]] = {}
         for symbol in symbols:
@@ -283,7 +287,7 @@ class SignalService:
                     daily,
                     todays,
                     spy_1h,
-                    earnings_available,
+                    earnings_ok and symbol not in self.earnings_missing,
                     earnings_next,
                     today,
                 ),
@@ -401,9 +405,7 @@ class SignalService:
         held, pending = self._held_and_pending()
         earnings_next = self.next_earnings(symbols, today)
         earnings_status = self.market_data.latest_earnings
-        earnings_available = (
-            earnings_status is not None and earnings_status.error is None
-        )
+        earnings_ok = earnings_status is not None and earnings_status.error is None
         last_cycle = self.is_last_cycle(today, now.astimezone(NY_TZ))
         ranks = {
             row.symbol: row.rank
@@ -421,7 +423,7 @@ class SignalService:
                 daily,
                 todays,
                 spy_1h,
-                earnings_available,
+                earnings_ok and symbol not in self.earnings_missing,
                 earnings_next,
                 today,
             )

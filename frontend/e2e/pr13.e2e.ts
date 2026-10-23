@@ -1,12 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR 13 screenshots land in docs/screenshots/pr-13/; design/ is untouched.
-const outDir =
-  process.env.SCREENSHOT_DIR ??
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../docs/screenshots/pr-13');
+import { screenshotDir } from './shots';
+
+// PR 13 screenshots are for docs/screenshots/pr-13/ (pass SCREENSHOT_DIR, see ./shots); design/ is untouched.
+const outDir = screenshotDir('pr-13');
 
 const shot = (base: string, project: string) =>
   path.join(outDir, `${base}-${project === 'mobile' ? '390' : '1440'}.png`);

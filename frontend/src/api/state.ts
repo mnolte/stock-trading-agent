@@ -1,6 +1,10 @@
 import { get, post } from './client';
 import type {
   ApprovalsResponse,
+  BacktestDecisionRow,
+  BacktestEstimate,
+  BacktestTrade,
+  BacktestsResponse,
   ApproveResult,
   BannersResponse,
   ChartResponse,
@@ -11,6 +15,7 @@ import type {
   KeyGroup,
   KeysResponse,
   KillSwitchResponse,
+  NewBacktestBody,
   NewStrategyBody,
   NotificationsResponse,
   OrdersResponse,
@@ -251,4 +256,67 @@ export function postStrategyAction(
 
 export function getStrategyPromotion(id: number): Promise<StrategyPromotion> {
   return get<StrategyPromotion>(`/api/strategies/${id}/promotion`);
+}
+
+// --- Backtesting (PR 14) ---------------------------------------------------
+
+export function getBacktests(): Promise<BacktestsResponse> {
+  return get<BacktestsResponse>('/api/backtests');
+}
+
+export function postBacktestEstimate(
+  body: NewBacktestBody,
+): Promise<BacktestEstimate> {
+  return post<BacktestEstimate>('/api/backtests/estimate', body);
+}
+
+export function postBacktest(
+  body: NewBacktestBody,
+): Promise<{ id: number; status: string; reason?: string }> {
+  return post<{ id: number; status: string; reason?: string }>(
+    '/api/backtests',
+    body,
+  );
+}
+
+export function postBacktestCancel(id: number): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>(`/api/backtests/${id}/cancel`, {});
+}
+
+export async function deleteBacktest(id: number): Promise<{ ok: boolean }> {
+  const response = await fetch(`/api/backtests/${id}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(`delete failed: ${response.status}`);
+  return (await response.json()) as { ok: boolean };
+}
+
+export function postClearBarStore(): Promise<{ ok: boolean }> {
+  return post<{ ok: boolean }>('/api/backtests/bar-store/clear', {});
+}
+
+export function getBacktestTrades(
+  id: number,
+  slug: string,
+): Promise<{ trades: BacktestTrade[] }> {
+  return get<{ trades: BacktestTrade[] }>(
+    `/api/backtests/${id}/strategies/${slug}/trades`,
+  );
+}
+
+export function getBacktestDecisions(
+  id: number,
+  slug: string,
+): Promise<{ items: BacktestDecisionRow[] }> {
+  return get<{ items: BacktestDecisionRow[] }>(
+    `/api/backtests/${id}/strategies/${slug}/decisions`,
+  );
+}
+
+export function getBacktestDecision(
+  id: number,
+  slug: string,
+  decisionId: number,
+): Promise<DecisionDetail> {
+  return get<DecisionDetail>(
+    `/api/backtests/${id}/strategies/${slug}/decisions/${decisionId}`,
+  );
 }

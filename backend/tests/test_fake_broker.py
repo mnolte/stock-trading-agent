@@ -42,6 +42,48 @@ async def test_bracket_entry_creates_three_orders() -> None:
     assert [o.id for o in open_orders.data] == [parent.id]
 
 
+async def test_open_orders_lists_released_legs_after_parent_fills() -> None:
+    """Released bracket legs are their own orders at the broker — the
+    open list returns them once the parent is closed."""
+    broker = _broker()
+    await broker.submit_bracket_entry(
+        symbol="MSFT",
+        qty=4,
+        limit_price=Decimal("421"),
+        stop_price=Decimal("410"),
+        target_price=Decimal("435"),
+        client_order_id="c1",
+    )
+    await broker.tick("MSFT", Decimal("420"))
+    open_orders = await broker.get_open_orders()
+    assert sorted(o.order_type for o in open_orders.data) == ["limit", "stop"]
+
+
+async def test_open_orders_hides_held() -> None:
+    """Alpaca's open filter never returns `held` orders — a bracket stop
+    leg can rest there under its filled parent. The fake hides them too
+    so reconcile exercises the by-id refetch path."""
+    broker = _broker()
+    submitted = await broker.submit_bracket_entry(
+        symbol="MSFT",
+        qty=4,
+        limit_price=Decimal("421"),
+        stop_price=Decimal("410"),
+        target_price=Decimal("435"),
+        client_order_id="c1",
+    )
+    await broker.tick("MSFT", Decimal("420"))
+    stop_leg = next(
+        leg for leg in submitted.data.legs if leg.order_type == "stop"
+    )
+    broker.orders[stop_leg.id].status = "held"
+    open_orders = await broker.get_open_orders()
+    assert stop_leg.id not in {o.id for o in open_orders.data}
+    # get_order still returns it: reconcile refetches what the list misses.
+    fetched = await broker.get_order(stop_leg.id)
+    assert fetched.data is not None and fetched.data.status == "held"
+
+
 async def test_limit_buy_fills_when_price_crosses() -> None:
     broker = _broker()
     submitted = await broker.submit_bracket_entry(

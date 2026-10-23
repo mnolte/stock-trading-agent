@@ -14,7 +14,8 @@ export type Topic =
   | 'settings'
   | 'notifications'
   | 'universe'
-  | 'strategies';
+  | 'strategies'
+  | 'backtests';
 
 export type LiveStatus = 'live' | 'paused';
 

@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 from app.broker.fake import FakeBroker, _PosRec
-from app.broker.models import BrokerAccount
+from app.broker.models import BrokerAccount, BrokerOrder
 from app.config import AppConfig
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -32,7 +32,7 @@ from app.market.clock import NY_TZ, UTC, FakeClock
 from app.rules.prefilter import RulesResult
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -329,6 +329,138 @@ def test_client_order_ids_unique_across_processes(
     )
 
 
+async def test_crash_after_broker_accepted_stop_reconciles_without_resend(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The broker accepted the protective stop but the process died before
+    the order row was written. On restart reconciliation finds the open
+    order at the broker, records it, covers the adopted position — and
+    never sends a second order (hard rule 3)."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, cash=Decimal("10000"), prices={"XYZ": Decimal("100")})
+    broker.positions["XYZ"] = _PosRec(qty=7, avg_entry_price=Decimal("100"))
+    config = AppConfig()
+    executor = _executor(session_factory, broker, clock, config)
+
+    # Crash exactly between the broker's accept and the DB write.
+    real_store = Executor._store_broker_order
+    fired = False
+
+    def crash_once(
+        self: Executor,
+        session: Session,
+        order: BrokerOrder,
+        decision_id: int | None,
+        *,
+        leg: str | None = None,
+        parent: BrokerOrder | None = None,
+    ) -> Order:
+        nonlocal fired
+        if not fired:
+            fired = True
+            raise RuntimeError("simulated crash after broker accept")
+        return real_store(self, session, order, decision_id, leg=leg, parent=parent)
+
+    monkeypatch.setattr(Executor, "_store_broker_order", crash_once)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        await executor.reconcile()
+    assert broker.submit_calls == 1
+    # The aftermath: position committed before the broker call (hard rule
+    # 13), the broker holds the stop, the order row was never written.
+    with session_factory() as session:
+        assert session.execute(
+            select(Position).where(Position.symbol == "XYZ")
+        ).scalar_one().pending_ack is True
+        assert (
+            session.execute(select(func.count()).select_from(Order)).scalar_one()
+            == 0
+        )
+
+    # Restart: a fresh executor over the same database and broker.
+    restarted = _executor(session_factory, broker, clock, config)
+    report = await restarted.reconcile()
+
+    assert broker.submit_calls == 1  # no second stop was sent
+    assert any("unknown order" in m for m in report.mismatches)
+    with session_factory() as session:
+        orders = session.execute(
+            select(Order).where(Order.symbol == "XYZ")
+        ).scalars().all()
+        assert len(orders) == 1
+        assert orders[0].leg == "stop"
+        assert orders[0].qty == 7
+
+
+async def test_crash_after_broker_accepted_entry_reconciles_without_resend(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same crash on the entry path: the broker accepted the bracket and
+    the app died before recording it. Reconciliation records the entry and
+    its legs from the broker's open orders; no resend, ever."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("421")})
+    config = AppConfig()
+    executor = _executor(session_factory, broker, clock, config)
+
+    real_store = Executor._store_broker_order
+    fired = False
+
+    def crash_once(
+        self: Executor,
+        session: Session,
+        order: BrokerOrder,
+        decision_id: int | None,
+        *,
+        leg: str | None = None,
+        parent: BrokerOrder | None = None,
+    ) -> Order:
+        nonlocal fired
+        if not fired:
+            fired = True
+            raise RuntimeError("simulated crash after broker accept")
+        return real_store(self, session, order, decision_id, leg=leg, parent=parent)
+
+    monkeypatch.setattr(Executor, "_store_broker_order", crash_once)
+    with session_factory() as session:
+        decision = _decision(
+            session,
+            "MSFT",
+            "enter",
+            {"stop_price": 412.0, "target_price": 435.0},
+        )
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await executor.apply_decision(
+                session,
+                decision,
+                _item("MSFT"),
+                None,
+                _quote("MSFT"),
+                NOW,
+                account=_account(),
+                earnings_known=True,
+            )
+    assert broker.submit_calls == 1
+    with session_factory() as session:
+        assert (
+            session.execute(select(func.count()).select_from(Order)).scalar_one()
+            == 0
+        )
+
+    restarted = _executor(session_factory, broker, clock, config)
+    report = await restarted.reconcile()
+
+    assert broker.submit_calls == 1  # the entry is never resent
+    assert any("unknown order" in m for m in report.mismatches)
+    with session_factory() as session:
+        orders = session.execute(
+            select(Order).where(Order.symbol == "MSFT")
+        ).scalars().all()
+        # The bracket's legs were recorded from the broker's open orders.
+        assert {o.leg for o in orders} == {"entry", "stop", "target"}
+
+
 async def test_acknowledge_adopted_position_unblocks_entries(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -565,6 +697,62 @@ async def test_position_with_live_stop_needs_no_new_order(
 
     assert report.protective_stops == []
     assert len(broker.orders) == 1
+
+
+async def test_held_bracket_stop_leg_counts_as_coverage(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Alpaca keeps a bracket's stop leg `held` under its filled parent
+    and out of the open-orders list — the leg is live and still covers
+    the position. Reconcile refetches it by id; no protective stop goes
+    out (Alpaca would reject it: the shares are already held)."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    submitted = await broker.submit_bracket_entry(
+        symbol="MSFT",
+        qty=4,
+        limit_price=Decimal("421"),
+        stop_price=Decimal("410"),
+        target_price=Decimal("435"),
+        client_order_id="sa-entry-1-MSFT-1",
+    )
+    await broker.tick("MSFT", Decimal("420"))  # entry fills; legs go live
+    stop_leg = next(
+        leg for leg in submitted.data.legs if leg.order_type == "stop"
+    )
+    broker.orders[stop_leg.id].status = "held"  # as Alpaca leaves it
+    assert stop_leg.id not in {
+        order.id for order in (await broker.get_open_orders()).data
+    }
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="420", stop="410")
+        for leg_order in submitted.data.legs:
+            session.add(
+                Order(
+                    alpaca_order_id=leg_order.id,
+                    parent_alpaca_order_id=submitted.data.id,
+                    symbol="MSFT",
+                    side="sell",
+                    order_type=leg_order.order_type,
+                    leg="stop" if leg_order.order_type == "stop" else "target",
+                    qty=4,
+                    limit_price=leg_order.limit_price,
+                    stop_price=leg_order.stop_price,
+                    status=broker.orders[leg_order.id].status,
+                    created_at=YESTERDAY,
+                )
+            )
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.ok
+    assert report.protective_stops == []
+    assert broker.submit_calls == 1  # only the bracket; no resend
+    with session_factory() as session:
+        assert not _events(session, "protective_stop")
+        assert not _events(session, "protective_stop_failed")
 
 
 # ----------------------------------------------------------------------

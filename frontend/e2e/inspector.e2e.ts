@@ -1,16 +1,12 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// PR 4 screenshots land in docs/screenshots/pr-4/, matching the PR 3
+import { screenshotDir } from './shots';
+
+// PR 4 screenshots are for docs/screenshots/pr-4/ (pass SCREENSHOT_DIR, see ./shots), matching the PR 3
 // convention; design/screenshots/ holds the design references only.
-const outDir =
-  process.env.SCREENSHOT_DIR ??
-  path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../docs/screenshots/pr-4'
-  );
+const outDir = screenshotDir('pr-4');
 
 test('LLM inspector and decision detail', async ({ page }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';

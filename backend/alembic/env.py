@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -13,7 +14,13 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 cfg = get_config()
-config.set_main_option("sqlalchemy.url", f"sqlite:///{cfg.env.sa_db_path}")
+
+# The backtest worker migrates one database file per strategy; the app
+# itself migrates the configured live database.
+config.set_main_option(
+    "sqlalchemy.url",
+    os.environ.get("SA_ALEMBIC_DB") or f"sqlite:///{cfg.env.sa_db_path}",
+)
 
 
 def run_migrations_offline() -> None:

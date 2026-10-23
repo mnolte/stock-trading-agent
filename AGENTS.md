@@ -43,6 +43,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
 13. **No write lock across a network call.** Commit before any model, broker or data call; never keep a SQLite write transaction open while awaiting I/O. Live jobs and shadows share one event loop and one database file.
+14. **No restarts during the session.** Don't restart, redeploy or migrate the running app between 09:30 and 16:00 New York time unless Marc asks for it or it's an emergency; say so in the PR if a change needs a restart.
 
 ## Conventions
 

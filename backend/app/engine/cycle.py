@@ -526,6 +526,9 @@ class CycleRunner:
                 detail=f"rules: {item.rules.status}",
             )
             report.decisions.append(decision.id)
+        # Hard rule 13: the recorded no_call decisions are durable before
+        # the first model call awaits I/O.
+        session.commit()
         capped_at: int | None = None
         for i, item in enumerate(reviews):
             if report.calls >= max_calls:
@@ -576,6 +579,9 @@ class CycleRunner:
                     ),
                 )
             if self.executor is not None:
+                # Hard rule 13: commit the stored decision before the
+                # executor's quote and order calls await the broker.
+                session.commit()
                 force_exit = (
                     "earnings_exit"
                     if (

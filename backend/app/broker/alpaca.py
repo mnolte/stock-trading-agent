@@ -206,9 +206,28 @@ class AlpacaPaperBroker:
         try:
             raw = await self.limiter.run_read(
                 self.trading.get_orders,
-                GetOrdersRequest(status=QueryOrderStatus.OPEN, nested=True),
+                GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN, nested=True, limit=500
+                ),
             )
             orders = [parse_order(o) for o in (list(raw) if raw else [])]
+            # Alpaca's open filter never returns `held` orders, but a
+            # bracket's stop leg stays `held` — and fully working — under
+            # its filled parent. Recover live legs still riding under
+            # closed parents so the stop-coverage check sees them.
+            closed = await self.limiter.run_read(
+                self.trading.get_orders,
+                GetOrdersRequest(
+                    status=QueryOrderStatus.CLOSED, nested=True, limit=500
+                ),
+            )
+            seen = {order.id for order in orders}
+            seen.update(leg.id for order in orders for leg in order.legs)
+            for parent in [parse_order(o) for o in (list(closed) if closed else [])]:
+                for leg in parent.legs:
+                    if leg.is_open and leg.id not in seen:
+                        seen.add(leg.id)
+                        orders.append(leg)
             return DataResult(data=orders, source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=[], error=str(exc), source="alpaca")

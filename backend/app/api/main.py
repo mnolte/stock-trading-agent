@@ -22,16 +22,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
+from app.api.backtests import router as backtests_router
 from app.api.routes import router as api_router
 from app.api.strategies import router as strategies_router
 from app.api.websocket import UpdateBus
 from app.api.websocket import router as ws_router
+from app.backtests.manager import BacktestManager
 from app.broker.base import Broker
 from app.config import ROOT, AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
-from app.db.base import check_schema_matches_models
+from app.db.base import check_schema_matches_models, get_session_maker
 from app.db.models import Strategy
 from app.decide.client import (
     DecisionClient,
@@ -40,6 +42,7 @@ from app.decide.client import (
     UnpricedModelError,
     make_decision_client,
 )
+from app.decide.llm_cache import LLMCacheStore
 from app.decide.service import DecisionService
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
@@ -107,12 +110,18 @@ async def refresh_calendar_and_daily_data(
     today = clock.now().astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
-    await market_data.refresh_earnings(today - timedelta(days=30), today + timedelta(days=90))
-    await market_data.refresh_corporate_actions(
-        today - timedelta(days=30), today + timedelta(days=90)
+    # Independent sources fetched together — the calendar must load first
+    # (the daily refresh resolves sessions through it).
+    _, _, _, fx = await asyncio.gather(
+        market_data.refresh_earnings(
+            today - timedelta(days=30), today + timedelta(days=90)
+        ),
+        market_data.refresh_corporate_actions(
+            today - timedelta(days=30), today + timedelta(days=90)
+        ),
+        market_data.refresh_daily(today),
+        sources.fx.fetch_fx(today),
     )
-    await market_data.refresh_daily(today)
-    fx = await sources.fx.fetch_fx(today)
     market_data.latest_fx = fx
 
 
@@ -171,13 +180,22 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
 
 
 async def run_scheduled_cycle(
-    runner: CycleRunner, clock: Clock, cycle_time: str
+    runner: CycleRunner,
+    clock: Clock,
+    cycle_time: str,
+    backtests: Any = None,
 ) -> None:
     """Scheduler entry point: run the decision cycle due at ``cycle_time`` today."""
     today = clock.now().astimezone(NY_TZ).date()
     hour, minute = (int(p) for p in cycle_time.split(":")[:2])
     scheduled = datetime.combine(today, dtime(hour, minute), tzinfo=NY_TZ)
-    await runner.run(scheduled)
+    if backtests is not None:
+        backtests.set_paused(True)
+    try:
+        await runner.run(scheduled)
+    finally:
+        if backtests is not None:
+            backtests.set_paused(False)
 
 
 async def run_universe_screen(
@@ -195,10 +213,18 @@ async def run_universe_screen(
 
 
 async def run_scheduled_check(
-    checker: PositionChecker, bus: UpdateBus | None = None
+    checker: PositionChecker,
+    bus: UpdateBus | None = None,
+    backtests: Any = None,
 ) -> None:
     """Scheduler entry point for the 15-minute position check."""
-    await checker.run()
+    if backtests is not None:
+        backtests.set_paused(True)
+    try:
+        await checker.run()
+    finally:
+        if backtests is not None:
+            backtests.set_paused(False)
     if bus is not None:
         bus.publish("positions", "orders", "banners", "header", "performance")
 
@@ -365,6 +391,7 @@ def schedule_cycle_jobs(
     runner: CycleRunner,
     config: AppConfig,
     clock: Clock,
+    backtests: Any = None,
 ) -> None:
     """(Re)build the cron jobs for the configured cycle times.
 
@@ -382,7 +409,7 @@ def schedule_cycle_jobs(
         scheduler.add_job(
             run_scheduled_cycle,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[runner, clock, str(cycle_at)],
+            args=[runner, clock, str(cycle_at), backtests],
             id=f"cycle-{cycle_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,
@@ -500,11 +527,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
+    # The llm_cache is shared: live and shadows write through to it (never
+    # read it), backtests read it — a rerun on identical inputs is free.
+    llm_cache = LLMCacheStore(get_session_maker(), clock)
     decision_service = DecisionService(
         make_decision_client(config, api_key=secrets_store.get("openai")),
         config,
         api_key=secrets_store.get("openai"),
         notifier=notification_service,
+        llm_cache=llm_cache,
     )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
@@ -579,6 +610,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         live_state=live_gate_state,
         notifier=notification_service,
         notify=lambda topics: bus.publish(*topics),
+        llm_cache=llm_cache,
     )
     shadow_tasks: set[asyncio.Task[object]] = set()
     cycle_runner.on_cycle_done = lambda report: spawn_background(
@@ -629,7 +661,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Fill any outcome targets that were due while the app was down, and
     # record the startup equity point.
-    from app.db.base import get_session_maker
     from app.db.models import Cycle
 
     with get_session_maker()() as session:
@@ -709,10 +740,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.notification_service = notification_service
     app.state.shadow_runner = shadow_runner
 
+    # Backtesting (PR 14): one child process at a time; rows left "queued"
+    # or "running" by a crash are marked interrupted at startup.
+    backtest_manager = BacktestManager(config, clock)
+    backtest_manager.interrupt_orphans()
+    app.state.backtests = backtest_manager
+
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
     # When promoted settings move cycle times the cron jobs are rebuilt.
     cycle_runner._on_settings_promoted = (
-        lambda: schedule_cycle_jobs(scheduler, cycle_runner, config, clock)
+        lambda: schedule_cycle_jobs(
+            scheduler, cycle_runner, config, clock, backtest_manager
+        )
     )
     refresh_at = str(config.get("schedule", "calendar_refresh", default="08:00"))
     refresh_hour, refresh_minute = (int(p) for p in refresh_at.split(":")[:2])
@@ -770,7 +809,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # refreshes the stored signal snapshot as part of the cycle. Missed
     # cycles may run late by at most misfire_grace_seconds, and several
     # misses coalesce into one run — never into a queue of catch-ups.
-    schedule_cycle_jobs(scheduler, cycle_runner, config, clock)
+    schedule_cycle_jobs(
+        scheduler, cycle_runner, config, clock, backtest_manager
+    )
     misfire_grace = int(
         config.get("schedule", "misfire_grace_seconds", default=120)
     )
@@ -779,7 +820,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         scheduler.add_job(
             run_scheduled_check,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[position_checker, bus],
+            args=[position_checker, bus, backtest_manager],
             id=f"position-check-{check_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,
@@ -831,11 +872,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="notifications-tick",
         coalesce=True,
     )
+    # Backtest lifecycle: spawn the oldest queued run, sync progress from a
+    # running child, keep cost totals fresh.
+    scheduler.add_job(
+        backtest_manager.tick,
+        IntervalTrigger(seconds=10),
+        id="backtests-tick",
+        coalesce=True,
+    )
     scheduler.start()
     app.state.scheduler = scheduler
     try:
         yield
     finally:
+        await backtest_manager.shutdown()
         scheduler.shutdown(wait=False)
         # Shadow work is never waited for: it is cut, never live.
         for task in list(shadow_tasks):
@@ -871,6 +921,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(api_router, prefix="/api")
     app.include_router(strategies_router, prefix="/api")
+    app.include_router(backtests_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
     if FRONTEND_DIST.is_dir():
         app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")

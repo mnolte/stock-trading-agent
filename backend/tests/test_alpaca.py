@@ -55,6 +55,77 @@ async def test_get_asset_reads_raw_class_field() -> None:
     assert result.data.tradable is True
 
 
+async def test_open_orders_recovers_held_leg_under_closed_parent() -> None:
+    """Alpaca's open filter never returns `held` orders — a bracket's
+    working stop leg stays `held` under its filled parent. The closed
+    list carries the parent with its legs nested; the live leg is
+    recovered from there."""
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    open_raw = [
+        {  # the released take-profit leg, returned top-level
+            "id": "leg-target",
+            "symbol": "WMT",
+            "side": "sell",
+            "type": "limit",
+            "order_class": "bracket",
+            "status": "new",
+            "qty": "16",
+            "limit_price": "123",
+        }
+    ]
+    closed_raw = [
+        {  # the filled parent still carries both legs
+            "id": "parent-entry",
+            "symbol": "WMT",
+            "side": "buy",
+            "type": "limit",
+            "order_class": "bracket",
+            "status": "filled",
+            "qty": "16",
+            "filled_qty": "16",
+            "filled_avg_price": "120.1",
+            "legs": [
+                {
+                    "id": "leg-target",
+                    "symbol": "WMT",
+                    "side": "sell",
+                    "type": "limit",
+                    "status": "new",
+                    "qty": "16",
+                    "limit_price": "123",
+                },
+                {
+                    "id": "leg-stop",
+                    "symbol": "WMT",
+                    "side": "sell",
+                    "type": "stop",
+                    "status": "held",
+                    "qty": "16",
+                    "stop_price": "118.31",
+                },
+            ],
+        }
+    ]
+
+    def fake_get_orders(
+        request: GetOrdersRequest | None = None,
+    ) -> Any:  # raw_data=True returns plain dicts
+        status = request.status if request is not None else None
+        return open_raw if status == QueryOrderStatus.OPEN else closed_raw
+
+    broker.trading.get_orders = fake_get_orders  # type: ignore[assignment]
+    result = await broker.get_open_orders()
+    assert result.error is None
+    by_id = {o.id: o for o in result.data}
+    assert set(by_id) == {"leg-target", "leg-stop"}
+    assert by_id["leg-stop"].status == "held"
+    assert by_id["leg-stop"].is_open
+
+
 async def test_trade_update_handlers_run_on_the_app_loop() -> None:
     """The SDK stream owns a private loop on its thread; handlers touch
     the DB, the reconcile lock and the update bus, so they must be

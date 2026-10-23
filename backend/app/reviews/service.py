@@ -583,18 +583,17 @@ class ReviewService:
                         updated_at=now,
                     )
                 )
-                # autoflush is off: flush so the cap counts this call's
-                # spend before the next verdict in the batch.
-                session.flush()
+                # Commit per verdict: the cap counts this call's spend
+                # before the next compose, and no write transaction stays
+                # open across a model call (AGENTS.md, hard rule 13).
+                try:
+                    session.commit()
+                except IntegrityError:
+                    session.rollback()
+                    continue
                 written += 1
-            if not written:
-                return 0
-            try:
-                session.commit()
-            except IntegrityError:
-                session.rollback()
-                return 0
-        self._notify({"reviews", "decisions"})
+        if written:
+            self._notify({"reviews", "decisions"})
         return written
 
     # ------------------------------------------------------------------

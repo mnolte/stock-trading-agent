@@ -2,6 +2,24 @@
 
 Newest first.
 
+## 2026-10-23 — Integrity fixes from the 22 October analysis (PR 15)
+
+- Entries: usable quotes only (quote timestamp, never the trade's or fetch time; missing or zero bid/ask → quote_missing; ask > 1% from the last bar close → quote_suspect; both before any model call); quote provenance stored per decision; size, order value and all gates redone on the final limit; stop must sit ≥ 1.5 × ATR below the lowest of ask, last trade and bar close before submit. Config: `execution.quote_max_deviation_pct`.
+- Code checks: tighten_stop must be ≥ 0.25 × ATR below the lowest of bid, last trade and bar close, rechecked before replacement. Config: `decision.tighten_min_atr_below_price`.
+- Risk gates: one sector resolver (pool or config) for gates, shadows and dashboard; unknown sector fails the gate. Daily loss limit latched for the rest of the New York session, survives restarts.
+- Snapshot: quote and signal-bar times; held positions get initial stop, original thesis and invalidation, R against initial risk; per-symbol news status (complete, empty, truncated, failed), no shared cap.
+- Outcomes: first touch judged against the stop active at each bar's time. Data model: `positions.initial_stop`.
+- Reviews: status facts written by code; known-empty never called unavailable.
+- Schedule: every incomplete cycle stored with its reason; no restarts or deploys during regular hours except emergencies.
+- Decision cost stored with its source (priced, cached, legacy). AGENTS.md: new hard rule 14, no restarts during the session.
+- Build plan: PR 15 Integrity fixes.
+
+## 2026-10-21 — PR 14 review
+
+- Backtesting: the bar store is filled for the run period plus the indicator lookback, so signals work from the first session.
+- LLM cache: live and shadows write to it but never read from it; backtest decisions answered from it are marked `cached` (new `decisions.cached`, always false live).
+- AGENTS.md hard rule 13 audit (PR 14) fixed write locks held across I/O in the cycle's model call, reconciliation, adoption/protective-stop placement and verdict writing.
+
 ## 2026-10-21 — Answers to PR 14 questions
 
 - Run layout: `data/backtests/run-<id>/` with one live-schema DB per strategy and a read-only `market.db` (earnings, news, corporate actions); no strategy column in the live schema; strategies advance in lockstep; deleting a run removes its folder.

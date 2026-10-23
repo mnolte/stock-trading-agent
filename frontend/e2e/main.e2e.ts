@@ -1,16 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 
-// Screenshots land in docs/screenshots/<run>/ next to the PR that touched the
-// screen. Override with SCREENSHOT_DIR; default keeps them out of design/.
-const outDir =
-  process.env.SCREENSHOT_DIR ??
-  path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '../../docs/screenshots/e2e'
-  );
+import { screenshotDir } from './shots';
+
+// Screenshots for docs/screenshots/e2e/ (pass SCREENSHOT_DIR, see ./shots).
+const outDir = screenshotDir('e2e');
 
 test('dashboard watchlist', async ({ page, request }, testInfo) => {
   await page.goto('/');

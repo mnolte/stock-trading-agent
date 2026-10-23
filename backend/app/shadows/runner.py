@@ -37,6 +37,7 @@ from app.data.cache import BarCache, _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import DecisionClient, token_cost
+from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import validate_model_output
 from app.decide.prompt import cached_prompt
 from app.decide.service import model_output_json, rules_result_json, validation_result_json
@@ -195,6 +196,7 @@ class ShadowRunner:
         bars: BarReader | None = None,
         notifier: Notifier | None = None,
         notify: Callable[[set[str]], None] | None = None,
+        llm_cache: LLMCacheStore | None = None,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -208,6 +210,9 @@ class ShadowRunner:
         self._clients: dict[int, DecisionClient] = {}
         self._cap_notified: str | None = None
         self._lock = asyncio.Lock()
+        # Write-through only: shadow answers land in the shared cache for
+        # backtest replays; a shadow decision is always a fresh model call.
+        self._llm_cache = llm_cache
 
     # ------------------------------------------------------------------
     # helpers
@@ -544,6 +549,24 @@ class ShadowRunner:
             except TimeoutError as exc:
                 state["out"] = "time"
                 raise _OutOfTime from exc
+            if (
+                self._llm_cache is not None
+                and response.error is None
+                and response.raw is not None
+            ):
+                self._llm_cache.store(
+                    model=str(strategy.model),
+                    temperature=float(
+                        cfg.get("decision", "temperature", default=0.2)
+                    ),
+                    prompt_version=prompt.version,
+                    prompt_hash=prompt.sha256,
+                    user=json.dumps(snap_json, indent=2),
+                    cycle_time=scheduled,
+                    response=response.raw,
+                    tokens_in=response.tokens_in,
+                    tokens_out=response.tokens_out,
+                )
             ind = indicators_from_snapshot(d.symbol, d.snapshot)
             validation = validate_model_output(
                 response.raw,
