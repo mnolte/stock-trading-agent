@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
 import {
@@ -25,74 +25,190 @@ import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { CycleCounter } from '../components/CycleCounter';
+import { DialogButton, Modal } from '../components/Modal';
 import { PriceChart } from '../components/PriceChart';
 import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
 import { displayFullDate, displayTime, nyTime } from '../format';
-import { actionBadgeStyle } from '../components/decisionFormat';
+import {
+  actionBadgeStyle,
+  formatAmsTime,
+  formatNyTitle,
+} from '../components/decisionFormat';
 import { earningsChipLabel } from './decisionDetail';
-import { actionChip, feedText } from './dashboardFeed';
+import {
+  actionText,
+  collapsedMeta,
+  cycleMeta,
+  groupFeed,
+  rowSymbols,
+  type FeedCycle,
+  type FeedRow,
+} from './dashboardFeed';
 
-function Feed({ items }: { items: DashboardFeedItem[] }) {
+/** One feed row: a single decision links to the decision drawer, a grouped
+ * row to the LLM inspector filtered to its cycle and action. */
+function FeedRowLink({ row }: { row: FeedRow }) {
   const location = useLocation();
-  // Group by cycle time like the design's "Today's decisions".
-  const groups = useMemo(() => {
-    const map = new Map<string, DashboardFeedItem[]>();
-    for (const item of items) {
-      const key = displayTime(item.time);
-      map.set(key, [...(map.get(key) ?? []), item]);
-    }
-    return [...map.entries()].reverse();
-  }, [items]);
+  const { text, more } = rowSymbols(row.items);
+  const single = row.items.length === 1;
+  const item = row.items[0];
+  const to = single
+    ? `/decisions/${item.id}`
+    : `/inspector?cycle=${encodeURIComponent(item.time)}&action=${row.action}`;
+  return (
+    <Link
+      to={to}
+      state={single ? { backgroundLocation: location } : undefined}
+      className="sa-row"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '108px minmax(0, 1fr) auto',
+        gap: 'var(--sa-space-3)',
+        alignItems: 'center',
+        minHeight: 'var(--sa-control-height)',
+        padding: '6px 8px',
+        margin: '0 -8px',
+        borderRadius: 'var(--sa-radius-sm)',
+        borderBottom: '1px solid var(--sa-border)',
+        fontSize: 'var(--sa-text-md)',
+        color: 'var(--sa-text-2)',
+        textDecoration: 'none',
+      }}
+    >
+      <span
+        style={{
+          display: 'inline-block',
+          minWidth: '56px',
+          fontFamily: 'var(--sa-font-mono)',
+          fontSize: 'var(--sa-text-sm)',
+          fontWeight: 600,
+          color: row.color,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {row.label}
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <b style={{ fontWeight: 600, color: 'var(--sa-text)' }}>{text}</b>
+        {more > 0 && (
+          <span style={{ color: 'var(--sa-text-muted)' }}> +{more} more</span>
+        )}
+        {row.reason && (
+          <span style={{ color: 'var(--sa-text-muted)' }}> · {row.reason}</span>
+        )}
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--sa-font-mono)',
+          fontSize: 'var(--sa-text-sm)',
+          color: 'var(--sa-text-muted)',
+        }}
+      >
+        {row.items.length > 1 ? row.items.length : ''}
+      </span>
+    </Link>
+  );
+}
+
+function CycleGroup({
+  cycle,
+  expanded,
+  onToggle,
+}: {
+  cycle: FeedCycle;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const rows = expanded ? cycle.rows : cycle.changeRows;
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+        style={{
+          display: 'flex',
+          width: '100%',
+          alignItems: 'baseline',
+          gap: 'var(--sa-space-3)',
+          minHeight: '40px',
+          padding: 'var(--sa-space-2) 0 var(--sa-space-1)',
+          border: 0,
+          background: 'transparent',
+          color: 'var(--sa-text)',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <span aria-hidden="true" style={{ color: 'var(--sa-text-muted)' }}>
+          {expanded ? '▾' : '▸'}
+        </span>
+        <span
+          title={formatNyTitle(cycle.time)}
+          style={{
+            fontFamily: 'var(--sa-font-mono)',
+            fontSize: 'var(--sa-text-md)',
+            fontWeight: 600,
+          }}
+        >
+          {formatAmsTime(cycle.time)}
+        </span>
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          {expanded ? cycleMeta(cycle) : collapsedMeta(cycle)}
+        </span>
+      </button>
+      {rows.map((row) => (
+        <FeedRowLink key={row.key} row={row} />
+      ))}
+    </div>
+  );
+}
+
+/** "Today's decisions" — feed grouped per cycle; the latest cycle opens,
+ * earlier cycles collapse to their change rows. */
+function Feed({ items }: { items: DashboardFeedItem[] }) {
+  const cycles = useMemo(() => groupFeed(items), [items]);
+  // The latest cycle starts open; every other starts collapsed to changes.
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const isOpen = (cycle: FeedCycle, first: boolean) =>
+    toggled[cycle.key] ?? first;
 
   return (
-    <Card label="Today's decisions" right={<Link to="/inspector">All model calls</Link>}>
-      {groups.length === 0 && (
+    <Card
+      label="Today's decisions"
+      right={<Link to="/inspector">All model calls</Link>}
+    >
+      {cycles.length === 0 && (
         <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
           No decisions yet today.
         </div>
       )}
-      {groups.map(([time, rows]) => (
+      {cycles.map((cycle, i) => (
+        <CycleGroup
+          key={cycle.key}
+          cycle={cycle}
+          expanded={isOpen(cycle, i === 0)}
+          onToggle={() =>
+            setToggled((t) => ({ ...t, [cycle.key]: !isOpen(cycle, i === 0) }))
+          }
+        />
+      ))}
+      {cycles.length > 0 && (
         <div
-          key={time}
           style={{
-            display: 'flex',
-            gap: 'var(--sa-space-3)',
-            padding: 'var(--sa-space-2) 0',
-            borderBottom: '1px solid var(--sa-border)',
-            alignItems: 'baseline',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+            paddingTop: 'var(--sa-space-2)',
           }}
         >
-          <span
-            style={{
-              fontFamily: 'var(--sa-font-mono)',
-              fontSize: 'var(--sa-text-md)',
-              color: 'var(--sa-text-muted)',
-              flex: '0 0 46px',
-            }}
-          >
-            {time}
-          </span>
-          <span style={{ display: 'flex', flexWrap: 'wrap', gap: '6px var(--sa-space-3)' }}>
-            {rows.map((row) => {
-              const chip = actionChip(row.action, row.no_call_reason);
-              return (
-                <Link
-                  key={row.id}
-                  to={`/decisions/${row.id}`}
-                  state={{ backgroundLocation: location }}
-                  style={{ color: 'var(--sa-text-2)', display: 'inline-flex', gap: '6px', alignItems: 'center' }}
-                >
-                  <Chip variant={chip.variant}>{chip.label}</Chip>
-                  <span style={{ fontSize: 'var(--sa-text-md)' }}>{feedText(row)}</span>
-                </Link>
-              );
-            })}
-          </span>
+          Changes (entries, exits, stop moves) always show. Other decisions are
+          grouped by action and reason; collapsed cycles show their changes
+          only.
         </div>
-      ))}
+      )}
     </Card>
   );
 }
@@ -131,7 +247,7 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
       </Card>
     );
   }
-  const chip = actionChip(d.final_action, d.no_call_reason);
+  const chip = actionText(d.final_action);
   const badge = actionBadgeStyle(d.final_action);
   const regimeVariant: 'positive' | 'negative' | 'neutral' =
     d.regime?.trend === 'up'
@@ -395,6 +511,127 @@ export function MarketClosed({ mc }: { mc: MarketClosedCard }) {
   );
 }
 
+/** "Find symbol" dialog over held symbols plus the watchlist — replaces the
+ * old wall of one button per symbol (design/screens/Main.dc.html). */
+function FindSymbolDialog({
+  open,
+  symbols,
+  held,
+  selected,
+  onPick,
+  onClose,
+}: {
+  open: boolean;
+  symbols: string[];
+  held: Set<string>;
+  selected: string | null;
+  onPick: (symbol: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    if (open) setQuery('');
+  }, [open]);
+  const options = useMemo(() => {
+    const q = query.trim().toUpperCase();
+    return q ? symbols.filter((s) => s.includes(q)) : symbols;
+  }, [symbols, query]);
+  return (
+    <Modal
+      open={open}
+      title="Find symbol"
+      footer={
+        <DialogButton variant="cancel" onClick={onClose}>
+          Close
+        </DialogButton>
+      }
+    >
+      <input
+        autoFocus
+        type="search"
+        aria-label="Find a symbol"
+        placeholder="Type to filter"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        style={{
+          height: 'var(--sa-input-height)',
+          boxSizing: 'border-box',
+          width: '100%',
+          padding: '0 var(--sa-space-3)',
+          borderRadius: 'var(--sa-radius-md)',
+          border: '1px solid var(--sa-border-strong)',
+          background: 'var(--sa-bg)',
+          color: 'var(--sa-text)',
+          fontSize: 'var(--sa-text-base)',
+        }}
+      />
+      <ul
+        role="listbox"
+        aria-label="Symbols"
+        style={{
+          margin: 0,
+          padding: 0,
+          listStyle: 'none',
+          maxHeight: '320px',
+          overflowY: 'auto',
+        }}
+      >
+        {options.map((symbol) => (
+          <li key={symbol}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={symbol === selected}
+              onClick={() => onPick(symbol)}
+              className="sa-row"
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--sa-space-3)',
+                minHeight: 'var(--sa-control-height)',
+                padding: '0 var(--sa-space-3)',
+                border: 0,
+                borderRadius: 'var(--sa-radius-sm)',
+                background: 'transparent',
+                color: 'var(--sa-text)',
+                fontSize: 'var(--sa-text-base)',
+                fontWeight: 600,
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
+            >
+              {symbol}
+              {held.has(symbol) && (
+                <span
+                  style={{
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-info)',
+                    fontWeight: 400,
+                  }}
+                >
+                  held
+                </span>
+              )}
+            </button>
+          </li>
+        ))}
+        {options.length === 0 && (
+          <li
+            style={{
+              padding: 'var(--sa-space-4)',
+              color: 'var(--sa-text-muted)',
+              fontSize: 'var(--sa-text-md)',
+            }}
+          >
+            No symbol in the universe matches “{query}”.
+          </li>
+        )}
+      </ul>
+    </Modal>
+  );
+}
+
 export default function Dashboard() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [watchlist, setWatchlist] = useState<WatchlistResponse | null>(null);
@@ -402,7 +639,8 @@ export default function Dashboard() {
   const [positions, setPositions] = useState<PositionsResponse | null>(null);
   const [chart, setChart] = useState<ChartResponse | null>(null);
   const [budget, setBudget] = useState<RiskBudgetResponse | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const refreshDashboard = useCallback((symbol?: string | null) => {
     getDashboard(symbol ?? undefined)
@@ -426,8 +664,35 @@ export default function Dashboard() {
     getRiskBudget().then(setBudget).catch(console.error);
   }, []);
 
-  const symbols = watchlist?.rows.map((r) => r.symbol) ?? [];
-  const chartSymbol = selected ?? symbols[0] ?? null;
+  // The charted symbol persists in the URL (?symbol=): an explicit param
+  // wins, else the first held position, else the first watchlist row.
+  const urlSymbol = useMemo(() => {
+    const raw = searchParams.get('symbol');
+    return raw ? raw.toUpperCase() : null;
+  }, [searchParams]);
+  const heldSymbols = useMemo(
+    () => (positions?.open ?? []).map((p) => p.symbol),
+    [positions],
+  );
+  const watchSymbols = useMemo(
+    () => (watchlist?.rows ?? []).map((r) => r.symbol),
+    [watchlist],
+  );
+  const chartSymbol = urlSymbol ?? heldSymbols[0] ?? watchSymbols[0] ?? null;
+  const heldSet = useMemo(() => new Set(heldSymbols), [heldSymbols]);
+  const pickerSymbols = useMemo(
+    () => [...heldSymbols, ...watchSymbols.filter((s) => !heldSet.has(s))],
+    [heldSymbols, watchSymbols, heldSet],
+  );
+  const pickSymbol = useCallback(
+    (symbol: string) => setSearchParams({ symbol }),
+    [setSearchParams],
+  );
+  useEffect(() => {
+    if (chartSymbol && urlSymbol !== chartSymbol) {
+      setSearchParams({ symbol: chartSymbol }, { replace: true });
+    }
+  }, [chartSymbol, urlSymbol, setSearchParams]);
 
   useEffect(() => {
     refreshWatchlist();
@@ -616,56 +881,123 @@ export default function Dashboard() {
         }}
       >
         <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <Card
-            label={chartSymbol ?? 'Chart'}
-            right={
-              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                1h bars · last 5 sessions · SIP, 15 min delayed
-              </span>
-            }
-          >
-            <div style={{ display: 'flex', gap: 'var(--sa-space-2)', flexWrap: 'wrap' }}>
-              {symbols.map((symbol) => (
+          <Card>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--sa-space-3)',
+                flexWrap: 'wrap',
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>
+                {chartSymbol ?? 'Chart'}
+              </h2>
+              {chart && (
+                <>
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-price)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    ${formatPrice(chart.price)}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-md)',
+                      color:
+                        chart.day_change_pct !== null && Number(chart.day_change_pct) >= 0
+                          ? 'var(--sa-positive)'
+                          : 'var(--sa-negative-text)',
+                    }}
+                  >
+                    {formatDayChange(chart.day_change_pct)} today
+                  </span>
+                  {chart.warming_up && <Chip variant="info">Warming up</Chip>}
+                </>
+              )}
+              <span style={{ flex: 1 }} />
+              <div
+                role="group"
+                aria-label="Pick a symbol"
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '6px',
+                  alignItems: 'center',
+                }}
+              >
+                {heldSymbols.map((symbol) => (
+                  <button
+                    key={symbol}
+                    type="button"
+                    aria-pressed={symbol === chartSymbol}
+                    onClick={() => pickSymbol(symbol)}
+                    style={{
+                      height: '36px',
+                      padding: '0 var(--sa-space-3)',
+                      borderRadius: 'var(--sa-radius-md)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: 'var(--sa-text-md)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      border: `1px solid ${symbol === chartSymbol ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
+                      background:
+                        symbol === chartSymbol
+                          ? 'var(--sa-accent-bg)'
+                          : 'var(--sa-raised)',
+                      color: 'var(--sa-text)',
+                    }}
+                  >
+                    {symbol}
+                    <span
+                      style={{ fontSize: 'var(--sa-text-xs)', color: 'var(--sa-info)' }}
+                    >
+                      held
+                    </span>
+                  </button>
+                ))}
                 <button
-                  key={symbol}
                   type="button"
-                  onClick={() => setSelected(symbol)}
+                  aria-haspopup="listbox"
+                  onClick={() => setPickerOpen(true)}
                   style={{
-                    height: '30px',
+                    height: '36px',
                     padding: '0 var(--sa-space-3)',
-                    borderRadius: 'var(--sa-radius-sm)',
-                    border: `1px solid ${symbol === chartSymbol ? 'var(--sa-accent-border)' : 'var(--sa-border)'}`,
-                    background: symbol === chartSymbol ? 'var(--sa-accent-bg)' : 'var(--sa-raised)',
-                    color: symbol === chartSymbol ? 'var(--sa-accent)' : 'var(--sa-text-2)',
-                    fontFamily: 'var(--sa-font-mono)',
-                    fontSize: 'var(--sa-text-sm)',
+                    borderRadius: 'var(--sa-radius-md)',
+                    border: '1px solid var(--sa-border-strong)',
+                    background: 'var(--sa-bg)',
+                    color: 'var(--sa-text-muted)',
+                    fontSize: 'var(--sa-text-md)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 'var(--sa-space-2)',
                     cursor: 'pointer',
                   }}
                 >
-                  {symbol}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px' }}>
+                    <circle cx="11" cy="11" r="6" />
+                    <line x1="16" y1="16" x2="21" y2="21" />
+                  </svg>
+                  Find symbol
                 </button>
-              ))}
-            </div>
-            {chart && (
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--sa-space-3)' }}>
-                <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-price)', fontWeight: 500 }}>
-                  {formatPrice(chart.price)}
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'var(--sa-font-mono)',
-                    fontSize: 'var(--sa-text-md)',
-                    color:
-                      chart.day_change_pct !== null && Number(chart.day_change_pct) >= 0
-                        ? 'var(--sa-positive)'
-                        : 'var(--sa-negative-text)',
-                  }}
-                >
-                  {formatDayChange(chart.day_change_pct)}
-                </span>
-                {chart.warming_up && <Chip variant="info">Warming up</Chip>}
               </div>
-            )}
+            </div>
+            <div
+              style={{
+                fontSize: 'var(--sa-text-sm)',
+                color: 'var(--sa-text-muted)',
+                marginTop: '-4px',
+              }}
+            >
+              1h bars · last 5 sessions · SIP, 15 min delayed · or pick a row in
+              the watchlist
+            </div>
             {chart && chart.bars.length > 0 ? (
               <PriceChart bars={chart.bars} levels={chart.levels} />
             ) : (
@@ -691,7 +1023,7 @@ export default function Dashboard() {
       <Watchlist
         rows={watchlist?.rows ?? []}
         selected={chartSymbol}
-        onSelect={setSelected}
+        onSelect={pickSymbol}
         universeMode={watchlist?.universe_mode ?? 'fixed'}
         watchlistRows={watchlist?.watchlist_rows ?? 15}
         earningsBlackoutDays={watchlist?.earnings_blackout_days ?? 3}
@@ -700,6 +1032,18 @@ export default function Dashboard() {
       <OpenPositionsMini positions={positions} />
 
       <Feed items={dashboard?.feed ?? []} />
+
+      <FindSymbolDialog
+        open={pickerOpen}
+        symbols={pickerSymbols}
+        held={heldSet}
+        selected={chartSymbol}
+        onPick={(symbol) => {
+          pickSymbol(symbol);
+          setPickerOpen(false);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
     </div>
   );
 }

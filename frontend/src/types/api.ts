@@ -1031,12 +1031,20 @@ export interface DashboardLatestDecision {
 export interface DashboardFeedItem {
   id: number;
   time: string;
+  cycle_id: number;
+  /** 1-based position of the cycle within the shown session. */
+  cycle_index: number | null;
   symbol: string;
   context: string;
   action: string;
   model_action: string | null;
   no_call_reason: string | null;
   reason: string | null;
+  /** Entries, exits, stop moves, deferred exits and approvals — shown even
+   * in collapsed cycles. */
+  change: boolean;
+  /** A real model call (model != 'none'). */
+  called: boolean;
 }
 
 export interface MarketClosedCard {

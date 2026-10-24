@@ -52,8 +52,10 @@ export function getWatchlist(): Promise<WatchlistResponse> {
   return get<WatchlistResponse>('/api/watchlist');
 }
 
-export function getDecisions(): Promise<DecisionsResponse> {
-  return get<DecisionsResponse>('/api/decisions');
+export function getDecisions(cycle?: string): Promise<DecisionsResponse> {
+  const query =
+    cycle === undefined ? '' : `?cycle=${encodeURIComponent(cycle)}`;
+  return get<DecisionsResponse>(`/api/decisions${query}`);
 }
 
 export function getDecision(id: number): Promise<DecisionDetail> {

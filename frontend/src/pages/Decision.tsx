@@ -20,7 +20,7 @@ import {
   formatConfidence,
   formatNyTitle,
 } from '../components/decisionFormat';
-import { actionChip } from './dashboardFeed';
+import { actionText } from './dashboardFeed';
 import {
   firstTouchLabel,
   gateRows,
@@ -721,7 +721,7 @@ export default function Decision() {
   const rulesPassed = rules
     ? `${rules.checks.filter((c) => c.passed).length} of ${rules.checks.length}`
     : null;
-  const chip = actionChip(decision.final_action, decision.no_call_reason);
+  const chip = actionText(decision.final_action);
   const badge = actionBadgeStyle(decision.final_action);
   const trade = decision.trade;
   const output = decision.model_output;

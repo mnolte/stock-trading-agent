@@ -376,8 +376,14 @@ def _decision_item(decision: Decision, scheduled: datetime) -> dict[str, object]
 
 
 @router.get("/decisions")
-def list_decisions(request: Request) -> dict[str, object]:
-    """Today's decisions (Amsterdam day) for the LLM inspector list."""
+def list_decisions(
+    request: Request, cycle: str | None = None
+) -> dict[str, object]:
+    """Today's decisions (Amsterdam day) for the LLM inspector list.
+
+    ``?cycle=<ISO>`` narrows the list to one cycle — the dashboard feed's
+    grouped rows link here filtered to their cycle and action.
+    """
     app_tz = ZoneInfo(str(get_config().get("app", "timezone", default="Europe/Amsterdam")))
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today = clock.now().astimezone(app_tz).date()
@@ -386,16 +392,21 @@ def list_decisions(request: Request) -> dict[str, object]:
     start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
     end_utc = day_end.astimezone(UTC).replace(tzinfo=None)
 
+    filters = [Cycle.scheduled_time >= start_utc, Cycle.scheduled_time < end_utc]
+    if cycle is not None:
+        try:
+            cycle_at = datetime.fromisoformat(cycle).astimezone(UTC).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad cycle timestamp") from None
+        filters = [Cycle.scheduled_time == cycle_at]
+
     with get_session_maker()() as session:
         rows: list[tuple[Decision, datetime]] = [
             (decision, scheduled)
             for decision, scheduled in session.execute(
                 select(Decision, Cycle.scheduled_time)
                 .join(Cycle, Decision.cycle_id == Cycle.id)
-                .where(
-                    Cycle.scheduled_time >= start_utc,
-                    Cycle.scheduled_time < end_utc,
-                )
+                .where(*filters)
                 .order_by(Cycle.scheduled_time.desc(), Decision.id.desc())
             ).all()
         ]
@@ -3296,17 +3307,31 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         "run_cycle_number": run_cycle_number,
     }
 
-    # Decisions feed, grouped client-side by cycle.
+    # Decisions feed, grouped client-side by cycle. Each item carries its
+    # cycle id, the cycle's number within the session, whether the decision
+    # changed something (entries, exits, stop moves, deferred exits,
+    # approvals — always shown, even in collapsed cycles) and whether a
+    # real model call happened.
+    cycle_order = {
+        c.id: i
+        for i, c in enumerate(
+            sorted(today_cycle_rows, key=lambda c: c.scheduled_time), start=1
+        )
+    }
     feed = [
         {
             "id": d.id,
             "time": t.replace(tzinfo=UTC).isoformat(),
+            "cycle_id": d.cycle_id,
+            "cycle_index": cycle_order.get(d.cycle_id),
             "symbol": d.symbol,
             "context": d.context,
             "action": d.final_action,
             "model_action": (d.validation_result or {}).get("model_action"),
             "no_call_reason": d.no_call_reason,
             "reason": _feed_reason(d),
+            "change": _feed_change(d),
+            "called": d.model != "none",
         }
         for d, t in today_decisions
     ]
@@ -3448,24 +3473,54 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     }
 
 
+def _feed_change(decision: Decision) -> bool:
+    """Changes always show as their own feed rows, even in collapsed cycles
+    (design/screens/Main.dc.html: entries, exits, stop moves, deferred
+    exits, pending approvals)."""
+    if decision.final_action in {"enter", "exit", "tighten_stop", "deferred"}:
+        return True
+    return bool((decision.gates_result or {}).get("pending_approval"))
+
+
 def _feed_reason(decision: Decision) -> str | None:
-    """One-line reason for the feed row."""
+    """One-line reason under the action in a feed row.
+
+    Rows with the same (action, reason) collapse into one grouped row, so
+    the text is the shared reason — not the symbol. ``pre-filter`` for
+    rules-held rows; the failing code check when code changed the model's
+    action; the model's thesis otherwise.
+    """
     validation = decision.validation_result or {}
     output = decision.model_output or {}
-    if decision.final_action == "enter":
-        conf = output.get("confidence")
-        return f"ENTER {conf}" if conf is not None else "ENTER"
+    if decision.final_action == "no_call":
+        if decision.no_call_reason in (None, "rules"):
+            return "pre-filter"
+        return str(
+            validation.get("error") or decision.no_call_reason
+        ).replace("_", " ")
+    if decision.final_action == "deferred":
+        return "exit deferred (day-trade rule)"
     if decision.final_action == "blocked":
         gates = decision.gates_result or {}
         return f"blocked: {gates.get('blocked_by', 'gate')}"
-    if decision.final_action == "skip":
-        conf = output.get("confidence")
-        return f"SKIP {conf}" if conf is not None else "SKIP"
-    if decision.final_action == "deferred":
-        return "exit deferred (day-trade rule)"
-    if decision.no_call_reason:
-        return str(validation.get("error") or decision.no_call_reason)
-    return decision.final_action
+    if validation.get("changed_by_code"):
+        failed = next(
+            (
+                c
+                for c in cast("list[dict[str, object]]", validation.get("checks") or [])
+                if c.get("passed") is False
+            ),
+            None,
+        )
+        if failed is not None and failed.get("name"):
+            return str(failed["name"])
+        note = str(validation.get("note") or "")
+        return note or None
+    thesis = output.get("thesis")
+    if isinstance(thesis, str) and thesis:
+        return thesis
+    conf = output.get("confidence")
+    return f"confidence {conf}" if conf is not None else None
 
 
 @router.get("/chart/{symbol}")
