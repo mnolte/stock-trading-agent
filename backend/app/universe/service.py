@@ -622,7 +622,7 @@ class UniverseService:
         self.ensure_pool_loaded()
         try:
             return await self._run_screen(now, today)
-        except Exception as exc:  # keep the previous list, raise the banner
+        except Exception as exc:  # noqa: BLE001 - keep the previous list, raise the banner
             _log.exception("universe screen failed")
             with self._sf() as session:
                 record_event(

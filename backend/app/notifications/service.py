@@ -346,7 +346,9 @@ class NotificationService:
         self._loop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
         self._wake.set()  # flush anything queued before start()
-        self._worker = asyncio.create_task(self._run_worker())
+        from app.spawn import spawn
+
+        self._worker = spawn(self._run_worker(), "notifications-worker")
 
     async def _run_worker(self) -> None:
         assert self._wake is not None

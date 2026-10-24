@@ -402,15 +402,11 @@ def spawn_background(
     tasks: set[asyncio.Task[object]], coro: Coroutine[Any, Any, object], name: str
 ) -> None:
     """Start shadow work as its own task so the live job returns at once."""
-    task: asyncio.Task[object] = asyncio.get_running_loop().create_task(coro, name=name)
+    from app.spawn import spawn
+
+    task = spawn(coro, name)
     tasks.add(task)
-
-    def _done(t: asyncio.Task[object]) -> None:
-        tasks.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error("%s failed", name, exc_info=t.exception())
-
-    task.add_done_callback(_done)
+    task.add_done_callback(tasks.discard)
 
 
 def check_model_prices_at_startup(config: AppConfig) -> None:
@@ -524,6 +520,9 @@ async def retry_calendar_load(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging()
+    from app.spawn import install_global_hooks
+
+    install_global_hooks(asyncio.get_running_loop())
     config = get_config()
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
@@ -962,6 +961,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         misfire_grace_time=10,
         coalesce=True,
     )
+    # Scheduler error listener: a failed job is logged with its id at
+    # ERROR through the same pipeline — never just APScheduler's stderr.
+    from apscheduler.events import EVENT_JOB_ERROR, JobExecutionEvent
+
+    def _on_job_error(event: JobExecutionEvent[object]) -> None:
+        logger.error(
+            "scheduler job %s failed: %s",
+            event.job_id,
+            event.exception,
+            exc_info=event.exception,
+        )
+
+    scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     scheduler.start()
     app.state.scheduler = scheduler
     try:
@@ -994,6 +1006,41 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Stock Agent", version="0.2.0", lifespan=lifespan)
+
+    import secrets as _secrets_mod
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    from app.logging_config import log_context
+
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next: Any) -> Any:
+        """One request id per call: X-Request-Id back, ``request`` context
+        on every log line written while it runs."""
+        rid = f"r-{_secrets_mod.token_hex(4)}"
+        with log_context(request=rid):
+            response = await call_next(request)
+        response.headers["X-Request-Id"] = rid
+        return response
+
+    @app.exception_handler(Exception)
+    async def unhandled_api_error(request: Request, exc: Exception) -> Any:
+        """500 with an error_id; the same id is on the log line (spec)."""
+        error_id = f"e-{_secrets_mod.token_hex(3)}"
+        logger.error(
+            "unhandled API error on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=exc,
+            extra={"error_id": error_id},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal error", "error_id": error_id},
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],

@@ -312,12 +312,11 @@ class CycleRunner:
             except Exception as exc:  # noqa: BLE001
                 report.status = "error"
                 report.errors.append(str(exc))
-                logger.error(
+                logger.exception(
                     "Cycle %s failed at %s: %s",
                     report.cycle_id,
                     scheduled_ny,
                     exc,
-                    exc_info=True,
                 )
                 session.rollback()
                 stored = session.get(Cycle, report.cycle_id)

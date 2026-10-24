@@ -159,7 +159,7 @@ def ev(
     event: str,
     message: str | None = None,
     *,
-    exc_info: bool | BaseException = False,
+    exc_info: Any = False,
     **context: Any,
 ) -> None:
     """One structured log line with a stable event code and context."""

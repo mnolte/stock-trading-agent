@@ -148,8 +148,11 @@ class BacktestManager:
             self.config.get("backtest", "cancel_grace_seconds", default=60)
         )
         if pid:
-            self._cancel_task = asyncio.create_task(
-                self._stop_after_grace(run_id, pid, grace)
+            from app.spawn import spawn
+
+            self._cancel_task = spawn(
+                self._stop_after_grace(run_id, pid, grace),
+                f"backtest-cancel-{run_id}",
             )
         return True
 

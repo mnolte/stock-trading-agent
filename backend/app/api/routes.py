@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
@@ -4120,9 +4119,9 @@ async def universe_pool_add(
         row = await service.add_symbol(symbol, sector)
     except PoolError as exc:
         raise HTTPException(status_code=422, detail=exc.messages) from exc
-    asyncio.get_running_loop().create_task(
-        _warm_up_in_background(service, [row.symbol])
-    )
+    from app.spawn import spawn
+
+    spawn(_warm_up_in_background(service, [row.symbol]), "universe-warmup")
     _notify(request, "universe")
     return {"symbol": row.symbol, "sector": row.sector, "added": True}
 
@@ -4141,9 +4140,9 @@ async def universe_pool_import(
     except PoolError as exc:
         raise HTTPException(status_code=422, detail=exc.messages) from exc
     if added:
-        asyncio.get_running_loop().create_task(
-            _warm_up_in_background(service, added)
-        )
+        from app.spawn import spawn
+
+        spawn(_warm_up_in_background(service, added), "universe-warmup")
     _notify(request, "universe")
     return {"added": len(added), "skipped": skipped}
 
@@ -4173,3 +4172,40 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
     result = await _universe(request).run_screen()
     _notify(request, "universe", "banners", "header")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Frontend error reporting (docs/SPEC.md, Error handling)
+
+_client_error_times: dict[str, list[float]] = {}
+
+
+@router.post("/logs/client")
+def log_client_error(request: Request, body: dict[str, object]) -> dict[str, object]:
+    """Frontend errors: window.onerror, unhandledrejection and the React
+    error boundary post here, at most ``logging.client_errors_per_minute``
+    per tab. Logged at ERROR with logger ``frontend``."""
+    import time
+
+    limit = int(get_config().get("logging", "client_errors_per_minute", default=10))
+    tab = str(body.get("tab_id") or request.client.host if request.client else "?")
+    now = time.monotonic()
+    bucket = [t for t in _client_error_times.get(tab, []) if now - t < 60]
+    _client_error_times[tab] = bucket
+    if len(bucket) >= limit:
+        return {"logged": False, "rate_limited": True}
+    bucket.append(now)
+    logging.getLogger("frontend").error(
+        "%s (%s:%s:%s)\n%s",
+        body.get("message", "frontend error"),
+        body.get("source", ""),
+        body.get("lineno", ""),
+        body.get("colno", ""),
+        body.get("stack", ""),
+        extra={
+            "event": "frontend.error",
+            "context": {"url": str(body.get("url", "")), "tab_id": tab},
+            "error_id": str(body.get("error_id") or "") or None,
+        },
+    )
+    return {"logged": True}
