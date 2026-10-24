@@ -20,8 +20,8 @@ test('reviews screen: weekly tab, review detail, verdicts to confirm', async ({
   await expect(
     page.getByText('Weekly review Saturday 10:00', { exact: false })
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByRole('button', { name: 'Weekly' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Briefings' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Weekly' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Briefings' })).toBeVisible();
 
   // The newest review auto-opens: heading, stat tiles and the verdicts card.
   await expect(
@@ -42,7 +42,7 @@ test('briefings tab', async ({ page }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
 
   await page.goto('/reviews');
-  await page.getByRole('button', { name: 'Briefings' }).click();
+  await page.getByRole('tab', { name: 'Briefings' }).click();
   await expect(
     page.getByRole('heading', { name: 'Verdicts to confirm' })
   ).toBeVisible({ timeout: 60_000 });

@@ -39,7 +39,7 @@ test('universe: fixed mode shows the v0.1 list and points to Settings', async ({
   await page.goto('/universe');
 
   await expect(
-    page.getByRole('heading', { name: 'Universe', exact: true })
+    page.getByRole('heading', { name: 'Universe', exact: true, level: 2 })
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText('fixed list', { exact: true })).toBeVisible();
   await expect(page.getByText('Fixed list ·')).toBeVisible();
