@@ -16,7 +16,8 @@ export type Topic =
   | 'universe'
   | 'strategies'
   | 'backtests'
-  | 'readiness';
+  | 'readiness'
+  | 'logs';
 
 export type LiveStatus = 'live' | 'paused';
 

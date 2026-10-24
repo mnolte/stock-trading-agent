@@ -8,8 +8,6 @@ import sqlite3
 import time
 from pathlib import Path
 
-import pytest
-
 from app.log_index import (
     LogIndexHandler,
     fingerprint,

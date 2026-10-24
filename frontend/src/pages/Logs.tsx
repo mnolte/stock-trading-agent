@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { get, post } from '../api/client';
-import { useLiveUpdates } from '../api/live';
+import { useLiveUpdates } from '../api/liveContext';
 
 interface LogLine {
   id: number;
@@ -143,13 +143,9 @@ export default function Logs() {
   }, [load]);
 
   // Follow new lines: the "logs" topic pings on warning-and-up.
-  const { subscribe } = useLiveUpdates();
-  useEffect(() => {
-    if (!follow) return;
-    return subscribe(['logs'], () => {
-      void load();
-    });
-  }, [follow, subscribe, load]);
+  useLiveUpdates(['logs'], () => {
+    if (follow) void load();
+  });
 
   const onScroll = () => {
     const el = listRef.current;
@@ -276,7 +272,7 @@ export default function Logs() {
         </a>
       </div>
 
-      <div className="sa-log-filters" style={{ display: 'flex', gap: 'var(--sa-space-2)', flexWrap: 'wrap' }}>
+      <div className="sa-log-filters" data-more={moreFilters} style={{ display: 'flex', gap: 'var(--sa-space-2)', flexWrap: 'wrap' }}>
         <input value={loggerFilter} onChange={(e) => setLoggerFilter(e.target.value)} placeholder="Component" aria-label="Component" style={{ height: 'var(--sa-control-height)', borderRadius: 'var(--sa-radius-md)', border: '1px solid var(--sa-border)', background: 'var(--sa-raised)', color: 'var(--sa-text)', padding: '0 var(--sa-space-3)', width: 130 }} />
         <input value={symbolFilter} onChange={(e) => setSymbolFilter(e.target.value)} placeholder="Symbol" aria-label="Symbol" style={{ height: 'var(--sa-control-height)', borderRadius: 'var(--sa-radius-md)', border: '1px solid var(--sa-border)', background: 'var(--sa-raised)', color: 'var(--sa-text)', padding: '0 var(--sa-space-3)', width: 90 }} />
         <input value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)} placeholder="Cycle" aria-label="Cycle" style={{ height: 'var(--sa-control-height)', borderRadius: 'var(--sa-radius-md)', border: '1px solid var(--sa-border)', background: 'var(--sa-raised)', color: 'var(--sa-text)', padding: '0 var(--sa-space-3)', width: 110 }} />

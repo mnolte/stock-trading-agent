@@ -7,15 +7,14 @@ import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
-import pytest
-from sqlalchemy.orm import Session
-
 import app.readiness.service as readiness
+import pytest
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import LogReview
 from app.log_index import LogIndexHandler
 from app.market.calendar import WeekdayCalendarProvider
+from sqlalchemy.orm import Session
 
 
 def _emit(handler: LogIndexHandler, msg: str, level: int) -> str:
