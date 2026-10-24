@@ -158,6 +158,16 @@ class Position(Base):
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     realized_pnl_adjusted: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # After-exit metrics (docs/SPEC.md, Tail metrics): the highest high and
+    # the 5th session's close in the sessions after the exit, split-adjusted.
+    # Written once by the daily job; status runs pending → done | unavailable.
+    after_exit_best_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    after_exit_best_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    after_exit_close_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    after_exit_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending"
+    )
+    after_exit_done_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class Outcome(Base):
