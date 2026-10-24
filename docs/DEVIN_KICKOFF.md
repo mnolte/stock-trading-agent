@@ -218,6 +218,64 @@ Use the PR template, save screenshots in docs/screenshots/pr-16/ next to the
 design PNGs, and ask in the PR before guessing.
 ```
 
+## Dashboard and interaction polish (PR 17)
+
+```
+PR 17 (Dashboard and interaction polish) — thanks for the dashboard UX
+review; it's now spec and design. It doesn't depend on PR 16, so it can go
+before or after it, but not in the same PR. Pull the latest spec and design
+packages, then read:
+1. docs/CHANGES.md, entries 2026-10-24 "Dashboard and interaction polish"
+   (spec) and "UX review: scale, states and interaction" (design)
+2. docs/SPEC.md → GUI: "Dashboard at scale and off-hours", "Interaction and
+   states"; Build plan item 17
+3. design/DESIGN.md → Interaction rules; design/tokens.css (new interaction
+   tokens and shared classes at the end)
+4. design/screens/Main.dc.html and States.dc.html (Market closed, Card
+   states, Toasts, Pending approval) with their screenshots
+
+Build PR 17 only, in this order (one commit per step):
+1. Scale: remove the symbol button row; held-symbol buttons + Find symbol
+   in the chart header; ?symbol= in the URL (default first held position,
+   else first watchlist row). Feed grouped per cycle id: changes always as
+   own rows, the rest grouped by (final action, reason) with symbols (first
+   8, "+n more") and a count; current cycle open, earlier collapsed to
+   changes; single row → decision, grouped row → LLM inspector filtered to
+   cycle + action; rows ≥ 44 px with hover.
+2. States: loading / empty / error on every data card (no empty text before
+   a successful load; errors show what failed + Retry, stale data kept and
+   marked); page banner when ≥ 2 cards fail or the API is unreachable,
+   retrying every 15 s; chart errors are not "No bars loaded".
+3. Session day (backend): "today" = current or last NY session, not
+   Amsterdam midnight; feed title with the session date off-hours; model-call
+   tile counts that session; latest-decision fallback (why not called this
+   cycle from the snapshot, else most recent decision with date); countdown
+   > 24 h shows day and time only.
+4. Quick wins: unrealized P&L coloured; NY time on hover for every time;
+   rank column + hint only in screened mode; earnings tooltip and any copy
+   naming a setting read it from settings; tiles link (Positions, Model
+   calls, Since start); approval shows its expiry; backend sends numbers,
+   frontend formats with U+2212.
+5. Accessibility: global CSS from tokens.css (focus-visible ring, .sa-row,
+   .sa-tile hover, skeleton); remove outline:none; countdown out of any live
+   region; filters as aria-pressed toggles, real tabs with arrow keys,
+   watchlist rows as buttons in a list; mobile sidebar overlay with Escape,
+   focus trap and focus return; critical toasts persist (role alert); toasts
+   deduped per notification event, max 3, below the header.
+6. Polish: latest request wins for symbol/chart/dashboard fetches
+   (AbortController or a request token); document.title shows the state.
+
+Tests: Playwright with the 71-symbol screened fixture (no symbol wall, feed
+fits in collapsed cycles); a Saturday fixture shows Friday's session;
+keyboard-only walkthrough of Dashboard, Settings and Strategies with visible
+focus; loading/empty/error per card via mocked responses; API down → banner;
+rapid symbol switching shows the last symbol's chart; critical toast stays,
+info toast closes after 10 s; one toast per event across channels.
+
+Use the PR template, screenshots in docs/screenshots/pr-17/ next to the
+design PNGs (Main, Main-390, States). List any remaining design differences.
+```
+
 ## Each later PR
 
 ```

@@ -31,6 +31,7 @@
 | 14 | Backtesting (v0.2) | Backtesting; Decision layer; Risk management; Data model | `Backtest` |
 | 15 | Integrity fixes | Alpaca integration (Entries); Decision layer (code checks, prompt, outcome tracking); Risk management (gates); Reviews (number check); Market, schedule and data | none |
 | 16 | Readiness | Readiness; Notifications; Data model | `Readiness`, Readiness section in `Settings` |
+| 17 | Dashboard and interaction polish | GUI (Dashboard at scale and off-hours; Interaction and states) | `Main`, `States` (card states, closed market, toasts), `design/DESIGN.md` → Interaction rules, `tokens.css` |
 
 ## PR description template
 

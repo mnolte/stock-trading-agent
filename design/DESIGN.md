@@ -28,7 +28,7 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 
 | File | Screen | Built in |
 | --- | --- | --- |
-| `Main.dc.html` | Dashboard: header, this-cycle line with cycle counter, summary tiles (positions, model calls today, since start), daily briefing and risk budget cards, price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card, cycle counter, briefing card, model call counter) |
+| `Main.dc.html` | Dashboard: header, this-cycle line with cycle counter, summary tiles (positions, model calls today and since start link on), daily briefing and risk budget cards, chart with held-symbol buttons and Find symbol (no row of every symbol), price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card, cycle counter, briefing card, model call counter) |
 | `Decision.dc.html` | Decision detail drawer, 560 px, in Trading Agent's layout (gates, signal stack, reasoning, levels, outcome), opened from the dashboard, positions and inspector | PR 4 (model part), PR 6 |
 | `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, day trades, account, order history | PR 5 (data), PR 6 |
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, decisions and outcomes, closed trades | PR 7 |
@@ -68,6 +68,24 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 - **Controls:** buttons, nav items and clickable rows are at least 44 px high.
 - **PAPER** shows in the header on every screen, always.
 - **Sample data:** every number in the designs is sample data. Labels that say "Sample data" in the designs are for the designs only.
+
+## Interaction rules
+
+These apply to every screen. Inline styles can't express hover or focus, so the shared classes live once in the app's global CSS (see the end of `tokens.css`).
+
+- **Focus:** every interactive element shows `:focus-visible` (2 px accent ring, 2 px offset). Never set `outline: none` without this replacement.
+- **Hover:** clickable rows use `.sa-row`, linked tiles and cards `.sa-tile`, buttons brighten slightly. Anything clickable gives hover feedback; nothing that isn't clickable does.
+- **Size:** buttons, nav items, clickable rows and feed rows are at least 44 px high (`--sa-control-height`), at phone width too.
+- **Card states:** every card that fetches data has three states besides showing data: *loading* (skeleton, `aria-busy`, never the empty text), *empty* (only after a successful load; says why and what comes next) and *error* (what failed and when, a Retry, and the last data kept visible and marked stale). When two or more cards fail or the API doesn't answer, a page banner says so and retries every 15 s. See `States.dc.html` → Card states.
+- **Live regions:** only changes of state are announced. Countdowns and clocks are never inside `role="status"` or `aria-live`. Critical banners and toasts use `role="alert"`.
+- **Toasts:** one per notification event (not per channel), stacked below the header, newest on top, at most 3. Info and warning close after 10 s (hover pauses); critical toasts stay until dismissed.
+- **ARIA patterns:** use a pattern completely or not at all. Filters are toggle buttons (`aria-pressed`), not tabs. Real tabs (that switch panels, like Reviews) support arrow keys. Lists of clickable rows are buttons in a list, not `role="row"` on a button.
+- **Dialogs and drawers:** focus moves in, stays in, Escape closes, and focus returns to what opened it. The phone sidebar overlay follows the same rule.
+- **Times:** every time shown, including feed rows and chips, has the New York time in a tooltip.
+- **Numbers:** the frontend formats numbers from numeric API values, so every negative uses the minus sign (−, U+2212). The backend never sends formatted strings.
+- **Copy that names a setting** (for example "3 trading days") reads the value from settings; it is never hard-coded.
+- **Latest request wins:** when a selection changes quickly (symbol, filter, run), only the newest response is shown; older ones are cancelled or ignored.
+- **Page title:** the browser tab shows the state, for example "● Market open · Stock Agent", "⏸ Paused · Stock Agent", "⛔ Kill switch · Stock Agent".
 
 ## Phone width
 

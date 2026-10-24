@@ -2,6 +2,19 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-24 — UX review: scale, states and interaction
+
+- `Main.dc.html`:
+  - Today's decisions is grouped by cycle (Amsterdam time, New York on hover) with a collapsible header per cycle. Changes (enter, exit, stop moves) always show; the rest is grouped by action and reason with symbols listed and a count. Rows are 44 px links with hover. Pre-filter rows read "NO CALL", as on the decision card.
+  - Chart header: buttons for held symbols plus Find symbol; there is no row of buttons for every symbol.
+  - Model calls and Since start tiles are links (Open →).
+  - The cycle strip is no longer a live region, so the countdown isn't announced every second.
+  - Watchlist: filters are toggle buttons, rows are buttons in a list; the screened-mode hint was removed from the fixed-mode design.
+- `States.dc.html`: new "Market closed · Dashboard shows the last session", "Card states" (loading, empty, error, backend unreachable) and "Toasts" (critical persistent, info auto-close) groups; the pending approval shows when it expires.
+- `Universe.dc.html`: pool filters are toggle buttons.
+- All screens: shared focus ring, hover and skeleton styles (`tokens.css` interaction tokens and classes). `DESIGN.md`: new "Interaction rules" section.
+- All screenshots re-rendered.
+
 ## 2026-10-24 — Readiness
 
 - New screen `Readiness.dc.html` in the Control group (every sidebar updated, shield icon): red "Not ready for live trading" banner, five summary tiles, Evidence (7), Model (2) and Operations (6) criteria with current value, target, progress bar for counts and a status chip (pass, not yet, waiting for data), five manual items with checkboxes, and History.
