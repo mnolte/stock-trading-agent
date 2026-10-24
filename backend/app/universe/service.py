@@ -46,6 +46,7 @@ from app.data.models import CalendarDay, DailyBar
 from app.data.service import MarketDataService
 from app.db.models import Event, Order, Position, UniversePoolRow, UniverseScreenRow
 from app.engine.state import record_event
+from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock
 
@@ -780,6 +781,11 @@ class UniverseService:
             session.add_all(out_rows)
 
             funnel = _funnel_counts(out_rows)
+            ev(
+                _log, logging.INFO, "universe.screen",
+                f"universe screen {today}: {len(eligible)} eligible",
+                eligible=len(eligible), funnel=funnel,
+            )
             record_event(
                 session,
                 self._clock,

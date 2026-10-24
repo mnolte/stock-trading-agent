@@ -172,11 +172,21 @@ class MarketDataService:
         bar source takes the whole universe in one request (docs/SPEC.md,
         Cycles at scale). ``symbols`` defaults to ``universe()``.
         """
+        import logging
+
+        from app.logging_config import ev
+
+        log = logging.getLogger("data.prices")
         wanted = symbols if symbols is not None else self.universe()
         if not wanted:
             return {}
         fetched = await self.sources.bars.fetch_5m_bars(wanted, start, end)
         if fetched.error is not None:
+            ev(
+                log, logging.ERROR, "data.fetch_failed",
+                f"bars fetch failed: {fetched.error}",
+                source=fetched.source,
+            )
             return {
                 symbol: DataResult(
                     data=0, error=fetched.error, source=fetched.source
@@ -193,6 +203,12 @@ class MarketDataService:
         grouped: dict[str, list[Bar5m]] = {symbol: [] for symbol in wanted}
         for bar in in_session:
             grouped.setdefault(bar.symbol, []).append(bar)
+        ev(
+            log, logging.DEBUG, "data.fetch",
+            f"bars: {len(wanted)} symbols, "
+            f"{sum(len(v) for v in grouped.values())} bars",
+            source=fetched.source, symbols=len(wanted),
+        )
         return {
             symbol: DataResult(
                 data=self.bars_cache.store(grouped[symbol]),

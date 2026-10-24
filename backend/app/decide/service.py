@@ -10,6 +10,7 @@ response. An empty ``outcomes`` row is created alongside; the outcome worker
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from decimal import Decimal
@@ -31,9 +32,12 @@ from app.decide.output import (
 )
 from app.decide.prompt import Prompt, cached_prompt
 from app.inspector.record import build_llm_call
+from app.logging_config import ev
 from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
+
+logger = logging.getLogger("model.openai")
 
 # Final action recorded when no usable model answer exists (no call made,
 # or the call failed). ``no_call_reason`` says why: rules, call_cap,
@@ -179,8 +183,28 @@ class DecisionService:
             if self._before_call is not None:
                 await self._before_call()
             sent_at = _naive_utc(self._clock.now())
+            ev(
+                logger, logging.DEBUG, "model.call_sent",
+                f"{symbol}: model call sent "
+                f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
+                symbol=symbol,
+            )
             response = await self.client.complete(
                 system=self._prompt.text, user=user
+            )
+            ev(
+                logger,
+                logging.DEBUG if response.error is None else logging.WARNING,
+                "model.call_returned" if response.error is None else "model.call_failed",
+                (
+                    f"{symbol}: {response.model} returned "
+                    f"{response.tokens_in}+{response.tokens_out} tok in "
+                    f"{response.latency_ms}ms"
+                    if response.error is None
+                    else f"{symbol}: model call failed ({response.error_type}: "
+                         f"{response.error})"
+                ),
+                symbol=symbol,
             )
             if (
                 self._cache is not None

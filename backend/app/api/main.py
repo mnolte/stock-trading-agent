@@ -976,6 +976,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     scheduler.start()
     app.state.scheduler = scheduler
+    from app.logging_config import ev as _ev
+
+    _ev(
+        logger, logging.INFO, "app.started",
+        f"stock agent started ({config.env.mode})",
+        mode=config.env.mode,
+    )
     try:
         yield
     finally:
@@ -1019,9 +1026,20 @@ def create_app() -> FastAPI:
         """One request id per call: X-Request-Id back, ``request`` context
         on every log line written while it runs."""
         rid = f"r-{_secrets_mod.token_hex(4)}"
+        import time as _time
+
+        started = _time.monotonic()
         with log_context(request=rid):
             response = await call_next(request)
         response.headers["X-Request-Id"] = rid
+        logging.getLogger("api").debug(
+            "%s %s -> %s in %dms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int((_time.monotonic() - started) * 1000),
+            extra={"event": "api.request"},
+        )
         return response
 
     @app.exception_handler(Exception)

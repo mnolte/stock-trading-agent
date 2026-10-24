@@ -45,6 +45,7 @@ from app.db.models import (
     Run,
 )
 from app.engine.state import ExecutionState, record_event
+from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
@@ -65,6 +66,9 @@ if TYPE_CHECKING:
 CENT = Decimal("0.01")
 
 logger = logging.getLogger(__name__)
+log_orders = logging.getLogger("broker.orders")
+log_gates = logging.getLogger("risk")
+log_reconcile = logging.getLogger("broker.reconcile")
 
 
 @dataclass
@@ -767,6 +771,24 @@ class Executor:
                 stop=approval.stop_price,
                 config=self.config,
             )
+            ev(
+                log_gates, logging.DEBUG, "gates.eval",
+                f"{approval.symbol}: {'allowed' if result.allowed else 'blocked'}",
+                symbol=approval.symbol,
+                checks={
+                    c.name: {"passed": c.passed, "detail": c.detail}
+                    for c in result.checks
+                },
+                sizing=(
+                    result.sizing.__dict__ if result.sizing else None
+                ),
+            )
+            if not result.allowed:
+                ev(
+                    log_orders, logging.INFO, "gates.blocked",
+                    f"{approval.symbol}: {result.blocked_by or 'gate'}",
+                    symbol=approval.symbol,
+                )
             if decision is not None:
                 decision.gates_result = result.to_json() | {
                     "entry_limit": str(limit), "quote": self._quote_provenance(quote),
@@ -802,6 +824,11 @@ class Executor:
                 client_order_id=client_id,
             )
             if submitted.error is not None or submitted.data is None:
+                ev(
+                    log_orders, logging.ERROR, "orders.submit_failed",
+                    f"{approval.symbol}: order submit failed: {submitted.error}",
+                    symbol=approval.symbol, order=client_id,
+                )
                 # Never resent; reconciliation decides what Alpaca did.
                 recovered = await self.broker.get_order_by_client_id(client_id)
                 if recovered.error is None and recovered.data is not None:
@@ -832,6 +859,13 @@ class Executor:
                 }
             self._store_broker_order(
                 session, submitted.data, approval.decision_id
+            )
+            ev(
+                log_orders, logging.INFO, "orders.submitted",
+                f"{approval.symbol}: bracket entry x{qty} "
+                f"limit {limit} stop {approval.stop_price} "
+                f"target {approval.target_price} ({client_id})",
+                symbol=approval.symbol, order=client_id,
             )
             approval.qty = qty
             approval.limit_price = limit
@@ -1326,6 +1360,22 @@ class Executor:
                         f"cancel {row.alpaca_order_id}: {result.error}"
                     )
             session.commit()
+        ev(
+            log_reconcile, logging.INFO, "reconcile.result",
+            f"reconcile: {report.orders_synced} orders synced, "
+            f"{report.fills_recorded} fills, "
+            f"{len(report.mismatches)} mismatches, "
+            f"{len(report.entries_cancelled)} entries cancelled"
+            + ("" if report.ok else f" — errors: {'; '.join(report.errors)}"),
+            orders=report.orders_synced,
+            fills=report.fills_recorded,
+            mismatches=len(report.mismatches),
+        )
+        if report.mismatches:
+            ev(
+                log_reconcile, logging.CRITICAL, "reconcile.mismatch",
+                "; ".join(report.mismatches[:5]),
+            )
         self._notify({"positions", "orders", "banners", "header"})
         return report
 

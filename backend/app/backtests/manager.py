@@ -271,6 +271,13 @@ class BacktestManager:
         row.process_id = proc.pid
         self._process = proc
         self._run_id = row.id
+        from app.logging_config import ev
+
+        ev(
+            logger, logging.INFO, "backtest.spawned",
+            f"backtest {row.id} spawned (pid {proc.pid})",
+            run=row.id,
+        )
 
     def set_paused(self, paused: bool) -> None:
         """The app calls this while a live cycle or check runs."""
