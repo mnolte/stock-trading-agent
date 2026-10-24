@@ -9,6 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, Money
 
+# Nullable JSON stores SQL NULL for None, not the JSON text 'null', so
+# IS NOT NULL means "has a value" (the PR-18 llm_calls backfill bug).
+JSONOrNull = JSON(none_as_null=True)
+
 
 class Bar5m(Base):
     """5-minute SIP bars, cached locally."""
@@ -55,8 +59,8 @@ class Cycle(Base):
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
-    errors: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    data_source_health: Mapped[dict[str, str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    errors: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
+    data_source_health: Mapped[dict[str, str] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Decision(Base):
@@ -68,11 +72,11 @@ class Decision(Base):
     cycle_id: Mapped[int] = mapped_column(ForeignKey("cycles.id"), nullable=False)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     context: Mapped[str] = mapped_column(String(16), nullable=False)  # candidate | held
-    input_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    rules_result: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    model_output: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    validation_result: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    gates_result: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    input_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    rules_result: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    model_output: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    validation_result: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    gates_result: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     final_action: Mapped[str] = mapped_column(String(32), nullable=False)
     # Why no model answer counts: rules | call_cap | price_stale | price_suspect | model_error
     no_call_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -155,7 +159,7 @@ class Position(Base):
     target_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # A same-day exit decision deferred by the day-trade rule: {at, reason}.
     # Shown on the position and included in the next session's first snapshot.
-    deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
@@ -292,7 +296,7 @@ class UniverseScreenRow(Base):
     # eligible | excluded | warming_up
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     # Per-check results, e.g. {"history": "pass", ..., "failed_check": "one_share"}.
-    check_results: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    check_results: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     last_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     avg_dollar_volume: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     # 20-session return minus SPY's, in percentage points.
@@ -394,11 +398,11 @@ class Review(Base):
     period: Mapped[str] = mapped_column(
         String(16), nullable=False
     )  # "2026-W41" | "2026-10-19"
-    facts: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     # Main prose: the weekly summary or the briefing body.
     text: Mapped[str] = mapped_column(Text, nullable=False)
     # Structured fields the GUI renders: {observations, suggestion} for weekly.
-    content: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    content: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # model | template
     reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -444,7 +448,7 @@ class Verdict(Base):
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     # The facts the draft call was written from, so the LLM inspector can
     # rebuild the user part of the prompt (PR 18).
-    facts: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
@@ -609,7 +613,7 @@ class Event(Base):
     time: Mapped[datetime] = mapped_column(nullable=False, index=True)
     level: Mapped[str] = mapped_column(String(16), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    details: Mapped[dict[str, object] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    details: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     # Blocking events (reconciliation mismatches) hold new entries until set.
     acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
     # What the event touched: decision | order | fill | none. Only errors
@@ -680,7 +684,7 @@ class Strategy(Base):
     prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     model: Mapped[str | None] = mapped_column(String(32), nullable=True)
     temperature: Mapped[float | None] = mapped_column(nullable=True)
-    overrides: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    overrides: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     # active | paused | archived
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(nullable=False)
@@ -717,11 +721,11 @@ class ShadowDecision(Base):
     live_decision_id: Mapped[int | None] = mapped_column(
         ForeignKey("decisions.id"), nullable=True
     )
-    position: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    rules_result: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    validation_result: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    gates_result: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    position: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    rules_result: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    model_output: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    validation_result: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    gates_result: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     final_action: Mapped[str] = mapped_column(String(32), nullable=False)
     no_call_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
@@ -739,7 +743,7 @@ class ShadowDecision(Base):
     missed_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Only for a symbol live made no decision on (held by shadows only):
     # the snapshot live's cycle built for it.
-    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
@@ -778,7 +782,7 @@ class ShadowPosition(Base):
     exit_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     pnl: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     r: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    deferred_exit: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    deferred_exit: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     # A pending exit (model, earnings or flatten) filled at the next bar's open.
     exit_pending: Mapped[str | None] = mapped_column(String(32), nullable=True)
     exit_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -870,8 +874,8 @@ class Backtest(Base):
     # waits before every Alpaca download and every model call.
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     size_bytes: Mapped[int | None] = mapped_column(nullable=True)
-    warnings: Mapped[list[str] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
-    summary: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    warnings: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
+    summary: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     refuse_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)

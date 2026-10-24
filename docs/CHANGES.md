@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-24 — Fix: phantom `invalid_output` call rows
+
+- Bug fix, no spec change. The PR 18 `llm_calls` backfill treated a stored JSON `null` (what the ORM writes for Python `None`) as a real model output, so every `no_call` decision — rules, call cap, price checks — got a call-history row classified `invalid_output`, even though no request was ever sent. A new migration deletes those phantom rows and normalises stored JSON `null` to SQL NULL; nullable JSON columns now write NULL (`none_as_null`).
+
 ## 2026-10-24 — Logging, error handling and shutdown (PR 20)
 
 - New "Logging, error handling and shutdown" section: JSON-lines log file with all five levels (console info and up), rotation, key scrubbing and a level table saying what goes where; tracing ids per cycle, check, job and request; no swallowed exceptions (ruff rules, global hooks, `spawn()` for tasks, API `error_id`, frontend error reporting and an error boundary); graceful shutdown on Ctrl+C and SIGTERM (scheduler paused, 60 s grace, shielded order submission, interrupted cycles, backtest child stopped, WAL checkpoint, log closed last; second Ctrl+C skips the wait) and unclean-stop detection with `data/run.lock`.

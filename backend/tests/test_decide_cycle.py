@@ -225,6 +225,13 @@ async def test_cycle_stores_decisions_for_candidates_and_held(
     assert xom.model == "none"
     assert xom.input_snapshot is not None
     with session_factory() as session:
+        # Stored as SQL NULL, not the JSON text 'null' — IS NOT NULL
+        # queries (the llm_calls backfill) rely on it.
+        stored = session.connection().exec_driver_sql(
+            "SELECT model_output FROM decisions WHERE symbol = 'XOM'"
+        ).scalar()
+    assert stored is None
+    with session_factory() as session:
         outcomes = session.execute(select(Outcome)).scalars().all()
         cycles = session.execute(select(Cycle)).scalars().all()
     assert {o.decision_id for o in outcomes} == {d.id for d in decisions.values()}

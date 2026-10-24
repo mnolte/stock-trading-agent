@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import sqlite3
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -4241,3 +4242,168 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
         },
     )
     return {"logged": True}
+
+
+# ---------------------------------------------------------------------------
+# Log index (docs/SPEC.md, Logging — API)
+
+def _log_db(request: Request) -> sqlite3.Connection | None:
+    """Open the log index read-only, or None when unavailable (never pass
+    readiness, but the API still answers)."""
+    from app.log_index import index_path
+
+    path = index_path(get_config())
+    if not path.exists():
+        return None
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+
+
+def _log_row(row: tuple[object, ...]) -> dict[str, object]:
+    import json
+
+    return {
+        "id": row[0], "ts": row[1], "level": row[2], "logger": row[3],
+        "event": row[4], "message": row[5],
+        "context": json.loads(str(row[6] or "{}")),
+        "cycle": row[7], "symbol": row[8], "process": row[9], "pid": row[10],
+        "error_id": row[11], "exception_type": row[12],
+        "exception_message": row[13], "traceback": row[14],
+        "fingerprint": row[15],
+    }
+
+
+_COLS = ("id,ts,level,logger,event,message,context,cycle,symbol,process,pid,"
+         "error_id,exception_type,exception_message,traceback,fingerprint")
+
+
+def _log_where(
+    params: Mapping[str, str],
+) -> tuple[str, list[object]]:
+    where: list[str] = []
+    args: list[object] = []
+    levels = params.get("levels")
+    if levels:
+        lv = [x.strip().upper() for x in str(levels).split(",") if x.strip()]
+        where.append("level IN (" + ",".join("?" * len(lv)) + ")")
+        args += lv
+    for key, col in (("logger", "logger"), ("symbol", "symbol"), ("cycle", "cycle")):
+        if params.get(key):
+            where.append(f"{col} = ?")
+            args.append(params[key])
+    if params.get("from"):
+        where.append("ts >= ?")
+        args.append(params["from"])
+    if params.get("to"):
+        where.append("ts <= ?")
+        args.append(params["to"])
+    if params.get("search"):
+        where.append(
+            "id IN (SELECT rowid FROM log_lines_fts WHERE message MATCH ?)"
+        )
+        args.append(str(params["search"]).replace('"', '""'))
+    if params.get("cursor"):
+        where.append("id < ?")
+        args.append(int(str(params["cursor"])))
+    return ("WHERE " + " AND ".join(where)) if where else "", args
+
+
+@router.get("/logs")
+def api_logs(request: Request) -> dict[str, object]:
+    """Newest-first keyset paging (cursor = last id), limit ≤ 200."""
+    conn = _log_db(request)
+    if conn is None:
+        return {"lines": [], "next_cursor": None, "index_available": False}
+    with conn:
+        where, args = _log_where(request.query_params)
+        limit = min(int(str(request.query_params.get("limit") or 100)), 200)
+        rows = conn.execute(
+            f"SELECT {_COLS} FROM log_lines {where} "
+            f"ORDER BY id DESC LIMIT {limit + 1}",
+            args,
+        ).fetchall()
+    lines = [_log_row(r) for r in rows[:limit]]
+    return {
+        "lines": lines,
+        "next_cursor": rows[limit][0] if len(rows) > limit else None,
+        "index_available": True,
+    }
+
+
+@router.get("/logs/summary")
+def api_logs_summary(request: Request) -> dict[str, object]:
+    """Warnings/errors per day + recurring problems by fingerprint."""
+    conn = _log_db(request)
+    if conn is None:
+        return {"days": [], "problems": [], "index_available": False}
+    with conn:
+        days = conn.execute(
+            "SELECT substr(ts,1,10) day, level, count(*) FROM log_lines "
+            "WHERE level IN ('WARNING','ERROR','CRITICAL') "
+            "GROUP BY day, level ORDER BY day"
+        ).fetchall()
+        problems = conn.execute(
+            "SELECT fingerprint, level, max(ts) last_ts, count(*) n, "
+            "substr(message,1,160) sample FROM log_lines "
+            "WHERE level IN ('ERROR','CRITICAL') "
+            "GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50"
+        ).fetchall()
+        # Review state for each fingerprint (step 8: log_reviews).
+        reviews: dict[str, str] = {}
+        try:
+            from sqlalchemy import text
+
+            with get_session_maker()() as session:
+                for fp, review in session.execute(
+                    text("SELECT fingerprint, review FROM log_reviews")
+                ):
+                    reviews[fp] = review
+        except Exception:  # noqa: BLE001 - table may predate the migration
+            logging.getLogger("api").debug("log_reviews not available yet")
+    return {
+        "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
+        "problems": [
+            {
+                "fingerprint": fp, "level": lv, "last_ts": ts, "count": n,
+                "sample": smp, "review": reviews.get(fp),
+            }
+            for fp, lv, ts, n, smp in problems
+        ],
+        "index_available": True,
+    }
+
+
+@router.get("/logs/{line_id}/around")
+def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
+    """The line plus `window` lines before/after by index order."""
+    conn = _log_db(request)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="log index unavailable")
+    window = min(int(str(request.query_params.get("window") or 20)), 100)
+    with conn:
+        rows = conn.execute(
+            f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "
+            "ORDER BY id",
+            (line_id - window, line_id + window),
+        ).fetchall()
+    return {"lines": [_log_row(r) for r in rows], "center": line_id}
+
+
+@router.get("/logs/export.jsonl")
+def api_logs_export(request: Request) -> Response:
+    """Download the filtered lines as JSONL (same filters as /api/logs)."""
+    import json
+
+    conn = _log_db(request)
+    if conn is None:
+        raise HTTPException(status_code=503, detail="log index unavailable")
+    with conn:
+        where, args = _log_where(request.query_params)
+        rows = conn.execute(
+            f"SELECT {_COLS} FROM log_lines {where} ORDER BY id", args
+        ).fetchall()
+    body = "\n".join(json.dumps(_log_row(r), default=str) for r in rows)
+    return Response(
+        content=body,
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="logs.jsonl"'},
+    )

@@ -328,8 +328,12 @@ _pipeline: LogPipeline | None = None
 _pipeline_lock = threading.Lock()
 
 
-def _install_queue_root(pipeline: LogPipeline) -> None:
-    """Root logger → the queue; uvicorn and library loggers propagate."""
+def install_queue_root(pipeline: LogPipeline) -> None:
+    """Root logger → the queue; uvicorn and library loggers propagate.
+
+    alembic's ``fileConfig`` clears every handler when migrations run, so
+    the lifespan calls this again after ``run_migrations()``.
+    """
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
     for handler in list(root.handlers):
@@ -347,6 +351,19 @@ def _install_queue_root(pipeline: LogPipeline) -> None:
     logging.captureWarnings(True)
 
 
+def log_dir(config: Any) -> Path:
+    """The log directory: ``logging.dir`` relative paths under ``data/``
+    live inside the data dir (SA_DATA_DIR in tests), others under ROOT."""
+    from app.config import ROOT
+
+    d = Path(str(config.get("logging", "dir", default="data/logs")))
+    if d.is_absolute():
+        return d
+    if d.parts and d.parts[0] == "data":
+        return Path(config.env.sa_data_dir).joinpath(*d.parts[1:])
+    return ROOT / d
+
+
 def setup_logging(
     *,
     process: str = "app",
@@ -355,17 +372,11 @@ def setup_logging(
     """Configure the JSON-lines queue pipeline. Safe to call twice."""
     global _pipeline
     cfg = get_config()
-    from app.config import ROOT
-
-    # Config paths are repo-relative, like SA_DATA_DIR.
-    log_dir = Path(str(cfg.get("logging", "dir", default="data/logs")))
-    if not log_dir.is_absolute():
-        log_dir = ROOT / log_dir
     app_tz = ZoneInfo(str(cfg.get("app", "timezone", default="Europe/Amsterdam")))
     file_level = str(cfg.get("logging", "file_level", default="DEBUG"))
     console_level = str(cfg.get("logging", "console_level", default="INFO"))
     pipeline = LogPipeline(
-        file_path=log_dir / "stock-agent.log",
+        file_path=log_dir(cfg) / "stock-agent.log",
         process=process,
         file_level=getattr(logging, file_level.upper(), logging.DEBUG),
         console_level=getattr(logging, console_level.upper(), logging.INFO),
@@ -381,7 +392,7 @@ def setup_logging(
     if previous is not None:
         # A second lifespan in the same process swaps pipelines cleanly.
         previous.stop()
-    _install_queue_root(pipeline)
+    install_queue_root(pipeline)
     pipeline.start()
     return pipeline
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -520,7 +521,7 @@ async def retry_calendar_load(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    setup_logging()
+    pipeline = setup_logging()
     from app.spawn import install_global_hooks
 
     install_global_hooks(asyncio.get_running_loop())
@@ -556,6 +557,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
+    # alembic's fileConfig closes every handler (env.py can't skip it —
+    # CLI runs need it): re-attach the queue to the root logger.
+    from app.logging_config import install_queue_root
+
+    install_queue_root(pipeline)
     # Migrations are immutable; a schema that drifted outside them fails
     # here with the differing table/column instead of a raw SQL error.
     check_schema_matches_models()
@@ -567,6 +573,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     clock = make_clock(config)
     bus = UpdateBus()
+
+    # Log index: the listener thread batches rows into logs.db; warning
+    # and up also pings the "logs" topic (debounced 1s, spec).
+    from app.log_index import make_index_handler
+
+    loop = asyncio.get_running_loop()
+    _last_logs_push = [0.0]
+
+    def _push_logs_topic(_record: object) -> None:
+        now = time.monotonic()
+        if now - _last_logs_push[0] >= 1:
+            _last_logs_push[0] = now
+            loop.call_soon_threadsafe(bus.publish, "logs")
+
+    index_handler = make_index_handler(
+        config,
+        file_fallback=pipeline.file_handler,
+        on_warning_or_above=_push_logs_topic,
+    )
+    if index_handler is not None:
+        pipeline.add_handler(index_handler)
+    app.state.log_index_handler = index_handler
     # Encrypted keys come first: a one-time .env import runs before any
     # client is built, and the scrub filter is in place before anything
     # can log a value that passed through the environment.

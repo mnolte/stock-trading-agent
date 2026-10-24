@@ -40,6 +40,9 @@ run-frontend:
 lint:
 	cd backend && ../$(RUFF) check .
 	cd backend && ../$(MYPY) .
+
+logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
+	cd backend && ../$(PYTHON) -m app.log_index
 	$(FE) lint
 	$(FE) typecheck
 

@@ -49,7 +49,9 @@ def _fixture(db: Path) -> None:
              "enter", None, 800, "{}", 0),
             (2, '{"a":1}', '{"valid": true, "model_action": "enter"}',
              "blocked", None, 900, "{}", 0),
-            (3, None, '{"valid": false}',
+            # 'null' is what the ORM wrote for Python None before
+            # none_as_null — no usable output on a failed call.
+            (3, "null", '{"valid": false}',
              "no_call", "model_error", None, "{}", 0),
             (4, '{"a":1}', '{"valid": false, "model_action": null}',
              "skip", None, 700, "{}", 0),
@@ -57,11 +59,15 @@ def _fixture(db: Path) -> None:
              "skip", None, 600, '{"price": "unavailable"}', 0),
             (6, '{"a":1}', '{"valid": true, "model_action": "skip"}',
              "skip", None, 20000, "{}", 0),
-            # Never sent: a cached replay and no_call rows.
+            # Never sent: a cached replay and no_call rows. Their 'null'
+            # output made the pre-cleanup backfill add phantom
+            # invalid_output rows.
             (7, '{"a":1}', '{"valid": true, "model_action": "skip"}',
              "skip", None, 500, "{}", 1),
-            (8, None, None, "no_call", "call_cap", None, "{}", 0),
-            (9, None, None, "no_call", "rules", None, "{}", 0),
+            (8, "null", '{"valid": false, "model_action": null}',
+             "no_call", "call_cap", None, "{}", 0),
+            (9, "null", '{"valid": false, "model_action": null}',
+             "no_call", "rules", None, "{}", 0),
         ]
         for d in decisions:
             conn.execute(text(
@@ -78,7 +84,8 @@ def _fixture(db: Path) -> None:
                 "id": d[0], "symbol": f"SYM{d[0]}", "snapshot": d[6],
                 "validation": d[2], "output": d[1], "action": d[3],
                 "ncr": d[4], "latency": d[5],
-                "raw": d[1], "cached": d[7],
+                # No response was ever sent for a no_call row.
+                "raw": d[1] if d[4] is None else None, "cached": d[7],
             })
 
         shadows = [
@@ -86,11 +93,12 @@ def _fixture(db: Path) -> None:
             #  missed, live_id)
             (1, '{"a":1}', '{"valid": true, "model_action": "hold"}',
              "hold", None, 0, 1),
-            (2, None, '{"valid": false}',
+            (2, "null", '{"valid": false}',
              "no_call", "model_error", 0, 2),
             (3, '{"a":1}', '{"valid": true}',
              "no_call", None, 1, 3),  # missed — never sent
-            (4, None, None, "no_call", "call_cap", 0, 4),  # never sent
+            (4, "null", '{"valid": false, "model_action": null}',
+             "no_call", "call_cap", 0, 4),  # never sent
         ]
         for s in shadows:
             conn.execute(text(
@@ -239,6 +247,32 @@ def test_verdict_backfill(migrated: list[dict[str, Any]]) -> None:
     # "no OpenAI key" and eventless templates: no proof a call was sent.
     assert verdict[1]["symbol"] == "SYM1"
     assert verdict[1]["decision_id"] == 1
+
+
+def test_json_null_text_is_normalised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cleanup turns the ORM's stored 'null' into SQL NULL.
+
+    The phantom llm_calls rows are already covered above; this checks the
+    underlying column state so ``IS NOT NULL`` keeps meaning "has a
+    value" (the footgun that produced them).
+    """
+    db = tmp_path / "norm.db"
+    _upgrade(db, PRIOR_REVISION, monkeypatch)
+    _fixture(db)
+    _upgrade(db, "head", monkeypatch)
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.connect() as conn:
+        for table in ("decisions", "shadow_decisions"):
+            assert conn.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE model_output = 'null'")
+            ).scalar() == 0
+        # Decisions 3, 8 and 9 stored 'null'; they are SQL NULL now.
+        assert conn.execute(
+            text("SELECT COUNT(*) FROM decisions WHERE model_output IS NULL")
+        ).scalar() == 3
+    engine.dispose()
 
 
 def test_backfilled_rows_are_marked_and_sparse(migrated: list[dict[str, Any]]) -> None:
