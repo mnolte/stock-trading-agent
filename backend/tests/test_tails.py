@@ -30,6 +30,8 @@ from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import (
     Bar5m as Bar5mRow,
+)
+from app.db.models import (
     CorporateAction,
     Cycle,
     Decision,
@@ -82,10 +84,19 @@ def _tail(**kw: Any) -> TailTrade:
     return TailTrade(**base)
 
 
-def _fn(trades: list[TailTrade], **kw: Any) -> dict[str, Any]:
-    args = {"bucket_r": Decimal("0.5"), "top_share_pct": 20, "min_trades": 20}
-    args.update(kw)
-    return compute_tails(trades, **args)
+def _fn(
+    trades: list[TailTrade],
+    *,
+    bucket_r: Decimal = Decimal("0.5"),
+    top_share_pct: int = 20,
+    min_trades: int = 20,
+) -> dict[str, Any]:
+    return compute_tails(
+        trades,
+        bucket_r=bucket_r,
+        top_share_pct=top_share_pct,
+        min_trades=min_trades,
+    )
 
 
 def test_distribution_hand_calculation() -> None:
@@ -128,7 +139,10 @@ def test_largest_loss_below_minus_1r() -> None:
 
 def test_top_share_net_without_best_winners_kept() -> None:
     """6 trades, winners 160+90+260+160=670: top ceil(20%×6)=2 → 420/670."""
-    adjusted = [Decimal("160"), Decimal("90"), Decimal("-100"), Decimal("260"), Decimal("160"), Decimal("-110")]
+    adjusted = [
+        Decimal(x)
+        for x in ("160", "90", "-100", "260", "160", "-110")
+    ]
     trades = [
         _tail(
             id=i,
@@ -231,7 +245,12 @@ class _FailingBars(FakeBarSource):
         self.fail_remaining = fail
         self.calls = 0
 
-    async def fetch_5m_bars(self, symbols, start, end):  # type: ignore[override]
+    async def fetch_5m_bars(
+        self,
+        symbols: list[str],
+        start: datetime,
+        end: datetime,
+    ) -> DataResult[list[Bar5m]]:
         self.calls += 1
         if self.fail_remaining:
             self.fail_remaining -= 1
@@ -293,7 +312,9 @@ def _closed_position(
     return position
 
 
-async def test_job_fills_after_five_sessions(session_factory) -> None:
+async def test_job_fills_after_five_sessions(
+    session_factory: sessionmaker[Session],
+) -> None:
     """Exit Tue Oct 6 → window Oct 7,8,9,12,13; job runs after the 13th's
     close (+SIP delay)."""
     exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
@@ -311,7 +332,9 @@ async def test_job_fills_after_five_sessions(session_factory) -> None:
     report = await worker.fill(now)
     assert report.filled == 1
     with session_factory() as session:
-        p = session.get(Position, pid)
+        p = session.execute(
+            select(Position).where(Position.id == pid)
+        ).scalar_one()
         assert p.after_exit_status == "done"
         assert p.after_exit_done_at is not None
         bars = session.execute(
@@ -333,11 +356,15 @@ async def test_job_fills_after_five_sessions(session_factory) -> None:
     report = await worker.fill(datetime(2026, 10, 14, 21, 0, tzinfo=UTC))
     assert report.filled == 0
     with session_factory() as session:
-        p = session.get(Position, pid)
+        p = session.execute(
+            select(Position).where(Position.id == pid)
+        ).scalar_one()
         assert (p.after_exit_best_price, p.after_exit_close_price) == before
 
 
-async def test_job_stays_pending_inside_the_window(session_factory) -> None:
+async def test_job_stays_pending_inside_the_window(
+    session_factory: sessionmaker[Session],
+) -> None:
     exit_at = datetime(2026, 10, 9, 18, 0, tzinfo=UTC)  # Friday
     now = datetime(2026, 10, 13, 21, 0, tzinfo=UTC)
     clock = FakeClock(now)
@@ -353,7 +380,9 @@ async def test_job_stays_pending_inside_the_window(session_factory) -> None:
         assert p.after_exit_status == "pending"
 
 
-async def test_job_fetches_uncached_symbol(session_factory) -> None:
+async def test_job_fetches_uncached_symbol(
+    session_factory: sessionmaker[Session],
+) -> None:
     """Nothing in the cache: the job goes through the bar source."""
     exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
     now = datetime(2026, 10, 13, 21, 0, tzinfo=UTC)
@@ -374,7 +403,9 @@ async def test_job_fetches_uncached_symbol(session_factory) -> None:
         assert p.after_exit_best_price is not None
 
 
-async def test_job_three_failures_become_unavailable(session_factory) -> None:
+async def test_job_three_failures_become_unavailable(
+    session_factory: sessionmaker[Session],
+) -> None:
     exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
     bars = _FailingBars(FakeCalendarSource(), fail=99)
     clock = FakeClock(datetime(2026, 10, 13, 21, 0, tzinfo=UTC))
@@ -395,7 +426,9 @@ async def test_job_three_failures_become_unavailable(session_factory) -> None:
         assert p.after_exit_status == "unavailable"
 
 
-async def test_split_during_window_adjusts_bars_and_exit(session_factory) -> None:
+async def test_split_during_window_adjusts_bars_and_exit(
+    session_factory: sessionmaker[Session],
+) -> None:
     """A 2:1 split ex-date inside the window: cached pre-split bars and
     the exit price are halved before comparing."""
     exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
@@ -418,12 +451,13 @@ async def test_split_during_window_adjusts_bars_and_exit(session_factory) -> Non
     report = await worker.fill(now)
     assert report.filled == 1
     with session_factory() as session:
-        p = session.get(Position, pid)
+        p = session.execute(
+            select(Position).where(Position.id == pid)
+        ).scalar_one()
         assert p.after_exit_status == "done"
         bars = session.execute(
             select(Bar5mRow).where(Bar5mRow.symbol == "AAA")
         ).scalars().all()
-        by_start = {b.start: b for b in bars}
         # Expected: bars before Oct 9 divided by 2, later bars as stored.
         expected_highs = []
         for b in bars:
