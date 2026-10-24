@@ -8,10 +8,22 @@ const styles: Record<BannerVariant, { bg: string; border: string; color: string 
   info: { bg: 'var(--sa-info-bg)', border: 'var(--sa-info-border)', color: 'var(--sa-info)' },
 };
 
-export function Banner({ variant, children, actions }: { variant: BannerVariant; children: ReactNode; actions?: ReactNode }) {
+export function Banner({
+  variant,
+  children,
+  actions,
+  role,
+}: {
+  variant: BannerVariant;
+  children: ReactNode;
+  actions?: ReactNode;
+  /** e.g. "status" for the backend-unreachable banner (design States screen). */
+  role?: string;
+}) {
   const s = styles[variant];
   return (
     <div
+      role={role}
       style={{
         display: 'flex',
         flexWrap: 'wrap',

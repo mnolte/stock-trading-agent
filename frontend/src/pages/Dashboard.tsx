@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
@@ -10,19 +10,20 @@ import {
   getRiskBudget,
   getWatchlist,
 } from '../api/state';
+import { useApiResource } from '../api/useResource';
+import type { FetchFailure, Resource } from '../api/useResource';
 import type {
-  ApprovalsResponse,
-  ChartResponse,
   DashboardFeedItem,
+  DashboardLatestDecision,
   DashboardResponse,
   MarketClosedCard,
   PositionsResponse,
-  RiskBudgetResponse,
-  WatchlistResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { Banner } from '../components/Banner';
 import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
+import { CardBody, ErrorBanner } from '../components/cardState';
 import { Chip } from '../components/Chip';
 import { CycleCounter } from '../components/CycleCounter';
 import { DialogButton, Modal } from '../components/Modal';
@@ -169,7 +170,8 @@ function CycleGroup({
 
 /** "Today's decisions" — feed grouped per cycle; the latest cycle opens,
  * earlier cycles collapse to their change rows. */
-function Feed({ items }: { items: DashboardFeedItem[] }) {
+function Feed({ res }: { res: Resource<DashboardResponse> }) {
+  const items = res.data?.feed ?? EMPTY_FEED;
   const cycles = useMemo(() => groupFeed(items), [items]);
   // The latest cycle starts open; every other starts collapsed to changes.
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
@@ -180,38 +182,49 @@ function Feed({ items }: { items: DashboardFeedItem[] }) {
     <Card
       label="Today's decisions"
       right={<Link to="/inspector">All model calls</Link>}
+      busy={res.loading}
     >
-      {cycles.length === 0 && (
-        <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-          No decisions yet today.
-        </div>
-      )}
-      {cycles.map((cycle, i) => (
-        <CycleGroup
-          key={cycle.key}
-          cycle={cycle}
-          expanded={isOpen(cycle, i === 0)}
-          onToggle={() =>
-            setToggled((t) => ({ ...t, [cycle.key]: !isOpen(cycle, i === 0) }))
-          }
-        />
-      ))}
-      {cycles.length > 0 && (
-        <div
-          style={{
-            fontSize: 'var(--sa-text-sm)',
-            color: 'var(--sa-text-muted)',
-            paddingTop: 'var(--sa-space-2)',
-          }}
-        >
-          Changes (entries, exits, stop moves) always show. Other decisions are
-          grouped by action and reason; collapsed cycles show their changes
-          only.
-        </div>
-      )}
+      <CardBody
+        res={res}
+        what="the decision feed"
+        isEmpty={(d) => d.feed.length === 0}
+        empty={
+          <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
+            No decisions yet today — the next cycle writes the first.
+          </div>
+        }
+      >
+        {() => (
+          <>
+            {cycles.map((cycle, i) => (
+              <CycleGroup
+                key={cycle.key}
+                cycle={cycle}
+                expanded={isOpen(cycle, i === 0)}
+                onToggle={() =>
+                  setToggled((t) => ({ ...t, [cycle.key]: !isOpen(cycle, i === 0) }))
+                }
+              />
+            ))}
+            <div
+              style={{
+                fontSize: 'var(--sa-text-sm)',
+                color: 'var(--sa-text-muted)',
+                paddingTop: 'var(--sa-space-2)',
+              }}
+            >
+              Changes (entries, exits, stop moves) always show. Other decisions are
+              grouped by action and reason; collapsed cycles show their changes
+              only.
+            </div>
+          </>
+        )}
+      </CardBody>
     </Card>
   );
 }
+
+const EMPTY_FEED: DashboardFeedItem[] = [];
 
 function toneStyle(tone: number): React.CSSProperties {
   return {
@@ -235,18 +248,45 @@ function toneStyle(tone: number): React.CSSProperties {
   };
 }
 
-function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) {
+function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
+  const d = res.data?.latest_decision ?? null;
+  return (
+    <Card
+      label="Latest decision"
+      busy={res.loading}
+      right={
+        d && (
+          <span
+            title={formatNyTitle(d.time)}
+            style={{
+              fontFamily: 'var(--sa-font-mono)',
+              fontSize: 'var(--sa-text-sm)',
+              color: 'var(--sa-text-muted)',
+            }}
+          >
+            {displayTime(d.time)} · {d.model ?? '—'}
+          </span>
+        )
+      }
+    >
+      <CardBody
+        res={res}
+        what="the latest decision"
+        isEmpty={(data) => data.latest_decision === null}
+        empty={
+          <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
+            No decision yet this session.
+          </div>
+        }
+      >
+        {() => (d === null ? null : <LatestDecisionBody d={d} />)}
+      </CardBody>
+    </Card>
+  );
+}
+
+function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
   const location = useLocation();
-  const d = dashboard?.latest_decision ?? null;
-  if (!d) {
-    return (
-      <Card label="Latest decision">
-        <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-          No decision yet this session.
-        </div>
-      </Card>
-    );
-  }
   const chip = actionText(d.final_action);
   const badge = actionBadgeStyle(d.final_action);
   const regimeVariant: 'positive' | 'negative' | 'neutral' =
@@ -256,20 +296,7 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
         ? 'negative'
         : 'neutral';
   return (
-    <Card
-      label="Latest decision"
-      right={
-        <span
-          style={{
-            fontFamily: 'var(--sa-font-mono)',
-            fontSize: 'var(--sa-text-sm)',
-            color: 'var(--sa-text-muted)',
-          }}
-        >
-          {displayTime(d.time)} · {d.model ?? '—'}
-        </span>
-      }
-    >
+    <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
         <div
           style={{
@@ -384,22 +411,46 @@ function LatestDecision({ dashboard }: { dashboard: DashboardResponse | null }) 
       >
         Open full decision
       </Link>
-    </Card>
+    </>
   );
 }
 
-function OpenPositionsMini({ positions }: { positions: PositionsResponse | null }) {
-  const open = positions?.open ?? [];
+function OpenPositionsMini({
+  res,
+  nextCycle,
+  passCount,
+}: {
+  res: Resource<PositionsResponse>;
+  nextCycle: string | null;
+  passCount: number | null;
+}) {
+  const open = res.data?.open ?? [];
   return (
     <Card
       label="Open positions"
       right={<Link to="/positions">Positions & orders</Link>}
+      busy={res.loading}
     >
-      {open.length === 0 ? (
-        <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-          No open positions.
-        </div>
-      ) : (
+      <CardBody
+        res={res}
+        what="positions"
+        isEmpty={(d) => d.open.length === 0}
+        empty={
+          <>
+            <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+              No open positions.
+            </p>
+            <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-muted)' }}>
+              {nextCycle && passCount !== null && passCount > 0
+                ? `The next cycle at ${displayTime(nextCycle)} may open one: ${passCount} symbol${passCount === 1 ? '' : 's'} pass${passCount === 1 ? 'es' : ''} the rules.`
+                : nextCycle
+                  ? `The next cycle at ${displayTime(nextCycle)} may open one.`
+                  : 'The next entry decision comes with the next cycle.'}
+            </p>
+          </>
+        }
+      >
+        {() => (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', minWidth: '560px' }}>
             <thead>
@@ -465,7 +516,8 @@ function OpenPositionsMini({ positions }: { positions: PositionsResponse | null 
             </tbody>
           </table>
         </div>
-      )}
+        )}
+      </CardBody>
     </Card>
   );
 }
@@ -633,36 +685,13 @@ function FindSymbolDialog({
 }
 
 export default function Dashboard() {
-  const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [watchlist, setWatchlist] = useState<WatchlistResponse | null>(null);
-  const [approvals, setApprovals] = useState<ApprovalsResponse | null>(null);
-  const [positions, setPositions] = useState<PositionsResponse | null>(null);
-  const [chart, setChart] = useState<ChartResponse | null>(null);
-  const [budget, setBudget] = useState<RiskBudgetResponse | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const refreshDashboard = useCallback((symbol?: string | null) => {
-    getDashboard(symbol ?? undefined)
-      .then(setDashboard)
-      .catch(console.error);
-  }, []);
-  const refreshWatchlist = useCallback(() => {
-    getWatchlist().then(setWatchlist).catch(console.error);
-  }, []);
-  const refreshApprovals = useCallback(() => {
-    getApprovals().then(setApprovals).catch(console.error);
-  }, []);
-  const refreshPositions = useCallback(() => {
-    getPositions().then(setPositions).catch(console.error);
-  }, []);
-  const refreshChart = useCallback((symbol: string | null) => {
-    if (!symbol) return;
-    getChart(symbol).then(setChart).catch(() => setChart(null));
-  }, []);
-  const refreshBudget = useCallback(() => {
-    getRiskBudget().then(setBudget).catch(console.error);
-  }, []);
+  const positionsRes = useApiResource(getPositions);
+  const watchlistRes = useApiResource(getWatchlist);
+  const approvalsRes = useApiResource(getApprovals);
+  const budgetRes = useApiResource(getRiskBudget);
 
   // The charted symbol persists in the URL (?symbol=): an explicit param
   // wins, else the first held position, else the first watchlist row.
@@ -671,12 +700,12 @@ export default function Dashboard() {
     return raw ? raw.toUpperCase() : null;
   }, [searchParams]);
   const heldSymbols = useMemo(
-    () => (positions?.open ?? []).map((p) => p.symbol),
-    [positions],
+    () => (positionsRes.data?.open ?? []).map((p) => p.symbol),
+    [positionsRes.data],
   );
   const watchSymbols = useMemo(
-    () => (watchlist?.rows ?? []).map((r) => r.symbol),
-    [watchlist],
+    () => (watchlistRes.data?.rows ?? []).map((r) => r.symbol),
+    [watchlistRes.data],
   );
   const chartSymbol = urlSymbol ?? heldSymbols[0] ?? watchSymbols[0] ?? null;
   const heldSet = useMemo(() => new Set(heldSymbols), [heldSymbols]);
@@ -694,39 +723,82 @@ export default function Dashboard() {
     }
   }, [chartSymbol, urlSymbol, setSearchParams]);
 
-  useEffect(() => {
-    refreshWatchlist();
-    refreshApprovals();
-    refreshPositions();
-    refreshBudget();
-  }, [refreshWatchlist, refreshApprovals, refreshPositions, refreshBudget]);
-  useEffect(() => {
-    // The latest-decision card tracks the selected symbol.
-    refreshDashboard(chartSymbol);
-  }, [chartSymbol, refreshDashboard]);
-  useEffect(() => {
-    refreshChart(chartSymbol);
-  }, [chartSymbol, refreshChart]);
-
-  useLiveUpdates(['decisions', 'header', 'performance', 'reviews'], () =>
-    refreshDashboard(chartSymbol),
+  // The latest-decision card tracks the selected symbol.
+  const dashboardRes = useApiResource(
+    () => getDashboard(chartSymbol ?? undefined),
+    [chartSymbol],
   );
-  useLiveUpdates(['watchlist'], refreshWatchlist);
+  const chartRes = useApiResource(
+    () => getChart(chartSymbol ?? ''),
+    [chartSymbol],
+    chartSymbol !== null,
+  );
+
+  useLiveUpdates(
+    ['decisions', 'header', 'performance', 'reviews'],
+    dashboardRes.reload,
+  );
+  useLiveUpdates(['watchlist'], watchlistRes.reload);
   useLiveUpdates(['approvals'], () => {
-    refreshApprovals();
-    refreshDashboard(chartSymbol);
+    approvalsRes.reload();
+    dashboardRes.reload();
   });
   useLiveUpdates(['positions', 'orders'], () => {
-    refreshPositions();
-    refreshDashboard(chartSymbol);
-    refreshChart(chartSymbol);
+    positionsRes.reload();
+    dashboardRes.reload();
+    chartRes.reload();
   });
   // The risk budget card reads the gate context: positions, orders and
   // account updates (header) all change its inputs.
-  useLiveUpdates(['positions', 'orders', 'header'], refreshBudget);
-  useLiveUpdates(['watchlist', 'decisions'], () => refreshChart(chartSymbol));
+  useLiveUpdates(['positions', 'orders', 'header'], budgetRes.reload);
+  useLiveUpdates(['watchlist', 'decisions'], chartRes.reload);
 
+  // Page-level state: two or more failed cards, or a request that never got
+  // an answer, means the backend is probably unreachable — banner + 15 s
+  // auto-retry (design/screens/States.dc.html).
+  const resources = [
+    dashboardRes,
+    watchlistRes,
+    approvalsRes,
+    positionsRes,
+    budgetRes,
+    chartRes,
+  ];
+  const failures = resources
+    .map((r) => r.failure)
+    .filter((f): f is FetchFailure => f !== null);
+  const backendDown =
+    failures.some((f) => f.unreachable) || failures.length >= 2;
+  const failedRef = useRef(resources.filter((r) => r.failure !== null));
+  failedRef.current = resources.filter((r) => r.failure !== null);
+  useEffect(() => {
+    if (!backendDown) return;
+    const timer = setInterval(() => {
+      failedRef.current.forEach((r) => r.reload());
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [backendDown]);
+  const retryFailed = useCallback(() => {
+    failedRef.current.forEach((r) => r.reload());
+  }, []);
+  const failSince =
+    failures.length > 0
+      ? new Date(Math.min(...failures.map((f) => f.at.getTime())))
+      : null;
+  const okTimes = resources
+    .map((r) => r.updatedAt)
+    .filter((d): d is Date => d !== null);
+  const lastOk =
+    okTimes.length > 0
+      ? new Date(Math.max(...okTimes.map((d) => d.getTime())))
+      : null;
+
+  const dashboard = dashboardRes.data;
+  const chart = chartRes.data;
   const stats = dashboard?.stats;
+  const passCount = watchlistRes.data
+    ? watchlistRes.data.rows.filter((r) => r.rules.status === 'pass').length
+    : null;
   const sincePct =
     stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
       ? Number(stats.since_start_pct)
@@ -734,27 +806,80 @@ export default function Dashboard() {
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
-      {approvals && approvals.items.length > 0 && (
+      {backendDown && (
+        <Banner
+          variant="negative"
+          role="status"
+          actions={
+            <button
+              type="button"
+              onClick={retryFailed}
+              style={{
+                height: 36,
+                padding: '0 var(--sa-space-3)',
+                borderRadius: 'var(--sa-radius-md)',
+                border: '1px solid var(--sa-negative-border)',
+                background: 'transparent',
+                color: 'var(--sa-negative-soft)',
+                fontSize: 'var(--sa-text-md)',
+                fontWeight: 500,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Retry now
+            </button>
+          }
+        >
+          <b>
+            Can&rsquo;t reach the Stock Agent backend
+            {failSince ? ` since ${displayTime(failSince.toISOString())}` : ''}.
+          </b>{' '}
+          {lastOk
+            ? `Showing data from ${displayTime(lastOk.toISOString())}, marked stale. `
+            : ''}
+          Retrying every 15 seconds. Stops at Alpaca keep protecting positions.
+        </Banner>
+      )}
+
+      {approvalsRes.failure && (approvalsRes.data?.items.length ?? 0) === 0 && (
+        <ErrorBanner
+          what="pending approvals"
+          failure={approvalsRes.failure}
+          updatedAt={approvalsRes.updatedAt}
+          onRetry={approvalsRes.reload}
+        />
+      )}
+      {approvalsRes.data && approvalsRes.data.items.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
-          {approvals.items.map((a) => (
+          {approvalsRes.failure && (
+            <ErrorBanner
+              what="pending approvals"
+              failure={approvalsRes.failure}
+              updatedAt={approvalsRes.updatedAt}
+              onRetry={approvalsRes.reload}
+            />
+          )}
+          {approvalsRes.data.items.map((a) => (
             <ApprovalCard
               key={a.id}
               approval={a}
-              killSwitchOn={approvals.kill_switch_on}
-              paused={approvals.paused}
+              killSwitchOn={approvalsRes.data?.kill_switch_on ?? false}
+              paused={approvalsRes.data?.paused ?? false}
               onResolved={() => {
-                refreshApprovals();
-                refreshDashboard();
-                refreshPositions();
+                approvalsRes.reload();
+                dashboardRes.reload();
+                positionsRes.reload();
               }}
             />
           ))}
         </div>
       )}
 
-      {(dashboard?.cycle_line || dashboard?.cycle_counter) && (
+      {(dashboard === null ||
+        dashboard.cycle_line !== null ||
+        dashboard.cycle_counter !== null) && (
         <div
-          role="status"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
@@ -767,37 +892,73 @@ export default function Dashboard() {
             fontSize: 'var(--sa-text-md)',
           }}
         >
-          {dashboard?.cycle_line && (
-            <>
-              <span
-                style={{
-                  padding: '3px var(--sa-space-2)',
-                  borderRadius: 'var(--sa-radius-sm)',
-                  background: 'var(--sa-subtle)',
-                  color: 'var(--sa-text-2)',
-                  fontSize: 'var(--sa-text-sm)',
-                  fontWeight: 600,
-                }}
-              >
-                {dashboard.cycle_line.label}
-              </span>
-              <span
-                style={{ flex: '1 1 420px', color: 'var(--sa-text-2)', lineHeight: 1.5 }}
-              >
-                {dashboard.cycle_line.text}
-              </span>
-            </>
-          )}
-          {dashboard?.cycle_counter && <CycleCounter counter={dashboard.cycle_counter} />}
+          <CardBody res={dashboardRes} what="the cycle state">
+            {(d) => (
+              <>
+                {d.cycle_line && (
+                  <>
+                    <span
+                      style={{
+                        padding: '3px var(--sa-space-2)',
+                        borderRadius: 'var(--sa-radius-sm)',
+                        background: 'var(--sa-subtle)',
+                        color: 'var(--sa-text-2)',
+                        fontSize: 'var(--sa-text-sm)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {d.cycle_line.label}
+                    </span>
+                    <span
+                      style={{ flex: '1 1 420px', color: 'var(--sa-text-2)', lineHeight: 1.5 }}
+                    >
+                      {d.cycle_line.text}
+                    </span>
+                  </>
+                )}
+                {d.cycle_counter && <CycleCounter counter={d.cycle_counter} />}
+              </>
+            )}
+          </CardBody>
         </div>
       )}
 
+      {dashboardRes.failure && (
+        <ErrorBanner
+          what="the stats"
+          failure={dashboardRes.failure}
+          updatedAt={dashboardRes.updatedAt}
+          onRetry={dashboardRes.reload}
+        />
+      )}
+      {dashboard === null ? (
+        dashboardRes.failure === null && (
+          <div
+            style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}
+            aria-hidden="true"
+          >
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="sa-skel"
+                style={{
+                  flex: '1 1 190px',
+                  height: 96,
+                  borderRadius: 'var(--sa-radius-lg)',
+                  background: 'var(--sa-panel)',
+                }}
+              />
+            ))}
+          </div>
+        )
+      ) : (
       <div
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           gap: 'var(--sa-space-3)',
           alignItems: 'stretch',
+          opacity: dashboardRes.failure ? 0.55 : 1,
         }}
       >
         <StatCard
@@ -855,6 +1016,7 @@ export default function Dashboard() {
           sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
         />
       </div>
+      )}
 
       <div
         style={{
@@ -864,8 +1026,8 @@ export default function Dashboard() {
           alignItems: 'stretch',
         }}
       >
-        <BriefingCard briefing={dashboard?.briefing ?? null} />
-        <RiskBudgetCard budget={budget} />
+        <BriefingCard res={dashboardRes} />
+        <RiskBudgetCard res={budgetRes} />
       </div>
 
       {dashboard?.market_closed && (
@@ -998,13 +1160,31 @@ export default function Dashboard() {
               1h bars · last 5 sessions · SIP, 15 min delayed · or pick a row in
               the watchlist
             </div>
-            {chart && chart.bars.length > 0 ? (
-              <PriceChart bars={chart.bars} levels={chart.levels} />
-            ) : (
-              <div style={{ height: '340px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
-                No bars loaded for {chartSymbol ?? 'this symbol'} yet.
-              </div>
-            )}
+            <CardBody
+              res={chartRes}
+              what={chartSymbol ? `the chart for ${chartSymbol}` : 'the chart'}
+              isEmpty={(d) => d.bars.length === 0}
+              skeleton={
+                <div
+                  className="sa-skel"
+                  aria-hidden="true"
+                  style={{
+                    height: '340px',
+                    borderRadius: 'var(--sa-radius-md)',
+                    background: 'var(--sa-subtle)',
+                  }}
+                />
+              }
+              empty={
+                <div style={{ height: '340px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
+                  {chartSymbol
+                    ? `No bars loaded for ${chartSymbol} yet — bars appear after its first data pull.`
+                    : 'Pick a symbol to chart.'}
+                </div>
+              }
+            >
+              {(d) => <PriceChart bars={d.bars} levels={d.levels} />}
+            </CardBody>
             <div style={{ display: 'flex', gap: 'var(--sa-space-4)', flexWrap: 'wrap', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               <Legend swatch="var(--sa-chart-ema20)" label="EMA 20" />
               <Legend swatch="var(--sa-chart-ema50)" label="EMA 50" />
@@ -1016,22 +1196,23 @@ export default function Dashboard() {
           </Card>
         </div>
         <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <LatestDecision dashboard={dashboard} />
+          <LatestDecision res={dashboardRes} />
         </div>
       </div>
 
       <Watchlist
-        rows={watchlist?.rows ?? []}
+        res={watchlistRes}
         selected={chartSymbol}
         onSelect={pickSymbol}
-        universeMode={watchlist?.universe_mode ?? 'fixed'}
-        watchlistRows={watchlist?.watchlist_rows ?? 15}
-        earningsBlackoutDays={watchlist?.earnings_blackout_days ?? 3}
       />
 
-      <OpenPositionsMini positions={positions} />
+      <OpenPositionsMini
+        res={positionsRes}
+        nextCycle={dashboard?.session.next_cycle ?? null}
+        passCount={passCount}
+      />
 
-      <Feed items={dashboard?.feed ?? []} />
+      <Feed res={dashboardRes} />
 
       <FindSymbolDialog
         open={pickerOpen}

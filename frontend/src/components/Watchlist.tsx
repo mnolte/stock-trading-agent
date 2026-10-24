@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import type { WatchlistRow } from '../types/api';
+import type { Resource } from '../api/useResource';
+import type { WatchlistResponse } from '../types/api';
 import { Card } from './Card';
+import { CardBody } from './cardState';
 import {
   filterCounts,
   filterRows,
@@ -60,20 +62,18 @@ function Tab({
 }
 
 export function Watchlist({
-  rows,
+  res,
   selected,
   onSelect,
-  universeMode = 'fixed',
-  watchlistRows = 15,
-  earningsBlackoutDays = 3,
 }: {
-  rows: WatchlistRow[];
+  res: Resource<WatchlistResponse>;
   selected: string | null;
   onSelect: (symbol: string) => void;
-  universeMode?: 'fixed' | 'screened';
-  watchlistRows?: number;
-  earningsBlackoutDays?: number;
 }) {
+  const rows = useMemo(() => res.data?.rows ?? [], [res.data]);
+  const universeMode = res.data?.universe_mode ?? 'fixed';
+  const watchlistRows = res.data?.watchlist_rows ?? 15;
+  const earningsBlackoutDays = res.data?.earnings_blackout_days ?? 3;
   const screened = universeMode === 'screened';
   const [filter, setFilter] = useState<WatchlistFilter>('all');
   const [query, setQuery] = useState('');
@@ -105,6 +105,7 @@ export function Watchlist({
   return (
     <Card
       label="Watchlist"
+      busy={res.loading}
       right={
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
           {rows.length} symbols · <Link to="/universe">Universe</Link> · click a row
@@ -112,6 +113,19 @@ export function Watchlist({
         </span>
       }
     >
+      <CardBody
+        res={res}
+        what="the watchlist"
+        isEmpty={(d) => d.rows.length === 0}
+        empty={
+          <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+            No symbols on the watchlist yet — the next screen pass fills it
+            from the pool.
+          </p>
+        }
+      >
+        {() => (
+          <>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
         <div
           role="tablist"
@@ -296,6 +310,9 @@ export function Watchlist({
           Show fewer
         </button>
       )}
+          </>
+        )}
+      </CardBody>
     </Card>
   );
 }

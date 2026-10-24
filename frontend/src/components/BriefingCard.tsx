@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
 
-import type { BriefingChip as ChipData, DashboardBriefing } from '../types/api';
+import type { Resource } from '../api/useResource';
+import type { BriefingChip as ChipData, DashboardResponse } from '../types/api';
+import { CardBody } from './cardState';
 import { Chip } from './Chip';
 import { formatCost } from './decisionFormat';
 
@@ -36,7 +38,8 @@ function chipVariant(tone: ChipData['tone']) {
  * Today's briefing once its slot has passed, the previous one with its
  * date before that; "off" with a Settings link when briefings are off.
  */
-export function BriefingCard({ briefing }: { briefing: DashboardBriefing | null }) {
+export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
+  const briefing = res.data?.briefing ?? null;
   const card = briefing?.card ?? null;
   const enabled = briefing?.enabled ?? true;
   const next = briefing?.next_at ? nextLabel(briefing.next_at) : null;
@@ -44,6 +47,7 @@ export function BriefingCard({ briefing }: { briefing: DashboardBriefing | null 
   return (
     <section
       aria-label="Daily briefing"
+      aria-busy={res.loading || undefined}
       style={{
         flex: '999 1 460px',
         minWidth: 0,
@@ -82,63 +86,69 @@ export function BriefingCard({ briefing }: { briefing: DashboardBriefing | null 
           All briefings and reviews
         </Link>
       </div>
-      {!enabled && (
-        <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
-          Daily briefings are turned off — turn them back on in{' '}
-          <Link to="/settings">Settings</Link>.
-        </p>
-      )}
-      {enabled && card === null && (
-        <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
-          No briefing written yet
-          {next ? ` — the next is written ${next}` : ''}.
-        </p>
-      )}
-      {enabled && card !== null && (
-        <>
-          <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
-            {card.text}
-          </p>
-          {card.chips.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
-              {card.chips.map((chip, i) => (
-                <Chip key={i} variant={chipVariant(chip.tone)}>
-                  {chip.text}
-                </Chip>
-              ))}
-            </div>
-          )}
-          <div style={{ flex: 1 }} />
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 'var(--sa-space-2) var(--sa-space-4)',
-              paddingTop: 'var(--sa-space-3)',
-              borderTop: '1px solid var(--sa-border)',
-              fontSize: 'var(--sa-text-sm)',
-              color: 'var(--sa-text-muted)',
-            }}
-          >
-            <span>
-              {card.source === 'model'
-                ? 'Numbers checked ✓'
-                : `Plain briefing: ${card.reason ?? 'template used'}`}
-            </span>
-            <span>
-              {card.source === 'model' ? card.model ?? 'model' : 'template'}
-              {card.prompt_version ? ` · ${card.prompt_version}` : ''}
-            </span>
-            {card.cost !== null && <span>{formatCost(card.cost)}</span>}
-            {next && <span>Next briefing {next}</span>}
-          </div>
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            {card.source === 'model'
-              ? 'Written by the model from figures computed by the agent before the open; every number was checked against those figures. Things that changed since are in the cards around it.'
-              : 'Built from the same figures with the plain template. Things that changed since are in the cards around it.'}
-          </div>
-        </>
-      )}
+      <CardBody res={res} what="the briefing">
+        {() => (
+          <>
+            {!enabled && (
+              <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
+                Daily briefings are turned off — turn them back on in{' '}
+                <Link to="/settings">Settings</Link>.
+              </p>
+            )}
+            {enabled && card === null && (
+              <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
+                No briefing written yet
+                {next ? ` — the next is written ${next}` : ''}.
+              </p>
+            )}
+            {enabled && card !== null && (
+              <>
+                <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
+                  {card.text}
+                </p>
+                {card.chips.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
+                    {card.chips.map((chip, i) => (
+                      <Chip key={i} variant={chipVariant(chip.tone)}>
+                        {chip.text}
+                      </Chip>
+                    ))}
+                  </div>
+                )}
+                <div style={{ flex: 1 }} />
+                <div
+                  style={{
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 'var(--sa-space-2) var(--sa-space-4)',
+                    paddingTop: 'var(--sa-space-3)',
+                    borderTop: '1px solid var(--sa-border)',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  <span>
+                    {card.source === 'model'
+                      ? 'Numbers checked ✓'
+                      : `Plain briefing: ${card.reason ?? 'template used'}`}
+                  </span>
+                  <span>
+                    {card.source === 'model' ? card.model ?? 'model' : 'template'}
+                    {card.prompt_version ? ` · ${card.prompt_version}` : ''}
+                  </span>
+                  {card.cost !== null && <span>{formatCost(card.cost)}</span>}
+                  {next && <span>Next briefing {next}</span>}
+                </div>
+                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  {card.source === 'model'
+                    ? 'Written by the model from figures computed by the agent before the open; every number was checked against those figures. Things that changed since are in the cards around it.'
+                    : 'Built from the same figures with the plain template. Things that changed since are in the cards around it.'}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </CardBody>
     </section>
   );
 }
