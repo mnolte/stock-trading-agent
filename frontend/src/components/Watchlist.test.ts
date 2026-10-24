@@ -14,7 +14,7 @@ function row(status: 'pass' | 'fail' | 'held', reason: string | null): Watchlist
   return {
     symbol: 'AAPL',
     price: '225.10',
-    day_change_pct: '0.21',
+    day_change_pct: 0.21,
     rules: { status, reason, checks: [] },
     earnings_date: null,
     last_action: null,
@@ -43,8 +43,8 @@ describe('formatting', () => {
   });
 
   it('formats signed day change', () => {
-    expect(formatDayChange('0.74')).toBe('+0.74%');
-    expect(formatDayChange('-0.21')).toBe('−0.21%');
+    expect(formatDayChange(0.74)).toBe('+0.74%');
+    expect(formatDayChange(-0.21)).toBe('−0.21%');
     expect(formatDayChange(null)).toBe('—');
   });
 

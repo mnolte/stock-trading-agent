@@ -12,18 +12,17 @@ import type {
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { formatPrice } from '../components/watchlistFormat';
-import { displayDateTime, displayTime } from '../format';
+import { displayDateTime, displayTime, signed, signedUsd } from '../format';
 
 const mono: React.CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
 };
 
-function fmtPnl(value: string | null | undefined): { text: string; color: string } {
+function fmtPnl(value: number | null | undefined): { text: string; color: string } {
   if (value == null) return { text: '—', color: 'var(--sa-text-muted)' };
-  const n = Number(value);
   return {
-    text: `${n >= 0 ? '+' : '−'}$${Math.abs(n).toFixed(2)}`,
-    color: n >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)',
+    text: signedUsd(value),
+    color: value >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)',
   };
 }
 
@@ -101,13 +100,13 @@ function PositionCard({ p }: { p: PositionRow }) {
         )}
         <span style={{ ...mono, color: pnl.color }}>
           {pnl.text}
-          {p.unrealized_pnl_eur && (
-            <span style={{ color: 'var(--sa-text-muted)' }}> · €{p.unrealized_pnl_eur}</span>
+          {p.unrealized_pnl_eur != null && (
+            <span style={{ color: 'var(--sa-text-muted)' }}> · €{p.unrealized_pnl_eur.toFixed(2)}</span>
           )}
         </span>
         {p.r_multiple != null && (
           <span style={{ ...mono, color: 'var(--sa-text-muted)' }}>
-            {Number(p.r_multiple) >= 0 ? '+' : ''}{p.r_multiple}R
+            {signed(p.r_multiple)}R
           </span>
         )}
         {p.stop_distance_label && (

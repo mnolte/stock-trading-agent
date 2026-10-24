@@ -113,6 +113,24 @@ export function sessionDayShort(isoDate: string | null | undefined): string {
   });
 }
 
+/** "+1.23" / "−1.23" — signed number with the real minus sign (U+2212,
+ * design/DESIGN.md numbers rule). Zero has no sign. */
+export function signed(n: number, digits = 2): string {
+  const sign = n > 0 ? '+' : n < 0 ? '−' : '';
+  return `${sign}${Math.abs(n).toFixed(digits)}`;
+}
+
+/** "+1.23%" / "−1.23%". */
+export function signedPct(n: number, digits = 2): string {
+  return `${signed(n, digits)}%`;
+}
+
+/** "+$12.40" / "−$12.40". */
+export function signedUsd(n: number, digits = 2): string {
+  const sign = n > 0 ? '+' : n < 0 ? '−' : '';
+  return `${sign}$${Math.abs(n).toFixed(digits)}`;
+}
+
 /** True when the ISO timestamp falls on today's New York session date. */
 export function openedTodayNy(iso: string): boolean {
   const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: MARKET_TZ };

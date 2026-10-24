@@ -21,11 +21,9 @@ export function formatPrice(price: string | null): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function formatDayChange(pct: string | null): string {
-  if (pct === null) return '—';
-  const n = Number(pct);
-  if (Number.isNaN(n)) return '—';
-  return `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(2)}%`;
+export function formatDayChange(pct: number | null): string {
+  if (pct === null || Number.isNaN(pct)) return '—';
+  return `${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(2)}%`;
 }
 
 export function formatEarnings(isoDate: string | null): string {

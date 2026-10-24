@@ -41,7 +41,7 @@ export interface RulesStatus {
 export interface WatchlistRow {
   symbol: string;
   price: string | null;
-  day_change_pct: string | null;
+  day_change_pct: number | null;
   rules: RulesStatus;
   earnings_date: string | null;
   warming_up?: boolean;
@@ -230,13 +230,13 @@ export interface PositionRow {
   deferred_exit: { at: string; reason: string; detail?: string } | null;
   opened_at: string;
   closed_at: string | null;
-  realized_pnl_raw: string | null;
+  realized_pnl_raw: number | null;
   exit_reason: string | null;
   legs?: PositionLeg[];
   last_price?: string | null;
-  unrealized_pnl?: string | null;
-  unrealized_pnl_eur?: string | null;
-  r_multiple?: string | null;
+  unrealized_pnl?: number | null;
+  unrealized_pnl_eur?: number | null;
+  r_multiple?: number | null;
   stop_distance_label?: string;
   earnings_date?: string | null;
   opened_today?: boolean;
@@ -523,6 +523,8 @@ export interface ApprovalsResponse {
   mode: string;
   kill_switch_on: boolean;
   paused: boolean;
+  /** Pending approvals expire at the start of this cycle. */
+  next_cycle: string | null;
   items: Approval[];
   recent: Approval[];
 }
@@ -914,9 +916,9 @@ export interface DashboardStats {
   positions: number;
   positions_cap: number;
   cash: string | null;
-  since_start_pct: string | null;
+  since_start_pct: number | null;
   since_label: string;
-  spy_pct: string | null;
+  spy_pct: number | null;
   execution_mode: string;
   // Model call counter (docs/SPEC.md, GUI — Model call counter).
   calls_today: number;
@@ -1110,7 +1112,7 @@ export interface ChartResponse {
   levels: ChartLevels;
   warming_up: boolean;
   price: string | null;
-  day_change_pct: string | null;
+  day_change_pct: number | null;
 }
 
 // ---- Universe (pool + liquidity screen, v0.2) --------------------------------

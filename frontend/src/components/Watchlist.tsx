@@ -5,6 +5,7 @@ import type { Resource } from '../api/useResource';
 import type { WatchlistResponse } from '../types/api';
 import { Card } from './Card';
 import { CardBody } from './cardState';
+import { formatNyTitle } from './decisionFormat';
 import {
   filterCounts,
   filterRows,
@@ -23,6 +24,9 @@ import {
 } from './watchlistFormat';
 
 const GRID = '90px 110px 90px minmax(200px, 1.3fr) minmax(150px, 1fr) 90px';
+// Screened mode adds a leading rank column (docs/SPEC.md: the rank shows
+// on the Universe screen and the dashboard).
+const GRID_RANKED = `48px ${GRID}`;
 
 function Tab({
   label,
@@ -169,9 +173,11 @@ export function Watchlist({
           }}
         />
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-          With a screened pool: sorted by rank, {watchlistRows} rows, then Show all
-        </span>
+        {screened && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            Sorted by rank · {watchlistRows} rows, then Show all
+          </span>
+        )}
       </div>
       <div style={{ overflowX: 'auto' }}>
         <div role="table" aria-label="Watchlist" style={{ minWidth: '760px' }}>
@@ -179,7 +185,7 @@ export function Watchlist({
             role="row"
             style={{
               display: 'grid',
-              gridTemplateColumns: GRID,
+              gridTemplateColumns: screened ? GRID_RANKED : GRID,
               gap: 'var(--sa-space-2)',
               padding: '0 10px var(--sa-space-2)',
               fontSize: 'var(--sa-text-sm)',
@@ -187,6 +193,15 @@ export function Watchlist({
               borderBottom: '1px solid var(--sa-border)',
             }}
           >
+            {screened && (
+              <span
+                role="columnheader"
+                title="Liquidity-screen rank: 20-session return minus SPY's."
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
+              >
+                Rank
+              </span>
+            )}
             <span role="columnheader">Symbol</span>
             <span role="columnheader" style={{ textAlign: 'right' }}>Price</span>
             <span role="columnheader" style={{ textAlign: 'right' }}>Day</span>
@@ -194,7 +209,7 @@ export function Watchlist({
             <span role="columnheader">Last action</span>
             <span
               role="columnheader"
-              title="Next earnings date. No new entries within 3 trading days."
+              title={`Next earnings date. No new entries within ${earningsBlackoutDays} trading days.`}
               style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
             >
               Earnings
@@ -202,7 +217,7 @@ export function Watchlist({
           </div>
           {shown.map((row) => {
             const on = row.symbol === selected;
-            const change = row.day_change_pct === null ? null : Number(row.day_change_pct);
+            const change = row.day_change_pct;
             return (
               <button
                 key={row.symbol}
@@ -213,7 +228,7 @@ export function Watchlist({
                 style={{
                   width: '100%',
                   display: 'grid',
-                  gridTemplateColumns: GRID,
+                  gridTemplateColumns: screened ? GRID_RANKED : GRID,
                   gap: 'var(--sa-space-2)',
                   alignItems: 'center',
                   minHeight: 'var(--sa-control-height)',
@@ -228,6 +243,17 @@ export function Watchlist({
                   boxShadow: on ? 'inset 3px 0 0 var(--sa-accent)' : 'none',
                 }}
               >
+                {screened && (
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-muted)',
+                    }}
+                  >
+                    {row.rank ?? '—'}
+                  </span>
+                )}
                 <span style={{ fontWeight: 600 }}>{row.symbol}</span>
                 <span style={{ fontFamily: 'var(--sa-font-mono)', textAlign: 'right' }}>
                   {formatPrice(row.price)}
@@ -250,6 +276,7 @@ export function Watchlist({
                   {rulesLabel(row)}
                 </span>
                 <span
+                  title={row.last_action_time ? formatNyTitle(row.last_action_time) : undefined}
                   style={{
                     fontFamily: 'var(--sa-font-mono)',
                     fontSize: 'var(--sa-text-sm)',

@@ -293,7 +293,7 @@ def watchlist(request: Request) -> dict[str, object]:
                 "symbol": row.symbol,
                 "price": str(row.price) if row.price is not None else None,
                 "day_change_pct": (
-                    str(row.day_change_pct)
+                    float(row.day_change_pct)
                     if row.day_change_pct is not None
                     else None
                 ),
@@ -901,7 +901,7 @@ def _position_json(
             else None
         ),
         "realized_pnl_raw": (
-            str(position.realized_pnl_raw)
+            float(position.realized_pnl_raw)
             if position.realized_pnl_raw is not None
             else None
         ),
@@ -1089,11 +1089,14 @@ async def positions(request: Request) -> dict[str, object]:
         )
         market_value = marks.get(p.symbol)
         if market_value is not None:
-            item["unrealized_pnl"] = str(
+            item["unrealized_pnl"] = float(
                 market_value - p.avg_entry_price * p.qty
             )
             item["unrealized_pnl_eur"] = (
-                str((market_value - p.avg_entry_price * p.qty) / fx_rate.usd_per_eur)
+                float(
+                    (market_value - p.avg_entry_price * p.qty)
+                    / fx_rate.usd_per_eur
+                )
                 if fx_rate is not None
                 else None
             )
@@ -1106,9 +1109,11 @@ async def positions(request: Request) -> dict[str, object]:
                         p.current_stop_price or Decimal(0)
                     )
                     unrealized = market_value - p.avg_entry_price * p.qty
-                    item["r_multiple"] = str(
-                        (unrealized / (risk_per_share * p.qty)).quantize(
-                            Decimal("0.01")
+                    item["r_multiple"] = (
+                        float(
+                            (unrealized / (risk_per_share * p.qty)).quantize(
+                                Decimal("0.01")
+                            )
                         )
                         if risk_per_share > 0
                         else None
@@ -1847,10 +1852,14 @@ def approvals(request: Request) -> dict[str, object]:
             .order_by(Approval.id.desc())
             .limit(10)
         ).scalars().all()
+    # Pending approvals expire at the start of the next full cycle — the
+    # card shows that time (design/screens/States.dc.html).
+    next_cycle = _session_state(request).next_cycle
     return {
         "mode": get_config().get("execution", "mode", default="automatic"),
         "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
         "paused": bool(getattr(state, "paused", False)),
+        "next_cycle": next_cycle.isoformat() if next_cycle else None,
         "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
         "recent": [_approval_json(a, None) for a in recent],
     }
@@ -3530,11 +3539,13 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
             "cash": _fmt_money(account.cash if account else None),
+            # Numbers travel as numbers; the GUI formats them (minus sign
+            # U+2212, docs/SPEC.md — Interaction and states).
             "since_start_pct": (
-                f"{since_start_pct:+.2f}" if since_start_pct is not None else None
+                float(since_start_pct) if since_start_pct is not None else None
             ),
             "since_label": since_label,
-            "spy_pct": f"{spy_pct:+.2f}" if spy_pct is not None else None,
+            "spy_pct": float(spy_pct) if spy_pct is not None else None,
             "execution_mode": config.get(
                 "execution", "mode", default="automatic"
             ),
@@ -3785,7 +3796,7 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
             warming = row.warming_up
             price = str(row.price) if row.price is not None else None
             change = (
-                str(row.day_change_pct)
+                float(row.day_change_pct)
                 if row.day_change_pct is not None
                 else None
             )

@@ -1168,7 +1168,9 @@ def test_update_bus_fans_out_topics() -> None:
 
 def test_approvals_endpoint_shape(client: TestClient) -> None:
     body = client.get("/api/approvals").json()
-    assert {"items", "recent", "mode", "kill_switch_on"} <= set(body)
+    assert {"items", "recent", "mode", "kill_switch_on", "next_cycle"} <= set(
+        body
+    )
     assert body["mode"] == "automatic"
 
 
@@ -1192,6 +1194,12 @@ def test_dashboard_endpoint_shape(client: TestClient) -> None:
         "shadows_cost_cap",
     } <= set(stats)
     assert {"enabled", "next_at", "card"} <= set(body["briefing"])
+    # Signed values travel as numbers — the GUI formats them with U+2212
+    # (docs/SPEC.md, Interaction and states).
+    assert stats["since_start_pct"] is None or isinstance(
+        stats["since_start_pct"], (int, float)
+    )
+    assert stats["spy_pct"] is None or isinstance(stats["spy_pct"], (int, float))
     # Risk figures moved to /api/risk-budget with the risk budget card.
     assert "open_risk_pct" not in stats
     assert "day_trades" not in stats

@@ -40,6 +40,9 @@ import {
   nyTime,
   sessionDayLabel,
   sessionDayShort,
+  signed,
+  signedPct,
+  signedUsd,
 } from '../format';
 import {
   actionBadgeStyle,
@@ -496,13 +499,20 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
 function OpenPositionsMini({
   res,
   nextCycle,
+  nextCycleToday,
   passCount,
 }: {
   res: Resource<PositionsResponse>;
-  /** Formatted "at 19:46" / "at Mon 16:46" label, or null when unknown. */
+  /** Next cycle's ISO time, or null when unknown. */
   nextCycle: string | null;
+  nextCycleToday: boolean;
   passCount: number | null;
 }) {
+  const nextCycleLabel = nextCycle
+    ? nextCycleToday
+      ? displayTime(nextCycle)
+      : displayWeekdayTime(nextCycle)
+    : null;
   const open = res.data?.open ?? [];
   return (
     <Card
@@ -520,11 +530,19 @@ function OpenPositionsMini({
               No open positions.
             </p>
             <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-muted)' }}>
-              {nextCycle && passCount !== null && passCount > 0
-                ? `The next cycle at ${nextCycle} may open one: ${passCount} symbol${passCount === 1 ? '' : 's'} pass${passCount === 1 ? 'es' : ''} the rules.`
-                : nextCycle
-                  ? `The next cycle at ${nextCycle} may open one.`
-                  : 'The next entry decision comes with the next cycle.'}
+              {nextCycleLabel ? (
+                <>
+                  The next cycle at{' '}
+                  <span title={formatNyTitle(nextCycle ?? '')}>{nextCycleLabel}</span>{' '}
+                  may open one
+                  {passCount !== null && passCount > 0
+                    ? `: ${passCount} symbol${passCount === 1 ? '' : 's'} pass${passCount === 1 ? 'es' : ''} the rules`
+                    : ''}
+                  .
+                </>
+              ) : (
+                'The next entry decision comes with the next cycle.'
+              )}
             </p>
           </>
         }
@@ -570,7 +588,6 @@ function OpenPositionsMini({
                     p.last_price ?? '—',
                     p.current_stop_price ?? '—',
                     p.stop_distance_label ?? '—',
-                    p.unrealized_pnl ?? '—',
                   ].map((cell, i) => (
                     <td
                       key={i}
@@ -583,13 +600,43 @@ function OpenPositionsMini({
                       }}
                     >
                       {cell}
-                      {i === 5 && p.r_multiple && (
-                        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                          {Number(p.r_multiple) >= 0 ? '+' : ''}{p.r_multiple}R
-                        </div>
-                      )}
                     </td>
                   ))}
+                  <td
+                    style={{
+                      padding: 'var(--sa-space-2) 10px',
+                      textAlign: 'right',
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-md)',
+                      color:
+                        p.unrealized_pnl === null || p.unrealized_pnl === undefined
+                          ? 'var(--sa-text-2)'
+                          : p.unrealized_pnl > 0
+                            ? 'var(--sa-positive)'
+                            : p.unrealized_pnl < 0
+                              ? 'var(--sa-negative-text)'
+                              : 'var(--sa-text-2)',
+                    }}
+                  >
+                    {p.unrealized_pnl === null || p.unrealized_pnl === undefined
+                      ? '—'
+                      : signedUsd(p.unrealized_pnl)}
+                    {(() => {
+                      const sub =
+                        p.r_multiple !== null && p.r_multiple !== undefined
+                          ? `${signed(p.r_multiple)}R`
+                          : p.stop_distance_label === 'stop above entry'
+                            ? 'stop above entry'
+                            : null;
+                      return (
+                        sub && (
+                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                            {sub}
+                          </div>
+                        )
+                      );
+                    })()}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -889,10 +936,7 @@ export default function Dashboard() {
   const passCount = watchlistRes.data
     ? watchlistRes.data.rows.filter((r) => r.rules.status === 'pass').length
     : null;
-  const sincePct =
-    stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
-      ? Number(stats.since_start_pct)
-      : null;
+  const sincePct = stats?.since_start_pct ?? null;
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -956,6 +1000,7 @@ export default function Dashboard() {
               approval={a}
               killSwitchOn={approvalsRes.data?.kill_switch_on ?? false}
               paused={approvalsRes.data?.paused ?? false}
+              nextCycle={approvalsRes.data?.next_cycle ?? null}
               onResolved={() => {
                 approvalsRes.reload();
                 dashboardRes.reload();
@@ -1051,13 +1096,23 @@ export default function Dashboard() {
           opacity: dashboardRes.failure ? 0.55 : 1,
         }}
       >
-        <StatCard
-          label="Positions"
-          value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
-          sub={`cash $${stats?.cash ?? '—'} · no margin`}
-        />
+        <Link
+          to="/positions"
+          className="sa-tile"
+          aria-label="Positions, open Positions and orders"
+          style={{ display: 'flex', flex: '1 1 190px', minWidth: 0 }}
+        >
+          <StatCard
+            label="Positions"
+            value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
+            sub={`cash $${stats?.cash ?? '—'} · no margin`}
+            style={{ flex: '1 1 auto', width: '100%' }}
+          />
+        </Link>
         <Link
           to="/inspector"
+          className="sa-tile"
+          aria-label="Model calls, open the LLM inspector"
           title={
             stats
               ? `Decision calls in the shown session: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
@@ -1091,24 +1146,28 @@ export default function Dashboard() {
             style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
           />
         </Link>
-        <StatCard
-          label="Since start"
-          value={
-            stats?.since_start_pct !== null && stats?.since_start_pct !== undefined
-              ? `${stats.since_start_pct}%`
-              : '—'
-          }
-          valueColor={
-            sincePct === null
-              ? undefined
-              : sincePct > 0
-                ? 'var(--sa-positive)'
-                : sincePct < 0
-                  ? 'var(--sa-negative)'
-                  : undefined
-          }
-          sub={`SPY ${stats?.spy_pct ?? '—'}% · ${stats?.since_label ?? ''}`}
-        />
+        <Link
+          to="/performance"
+          className="sa-tile"
+          aria-label="Since start, open Performance"
+          style={{ display: 'flex', flex: '1 1 190px', minWidth: 0 }}
+        >
+          <StatCard
+            label="Since start"
+            value={sincePct === null ? '—' : signedPct(sincePct)}
+            valueColor={
+              sincePct === null
+                ? undefined
+                : sincePct > 0
+                  ? 'var(--sa-positive)'
+                  : sincePct < 0
+                    ? 'var(--sa-negative)'
+                    : undefined
+            }
+            sub={`SPY ${stats?.spy_pct !== null && stats?.spy_pct !== undefined ? signedPct(stats.spy_pct) : '—'} · ${stats?.since_label ?? ''}`}
+            style={{ flex: '1 1 auto', width: '100%' }}
+          />
+        </Link>
       </div>
       )}
 
@@ -1172,7 +1231,7 @@ export default function Dashboard() {
                       fontFamily: 'var(--sa-font-mono)',
                       fontSize: 'var(--sa-text-md)',
                       color:
-                        chart.day_change_pct !== null && Number(chart.day_change_pct) >= 0
+                        chart.day_change_pct !== null && chart.day_change_pct >= 0
                           ? 'var(--sa-positive)'
                           : 'var(--sa-negative-text)',
                     }}
@@ -1309,13 +1368,8 @@ export default function Dashboard() {
 
       <OpenPositionsMini
         res={positionsRes}
-        nextCycle={
-          dashboard?.session.next_cycle
-            ? dashboard.cycle_counter?.next_cycle_today === false
-              ? displayWeekdayTime(dashboard.session.next_cycle)
-              : displayTime(dashboard.session.next_cycle)
-            : null
-        }
+        nextCycle={dashboard?.session.next_cycle ?? null}
+        nextCycleToday={dashboard?.cycle_counter?.next_cycle_today !== false}
         passCount={passCount}
       />
 
