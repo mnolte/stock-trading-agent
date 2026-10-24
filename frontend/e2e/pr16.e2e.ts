@@ -14,7 +14,7 @@ const shot = (base: string, project: string) =>
 /** Close notification toasts left over from earlier specs in the shared
  * e2e database so they don't cover the screenshot. */
 async function dismissToasts(page: import('@playwright/test').Page) {
-  const toasts = page.getByRole('button', { name: 'Dismiss notification' });
+  const toasts = page.getByRole('button', { name: 'Dismiss' });
   while (await toasts.count()) {
     await toasts.first().click();
   }

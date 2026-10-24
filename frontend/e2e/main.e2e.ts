@@ -10,7 +10,7 @@ const outDir = screenshotDir('e2e');
 test('dashboard watchlist', async ({ page, request }, testInfo) => {
   await page.goto('/');
 
-  const rows = page.locator('[aria-label="Watchlist"] button[role="row"]');
+  const rows = page.locator('[aria-label="Watchlist"] button.sa-row');
   await expect(rows.first()).toBeVisible({ timeout: 60_000 });
   // The e2e database is shared between suites: in fixed mode every row
   // renders, in screened mode the first watchlist_rows do.
