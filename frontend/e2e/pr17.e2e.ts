@@ -463,6 +463,18 @@ test('off-hours: the dashboard shows the last session, not an empty today', asyn
   });
 });
 
+test('states gallery page', async ({ page }, testInfo) => {
+  await page.goto('/states');
+  await expect(
+    page.locator('h2', { hasText: 'States & dialogs' }),
+  ).toBeVisible();
+  await expect(page.getByText('Market closed · Dashboard')).toBeVisible();
+  await page.screenshot({
+    path: shot('gallery', testInfo.project.name),
+    fullPage: true,
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Card states — skeleton, error + Retry, empty only after a successful load.
 // ---------------------------------------------------------------------------
