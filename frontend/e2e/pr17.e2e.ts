@@ -377,7 +377,7 @@ test('scale: 71-symbol pool — held picks + Find symbol, feed in collapsed cycl
 
 test('off-hours: the dashboard shows the last session, not an empty today', async ({
   page,
-}) => {
+}, testInfo) => {
   await mockApi(page, 'approvals', emptyApprovals);
   await mockApi(
     page,
@@ -456,6 +456,11 @@ test('off-hours: the dashboard shows the last session, not an empty today', asyn
     page.getByRole('heading', { name: 'Latest decision · MSFT' }),
   ).toBeVisible();
   await expect(page.getByText(/HOLD · Fri 16 Oct/)).toBeVisible();
+
+  await page.screenshot({
+    path: shot('states', testInfo.project.name),
+    fullPage: true,
+  });
 });
 
 // ---------------------------------------------------------------------------
