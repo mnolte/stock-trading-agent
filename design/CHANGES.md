@@ -2,6 +2,43 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-24 — Logs in Readiness
+
+- `Readiness.dc.html`: Operations gains "Errors in the log" (2 unreviewed · 4 lines, not yet, with a link to review on Logs) and "Critical lines in the log" (0, pass); the group links to Logs; tiles now count 17 criteria (8 pass, 5 not yet); History line added.
+- `Logs.dc.html`: Recurring problems gains a Review column. Error problems show "unreviewed" and a Review button; warnings show —.
+- `States.dc.html`: new dialog "Review a recurring error": Expected or Fixed, with a required note.
+- `Settings.dc.html`: the Readiness zero-tolerance note names the log criteria.
+
+## 2026-10-24 — Logs screen and shutdown states
+
+- New `Logs.dc.html` in the Control group (sidebar: Readiness, Universe, Logs, Settings; new `logs` icon), with:
+  - level toggles with counts (Debug and Info off, dashed, by default) and a "Show debug and info" switch;
+  - period presets, then search, component, symbol and cycle filters (behind "More filters" on phone);
+  - "Warnings and errors per day" stacked bars;
+  - "Recurring problems" table;
+  - the log grouped per day, each line with time, level chip, message, component and context chips. The opened ERROR line shows the error id, Copy line, the related link, the traceback, the stored JSON line, and surrounding lines at all levels with the line highlighted;
+  - Follow new lines switch; footer with file size and retention.
+- `States.dc.html`: new "Shutdown and restart" group with the Shutting down pill, the shutting-down banner, the unclean previous run banner (Open logs, Dismiss) and the terminal output after Ctrl+C.
+- All screens re-rendered for the new sidebar item; screenshots updated, plus `Logs.png` and `Logs-390.png`.
+
+## 2026-10-24 — Performance: Winners and tails
+
+- `Performance.dc.html`: new "Winners and tails" card below By regime and By symbol:
+  - Amber small-sample banner ("6 of 20 trades").
+  - R distribution in 0.5R buckets (losses red, wins green, empty buckets as a thin line, counts above the bars).
+  - Tiles: Largest win, Largest loss, Top 20% of trades, Net without the best trade, Winners kept. Each tile explains its definition on hover.
+  - "After the exit": medians per exit reason (best after and 5-session close), then a per-trade table (result, best while open, best after exit, close 5 sessions after) and a "How to read it" line.
+- Sample values match the 6 closed trades on the screen.
+
+## 2026-10-24 — LLM inspector: all calls with filters
+
+- `Inspector.dc.html`, rebuilt:
+  - Filters card: Period (Last session, 5 sessions, 20 sessions, All, Custom) with From and To; Outcome (All, Success, Warning, Error) and Source (Live decisions, Shadows, Reviews) as `aria-pressed` toggles with counts; Symbol, Action, Reason, Model, Prompt; Clear filters and Export CSV. At phone width the last row folds behind "More filters".
+  - Filtered calls: calls, success, warning, error with shares, cost by source, latency median and p95, a stacked bar per session (success slate, warning amber, error red); a bar click sets the period.
+  - Calls list: scrolls inside its card, grouped per session with sticky headers (calls, warnings, errors); rows show time, symbol or review kind, final action, context and model, and an outcome chip naming the reasons; "50 of 65 loaded · Load 15 more".
+  - Details: title with session date; outcome block coloured by outcome with the reason codes and explanation; Source, Model, Prompt, Tokens, Cost, Latency; Copy link; an Error block replaces Raw response for failed calls; review calls show their facts as the user part.
+- New screenshots `Inspector-error.png` (timeout selected) and `Inspector-390.png`.
+
 ## 2026-10-24 — UX review: scale, states and interaction
 
 - `Main.dc.html`:

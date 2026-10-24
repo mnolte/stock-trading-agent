@@ -26,7 +26,7 @@ make lint        # ruff + mypy (backend), pnpm lint + pnpm typecheck (frontend)
 make test        # pytest with sockets blocked, vitest, playwright e2e when browsers are installed
 ```
 
-`make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
+`make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both with a graceful shutdown. `make logs-reindex` rebuilds the log index from the log files. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
 
 ## Hard rules
 
@@ -44,6 +44,8 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
 13. **No write lock across a network call.** Commit before any model, broker or data call; never keep a SQLite write transaction open while awaiting I/O. Live jobs and shadows share one event loop and one database file.
 14. **No restarts during the session.** Don't restart, redeploy or migrate the running app between 09:30 and 16:00 New York time unless Marc asks for it or it's an emergency; say so in the PR if a change needs a restart.
+15. **No silent failures.** No bare `except:`, no `except Exception: pass`, no catch that neither logs nor re-raises; use `logger.exception` (or log at WARNING for an expected condition with its reason). Start background tasks only through `spawn()`. Every component logs its steps at DEBUG and milestones at INFO with the cycle or request id in context. Never log keys, prompts or model responses.
+16. **Clean shutdown.** Ctrl+C and SIGTERM must finish or interrupt work cleanly: never cut an order submission between sending and storing the answer, keep each unit of work in one transaction, and close the database and the log last.
 
 ## Conventions
 

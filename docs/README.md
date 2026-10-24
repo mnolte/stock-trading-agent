@@ -32,6 +32,9 @@
 | 15 | Integrity fixes | Alpaca integration (Entries); Decision layer (code checks, prompt, outcome tracking); Risk management (gates); Reviews (number check); Market, schedule and data | none |
 | 16 | Readiness | Readiness; Notifications; Data model | `Readiness`, Readiness section in `Settings` |
 | 17 | Dashboard and interaction polish | GUI (Dashboard at scale and off-hours; Interaction and states) | `Main`, `States` (card states, closed market, toasts), `design/DESIGN.md` → Interaction rules, `tokens.css` |
+| 18 | LLM call history | LLM call history; Data model (`llm_calls`); GUI table | `Inspector` (+ `Inspector-390`, `Inspector-error` screenshots) |
+| 19 | Tail metrics | Tail metrics; Data model (`positions`); GUI table | `Performance` (Winners and tails card) |
+| 20 | Logging, error handling and shutdown | Logging, error handling and shutdown; GUI table; AGENTS.md rules 15–16 | `Logs`, `States` (shutdown and restart) |
 
 ## PR description template
 

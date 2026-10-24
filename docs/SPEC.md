@@ -289,14 +289,15 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Dashboard | Risk budget card and cycle counter (see below); price chart for the selected symbol (1h bars, VWAP, EMAs, entry, stop and target lines); watchlist with price, day change, rules status and earnings date; open positions with unrealized P&L and stop distance; latest decisions feed; next-cycle timer; latest-decision card for the selected symbol (action, confidence, market regime, earnings date, reasoning, signal chips, and a three-line summary: the failed check and proposed stop and target for a skip, the position and its stop and target for a held symbol, or the pre-filter reason when no model call was made) |
 | Decision detail | Same layout as Trading Agent's decision drawer: action with size and a confidence bar; safety gates (code checks, then risk gates, each pass, fail or reduced); signal stack with 1h and daily columns; agent reasoning with named risks and news used; entry, stop, target and invalidation tiles; outcome after 1h, 1 session and 5 sessions with best and worst R and which of stop or target was touched first; order status; links to the position and the model call |
 | Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
-| Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime |
-| LLM inspector | Every model call: prompt version, full prompt, raw response, tokens, cost, latency, validation result |
+| Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime, winners and tails (see Tail metrics) |
+| LLM inspector | Every model call since the start (live, shadows, reviews), filtered by period, outcome (success, warning, error), source and more; summary per session; prompt, raw response or error, tokens, cost, latency, outcome and reasons (see LLM call history) |
 | Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | Universe (v0.2) | Pool, daily screen and eligible symbols (see Larger universe) |
 | Strategies (v0.2) | Live, shadows and baselines compared; equity curves; disagreements; Promote to live (see Strategies and shadows) |
 | Backtest (v0.2) | New backtest with estimate, runs, results (see Backtesting) |
 | Readiness | Whether the paper evidence would justify live trading (see Readiness) |
-| States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode); confirm dialogs for Stop & flatten, reset paper account and settings changes |
+| Logs | Every log line, warnings and up by default with a switch for debug and info; level toggles, period, search, component, symbol and cycle filters; warnings and errors per day; recurring problems; traceback, stored line and surrounding lines (see Logging, error handling and shutdown) |
+| States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode), shutting down, previous run not shut down cleanly; confirm dialogs for Stop & flatten, reset paper account and settings changes |
 
 The layout must also work at phone width, so the VPS version can be checked from a phone.
 
@@ -380,7 +381,7 @@ The agent tells Marc about what matters while he is away from the screen. Every 
 
 ## Data model
 
-SQLite, one file, migrations with Alembic. Times are stored in UTC; money as decimals in USD.
+SQLite, one file, migrations with Alembic. Times are stored in UTC; money as decimals in USD. The log index (`data/logs/logs.db`, see Logging, error handling and shutdown) is a separate file outside this schema and its migrations.
 
 | Table | Holds |
 | --- | --- |
@@ -389,7 +390,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live) |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
-| `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, initial stop, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason |
+| `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, initial stop, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason, after-exit best price and time, after-exit close price, after-exit status and done at (see Tail metrics) |
 | `outcomes` | decision, price after 1h, 1 session and 5 sessions; best and worst price while open |
 | `equity_snapshots` | time, equity, cash, SPY benchmark value, EUR/USD rate |
 | `day_trades` | date, symbol, order ids |
@@ -409,6 +410,8 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON, affects (decision, order, fill or none), resolved at, resolution (auto or dismissed), note |
 | `readiness_snapshots` | session date, run, criteria JSON (value, target, status, sample, estimate) |
 | `readiness_manual` | item, done, note, changed at |
+| `log_reviews` | fingerprint, level, sample message, review (expected or fixed), note, reviewed at, app version (PR 20; in the trading database, so it is backed up) |
+| `llm_calls` | sent at, session date, source (live, shadow, review), strategy, kind, linked decision, shadow decision or review, cycle, symbol, context, model, temperature, prompt version and hash, tokens, cost and source, latency, final action, outcome (success, warning, error), reasons JSON, error type, HTTP status, error message, request id, raw response, backfilled (see LLM call history) |
 
 Every connection uses WAL mode and a busy timeout (`storage.sqlite_busy_timeout_seconds`, 30). No job keeps a write transaction open while it waits for a model call or any other network call. A daily copy of the database is made at 03:00 Amsterdam time with SQLite's online backup API (never a plain file copy, which can catch a write half-done), checked with `PRAGMA integrity_check`, and kept for 14 days. Migrations are never edited once merged; a schema change is always a new revision. At startup the app compares the schema with the models and refuses to start with a clear message if they differ.
 
@@ -445,8 +448,11 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 13. **Strategies and shadows (v0.2).** `strategies`, shadow runner after each live cycle, virtual portfolios and fills, rules-only baseline, shadow cost cap, comparison and disagreements, Promote to live via Settings, Strategies screen. *Done when:* in simulated mode two shadows and the rules-only baseline run alongside live for a full session without delaying any live cycle, and a test proves the shadow code cannot reach the broker.
 14. **Backtesting (v0.2).** Backtest worker on the live cycle code with the fake broker, per-run database, historical data download within its own rate limit, lookahead guards, simulated fills, model-cutoff check, answer cache, estimate and cost cap, results and Backtest screen. *Done when:* a rules-only backtest over 3 months of cached bars gives the same trades twice, a live cycle starts on time while a backtest runs, an LLM backtest before the model's cutoff is refused, and a lookahead test passes.
 15. **Integrity fixes.** Usable quotes and quote provenance; sizing on the final price; sector resolver; daily-loss latch; tighten-stop check; R from the initial stop and the original thesis for held positions; stop history for first-touch outcomes; news completeness; briefing status facts; missed-cycle reasons; cost source; backtest database errors. *Done when:* each defect from the 22 October analysis has a test that fails before the fix and passes after it, and none of the risk limits changed.
-16. **Readiness.** Daily readiness snapshot after the close, the 15 criteria with minimum samples and estimates, error resolution (auto after 1 hour, dismiss with a note), manual items with notes, history, Settings → Readiness thresholds, "Readiness changed" notification, Readiness screen. *Done when:* the snapshot for a fixture run gives the expected status for every criterion, including "waiting for data" below each minimum sample, and nothing in the app can enable live trading.
+16. **Readiness.** Daily readiness snapshot after the close, the 15 criteria (two log criteria follow in PR 20) with minimum samples and estimates, error resolution (auto after 1 hour, dismiss with a note), manual items with notes, history, Settings → Readiness thresholds, "Readiness changed" notification, Readiness screen. *Done when:* the snapshot for a fixture run gives the expected status for every criterion, including "waiting for data" below each minimum sample, and nothing in the app can enable live trading.
 17. **Dashboard and interaction polish.** Dashboard at scale and off-hours (session day, latest-decision fallback, feed grouped per cycle, symbol picking and `?symbol=`, rank only in screened mode, linked tiles, approval expiry) and the interaction rules on every screen (focus, hover, card states, backend banner, live regions, toasts, ARIA patterns, latest request wins, numeric API values, settings-driven copy, page title). Independent of PR 16. *Done when:* with the 71-symbol screened pool the dashboard has no symbol button wall and the feed for a full session fits in collapsed cycles, the dashboard on a Saturday shows Friday's session, and every screen passes a keyboard-only walkthrough with visible focus.
+18. **LLM call history.** `llm_calls` table with backfill, outcome and reasons at write time, list, summary, detail and CSV endpoints with keyset paging, filters in the URL, LLM inspector rebuilt with filters, summary, per-session list and error details; dashboard, feed and decision links updated. After PR 17. *Done when:* every model call since the start can be found by period, outcome and source; the backfill gives each existing call the outcome the spec rules give; a timeout and an HTTP 503 show as errors with their details; list and summary answer within 300 ms on a 100,000-call fixture.
+19. **Tail metrics.** After-exit job and `positions` columns, the tails function (R distribution, largest win and loss, top 20% share, net without the best trade, winners kept, after-exit medians per exit reason), `/api/performance/tails`, "Winners and tails" card on Performance. Measures only; exits and prompts don't change. Independent of PR 16–18. *Done when:* on a fixture run every metric matches a hand calculation, a trade inside its 5-session window shows pending, a symbol outside the bar cache is fetched, and the card shows the small-sample banner below 20 closed trades.
+20. **Logging, error handling and shutdown.** Audit report first; JSON log file with rotation and scrubbing, levels per the table, DEBUG and INFO lines in every component, tracing ids; no swallowed exceptions (ruff rules, global hooks, `spawn()`, API `error_id`, frontend error reporting and error boundary); graceful shutdown on Ctrl+C and SIGTERM with unclean-stop detection; log index, logs API and Logs screen with error reviews (`log_reviews`); the two log criteria on Readiness; shutdown banners. After PR 17. *Done when:* the audit's findings are fixed or listed as questions; one cycle can be followed from schedule to order by its id at DEBUG; `make lint` fails on a swallowed exception; Ctrl+C during a cycle, an order submission, a backtest and a backup leaves `PRAGMA integrity_check` ok with no half-written rows; the Logs screen opens on warnings and up, and an unreviewed error in the last 10 sessions keeps Readiness at "not yet".
 
 ## Reviews
 
@@ -553,12 +559,22 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 | Operations | Times a position had no live stop at Alpaca for longer than one position check, last 30 sessions | 0 | — |
 | Operations | Kill switch events, last 30 sessions | 0 | — |
 | Operations | Unresolved errors that affected a decision, order or fill, last 10 sessions | 0 | — |
+| Operations | Errors in the log: ERROR problems (grouped by fingerprint) in the last 10 sessions that are not reviewed as expected or fixed (from PR 20) | 0 unreviewed | — |
+| Operations | CRITICAL lines in the log, last 20 sessions (from PR 20) | 0 | — |
 | Operations | Candidate checks blocked as `price_stale` or `price_suspect`, last 20 sessions | ≤ 5% | — |
 | Operations | Unacknowledged reconciliation mismatches, now | 0 | — |
 
 **Counts and dates.** For counts that aren't reached yet, the screen shows an estimate at the current pace (closed trades per session) and, for sessions, the date from the trading calendar. "Earliest possible" is the latest of those estimates.
 
-**Errors.** An error resolves itself after 1 hour without recurring, or Marc dismisses it with a note from its banner or the events list. Only errors linked to a decision, order or fill count for Readiness.
+**Errors.** An error resolves itself after 1 hour without recurring, or Marc dismisses it with a note from its banner or the events list. Only errors linked to a decision, order or fill count for this criterion.
+
+**Errors in the log** (from PR 20).
+- **Why a review and not "zero ERROR lines".** Some errors come from outside and are handled as specified (an OpenAI outage, a mail server refusing a login). Zero ERROR lines would never pass, so every recurring error problem needs a review instead.
+- **How.** On the Logs screen, under Recurring problems, Marc marks a problem **Expected** (an outside failure handled as specified; it stays reviewed if it recurs) or **Fixed** (the cause is solved; if it happens again after the review, it is unreviewed again). Either way he adds a note.
+- **Criterion.** It passes when no ERROR problem with a line in the last `readiness.log_error_sessions` (10) sessions is unreviewed.
+- **Critical lines.** They can't be reviewed away: any CRITICAL line in the last `readiness.log_critical_sessions` (20) sessions fails its criterion.
+- **Source and safety.** Both are counted from the log index when the daily snapshot runs. If the index is unavailable or incomplete for the window, both criteria show "not yet" with that reason, never pass.
+- **History.** Reviews show in Readiness History with their note.
 
 **Manual items.** Real-time SIP market data subscribed; Dutch tax treatment checked with an advisor; live-trading spec written and reviewed; hosting with login (VPS); first live size and loss limit decided. Ticking or unticking an item asks for a short note, stored with the date.
 
@@ -567,6 +583,218 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 **Notifications.** A new Info event "Readiness changed" (browser on, email off) when a criterion passes or stops passing.
 
 **GUI.** A verdict banner ("Not ready for live trading" until everything passes), summary tiles (pass, not yet, waiting, manual items, earliest possible), the Evidence, Model and Operations groups with current value, target, a progress bar for counts and the status, the manual items, and History. Every criterion explains how it is measured on hover and links to the screen with the details.
+
+## LLM call history
+
+The LLM inspector shows every model call ever made, not just today's, and can filter them by date, outcome (success, warning, error), source and a few more fields. Built as PR 18, after PR 17.
+
+**What counts as a call.** One request actually sent to OpenAI by live decisions, shadows or reviews. Nothing that wasn't sent appears: rules no_calls, the call cap, `price_stale` or `price_suspect`, a missing key, a reached cost cap, missed shadow calls. Those stay visible as decisions or review labels. Backtest calls stay in their run's database and are shown on the Backtest screen.
+
+**Outcome.** Set once, when the call and its linked row are stored, and never recomputed. Later events (an approval expiring, an order not filling) don't change it. An error outranks warnings; a call can have several warning reasons.
+
+| Outcome | When | Reasons |
+| --- | --- | --- |
+| Success | A valid response used as the model chose; for reviews, the number check passed | — |
+| Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check, risk gate or deferred exit), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15) |
+| Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and OpenAI error code stored), `invalid_output` (unparseable, or fails the schema or Pydantic; counts as skip or hold), `refusal` (the structured-output refusal field is set) |
+
+A size reduced by a gate is not a warning; the model's action was kept.
+
+**Storage.** A new `llm_calls` table, one row per call:
+- What and where: sent at, New York session date, source (live, shadow, review), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
+- How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
+- Result: outcome, reasons JSON, error type, HTTP status, error message, OpenAI request id, raw response text.
+- The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
+- The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
+- Indexes: (session date, sent at), (outcome, sent at), (source, sent at), (symbol, sent at).
+- Never pruned. At roughly 1 KB per call, a year of live, shadow and review calls stays in the tens of MB.
+
+**Backfill.** The migration fills `llm_calls` from existing `decisions` (rows with a model output or reason `model_error`), `shadow_decisions` (rows with a model output) and `reviews` (source model, or template after a failed call). Outcome and reasons come from the stored validation result, final action, headline status and number check. Latency, HTTP status and request id are null and shown as "not recorded"; such rows are marked `backfilled`.
+
+**Filters.** Every filter is in the URL (`?from=&to=&outcome=&source=&symbol=&action=&reason=&model=&prompt=&strategy=&cycle=&call=`), so links land on the right calls:
+- The dashboard's model-call tile opens Last session with live decisions.
+- A grouped feed row opens its cycle and action.
+- The decision drawer's "Open model call" opens `?call=`, as does Copy link.
+- The navigation opens the defaults.
+
+| Filter | Options | Default |
+| --- | --- | --- |
+| Period | Last session, 5 sessions, 20 sessions, All, Custom (from and to) | Last session |
+| Outcome | All, Success, Warning, Error (one) | All |
+| Source | Live decisions, Shadows, Reviews (one or more) | Live decisions and Reviews; shadows are off because they triple the volume |
+| More | Symbol, action, reason, model, prompt version, strategy (with Shadows on), cycle (only from links) | none |
+
+- **Dates.** Periods use New York session dates. A call made outside a session (the Saturday weekly review, a verdict after the close) belongs to the New York date it was sent.
+- **Counts.** Every option shows its count under the other filters.
+- **Clear filters** returns to the defaults.
+- **Phone.** At phone width the "More" filters sit behind a "More filters" button that says how many are set.
+
+**Summary.** For the filtered set:
+- Calls, success, warning and error with their share.
+- Cost, split by source.
+- Latency median and p95, counting only calls that returned.
+- A stacked bar per session (per week above 20 sessions). Clicking a bar sets the period to that session.
+
+**List.** Newest first, with a switch to oldest first. Calls are grouped per session under a sticky header (calls, warnings, errors). A row shows:
+- the time (New York on hover);
+- the symbol, or the review kind;
+- the final action;
+- the context or review prompt, and the model;
+- an outcome chip naming the reasons.
+
+Pages of `inspector.page_size` (50) use a keyset cursor on (sent at, id), with "Load more" and "n of total loaded". Selecting a row shows its details; on phone the details open below the list and "Back to list" returns to the same place.
+
+**Details.**
+- **Outcome:** a block with the chip, a one-line result, the reason codes and an explanation (for example "reward to risk computed by code is 1.3, below 1.5").
+- **Call data:** source, model and temperature, prompt version, tokens, cost and latency.
+- **Links and copy:** a link to the decision, shadow strategy or review, and Copy link.
+- **Prompt and response:** the prompt (system, then user), then the raw response.
+- **Errors:** instead of the raw response, an Error block with the type, HTTP status, OpenAI's message and the request id.
+
+**Export CSV.** The metadata of the filtered calls: time, source, strategy, symbol, action, outcome, reasons, model, prompt, tokens, cost and latency. No prompts or responses.
+
+**API.**
+- `GET /api/llm-calls` (filters, cursor, limit up to 100) returns the page and the next cursor.
+- `GET /api/llm-calls/summary` (same filters) returns totals, per-session buckets and the option counts.
+- `GET /api/llm-calls/{id}` returns the full call with the rebuilt prompt.
+- `GET /api/llm-calls/export.csv` returns the export.
+- Each list and summary request must answer within 300 ms on a 100,000-call fixture.
+
+**GUI.** The LLM inspector screen keeps its place in the Learn group. It has filters, the summary, the list and the details, and follows the PR 17 interaction rules (toggle buttons with `aria-pressed`, card states, latest request wins).
+
+## Tail metrics
+
+Trend-following results usually depend on a few large winners. Fixed targets can cut those winners off, which is why the Performance screen gets a "Winners and tails" card. It shows whether the run's results lean on a few trades and whether fixed targets cut winners short. It measures and changes nothing: exits, prompts and targets stay as they are. Whether to test another exit style is decided later, from these numbers. Built as PR 19.
+
+**Scope.** Closed trades of the current run, using adjusted P&L. 1R is the trade's initial risk: (average entry − initial stop) × quantity. Adopted positions without an initial stop are left out, and the card says how many. The numbers come from one function in the performance module, so Strategies and backtest results can reuse it later; PR 19 only shows them for live.
+
+| Metric | Definition |
+| --- | --- |
+| R distribution | Closed trades counted in buckets of `performance.tail.bucket_r` (0.5R), from below −1.5R to 3R or more; each bucket includes its lower edge |
+| Largest win, largest loss | Best and worst closed trade in R, with symbol, exit reason and dates. A loss below −1R means the exit filled worse than the stop |
+| Top 20% of trades | The best `ceil(20% × trades)` closed trades by adjusted P&L, as a share of the summed P&L of all winning trades. Hidden while there are no winners |
+| Net without the best trade | Adjusted net P&L of closed trades with the single best trade removed |
+| Winners kept | Per winning trade, realized R ÷ the best R reached while open (from `outcomes`), averaged |
+| Best after exit | Per closed trade: (highest high in the `performance.tail.after_exit_sessions` (5) sessions after the exit fill − exit price) ÷ initial risk per share |
+| Close after exit | Per closed trade: (close of the 5th session after the exit − exit price) ÷ initial risk per share |
+
+**After the exit.** Medians of best after exit and close after exit per exit reason (target, stop, agent exit, earnings exit, Stop & flatten), plus for target exits the share whose best after exit reached 1R or more. A table lists each closed trade with its result, best R while open, best after exit and close after exit. A trade still inside its 5-session window shows "pending" and isn't counted yet. Best after exit is an upper bound, because nobody sells at the top; the close is the realistic view, and the screen labels both.
+
+**Computing the after-exit values.** A job runs once per trading day after the close (after the readiness snapshot). It fills the values for every closed position whose 5th session after the exit has closed. It uses 5-min bars from the exit fill time to that session's close, split-adjusted with `corporate_actions`; dividends are ignored. If the bars aren't in the cache (for example the symbol left the universe), the job fetches them through the shared Alpaca limiter. A failed fetch is retried the next day; after 3 failures the values are stored as unavailable and shown as "—". Once filled, the values never change. The job doesn't hold a write lock during a fetch (hard rule 13).
+
+**Small samples.** Under `performance.tail.min_trades` (20) closed trades, the card shows "n of 20 trades" with the note that one trade can swing every number. The values are still shown. The R distribution and the per-trade table are always shown.
+
+**Storage.** `positions` gains `after_exit_best_price`, `after_exit_best_at`, `after_exit_close_price`, `after_exit_status` (pending, done, unavailable) and `after_exit_done_at`, in a new migration. Existing closed positions are filled by the first job run, as far as the bars allow.
+
+**API.** `GET /api/performance/tails?run=` returns the distribution, the summary values with their sample counts, the after-exit medians per exit reason and the per-trade rows, all as numbers.
+
+**GUI.** The "Winners and tails" card on Performance, below By regime and By symbol. It has:
+- a small-sample banner;
+- the R distribution as bars (losses red, wins green);
+- tiles for largest win, largest loss, top 20% share, net without the best trade and winners kept;
+- "After the exit" with medians per exit reason;
+- the per-trade table;
+- a one-line "How to read it".
+
+Every tile explains its definition on hover.
+
+## Logging, error handling and shutdown
+
+Every part of the app logs what it does, so a cycle, an order or a failure can be traced afterwards. No error or warning is swallowed. A Logs screen shows the log with warnings and errors first. Ctrl+C stops the app cleanly without damaging the database. Built as PR 20, which starts with an audit of the existing code.
+
+**Log file.**
+- **Format.** One JSON object per line in `data/logs/stock-agent.log`. Fields:
+  - `ts` (UTC, milliseconds), `level`, `logger` (the component, for example `data.prices`), `event` (a stable code such as `prices.stale`), `message`;
+  - `context` (cycle id, symbol, decision, order, notification, run or HTTP request id, whichever apply);
+  - `process` (`app` or `backtest-<id>`), `pid`;
+  - for errors: `error_id` and `exception` (type, message, traceback).
+- **Levels.** All five levels go to the file (`logging.file_level`: DEBUG). The console shows INFO and up (`logging.console_level`) in a short readable format.
+- **Writing.** Through a queue: the event loop puts a line on a queue and one listener thread writes it, so logging never blocks a cycle.
+- **Rotation.** At `logging.max_file_mb` (50 MB) the file rotates and the old one is gzipped. Files older than `logging.keep_days` (30) or beyond `logging.max_files` (20) are deleted.
+- **Process logs.** A backtest child process writes its own file, `data/logs/backtest-<id>.log`, in the same format.
+- **Scrubbing.** A filter on every handler replaces the value of every stored key and anything that looks like a key or an Authorization header with `[redacted]`. Model prompts and responses are not logged; they live in `llm_calls`.
+
+**What each level means.** The audit and every later PR follow this table. Every component logs its steps at DEBUG and its milestones at INFO, so a cycle can be followed from schedule to order.
+
+| Level | Meaning | Examples |
+| --- | --- | --- |
+| DEBUG | The steps and values behind a decision | Bars fetched per symbol and their last time, each rule check with its value, snapshot hash, gate inputs and results, sizing math, model call sent and returned (tokens, latency), API calls with status and duration (no bodies), limiter waits, WebSocket topics sent |
+| INFO | The workflow, one line per milestone | App start and stop with version and config hash, cycle start and end with a summary, position check summary, each decision's final action, order submitted, filled, cancelled or replaced, stop moved, settings saved, keys tested (never the key), jobs run (backup, screen, readiness, reviews, after-exit), reconciliation result, notification sent |
+| WARNING | Something degraded but handled | `price_stale`, `price_suspect`, `spread_unknown`, news truncated or failed, slow or invalid model output, a fetch retried, a cycle over 10 minutes, a limiter wait over 5 s, an exit deferred, an unclean previous shutdown, a missing optional data source |
+| ERROR | An operation failed and its unit of work was given up | An unhandled exception in a cycle step, an order call failing, a model error, a job failing, an email failing, a database error that was rolled back |
+| CRITICAL | Safety at risk or the app can't continue | The kill switch turned on automatically, a position without a broker-side stop, a reconciliation mismatch, the database can't be written, startup refused, shutdown with an order whose result is unknown |
+
+**Tracing.**
+- Every cycle, position check and job gets an id (`c-0412`), set in a context variable. Every line written while it runs carries that id.
+- Lines about one symbol carry the symbol, and the decision or order id once known.
+- API requests get a request id, returned in the `X-Request-Id` header.
+- One cycle can be followed end to end by filtering on its id.
+
+**Error handling.**
+- **Never swallowed.** No bare `except:`, no `except Exception: pass`, no catch that neither logs nor re-raises. A caught exception is one of three things:
+  - re-raised;
+  - turned into a defined outcome (for example `no_call` with `model_error`, a failed gate, a cycle stored as error) and logged with its traceback at the matching level;
+  - an expected condition, logged at WARNING with its reason.
+- **Linted.** Ruff enforces this with rules E722, BLE001, S110, TRY400 and TRY203, and `make lint` fails on them. A narrow exception that is deliberately allowed needs a `# noqa` with a reason.
+- **Global hooks**, so nothing escapes the log:
+  - `sys.excepthook` and `threading.excepthook`;
+  - the asyncio loop's exception handler;
+  - a single `spawn()` helper for every background task, which logs a failed task at ERROR. Bare `asyncio.create_task` outside it fails a test.
+  - the scheduler's job-error listener;
+  - `logging.captureWarnings`;
+  - uvicorn's and the libraries' loggers routed to the same handlers.
+- **API errors.** An unhandled API error returns 500 with an `error_id`; the same id is on the log line with the traceback.
+- **Frontend errors.** `window.onerror`, `unhandledrejection` and a React error boundary send the error to `POST /api/logs/client`, at most 10 per minute per tab. They are logged at ERROR with logger `frontend`. The error boundary shows "Something went wrong" with the `error_id` and a Reload button instead of a blank page.
+- **Logs and events.** The log is for diagnosis. Errors that need action still create `events` and notifications as specified; a log line never sends a notification by itself.
+
+**Graceful shutdown.**
+- **Steps.** Ctrl+C (SIGINT) or SIGTERM, on macOS, Linux and Windows, with `make run` and `make dev`, starts a graceful shutdown:
+  1. Log "Shutdown requested", show the "Shutting down" banner in every tab, and pause the scheduler: no new cycles, position checks or jobs. API writes return 503 "shutting down"; reads keep working.
+  2. Wait up to `storage.shutdown_grace_seconds` (60) for running work to finish. A cycle finishes the symbol it is on. Order submission, from sending to storing Alpaca's answer, is shielded and is never cut off halfway.
+  3. Work still running after the grace period is cancelled. Its cycle is stored as `interrupted` (reason shutdown), and any order whose answer didn't arrive is left to reconciliation at the next start (hard rule 3), with a CRITICAL line naming it.
+  4. A running backtest child gets its cancel flag. After 10 s it is stopped by its PID and marked `interrupted`.
+  5. Pending emails get up to 5 s. WebSocket clients and the Alpaca, OpenAI and data clients are closed.
+  6. Database: every session is committed or rolled back, then a WAL checkpoint (TRUNCATE) runs and the engine is disposed.
+  7. The log listener is flushed and closed last. The final line is "Shutdown complete in n s".
+- **Second Ctrl+C.** A second Ctrl+C logs a WARNING and skips the wait in step 2. Steps 6 and 7 always run.
+- **Data stays whole.** Every unit of work writes in one short transaction: a decision with its `llm_calls` row, gates and order rows; a fill with its position update. Shutdown can't leave half of it behind. Stops at Alpaca protect positions while the app is down.
+- **Unclean stop detection.** At start the app writes `data/run.lock` (pid, start time) and a heartbeat every 30 s; a clean shutdown deletes the file. If the file is still there at the next start, the app logs a WARNING and runs `PRAGMA quick_check`. It marks running cycles as `interrupted`, reconciles with Alpaca as usual, and shows "The previous run did not shut down cleanly" with the results. If the pid in the file is still running, startup is refused (CRITICAL), so two instances never share the database.
+
+**Log index and API.**
+- **Index.** The listener thread also writes each line, in batches every second, to a separate SQLite file, `data/logs/logs.db`. It has a `log_lines` table with the fields above plus a fingerprint, full-text search on the message, and indexes on (ts), (level, ts), (logger, ts), (cycle, ts) and (symbol, ts). It is never the trading database: it isn't in the 03:00 backup and is pruned with the files.
+- **Index failures.** If the index can't be written, the file keeps working. The failure goes to the file and stderr at ERROR, never through the index. A rebuild from the files is possible (`make logs-reindex`).
+- **Fingerprint.** Logger + event + the message with numbers, symbols and ids replaced by placeholders. Recurring problems are grouped by it.
+- **Endpoints.**
+  - `GET /api/logs` takes levels, from and to, search, logger, symbol, cycle, cursor and limit (up to 200), and returns newest first with a keyset cursor.
+  - `GET /api/logs/summary` returns counts per level, warnings and up per day or hour, and recurring problems.
+  - `GET /api/logs/{id}/around?n=50` returns the surrounding lines of the same process at all levels.
+  - `GET /api/logs/export.jsonl` exports the filtered lines.
+  - A WebSocket topic `logs` announces new lines at warning and up, debounced 1 s.
+
+**Logs screen.** A Logs item in the Control group. The screen has:
+- **Levels.** A toggle per level (Debug, Info, Warning, Error, Critical) with its count. The default shows Warning, Error and Critical. A "Show debug and info" switch turns those two on or off together. The choice is in the URL (`?levels=`) and remembered per browser.
+- **Period.** Last hour, Today, 7 days (default), 30 days, Custom.
+- **More filters.** Search on the message, component, symbol, cycle. On a phone these sit behind "More filters".
+- **Clear filters** and **Download .jsonl**.
+- **Warnings and errors per day.** Stacked bars; clicking one shows that day.
+- **Recurring problems.** Grouped by fingerprint with level, count, first and last seen and examples. Clicking one filters the log on it. ERROR and CRITICAL problems show their review state: unreviewed, expected or fixed, with a Review button. Review opens a dialog: Expected or Fixed, plus a required note. These reviews feed Readiness (see Readiness → Errors in the log).
+- **Log.** Grouped per day under sticky headers, newest first. Each line shows its time (Amsterdam, New York on hover), a level chip, the message, the component and context chips (cycle, symbol). Context chips link to the cycle filter, the decision or the order.
+- **Opening a line.** It shows:
+  - the exception with its traceback;
+  - the stored JSON;
+  - "Surrounding lines" (same process, all levels, with "Show 50 more");
+  - Copy line, and a link to what it concerns.
+- **Follow new lines.** On by default; it pauses while scrolled away from the top.
+- **Card states.** Loading, empty and error as in the Interaction rules. With no lines in the period: "No warnings or errors in this period".
+
+`events` and `notifications` link to the Logs screen filtered on their time (±2 minutes) and cycle.
+
+**Audit first.**
+- **Report.** PR 20 starts with `docs/analysis/<date>-error-handling-audit.md`. It lists:
+  - every `try`/`except`, every background task and every place a failure could pass silently, each with file and line, what happens today and the fix;
+  - every component and its current logging, and the INFO and DEBUG lines it needs to be traced;
+  - shutdown behaviour today under Ctrl+C during a cycle, an order submission, a backtest and a backup.
+- **Order of work.** The fixes follow the report. Anything that changes trading behaviour beyond logging and shutdown is listed as a question, not fixed.
 
 ## Out of scope and later versions
 

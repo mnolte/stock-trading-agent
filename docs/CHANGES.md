@@ -2,19 +2,26 @@
 
 Newest first.
 
-## 2026-10-24 — Test suite speed-up and warm-cache daily refresh
+## 2026-10-24 — Logging, error handling and shutdown (PR 20)
 
-- `MarketDataService.refresh_daily` now checks coverage like `refresh_history`: each symbol's fetch starts at its earliest missing session and only the newest session is always refetched. A warm restart costs one small request per symbol instead of re-downloading `daily_history_sessions` days — app boot ~16 s faster.
-- New `BarCache.covered_daily_dates` (per-symbol twin of `covered_session_dates`).
-- Tests: a per-worker template database (schema + calendar + earnings + corporate actions + FX + daily and 5-minute bars for the default universe, seeded without a boot) is copied into every test's `SA_DB_PATH`, cutting each app boot from ~50 s to ~12 s. Shared `session_factory` fixture replaces ~12 identical copies; engines are disposed per test.
-- `test_rules_only_short_window_is_deterministic` and `test_full_default_pool_screens_in_simulated_mode` moved to `-m slow` (`make test-slow`); per-test timeout 600 s (1800 s for slow); pytest runs `-n 4`, strict markers.
-- `shutdown_grace_seconds` shortened in the two cycle-counter tests that leave a running row.
+- New "Logging, error handling and shutdown" section: JSON-lines log file with all five levels (console info and up), rotation, key scrubbing and a level table saying what goes where; tracing ids per cycle, check, job and request; no swallowed exceptions (ruff rules, global hooks, `spawn()` for tasks, API `error_id`, frontend error reporting and an error boundary); graceful shutdown on Ctrl+C and SIGTERM (scheduler paused, 60 s grace, shielded order submission, interrupted cycles, backtest child stopped, WAL checkpoint, log closed last; second Ctrl+C skips the wait) and unclean-stop detection with `data/run.lock`.
+- Log index in a separate `data/logs/logs.db`, logs API, and a Logs screen in the Control group: warning and up by default with a "Show debug and info" switch, per-level toggles, period, search, component, symbol and cycle filters, warnings and errors per day, recurring problems, traceback and surrounding lines, follow new lines.
+- AGENTS.md hard rules 15 (no silent failures) and 16 (clean shutdown). Config: `logging` block. States: shutting down, unclean previous run. PR 20 starts with an error-handling audit report.
+- Build plan: PR 20, after PR 17.
+- Readiness (added the same day): two Operations criteria from the log, built in PR 20. "Errors in the log": 0 unreviewed ERROR problems in the last 10 sessions, where each recurring error is reviewed on the Logs screen as expected or fixed with a note; a fixed one that recurs is unreviewed again. "Critical lines in the log": 0 in the last 20 sessions, with no review possible. If the log index is unavailable, both show not yet. New `log_reviews` table; config `readiness.log_error_sessions` and `log_critical_sessions`.
 
-## 2026-10-24 — Briefing fact-check fix
+## 2026-10-24 — Tail metrics (PR 19)
 
-- New prompt `briefing.v2`: an empty list is a known fact (say "none" or skip the line) — only `null` means "unavailable". v1 let the model call known-empty earnings "unavailable", which the fact check correctly rejected on 23 October.
-- The fact check's `review_fallback` event now records the offending clause as `detail`, and clause splitting also breaks on commas and dashes so a legitimate "unavailable" for a null fact (regime, yesterday's result) in the same sentence no longer fails the check.
-- `reviews.prompts.briefing` is not editable in Settings; activating v2 took a new `settings_versions` row.
+- New "Tail metrics" section: a "Winners and tails" card on Performance measuring whether results lean on a few large winners and whether fixed targets cut them off: R distribution, largest win and loss, top 20% share of gross profit, net without the best trade, winners kept (realized ÷ best open R), and per exit reason the best and the close in the 5 sessions after the exit. Small-sample banner below 20 closed trades. Measures only; exits and prompts don't change.
+- Data model: `positions` gains after-exit best price and time, close price, status and done at, filled by a daily job after the close. Config: `performance.tail`. API: `/api/performance/tails`.
+- Build plan: PR 19, independent of PR 16–18. Source: the Pareto question of 24 October.
+
+## 2026-10-24 — LLM call history (PR 18)
+
+- New "LLM call history" section: the LLM inspector browses every model call since the start (live decisions, shadows, reviews; backtests stay on the Backtest screen), not just today's. Filters: period (last session, 5, 20, all, custom; New York session dates), outcome (success, warning, error), source, plus symbol, action, reason, model, prompt, strategy and cycle, all in the URL. Summary per filtered set with a bar per session; list grouped per session with keyset paging; details with outcome reasons and an Error block; CSV export of metadata.
+- Outcome rules: warning = `changed_by_code`, `input_incomplete`, `number_check_failed`, `slow`; error = `timeout`, `api_error`, `invalid_output`, `refusal`. Set once at write time.
+- Data model: `llm_calls`, backfilled from decisions, shadow decisions and reviews. Config: `inspector` block. GUI table row updated.
+- Build plan: PR 18, after PR 17.
 
 ## 2026-10-24 — Dashboard and interaction polish (PR 17)
 

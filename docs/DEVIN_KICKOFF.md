@@ -276,6 +276,264 @@ Use the PR template, screenshots in docs/screenshots/pr-17/ next to the
 design PNGs (Main, Main-390, States). List any remaining design differences.
 ```
 
+## PR 18 — LLM call history (after PR 17)
+
+```
+PR 18 (LLM call history). Start this only after PR 17 (Dashboard and
+interaction polish) is merged: it builds on PR 17's interaction rules,
+card states and URL handling. Pull the latest spec and design packages,
+then read:
+1. docs/CHANGES.md, entry 2026-10-24 "LLM call history (PR 18)" (spec)
+   and "LLM inspector: all calls with filters" (design)
+2. docs/SPEC.md → "LLM call history" (the whole section), Data model
+   (llm_calls), GUI table (LLM inspector row), Build plan item 18
+3. backend/config.example.yaml → inspector block
+4. design/screens/Inspector.dc.html with Inspector.png, Inspector-error.png
+   and Inspector-390.png
+
+Build PR 18 only, in this order (one commit per step):
+1. Storage: new Alembic revision for llm_calls with the four indexes (never
+   edit an old migration). Write a row for every request actually sent by
+   live decisions, shadows and reviews, in the same transaction as the
+   linked row and after the call returned (hard rule 13). Store latency,
+   error type, HTTP status, scrubbed error message and OpenAI request id;
+   never headers or keys.
+2. Outcome: a single pure function, unit-tested per reason. It gives
+   success, warning or error plus a list of reasons. Warning reasons:
+   changed_by_code, input_incomplete, number_check_failed, slow. Error
+   reasons: timeout, api_error, invalid_output, refusal. It is set once at
+   write time. A size reduced by a gate is not a warning.
+3. Backfill in the migration from decisions, shadow_decisions and reviews,
+   using the same function. Unknown fields stay null and the row is marked
+   backfilled. Calls that were never sent get no row.
+4. API: GET /api/llm-calls (filters, keyset cursor on (sent at, id), limit
+   ≤ 100), /summary (totals, per-session buckets, option counts),
+   /{id} (prompt rebuilt from the prompt file + stored input; hash
+   mismatch reported, not hidden), /export.csv (metadata only). Session
+   dates are New York dates. Numbers as numbers.
+5. Frontend: rebuild the LLM inspector per the design.
+   - Filters synced to the URL; defaults Last session, All outcomes,
+     Live decisions + Reviews.
+   - Summary with bars per session (a click sets the period).
+   - List grouped per session with Load more.
+   - Details with the outcome block and the Error block.
+   - "More filters" at phone width; Copy link.
+   - PR 17 rules apply: toggles with aria-pressed, card states, latest
+     request wins.
+6. Links: the dashboard model-call tile opens Last session and live
+   decisions. A grouped feed row opens its cycle and action. The decision
+   drawer's "Open model call" opens ?call=.
+
+Tests:
+- Outcome function, every reason, including precedence (error beats
+  warnings).
+- Backfill on a fixture DB: the expected outcome for each call, and no rows
+  for no_calls.
+- A timeout and an HTTP 503 give error rows with details and no raw
+  response.
+- Each filter and combination, including Custom dates across a weekend and
+  a Saturday weekly review.
+- Paging without gaps or duplicates while new calls arrive.
+- List and summary under 300 ms on a 100,000-call fixture.
+- CSV has no prompt or response text, and the fake keys never appear
+  anywhere.
+- Playwright: filters survive reload via the URL, ?call= opens the call,
+  keyboard-only walkthrough.
+
+Use the PR template, screenshots in docs/screenshots/pr-18/ next to the
+design PNGs (Inspector, Inspector-error, Inspector-390). List any
+remaining design differences.
+```
+
+## PR 19 — Tail metrics (measure only)
+
+```
+PR 19 (Tail metrics). This PR measures only: don't change exits, targets or
+prompts. It doesn't depend on PR 16–18, so it can go before or after them,
+but always as its own PR. Pull the latest spec and design packages, then
+read:
+1. docs/CHANGES.md, entry 2026-10-24 "Tail metrics (PR 19)" (spec) and
+   "Performance: Winners and tails" (design)
+2. docs/SPEC.md → "Tail metrics" (whole section), Data model (positions),
+   Outcome tracking (best price while open), Build plan item 19
+3. backend/config.example.yaml → performance.tail
+4. design/screens/Performance.dc.html with Performance.png and
+   Performance-390.png (Winners and tails card)
+
+Build PR 19 only, in this order (one commit per step):
+1. Migration: a new revision adding after_exit_best_price, after_exit_best_at,
+   after_exit_close_price, after_exit_status (pending, done, unavailable)
+   and after_exit_done_at to positions.
+2. After-exit job, once per trading day after the close (after the readiness
+   snapshot):
+   - For every closed position whose 5th session after the exit has closed:
+     take the highest high and the 5th session's close from 5-min bars after
+     the exit fill, split-adjusted.
+   - Fetch missing bars through the shared Alpaca limiter. Retry the next
+     day; after 3 failures, mark the position unavailable.
+   - Write once, never update.
+   - Hold no write lock during a fetch (hard rule 13).
+   - The first run fills existing closed positions.
+3. One pure tails function in the performance module (current run, adjusted,
+   1R = initial risk), unit-tested against hand calculations. It gives:
+   - the R distribution (each bucket includes its lower edge);
+   - largest win and loss;
+   - the top ceil(20%) trades' share of gross profit;
+   - net without the best trade;
+   - winners kept;
+   - per exit reason: median best and median close after exit, and the
+     share of target exits with best after exit ≥ 1R.
+   Pending trades are excluded and counted; adopted positions without an
+   initial stop are excluded and counted.
+4. GET /api/performance/tails?run= returning numbers (no formatted
+   strings).
+5. The "Winners and tails" card per the design:
+   - small-sample banner below min_trades;
+   - R distribution bars with an aria-label;
+   - tiles with their definitions on hover;
+   - After the exit with the per-trade table and "pending" rows;
+   - card states and focus per the PR 17 rules (if PR 17 isn't merged yet,
+     follow DESIGN.md → Interaction rules for this card).
+
+Tests:
+- Fixture run with known trades: every metric matches the hand calculation,
+  including a loss below −1R, a trade still pending, a split during the
+  after-exit window, and a symbol whose bars aren't cached (fetched through
+  the limiter, mocked).
+- A fetch failing 3 times ends as unavailable.
+- A run with no winners hides the top-20% tile.
+- Under 20 trades the banner shows; at 20 it doesn't.
+- Values never change once done.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-19/ next to the
+design PNGs (Performance, Performance-390). List any remaining design
+differences.
+```
+
+## PR 20 — Logging, error handling and shutdown (after PR 17)
+
+```
+PR 20 (Logging, error handling and shutdown). Start after PR 17 is merged.
+If PR 18 or 19 are already merged, include their code in the audit. Pull
+the latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-24 "Logging, error handling and shutdown
+   (PR 20)" (spec) and "Logs screen and shutdown states" (design)
+2. docs/SPEC.md → "Logging, error handling and shutdown" (whole section),
+   GUI table (Logs, States), Data model intro (log index) and log_reviews,
+   Readiness (the two log criteria and "Errors in the log"), Build plan
+   item 20
+3. AGENTS.md → hard rules 13, 15 and 16; backend/config.example.yaml →
+   logging and storage.shutdown_grace_seconds
+4. design/screens/Logs.dc.html, States.dc.html (Shutdown and restart,
+   Review a recurring error) and Readiness.dc.html (Operations) with their
+   screenshots
+
+Build PR 20 only, in this order (one commit per step):
+1. Audit, no code changes. Write
+   docs/analysis/<date>-error-handling-audit.md:
+   - every try/except, background task, callback and thread, with
+     file:line, what happens on failure today, and the fix;
+   - per component, its current logging and the INFO and DEBUG lines it
+     needs so a cycle can be traced from schedule to order;
+   - what Ctrl+C does today during a cycle, an order submission, a
+     backtest and the 03:00 backup, tested in simulated mode.
+   Anything that would change trading behaviour beyond logging and
+   shutdown goes in a "Questions" list, not into code. Push this commit
+   first and post a summary in the PR.
+2. Logging core: JSON-lines file handler behind a QueueHandler and
+   QueueListener; console handler at INFO; rotation with gzip, max files
+   and keep days; scrubbing filter on every handler (stored keys,
+   key-like strings, Authorization headers); context variables for cycle,
+   check, job and request ids added to every line; error_id on ERROR and
+   CRITICAL; uvicorn and library loggers routed to the same handlers;
+   captureWarnings. The backtest child writes its own file in the same
+   format.
+3. No silent failures:
+   - enable ruff E722, BLE001, S110, TRY400 and TRY203, and fix every hit
+     per the audit;
+   - add the global hooks: sys.excepthook, threading.excepthook, the
+     asyncio exception handler, the scheduler error listener;
+   - a spawn() helper for all background tasks, plus a test that fails
+     on bare asyncio.create_task outside it;
+   - an API exception handler returning error_id;
+   - POST /api/logs/client with a rate limit, window.onerror,
+     unhandledrejection and a React error boundary showing the error_id.
+4. Log lines: add DEBUG and INFO lines in every component per the level
+   table (scheduler, cycle, data, rules, model, risk, orders,
+   reconciliation, positions, notifications, reviews, universe, shadows,
+   backtest, settings, keys, jobs, db), with stable event codes. Never
+   log keys, prompts or model responses.
+5. Graceful shutdown, steps 1–7 of the spec:
+   - signal handling for SIGINT and SIGTERM on macOS, Linux and Windows;
+     make dev and make run both shut down this way;
+   - scheduler paused; 503 for writes while shutting down;
+   - grace wait; order submission shielded from sending until the answer
+     is stored;
+   - cycles stored as interrupted; backtest child stopped by PID;
+   - clients closed; sessions closed; WAL checkpoint; engine disposed;
+     log closed last;
+   - a second Ctrl+C skips the wait;
+   - data/run.lock with a heartbeat, unclean-stop detection with
+     quick_check, and startup refused while another live pid holds the
+     lock;
+   - a "shutting down" WebSocket state.
+6. Log index and API: data/logs/logs.db written in batches by the
+   listener thread (never the trading DB; failures only to file and
+   stderr), FTS on the message, fingerprints, pruning with the files,
+   make logs-reindex; GET /api/logs, /summary, /{id}/around,
+   /export.jsonl; WebSocket topic logs.
+7. Frontend:
+   - the Logs screen per the design: level toggles with warning and up
+     by default and the "Show debug and info" switch, the URL and per-
+     browser memory, period and filters, per-day bars, recurring
+     problems, grouped log with an expandable line (traceback, stored
+     line, surrounding lines), follow new lines, phone layout;
+   - the Logs sidebar item;
+   - the shutting-down pill and banner, and the unclean-run banner;
+   - links from events and notifications to Logs.
+8. Readiness from the log:
+   - a log_reviews table (new Alembic revision, in the trading DB);
+   - a Review action on ERROR and CRITICAL recurring problems (Expected or
+     Fixed, with a required note) and its dialog;
+   - two Operations criteria in the readiness snapshot, counted from the
+     log index: "Errors in the log" (0 unreviewed ERROR problems in the
+     last 10 sessions; a Fixed problem that recurs is unreviewed again)
+     and "Critical lines in the log" (0 in the last 20 sessions, no review
+     possible). An unavailable or incomplete index means not yet, never
+     pass. Reviews appear in Readiness history.
+   If PR 16 isn't merged yet, stop and ask instead of building the
+   readiness part.
+
+Tests:
+- Each ruff rule catches a sample.
+- An exception in a task, thread, scheduler job, API route and the
+  frontend each ends up in the log file with a traceback and an error_id.
+- Keys, including fake ones, never appear in the file or the index.
+- One simulated cycle can be reconstructed from its id at DEBUG.
+- SIGINT during a cycle, during an order submission (the fake broker
+  delays its answer), during a backtest and during the backup: in each
+  case integrity_check is ok, there are no half-written rows, the cycle
+  is completed or interrupted, and the order's state is recorded or
+  flagged for reconciliation.
+- A second SIGINT skips the wait; a stale run.lock triggers the unclean
+  banner; a live pid in run.lock refuses startup.
+- An index failure keeps the file logging.
+- Logs API filters and paging.
+- Readiness: an unreviewed error in the window keeps "Errors in the
+  log" at not yet; Expected keeps it passing when the error recurs, Fixed
+  doesn't; one CRITICAL line fails its criterion; a missing index never
+  passes.
+- Playwright: Logs opens on warning and up, the switch shows debug and
+  info, ?levels= survives a reload, opening a line shows the traceback
+  and surrounding lines.
+- No network in tests.
+
+Use the PR template. Screenshots go in docs/screenshots/pr-20/ next to the
+design PNGs (Logs, Logs-390, States, Readiness). List remaining design differences and
+the audit's open questions.
+```
+
 ## Each later PR
 
 ```

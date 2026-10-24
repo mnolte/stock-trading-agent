@@ -103,6 +103,11 @@ performance:
   starting_equity: 10000          # checked by "Start new run" after a paper reset (±1%)
   slippage_pct_per_side: 0.05
   benchmark: SPY
+  tail:                         # PR 19, Winners and tails card
+    bucket_r: 0.5               # R distribution bucket width
+    top_share_pct: 20           # "top 20% of trades"
+    after_exit_sessions: 5      # window for best and close after exit
+    min_trades: 20              # below this the card shows the small-sample banner
 
 reviews:
   weekly_day: saturday
@@ -112,7 +117,7 @@ reviews:
   verdict_after_sessions: 5
   model: gpt-4o-mini
   temperature: 0.2
-  prompts: {weekly: weekly.v1, briefing: briefing.v2, verdict: verdict.v1}
+  prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 
@@ -180,6 +185,26 @@ readiness:                      # PR 16; evidence from the current run, adjusted
   min_cycles_completed_pct: 98    # last 20 sessions
   max_price_blocked_pct: 5        # price_stale + price_suspect, last 20 sessions
   error_auto_resolve_minutes: 60
+  log_error_sessions: 10          # PR 20: unreviewed ERROR problems in the log, target 0 (fixed)
+  log_critical_sessions: 20       # PR 20: CRITICAL lines in the log, target 0 (fixed); keep within logging.keep_days
+
+inspector:                      # PR 18, LLM call history
+  page_size: 50                 # calls per page; the API allows up to 100
+  slow_call_seconds: 15         # a returned call slower than this gets the warning "slow"
+  default_sources: [live, review]   # shadows off by default (they triple the volume)
+
+logging:                        # PR 20, Logging, error handling and shutdown
+  dir: data/logs
+  file_level: DEBUG             # everything goes to the file
+  console_level: INFO
+  max_file_mb: 50               # rotate and gzip
+  max_files: 20
+  keep_days: 30                 # files and the log index
+  index: data/logs/logs.db      # separate SQLite file; not in the 03:00 backup
+  page_size: 100                # Logs screen; API allows up to 200
+  client_errors_per_minute: 10  # frontend errors per tab
+  heartbeat_seconds: 30         # data/run.lock heartbeat for unclean-stop detection
+  backtest_kill_after_seconds: 10   # on shutdown, after the cancel flag
 
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
