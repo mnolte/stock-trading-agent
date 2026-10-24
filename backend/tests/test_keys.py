@@ -350,7 +350,7 @@ def test_log_filter_scrubs_stored_keys() -> None:
         logger.warning("auth failed with %s", FAKE_OPENAI)
         output = stream.getvalue()
         assert FAKE_OPENAI not in output
-        assert "••••" in output
+        assert "[redacted]" in output
     finally:
         logger.removeHandler(handler)
 

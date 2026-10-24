@@ -248,9 +248,9 @@ def make_key_testers(config: AppConfig, clock: Clock) -> KeyTesters:
 
 
 class _ScrubSecretsFilter(logging.Filter):
-    """Removes every known key value from log records before they are
-    written. Attached to every handler (file and uvicorn's consoles) so
-    propagated records are covered too."""
+    """Compatibility shim kept for tests: registers the provider so the
+    shared pipeline filter (``app.logging_config.SecretScrubFilter``)
+    scrubs stored keys on every handler."""
 
     def __init__(self, secrets: Callable[[], list[str]]) -> None:
         super().__init__()
@@ -274,8 +274,13 @@ class _ScrubSecretsFilter(logging.Filter):
 
 
 def install_secret_scrub_filter(secrets: Callable[[], list[str]]) -> None:
-    """Attach the scrub filter to every existing log handler."""
-    scrub_filter = _ScrubSecretsFilter(secrets)
+    """Feed the live key values to the shared scrub filter and attach a
+    local scrub filter to any handler that predates the pipeline (keeps
+    the unit test's own handler covered)."""
+    from app.logging_config import SecretScrubFilter, register_secret_provider
+
+    register_secret_provider(secrets)
+    shared = SecretScrubFilter()
     loggers = [logging.getLogger()]
     loggers += [
         logging.getLogger(name)
@@ -284,7 +289,7 @@ def install_secret_scrub_filter(secrets: Callable[[], list[str]]) -> None:
     ]
     for log in loggers:
         for handler in log.handlers:
-            handler.addFilter(scrub_filter)
+            handler.addFilter(shared)
 
 
 class SecretsStore:
