@@ -136,6 +136,9 @@ class Position(Base):
     """An open or closed position."""
 
     __tablename__ = "positions"
+    __table_args__ = (
+        Index("ix_positions_after_exit_status", "after_exit_status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -158,6 +161,19 @@ class Position(Base):
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     realized_pnl_adjusted: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # After-exit metrics (docs/SPEC.md, Tail metrics): the highest high and
+    # the 5th session's close in the sessions after the exit, split-adjusted.
+    # Written once by the daily job; status runs pending → done | unavailable.
+    after_exit_best_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    after_exit_best_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    after_exit_close_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    after_exit_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending"
+    )
+    after_exit_done_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Fetch failures toward "unavailable", kept on the row so a restart
+    # does not reset the retry budget.
+    after_exit_failures: Mapped[int] = mapped_column(nullable=False, default=0)
 
 
 class Outcome(Base):

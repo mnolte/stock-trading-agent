@@ -39,7 +39,7 @@ from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, load_prompt
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
-from app.engine.performance import compute_performance
+from app.engine.performance import compute_performance, compute_tails_payload
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
     NY_TZ,
@@ -2702,6 +2702,21 @@ def performance(request: Request, run: int | None = None) -> dict[str, object]:
             live_equity=live_equity if run is None else None,
             run_id=run,
         )
+    if payload.get("empty") and run is not None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return payload
+
+
+@router.get("/performance/tails")
+def performance_tails(request: Request, run: int | None = None) -> dict[str, object]:
+    """Winners and tails numbers for one run (docs/SPEC.md, Tail metrics).
+
+    ``run`` selects an earlier run; the default is the current one. All
+    values are numbers (decimal strings), never formatted text.
+    """
+    config = get_config()
+    with get_session_maker()() as session:
+        payload = compute_tails_payload(session, config=config, run_id=run)
     if payload.get("empty") and run is not None:
         raise HTTPException(status_code=404, detail="run not found")
     return payload

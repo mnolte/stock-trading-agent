@@ -107,6 +107,8 @@ performance:
     bucket_r: 0.5               # R distribution bucket width
     top_share_pct: 20           # "top 20% of trades"
     after_exit_sessions: 5      # window for best and close after exit
+    after_exit_bar_delay_minutes: 16  # delay before trusting a closed session's bars
+    after_exit_max_failures: 3  # failed fetches before a row is "unavailable"
     min_trades: 20              # below this the card shows the small-sample banner
 
 reviews:

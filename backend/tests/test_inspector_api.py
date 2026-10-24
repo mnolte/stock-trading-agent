@@ -551,27 +551,36 @@ class TestPerformance:
             )
             session.commit()
 
-        start = time.perf_counter()
-        data = client.get("/api/llm-calls", params={"limit": 50})
-        assert data.status_code == 200
-        list_ms = (time.perf_counter() - start) * 1000
+        def timed(path: str, params: dict[str, Any]) -> tuple[float, Any]:
+            """Best of three calls after a warm-up. The budget is about
+            the queries on the fixture, not CI scheduler luck: parallel
+            xdist workers share the box, and the first call also pays
+            statement compilation and cold page reads. A real regression
+            (a covering index gone → full scans) costs seconds, so the
+            best call still fails it."""
+            client.get(path, params=params)
+            best_ms, body = float("inf"), None
+            for _ in range(3):
+                start = time.perf_counter()
+                response = client.get(path, params=params)
+                elapsed = (time.perf_counter() - start) * 1000
+                assert response.status_code == 200
+                if elapsed < best_ms:
+                    best_ms, body = elapsed, response
+            return best_ms, body
+
+        list_ms, data = timed("/api/llm-calls", {"limit": 50})
         assert data.json()["total"] == 100_000
         assert len(data.json()["calls"]) == 50
 
-        start = time.perf_counter()
-        summary = client.get("/api/llm-calls/summary")
-        assert summary.status_code == 200
-        summary_ms = (time.perf_counter() - start) * 1000
+        summary_ms, summary = timed("/api/llm-calls/summary", {})
         assert summary.json()["total"] == 100_000
 
         # Filtered views are the common case and must be equally fast.
-        start = time.perf_counter()
-        filtered = client.get(
+        filtered_ms, _ = timed(
             "/api/llm-calls",
-            params={"outcome": "error", "source": "live", "limit": 50},
+            {"outcome": "error", "source": "live", "limit": 50},
         )
-        assert filtered.status_code == 200
-        filtered_ms = (time.perf_counter() - start) * 1000
 
         assert list_ms < 300, f"list took {list_ms:.0f} ms"
         assert summary_ms < 300, f"summary took {summary_ms:.0f} ms"

@@ -24,6 +24,7 @@ import type {
   OrdersResponse,
   PaperResetResult,
   PerformanceResponse,
+  PerformanceTailsResponse,
   PositionsResponse,
   ReadinessResponse,
   ReviewDetail,
@@ -199,6 +200,11 @@ export function getRuns(): Promise<RunsResponse> {
 export function getPerformance(runId?: number): Promise<PerformanceResponse> {
   const query = runId === undefined ? '' : `?run=${runId}`;
   return get<PerformanceResponse>(`/api/performance${query}`);
+}
+
+export function getPerformanceTails(runId?: number): Promise<PerformanceTailsResponse> {
+  const query = runId === undefined ? '' : `?run=${runId}`;
+  return get<PerformanceTailsResponse>(`/api/performance/tails${query}`);
 }
 
 export function getReviews(kind: 'weekly' | 'briefing'): Promise<ReviewsResponse> {
