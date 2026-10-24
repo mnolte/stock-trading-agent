@@ -15,7 +15,8 @@ export type Topic =
   | 'notifications'
   | 'universe'
   | 'strategies'
-  | 'backtests';
+  | 'backtests'
+  | 'readiness';
 
 export type LiveStatus = 'live' | 'paused';
 

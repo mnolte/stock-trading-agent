@@ -572,6 +572,19 @@ export interface SettingsForm {
   };
   performance: { slippage_pct_per_side: number; starting_equity: number };
   reviews: { briefing_enabled: boolean; monthly_cost_cap_usd: number };
+  readiness: {
+    min_closed_trades: number;
+    min_sessions: number;
+    max_drawdown_pct: number;
+    min_avg_r: number;
+    min_profit_factor: number;
+    ratio_min_trades: number;
+    min_proposal_pass_pct: number;
+    max_calibration_gap_pts: number;
+    min_cycles_completed_pct: number;
+    max_price_blocked_pct: number;
+    error_auto_resolve_minutes: number;
+  };
   schedule: { cycles: string[] };
   notifications: {
     repeat_limit_minutes: number;
@@ -1419,4 +1432,73 @@ export interface BacktestDecisionRow {
   final_action: string;
   no_call_reason: string | null;
   cached: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Readiness (docs/SPEC.md, Readiness)
+
+export type ReadinessStatus = 'pass' | 'not_yet' | 'waiting';
+
+export interface ReadinessCriterion {
+  key: string;
+  group: 'Evidence' | 'Model' | 'Operations' | string;
+  label: string;
+  value: string;
+  target: string;
+  /** 0..1 fill of the progress bar; null when the criterion has no bar. */
+  progress: number | null;
+  status: ReadinessStatus;
+  sample: number | null;
+  /** Small line under the label (estimate, minimum or missed reason). */
+  sub: string | null;
+  /** Hover text: how the criterion is measured. */
+  hint: string;
+  estimate: string | null;
+  estimate_date: string | null;
+}
+
+export interface ReadinessManualItem {
+  item: string;
+  label: string;
+  detail: string;
+  done: boolean;
+  note: string | null;
+  changed_at: string | null;
+}
+
+export interface ReadinessErrorItem {
+  id: number;
+  time: string;
+  level: string;
+  event_type: string;
+  affects: string;
+  message: string;
+  resolves_at: string;
+}
+
+export interface ReadinessHistoryEntry {
+  at: string;
+  kind: 'run' | 'criterion' | 'manual' | string;
+  change: string;
+}
+
+export interface ReadinessResponse {
+  run: { id: number; started_at: string } | null;
+  snapshot: {
+    session_date: string;
+    created_at: string;
+    criteria: ReadinessCriterion[];
+  } | null;
+  summary: {
+    pass: number;
+    not_yet: number;
+    waiting: number;
+    total: number;
+    manual_done: number;
+    manual_total: number;
+    earliest: { label: string; date: string; text: string } | null;
+  };
+  manual: ReadinessManualItem[];
+  errors: ReadinessErrorItem[];
+  history: ReadinessHistoryEntry[];
 }

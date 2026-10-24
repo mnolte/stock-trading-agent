@@ -42,6 +42,17 @@ const FIELD_LABELS: Record<string, string> = {
   'universe.screen.min_avg_dollar_volume': 'Min average dollar volume',
   'universe.screen.lookback_sessions': 'Average over',
   'universe.screen.drop_after_failed_screens': 'Drop after',
+  'readiness.min_closed_trades': 'Readiness closed trades',
+  'readiness.min_sessions': 'Readiness paper sessions',
+  'readiness.max_drawdown_pct': 'Readiness max drawdown',
+  'readiness.min_avg_r': 'Readiness average R',
+  'readiness.min_profit_factor': 'Readiness profit factor',
+  'readiness.ratio_min_trades': 'Readiness minimum trades for ratios',
+  'readiness.min_proposal_pass_pct': 'Readiness proposals passing',
+  'readiness.max_calibration_gap_pts': 'Readiness calibration gap',
+  'readiness.min_cycles_completed_pct': 'Readiness cycles completed',
+  'readiness.max_price_blocked_pct': 'Readiness price checks blocked',
+  'readiness.error_auto_resolve_minutes': 'Errors auto-resolve after',
 };
 
 export interface DiffRow {
@@ -73,6 +84,7 @@ export function fmtPath(path: string, value: unknown): string {
 // Event labels for `notifications.events.<key>` diff rows — mirrors
 // backend/app/notifications/events.py EVENT_DEFS.
 const EVENT_LABELS: Record<string, string> = {
+  readiness_changed: 'Readiness changed',
   kill_switch: 'Kill switch turned on',
   missing_stop: 'Position without a stop at Alpaca',
   reconciliation: 'Reconciliation mismatch or adopted position',

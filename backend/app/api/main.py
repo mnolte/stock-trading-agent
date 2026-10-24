@@ -56,9 +56,9 @@ from app.engine.state import (
     set_event_sink,
 )
 from app.logging_config import setup_logging
-from app.market.calendar import CalendarStore
+from app.market.calendar import CalendarProvider, CalendarStore
 from app.market.clock import NY_TZ, Clock, make_clock
-from app.notifications.service import NotificationService
+from app.notifications.service import NotificationService, Notifier
 from app.reviews.client import make_review_client
 from app.reviews.service import ReviewService
 from app.secrets_service import (
@@ -141,6 +141,33 @@ async def refresh_daily_data_and_signals(
     await signals.refresh()
     if bus is not None:
         bus.publish("watchlist", "header", "banners", "performance")
+
+
+def run_readiness_tick(
+    config: AppConfig,
+    calendar: CalendarProvider,
+    clock: Clock,
+    notifier: Notifier,
+    publish: Callable[[set[str]], None],
+) -> None:
+    """Store the session-close readiness snapshot(s).
+
+    Runs every minute like the cycle audit: after each session's close it
+    evaluates the 15 criteria once and stores them; sessions missed while
+    the app was down are backfilled. A failure is logged, never fatal.
+    """
+    try:
+        from app.readiness.service import tick
+
+        tick(
+            config=config,
+            calendar=calendar,
+            clock=clock,
+            notifier=notifier,
+            publish=publish,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("readiness tick failed")
 
 
 def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
@@ -876,6 +903,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notification_service.tick,
         IntervalTrigger(minutes=1),
         id="notifications-tick",
+        coalesce=True,
+    )
+    # Readiness: after each session's close evaluate the 15 criteria once
+    # and store the snapshot; backfills sessions missed while down.
+    scheduler.add_job(
+        run_readiness_tick,
+        IntervalTrigger(minutes=1),
+        args=[
+            config,
+            calendar_store,
+            clock,
+            notification_service,
+            lambda topics: bus.publish(*topics),
+        ],
+        id="readiness-tick",
         coalesce=True,
     )
     # Backtest lifecycle: spawn the oldest queued run, sync progress from a

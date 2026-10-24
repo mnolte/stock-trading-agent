@@ -162,6 +162,13 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "reviews",
         INFO,
     ),
+    EventDef(
+        "readiness_changed",
+        "Readiness changed",
+        "A criterion passes or stops passing",
+        "reviews",
+        INFO,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}

@@ -89,3 +89,38 @@ def test_earnings_migration_backfills_and_normalises(
     assert rows["AAPL"] == "before_open|bmo"
     assert rows["MSFT"] == "during_market|dmh"
     assert rows["XOM"] == "unknown|weird"
+
+
+def test_readiness_migration_backfills_affects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """events.affects is backfilled from stored detail links."""
+    db = tmp_path / "readiness-mig.db"
+    _upgrade(db, "a15b26c37d48", monkeypatch)
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO events (time, level, event_type, details) VALUES "
+                "('2026-10-20 14:00:00', 'critical', 'order_submit_failed', "
+                "'{\"order_id\": \"o1\"}'), "
+                "('2026-10-20 14:01:00', 'critical', 'order_submit_failed', "
+                "'{\"fill_id\": 7}'), "
+                "('2026-10-20 14:02:00', 'info', 'run_started', "
+                "'{\"decision_id\": 3}'), "
+                "('2026-10-20 14:03:00', 'critical', 'universe_screen_failed', "
+                "'{\"error\": \"timeout\"}')"
+            )
+        )
+    _upgrade(db, "head", monkeypatch)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT event_type, affects FROM events ORDER BY time")
+        ).all()
+    assert rows == [
+        ("order_submit_failed", "order"),
+        ("order_submit_failed", "fill"),
+        ("run_started", "decision"),
+        ("universe_screen_failed", "none"),
+    ]
+    engine.dispose()

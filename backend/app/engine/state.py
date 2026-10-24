@@ -109,6 +109,27 @@ class ExecutionState:
         return bool(blocking)
 
 
+# Detail keys that link an event to a stored object, in precedence order:
+# the most downstream object the event touched wins (docs/SPEC.md, events
+# affects — only errors linked to a decision, order or fill count for
+# Readiness).
+AFFECTS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("fill", ("fill_id",)),
+    ("order", ("order", "order_id", "alpaca_order_id", "client_order_id")),
+    ("decision", ("decision_id",)),
+)
+
+
+def infer_affects(details: dict[str, object] | None) -> str:
+    """``affects`` for an event row from its stored details links."""
+    if not details:
+        return "none"
+    for affects, keys in AFFECTS_KEYS:
+        if any(details.get(key) not in (None, "") for key in keys):
+            return affects
+    return "none"
+
+
 def record_event(
     session: Session,
     clock: Clock,
@@ -116,6 +137,7 @@ def record_event(
     level: str,
     event_type: str,
     details: dict[str, object] | None = None,
+    affects: str | None = None,
 ) -> Event:
     """Append one row to the events log."""
     from app.data.cache import _naive_utc
@@ -125,6 +147,7 @@ def record_event(
         level=level,
         event_type=event_type,
         details=details,
+        affects=affects if affects is not None else infer_affects(details),
     )
     session.add(event)
     session.flush()

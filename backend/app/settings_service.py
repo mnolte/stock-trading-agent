@@ -86,6 +86,21 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "quiet_hours": ("quiet_hours", None, None),
         "events": ("notify_events", None, None),
     },
+    "readiness": {
+        # Thresholds only: the zero-tolerance criteria and the manual
+        # items are fixed by the spec (docs/SPEC.md, Readiness).
+        "min_closed_trades": ("int", 1, 10000),
+        "min_sessions": ("int", 1, 1000),
+        "max_drawdown_pct": ("number", 0, 100),
+        "min_avg_r": ("number", -10, 10),
+        "min_profit_factor": ("number", 0, 100),
+        "ratio_min_trades": ("int", 1, 1000),
+        "min_proposal_pass_pct": ("number", 0, 100),
+        "max_calibration_gap_pts": ("number", 0, 100),
+        "min_cycles_completed_pct": ("number", 0, 100),
+        "max_price_blocked_pct": ("number", 0, 100),
+        "error_auto_resolve_minutes": ("int", 1, 1440),
+    },
 }
 
 # Channels the user may pick per event (``app`` is always on).
@@ -150,6 +165,17 @@ LABELS: dict[tuple[str, str], str] = {
     ("notifications", "quiet_hours.start"): "Quiet hours from",
     ("notifications", "quiet_hours.end"): "Quiet hours to",
     ("notifications", "events"): "Notification channels",
+    ("readiness", "min_closed_trades"): "Readiness closed trades",
+    ("readiness", "min_sessions"): "Readiness paper sessions",
+    ("readiness", "max_drawdown_pct"): "Readiness max drawdown",
+    ("readiness", "min_avg_r"): "Readiness average R",
+    ("readiness", "min_profit_factor"): "Readiness profit factor",
+    ("readiness", "ratio_min_trades"): "Readiness minimum trades for ratios",
+    ("readiness", "min_proposal_pass_pct"): "Readiness proposals passing",
+    ("readiness", "max_calibration_gap_pts"): "Readiness calibration gap",
+    ("readiness", "min_cycles_completed_pct"): "Readiness cycles completed",
+    ("readiness", "max_price_blocked_pct"): "Readiness price checks blocked",
+    ("readiness", "error_auto_resolve_minutes"): "Errors auto-resolve after",
     ("universe", "symbols"): "Universe",
     ("universe", "mode"): "Universe mode",
     ("universe", "screen.min_price"): "Min price",

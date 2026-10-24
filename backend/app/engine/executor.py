@@ -441,6 +441,7 @@ class Executor:
                                 "qty": pos.qty,
                                 "reason": "cancel not confirmed",
                             },
+                            affects="order",
                         )
                         session.commit()
                     continue
@@ -469,6 +470,7 @@ class Executor:
                                 "error": result.error,
                                 "market_on_open": not regular_hours,
                             },
+                            affects="order",
                         )
                         session.commit()
                 else:
@@ -507,6 +509,9 @@ class Executor:
                     "market_on_open": not regular_hours,
                     "errors": errors,
                 },
+                # A clean flatten is a deliberate action; a failed leg is
+                # an order error that counts for Readiness.
+                affects="order" if errors or rejected or blocked else "none",
             )
             session.commit()
         await self.reconcile()
@@ -860,6 +865,9 @@ class Executor:
                     "closed": closed,
                     "errors": errors,
                 },
+                # A clean reset is a deliberate action; a failed close is
+                # an order error that counts for Readiness.
+                affects="order" if errors else "none",
             )
             session.commit()
         await self.reconcile()
@@ -1620,6 +1628,7 @@ class Executor:
                     level="critical",
                     event_type="protective_stop_failed",
                     details={"symbol": bp.symbol, "error": result.error},
+                    affects="order",
                 )
             else:
                 self._store_broker_order(session, result.data, None, leg="stop")
@@ -1692,6 +1701,7 @@ class Executor:
                     "symbol": position.symbol,
                     "error": result.error,
                 },
+                affects="order",
             )
             return None
         self._store_broker_order(session, result.data, None, leg="stop")
@@ -1929,6 +1939,7 @@ class Executor:
                     level="critical",
                     event_type="order_sanity",
                     details=result.to_json(),
+                    affects="order",
                 )
             session.flush()
             return
@@ -2322,6 +2333,7 @@ class Executor:
                     "symbol": position.symbol,
                     "error": broker_open.error,
                 },
+                affects="order",
             )
             session.flush()
             return
@@ -2384,6 +2396,7 @@ class Executor:
                     "symbol": position.symbol,
                     "error": sold.error,
                 },
+                affects="order",
             )
             session.flush()
             return
