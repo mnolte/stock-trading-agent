@@ -14,26 +14,13 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { HeaderState, PositionsResponse } from '../types/api';
 import { Banner } from './Banner';
 import { BannerStrip } from './BannerStrip';
+import { documentTitle, pageTitle } from './documentTitle';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
 import { Sidebar } from './Sidebar';
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
-
-function pageTitle(pathname: string): string {
-  if (pathname.startsWith('/positions')) return 'Positions & orders';
-  if (pathname.startsWith('/performance')) return 'Performance';
-  if (pathname.startsWith('/inspector')) return 'LLM inspector';
-  if (pathname.startsWith('/reviews')) return 'Reviews';
-  if (pathname.startsWith('/strategies')) return 'Strategies';
-  if (pathname.startsWith('/backtest')) return 'Backtest';
-  if (pathname.startsWith('/decisions')) return 'Decision detail';
-  if (pathname.startsWith('/readiness')) return 'Readiness';
-  if (pathname.startsWith('/settings')) return 'Settings';
-  if (pathname.startsWith('/states')) return 'States & dialogs';
-  return 'Dashboard';
-}
 
 export function Layout() {
   const [state, setState] = useState<HeaderState | null>(null);
@@ -64,6 +51,12 @@ export function Layout() {
   );
   useEffect(refreshAll, [refreshAll]);
   useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  // Browser tab shows the page and the agent's state (open, paused, kill
+  // switch) — docs/SPEC.md, Interaction and states.
+  useEffect(() => {
+    document.title = documentTitle(location.pathname, state);
+  }, [location.pathname, state]);
 
   // Mobile menu overlay (design/DESIGN.md, Interaction rules): Escape
   // closes, Tab stays inside the panel, and focus returns to the control

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, errorMessages } from './client';
+import { createSequence } from './latestWins';
 
 /** A failed fetch: when it happened, what the server/fetch layer said and
  * whether the request never got an answer (backend down or network off). */
@@ -34,22 +35,22 @@ export function useApiResource<T>(
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [failure, setFailure] = useState<FetchFailure | null>(null);
   const [settled, setSettled] = useState(false);
-  const seq = useRef(0);
+  const seq = useRef(createSequence());
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
   const reload = useCallback(() => {
-    const id = ++seq.current;
+    const isCurrent = seq.current.next();
     void fetcherRef.current()
       .then((result: T) => {
-        if (id !== seq.current) return;
+        if (!isCurrent()) return;
         setData(result);
         setUpdatedAt(new Date());
         setFailure(null);
         setSettled(true);
       })
       .catch((e: unknown) => {
-        if (id !== seq.current) return;
+        if (!isCurrent()) return;
         setSettled(true);
         setFailure({
           at: new Date(),
