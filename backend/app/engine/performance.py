@@ -785,7 +785,8 @@ class TailTrade:
     origin: str
     qty: int
     entry: Decimal
-    # Exit price in the same (post-split) terms as the after-exit prices.
+    # All prices are in entry-day terms; tails_trades converts stored
+    # post-split prices back before passing them in.
     exit_price: Decimal | None
     initial_stop: Decimal | None
     adjusted_pnl: Decimal | None
@@ -1059,9 +1060,10 @@ def tails_trades(
 ) -> list[TailTrade]:
     """Load one run's closed trades as ``TailTrade`` inputs.
 
-    The exit price is expressed in the same post-split terms the after-
-    exit job stored its prices in (``split_factor_after``), so the R
-    figures compare like with like.
+    Every price is expressed in entry-day terms — after-exit prices and
+    the best price while open are multiplied back by the cumulative
+    split ratio after their dates (``split_factor_after``), so the R
+    figures compare like with like on either side of a split.
     """
     from app.engine.after_exit import split_factor_after
 
@@ -1122,7 +1124,29 @@ def tails_trades(
             if p.entry_decision_id is not None
             else None
         )
-        factor = split_factor_after(splits, p.symbol, closed_ny)
+        opened_ny = _aware(p.opened_at).astimezone(NY_TZ).date()
+        # Splits after entry: stored post-split prices convert back to
+        # entry-day terms by multiplying; entry, stop and the reconstructed
+        # exit are already in entry-day terms.
+        factor = split_factor_after(splits, p.symbol, opened_ny)
+        best_open = outcome.best_price if outcome is not None else None
+        if (
+            best_open is not None
+            and outcome is not None
+            and outcome.best_price_at is not None
+            and factor != 1
+        ):
+            best_day = _aware(outcome.best_price_at).astimezone(NY_TZ).date()
+            best_open = (
+                best_open * factor / split_factor_after(splits, p.symbol, best_day)
+            )
+        # The stored after-exit prices only reflect splits that had their
+        # ex-date by the time the window was measured, so bound the
+        # conversion to those; a later split must not rescale them.
+        tail_factor = factor
+        if p.after_exit_done_at is not None:
+            done_day = _aware(p.after_exit_done_at).astimezone(NY_TZ).date()
+            tail_factor = factor / split_factor_after(splits, p.symbol, done_day)
         out.append(
             TailTrade(
                 id=p.id,
@@ -1130,20 +1154,24 @@ def tails_trades(
                 origin=p.origin,
                 qty=p.qty,
                 entry=p.avg_entry_price,
-                exit_price=(
-                    exit_price / factor if exit_price is not None else None
-                ),
+                exit_price=exit_price,
                 initial_stop=stop,
                 adjusted_pnl=adjusted,
                 exit_reason=p.exit_reason,
                 opened_at=p.opened_at,
                 closed_at=p.closed_at,  # type: ignore[arg-type]
-                best_open_price=(
-                    outcome.best_price if outcome is not None else None
-                ),
+                best_open_price=best_open,
                 after_exit_status=p.after_exit_status,
-                after_exit_best_price=p.after_exit_best_price,
-                after_exit_close_price=p.after_exit_close_price,
+                after_exit_best_price=(
+                    p.after_exit_best_price * tail_factor
+                    if p.after_exit_best_price is not None and tail_factor != 1
+                    else p.after_exit_best_price
+                ),
+                after_exit_close_price=(
+                    p.after_exit_close_price * tail_factor
+                    if p.after_exit_close_price is not None and tail_factor != 1
+                    else p.after_exit_close_price
+                ),
             )
         )
     return out

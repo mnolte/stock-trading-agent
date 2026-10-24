@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
 from app.data.aggregate import session_bars
-from app.data.alpaca import AlpacaDataClient
 from app.data.cache import _naive_utc
 from app.data.factory import DataSources
 from app.data.models import Bar5m, CalendarDay
@@ -38,8 +37,6 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 
 logger = logging.getLogger(__name__)
-
-_MAX_FAILURES = 3
 
 
 @dataclass
@@ -58,7 +55,6 @@ class _PendingRow:
 
     position_id: int
     symbol: str
-    exit_price: Decimal | None
     exit_day: date
     sessions: list[CalendarDay]
     start: datetime
@@ -111,11 +107,27 @@ class AfterExitWorker:
         self._session_factory = session_factory or get_session_maker()
         # The session date the last pass ran for — one attempt per session.
         self._ran_for: date | None = None
-        # Fetch failures per position, counted within the process (a
-        # restart simply earns a fresh attempt).
-        self._failures: dict[int, int] = {}
         self._sessions_n = int(
             config.get("performance", "tail", "after_exit_sessions", default=5)
+        )
+        # Fetch failures that make a row "unavailable"; the counter itself
+        # lives on the position row so a restart keeps the budget.
+        self._max_failures = int(
+            config.get(
+                "performance", "tail", "after_exit_max_failures", default=3
+            )
+        )
+        # Delay before trusting a closed session's bars (the SIP delay the
+        # paper data client applies).
+        self._data_delay = timedelta(
+            minutes=int(
+                config.get(
+                    "performance",
+                    "tail",
+                    "after_exit_bar_delay_minutes",
+                    default=16,
+                )
+            )
         )
 
     # ------------------------------------------------------------------
@@ -161,21 +173,18 @@ class AfterExitWorker:
             if len(sessions) < self._sessions_n:
                 continue  # calendar doesn't reach far enough — stays pending
             last_close = sessions[-1].close.astimezone(UTC)
-            if last_close + AlpacaDataClient.SIP_MIN_AGE > now:
+            if last_close + self._data_delay > now:
                 continue  # still inside the window — shows "pending"
-            exit_price = (
-                position.avg_entry_price + position.realized_pnl_raw / position.qty
-                if position.realized_pnl_raw is not None and position.qty
-                else None
-            )
             due.append(
                 _PendingRow(
                     position_id=position.id,
                     symbol=position.symbol,
-                    exit_price=exit_price,
                     exit_day=exit_day,
                     sessions=sessions,
-                    start=_aware(position.closed_at),  # type: ignore[arg-type]
+                    # The window is the sessions AFTER the exit: bars from
+                    # the first post-exit session's open, never the
+                    # remainder of the exit session.
+                    start=sessions[0].open.astimezone(UTC),
                     end=last_close,
                 )
             )
@@ -224,14 +233,21 @@ class AfterExitWorker:
     # ------------------------------------------------------------------
     # one position
 
-    def _write_unavailable(self, position_id: int) -> None:
+    def _record_failure(self, position_id: int) -> bool:
+        """Count a fetch failure on the position row; returns True when the
+        row was stored ``unavailable``."""
         with self._session_factory() as session:
             position = session.get(Position, position_id)
             if position is None or position.after_exit_status != "pending":
-                return
+                return False
+            position.after_exit_failures += 1
+            if position.after_exit_failures < self._max_failures:
+                session.commit()
+                return False
             position.after_exit_status = "unavailable"
             position.after_exit_done_at = _naive_utc(self.clock.now())
             session.commit()
+            return True
 
     async def _fill_one(
         self,
@@ -241,14 +257,11 @@ class AfterExitWorker:
         """Compute and store one position; returns done | pending | failed | unavailable."""
         bars, error = await self._bars(row)
         if bars is None:
-            failures = self._failures.get(row.position_id, 0) + 1
-            self._failures[row.position_id] = failures
-            if failures >= _MAX_FAILURES:
-                self._write_unavailable(row.position_id)
+            if self._record_failure(row.position_id):
                 logger.warning(
                     "after-exit %s: fetch failed %d times (%s) — unavailable",
                     row.symbol,
-                    failures,
+                    self._max_failures,
                     error,
                 )
                 return "unavailable"
@@ -289,6 +302,7 @@ class AfterExitWorker:
                 return "pending"
             position.after_exit_status = "done"
             position.after_exit_done_at = _naive_utc(self.clock.now())
+            position.after_exit_failures = 0
             position.after_exit_best_price = best.high
             position.after_exit_best_at = _naive_utc(best.start)
             position.after_exit_close_price = close.close

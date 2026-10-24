@@ -42,7 +42,7 @@ from app.db.models import (
     Run,
 )
 from app.engine.after_exit import AfterExitWorker, split_factor_after
-from app.engine.performance import TailTrade, compute_tails
+from app.engine.performance import TailTrade, compute_tails, tails_trades
 from app.market.clock import NY_TZ, FakeClock
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -337,10 +337,14 @@ async def test_job_fills_after_five_sessions(
         ).scalar_one()
         assert p.after_exit_status == "done"
         assert p.after_exit_done_at is not None
+        # Window starts at the first post-exit session's open (Wed Oct 7);
+        # the rest of the exit session must not leak into the metrics.
         bars = session.execute(
             select(Bar5mRow).where(
                 Bar5mRow.symbol == "AAA",
-                Bar5mRow.start >= exit_at.replace(tzinfo=None),
+                Bar5mRow.start
+                >= datetime.combine(date(2026, 10, 7), NY_OPEN)
+                .replace(tzinfo=NY_TZ).astimezone(UTC).replace(tzinfo=None),
                 Bar5mRow.start
                 <= datetime.combine(date(2026, 10, 13), time(16, 0))
                 .replace(tzinfo=NY_TZ).astimezone(UTC).replace(tzinfo=None),
@@ -467,6 +471,24 @@ async def test_split_during_window_adjusts_bars_and_exit(
                     b.high / 2 if day_ < date(2026, 10, 9) else b.high
                 )
         assert p.after_exit_best_price == max(expected_highs)
+        stored_best = p.after_exit_best_price
+        stored_close = p.after_exit_close_price
+    # tails_trades expresses everything in entry-day terms: after-exit
+    # prices come back multiplied by the 2:1 split; exit stays 105.
+    with session_factory() as session:
+        trades = tails_trades(
+            session, run_start=datetime(2026, 1, 1), run_end=None
+        )
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.exit_price == Decimal("105")
+    assert stored_close is not None
+    assert trade.after_exit_best_price == stored_best * 2
+    assert trade.after_exit_close_price == stored_close * 2
+    out = _fn(trades)
+    assert out["after_exit"][0]["median_best_r"] == (
+        (stored_best * 2 - Decimal("105")) / 5
+    )
 
 
 def test_split_factor_after_helper() -> None:

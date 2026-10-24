@@ -136,6 +136,9 @@ class Position(Base):
     """An open or closed position."""
 
     __tablename__ = "positions"
+    __table_args__ = (
+        Index("ix_positions_after_exit_status", "after_exit_status"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
@@ -168,6 +171,9 @@ class Position(Base):
         String(16), nullable=False, default="pending"
     )
     after_exit_done_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Fetch failures toward "unavailable", kept on the row so a restart
+    # does not reset the retry budget.
+    after_exit_failures: Mapped[int] = mapped_column(nullable=False, default=0)
 
 
 class Outcome(Base):
