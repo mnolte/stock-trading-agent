@@ -473,6 +473,8 @@ export interface DecisionDetail {
   verdict: DecisionVerdict | null;
   verdict_eligible: boolean;
   verdict_due: string | null;
+  /** The llm_calls row for this decision's request, when one was sent. */
+  llm_call_id: number | null;
   earnings: DecisionEarnings | null;
   execution_mode: string | null;
   eur_usd_rate: string | null;
@@ -1521,4 +1523,96 @@ export interface ReadinessResponse {
   manual: ReadinessManualItem[];
   errors: ReadinessErrorItem[];
   history: ReadinessHistoryEntry[];
+}
+
+// --- LLM call history (PR 18) --------------------------------------------
+
+export type LlmCallOutcome = 'success' | 'warning' | 'error';
+export type LlmCallSource = 'live' | 'shadow' | 'review';
+
+export interface LlmCallRow {
+  id: number;
+  sent_at: string;
+  session_date: string;
+  source: LlmCallSource;
+  kind: string;
+  strategy_id: number | null;
+  strategy: string | null;
+  decision_id: number | null;
+  shadow_decision_id: number | null;
+  review_id: number | null;
+  verdict_id: number | null;
+  cycle_id: number | null;
+  symbol: string | null;
+  context: string | null;
+  model: string | null;
+  temperature: number | null;
+  prompt_version: string | null;
+  prompt_hash: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cost: number | null;
+  cost_source: string | null;
+  latency_ms: number | null;
+  final_action: string | null;
+  outcome: LlmCallOutcome;
+  reasons: string[];
+  error_type: string | null;
+  http_status: number | null;
+  backfilled: boolean;
+}
+
+export interface LlmCallsPage {
+  calls: LlmCallRow[];
+  total: number;
+  has_more: boolean;
+  next_cursor: string | null;
+}
+
+export interface LlmCallsSummary {
+  total: number;
+  outcomes: Record<LlmCallOutcome, number>;
+  cost_total: number | null;
+  cost_by_source: Record<LlmCallSource, number | null>;
+  latency: { median_ms: number | null; p95_ms: number | null; counted: number };
+  buckets: {
+    session_date: string;
+    calls: number;
+    success: number;
+    warning: number;
+    error: number;
+  }[];
+  /** Session calendar under the other filters (date range ignored). */
+  session_dates: string[];
+  /** Per-option counts under the other filters. */
+  options: {
+    outcome: Record<string, number>;
+    source: Record<string, number>;
+    symbol: Record<string, number>;
+    action: Record<string, number>;
+    model: Record<string, number>;
+    prompt: Record<string, number>;
+    reason: Record<string, number>;
+    strategy: Record<string, number>;
+  };
+}
+
+export interface LlmCallDetail extends LlmCallRow {
+  error: {
+    type: string | null;
+    http_status: number | null;
+    code: string | null;
+    message: string | null;
+    request_id: string | null;
+  };
+  raw_response: string | null;
+  prompt: {
+    system: string | null;
+    user: string | null;
+    stored_hash: string | null;
+    mismatch: boolean;
+  };
+  result: string;
+  explanation: string | null;
+  link: string | null;
 }

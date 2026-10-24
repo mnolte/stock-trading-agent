@@ -12,6 +12,10 @@ export function actionColor(action: string | null): string {
       return 'var(--sa-info)';
     case 'hold':
       return 'var(--sa-text-2)';
+    case 'briefing':
+    case 'weekly':
+    case 'verdict':
+      return 'var(--sa-neutral-chip)';
     default:
       return 'var(--sa-text-disabled)';
   }

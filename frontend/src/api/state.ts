@@ -1,5 +1,8 @@
 import { get, post } from './client';
 import type {
+  LlmCallDetail,
+  LlmCallsPage,
+  LlmCallsSummary,
   ApprovalsResponse,
   BacktestDecisionRow,
   BacktestEstimate,
@@ -345,4 +348,46 @@ export function postDismissEvent(
   note: string,
 ): Promise<{ dismissed: boolean }> {
   return post<{ dismissed: boolean }>(`/api/events/${id}/dismiss`, { note });
+}
+
+// --- LLM call history (PR 18) --------------------------------------------
+
+/** Filter dimensions the list, summary and CSV export share. */
+export type LlmCallFilters = Record<string, string | undefined>;
+
+function llmCallsQuery(filters: LlmCallFilters): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+export function getLlmCalls(
+  filters: LlmCallFilters,
+  cursor?: string,
+  limit = 50,
+  order: 'desc' | 'asc' = 'desc',
+): Promise<LlmCallsPage> {
+  const params = new URLSearchParams(llmCallsQuery(filters));
+  params.set('limit', String(limit));
+  params.set('order', order);
+  if (cursor) params.set('cursor', cursor);
+  return get<LlmCallsPage>(`/api/llm-calls?${params}`);
+}
+
+export function getLlmCallsSummary(
+  filters: LlmCallFilters,
+): Promise<LlmCallsSummary> {
+  return get<LlmCallsSummary>(`/api/llm-calls/summary${llmCallsQuery(filters)}`);
+}
+
+export function getLlmCall(id: number): Promise<LlmCallDetail> {
+  return get<LlmCallDetail>(`/api/llm-calls/${id}`);
+}
+
+/** The filtered calls' metadata as CSV — never prompts or responses. */
+export function llmCallsExportUrl(filters: LlmCallFilters): string {
+  return `/api/llm-calls/export.csv${llmCallsQuery(filters)}`;
 }
