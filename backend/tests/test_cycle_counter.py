@@ -101,14 +101,17 @@ def test_counter_early_close_fewer_segments(client: TestClient) -> None:
 
 
 def test_counter_market_closed_next_session_first_cycle(client: TestClient) -> None:
-    # Saturday: the counter points at Monday's first cycle, not today.
+    # Saturday: the strip summarises the last session (Friday), so its six
+    # cycles show as done segments, and the counter points at Monday's
+    # first cycle.
     _calendar(client, [_day(date(2026, 10, 16)), _day(date(2026, 10, 19))])
     _clock(client).set(datetime(2026, 10, 17, 12, 0, tzinfo=UTC))
 
     body = _counter(client)
 
-    assert body["segments"] == []
-    assert body["cycles_today"] == 0
+    assert body["session_is_today"] is False
+    assert [s["status"] for s in body["segments"]] == ["done"] * 6
+    assert body["cycles_today"] == 6
     assert body["cycle_index"] == 0
     assert body["next_cycle"] == "2026-10-19T14:46:00+00:00"  # Mon 10:46 NY
     assert body["next_cycle_today"] is False

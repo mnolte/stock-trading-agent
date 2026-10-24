@@ -23,6 +23,9 @@ describe('countdown', () => {
   it('rounds whole hours without minutes', () => {
     expect(countdown('2026-10-15T16:52:00Z', '2026-10-15T19:52:00Z')).toBe('in 3 h');
   });
+  it('is empty past 24 hours — the day and time are shown instead', () => {
+    expect(countdown('2026-10-17T16:52:00Z', '2026-10-19T13:30:00Z')).toBe('');
+  });
 });
 
 describe('sessionTail', () => {
@@ -50,6 +53,18 @@ describe('sessionTail', () => {
       session({ state: 'closed', next_open: '2026-10-16T13:30:00Z' }),
     );
     expect(tail).toBe(' · opens Fri 15:30 · in 20 h 38 min');
+  });
+  it('closed: past 24 hours shows only the day and time', () => {
+    // Saturday → Monday open (~46 h away): no countdown.
+    const tail = sessionTail(
+      'closed',
+      session({
+        state: 'closed',
+        now: '2026-10-17T12:00:00+00:00',
+        next_open: '2026-10-19T13:30:00Z',
+      }),
+    );
+    expect(tail).toBe(' · opens Mon 15:30');
   });
   it('early close: closes early with the cycles that still run', () => {
     const tail = sessionTail(

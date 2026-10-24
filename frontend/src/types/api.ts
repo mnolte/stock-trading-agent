@@ -897,6 +897,9 @@ export interface CycleCounter {
   kill_switch: boolean;
   running: boolean;
   now: string | null; // server time, to correct client-clock drift
+  /** The counter's segments cover the shown session; off-hours that's the
+   * last session, not today. */
+  session_is_today: boolean;
   next_cycle: string | null;
   next_cycle_today: boolean;
   next_check: string | null;
@@ -1026,6 +1029,9 @@ export interface DashboardLatestDecision {
   checks: { name: string; passed: boolean; detail: string }[];
   price: string | null;
   time: string;
+  /** False when this is the most recent decision from an earlier session —
+   * the card then shows the date instead of the full in-session layout. */
+  in_session: boolean;
 }
 
 export interface DashboardFeedItem {
@@ -1061,6 +1067,10 @@ export interface DashboardResponse {
     next_cycle: string | null;
     next_open: string | null;
     next_close: string | null;
+    /** The session the feed/tiles describe — today or the last completed
+     * one (NY session date, "2026-10-23"). */
+    shown_date: string;
+    shown_is_today: boolean;
   };
   cycle_line: DashboardCycleLine | null;
   cycle_counter: CycleCounter | null;

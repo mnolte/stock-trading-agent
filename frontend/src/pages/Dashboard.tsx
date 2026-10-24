@@ -32,7 +32,15 @@ import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
-import { displayFullDate, displayTime, nyTime } from '../format';
+import {
+  displayFullDate,
+  displayTime,
+  displayWeekdayDateTime,
+  displayWeekdayTime,
+  nyTime,
+  sessionDayLabel,
+  sessionDayShort,
+} from '../format';
 import {
   actionBadgeStyle,
   formatAmsTime,
@@ -177,10 +185,17 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const isOpen = (cycle: FeedCycle, first: boolean) =>
     toggled[cycle.key] ?? first;
+  const sess = res.data?.session;
+  // Off-hours the feed is titled with the shown session's date
+  // ("Friday 23 Oct · last session", docs/SPEC.md).
+  const title =
+    sess && !sess.shown_is_today
+      ? `${sessionDayLabel(sess.shown_date)} · last session`
+      : "Today's decisions";
 
   return (
     <Card
-      label="Today's decisions"
+      label={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
     >
@@ -190,7 +205,9 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
         isEmpty={(d) => d.feed.length === 0}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-            No decisions yet today — the next cycle writes the first.
+            {sess && !sess.shown_is_today
+              ? `No decisions on ${sessionDayLabel(sess.shown_date)}.`
+              : 'No decisions yet today — the next cycle writes the first.'}
           </div>
         }
       >
@@ -250,9 +267,12 @@ function toneStyle(tone: number): React.CSSProperties {
 
 function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
   const d = res.data?.latest_decision ?? null;
+  // Off-session fallback (design/screens/States.dc.html): the card shows
+  // the most recent decision for the symbol, with its date.
+  const compact = d !== null && !d.in_session;
   return (
     <Card
-      label="Latest decision"
+      label={compact ? `Latest decision · ${d.symbol}` : 'Latest decision'}
       busy={res.loading}
       right={
         d && (
@@ -275,13 +295,71 @@ function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
         isEmpty={(data) => data.latest_decision === null}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-            No decision yet this session.
+            No decisions recorded yet — the next cycle writes the first.
           </div>
         }
       >
-        {() => (d === null ? null : <LatestDecisionBody d={d} />)}
+        {() =>
+          d === null ? null : compact ? (
+            <LatestDecisionCompact d={d} />
+          ) : (
+            <LatestDecisionBody d={d} />
+          )
+        }
       </CardBody>
     </Card>
+  );
+}
+
+/** Compact off-session card: "HOLD · Fri 23 Oct 21:46 · trend intact". */
+function LatestDecisionCompact({ d }: { d: DashboardLatestDecision }) {
+  const location = useLocation();
+  const chip = actionText(d.final_action);
+  const badge = actionBadgeStyle(d.final_action);
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 'var(--sa-text-md)',
+          color: 'var(--sa-text-2)',
+          lineHeight: 1.55,
+        }}
+      >
+        <b
+          style={{
+            fontFamily: 'var(--sa-font-mono)',
+            fontWeight: 600,
+            color: badge.color,
+          }}
+        >
+          {chip.label}
+        </b>
+        {' · '}
+        <span title={formatNyTitle(d.time)}>
+          {displayWeekdayDateTime(d.time)}
+        </span>
+        {d.why ? ` · ${d.why}` : ''}
+      </div>
+      <Link
+        to={`/decisions/${d.id}`}
+        state={{ backgroundLocation: location }}
+        style={{
+          height: '44px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 'var(--sa-radius-md)',
+          border: '1px solid var(--sa-border-strong)',
+          background: 'var(--sa-raised)',
+          color: 'var(--sa-text)',
+          textDecoration: 'none',
+          fontWeight: 500,
+          marginTop: 'auto',
+        }}
+      >
+        Open full decision
+      </Link>
+    </>
   );
 }
 
@@ -421,6 +499,7 @@ function OpenPositionsMini({
   passCount,
 }: {
   res: Resource<PositionsResponse>;
+  /** Formatted "at 19:46" / "at Mon 16:46" label, or null when unknown. */
   nextCycle: string | null;
   passCount: number | null;
 }) {
@@ -442,9 +521,9 @@ function OpenPositionsMini({
             </p>
             <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-muted)' }}>
               {nextCycle && passCount !== null && passCount > 0
-                ? `The next cycle at ${displayTime(nextCycle)} may open one: ${passCount} symbol${passCount === 1 ? '' : 's'} pass${passCount === 1 ? 'es' : ''} the rules.`
+                ? `The next cycle at ${nextCycle} may open one: ${passCount} symbol${passCount === 1 ? '' : 's'} pass${passCount === 1 ? 'es' : ''} the rules.`
                 : nextCycle
-                  ? `The next cycle at ${displayTime(nextCycle)} may open one.`
+                  ? `The next cycle at ${nextCycle} may open one.`
                   : 'The next entry decision comes with the next cycle.'}
             </p>
           </>
@@ -522,7 +601,14 @@ function OpenPositionsMini({
   );
 }
 
-export function MarketClosed({ mc }: { mc: MarketClosedCard }) {
+export function MarketClosed({
+  mc,
+  day,
+}: {
+  mc: MarketClosedCard;
+  /** Session date the summary covers — "Friday 23 Oct". Defaults to "today". */
+  day?: string;
+}) {
   return (
     <Card>
       <div
@@ -556,7 +642,11 @@ export function MarketClosed({ mc }: { mc: MarketClosedCard }) {
               {s.symbol} stop {s.stop}
             </Chip>
           ))}
-          {mc.today_summary && <Chip variant="info">today: {mc.today_summary}</Chip>}
+          {mc.today_summary && (
+            <Chip variant="info">
+              {day ? `${sessionDayShort(day)}` : 'today'}: {mc.today_summary}
+            </Chip>
+          )}
         </div>
       </div>
     </Card>
@@ -970,7 +1060,7 @@ export default function Dashboard() {
           to="/inspector"
           title={
             stats
-              ? `Decision calls today: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
+              ? `Decision calls in the shown session: at most ${stats.calls_per_cycle} per cycle, ${stats.cycles_today} cycles.` +
                 (stats.reviews_cost_month !== null && stats.reviews_cost_month !== undefined
                   ? ` Reviews have their own $${stats.reviews_cost_cap} monthly cap: $${Number(stats.reviews_cost_month).toFixed(2)} used.`
                   : '') +
@@ -987,13 +1077,17 @@ export default function Dashboard() {
           }}
         >
           <StatCard
-            label="Model calls today"
+            label={
+              dashboard.session.shown_is_today
+                ? 'Model calls today'
+                : `Model calls · ${sessionDayShort(dashboard.session.shown_date)}`
+            }
             value={`${stats?.calls_today ?? 0}`}
             bar={{
               width: `${stats && stats.calls_max > 0 ? Math.min(100, (stats.calls_today / stats.calls_max) * 100) : 0}%`,
               color: 'var(--sa-info)',
             }}
-            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} today · $${stats ? Number(stats.calls_cost_month).toFixed(2) : '—'} this month`}
+            sub={`of ${stats?.calls_max ?? '—'} max · $${stats ? Number(stats.calls_cost_today).toFixed(3) : '—'} this session · $${stats ? Number(stats.calls_cost_month).toFixed(2) : '—'} this month`}
             style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
           />
         </Link>
@@ -1031,7 +1125,14 @@ export default function Dashboard() {
       </div>
 
       {dashboard?.market_closed && (
-        <MarketClosed mc={dashboard.market_closed} />
+        <MarketClosed
+          mc={dashboard.market_closed}
+          day={
+            dashboard.session.shown_is_today
+              ? undefined
+              : dashboard.session.shown_date
+          }
+        />
       )}
 
       <div
@@ -1208,7 +1309,13 @@ export default function Dashboard() {
 
       <OpenPositionsMini
         res={positionsRes}
-        nextCycle={dashboard?.session.next_cycle ?? null}
+        nextCycle={
+          dashboard?.session.next_cycle
+            ? dashboard.cycle_counter?.next_cycle_today === false
+              ? displayWeekdayTime(dashboard.session.next_cycle)
+              : displayTime(dashboard.session.next_cycle)
+            : null
+        }
         passCount={passCount}
       />
 

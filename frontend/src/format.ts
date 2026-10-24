@@ -72,6 +72,47 @@ export function nyTime(iso: string | null | undefined): string {
   });
 }
 
+/** "Fri 23 Oct 21:46" — weekday + date + time in Amsterdam time. Used when a
+ * shown timestamp is not from today (e.g. the last session's decision). */
+export function displayWeekdayDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: DISPLAY_TZ,
+  });
+  const time = d.toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: DISPLAY_TZ,
+  });
+  return `${date} ${time}`;
+}
+
+/** "Friday 23 Oct" — a session date ("2026-10-23") spelled out. */
+export function sessionDayLabel(isoDate: string | null | undefined): string {
+  if (!isoDate) return '';
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+}
+
+/** "Fri 23 Oct" — short session date (tile labels, chips). */
+export function sessionDayShort(isoDate: string | null | undefined): string {
+  if (!isoDate) return '';
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+}
+
 /** True when the ISO timestamp falls on today's New York session date. */
 export function openedTodayNy(iso: string): boolean {
   const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: MARKET_TZ };
