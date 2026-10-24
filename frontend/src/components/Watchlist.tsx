@@ -42,8 +42,7 @@ function Tab({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       style={{
         height: '34px',
@@ -132,7 +131,7 @@ export function Watchlist({
           <>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
         <div
-          role="tablist"
+          role="group"
           aria-label="Filter watchlist"
           style={{
             display: 'inline-flex',
@@ -180,9 +179,9 @@ export function Watchlist({
         )}
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <div role="table" aria-label="Watchlist" style={{ minWidth: '760px' }}>
+        <div role="list" aria-label="Watchlist" style={{ minWidth: '760px' }}>
           <div
-            role="row"
+            aria-hidden="true"
             style={{
               display: 'grid',
               gridTemplateColumns: screened ? GRID_RANKED : GRID,
@@ -195,20 +194,18 @@ export function Watchlist({
           >
             {screened && (
               <span
-                role="columnheader"
                 title="Liquidity-screen rank: 20-session return minus SPY's."
                 style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
               >
                 Rank
               </span>
             )}
-            <span role="columnheader">Symbol</span>
-            <span role="columnheader" style={{ textAlign: 'right' }}>Price</span>
-            <span role="columnheader" style={{ textAlign: 'right' }}>Day</span>
-            <span role="columnheader">Rules</span>
-            <span role="columnheader">Last action</span>
+            <span>Symbol</span>
+            <span style={{ textAlign: 'right' }}>Price</span>
+            <span style={{ textAlign: 'right' }}>Day</span>
+            <span>Rules</span>
+            <span>Last action</span>
             <span
-              role="columnheader"
               title={`Next earnings date. No new entries within ${earningsBlackoutDays} trading days.`}
               style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
             >
@@ -222,8 +219,9 @@ export function Watchlist({
               <button
                 key={row.symbol}
                 type="button"
-                role="row"
+                className="sa-row"
                 aria-pressed={on}
+                aria-label={`${row.symbol}, chart it`}
                 onClick={() => onSelect(row.symbol)}
                 style={{
                   width: '100%',

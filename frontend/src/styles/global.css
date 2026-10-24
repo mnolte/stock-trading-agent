@@ -61,6 +61,9 @@ table {
   outline: var(--sa-focus-ring);
   outline-offset: var(--sa-focus-offset);
 }
+button:not([disabled]):hover {
+  filter: brightness(1.15);
+}
 .sa-row {
   cursor: pointer;
 }

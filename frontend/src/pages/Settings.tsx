@@ -61,7 +61,8 @@ const numInput = (width = 72): CSSProperties => ({
   fontFamily: 'var(--sa-font-mono)',
   fontSize: 'var(--sa-text-base)',
   textAlign: 'right',
-  outline: 'none',
+  // No outline:none — the shared :focus-visible ring stays on every
+  // interactive element (design/DESIGN.md, Interaction rules).
 });
 
 const unitText: CSSProperties = {
