@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useLiveUpdates } from '../api/liveContext';
-import { getPerformance } from '../api/state';
+import { getPerformance, getPerformanceTails } from '../api/state';
+import { useApiResource } from '../api/useResource';
 import { Card } from '../components/Card';
 import { EquityCurveChart } from '../components/EquityCurveChart';
 import type { EquityCurvePoint } from '../components/EquityCurveChart';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatCard } from '../components/StatCard';
+import { TailsCard } from '../components/TailsCard';
 import type {
   ClosedTradeRow,
   PerformanceAggRow,
@@ -238,6 +240,14 @@ export default function Performance() {
   useEffect(refresh, [refresh]);
   useLiveUpdates(['performance'], refresh);
 
+  // Winners and tails: same run as the rest of the page; latest request
+  // wins when the run changes quickly.
+  const tails = useApiResource(
+    useCallback(() => getPerformanceTails(runId), [runId]),
+    [runId],
+  );
+  useLiveUpdates(['performance'], tails.reload);
+
   const run = data?.run;
   const summary = data?.summary;
   const curve = data?.curve;
@@ -454,6 +464,8 @@ export default function Performance() {
               </Card>
             </div>
           </div>
+
+          <TailsCard res={tails} />
 
           <Card label="Decisions and outcomes">
             <div style={{ overflowX: 'auto' }}>

@@ -993,15 +993,15 @@ def compute_tails(
                 "median_close_r": _median(close_rs),
                 # Share of target exits whose best after exit ran ≥ 1R.
                 "share_1r": (
-                    (
+                    Decimal(
                         sum(
                             1
                             for row in rows
                             if row.after_best_r is not None
                             and row.after_best_r >= 1
                         )
-                        / len(rows)
                     )
+                    / len(rows)
                     if reason == "target"
                     else None
                 ),
@@ -1219,6 +1219,12 @@ def compute_tails_payload(
         },
         "trades": result["trades"],
         "min_trades": result["min_trades"],
+        "after_exit_sessions": int(
+            config.get("performance", "tail", "after_exit_sessions", default=5)
+        ),
+        "top_share_pct": int(
+            config.get("performance", "tail", "top_share_pct", default=20)
+        ),
         "pending": result["pending"],
         "unavailable": result["unavailable"],
         "excluded": result["excluded"],

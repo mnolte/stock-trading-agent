@@ -859,6 +859,67 @@ export interface ClosedTradeRow {
   origin: string;
 }
 
+// ---- Tail metrics (PR 19) -------------------------------------------------
+
+export interface TailsBucket {
+  lower: string | null;
+  upper: string | null;
+  count: number;
+}
+
+export interface TailsExtreme {
+  symbol: string;
+  exit_reason: string | null;
+  r: string;
+  opened_at: string;
+  closed_at: string;
+  below_stop: boolean;
+}
+
+export interface TailsAfterExitGroup {
+  reason: string;
+  label: string;
+  count: number;
+  median_best_r: string | null;
+  median_close_r: string | null;
+  share_1r: string | null;
+  recovered_above_entry: number;
+}
+
+export interface TailsTradeRow {
+  id: number;
+  symbol: string;
+  exit_reason: string | null;
+  exit_label: string;
+  result_r: string;
+  best_open_r: string | null;
+  after_best_r: string | null;
+  after_close_r: string | null;
+  after_exit_status: string; // pending | done | unavailable
+  opened_at: string;
+  closed_at: string;
+}
+
+export interface PerformanceTailsResponse {
+  empty: boolean;
+  run?: { id: number; started_at: string; current: boolean };
+  trades: number;
+  min_trades: number;
+  after_exit_sessions?: number;
+  top_share_pct?: number;
+  pending: number;
+  unavailable: number;
+  excluded: number;
+  distribution: TailsBucket[];
+  largest_win: TailsExtreme | null;
+  largest_loss: TailsExtreme | null;
+  top_share: { trades: number; of: number; share: string } | null;
+  net_without_best: { net: string; total: string; symbol: string } | null;
+  winners_kept: { share: string; winners: number } | null;
+  after_exit: TailsAfterExitGroup[];
+  rows: TailsTradeRow[];
+}
+
 export interface PerformanceResponse {
   empty: boolean;
   runs: PerformanceRunInfo[];
