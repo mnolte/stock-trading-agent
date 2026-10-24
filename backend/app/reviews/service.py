@@ -731,6 +731,7 @@ class ReviewService:
                     reason=str(composed.content["reason"]),
                     source="draft",
                     draft_source=composed.source,
+                    draft_reason=composed.reason,
                     cost=composed.cost,
                     facts=facts,
                     created_at=now,

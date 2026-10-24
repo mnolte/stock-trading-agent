@@ -419,6 +419,10 @@ class Verdict(Base):
     draft_source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="model"
     )
+    # Which fallback made a template draft ("model call failed", "number
+    # check failed"…) — the reviews table records this in ``reason``; the
+    # LLM inspector needs it to tell a sent call from a skipped one.
+    draft_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Draft-call spend; the review monthly cap covers verdict calls too.
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
