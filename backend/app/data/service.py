@@ -292,7 +292,10 @@ class MarketDataService:
 
         Fetches run a few at a time: the per-symbol calls keep per-symbol
         error reporting, and the shared rate limiter releases its lock
-        after acquiring a slot, so the SDK calls overlap.
+        after acquiring a slot, so the SDK calls overlap. Coverage is
+        checked like ``refresh_history``: each symbol's request starts at
+        its earliest missing session and the newest session is always
+        refetched — a warm cache costs one small request per symbol.
         """
         count = int(
             self.config.get("schedule", "daily_history_sessions", default=260)
@@ -303,18 +306,35 @@ class MarketDataService:
                 symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
                 for symbol in self.universe()
             }
-        start, end = sessions[0].date, sessions[-1].date
+        end = sessions[-1].date
+        symbols = self.universe()
+        # Batched coverage first: only symbols short of the full window
+        # get the per-symbol date query.
+        covered_counts = self.bars_cache.daily_bar_counts(symbols, sessions)
         semaphore = asyncio.Semaphore(10)
 
-        async def fetch(symbol: str) -> tuple[str, DataResult[list[DailyBar]]]:
+        async def fetch(
+            symbol: str, start: date
+        ) -> tuple[str, DataResult[list[DailyBar]]]:
             async with semaphore:
                 return symbol, await self.sources.bars.fetch_daily_bars(
                     symbol, start, end
                 )
 
-        fetched = await asyncio.gather(
-            *(fetch(symbol) for symbol in self.universe())
-        )
+        fetches = []
+        for symbol in symbols:
+            if covered_counts.get(symbol, 0) == len(sessions):
+                missing: list[date] = []
+            else:
+                covered = self.bars_cache.covered_daily_dates(symbol, sessions)
+                missing = [s.date for s in sessions if s.date not in covered]
+            # The newest session's daily bar is still forming — refetch
+            # it even when the cache has a row for it.
+            if end not in missing:
+                missing.append(end)
+            fetches.append(fetch(symbol, min(missing)))
+
+        fetched = await asyncio.gather(*fetches)
         results: dict[str, DataResult[int]] = {}
         for symbol, result in fetched:
             if result.error is not None:

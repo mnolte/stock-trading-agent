@@ -7,7 +7,7 @@ packages = ["backend/app"]
 
 [project]
 name = "stock-trading-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Paper-only trading agent for US stocks on Alpaca"
 requires-python = ">=3.12"
 dependencies = [
@@ -32,6 +32,7 @@ dependencies = [
 dev = [
     "pytest>=8.3.0",
     "pytest-socket>=0.7.0",
+    "pytest-timeout>=2.3.0",
     "pytest-xdist>=3.6.0",
     "ruff>=0.7.0",
     "mypy>=1.13.0",
@@ -57,7 +58,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
-addopts = "--disable-socket --allow-unix-socket"
+addopts = "--disable-socket --allow-unix-socket --strict-markers --timeout=600"
 markers = [
     "slow: multi-minute tests (e.g. the 3-month replay) — run with make test-slow",
 ]

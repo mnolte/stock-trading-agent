@@ -4,7 +4,6 @@ versioned settings, warming-up symbols and the WebSocket update bus
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -31,7 +30,6 @@ from app.data.models import (
     Quote,
 )
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Approval, Cycle, Decision, Event, Order, Position, Run
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
@@ -42,7 +40,7 @@ from app.settings_service import SettingsError, validate_settings
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -50,13 +48,6 @@ pytestmark = pytest.mark.anyio
 # Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
 NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
 YESTERDAY = datetime(2026, 10, 14, 15, 0)  # naive UTC, stored format
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _sources(clock: FakeClock | None = None, **overrides: object) -> DataSources:

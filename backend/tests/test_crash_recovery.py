@@ -2,11 +2,9 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from app.config import get_config
-from app.db.base import Base
 from app.db.models import Cycle
 from app.engine.state import (
     ExecutionState,
@@ -15,15 +13,8 @@ from app.engine.state import (
     recover_interrupted_cycles,
 )
 from app.market.clock import Clock, FakeClock
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 @pytest.fixture

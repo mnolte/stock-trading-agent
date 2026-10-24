@@ -9,7 +9,6 @@ stored with the bar's timestamp, and only once the SIP delay has passed.
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from app.config import AppConfig
@@ -25,7 +24,6 @@ from app.data.fake import (
 )
 from app.data.models import Bar5m
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import (
     Bar5m as Bar5mRow,
 )
@@ -41,20 +39,13 @@ from app.db.models import (
 from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
 # SIP delay plus a minute, so fills are clearly past the delay.
 DELAY = timedelta(minutes=16)
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _worker(

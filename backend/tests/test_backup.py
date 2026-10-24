@@ -21,6 +21,15 @@ def _today() -> date:
     return datetime.now(tz=APP_TZ).date()
 
 
+def _is_date_suffix(name: str) -> bool:
+    """Same rule the pruner uses: the part after the last dot is a date."""
+    try:
+        datetime.strptime(name.rsplit(".", 1)[-1], "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 def _write_db(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("CREATE TABLE t (v TEXT)")
@@ -50,10 +59,14 @@ def test_create_backup_prunes_old_copies() -> None:
 
     create_backup()
 
-    backups = list(backup_dir.glob(f"{db_path.name}.*"))
-    assert [b.name for b in backups] == [
-        f"{db_path.name}.{_today().isoformat()}"
+    # WAL-mode databases leave -shm/-wal sidecars next to the copy; the
+    # pruner (and this check) only counts files with a date suffix.
+    backups = [
+        b.name
+        for b in backup_dir.glob(f"{db_path.name}.*")
+        if _is_date_suffix(b.name)
     ]
+    assert backups == [f"{db_path.name}.{_today().isoformat()}"]
 
 
 def test_create_backup_keeps_the_retention_boundary() -> None:

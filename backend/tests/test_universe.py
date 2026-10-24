@@ -24,7 +24,6 @@ from app.data.fake import (
 )
 from app.data.models import Bar5m, CalendarDay, DailyBar, DataResult
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import (
     Event,
     Order,
@@ -34,7 +33,7 @@ from app.db.models import (
 )
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.universe.service import SYMBOL_RE, PoolError, UniverseService
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -73,13 +72,6 @@ class No5mBars(StubBars):
     ) -> DataResult[list[Bar5m]]:
         wanted = [s for s in symbols if s not in self.no_5m]
         return await super().fetch_5m_bars(wanted, start, end)
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 @pytest.fixture
@@ -845,6 +837,8 @@ async def test_describe_warming_progress(
     assert payload["counts"]["warming_up"] == 2
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(600)
 async def test_full_default_pool_screens_in_simulated_mode(
     session_factory: sessionmaker[Session],
     clock: FakeClock,

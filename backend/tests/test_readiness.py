@@ -6,13 +6,11 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import pytest
 from app.config import AppConfig
 from app.data.cache import _naive_utc
-from app.db.base import Base
 from app.db.models import (
     Cycle,
     Decision,
@@ -44,7 +42,7 @@ from app.readiness.service import (
     unresolved_errors,
     write_snapshot,
 )
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 # Monday 5 October 2026 09:30 New York — the run's start, naive UTC.
@@ -55,10 +53,8 @@ SESSION = date(2026, 10, 9)
 
 
 @pytest.fixture
-def sf(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'readiness.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+def sf(session_factory: sessionmaker[Session]) -> sessionmaker[Session]:
+    return session_factory
 
 
 @pytest.fixture

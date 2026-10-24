@@ -91,6 +91,29 @@ async def test_briefing_report_four_rejects_known_empty_as_unavailable(
     assert review.source == "template"
     assert review.reason == "fact check failed"
     assert review.text.startswith("Positions: none.")
+    detail = str(
+        (_fallback_events(session_factory)[0].details or {}).get("detail", "")
+    )
+    assert "earnings tomorrow are all unavailable" in detail
+
+
+async def test_briefing_allows_legitimate_unavailable_for_null_fact(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """"Unavailable" is correct for a null fact (no signals service means
+    regime is unavailable) — only the status facts may never be called
+    that, and only in their own clause."""
+    day = date(2026, 10, 22)
+    service = _service(
+        session_factory, FakeClock(_ny(day)),
+        client=FakeReviewClient(handler=lambda _s, _u: json.dumps({
+            "text": "Earnings today: none, regime unavailable. Yesterday flat.",
+        })),
+    )
+    review = await service.write_briefing_for(day)
+    assert review is not None
+    assert review.source == "model"
+    assert review.reason is None
 
 
 async def test_briefing_rejects_unavailable_claim_when_facts_exist(

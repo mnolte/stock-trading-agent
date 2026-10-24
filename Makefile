@@ -46,10 +46,10 @@ lint:
 test: test-backend test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
-	cd backend && ../$(PYTEST) -v -m "not slow" -n auto
+	cd backend && ../$(PYTEST) -v -m "not slow" -n 4 --durations=15
 
 test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
-	cd backend && ../$(PYTEST) -v -m slow -n auto
+	cd backend && ../$(PYTEST) -v -m slow -n 4 --durations=15
 
 test-frontend:
 	$(FE) test

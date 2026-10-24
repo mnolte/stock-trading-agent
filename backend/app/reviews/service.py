@@ -54,10 +54,23 @@ from app.signals.service import SignalService
 logger = logging.getLogger(__name__)
 
 REASON_NUMBER_CHECK = "number check failed"
+REASON_FACT_CHECK = "fact check failed"
 REASON_NO_KEY = "no OpenAI key"
 REASON_CALL_FAILED = "model call failed"
 REASON_INVALID = "invalid model output"
 REASON_CAP = "cost cap reached"
+
+# The latest prompt version per review kind; config can pin an older one.
+_LATEST_PROMPT = {"weekly": "weekly.v1", "briefing": "briefing.v2", "verdict": "verdict.v1"}
+
+# Briefing facts the model may never call "unavailable": they are always
+# lists — empty means none, a null would mean unavailable and never occurs.
+_STATUS_FACTS = (
+    ("positions", "position"),
+    ("earnings_today", "earnings today"),
+    ("earnings_tomorrow", "earnings tomorrow"),
+    ("banners", "banner"),
+)
 
 _WEEKDAYS = {
     "monday": 0,
@@ -191,7 +204,10 @@ class ReviewService:
 
     def _prompt(self, kind: str) -> Prompt:
         version = str(
-            self.config.get("reviews", "prompts", kind, default=f"{kind}.v1")
+            self.config.get(
+                "reviews", "prompts", kind,
+                default=_LATEST_PROMPT.get(kind, f"{kind}.v1"),
+            )
         )
         return cached_prompt(version)
 
@@ -367,18 +383,38 @@ class ReviewService:
             )
         text = "\n".join(self._content_texts(content)).lower()
         # A fact the code produced — an empty list included — is known,
-        # never "unavailable"; the model may not call it that.
-        if kind == "briefing" and any(
-            "unavailable" in clause
-            and isinstance(facts.get(key), list)
-            and label in clause
-            for clause in text.replace(";", ".").replace("\n", ".").split(".")
-            for key, label in (("positions", "position"), ("earnings_today", "earnings today"),
-                               ("earnings_tomorrow", "earnings tomorrow"), ("banners", "banner"))
-        ):
-            return self._fallback(
-                session, kind=kind, ref=ref, facts=facts, reason="fact check failed", prompt=prompt,
+        # never "unavailable"; the model may not call it that. Clause
+        # boundaries include commas and dashes so a legitimate "unavailable"
+        # for a null fact (regime, yesterday's result) in the same sentence
+        # does not fail the check.
+        if kind == "briefing":
+            clauses = (
+                text.replace(";", ".")
+                .replace("\n", ".")
+                .replace(",", ".")
+                .replace("—", ".")
+                .replace("–", ".")
+                .split(".")
             )
+            false_claims = [
+                clause.strip()
+                for clause in clauses
+                if "unavailable" in clause
+                and any(
+                    isinstance(facts.get(key), list) and label in clause
+                    for key, label in _STATUS_FACTS
+                )
+            ]
+            if false_claims:
+                return self._fallback(
+                    session,
+                    kind=kind,
+                    ref=ref,
+                    facts=facts,
+                    reason=REASON_FACT_CHECK,
+                    prompt=prompt,
+                    detail="; ".join(false_claims)[:200],
+                )
         bad = bad_numbers("\n".join(self._content_texts(content)), facts)
         if bad:
             return self._fallback(

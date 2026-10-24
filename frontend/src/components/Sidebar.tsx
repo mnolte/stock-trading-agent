@@ -250,7 +250,7 @@ export function Sidebar({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 'var(--sa-text-lg)', whiteSpace: 'nowrap' }}>Stock Agent</div>
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', whiteSpace: 'nowrap' }}>
-              Paper · Alpaca · v0.1
+              Paper · Alpaca · v0.2
             </div>
           </div>
         )}
