@@ -373,6 +373,8 @@ def compute_performance(
 
     trades: list[dict[str, Any]] = []
     agent_trades: list[tuple[Position, Decimal | None, str | None]] = []
+    adj_pnls: list[Decimal] = []
+    adj_rs: list[Decimal] = []
     for p in closed_positions:
         qty = p.qty
         exit_price = (
@@ -392,6 +394,14 @@ def compute_performance(
         adjusted = (
             p.realized_pnl_adjusted + div
             if p.realized_pnl_adjusted is not None
+            else None
+        )
+        r_adjusted = (
+            adjusted / ((p.avg_entry_price - stop) * qty)
+            if adjusted is not None
+            and stop is not None
+            and qty
+            and p.avg_entry_price > stop
             else None
         )
         regime = (
@@ -419,6 +429,11 @@ def compute_performance(
                     if r_value is not None
                     else None
                 ),
+                "adjusted_r": (
+                    str(r_adjusted.quantize(Decimal("0.01")))
+                    if r_adjusted is not None
+                    else None
+                ),
                 "exit_reason": p.exit_reason,
                 "exit_label": _EXIT_LABELS.get(
                     p.exit_reason or "", p.exit_reason or "—"
@@ -429,6 +444,10 @@ def compute_performance(
         )
         if p.origin == "agent":
             agent_trades.append((p, r_value, regime))
+            if adjusted is not None:
+                adj_pnls.append(adjusted)
+            if r_adjusted is not None:
+                adj_rs.append(r_adjusted)
 
     # ---- by symbol / by regime -------------------------------------------
     def _aggregate(key_fn: Any) -> dict[str, dict[str, Any]]:
@@ -618,6 +637,12 @@ def compute_performance(
     win_rate = Decimal(wins) / len(scored) * 100 if scored else None
     rs = [r for _, r, _ in agent_trades if r is not None]
     avg_r = sum(rs, Decimal(0)) / len(rs) if rs else None
+    # Adjusted metrics (slippage + dividends) for the Readiness criteria.
+    avg_r_adjusted = sum(adj_rs, Decimal(0)) / len(adj_rs) if adj_rs else None
+    gross_wins = sum((p for p in adj_pnls if p > 0), Decimal(0))
+    gross_losses = sum((-p for p in adj_pnls if p < 0), Decimal(0))
+    # No losses yet → None (the Readiness screen shows "—", like the design).
+    profit_factor = gross_wins / gross_losses if gross_losses > 0 else None
 
     curve_values = [run.starting_equity] + [
         Decimal(point["equity"]) for point in points
@@ -679,6 +704,15 @@ def compute_performance(
                 str(vs_spy.quantize(Decimal("0.01"))) if vs_spy is not None else None
             ),
             "adjusted_usd": str(adjusted_total.quantize(Decimal("0.01"))),
+            "adjusted_pct": (
+                str(
+                    (adjusted_total / run.starting_equity * 100).quantize(
+                        Decimal("0.01")
+                    )
+                )
+                if run.starting_equity
+                else None
+            ),
             "slippage_pct": str(slip_pct),
             "dividends_usd": str(dividends_total.quantize(Decimal("0.01"))),
             "win_rate_pct": (
@@ -690,6 +724,16 @@ def compute_performance(
             "closed": len(scored),
             "avg_r": (
                 str(avg_r.quantize(Decimal("0.01"))) if avg_r is not None else None
+            ),
+            "avg_r_adjusted": (
+                str(avg_r_adjusted.quantize(Decimal("0.01")))
+                if avg_r_adjusted is not None
+                else None
+            ),
+            "profit_factor": (
+                str(profit_factor.quantize(Decimal("0.01")))
+                if profit_factor is not None
+                else None
             ),
             "max_drawdown_pct": str(max_dd.quantize(Decimal("0.01"))),
             "kill_pct": str(kill_pct),

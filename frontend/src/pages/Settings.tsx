@@ -185,6 +185,15 @@ const DEFAULTS: Record<string, string> = {
   'universe.screen.lookback_sessions': '20',
   'universe.screen.drop_after_failed_screens': '3',
   'notifications.repeat_limit_minutes': '30 min',
+  'readiness.min_closed_trades': '100',
+  'readiness.min_sessions': '60',
+  'readiness.max_drawdown_pct': '6%',
+  'readiness.min_avg_r': '+0.2R',
+  'readiness.min_profit_factor': '1.3',
+  'readiness.min_proposal_pass_pct': '75%',
+  'readiness.max_calibration_gap_pts': '10 pts',
+  'readiness.min_cycles_completed_pct': '98%',
+  'readiness.max_price_blocked_pct': '5%',
 };
 
 // field path -> unit suffix for "Changed from …" and the unsaved list
@@ -205,6 +214,12 @@ const UNITS: Record<string, string> = {
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
   'notifications.repeat_limit_minutes': ' min',
+  'readiness.max_drawdown_pct': '%',
+  'readiness.min_avg_r': 'R',
+  'readiness.min_proposal_pass_pct': '%',
+  'readiness.max_calibration_gap_pts': ' pts',
+  'readiness.min_cycles_completed_pct': '%',
+  'readiness.max_price_blocked_pct': '%',
 };
 
 // field path -> section id, for the section-list change badges
@@ -240,6 +255,15 @@ const SECTION_OF: Record<string, string> = {
   'decision.max_calls_per_cycle': 'model',
   'reviews.briefing_enabled': 'model',
   'reviews.monthly_cost_cap_usd': 'model',
+  'readiness.min_closed_trades': 'ready',
+  'readiness.min_sessions': 'ready',
+  'readiness.max_drawdown_pct': 'ready',
+  'readiness.min_avg_r': 'ready',
+  'readiness.min_profit_factor': 'ready',
+  'readiness.min_proposal_pass_pct': 'ready',
+  'readiness.max_calibration_gap_pts': 'ready',
+  'readiness.min_cycles_completed_pct': 'ready',
+  'readiness.max_price_blocked_pct': 'ready',
 };
 
 const SECTIONS = [
@@ -250,6 +274,7 @@ const SECTIONS = [
   { id: 'earnings', label: 'Earnings' },
   { id: 'model', label: 'Model and reviews' },
   { id: 'notify', label: 'Notifications' },
+  { id: 'ready', label: 'Readiness' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'history', label: 'History' },
   { id: 'danger', label: 'Paper account' },
@@ -268,6 +293,8 @@ const SEARCH_TEXT: Record<string, string> = {
     'model reviews decisions prompt temperature calls per cycle daily briefing review cost cap',
   notify:
     'notifications alerts browser email smtp quiet hours repeat limit critical warnings trading reviews send test channels',
+  ready:
+    'readiness thresholds closed trades paper sessions drawdown average r profit factor proposals calibration cycles price checks live trading',
   schedule: 'schedule cycles new york amsterdam bar used entries position checks times',
   history: 'history version reason change settings log',
   danger: 'paper account reset new run start over balance',
@@ -2391,6 +2418,92 @@ export default function Settings() {
 
             <h3 style={subHead}>Recently sent</h3>
             <RecentNotifications />
+          </Section>
+
+          <Section
+            id="ready"
+            title="Readiness"
+            right={sectionChanges('ready') > 0 ? `${sectionChanges('ready')} changed` : undefined}
+            blurb="Thresholds for the Readiness page. Changing one is a settings change with a reason; it never unlocks anything by itself."
+          >
+            <h3 style={subHead}>Evidence · this run, adjusted</h3>
+            {row('readiness.min_closed_trades', {
+              id: 'r-trades',
+              label: 'Closed trades',
+              help: 'Ratios below need their own minimum before they can pass.',
+              children: (
+                <NumBox id="r-trades" value={s.readiness.min_closed_trades} unit="trades" accent={'readiness.min_closed_trades' in changed} invalid={!!fieldErrors['readiness.min_closed_trades']} onChange={(v) => patch('readiness', 'min_closed_trades', v)} />
+              ),
+            })}
+            {row('readiness.min_sessions', {
+              id: 'r-sessions',
+              label: 'Paper sessions',
+              help: 'Trading sessions since Start new run.',
+              children: (
+                <NumBox id="r-sessions" value={s.readiness.min_sessions} unit="sessions" accent={'readiness.min_sessions' in changed} invalid={!!fieldErrors['readiness.min_sessions']} onChange={(v) => patch('readiness', 'min_sessions', v)} />
+              ),
+            })}
+            {row('readiness.max_drawdown_pct', {
+              id: 'r-dd',
+              label: 'Max drawdown under',
+              help: 'Largest fall from a peak in this run.',
+              children: (
+                <NumBox id="r-dd" value={s.readiness.max_drawdown_pct} unit="%" accent={'readiness.max_drawdown_pct' in changed} invalid={!!fieldErrors['readiness.max_drawdown_pct']} onChange={(v) => patch('readiness', 'max_drawdown_pct', v)} />
+              ),
+            })}
+            {row('readiness.min_avg_r', {
+              id: 'r-avgr',
+              label: 'Average R at least',
+              help: 'Needs 30 closed trades.',
+              children: (
+                <NumBox id="r-avgr" value={s.readiness.min_avg_r} unit="R" accent={'readiness.min_avg_r' in changed} invalid={!!fieldErrors['readiness.min_avg_r']} onChange={(v) => patch('readiness', 'min_avg_r', v)} />
+              ),
+            })}
+            {row('readiness.min_profit_factor', {
+              id: 'r-pf',
+              label: 'Profit factor at least',
+              help: 'Needs 30 closed trades.',
+              children: (
+                <NumBox id="r-pf" value={s.readiness.min_profit_factor} accent={'readiness.min_profit_factor' in changed} invalid={!!fieldErrors['readiness.min_profit_factor']} onChange={(v) => patch('readiness', 'min_profit_factor', v)} />
+              ),
+            })}
+
+            <h3 style={subHead}>Model and operations</h3>
+            {row('readiness.min_proposal_pass_pct', {
+              id: 'r-pass',
+              label: 'Proposals passing code checks',
+              help: 'Share of the last 100 model entries; needs 30.',
+              children: (
+                <NumBox id="r-pass" value={s.readiness.min_proposal_pass_pct} unit="%" accent={'readiness.min_proposal_pass_pct' in changed} invalid={!!fieldErrors['readiness.min_proposal_pass_pct']} onChange={(v) => patch('readiness', 'min_proposal_pass_pct', v)} />
+              ),
+            })}
+            {row('readiness.max_calibration_gap_pts', {
+              id: 'r-cal',
+              label: 'Calibration gap within',
+              help: 'Needs 50 filled entries.',
+              children: (
+                <NumBox id="r-cal" value={s.readiness.max_calibration_gap_pts} unit="pts" accent={'readiness.max_calibration_gap_pts' in changed} invalid={!!fieldErrors['readiness.max_calibration_gap_pts']} onChange={(v) => patch('readiness', 'max_calibration_gap_pts', v)} />
+              ),
+            })}
+            {row('readiness.min_cycles_completed_pct', {
+              id: 'r-cycles',
+              label: 'Cycles completed',
+              help: 'Last 20 sessions.',
+              children: (
+                <NumBox id="r-cycles" value={s.readiness.min_cycles_completed_pct} unit="%" accent={'readiness.min_cycles_completed_pct' in changed} invalid={!!fieldErrors['readiness.min_cycles_completed_pct']} onChange={(v) => patch('readiness', 'min_cycles_completed_pct', v)} />
+              ),
+            })}
+            {row('readiness.max_price_blocked_pct', {
+              id: 'r-price',
+              label: 'Price checks blocked at most',
+              help: 'price_stale and price_suspect, last 20 sessions.',
+              children: (
+                <NumBox id="r-price" value={s.readiness.max_price_blocked_pct} unit="%" accent={'readiness.max_price_blocked_pct' in changed} invalid={!!fieldErrors['readiness.max_price_blocked_pct']} onChange={(v) => patch('readiness', 'max_price_blocked_pct', v)} />
+              ),
+            })}
+            <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', padding: '12px 0' }}>
+              Zero-tolerance criteria (positions without a stop, kill switch events, unresolved errors, reconciliation) and the manual items are fixed by the spec.
+            </div>
           </Section>
 
           <Section

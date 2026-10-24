@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-24 — Dashboard and interaction polish (PR 17)
+
+- GUI: new "Dashboard at scale and off-hours". "Today" is the current or last New York session; outside a session the feed, model-call tile and strip show the last session with its date; countdowns over 24 h show day and time. Latest decision falls back to why the symbol wasn't called, or its most recent decision with date. Feed grouped per cycle; changes always shown; other decisions grouped by action and reason. Symbols are picked from the watchlist, held-symbol buttons or Find symbol, never a button per symbol; `?symbol=` in the URL. Rank and the screened hint only in screened mode. Linked tiles. Approvals show their expiry.
+- GUI: new "Interaction and states": the Interaction rules in design/DESIGN.md are binding (focus ring, hover, 44 px, card loading/empty/error, backend banner, live regions, toast dedupe and persistent critical toasts, ARIA patterns, latest request wins, numeric API values with minus sign, settings-driven copy, page title).
+- Build plan: PR 17, independent of PR 16. Source: Devin's dashboard UX review of 24 October.
+
 ## 2026-10-24 — Readiness (PR 16)
 
 - New "Readiness" section: a screen in the Control group showing whether the current run's paper evidence would justify live trading. 15 criteria in Evidence, Model and Operations (closed trades, sessions, return vs SPY, drawdown, average R, profit factor, beats rules-only, proposals passing code checks, calibration, cycle coverage, stops, kill switch, errors, price checks, reconciliation) with minimum samples ("waiting for data"), estimates at the current pace, and five manual items. Nothing unlocks automatically; live trading needs its own spec.

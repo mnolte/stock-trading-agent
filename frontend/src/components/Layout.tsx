@@ -29,6 +29,7 @@ function pageTitle(pathname: string): string {
   if (pathname.startsWith('/strategies')) return 'Strategies';
   if (pathname.startsWith('/backtest')) return 'Backtest';
   if (pathname.startsWith('/decisions')) return 'Decision detail';
+  if (pathname.startsWith('/readiness')) return 'Readiness';
   if (pathname.startsWith('/settings')) return 'Settings';
   if (pathname.startsWith('/states')) return 'States & dialogs';
   return 'Dashboard';

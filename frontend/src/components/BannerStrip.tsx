@@ -6,12 +6,14 @@ import {
   getBanners,
   postAcknowledgeEvent,
   postAcknowledgePosition,
+  postDismissEvent,
   postPauseResume,
 } from '../api/state';
 import type { BannerItem } from '../types/api';
 import { displayTime } from '../format';
 import { Banner } from './Banner';
 import { Button } from './Button';
+import { DialogButton, Modal } from './Modal';
 
 const bannerVariant = (level: string): 'negative' | 'warning' | 'info' =>
   level === 'critical' ? 'negative' : level === 'warning' ? 'warning' : 'info';
@@ -41,6 +43,9 @@ export function BannerStrip({
 }) {
   const [items, setItems] = useState<BannerItem[]>([]);
   const [pending, setPending] = useState(false);
+  const [dismissItem, setDismissItem] = useState<BannerItem | null>(null);
+  const [dismissNote, setDismissNote] = useState('');
+  const [dismissError, setDismissError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const refresh = useCallback(() => {
@@ -83,6 +88,25 @@ export function BannerStrip({
       .finally(() => setPending(false));
   };
 
+  // Errors linked to a decision, order or fill resolve by dismissal with a
+  // note, or by themselves after the quiet period (docs/SPEC.md, Readiness).
+  const dismiss = () => {
+    if (dismissItem?.id == null) return;
+    if (!dismissNote.trim()) {
+      setDismissError('A short note is required.');
+      return;
+    }
+    setPending(true);
+    postDismissEvent(dismissItem.id, dismissNote.trim())
+      .then(() => {
+        setDismissItem(null);
+        refresh();
+        onChanged?.();
+      })
+      .catch((e: Error) => setDismissError(e.message))
+      .finally(() => setPending(false));
+  };
+
   if (items.length === 0) return null;
 
   return (
@@ -112,6 +136,16 @@ export function BannerStrip({
         if (item.actions.includes('acknowledge')) {
           actions.push({ label: 'Acknowledge', onClick: () => acknowledge(item) });
         }
+        if (item.actions.includes('dismiss') && item.id != null) {
+          actions.push({
+            label: 'Dismiss…',
+            onClick: () => {
+              setDismissNote('');
+              setDismissError(null);
+              setDismissItem(item);
+            },
+          });
+        }
         return (
           <Banner
             key={item.id ?? `${item.kind}-${index}`}
@@ -140,6 +174,43 @@ export function BannerStrip({
           </Banner>
         );
       })}
+      <Modal
+        open={dismissItem != null}
+        title="Dismiss error"
+        footer={
+          <>
+            <DialogButton variant="cancel" onClick={() => setDismissItem(null)}>Cancel</DialogButton>
+            <DialogButton variant="accent" onClick={dismiss} disabled={pending}>Dismiss</DialogButton>
+          </>
+        }
+      >
+        <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)', fontSize: 'var(--sa-text-md)' }}>
+          {dismissItem != null && bannerText(dismissItem)}
+        </p>
+        <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)', fontSize: 'var(--sa-text-md)' }}>
+          Dismissing resolves the error for Readiness. Write a short note — it stays in the event history.
+        </p>
+        <textarea
+          value={dismissNote}
+          onChange={(e) => setDismissNote(e.target.value)}
+          aria-label="Note"
+          rows={3}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: '10px',
+            borderRadius: 'var(--sa-radius-md)',
+            border: '1px solid var(--sa-border-strong)',
+            background: 'var(--sa-bg)',
+            color: 'var(--sa-text)',
+            fontSize: 'var(--sa-text-md)',
+            resize: 'vertical',
+          }}
+        />
+        {dismissError && (
+          <div style={{ color: 'var(--sa-negative-text)', fontSize: 'var(--sa-text-sm)' }}>{dismissError}</div>
+        )}
+      </Modal>
     </div>
   );
 }

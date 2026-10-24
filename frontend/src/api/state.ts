@@ -22,6 +22,7 @@ import type {
   PaperResetResult,
   PerformanceResponse,
   PositionsResponse,
+  ReadinessResponse,
   ReviewDetail,
   RiskBudgetResponse,
   ReviewsResponse,
@@ -319,4 +320,27 @@ export function getBacktestDecision(
   return get<DecisionDetail>(
     `/api/backtests/${id}/strategies/${slug}/decisions/${decisionId}`,
   );
+}
+
+export function getReadiness(): Promise<ReadinessResponse> {
+  return get<ReadinessResponse>('/api/readiness');
+}
+
+export function postReadinessManual(
+  item: string,
+  done: boolean,
+  note: string,
+): Promise<{ saved: boolean }> {
+  return post<{ saved: boolean }>('/api/readiness/manual', {
+    item,
+    done,
+    note,
+  });
+}
+
+export function postDismissEvent(
+  id: number,
+  note: string,
+): Promise<{ dismissed: boolean }> {
+  return post<{ dismissed: boolean }>(`/api/events/${id}/dismiss`, { note });
 }

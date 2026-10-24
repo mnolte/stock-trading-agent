@@ -304,6 +304,28 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 **Model call counter.** A summary tile shows today's decision calls against the day's maximum (max calls per cycle × cycles today, 60 by default), with today's and this month's decision cost. On hover it shows review cost against its own cap, and from v0.2 shadow and backtest cost against theirs. It links to the LLM inspector.
 
+**Dashboard at scale and off-hours.**
+- **Session day.** "Today" on the dashboard is the current New York session or, outside a session, the last completed one, never the Amsterdam calendar day. Outside a session the feed is titled with that session's date ("Friday 23 Oct · last session"), the model-call tile counts that session, and the cycle strip summarises it. A countdown longer than 24 hours shows only the day and time.
+- **Latest decision.** The card shows the selected symbol's latest decision in that session. If the symbol wasn't decided this cycle, it says why from the stored snapshot (pre-filter reason, call cap, price check). If it has no decision in the session, it shows its most recent decision with the date.
+- **Decisions feed.** Grouped per cycle (by cycle, not by minute), with the cycle's Amsterdam time (New York on hover) and a header that can collapse. Changes (entries, exits, stop moves, deferred exits, approvals) always show as their own rows. Other decisions are grouped by final action and reason into one row: the symbols (the first 8, then "+n more") and a count. The current cycle is open; earlier cycles start collapsed and show only their changes. A single row opens the decision; a grouped row opens the LLM inspector filtered to that cycle and action.
+- **Picking a symbol.** By clicking a watchlist row, a button for each held symbol in the chart header, or "Find symbol" (search over the universe). There is never a button for every symbol. The selected symbol is in the URL (`?symbol=`); without one, the dashboard opens on the first held position, otherwise the first watchlist row.
+- **Watchlist.** In screened mode it shows a rank column and "sorted by rank, 15 rows, then Show all"; in fixed mode neither.
+- **Tiles.** Positions links to Positions and orders, Model calls to the LLM inspector, Since start to Performance.
+- **Approvals** show when they expire ("expires at the 17:46 cycle").
+
+**Interaction and states.** The "Interaction rules" in `design/DESIGN.md` are binding for every screen. In short:
+- **Accessibility:** a visible focus ring everywhere, hover feedback on everything clickable, 44 px targets.
+- **Loading and errors:**
+  - Every data card has loading, empty and error states. Empty text only after a successful load; an error shows what failed and a Retry, with stale data kept and marked.
+  - A page banner shows when the backend can't be reached, retrying every 15 seconds.
+- **Announcements:** no countdown inside a live region.
+- **Toasts:** one per notification event, whatever the channels. Critical toasts stay until dismissed.
+- **Data in the browser:**
+  - Only the newest response counts when a selection changes quickly.
+  - Numbers arrive as numbers and are formatted in the browser (minus sign −).
+  - Copy that names a setting reads it from settings.
+- **Browser tab:** the title shows the agent's state (open, paused, kill switch).
+
 **Cycle counter.** The this-cycle strip at the top of the dashboard ends with a cycle counter: the next cycle's time in Amsterdam and New York with a live countdown (mm:ss under an hour, otherwise h:mm), one segment per cycle of today's session (done, next, later; an early-close day has fewer), "Cycle n of 6 today", the cycle's number in this run, and the next position check. Market closed: the next session's first cycle with its day. Kill switch on: "Kill switch on · no cycles". A cycle that is running shows "running" instead of the countdown. The count in this run comes from the `cycles` table (kind cycle) since the run started.
 
 **Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and day trades in the last 5 trading days. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
@@ -424,6 +446,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 14. **Backtesting (v0.2).** Backtest worker on the live cycle code with the fake broker, per-run database, historical data download within its own rate limit, lookahead guards, simulated fills, model-cutoff check, answer cache, estimate and cost cap, results and Backtest screen. *Done when:* a rules-only backtest over 3 months of cached bars gives the same trades twice, a live cycle starts on time while a backtest runs, an LLM backtest before the model's cutoff is refused, and a lookahead test passes.
 15. **Integrity fixes.** Usable quotes and quote provenance; sizing on the final price; sector resolver; daily-loss latch; tighten-stop check; R from the initial stop and the original thesis for held positions; stop history for first-touch outcomes; news completeness; briefing status facts; missed-cycle reasons; cost source; backtest database errors. *Done when:* each defect from the 22 October analysis has a test that fails before the fix and passes after it, and none of the risk limits changed.
 16. **Readiness.** Daily readiness snapshot after the close, the 15 criteria with minimum samples and estimates, error resolution (auto after 1 hour, dismiss with a note), manual items with notes, history, Settings → Readiness thresholds, "Readiness changed" notification, Readiness screen. *Done when:* the snapshot for a fixture run gives the expected status for every criterion, including "waiting for data" below each minimum sample, and nothing in the app can enable live trading.
+17. **Dashboard and interaction polish.** Dashboard at scale and off-hours (session day, latest-decision fallback, feed grouped per cycle, symbol picking and `?symbol=`, rank only in screened mode, linked tiles, approval expiry) and the interaction rules on every screen (focus, hover, card states, backend banner, live regions, toasts, ARIA patterns, latest request wins, numeric API values, settings-driven copy, page title). Independent of PR 16. *Done when:* with the 71-symbol screened pool the dashboard has no symbol button wall and the feed for a full session fits in collapsed cycles, the dashboard on a Saturday shows Friday's session, and every screen passes a keyboard-only walkthrough with visible focus.
 
 ## Reviews
 

@@ -12,6 +12,7 @@ const DevComponents = lazy(() => import('./pages/DevComponents'));
 const Inspector = lazy(() => import('./pages/Inspector'));
 const Performance = lazy(() => import('./pages/Performance'));
 const Positions = lazy(() => import('./pages/Positions'));
+const Readiness = lazy(() => import('./pages/Readiness'));
 const Reviews = lazy(() => import('./pages/Reviews'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Strategies = lazy(() => import('./pages/Strategies'));
@@ -43,6 +44,7 @@ function AppRoutes() {
             <Route path="reviews" element={<Reviews />} />
             <Route path="strategies" element={<Strategies />} />
             <Route path="backtest" element={<Backtest />} />
+            <Route path="readiness" element={<Readiness />} />
             {/* Deep links to /decisions/:id draw the dashboard under the drawer. */}
             <Route path="decisions/:id" element={<Dashboard />} />
             <Route path="settings" element={<Settings />} />

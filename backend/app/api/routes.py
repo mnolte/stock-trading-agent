@@ -801,6 +801,68 @@ def acknowledge_event(request: Request, event_id: int) -> dict[str, object]:
     return {"acknowledged": True}
 
 
+@router.post("/events/{event_id}/dismiss")
+def dismiss_event(
+    request: Request, event_id: int, body: dict[str, object]
+) -> dict[str, object]:
+    """Dismiss one unresolved readiness error; a note is required."""
+    from app.readiness.service import ReadinessError, dismiss_error
+
+    note = str(body.get("note") or "")
+    with get_session_maker()() as session:
+        try:
+            event = dismiss_error(
+                session, clock=_clock(request), event_id=event_id, note=note
+            )
+            session.commit()
+            dismissed_id = event.id
+        except ReadinessError as exc:
+            detail = str(exc)
+            if detail == "a note is required to dismiss an error":
+                raise HTTPException(status_code=422, detail=detail) from exc
+            raise HTTPException(status_code=409, detail=detail) from exc
+    _notify(request, "banners", "readiness")
+    return {"dismissed": True, "id": dismissed_id}
+
+
+@router.get("/readiness")
+def readiness(request: Request) -> dict[str, object]:
+    """The latest stored readiness snapshot — never evaluated here."""
+    from app.readiness.service import payload
+
+    with get_session_maker()() as session:
+        return payload(
+            session, config=get_config(), clock=_clock(request)
+        )
+
+
+@router.post("/readiness/manual")
+def readiness_manual(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Tick or untick one fixed manual item; a note is required."""
+    from app.readiness.service import ReadinessError, set_manual_item
+
+    item = str(body.get("item") or "")
+    done = body.get("done")
+    note = str(body.get("note") or "")
+    with get_session_maker()() as session:
+        try:
+            row = set_manual_item(
+                session,
+                clock=_clock(request),
+                item=item,
+                done=bool(done),
+                note=note,
+            )
+            session.commit()
+            row_id = row.id
+        except ReadinessError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _notify(request, "readiness")
+    return {"saved": True, "id": row_id}
+
+
 def _position_json(
     position: Position, market_value: Decimal | None = None
 ) -> dict[str, object]:
@@ -1387,6 +1449,53 @@ def banners(request: Request) -> dict[str, object]:
                     }
                 )
 
+        # Readiness errors that touched a decision, order or fill can be
+        # dismissed with a note; they also auto-resolve after the
+        # configured quiet period (docs/SPEC.md, Readiness, Errors).
+        from app.notifications.events import format_recorded
+        from app.readiness.service import unresolved_errors
+
+        minutes = int(
+            get_config().get(
+                "readiness", "error_auto_resolve_minutes", default=60
+            )
+        )
+        open_errors = unresolved_errors(
+            session,
+            as_of=_clock(request).now(),
+            window_start=None,
+            minutes=minutes,
+        )
+        open_ids = {e.id for e in open_errors}
+        shown_ids = {item["id"] for item in items if "id" in item}
+        for item in items:
+            actions = cast("list[str]", item.get("actions") or [])
+            if item.get("id") in open_ids and "dismiss" not in actions:
+                item["actions"] = [*actions, "dismiss"]
+        for event in open_errors:
+            if event.id in shown_ids:
+                continue
+            mapped = format_recorded(event.event_type, event.details)
+            line = (
+                mapped[1]
+                if mapped is not None
+                else event.event_type.replace("_", " ")
+            )
+            items.append(
+                {
+                    "id": event.id,
+                    "kind": "unresolved_error",
+                    "level": event.level,
+                    "message": (
+                        f"{line}. Dismiss with a note or it resolves "
+                        f"itself after {minutes} minutes without recurring."
+                    ),
+                    "details": event.details or {},
+                    "time": event.time.replace(tzinfo=UTC).isoformat(),
+                    "actions": ["dismiss"],
+                }
+            )
+
     if (
         state is not None
         and getattr(state, "paused", False)
@@ -1863,6 +1972,37 @@ def _settings_form(config: object) -> dict[str, object]:
                 default={"start": "23:00", "end": "08:00"},
             ),
             "events": get("notifications", "events", default={}),
+        },
+        "readiness": {
+            "min_closed_trades": get(
+                "readiness", "min_closed_trades", default=100
+            ),
+            "min_sessions": get("readiness", "min_sessions", default=60),
+            "max_drawdown_pct": get(
+                "readiness", "max_drawdown_pct", default=6
+            ),
+            "min_avg_r": get("readiness", "min_avg_r", default=0.2),
+            "min_profit_factor": get(
+                "readiness", "min_profit_factor", default=1.3
+            ),
+            "ratio_min_trades": get(
+                "readiness", "ratio_min_trades", default=30
+            ),
+            "min_proposal_pass_pct": get(
+                "readiness", "min_proposal_pass_pct", default=75
+            ),
+            "max_calibration_gap_pts": get(
+                "readiness", "max_calibration_gap_pts", default=10
+            ),
+            "min_cycles_completed_pct": get(
+                "readiness", "min_cycles_completed_pct", default=98
+            ),
+            "max_price_blocked_pct": get(
+                "readiness", "max_price_blocked_pct", default=5
+            ),
+            "error_auto_resolve_minutes": get(
+                "readiness", "error_auto_resolve_minutes", default=60
+            ),
         },
         "reviews": {
             "briefing_enabled": get(

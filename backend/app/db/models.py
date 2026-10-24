@@ -492,6 +492,54 @@ class Event(Base):
     details: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
     # Blocking events (reconciliation mismatches) hold new entries until set.
     acknowledged_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # What the event touched: decision | order | fill | none. Only errors
+    # with a real object count for Readiness (docs/SPEC.md, Readiness).
+    affects: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="none"
+    )
+    # Error resolution: set when the error auto-resolves or Marc dismisses
+    # it; ``resolution`` is auto | dismissed and ``note`` holds his words.
+    resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    resolution: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ReadinessSnapshot(Base):
+    """One daily readiness evaluation, stored after the session's close.
+
+    ``criteria`` is the full list of 15 criterion results, each
+    ``{key, group, label, hint, value, target, progress, status, sample,
+    estimate, estimate_date, note}`` (docs/SPEC.md, Readiness).
+    """
+
+    __tablename__ = "readiness_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_date", "run_id", name="uq_readiness_snapshots_day_run"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    criteria: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class ReadinessManual(Base):
+    """One change to a fixed manual readiness item (append-only log).
+
+    The latest row per ``item`` is its current state; every row is a
+    History entry. Ticking or unticking requires a short note.
+    """
+
+    __tablename__ = "readiness_manual"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    done: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
 class Strategy(Base):

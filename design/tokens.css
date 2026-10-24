@@ -73,4 +73,21 @@
   --sa-sidebar-collapsed: 72px;
   --sa-page-max: 1440px;
   --sa-drawer-width: 560px;
+
+  /* interaction */
+  --sa-focus-ring: 2px solid var(--sa-accent);   /* :focus-visible on every interactive element, offset 2px */
+  --sa-focus-offset: 2px;
+  --sa-hover-row: var(--sa-subtle);               /* clickable rows and list items */
+  --sa-hover-card: var(--sa-raised);              /* linked tiles and cards */
+  --sa-skeleton: var(--sa-subtle);                /* loading placeholders, pulse 1.4 s, none with reduced motion */
+  --sa-toast-auto-close: 10s;                     /* info and warning toasts; critical toasts never auto-close */
 }
+
+/* Shared interaction styles: put these in global.css once, so inline styles never have to express hover or focus. */
+:focus-visible { outline: var(--sa-focus-ring); outline-offset: var(--sa-focus-offset); }
+.sa-row { cursor: pointer; }
+.sa-row:hover { background: var(--sa-hover-row); }
+.sa-tile:hover { background: var(--sa-hover-card); border-color: var(--sa-border-strong); }
+@keyframes sa-pulse { 0% { opacity: .45 } 50% { opacity: .9 } 100% { opacity: .45 } }
+.sa-skel { background: var(--sa-skeleton); animation: sa-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .sa-skel { animation: none; } }
