@@ -879,3 +879,23 @@ class Backtest(Base):
     refuse_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class LogReview(Base):
+    """One review of a recurring log problem (docs/SPEC.md, Readiness).
+
+    ``review`` is ``expected`` or ``fixed``; a fixed problem that recurs
+    is unreviewed again (the criterion counts open fingerprints, not
+    rows). Critical lines can never be reviewed away.
+    """
+
+    __tablename__ = "log_reviews"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(400), nullable=False, index=True)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    sample: Mapped[str] = mapped_column(Text, nullable=False)
+    review: Mapped[str] = mapped_column(String(16), nullable=False)
+    note: Mapped[str] = mapped_column(Text, nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(nullable=False)
+    app_version: Mapped[str] = mapped_column(String(32), nullable=False)

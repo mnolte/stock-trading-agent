@@ -4407,3 +4407,34 @@ def api_logs_export(request: Request) -> Response:
         media_type="application/x-ndjson",
         headers={"Content-Disposition": 'attachment; filename="logs.jsonl"'},
     )
+
+
+@router.post("/logs/review")
+def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, object]:
+    """Review a recurring problem: expected or fixed, with a required
+    note (docs/SPEC.md, Readiness — Errors in the log)."""
+    from app.data.cache import _naive_utc
+    from app.db.models import LogReview
+
+    review = str(body.get("review") or "")
+    note = str(body.get("note") or "").strip()
+    fingerprint = str(body.get("fingerprint") or "")
+    if review not in ("expected", "fixed") or not note or not fingerprint:
+        raise HTTPException(
+            status_code=422, detail="review (expected|fixed), note and fingerprint required"
+        )
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    with get_session_maker()() as session:
+        session.add(
+            LogReview(
+                fingerprint=fingerprint,
+                level=str(body.get("level") or "ERROR"),
+                sample=str(body.get("sample") or "")[:400],
+                review=review,
+                note=note,
+                reviewed_at=_naive_utc(clock.now()),
+                app_version="0.2.0",
+            )
+        )
+        session.commit()
+    return {"ok": True, "review": review}
