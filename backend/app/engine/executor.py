@@ -815,6 +815,17 @@ class Executor:
                 "entry", approval.decision_id, approval.symbol
             )
             session.commit()
+            # Guard the submit→store window: shutdown's grace wait holds
+            # until this slot closes, so an accepted answer is never lost
+            # between the broker call and its DB row (hard rule 16).
+            import contextlib
+
+            from app.shutdown import current as _shutdown_current
+
+            _stack = contextlib.ExitStack()
+            _mgr = _shutdown_current()
+            if _mgr is not None:
+                _stack.enter_context(_mgr.order_slot())
             submitted = await self.broker.submit_bracket_entry(
                 symbol=approval.symbol,
                 qty=qty,
@@ -852,6 +863,7 @@ class Executor:
                     },
                 )
                 session.commit()
+                _stack.close()
                 self._notify({"approvals", "decisions", "banners"})
                 return {
                     "ok": False,
@@ -871,6 +883,7 @@ class Executor:
             approval.limit_price = limit
             self._resolve_approval(approval, "approved", None)
             session.commit()
+            _stack.close()
         self._notify({"approvals", "decisions", "positions", "orders", "header"})
         return {"ok": True}
 

@@ -1304,6 +1304,38 @@ def banners(request: Request) -> dict[str, object]:
     """The banner strip under the header: kill switch, mismatches, brakes."""
     state = getattr(request.app.state, "exec_state", None)
     items: list[dict[str, object]] = []
+    manager = getattr(request.app.state, "shutdown", None)
+    if manager is not None and manager.shutting_down.is_set():
+        items.append(
+            {
+                "id": "shutting-down",
+                "kind": "shutting_down",
+                "level": "warning",
+                "message": (
+                    "The agent is shutting down — writes are refused; "
+                    "the last steps may still be finishing."
+                ),
+                "details": {},
+                "time": "",
+                "actions": [],
+            }
+        )
+    if getattr(request.app.state, "unclean_previous_run", False):
+        integrity = getattr(request.app.state, "unclean_quick_check", "?")
+        items.append(
+            {
+                "id": "unclean-run",
+                "kind": "unclean_run",
+                "level": "warning",
+                "message": (
+                    "The last run did not shut down cleanly — data was "
+                    f"checked on startup (quick_check: {integrity})."
+                ),
+                "details": {"quick_check": integrity},
+                "time": "",
+                "actions": [],
+            }
+        )
     with get_session_maker()() as session:
         unacked = session.execute(
             select(Event)

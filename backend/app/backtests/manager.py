@@ -303,10 +303,12 @@ class BacktestManager:
                 if row.process_id:
                     pids.append(row.process_id)
             session.commit()
-        grace = float(
-            self.config.get("backtest", "cancel_grace_seconds", default=60)
+        # Cancel flag first; a child that ignores it is SIGTERMed by its
+        # recorded PID after logging.backtest_kill_after_seconds.
+        kill_after = float(
+            self.config.get("logging", "backtest_kill_after_seconds", default=10)
         )
-        await asyncio.sleep(min(grace, 10))
+        await asyncio.sleep(kill_after)
         for pid in pids:
             if _pid_alive(pid):
                 with contextlib.suppress(OSError):
@@ -315,7 +317,9 @@ class BacktestManager:
             for row in session.execute(
                 select(Backtest).where(Backtest.status.in_(ACTIVE_STATUSES))
             ).scalars():
-                row.status = "cancelled"
+                # An app shutdown interrupts the run — "cancelled" stays
+                # for the Cancel button (docs/SPEC.md, Clean shutdown).
+                row.status = "interrupted"
                 row.finished_at = _naive_utc(self.clock.now())
             session.commit()
 
