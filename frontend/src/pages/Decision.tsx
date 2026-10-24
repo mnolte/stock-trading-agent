@@ -1024,12 +1024,14 @@ export default function Decision() {
             <Link to="/positions" style={{ color: 'var(--sa-accent)' }}>
               Open position &amp; orders
             </Link>
-            <Link
-              to={`/inspector?call=${decision.id}`}
-              style={{ color: 'var(--sa-accent)' }}
-            >
-              Open model call
-            </Link>
+            {decision.llm_call_id !== null && (
+              <Link
+                to={`/inspector?call=${decision.llm_call_id}`}
+                style={{ color: 'var(--sa-accent)' }}
+              >
+                Open model call
+              </Link>
+            )}
           </div>
         </div>
     </DrawerShell>

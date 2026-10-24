@@ -26,6 +26,7 @@ from app.db.models import (
     Earning,
     Event,
     Fill,
+    LlmCall,
     Order,
     Outcome,
     Position,
@@ -558,6 +559,9 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         verdict_row = session.execute(
             select(Verdict).where(Verdict.decision_id == decision_id)
         ).scalar_one_or_none()
+        llm_call_id = session.execute(
+            select(LlmCall.id).where(LlmCall.decision_id == decision_id)
+        ).scalar_one_or_none()
         earnings = _decision_earnings(session, decision, scheduled)
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
@@ -649,6 +653,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         ),
         "verdict_eligible": verdict_eligible(decision),
         "verdict_due": _iso(verdict_due),
+        "llm_call_id": llm_call_id,
         "earnings": earnings,
         "execution_mode": get_config().get(
             "execution", "mode", default="automatic"

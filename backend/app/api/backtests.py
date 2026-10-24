@@ -501,9 +501,20 @@ def run_decision_detail(
         position_row = session.execute(
             select(Position).where(Position.entry_decision_id == decision_id)
         ).scalar_one_or_none()
+        # Column select, not the entity: run databases keep the schema they
+        # were created with, so newer Verdict columns (draft_reason, facts)
+        # are not guaranteed to exist.
         verdict_row = session.execute(
-            select(Verdict).where(Verdict.decision_id == decision_id)
-        ).scalar_one_or_none()
+            select(
+                Verdict.id,
+                Verdict.verdict,
+                Verdict.reason,
+                Verdict.source,
+                Verdict.draft_source,
+                Verdict.created_at,
+                Verdict.updated_at,
+            ).where(Verdict.decision_id == decision_id)
+        ).first()
         earnings = _decision_earnings(session, decision, scheduled)
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
@@ -570,6 +581,9 @@ def run_decision_detail(
         ),
         "verdict_eligible": False,
         "verdict_due": None,
+        # The inspector reads the live database only; run databases have no
+        # llm_calls history to link to.
+        "llm_call_id": None,
         "earnings": earnings,
         "execution_mode": get_config().get(
             "execution", "mode", default="automatic"

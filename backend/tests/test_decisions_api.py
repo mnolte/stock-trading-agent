@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, Outcome
+from app.db.models import Cycle, Decision, LlmCall, Outcome
 from app.market.clock import UTC
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -88,6 +88,8 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
     assert body["tokens_in"] == 80
     assert body["tokens_out"] == 20
     assert body["latency_ms"] == 900
+    # The seeded decision never sent a call — the drawer hides the link.
+    assert body["llm_call_id"] is None
     assert body["outcome"] == {
         "price_1h": None,
         "price_1h_at": None,
@@ -133,6 +135,28 @@ def test_decisions_list_shows_no_call_reason(client: TestClient) -> None:
     detail = client.get(f"/api/decisions/{decision_id}").json()
     assert detail["no_call_reason"] == "rules"
     assert detail["model"] == "none"
+
+
+def test_decision_detail_exposes_its_llm_call(client: TestClient) -> None:
+    """The drawer's "Open model call" links ?call= at the real row."""
+    decision_id = _seed_decision()
+    with get_session_maker()() as session:
+        call = LlmCall(
+            sent_at=datetime(2026, 10, 15, 16, 46),
+            session_date=datetime(2026, 10, 15).date(),
+            source="live",
+            kind="decision",
+            decision_id=decision_id,
+            symbol="MSFT",
+            outcome="success",
+            reasons=[],
+            backfilled=False,
+        )
+        session.add(call)
+        session.commit()
+        call_id = call.id
+    body = client.get(f"/api/decisions/{decision_id}").json()
+    assert body["llm_call_id"] == call_id
 
 
 def _seed_no_call() -> int:

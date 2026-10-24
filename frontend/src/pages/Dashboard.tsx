@@ -1110,7 +1110,7 @@ export default function Dashboard() {
           />
         </Link>
         <Link
-          to="/inspector"
+          to="/inspector?source=live"
           className="sa-tile"
           aria-label="Model calls, open the LLM inspector"
           title={
