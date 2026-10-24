@@ -21,8 +21,9 @@ test('LLM inspector: filters, list and call details', async ({ page, request }, 
   const rows = page.locator('[aria-label="Model calls"] button.sa-row');
   await expect(rows.first()).toBeVisible({ timeout: 60_000 });
 
-  // Defaults: Last session, all outcomes, Live decisions + Reviews.
-  await expect(page).toHaveURL(/period=last/);
+  // Defaults: Last session, all outcomes, Live decisions + Reviews —
+  // defaults stay out of the URL until the user changes a filter.
+  await expect(page.locator('[aria-label="Period"] [aria-pressed="true"]')).toHaveText(/Last session/);
   await expect(page.locator('[aria-label="Outcome"] [aria-pressed="true"]')).toHaveText(/All/);
   await expect(
     page.locator('[aria-label="Source · pick one or more"] [aria-pressed="true"]'),
@@ -82,10 +83,14 @@ test('LLM inspector: error call shows the error block', async ({ page, request }
   const callId = errors.calls[0].id as number;
 
   await page.goto(`/inspector?call=${callId}&outcome=error`);
+  const errorCard = page.locator('section[aria-label="Error"]');
+  await expect(errorCard).toBeVisible({ timeout: 60_000 });
+  // The error block carries the type and, when recorded, status and
+  // request id; a backfilled row may only show the type.
+  await expect(errorCard.getByText(/timeout|api_error|invalid_output|refusal|HTTP \d+|request id/).first()).toBeVisible();
   await expect(
-    page.getByRole('heading', { name: 'Error', exact: true }),
-  ).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/request id|timed out|HTTP \d+/).first()).toBeVisible();
+    page.getByText(/no usable response|Keys and headers are never stored/i).first(),
+  ).toBeVisible();
   // No raw response on a transport failure.
   await expect(
     page.getByRole('heading', { name: 'Raw response', exact: true }),
