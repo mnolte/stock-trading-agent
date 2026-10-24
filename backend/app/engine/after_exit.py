@@ -17,6 +17,7 @@ inside it (AGENTS.md hard rule 13).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -69,7 +70,7 @@ def _aware(dt: datetime) -> datetime:
 
 
 def split_factor_after(
-    actions: list[CorporateAction], symbol: str, day: date
+    actions: Sequence[CorporateAction], symbol: str, day: date
 ) -> Decimal:
     """Cumulative split ratio for ``symbol`` after ``day`` (ex-date > day).
 
@@ -259,7 +260,6 @@ class AfterExitWorker:
             return "failed"
         if not bars:
             return "pending"
-        exit_factor = split_factor_after(actions, row.symbol, row.exit_day)
 
         def adjusted(bar: Bar5m, fetched: bool) -> Bar5m:
             if fetched:
