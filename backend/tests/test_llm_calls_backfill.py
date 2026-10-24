@@ -10,6 +10,7 @@ id — stay null. Calls that were never sent get no row.
 
 import json
 from pathlib import Path
+from typing import Any
 
 import app.config as config_module
 import pytest
@@ -156,7 +157,7 @@ def _fixture(db: Path) -> None:
     engine.dispose()
 
 
-def _calls(db: Path) -> list[dict]:
+def _calls(db: Path) -> list[dict[str, Any]]:
     engine = create_engine(f"sqlite:///{db}")
     with engine.connect() as conn:
         rows = conn.execute(text(
@@ -177,7 +178,7 @@ def _calls(db: Path) -> list[dict]:
 
 
 @pytest.fixture()
-def migrated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+def migrated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     db = tmp_path / "backfill.db"
     _upgrade(db, PRIOR_REVISION, monkeypatch)
     _fixture(db)
@@ -185,12 +186,12 @@ def migrated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     return _calls(db)
 
 
-def _by_link(rows: list[dict], key: str, value: int) -> dict:
+def _by_link(rows: list[dict[str, Any]], key: str, value: int) -> dict[str, Any]:
     (row,) = [r for r in rows if r[key] == value]
     return row
 
 
-def test_every_call_gets_the_spec_outcome(migrated: list[dict]) -> None:
+def test_every_call_gets_the_spec_outcome(migrated: list[dict[str, Any]]) -> None:
     live = {r["decision_id"]: r for r in migrated if r["source"] == "live"}
     assert live[1]["outcome"] == "success" and live[1]["reasons"] == []
     assert live[2]["outcome"] == "warning"
@@ -205,7 +206,7 @@ def test_every_call_gets_the_spec_outcome(migrated: list[dict]) -> None:
     assert 7 not in live and 8 not in live and 9 not in live
 
 
-def test_shadow_backfill(migrated: list[dict]) -> None:
+def test_shadow_backfill(migrated: list[dict[str, Any]]) -> None:
     shadow = {
         r["shadow_decision_id"]: r
         for r in migrated if r["source"] == "shadow"
@@ -216,7 +217,7 @@ def test_shadow_backfill(migrated: list[dict]) -> None:
     assert shadow[2]["outcome"] == "error" and shadow[2]["error_type"] == "api_error"
 
 
-def test_review_backfill(migrated: list[dict]) -> None:
+def test_review_backfill(migrated: list[dict[str, Any]]) -> None:
     review = {r["review_id"]: r for r in migrated if r["source"] == "review"
               and r["review_id"] is not None}
     assert set(review) == {1, 2, 3, 4, 5}
@@ -228,7 +229,7 @@ def test_review_backfill(migrated: list[dict]) -> None:
     assert review[5]["reasons"] == ["number_check_failed"]
 
 
-def test_verdict_backfill(migrated: list[dict]) -> None:
+def test_verdict_backfill(migrated: list[dict[str, Any]]) -> None:
     verdict = {r["verdict_id"]: r for r in migrated
                if r["verdict_id"] is not None}
     assert set(verdict) == {1, 2}
@@ -240,7 +241,7 @@ def test_verdict_backfill(migrated: list[dict]) -> None:
     assert verdict[1]["decision_id"] == 1
 
 
-def test_backfilled_rows_are_marked_and_sparse(migrated: list[dict]) -> None:
+def test_backfilled_rows_are_marked_and_sparse(migrated: list[dict[str, Any]]) -> None:
     assert migrated, "the fixture must produce rows"
     for row in migrated:
         assert row["backfilled"] == 1

@@ -449,10 +449,35 @@ class LlmCall(Base):
 
     __tablename__ = "llm_calls"
     __table_args__ = (
+        Index("ix_llm_calls_sent_id", "sent_at", "id"),
         Index("ix_llm_calls_session_sent", "session_date", "sent_at"),
         Index("ix_llm_calls_outcome_sent", "outcome", "sent_at"),
         Index("ix_llm_calls_source_sent", "source", "sent_at"),
         Index("ix_llm_calls_symbol_sent", "symbol", "sent_at"),
+        # Summary/index-only aggregates and per-dimension option counts on
+        # the 100k-call fixture budget (300 ms): one covering scan for the
+        # session/outcome/cost aggregates, one index per option dimension
+        # the spec's four indexes don't already cover, and latency_ms for
+        # the median/p95 offset lookups. A call is written once per model
+        # request, so index overhead is not a factor.
+        Index(
+            "ix_llm_calls_aggregates",
+            "session_date",
+            "source",
+            "outcome",
+            "cost",
+        ),
+        Index("ix_llm_calls_action", "final_action"),
+        Index("ix_llm_calls_model", "model"),
+        Index("ix_llm_calls_prompt", "prompt_version"),
+        Index("ix_llm_calls_strategy", "strategy_id"),
+        Index("ix_llm_calls_latency", "latency_ms"),
+        Index("ix_llm_calls_reasons", "reasons"),
+        Index(
+            "ix_llm_calls_dims",
+            "outcome", "source", "symbol", "final_action",
+            "model", "prompt_version", "strategy_id",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

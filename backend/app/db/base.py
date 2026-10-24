@@ -39,6 +39,11 @@ def configure_sqlite(engine: Engine, busy_timeout_seconds: float) -> Engine:
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute(f"PRAGMA busy_timeout={busy_ms}")
+        # Read side: map the file and keep index pages warm — the
+        # inspector's 100k-row summary scans are memory-bound then.
+        cursor.execute("PRAGMA mmap_size=268435456")
+        cursor.execute("PRAGMA temp_store=MEMORY")
+        cursor.execute("PRAGMA cache_size=-64000")
         cursor.close()
 
     return engine

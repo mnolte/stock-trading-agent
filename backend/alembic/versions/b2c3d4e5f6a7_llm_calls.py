@@ -241,7 +241,7 @@ def _backfill(conn: sa.engine.Connection) -> None:
         )
     ).mappings():
         call_row(
-            _decision_call(r, source="live"),
+            _decision_call(dict(r), source="live"),
             r["scheduled_time"],
             decision_id=r["id"],
             cycle_id=r["cycle_id"],
@@ -277,7 +277,7 @@ def _backfill(conn: sa.engine.Connection) -> None:
         )
     ).mappings():
         call_row(
-            _decision_call(r, source="shadow"),
+            _decision_call(dict(r), source="shadow"),
             r["created_at"],
             shadow_decision_id=r["id"],
             strategy_id=r["strategy_id"],
@@ -307,7 +307,7 @@ def _backfill(conn: sa.engine.Connection) -> None:
             "         'number check failed', 'fact check failed'))"
         )
     ).mappings():
-        computed = _review_call(r, kind=r["kind"], reason=r["reason"])
+        computed = _review_call(dict(r), kind=r["kind"], reason=r["reason"])
         if computed is not None:
             call_row(
                 computed,
@@ -392,23 +392,59 @@ def upgrade() -> None:
         sa.Column("raw_response", sa.Text(), nullable=True),
         sa.Column("backfilled", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
+    # (sent_at, id) is the keyset order of the default list view.
+    op.create_index("ix_llm_calls_sent_id", "llm_calls", ["sent_at", "id"])
     op.create_index("ix_llm_calls_session_sent", "llm_calls", ["session_date", "sent_at"])
     op.create_index("ix_llm_calls_outcome_sent", "llm_calls", ["outcome", "sent_at"])
     op.create_index("ix_llm_calls_source_sent", "llm_calls", ["source", "sent_at"])
     op.create_index("ix_llm_calls_symbol_sent", "llm_calls", ["symbol", "sent_at"])
+    # The four spec indexes answer the list filters; these keep the
+    # summary's aggregates, option counts and latency percentiles inside
+    # the 300 ms budget on 100k calls (one covering scan, per-dimension
+    # index scans, index-assisted offsets).
+    op.create_index(
+        "ix_llm_calls_aggregates",
+        "llm_calls",
+        ["session_date", "source", "outcome", "cost"],
+    )
+    op.create_index("ix_llm_calls_action", "llm_calls", ["final_action"])
+    op.create_index("ix_llm_calls_model", "llm_calls", ["model"])
+    op.create_index("ix_llm_calls_prompt", "llm_calls", ["prompt_version"])
+    op.create_index("ix_llm_calls_strategy", "llm_calls", ["strategy_id"])
+    op.create_index("ix_llm_calls_latency", "llm_calls", ["latency_ms"])
+    op.create_index("ix_llm_calls_reasons", "llm_calls", ["reasons"])
+    # The summary's option counts scan this single covering index.
+    op.create_index(
+        "ix_llm_calls_dims", "llm_calls",
+        ["outcome", "source", "symbol", "final_action", "model",
+         "prompt_version", "strategy_id"],
+    )
     op.add_column("verdicts", sa.Column("facts", sa.JSON(), nullable=True))
     op.add_column(
         "verdicts", sa.Column("draft_reason", sa.String(length=64), nullable=True)
     )
 
     _backfill(op.get_bind())
+    # Stats for the covering indexes — the inspector's summary picks
+    # them when sqlite_stat1 exists (fresh databases get ANALYZE from
+    # the engine's own upkeep).
+    op.get_bind().execute(sa.text("ANALYZE llm_calls"))
 
 
 def downgrade() -> None:
     op.drop_column("verdicts", "draft_reason")
     op.drop_column("verdicts", "facts")
+    op.drop_index("ix_llm_calls_latency", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_strategy", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_prompt", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_model", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_action", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_aggregates", table_name="llm_calls")
     op.drop_index("ix_llm_calls_symbol_sent", table_name="llm_calls")
     op.drop_index("ix_llm_calls_source_sent", table_name="llm_calls")
     op.drop_index("ix_llm_calls_outcome_sent", table_name="llm_calls")
     op.drop_index("ix_llm_calls_session_sent", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_reasons", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_dims", table_name="llm_calls")
+    op.drop_index("ix_llm_calls_sent_id", table_name="llm_calls")
     op.drop_table("llm_calls")

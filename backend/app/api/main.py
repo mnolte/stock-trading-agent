@@ -23,6 +23,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from app.api.backtests import router as backtests_router
+from app.api.inspector import router as inspector_router
 from app.api.routes import router as api_router
 from app.api.strategies import router as strategies_router
 from app.api.websocket import UpdateBus
@@ -975,6 +976,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api")
     app.include_router(strategies_router, prefix="/api")
     app.include_router(backtests_router, prefix="/api")
+    app.include_router(inspector_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
     if FRONTEND_DIST.is_dir():
         app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")

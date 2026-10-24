@@ -106,7 +106,7 @@ def _has_unavailable(value: Any, ignored: frozenset[str]) -> bool:
     return bool(value == UNAVAILABLE)
 
 
-def input_incomplete(snapshot: dict[str, Any] | None) -> bool:
+def input_incomplete(snapshot: object) -> bool:
     """True when the stored input snapshot had missing inputs.
 
     A field that is ``"unavailable"`` or headlines that were ``truncated``
