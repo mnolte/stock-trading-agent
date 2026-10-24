@@ -10,7 +10,6 @@ import {
 } from '../api/state';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
-import { SegmentedControl } from '../components/SegmentedControl';
 import { VerdictButtons } from '../components/VerdictButtons';
 import type {
   BriefingFacts,
@@ -712,12 +711,58 @@ export default function Reviews() {
             boxSizing: 'border-box',
           }}
         >
-          <SegmentedControl
-            label="Review kind"
-            options={['Weekly', 'Briefings']}
-            value={tab}
-            onChange={(o) => setTab(o as 'Weekly' | 'Briefings')}
-          />
+          {/* Real tabs (design/screens/Reviews.dc.html): arrow keys move
+           * between tabs, roving tabindex keeps one tab in the Tab order. */}
+          <div
+            role="tablist"
+            aria-label="Review kind"
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+              e.preventDefault();
+              const tabs = Array.from(
+                e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'),
+              );
+              const i = tabs.indexOf(document.activeElement as HTMLElement);
+              const next =
+                i < 0
+                  ? 0
+                  : (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) %
+                    tabs.length;
+              tabs[next].focus();
+              tabs[next].click();
+            }}
+            style={{
+              display: 'inline-flex',
+              background: 'var(--sa-raised)',
+              border: '1px solid var(--sa-border)',
+              borderRadius: 'var(--sa-radius-md)',
+              padding: '2px',
+            }}
+          >
+            {(['Weekly', 'Briefings'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="tab"
+                aria-selected={option === tab}
+                tabIndex={option === tab ? 0 : -1}
+                onClick={() => setTab(option)}
+                style={{
+                  height: '32px',
+                  padding: '0 var(--sa-space-4)',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  background: option === tab ? 'var(--sa-panel)' : 'transparent',
+                  border: 'none',
+                  color: option === tab ? 'var(--sa-text)' : 'var(--sa-text-muted)',
+                  fontSize: 'var(--sa-text-sm)',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
           {upcoming && (
             <div
               style={{

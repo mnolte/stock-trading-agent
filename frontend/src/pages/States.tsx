@@ -306,6 +306,7 @@ export default function States() {
       <Card label="Pending approval · supervised mode">
         <ApprovalCard
           approval={sampleApproval}
+          nextCycle={new Date(Date.now() + 48 * 60_000).toISOString()}
           killSwitchOn={false}
           onResolved={() => {}}
         />

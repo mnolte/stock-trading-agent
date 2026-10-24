@@ -4,7 +4,6 @@ import json
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -21,7 +20,6 @@ from app.data.fake import (
 )
 from app.data.models import Bar1h, Bar5m, DataResult, NewsItem, Quote
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Cycle, Decision, Event, Order, Outcome, Position
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
@@ -32,20 +30,13 @@ from app.rules.prefilter import RulesResult
 from app.signals.regime import MarketRegime
 from app.signals.service import Evaluation, SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
 CYCLE_1246 = datetime(2026, 10, 15, 12, 46, tzinfo=NY_TZ)
 NOW_13H = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)  # 13:00 New York
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _regime() -> MarketRegime:

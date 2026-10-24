@@ -1232,13 +1232,13 @@ def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
     from app.settings_service import LABELS
 
     previous_readiness: dict[str, Any] | None = None
-    for row in session.execute(
+    for version_row in session.execute(
         select(SettingsVersion).order_by(
             SettingsVersion.changed_at, SettingsVersion.id
         )
     ).scalars():
         current = cast(
-            "dict[str, Any]", (row.settings or {}).get("readiness") or {}
+            "dict[str, Any]", (version_row.settings or {}).get("readiness") or {}
         )
         if previous_readiness is not None:
             for key in sorted(set(previous_readiness) | set(current)):
@@ -1248,11 +1248,11 @@ def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
                 change = (
                     f"{LABELS.get(('readiness', key), key)} {old} → {new}"
                 )
-                if row.reason:
-                    change += f" — {row.reason}"
+                if version_row.reason:
+                    change += f" — {version_row.reason}"
                 entries.append(
                     {
-                        "at": _aware(row.changed_at).isoformat(),
+                        "at": _aware(version_row.changed_at).isoformat(),
                         "kind": "settings",
                         "change": change,
                     }

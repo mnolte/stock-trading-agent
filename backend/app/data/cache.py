@@ -202,6 +202,28 @@ class BarCache:
                 counts[symbol] += 1
         return counts
 
+    def covered_daily_dates(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> set[date]:
+        """Session dates with a cached daily bar, intersected with the
+        wanted range — the daily twin of ``covered_session_dates``."""
+        if not sessions:
+            return set()
+        wanted = {s.date for s in sessions}
+        with self._session_factory() as session:
+            dates = (
+                session.execute(
+                    select(Bar1dRow.date).where(
+                        Bar1dRow.symbol == symbol,
+                        Bar1dRow.date >= min(wanted),
+                        Bar1dRow.date <= max(wanted),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return set(dates) & wanted
+
     def daily_bar_counts(
         self, symbols: list[str], sessions: list[CalendarDay]
     ) -> dict[str, int]:

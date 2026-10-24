@@ -87,7 +87,9 @@ test('universe: the daily screen shows as a preview in fixed mode', async ({
   await expect(
     page.getByText('Eligible for the next session', { exact: true })
   ).toBeVisible();
-  await expect(page.getByRole('tab', { name: /Eligible/ })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /Eligible/ })
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Add to pool' })).toBeVisible();
   await expect(
     page.getByRole('button', { name: 'Import CSV…' })

@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-10-24 — Test suite speed-up and warm-cache daily refresh
+
+- `MarketDataService.refresh_daily` now checks coverage like `refresh_history`: each symbol's fetch starts at its earliest missing session and only the newest session is always refetched. A warm restart costs one small request per symbol instead of re-downloading `daily_history_sessions` days — app boot ~16 s faster.
+- New `BarCache.covered_daily_dates` (per-symbol twin of `covered_session_dates`).
+- Tests: a per-worker template database (schema + calendar + earnings + corporate actions + FX + daily and 5-minute bars for the default universe, seeded without a boot) is copied into every test's `SA_DB_PATH`, cutting each app boot from ~50 s to ~12 s. Shared `session_factory` fixture replaces ~12 identical copies; engines are disposed per test.
+- `test_rules_only_short_window_is_deterministic` and `test_full_default_pool_screens_in_simulated_mode` moved to `-m slow` (`make test-slow`); per-test timeout 600 s (1800 s for slow); pytest runs `-n 4`, strict markers.
+- `shutdown_grace_seconds` shortened in the two cycle-counter tests that leave a running row.
+
+## 2026-10-24 — Briefing fact-check fix
+
+- New prompt `briefing.v2`: an empty list is a known fact (say "none" or skip the line) — only `null` means "unavailable". v1 let the model call known-empty earnings "unavailable", which the fact check correctly rejected on 23 October.
+- The fact check's `review_fallback` event now records the offending clause as `detail`, and clause splitting also breaks on commas and dashes so a legitimate "unavailable" for a null fact (regime, yesterday's result) in the same sentence no longer fails the check.
+- `reviews.prompts.briefing` is not editable in Settings; activating v2 took a new `settings_versions` row.
+
 ## 2026-10-24 — Dashboard and interaction polish (PR 17)
 
 - GUI: new "Dashboard at scale and off-hours". "Today" is the current or last New York session; outside a session the feed, model-call tile and strip show the last session with its date; countdowns over 24 h show day and time. Latest decision falls back to why the symbol wasn't called, or its most recent decision with date. Feed grouped per cycle; changes always shown; other decisions grouped by action and reason. Symbols are picked from the watchlist, held-symbol buttons or Find symbol, never a button per symbol; `?symbol=` in the URL. Rank and the screened hint only in screened mode. Linked tiles. Approvals show their expiry.

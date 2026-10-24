@@ -7,13 +7,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import pytest
 from app.config import AppConfig
 from app.data.models import Bar5m
-from app.db.base import Base
 from app.db.models import (
     Cycle,
     Decision,
@@ -30,7 +28,7 @@ from app.shadows.compare import same_as_live
 from app.shadows.portfolio import LiveGateState, replay_bars
 from app.shadows.runner import ShadowRunner
 from app.shadows.strategy import StrategyError, validate_new_strategy
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -41,10 +39,8 @@ RUN_START = datetime(2026, 10, 1, 13, 0)  # naive UTC
 
 
 @pytest.fixture
-def sf(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'shadows.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+def sf(session_factory: sessionmaker[Session]) -> sessionmaker[Session]:
+    return session_factory
 
 
 class Notes:

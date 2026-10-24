@@ -41,7 +41,7 @@ export interface RulesStatus {
 export interface WatchlistRow {
   symbol: string;
   price: string | null;
-  day_change_pct: string | null;
+  day_change_pct: number | null;
   rules: RulesStatus;
   earnings_date: string | null;
   warming_up?: boolean;
@@ -230,13 +230,13 @@ export interface PositionRow {
   deferred_exit: { at: string; reason: string; detail?: string } | null;
   opened_at: string;
   closed_at: string | null;
-  realized_pnl_raw: string | null;
+  realized_pnl_raw: number | null;
   exit_reason: string | null;
   legs?: PositionLeg[];
   last_price?: string | null;
-  unrealized_pnl?: string | null;
-  unrealized_pnl_eur?: string | null;
-  r_multiple?: string | null;
+  unrealized_pnl?: number | null;
+  unrealized_pnl_eur?: number | null;
+  r_multiple?: number | null;
   stop_distance_label?: string;
   earnings_date?: string | null;
   opened_today?: boolean;
@@ -523,6 +523,8 @@ export interface ApprovalsResponse {
   mode: string;
   kill_switch_on: boolean;
   paused: boolean;
+  /** Pending approvals expire at the start of this cycle. */
+  next_cycle: string | null;
   items: Approval[];
   recent: Approval[];
 }
@@ -897,6 +899,9 @@ export interface CycleCounter {
   kill_switch: boolean;
   running: boolean;
   now: string | null; // server time, to correct client-clock drift
+  /** The counter's segments cover the shown session; off-hours that's the
+   * last session, not today. */
+  session_is_today: boolean;
   next_cycle: string | null;
   next_cycle_today: boolean;
   next_check: string | null;
@@ -911,9 +916,9 @@ export interface DashboardStats {
   positions: number;
   positions_cap: number;
   cash: string | null;
-  since_start_pct: string | null;
+  since_start_pct: number | null;
   since_label: string;
-  spy_pct: string | null;
+  spy_pct: number | null;
   execution_mode: string;
   // Model call counter (docs/SPEC.md, GUI — Model call counter).
   calls_today: number;
@@ -1026,17 +1031,28 @@ export interface DashboardLatestDecision {
   checks: { name: string; passed: boolean; detail: string }[];
   price: string | null;
   time: string;
+  /** False when this is the most recent decision from an earlier session —
+   * the card then shows the date instead of the full in-session layout. */
+  in_session: boolean;
 }
 
 export interface DashboardFeedItem {
   id: number;
   time: string;
+  cycle_id: number;
+  /** 1-based position of the cycle within the shown session. */
+  cycle_index: number | null;
   symbol: string;
   context: string;
   action: string;
   model_action: string | null;
   no_call_reason: string | null;
   reason: string | null;
+  /** Entries, exits, stop moves, deferred exits and approvals — shown even
+   * in collapsed cycles. */
+  change: boolean;
+  /** A real model call (model != 'none'). */
+  called: boolean;
 }
 
 export interface MarketClosedCard {
@@ -1053,6 +1069,10 @@ export interface DashboardResponse {
     next_cycle: string | null;
     next_open: string | null;
     next_close: string | null;
+    /** The session the feed/tiles describe — today or the last completed
+     * one (NY session date, "2026-10-23"). */
+    shown_date: string;
+    shown_is_today: boolean;
   };
   cycle_line: DashboardCycleLine | null;
   cycle_counter: CycleCounter | null;
@@ -1092,7 +1112,7 @@ export interface ChartResponse {
   levels: ChartLevels;
   warming_up: boolean;
   price: string | null;
-  day_change_pct: string | null;
+  day_change_pct: number | null;
 }
 
 // ---- Universe (pool + liquidity screen, v0.2) --------------------------------

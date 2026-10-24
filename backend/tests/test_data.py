@@ -32,17 +32,10 @@ from app.db.base import Base
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
 from app.market.clock import NY_TZ, UTC
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 @pytest.fixture
@@ -783,6 +776,66 @@ async def test_refresh_daily_fills_cache(
         daily = service.get_daily_bars(symbol, sessions)
         assert len(daily) == 5
         assert daily[0].date < daily[-1].date
+
+
+async def test_refresh_daily_fetches_only_missing_sessions(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A warm daily cache re-fetches only the forming latest session per
+    symbol — never the whole window."""
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = 5
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), config, session_factory=session_factory
+    )
+    await service.refresh_daily(date(2026, 10, 15))
+    starts: list[date] = []
+    original = fake_sources.bars.fetch_daily_bars
+
+    async def spy(symbol: str, start: date, end: date) -> DataResult[list[DailyBar]]:
+        starts.append(start)
+        return await original(symbol, start, end)
+
+    fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
+    again = await service.refresh_daily(date(2026, 10, 15))
+    assert starts == [date(2026, 10, 15)] * len(starts)
+    for symbol in ("SPY", "AAPL"):
+        assert again[symbol].error is None
+        assert again[symbol].data == 0  # refetched, already stored
+
+
+async def test_refresh_daily_refetches_a_mid_range_hole(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A missing session inside the window is re-downloaded: the request
+    starts at the earliest missing date."""
+    from app.db.models import Bar1d as Bar1dRow
+
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = 5
+    service = MarketDataService(
+        fake_sources, FakeCalendarSource(), config, session_factory=session_factory
+    )
+    await service.refresh_daily(date(2026, 10, 15))
+    hole = date(2026, 10, 13)
+    with session_factory() as session:
+        session.execute(delete(Bar1dRow).where(Bar1dRow.date == hole))
+        session.commit()
+    starts: dict[str, date] = {}
+    original = fake_sources.bars.fetch_daily_bars
+
+    async def spy(symbol: str, start: date, end: date) -> DataResult[list[DailyBar]]:
+        starts[symbol] = start
+        return await original(symbol, start, end)
+
+    fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
+    results = await service.refresh_daily(date(2026, 10, 15))
+    # Every symbol's request starts at the hole; the newest session is
+    # inside the range and gets refetched with it.
+    assert set(starts.values()) == {hole}
+    for symbol in ("SPY", "AAPL"):
+        assert results[symbol].error is None
+        assert results[symbol].data == 1
 
 
 # ----------------------------------------------------------------------

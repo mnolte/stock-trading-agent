@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
+import type { Resource } from '../api/useResource';
 import type { BudgetMeter, BudgetMeterLevel, RiskBudgetResponse } from '../types/api';
+import { CardBody } from './cardState';
 import {
   budgetHints,
   dayTradesText,
@@ -115,12 +117,14 @@ function Limit({ children }: { children: ReactNode }) {
   return <span style={{ color: 'var(--sa-text-muted)' }}>{children}</span>;
 }
 
-export function RiskBudgetCard({ budget }: { budget: RiskBudgetResponse | null }) {
+export function RiskBudgetCard({ res }: { res: Resource<RiskBudgetResponse> }) {
+  const budget = res.data;
   const sb = budget?.shock_brake;
   const sectorCap = budget?.sectors[0]?.cap ?? 0;
   return (
     <section
       aria-label="Risk budget"
+      aria-busy={res.loading || undefined}
       style={{
         flex: '1 1 560px',
         minWidth: 0,
@@ -161,6 +165,8 @@ export function RiskBudgetCard({ budget }: { budget: RiskBudgetResponse | null }
             : 'limits from settings'}
         </span>
       </div>
+      <CardBody res={res} what="the risk budget">
+        {() => (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4) 28px' }}>
         <div
           style={{
@@ -239,6 +245,8 @@ export function RiskBudgetCard({ budget }: { budget: RiskBudgetResponse | null }
           />
         </div>
       </div>
+        )}
+      </CardBody>
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 
 import { useLiveStatus, useLiveUpdates } from '../api/liveContext';
@@ -14,26 +14,13 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import type { HeaderState, PositionsResponse } from '../types/api';
 import { Banner } from './Banner';
 import { BannerStrip } from './BannerStrip';
+import { documentTitle, pageTitle } from './documentTitle';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
 import { Sidebar } from './Sidebar';
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
-
-function pageTitle(pathname: string): string {
-  if (pathname.startsWith('/positions')) return 'Positions & orders';
-  if (pathname.startsWith('/performance')) return 'Performance';
-  if (pathname.startsWith('/inspector')) return 'LLM inspector';
-  if (pathname.startsWith('/reviews')) return 'Reviews';
-  if (pathname.startsWith('/strategies')) return 'Strategies';
-  if (pathname.startsWith('/backtest')) return 'Backtest';
-  if (pathname.startsWith('/decisions')) return 'Decision detail';
-  if (pathname.startsWith('/readiness')) return 'Readiness';
-  if (pathname.startsWith('/settings')) return 'Settings';
-  if (pathname.startsWith('/states')) return 'States & dialogs';
-  return 'Dashboard';
-}
 
 export function Layout() {
   const [state, setState] = useState<HeaderState | null>(null);
@@ -42,6 +29,7 @@ export function Layout() {
   const [error, setError] = useState<string | null>(null);
   const [bannerRefresh, setBannerRefresh] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuWrapRef = useRef<HTMLDivElement | null>(null);
   const liveStatus = useLiveStatus();
   const narrow = useMediaQuery('(max-width: 820px)');
   const location = useLocation();
@@ -63,6 +51,47 @@ export function Layout() {
   );
   useEffect(refreshAll, [refreshAll]);
   useEffect(() => setMenuOpen(false), [location.pathname]);
+
+  // Browser tab shows the page and the agent's state (open, paused, kill
+  // switch) — docs/SPEC.md, Interaction and states.
+  useEffect(() => {
+    document.title = documentTitle(location.pathname, state);
+  }, [location.pathname, state]);
+
+  // Mobile menu overlay (design/DESIGN.md, Interaction rules): Escape
+  // closes, Tab stays inside the panel, and focus returns to the control
+  // that opened it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const root = menuWrapRef.current;
+    root?.querySelector<HTMLElement>('a[href], button')?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        return;
+      }
+      if (e.key !== 'Tab' || !root) return;
+      const items = root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled])',
+      );
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        last.focus();
+        e.preventDefault();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        first.focus();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previous?.focus();
+    };
+  }, [menuOpen]);
 
   const onKillSwitchButton = () => {
     if (state?.kill_switch) {
@@ -128,7 +157,9 @@ export function Layout() {
     >
       {!narrow && <Sidebar />}
       {narrow && menuOpen && (
-        <Sidebar overlay onNavigate={() => setMenuOpen(false)} />
+        <div ref={menuWrapRef}>
+          <Sidebar overlay onNavigate={() => setMenuOpen(false)} />
+        </div>
       )}
       <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <Header
@@ -137,6 +168,7 @@ export function Layout() {
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
           onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
+          menuOpen={menuOpen}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>
           {liveStatus === 'paused' && (

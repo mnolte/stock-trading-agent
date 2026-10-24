@@ -481,7 +481,7 @@ export default function Universe() {
           {/* pool table */}
           <Card label="Pool" right="Sorted by rank">
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
-              <div role="tablist" style={{ display: 'inline-flex', flexWrap: 'wrap', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
+              <div role="group" aria-label="Filter the pool" style={{ display: 'inline-flex', flexWrap: 'wrap', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
                 {TABS.map((t) => {
                   const count =
                     t === 'All'
@@ -498,8 +498,7 @@ export default function Universe() {
                     <button
                       key={t}
                       type="button"
-                      role="tab"
-                      aria-selected={selected}
+                      aria-pressed={selected}
                       onClick={() => setTab(t)}
                       style={{
                         height: 36,

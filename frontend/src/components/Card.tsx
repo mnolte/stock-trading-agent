@@ -1,14 +1,20 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 export interface CardProps {
   label?: string;
   right?: ReactNode;
   children?: ReactNode;
+  style?: CSSProperties;
+  /** Sets aria-busy while the first load is in flight. */
+  busy?: boolean;
+  ariaLabel?: string;
 }
 
-export function Card({ label, right, children }: CardProps) {
+export function Card({ label, right, children, style, busy, ariaLabel }: CardProps) {
   return (
     <section
+      aria-label={ariaLabel}
+      aria-busy={busy || undefined}
       style={{
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',
@@ -17,6 +23,7 @@ export function Card({ label, right, children }: CardProps) {
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--sa-space-3)',
+        ...style,
       }}
     >
       {(label || right) && (

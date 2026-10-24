@@ -2,10 +2,15 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import { postApprove, postRejectApproval } from '../api/state';
-import { displayTime } from '../format';
+import {
+  displayTime,
+  displayWeekdayTime,
+  openedTodayNy,
+} from '../format';
 import type { Approval } from '../types/api';
 import { Banner } from './Banner';
 import { Button } from './Button';
+import { formatNyTitle } from './decisionFormat';
 
 /** R/R and dollar risk, computed from the stored limit/stop/target. */
 function RiskLine({ approval }: { approval: Approval }) {
@@ -29,11 +34,14 @@ export function ApprovalCard({
   approval,
   killSwitchOn,
   paused = false,
+  nextCycle = null,
   onResolved,
 }: {
   approval: Approval;
   killSwitchOn: boolean;
   paused?: boolean;
+  /** Pending approvals expire at the start of this cycle. */
+  nextCycle?: string | null;
   onResolved: () => void;
 }) {
   const location = useLocation();
@@ -98,8 +106,25 @@ export function ApprovalCard({
         <RiskLine approval={approval} />
       </div>
       <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-        Waiting since {displayTime(approval.created_at)}. Size and gates are checked
-        again when you approve.
+        Waiting since{' '}
+        <span title={formatNyTitle(approval.created_at)}>
+          {displayTime(approval.created_at)}
+        </span>
+        {nextCycle && (
+          <>
+            {' · '}
+            <b style={{ color: 'var(--sa-warning-text)', fontWeight: 600 }}>
+              expires at the{' '}
+              <span title={formatNyTitle(nextCycle)}>
+                {openedTodayNy(nextCycle)
+                  ? displayTime(nextCycle)
+                  : displayWeekdayTime(nextCycle)}
+              </span>{' '}
+              cycle
+            </b>
+          </>
+        )}
+        . Size and gates are checked again when you approve.
       </div>
       {error && <Banner variant="negative">{error}</Banner>}
       <div style={{ display: 'flex', gap: 'var(--sa-space-2)', alignItems: 'center' }}>

@@ -30,20 +30,25 @@ export function nextCycleLabel(c: CycleCounter): string {
   return `next cycle ${when} · ${nyTime(c.next_cycle)} NY`;
 }
 
-/** "in 54:12" while waiting, "running" while a cycle runs. */
+/** "in 54:12" while waiting, "running" while a cycle runs. A countdown
+ * longer than 24 hours shows only the day and time instead
+ * (docs/SPEC.md — the label already carries "Mon 16:46 · 10:46 NY"). */
 export function counterTail(c: CycleCounter, nowMs: number): string | null {
   if (c.running) return 'running';
   if (!c.next_cycle) return null;
+  const gap = new Date(c.next_cycle).getTime() - nowMs;
+  if (gap > 24 * 60 * 60 * 1000) return null;
   return `in ${counterCountdown(c.next_cycle, nowMs)}`;
 }
 
-/** "Cycle 3 of 6 today" — the count of today's cycles that have run.
- * Null when there is no session today (market closed: the counter then
- * shows the next session's first cycle with its day). */
+/** "Cycle 3 of 6 today" — the count of the session's cycles that have run.
+ * Off-hours the shown session is the last completed one, so the "today"
+ * suffix drops off. Null when there is no shown session. */
 export function todayLabel(c: CycleCounter): string | null {
-  return c.cycles_today
-    ? `Cycle ${c.cycle_index} of ${c.cycles_today} today`
-    : null;
+  if (!c.cycles_today) return null;
+  return `Cycle ${c.cycle_index} of ${c.cycles_today}${
+    c.session_is_today ? ' today' : ''
+  }`;
 }
 
 /** "#42 this run" — cycles since the run started; hidden until the

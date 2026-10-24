@@ -19,7 +19,7 @@ test('main: watchlist filter tabs, search and Show all', async ({
   const section = page.locator('section').filter({
     has: page.getByRole('heading', { name: 'Watchlist', exact: true }),
   });
-  const rows = section.locator('button[role="row"]');
+  const rows = section.locator('button.sa-row');
   await expect(rows.first()).toBeVisible({ timeout: 60_000 });
 
   // The e2e database is shared: whichever list cycles currently run —
@@ -33,24 +33,25 @@ test('main: watchlist filter tabs, search and Show all', async ({
     : wl.rows.length;
   await expect(rows).toHaveCount(expected);
 
-  // Filter tabs with counts (design/screens/Main.dc.html).
-  const tablist = section.getByRole('tablist', { name: 'Filter watchlist' });
-  await expect(tablist).toBeVisible();
-  await expect(tablist.getByRole('tab', { name: /All/ })).toBeVisible();
-  await expect(tablist.getByRole('tab', { name: /Pass rules/ })).toBeVisible();
-  await expect(tablist.getByRole('tab', { name: /Held/ })).toBeVisible();
+  // Filter toggles with counts (design/screens/Main.dc.html) — a labelled
+  // group of aria-pressed buttons, not tabs.
+  const filters = section.getByRole('group', { name: 'Filter watchlist' });
+  await expect(filters).toBeVisible();
+  await expect(filters.getByRole('button', { name: /All/ })).toBeVisible();
+  await expect(filters.getByRole('button', { name: /Pass rules/ })).toBeVisible();
+  await expect(filters.getByRole('button', { name: /Held/ })).toBeVisible();
   await expect(
-    tablist.getByRole('tab', { name: /Earnings ≤ 3 days/ })
+    filters.getByRole('button', { name: /Earnings ≤ 3 days/ })
   ).toBeVisible();
 
-  // The Held tab selects and narrows the table to held rows only.
-  const heldTab = tablist.getByRole('tab', { name: /^Held/ });
+  // The Held toggle selects and narrows the table to held rows only.
+  const heldTab = filters.getByRole('button', { name: /^Held/ });
   await heldTab.click();
-  await expect(heldTab).toHaveAttribute('aria-selected', 'true');
+  await expect(heldTab).toHaveAttribute('aria-pressed', 'true');
   for (const row of await rows.all()) {
     await expect(row).toContainText('Held');
   }
-  await tablist.getByRole('tab', { name: /All/ }).click();
+  await filters.getByRole('button', { name: /All/ }).click();
   await expect(rows).toHaveCount(expected);
 
   // Search narrows to a case-insensitive substring match.
@@ -61,10 +62,12 @@ test('main: watchlist filter tabs, search and Show all', async ({
   await find.fill('');
   await expect(rows).toHaveCount(expected);
 
-  // The muted rank hint from the design, and the Universe link.
-  await expect(
-    section.getByText(/sorted by rank, 15 rows, then Show all/i)
-  ).toBeVisible();
+  // The muted rank hint shows in screened mode only; the Universe link always.
+  if (screened) {
+    await expect(
+      section.getByText(/sorted by rank · \d+ rows, then Show all/i)
+    ).toBeVisible();
+  }
   await expect(
     section.getByRole('link', { name: 'Universe' })
   ).toBeVisible();

@@ -112,7 +112,7 @@ reviews:
   verdict_after_sessions: 5
   model: gpt-4o-mini
   temperature: 0.2
-  prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
+  prompts: {weekly: weekly.v1, briefing: briefing.v2, verdict: verdict.v1}
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 

@@ -30,12 +30,14 @@ export function Header({
   onKillSwitch,
   onPauseToggle,
   onMenu,
+  menuOpen = false,
 }: {
   state: HeaderState | null;
   title: string;
   onKillSwitch: () => void;
   onPauseToggle: () => void;
   onMenu?: () => void;
+  menuOpen?: boolean;
 }) {
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -82,6 +84,7 @@ export function Header({
         <button
           type="button"
           aria-label="Menu"
+          aria-expanded={menuOpen}
           onClick={onMenu}
           style={{
             height: 'var(--sa-control-height)',

@@ -53,3 +53,44 @@ table {
     opacity: 1;
   }
 }
+
+/* Shared interaction styles (design/tokens.css): every interactive element
+ * gets the accent focus ring; clickable rows and linked tiles hover; loading
+ * placeholders pulse (never with reduced motion). */
+:focus-visible {
+  outline: var(--sa-focus-ring);
+  outline-offset: var(--sa-focus-offset);
+}
+button:not([disabled]):hover {
+  filter: brightness(1.15);
+}
+.sa-row {
+  cursor: pointer;
+}
+.sa-row:hover {
+  background: var(--sa-hover-row);
+}
+.sa-tile:hover {
+  background: var(--sa-hover-card);
+  border-color: var(--sa-border-strong);
+}
+@keyframes sa-pulse {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.45;
+  }
+}
+.sa-skel {
+  background: var(--sa-skeleton);
+  animation: sa-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sa-skel {
+    animation: none;
+  }
+}

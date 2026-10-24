@@ -13,6 +13,7 @@ import type { CycleCounter } from '../types/api';
 const counter = (over: Partial<CycleCounter>): CycleCounter => ({
   kill_switch: false,
   running: false,
+  session_is_today: true,
   now: '2026-10-15T16:52:00Z',
   next_cycle: '2026-10-15T17:46:00Z', // 19:46 Amsterdam · 13:46 New York
   next_cycle_today: true,
@@ -67,6 +68,14 @@ describe('counterTail', () => {
   it('is empty when no cycle is scheduled', () => {
     expect(counterTail(counter({ next_cycle: null }), now)).toBeNull();
   });
+  it('shows no countdown when the next cycle is over 24 hours away', () => {
+    // Saturday → Monday's first cycle: the label already gives day + time.
+    const c = counter({
+      next_cycle: '2026-10-19T14:46:00Z', // Mon 10:46 NY
+      next_cycle_today: false,
+    });
+    expect(counterTail(c, now)).toBeNull();
+  });
 });
 
 describe('labels', () => {
@@ -78,6 +87,11 @@ describe('labels', () => {
     expect(
       todayLabel(counter({ cycle_index: 0, cycles_today: 0, segments: [] })),
     ).toBeNull();
+  });
+  it('todayLabel drops "today" when the shown session is not today', () => {
+    expect(
+      todayLabel(counter({ session_is_today: false })),
+    ).toBe('Cycle 3 of 6');
   });
   it('runLabel is the cycle number in this run', () => {
     expect(runLabel(counter({}))).toBe('#42 this run');

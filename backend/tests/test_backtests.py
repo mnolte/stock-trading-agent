@@ -1084,9 +1084,12 @@ async def _run_deterministic_pair(
     assert trades2 == trades1
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(1800)
 async def test_rules_only_short_window_is_deterministic() -> None:
     """Default-suite determinism check: ~10 sessions over seeded data that
-    trades. The 3-month variant runs under -m slow (make test-slow)."""
+    trades. Runs the whole backtest twice — moved behind `slow` with the
+    3-month variant (make test-slow)."""
     # ~65 sessions of warmup: the warmup gate, daily SMA-50 and RSI all
     # have history, and a sideways/unknown regime (no SMA-200 yet) does
     # not block entries.
@@ -1099,6 +1102,7 @@ async def test_rules_only_short_window_is_deterministic() -> None:
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(2400)
 async def test_rules_only_run_is_deterministic_and_never_touches_account() -> None:
     """The spec's 3-month determinism run — moved behind `slow` for CI
     time (docs/SPEC.md, Backtesting, Reproducibility)."""

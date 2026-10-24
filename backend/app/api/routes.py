@@ -293,7 +293,7 @@ def watchlist(request: Request) -> dict[str, object]:
                 "symbol": row.symbol,
                 "price": str(row.price) if row.price is not None else None,
                 "day_change_pct": (
-                    str(row.day_change_pct)
+                    float(row.day_change_pct)
                     if row.day_change_pct is not None
                     else None
                 ),
@@ -376,8 +376,14 @@ def _decision_item(decision: Decision, scheduled: datetime) -> dict[str, object]
 
 
 @router.get("/decisions")
-def list_decisions(request: Request) -> dict[str, object]:
-    """Today's decisions (Amsterdam day) for the LLM inspector list."""
+def list_decisions(
+    request: Request, cycle: str | None = None
+) -> dict[str, object]:
+    """Today's decisions (Amsterdam day) for the LLM inspector list.
+
+    ``?cycle=<ISO>`` narrows the list to one cycle — the dashboard feed's
+    grouped rows link here filtered to their cycle and action.
+    """
     app_tz = ZoneInfo(str(get_config().get("app", "timezone", default="Europe/Amsterdam")))
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today = clock.now().astimezone(app_tz).date()
@@ -386,16 +392,21 @@ def list_decisions(request: Request) -> dict[str, object]:
     start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
     end_utc = day_end.astimezone(UTC).replace(tzinfo=None)
 
+    filters = [Cycle.scheduled_time >= start_utc, Cycle.scheduled_time < end_utc]
+    if cycle is not None:
+        try:
+            cycle_at = datetime.fromisoformat(cycle).astimezone(UTC).replace(tzinfo=None)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="bad cycle timestamp") from None
+        filters = [Cycle.scheduled_time == cycle_at]
+
     with get_session_maker()() as session:
         rows: list[tuple[Decision, datetime]] = [
             (decision, scheduled)
             for decision, scheduled in session.execute(
                 select(Decision, Cycle.scheduled_time)
                 .join(Cycle, Decision.cycle_id == Cycle.id)
-                .where(
-                    Cycle.scheduled_time >= start_utc,
-                    Cycle.scheduled_time < end_utc,
-                )
+                .where(*filters)
                 .order_by(Cycle.scheduled_time.desc(), Decision.id.desc())
             ).all()
         ]
@@ -890,7 +901,7 @@ def _position_json(
             else None
         ),
         "realized_pnl_raw": (
-            str(position.realized_pnl_raw)
+            float(position.realized_pnl_raw)
             if position.realized_pnl_raw is not None
             else None
         ),
@@ -1078,11 +1089,14 @@ async def positions(request: Request) -> dict[str, object]:
         )
         market_value = marks.get(p.symbol)
         if market_value is not None:
-            item["unrealized_pnl"] = str(
+            item["unrealized_pnl"] = float(
                 market_value - p.avg_entry_price * p.qty
             )
             item["unrealized_pnl_eur"] = (
-                str((market_value - p.avg_entry_price * p.qty) / fx_rate.usd_per_eur)
+                float(
+                    (market_value - p.avg_entry_price * p.qty)
+                    / fx_rate.usd_per_eur
+                )
                 if fx_rate is not None
                 else None
             )
@@ -1095,9 +1109,11 @@ async def positions(request: Request) -> dict[str, object]:
                         p.current_stop_price or Decimal(0)
                     )
                     unrealized = market_value - p.avg_entry_price * p.qty
-                    item["r_multiple"] = str(
-                        (unrealized / (risk_per_share * p.qty)).quantize(
-                            Decimal("0.01")
+                    item["r_multiple"] = (
+                        float(
+                            (unrealized / (risk_per_share * p.qty)).quantize(
+                                Decimal("0.01")
+                            )
                         )
                         if risk_per_share > 0
                         else None
@@ -1836,10 +1852,14 @@ def approvals(request: Request) -> dict[str, object]:
             .order_by(Approval.id.desc())
             .limit(10)
         ).scalars().all()
+    # Pending approvals expire at the start of the next full cycle — the
+    # card shows that time (design/screens/States.dc.html).
+    next_cycle = _session_state(request).next_cycle
     return {
         "mode": get_config().get("execution", "mode", default="automatic"),
         "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
         "paused": bool(getattr(state, "paused", False)),
+        "next_cycle": next_cycle.isoformat() if next_cycle else None,
         "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
         "recent": [_approval_json(a, None) for a in recent],
     }
@@ -3016,10 +3036,27 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     app_tz = ZoneInfo(
         str(config.get("app", "timezone", default="Europe/Amsterdam"))
     )
+    calendar = _calendar(request)
     today_ny = clock.now().astimezone(NY_TZ).date()
     today = clock.now().astimezone(app_tz).date()
-    day_start = datetime.combine(today, dtime.min, tzinfo=app_tz)
-    start_utc = day_start.astimezone(UTC).replace(tzinfo=None)
+    # "Today" on the dashboard is the current New York session or, outside
+    # a session day, the last completed one — never the Amsterdam calendar
+    # day (docs/SPEC.md, GUI — Dashboard at scale and off-hours).
+    shown_day = calendar.session_for(today_ny)
+    if shown_day is None:
+        shown_day = calendar.previous_trading_day(today_ny)
+    shown_date = shown_day.date if shown_day is not None else today_ny
+    shown_is_today = shown_date == today_ny
+    shown_start_utc = (
+        datetime.combine(shown_date, dtime.min, tzinfo=NY_TZ)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
+    shown_end_utc = (
+        datetime.combine(shown_date, dtime.max, tzinfo=NY_TZ)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
 
     with get_session_maker()() as session:
         cycles = session.execute(
@@ -3029,11 +3066,12 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             .limit(10)
         ).scalars().all()
         last_cycle = cycles[0] if cycles else None
-        today_decisions = (
+        shown_decisions = (
             session.execute(
                 select(Decision, Cycle.scheduled_time)
                 .join(Cycle, Decision.cycle_id == Cycle.id)
-                .where(Cycle.scheduled_time >= start_utc)
+                .where(Cycle.scheduled_time >= shown_start_utc)
+                .where(Cycle.scheduled_time <= shown_end_utc)
                 .order_by(Decision.id.desc())
             ).all()
             if last_cycle is not None
@@ -3067,16 +3105,31 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             if run is not None
             else None
         )
-        # Latest decision for the card: today's newest for the selected
-        # symbol (or the newest overall when no symbol is given).
+        # Latest decision for the card: the shown session's newest for the
+        # selected symbol (or the newest overall when no symbol is given).
+        # With no decision in the session it falls back to the most recent
+        # decision at all, marked so the GUI shows its date
+        # (docs/SPEC.md, GUI — Dashboard at scale and off-hours).
         latest = next(
             (
                 row
-                for row in today_decisions
+                for row in shown_decisions
                 if symbol is None or row[0].symbol == symbol.upper()
             ),
             None,
         )
+        latest_in_session = latest is not None
+        if latest is None:
+            q = (
+                select(Decision, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .order_by(Decision.id.desc())
+                .limit(1)
+            )
+            if symbol:
+                q = q.where(Decision.symbol == symbol.upper())
+            rows = session.execute(q).all()
+            latest = rows[0] if rows else None
         latest_earnings = (
             _decision_earnings(session, latest[0], latest[1])
             if latest is not None
@@ -3117,9 +3170,13 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
         if d.final_action == "no_call":
-            why = (
-                rules.get("reason") or validation.get("error") or d.no_call_reason
-            )
+            if d.no_call_reason in (None, "rules"):
+                why = rules.get("reason") or "failed the pre-filter"
+            else:
+                why = validation.get("error") or _NO_CALL_WHY.get(
+                    d.no_call_reason,
+                    str(d.no_call_reason).replace("_", " "),
+                )
         else:
             why = (
                 output.get("thesis")
@@ -3150,28 +3207,79 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ],
             "price": snapshot.get("price"),
             "time": scheduled.replace(tzinfo=UTC).isoformat(),
+            # False when the decision is not from today's session — either
+            # an off-hours look at the last session or an older fallback —
+            # and the card shows the compact dated layout.
+            "in_session": latest_in_session and shown_is_today,
         }
 
-    # Cycle counter and cycle line share the session math. "Cycle N of M
-    # today" counts today's run cycles so far; M is the session's active
+    # Cycle counter and cycle line share the session math. "Cycle N of M"
+    # counts the shown session's cycles so far; M is the session's active
     # count (fewer on early-close days), not the configured list length.
-    session_clock = SessionClock(clock, config, _calendar(request))
-    today_session = _calendar(request).session_for(today_ny)
-    active_today = (
-        session_clock.active_cycles(today_session)
-        if today_session is not None
+    session_clock = SessionClock(clock, config, calendar)
+    active_shown = (
+        session_clock.active_cycles(shown_day)
+        if shown_day is not None
         else []
     )
-    today_cycle_rows = [
-        c for c in cycles if _ny_date(c.scheduled_time) == today_ny
+    shown_cycle_rows = [
+        c for c in cycles if _ny_date(c.scheduled_time) == shown_date
     ]
-    cycle_index = len(today_cycle_rows)
+    cycle_index = len(shown_cycle_rows)
 
-    # Cycle line (design: "5 of 8 symbols not held failed the pre-filter.
-    # 3 reached the model: all skipped. Both open positions held.
-    # 5 model calls · $0.002." + "Cycle 3 of 6 today").
+    # Cycle line. In session (design: "5 of 8 symbols not held failed the
+    # pre-filter. 3 reached the model: all skipped. Both open positions
+    # held. 5 model calls · $0.002."), market closed: the shown session's
+    # summary ("Last session: 6 cycles, 60 decisions, 1 entry, 1 stop
+    # raised.").
     cycle_line = None
-    if last_cycle is not None:
+    if session_state.state == "closed":
+        if shown_cycle_rows:
+            entered_n = sum(
+                1 for d, _ in shown_decisions if d.final_action == "enter"
+            )
+            tightened_n = sum(
+                1
+                for d, _ in shown_decisions
+                if d.final_action == "tighten_stop"
+            )
+            parts = [
+                f"{len(shown_cycle_rows)} cycles",
+                f"{len(shown_decisions)} decisions",
+            ]
+            if entered_n:
+                parts.append(
+                    f"{entered_n} entr{'y' if entered_n == 1 else 'ies'}"
+                )
+            if tightened_n:
+                parts.append(
+                    f"{tightened_n} stop{'s' if tightened_n != 1 else ''} raised"
+                )
+            text = "Last session: " + ", ".join(parts) + "."
+            if open_rows:
+                n = len(open_rows)
+                protected = (
+                    "The position is"
+                    if n == 1
+                    else "Both positions are"
+                    if n == 2
+                    else f"All {n} positions are"
+                )
+                text += (
+                    f" {protected} protected by stops at Alpaca until"
+                    " trading opens; a stop only triggers once trading opens."
+                )
+            cycle_line = {
+                "label": _session_date_label(shown_date),
+                "status": "closed",
+                "text": text,
+                "cycle_index": cycle_index,
+                "cycles_today": len(active_shown),
+            }
+    elif (
+        last_cycle is not None
+        and _ny_date(last_cycle.scheduled_time) == shown_date
+    ):
         scheduled_ny = last_cycle.scheduled_time.replace(tzinfo=UTC)
         held_ctx = sum(1 for d in cycle_decisions if d.context == "held")
         not_held = len(cycle_decisions) - held_ctx
@@ -3239,7 +3347,7 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "status": last_cycle.status,
             "text": " ".join(sentences),
             "cycle_index": cycle_index,
-            "cycles_today": len(active_today),
+            "cycles_today": len(active_shown),
         }
 
     # Cycle counter at the strip's right end (docs/SPEC.md, GUI). The whole
@@ -3261,7 +3369,8 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     next_check_utc = session_state.next_check
     cycle_counter = {
         "kill_switch": bool(getattr(state, "kill_switch_on", False)),
-        "running": any(c.status == "running" for c in today_cycle_rows),
+        "running": any(c.status == "running" for c in shown_cycle_rows),
+        "session_is_today": shown_is_today,
         "now": clock.now().astimezone(UTC).isoformat(),
         "next_cycle": (
             next_cycle_utc.isoformat() if next_cycle_utc is not None else None
@@ -3289,26 +3398,40 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                     else "later"
                 ),
             }
-            for t in active_today
+            for t in active_shown
         ],
         "cycle_index": cycle_index,
-        "cycles_today": len(active_today),
+        "cycles_today": len(active_shown),
         "run_cycle_number": run_cycle_number,
     }
 
-    # Decisions feed, grouped client-side by cycle.
+    # Decisions feed, grouped client-side by cycle. Each item carries its
+    # cycle id, the cycle's number within the session, whether the decision
+    # changed something (entries, exits, stop moves, deferred exits,
+    # approvals — always shown, even in collapsed cycles) and whether a
+    # real model call happened.
+    cycle_order = {
+        c.id: i
+        for i, c in enumerate(
+            sorted(shown_cycle_rows, key=lambda c: c.scheduled_time), start=1
+        )
+    }
     feed = [
         {
             "id": d.id,
             "time": t.replace(tzinfo=UTC).isoformat(),
+            "cycle_id": d.cycle_id,
+            "cycle_index": cycle_order.get(d.cycle_id),
             "symbol": d.symbol,
             "context": d.context,
             "action": d.final_action,
             "model_action": (d.validation_result or {}).get("model_action"),
             "no_call_reason": d.no_call_reason,
             "reason": _feed_reason(d),
+            "change": _feed_change(d),
+            "called": d.model != "none",
         }
-        for d, t in today_decisions
+        for d, t in shown_decisions
     ]
 
     # Market-closed card data.
@@ -3319,9 +3442,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             for p in open_rows
             if p.current_stop_price is not None
         ]
-        entered_today = sum(1 for d, _ in today_decisions if d.final_action == "enter")
+        entered_today = sum(1 for d, _ in shown_decisions if d.final_action == "enter")
         tightened = sum(
-            1 for d, _ in today_decisions if d.final_action == "tighten_stop"
+            1 for d, _ in shown_decisions if d.final_action == "tighten_stop"
         )
         summary_parts = []
         if entered_today:
@@ -3353,10 +3476,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     # per-cycle cap times today's active cycles — with today's and this
     # month's decision spend. Reviews and shadows have their own caps; their
     # spend feeds the tile's hover text. Backtests (PR 14) join later.
-    calls_today = sum(1 for d, _ in today_decisions if d.model != "none")
+    calls_today = sum(1 for d, _ in shown_decisions if d.model != "none")
     calls_cost_today = sum(
         (d.cost or Decimal(0))
-        for d, _ in today_decisions
+        for d, _ in shown_decisions
         if d.model != "none"
     )
     month_start = (
@@ -3390,6 +3513,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     return {
         "session": {
             "state": session_state.state,
+            # The session the feed, tiles and cards describe: today's when a
+            # session runs today, else the last completed one.
+            "shown_date": shown_date.isoformat(),
+            "shown_is_today": shown_is_today,
             "next_cycle": (
                 session_state.next_cycle.isoformat()
                 if session_state.next_cycle
@@ -3412,18 +3539,20 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
             "cash": _fmt_money(account.cash if account else None),
+            # Numbers travel as numbers; the GUI formats them (minus sign
+            # U+2212, docs/SPEC.md — Interaction and states).
             "since_start_pct": (
-                f"{since_start_pct:+.2f}" if since_start_pct is not None else None
+                float(since_start_pct) if since_start_pct is not None else None
             ),
             "since_label": since_label,
-            "spy_pct": f"{spy_pct:+.2f}" if spy_pct is not None else None,
+            "spy_pct": float(spy_pct) if spy_pct is not None else None,
             "execution_mode": config.get(
                 "execution", "mode", default="automatic"
             ),
             "calls_today": calls_today,
-            "calls_max": calls_per_cycle * len(active_today),
+            "calls_max": calls_per_cycle * len(active_shown),
             "calls_per_cycle": calls_per_cycle,
-            "cycles_today": len(active_today),
+            "cycles_today": len(active_shown),
             "calls_cost_today": str(calls_cost_today),
             "calls_cost_month": str(calls_cost_month),
             "reviews_cost_month": (
@@ -3448,24 +3577,70 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     }
 
 
+def _session_date_label(day: date) -> str:
+    """"Friday 23 Oct" — a session's date for the closed-state strip."""
+    return f"{day.strftime('%A')} {day.day} {day.strftime('%b')}"
+
+
+# Why a symbol reached no model call, for the latest-decision card
+# (docs/SPEC.md: "why from the stored snapshot — pre-filter reason, call
+# cap, price check").
+_NO_CALL_WHY = {
+    "call_cap": "call cap reached — the model was not asked",
+    "price_stale": "no fresh price — the model was not asked",
+    "price_suspect": "price check failed — the model was not asked",
+    "model_error": "the model call failed",
+}
+
+
+def _feed_change(decision: Decision) -> bool:
+    """Changes always show as their own feed rows, even in collapsed cycles
+    (design/screens/Main.dc.html: entries, exits, stop moves, deferred
+    exits, pending approvals)."""
+    if decision.final_action in {"enter", "exit", "tighten_stop", "deferred"}:
+        return True
+    return bool((decision.gates_result or {}).get("pending_approval"))
+
+
 def _feed_reason(decision: Decision) -> str | None:
-    """One-line reason for the feed row."""
+    """One-line reason under the action in a feed row.
+
+    Rows with the same (action, reason) collapse into one grouped row, so
+    the text is the shared reason — not the symbol. ``pre-filter`` for
+    rules-held rows; the failing code check when code changed the model's
+    action; the model's thesis otherwise.
+    """
     validation = decision.validation_result or {}
     output = decision.model_output or {}
-    if decision.final_action == "enter":
-        conf = output.get("confidence")
-        return f"ENTER {conf}" if conf is not None else "ENTER"
+    if decision.final_action == "no_call":
+        if decision.no_call_reason in (None, "rules"):
+            return "pre-filter"
+        return str(
+            validation.get("error") or decision.no_call_reason
+        ).replace("_", " ")
+    if decision.final_action == "deferred":
+        return "exit deferred (day-trade rule)"
     if decision.final_action == "blocked":
         gates = decision.gates_result or {}
         return f"blocked: {gates.get('blocked_by', 'gate')}"
-    if decision.final_action == "skip":
-        conf = output.get("confidence")
-        return f"SKIP {conf}" if conf is not None else "SKIP"
-    if decision.final_action == "deferred":
-        return "exit deferred (day-trade rule)"
-    if decision.no_call_reason:
-        return str(validation.get("error") or decision.no_call_reason)
-    return decision.final_action
+    if validation.get("changed_by_code"):
+        failed = next(
+            (
+                c
+                for c in cast("list[dict[str, object]]", validation.get("checks") or [])
+                if c.get("passed") is False
+            ),
+            None,
+        )
+        if failed is not None and failed.get("name"):
+            return str(failed["name"])
+        note = str(validation.get("note") or "")
+        return note or None
+    thesis = output.get("thesis")
+    if isinstance(thesis, str) and thesis:
+        return thesis
+    conf = output.get("confidence")
+    return f"confidence {conf}" if conf is not None else None
 
 
 @router.get("/chart/{symbol}")
@@ -3621,7 +3796,7 @@ def chart(request: Request, symbol: str) -> dict[str, object]:
             warming = row.warming_up
             price = str(row.price) if row.price is not None else None
             change = (
-                str(row.day_change_pct)
+                float(row.day_change_pct)
                 if row.day_change_pct is not None
                 else None
             )

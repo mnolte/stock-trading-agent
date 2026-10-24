@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 from app.broker.fake import FakeBroker, _PosRec
@@ -20,26 +19,18 @@ from app.data.fake import (
 from app.data.models import DataResult, Quote
 from app.data.protocols import QuoteSource
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Cycle, EquitySnapshot, Event
 from app.engine.executor import Executor
 from app.engine.position_check import PositionChecker
 from app.engine.state import ExecutionState
 from app.market.clock import UTC, FakeClock
 from app.signals.service import SignalService
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
 NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _checker(

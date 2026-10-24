@@ -2,7 +2,6 @@
 
 import json
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import pytest
 from app.config import AppConfig
@@ -17,25 +16,17 @@ from app.data.fake import (
     FakeQuoteSource,
 )
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import FakeDecisionClient, ModelResponse
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import UTC, FakeClock
 from app.smoke_decision import run as smoke_run
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
 NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)  # 13:00 New York
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _fakes() -> DataSources:

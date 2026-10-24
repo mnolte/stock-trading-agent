@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from collections.abc import Coroutine
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -29,7 +28,6 @@ from app.data.fake import (
     FakeQuoteSource,
 )
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Cycle, Decision, Run, ShadowDecision, ShadowEquity, Strategy
 from app.decide.client import FakeDecisionClient
 from app.decide.service import DecisionService
@@ -41,7 +39,7 @@ from app.market.calendar import CalendarStore
 from app.market.clock import NY_TZ, FakeClock, SessionClock
 from app.shadows.portfolio import LiveGateState
 from app.shadows.runner import ShadowRunner
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -50,10 +48,8 @@ DAY = date(2026, 10, 15)
 
 
 @pytest.fixture
-def sf(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'session.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+def sf(session_factory: sessionmaker[Session]) -> sessionmaker[Session]:
+    return session_factory
 
 
 async def test_full_session_two_shadows_and_rules_only_never_delay_live(

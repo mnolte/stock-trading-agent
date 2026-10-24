@@ -1,10 +1,13 @@
 import type { HeaderState } from '../types/api';
 import { displayTime, displayWeekdayTime } from '../format';
 
-/** "in 54 min" / "in 2 h 10 min" / "in 16 h 30 min" — server-clock based. */
+/** "in 54 min" / "in 2 h 10 min" / "in 16 h 30 min" — server-clock based.
+ * Past 24 hours the countdown is dropped: the target's day and time are
+ * shown instead (docs/SPEC.md — Dashboard at scale and off-hours). */
 export function countdown(fromIso: string, toIso: string): string {
   const mins = Math.round((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 60_000);
   if (mins <= 0) return 'now';
+  if (mins > 24 * 60) return '';
   if (mins < 60) return `in ${mins} min`;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
@@ -41,7 +44,10 @@ export function sessionTail(state: string, session: HeaderState['session']): str
       if (check) parts.push(check);
       if (session.next_cycle) {
         parts.push(`next cycle ${displayTime(session.next_cycle)}`);
-        if (now) parts.push(countdown(now, session.next_cycle));
+        if (now) {
+          const cd = countdown(now, session.next_cycle);
+          if (cd) parts.push(cd);
+        }
       }
       return parts.length ? ` · ${parts.join(' · ')}` : '';
     }
@@ -63,7 +69,8 @@ export function sessionTail(state: string, session: HeaderState['session']): str
     case 'closed': {
       if (!session.next_open) return '';
       const open = `opens ${displayWeekdayTime(session.next_open)}`;
-      return now ? ` · ${open} · ${countdown(now, session.next_open)}` : ` · ${open}`;
+      const cd = now ? countdown(now, session.next_open) : '';
+      return cd ? ` · ${open} · ${cd}` : ` · ${open}`;
     }
     default:
       return '';

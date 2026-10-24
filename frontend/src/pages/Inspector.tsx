@@ -315,22 +315,20 @@ export default function Inspector() {
   const [data, setData] = useState<DecisionsResponse | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<DecisionDetail | null>(null);
+  // Feed grouped rows link here filtered to one cycle (+ action).
+  const cycleParam = searchParams.get('cycle');
+  const actionParam = searchParams.get('action');
 
   useEffect(() => {
-    getDecisions()
+    getDecisions(cycleParam ?? undefined)
       .then((result) => {
         setData(result);
         const wanted = Number(searchParams.get('call'));
-        setSelectedId(
-          (current) =>
-            current ??
-            (Number.isInteger(wanted) && wanted > 0
-              ? wanted
-              : (result.items[0]?.id ?? null)),
-        );
+        const wantedItem = result.items.find((i) => i.id === wanted);
+        setSelectedId(wantedItem?.id ?? result.items[0]?.id ?? null);
       })
       .catch(console.error);
-  }, [searchParams]);
+  }, [searchParams, cycleParam]);
 
   useEffect(() => {
     if (selectedId === null) {
@@ -339,6 +337,11 @@ export default function Inspector() {
     }
     getDecision(selectedId).then(setDetail).catch(console.error);
   }, [selectedId]);
+
+  const items =
+    data?.items.filter(
+      (i) => !actionParam || i.final_action === actionParam,
+    ) ?? [];
 
   return (
     <div
@@ -351,6 +354,19 @@ export default function Inspector() {
       }}
     >
       {data && <SummaryStrip summary={data.summary} />}
+      {(cycleParam || actionParam) && (
+        <div
+          style={{
+            fontSize: 'var(--sa-text-md)',
+            color: 'var(--sa-text-muted)',
+          }}
+        >
+          Filtered to
+          {cycleParam ? ` the ${formatAmsTime(cycleParam)} cycle` : ' the feed group'}
+          {actionParam ? ` · ${actionParam.replace(/_/g, ' ')}` : ''} —{' '}
+          <Link to="/inspector">show all calls</Link>
+        </div>
+      )}
       <div
         style={{
           display: 'flex',
@@ -387,8 +403,8 @@ export default function Inspector() {
           >
             Calls today
           </h2>
-          {data?.items.length ? (
-            data.items.map((item) => (
+          {items.length ? (
+            items.map((item) => (
               <CallRow
                 key={item.id}
                 item={item}

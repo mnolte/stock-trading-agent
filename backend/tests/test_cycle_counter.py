@@ -9,6 +9,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, cast
 
+from app.config import get_config
 from app.data.models import CalendarDay
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Run
@@ -101,14 +102,17 @@ def test_counter_early_close_fewer_segments(client: TestClient) -> None:
 
 
 def test_counter_market_closed_next_session_first_cycle(client: TestClient) -> None:
-    # Saturday: the counter points at Monday's first cycle, not today.
+    # Saturday: the strip summarises the last session (Friday), so its six
+    # cycles show as done segments, and the counter points at Monday's
+    # first cycle.
     _calendar(client, [_day(date(2026, 10, 16)), _day(date(2026, 10, 19))])
     _clock(client).set(datetime(2026, 10, 17, 12, 0, tzinfo=UTC))
 
     body = _counter(client)
 
-    assert body["segments"] == []
-    assert body["cycles_today"] == 0
+    assert body["session_is_today"] is False
+    assert [s["status"] for s in body["segments"]] == ["done"] * 6
+    assert body["cycles_today"] == 6
     assert body["cycle_index"] == 0
     assert body["next_cycle"] == "2026-10-19T14:46:00+00:00"  # Mon 10:46 NY
     assert body["next_cycle_today"] is False
@@ -125,7 +129,14 @@ def test_counter_kill_switch(client: TestClient) -> None:
     assert body["kill_switch"] is True
 
 
+def _shorten_shutdown_grace() -> None:
+    # A running row left behind makes shutdown wait out the 60 s grace —
+    # seconds are plenty in a test.
+    get_config().yaml["storage"]["shutdown_grace_seconds"] = 0.5
+
+
 def test_counter_running_cycle(client: TestClient) -> None:
+    _shorten_shutdown_grace()
     _clock(client).set(datetime(2026, 10, 15, 16, 47, tzinfo=UTC))  # 12:47 NY
     _cycle(datetime(2026, 10, 15, 16, 46, tzinfo=UTC), status="running")
 
@@ -137,6 +148,7 @@ def test_counter_running_cycle(client: TestClient) -> None:
 def test_counter_running_check_is_not_a_cycle(client: TestClient) -> None:
     # A running position check does not light the "running" state — the
     # counter only watches kind='cycle' rows.
+    _shorten_shutdown_grace()
     _clock(client).set(datetime(2026, 10, 15, 16, 47, tzinfo=UTC))
     _cycle(
         datetime(2026, 10, 15, 16, 46, tzinfo=UTC),

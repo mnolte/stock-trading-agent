@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import type { WatchlistRow } from '../types/api';
+import type { Resource } from '../api/useResource';
+import type { WatchlistResponse } from '../types/api';
 import { Card } from './Card';
+import { CardBody } from './cardState';
+import { formatNyTitle } from './decisionFormat';
 import {
   filterCounts,
   filterRows,
@@ -21,6 +24,9 @@ import {
 } from './watchlistFormat';
 
 const GRID = '90px 110px 90px minmax(200px, 1.3fr) minmax(150px, 1fr) 90px';
+// Screened mode adds a leading rank column (docs/SPEC.md: the rank shows
+// on the Universe screen and the dashboard).
+const GRID_RANKED = `48px ${GRID}`;
 
 function Tab({
   label,
@@ -36,8 +42,7 @@ function Tab({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       style={{
         height: '34px',
@@ -60,20 +65,18 @@ function Tab({
 }
 
 export function Watchlist({
-  rows,
+  res,
   selected,
   onSelect,
-  universeMode = 'fixed',
-  watchlistRows = 15,
-  earningsBlackoutDays = 3,
 }: {
-  rows: WatchlistRow[];
+  res: Resource<WatchlistResponse>;
   selected: string | null;
   onSelect: (symbol: string) => void;
-  universeMode?: 'fixed' | 'screened';
-  watchlistRows?: number;
-  earningsBlackoutDays?: number;
 }) {
+  const rows = useMemo(() => res.data?.rows ?? [], [res.data]);
+  const universeMode = res.data?.universe_mode ?? 'fixed';
+  const watchlistRows = res.data?.watchlist_rows ?? 15;
+  const earningsBlackoutDays = res.data?.earnings_blackout_days ?? 3;
   const screened = universeMode === 'screened';
   const [filter, setFilter] = useState<WatchlistFilter>('all');
   const [query, setQuery] = useState('');
@@ -105,6 +108,7 @@ export function Watchlist({
   return (
     <Card
       label="Watchlist"
+      busy={res.loading}
       right={
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
           {rows.length} symbols · <Link to="/universe">Universe</Link> · click a row
@@ -112,9 +116,22 @@ export function Watchlist({
         </span>
       }
     >
+      <CardBody
+        res={res}
+        what="the watchlist"
+        isEmpty={(d) => d.rows.length === 0}
+        empty={
+          <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+            No symbols on the watchlist yet — the next screen pass fills it
+            from the pool.
+          </p>
+        }
+      >
+        {() => (
+          <>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
         <div
-          role="tablist"
+          role="group"
           aria-label="Filter watchlist"
           style={{
             display: 'inline-flex',
@@ -155,17 +172,19 @@ export function Watchlist({
           }}
         />
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-          With a screened pool: sorted by rank, {watchlistRows} rows, then Show all
-        </span>
+        {screened && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            Sorted by rank · {watchlistRows} rows, then Show all
+          </span>
+        )}
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <div role="table" aria-label="Watchlist" style={{ minWidth: '760px' }}>
+        <div role="list" aria-label="Watchlist" style={{ minWidth: '760px' }}>
           <div
-            role="row"
+            aria-hidden="true"
             style={{
               display: 'grid',
-              gridTemplateColumns: GRID,
+              gridTemplateColumns: screened ? GRID_RANKED : GRID,
               gap: 'var(--sa-space-2)',
               padding: '0 10px var(--sa-space-2)',
               fontSize: 'var(--sa-text-sm)',
@@ -173,14 +192,21 @@ export function Watchlist({
               borderBottom: '1px solid var(--sa-border)',
             }}
           >
-            <span role="columnheader">Symbol</span>
-            <span role="columnheader" style={{ textAlign: 'right' }}>Price</span>
-            <span role="columnheader" style={{ textAlign: 'right' }}>Day</span>
-            <span role="columnheader">Rules</span>
-            <span role="columnheader">Last action</span>
+            {screened && (
+              <span
+                title="Liquidity-screen rank: 20-session return minus SPY's."
+                style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
+              >
+                Rank
+              </span>
+            )}
+            <span>Symbol</span>
+            <span style={{ textAlign: 'right' }}>Price</span>
+            <span style={{ textAlign: 'right' }}>Day</span>
+            <span>Rules</span>
+            <span>Last action</span>
             <span
-              role="columnheader"
-              title="Next earnings date. No new entries within 3 trading days."
+              title={`Next earnings date. No new entries within ${earningsBlackoutDays} trading days.`}
               style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
             >
               Earnings
@@ -188,18 +214,19 @@ export function Watchlist({
           </div>
           {shown.map((row) => {
             const on = row.symbol === selected;
-            const change = row.day_change_pct === null ? null : Number(row.day_change_pct);
+            const change = row.day_change_pct;
             return (
               <button
                 key={row.symbol}
                 type="button"
-                role="row"
+                className="sa-row"
                 aria-pressed={on}
+                aria-label={`${row.symbol}, chart it`}
                 onClick={() => onSelect(row.symbol)}
                 style={{
                   width: '100%',
                   display: 'grid',
-                  gridTemplateColumns: GRID,
+                  gridTemplateColumns: screened ? GRID_RANKED : GRID,
                   gap: 'var(--sa-space-2)',
                   alignItems: 'center',
                   minHeight: 'var(--sa-control-height)',
@@ -214,6 +241,17 @@ export function Watchlist({
                   boxShadow: on ? 'inset 3px 0 0 var(--sa-accent)' : 'none',
                 }}
               >
+                {screened && (
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-muted)',
+                    }}
+                  >
+                    {row.rank ?? '—'}
+                  </span>
+                )}
                 <span style={{ fontWeight: 600 }}>{row.symbol}</span>
                 <span style={{ fontFamily: 'var(--sa-font-mono)', textAlign: 'right' }}>
                   {formatPrice(row.price)}
@@ -236,6 +274,7 @@ export function Watchlist({
                   {rulesLabel(row)}
                 </span>
                 <span
+                  title={row.last_action_time ? formatNyTitle(row.last_action_time) : undefined}
                   style={{
                     fontFamily: 'var(--sa-font-mono)',
                     fontSize: 'var(--sa-text-sm)',
@@ -296,6 +335,9 @@ export function Watchlist({
           Show fewer
         </button>
       )}
+          </>
+        )}
+      </CardBody>
     </Card>
   );
 }

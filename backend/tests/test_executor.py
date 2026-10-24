@@ -5,7 +5,6 @@ integration + Risk management)."""
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -24,7 +23,6 @@ from app.data.fake import (
 )
 from app.data.models import Bar5m, DailyBar, DataResult, Quote
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Approval, Cycle, DayTrade, Decision, Event, Order, Position
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
@@ -33,7 +31,7 @@ from app.market.clock import NY_TZ, UTC, FakeClock
 from app.rules.prefilter import RulesResult
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -41,13 +39,6 @@ pytestmark = pytest.mark.anyio
 # Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
 NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
 YESTERDAY = datetime(2026, 10, 14, 15, 0)  # naive UTC, stored format
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _sources(**overrides: object) -> DataSources:

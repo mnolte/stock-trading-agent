@@ -16,7 +16,7 @@ function row(
   return {
     symbol,
     price: '225.10',
-    day_change_pct: '0.21',
+    day_change_pct: 0.21,
     rules: { status, reason: null, checks: [] },
     earnings_date: null,
     last_action: null,

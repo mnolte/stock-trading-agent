@@ -4,7 +4,6 @@ versioned settings, warming-up symbols and the WebSocket update bus
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -31,7 +30,6 @@ from app.data.models import (
     Quote,
 )
 from app.data.service import MarketDataService
-from app.db.base import Base
 from app.db.models import Approval, Cycle, Decision, Event, Order, Position, Run
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
@@ -42,7 +40,7 @@ from app.settings_service import SettingsError, validate_settings
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -50,13 +48,6 @@ pytestmark = pytest.mark.anyio
 # Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
 NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
 YESTERDAY = datetime(2026, 10, 14, 15, 0)  # naive UTC, stored format
-
-
-@pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _sources(clock: FakeClock | None = None, **overrides: object) -> DataSources:
@@ -1168,7 +1159,9 @@ def test_update_bus_fans_out_topics() -> None:
 
 def test_approvals_endpoint_shape(client: TestClient) -> None:
     body = client.get("/api/approvals").json()
-    assert {"items", "recent", "mode", "kill_switch_on"} <= set(body)
+    assert {"items", "recent", "mode", "kill_switch_on", "next_cycle"} <= set(
+        body
+    )
     assert body["mode"] == "automatic"
 
 
@@ -1192,6 +1185,12 @@ def test_dashboard_endpoint_shape(client: TestClient) -> None:
         "shadows_cost_cap",
     } <= set(stats)
     assert {"enabled", "next_at", "card"} <= set(body["briefing"])
+    # Signed values travel as numbers — the GUI formats them with U+2212
+    # (docs/SPEC.md, Interaction and states).
+    assert stats["since_start_pct"] is None or isinstance(
+        stats["since_start_pct"], (int, float)
+    )
+    assert stats["spy_pct"] is None or isinstance(stats["spy_pct"], (int, float))
     # Risk figures moved to /api/risk-budget with the risk budget card.
     assert "open_risk_pct" not in stats
     assert "day_trades" not in stats
