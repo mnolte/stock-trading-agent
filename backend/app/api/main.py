@@ -563,6 +563,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         api_key=secrets_store.get("openai"),
         notifier=notification_service,
         llm_cache=llm_cache,
+        clock=clock,
+        secrets=secrets_store.scrub_values,
     )
     exec_state = load_execution_state(clock, config)
     executor = Executor(
@@ -594,6 +596,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state=exec_state,
         notify=lambda topics: bus.publish(*topics),
         notifier=notification_service,
+        secrets=secrets_store.scrub_values,
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -638,6 +641,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notifier=notification_service,
         notify=lambda topics: bus.publish(*topics),
         llm_cache=llm_cache,
+        secrets=secrets_store.scrub_values,
     )
     shadow_tasks: set[asyncio.Task[object]] = set()
     cycle_runner.on_cycle_done = lambda report: spawn_background(

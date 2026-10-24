@@ -26,6 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from time import monotonic
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -37,12 +38,13 @@ from app.data.cache import BarCache, _naive_utc
 from app.data.models import Quote
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
-from app.decide.client import DecisionClient, token_cost
+from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import validate_model_output
 from app.decide.prompt import cached_prompt
 from app.decide.service import model_output_json, rules_result_json, validation_result_json
 from app.decide.snapshot import UNAVAILABLE, _position_block
+from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
 from app.market.clock import Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
@@ -181,7 +183,18 @@ class ShadowReport:
 
 
 class _OutOfTime(Exception):
-    """The next live cycle or position check is due."""
+    """The next live cycle or position check is due.
+
+    When a model request was already sent but the wait-for deadline cut
+    it off, ``sent_at``/``latency_ms`` carry the send so the timeout is
+    still recorded as a sent call (docs/SPEC.md, LLM call history)."""
+
+    def __init__(
+        self, sent_at: datetime | None = None, latency_ms: int | None = None
+    ) -> None:
+        super().__init__()
+        self.sent_at = sent_at
+        self.latency_ms = latency_ms
 
 
 class ShadowRunner:
@@ -200,6 +213,7 @@ class ShadowRunner:
         notifier: Notifier | None = None,
         notify: Callable[[set[str]], None] | None = None,
         llm_cache: LLMCacheStore | None = None,
+        secrets: Callable[[], list[str]] | None = None,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -216,6 +230,8 @@ class ShadowRunner:
         # Write-through only: shadow answers land in the shared cache for
         # backtest replays; a shadow decision is always a fresh model call.
         self._llm_cache = llm_cache
+        # Scrubbed stored keys for call-history error messages.
+        self._secrets = secrets
 
     # ------------------------------------------------------------------
     # helpers
@@ -539,9 +555,11 @@ class ShadowRunner:
             sr.calls += 1
             prompt = cached_prompt(str(strategy.prompt_version))
             budget = (deadline - self.clock.now()).total_seconds() if deadline is not None else None
+            sent_at = _naive_utc(self.clock.now())
             # Never hold a database write transaction across an await: live
             # jobs run on the same event loop and must always get the lock.
             session.commit()
+            started = monotonic()
             try:
                 response = await asyncio.wait_for(
                     self._client(strategy).complete(
@@ -551,7 +569,11 @@ class ShadowRunner:
                 )
             except TimeoutError as exc:
                 state["out"] = "time"
-                raise _OutOfTime from exc
+                # The request was sent and got cut off by the deadline:
+                # still a call (docs/SPEC.md, What counts as a call).
+                raise _OutOfTime(
+                    sent_at, int((monotonic() - started) * 1000)
+                ) from exc
             if (
                 self._llm_cache is not None
                 and response.error is None
@@ -604,6 +626,47 @@ class ShadowRunner:
             row.cost = token_cost(response, self.config, model=strategy.model)
             row.latency_ms = response.latency_ms
             row.raw_response = response.raw
+            session.add(row)
+            session.flush()
+            # One llm_calls row per request actually sent, committed with
+            # the shadow decision it produced (docs/SPEC.md, LLM call
+            # history — Storage).
+            session.add(
+                build_llm_call(
+                    source="shadow",
+                    kind="decision",
+                    sent_at=sent_at,
+                    response=response,
+                    input_snapshot=snap_json,
+                    model_action=validation.model_action,
+                    final_action=row.final_action,
+                    output_invalid=not validation.valid
+                    and response.error is None
+                    and not response.refused,
+                    error_detail=validation.error,
+                    cycle_id=cycle.id,
+                    shadow_decision_id=row.id,
+                    strategy_id=strategy.id,
+                    symbol=d.symbol,
+                    context=context,
+                    model=str(strategy.model),
+                    temperature=float(
+                        cfg.get("decision", "temperature", default=0.2)
+                    ),
+                    prompt_version=prompt.version,
+                    prompt_hash=prompt.sha256,
+                    cost=row.cost,
+                    slow_ms=int(
+                        float(
+                            self.config.get(
+                                "inspector", "slow_call_seconds", default=15
+                            )
+                        )
+                        * 1000
+                    ),
+                    scrub_values=self._secrets,
+                )
+            )
             return row
 
         # ---- held positions first
@@ -658,8 +721,15 @@ class ShadowRunner:
             elif llm:
                 try:
                     row = await call(d, "held", snap_json, price, sp.stop, None)
-                except _OutOfTime:
-                    self._missed(session, strategy, cycle, d, "held", sr, str(state["out"]))
+                except _OutOfTime as oot:
+                    missed = self._missed(
+                        session, strategy, cycle, d, "held", sr, str(state["out"])
+                    )
+                    session.flush()
+                    self._record_timeout(
+                        session, strategy, cycle, d, "held", snap_json, oot,
+                        missed.id,
+                    )
                     continue
             else:
                 # rules_only exits only through its stop, target or earnings.
@@ -673,6 +743,7 @@ class ShadowRunner:
                 indicators_from_snapshot(d.symbol, snap_json).atr_1h,
                 price_failure=price_failure,
             )
+            sync_llm_call(session, row)
             sr.decisions += 1
 
         # ---- candidates that pass this strategy's rules, in rank order
@@ -723,9 +794,15 @@ class ShadowRunner:
                     snap_json["position"] = None
                     try:
                         row = await call(d, "candidate", snap_json, price, None, rules)
-                    except _OutOfTime:
-                        self._missed(
-                            session, strategy, cycle, d, "candidate", sr, str(state["out"])
+                    except _OutOfTime as oot:
+                        missed = self._missed(
+                            session, strategy, cycle, d, "candidate", sr,
+                            str(state["out"]),
+                        )
+                        session.flush()
+                        self._record_timeout(
+                            session, strategy, cycle, d, "candidate", snap_json,
+                            oot, missed.id,
                         )
                         continue
                     output = row.model_output or {}
@@ -758,6 +835,7 @@ class ShadowRunner:
                 )
                 if row.final_action == "enter":
                     sr.entries += 1
+            sync_llm_call(session, row)
             sr.decisions += 1
 
         # ---- everything the rules reject: stored, never called
@@ -819,12 +897,61 @@ class ShadowRunner:
         context: str,
         sr: StrategyReport,
         reason: str,
-    ) -> None:
+    ) -> ShadowDecision:
         row = self._row(strategy, cycle, d, context, final_action="no_call")
         row.missed = True
         row.missed_reason = reason
         session.add(row)
         sr.missed += 1
+        return row
+
+    def _record_timeout(
+        self,
+        session: Session,
+        strategy: Strategy,
+        cycle: Cycle,
+        d: LiveInput,
+        context: str,
+        snap_json: dict[str, Any],
+        oot: _OutOfTime,
+        missed_id: int | None,
+    ) -> None:
+        """The llm_calls row for a request the deadline cut off mid-call.
+
+        The request was sent, so it gets a row — a plain "missed" call
+        (never sent) does not (docs/SPEC.md, What counts as a call)."""
+        if oot.sent_at is None:
+            return
+        prompt = cached_prompt(str(strategy.prompt_version))
+        cfg = strategy_config(self.config, strategy)
+        session.add(
+            build_llm_call(
+                source="shadow",
+                kind="decision",
+                sent_at=oot.sent_at,
+                response=ModelResponse(
+                    raw=None,
+                    model=str(strategy.model),
+                    tokens_in=None,
+                    tokens_out=None,
+                    latency_ms=oot.latency_ms or 0,
+                    error="call cut off at the live-work deadline",
+                    error_type="timeout",
+                ),
+                input_snapshot=snap_json,
+                final_action="no_call",
+                cycle_id=cycle.id,
+                shadow_decision_id=missed_id,
+                strategy_id=strategy.id,
+                symbol=d.symbol,
+                context=context,
+                model=str(strategy.model),
+                temperature=float(cfg.get("decision", "temperature", default=0.2)),
+                prompt_version=prompt.version,
+                prompt_hash=prompt.sha256,
+                scrub_values=self._secrets,
+            )
+        )
 
     def _apply_held(
         self, row: ShadowDecision, sp: ShadowPosition, at: datetime,

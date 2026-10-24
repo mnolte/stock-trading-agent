@@ -15,7 +15,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from app.decide.client import ModelResponse
+from app.decide.client import ModelResponse, _classify_error
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -111,7 +111,7 @@ class OpenAIReviewClient:
 
         started = time.monotonic()
         try:
-            completion = await self._client.chat.completions.create(
+            response = await self._client.chat.completions.with_raw_response.create(
                 model=self.model,
                 temperature=self.temperature,
                 response_format=cast(
@@ -123,6 +123,8 @@ class OpenAIReviewClient:
                     {"role": "user", "content": user},
                 ],
             )
+            request_id = response.headers.get("x-request-id")
+            completion = response.parse()
         except Exception as exc:  # noqa: BLE001
             return ModelResponse(
                 raw=None,
@@ -131,14 +133,21 @@ class OpenAIReviewClient:
                 tokens_out=None,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error=str(exc),
+                error_type=_classify_error(exc),
+                http_status=getattr(exc, "status_code", None),
+                error_code=getattr(exc, "code", None),
+                request_id=getattr(exc, "request_id", None),
             )
         usage = completion.usage
+        message = completion.choices[0].message if completion.choices else None
         return ModelResponse(
-            raw=completion.choices[0].message.content if completion.choices else None,
+            raw=message.content if message else None,
             model=self.model,
             tokens_in=usage.prompt_tokens if usage else None,
             tokens_out=usage.completion_tokens if usage else None,
             latency_ms=int((time.monotonic() - started) * 1000),
+            request_id=request_id,
+            refused=bool(getattr(message, "refusal", None)),
         )
 
 
@@ -167,9 +176,13 @@ class FakeReviewClient:
         self,
         handler: FakeHandler | None = None,
         error: str | None = None,
+        error_type: str | None = None,
+        http_status: int | None = None,
     ) -> None:
         self.handler = handler or default_fake_reply
         self.error = error
+        self.error_type = error_type
+        self.http_status = http_status
         self.model = "fake-review"
 
     async def complete(
@@ -184,6 +197,8 @@ class FakeReviewClient:
                 tokens_out=None,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error=self.error,
+                error_type=self.error_type,
+                http_status=self.http_status,
             )
         raw = self.handler(system, user)
         # Deterministic pseudo-usage so cost tracking is exercised end to end.

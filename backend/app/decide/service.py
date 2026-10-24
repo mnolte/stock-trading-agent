@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
+from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
@@ -28,6 +30,8 @@ from app.decide.output import (
     validate_model_output,
 )
 from app.decide.prompt import Prompt, cached_prompt
+from app.inspector.record import build_llm_call
+from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
 
@@ -98,6 +102,8 @@ class DecisionService:
         llm_cache: LLMCacheStore | None = None,
         cache_reads: bool = False,
         before_call: Callable[[], Awaitable[None]] | None = None,
+        clock: Clock | None = None,
+        secrets: Callable[[], list[str]] | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -106,6 +112,10 @@ class DecisionService:
         self.api_key = api_key
         self._notifier = notifier or NullNotifier()
         self._session_factory = session_factory or get_session_maker()
+        self._clock = clock or make_clock(config)
+        # Scrubbed stored keys for call-history error messages; None in
+        # tests means nothing is stored yet, so nothing needs stripping.
+        self._secrets = secrets
         # The shared answer cache: every successful call writes a row; a
         # backtest also reads it so a rerun on the same inputs is free
         # (docs/SPEC.md, Backtesting, Model calls).
@@ -145,6 +155,7 @@ class DecisionService:
         """Call the model, validate the output and store the decision row."""
         user = json.dumps(snapshot_json, indent=2)
         response: ModelResponse | None = None
+        sent_at = None
         from_cache = False
         if self._cache is not None and self._cache_reads:
             hit = self._cache.lookup(
@@ -167,6 +178,7 @@ class DecisionService:
         if response is None:
             if self._before_call is not None:
                 await self._before_call()
+            sent_at = _naive_utc(self._clock.now())
             response = await self.client.complete(
                 system=self._prompt.text, user=user
             )
@@ -206,12 +218,13 @@ class DecisionService:
             call_error=response.error,
             config=self.config,
         )
-        # A failed call left no output to fall back on; "no_call" says so.
-        failed = response.error is not None
+        # A failed call (error or refusal) left no output to fall back
+        # on; "no_call" says so.
+        failed = response.error is not None or response.refused
         if failed:
             self._notifier.notify(
                 "model_failing",
-                f"{symbol}: model call failed ({response.error})",
+                f"{symbol}: model call failed ({response.error or 'refusal'})",
                 link="/inspector",
             )
         decision = self._store(
@@ -226,6 +239,7 @@ class DecisionService:
             final_action=NO_CALL if failed else validation.final_action,
             no_call_reason="model_error" if failed else None,
             cached=from_cache,
+            sent_at=sent_at,
         )
         return decision
 
@@ -279,6 +293,7 @@ class DecisionService:
         final_action: str,
         no_call_reason: str | None = None,
         cached: bool = False,
+        sent_at: datetime | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -317,4 +332,46 @@ class DecisionService:
         session.flush()
         session.add(Outcome(decision_id=decision.id))
         session.flush()
+        if response is not None and not cached:
+            # One llm_calls row per request actually sent, in the same
+            # transaction as the decision it made (docs/SPEC.md, LLM call
+            # history). A cache hit made no request; a gates-changed final
+            # action is folded in by apply_decision's sync.
+            session.add(
+                build_llm_call(
+                    source="live",
+                    kind="decision",
+                    sent_at=sent_at or _naive_utc(self._clock.now()),
+                    response=response,
+                    input_snapshot=snapshot_json,
+                    model_action=validation.model_action,
+                    final_action=final_action,
+                    output_invalid=not validation.valid
+                    and response.error is None
+                    and not response.refused,
+                    error_detail=validation.error,
+                    cycle_id=cycle_id,
+                    decision_id=decision.id,
+                    symbol=symbol,
+                    context=context,
+                    model=response.model,
+                    temperature=float(
+                        self.config.get("decision", "temperature", default=0)
+                    ),
+                    prompt_version=self._prompt.version,
+                    prompt_hash=self._prompt.sha256,
+                    cost=decision.cost,
+                    cost_source=decision.cost_source,
+                    slow_ms=self._slow_ms(),
+                    scrub_values=self._secrets,
+                )
+            )
         return decision
+
+    def _slow_ms(self) -> int:
+        return int(
+            float(
+                self.config.get("inspector", "slow_call_seconds", default=15)
+            )
+            * 1000
+        )

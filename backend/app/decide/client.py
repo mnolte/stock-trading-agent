@@ -35,6 +35,16 @@ class ModelResponse:
     tokens_out: int | None
     latency_ms: int
     error: str | None = None
+    # Failure classification for the call-history row (docs/SPEC.md, LLM
+    # call history): "timeout" or "api_error" (HTTP error or connection
+    # failure), with the HTTP status and OpenAI's error code when it sent
+    # them and the x-request-id response header.
+    error_type: str | None = None
+    http_status: int | None = None
+    error_code: str | None = None
+    request_id: str | None = None
+    # The structured-output refusal field was set — no usable response.
+    refused: bool = False
 
     @property
     def tokens(self) -> int | None:
@@ -83,6 +93,15 @@ def require_price(config: AppConfig, model: str, what: str) -> None:
         raise UnpricedModelError(
             f"{what} model {model!r} has no price in model_prices"
         )
+
+
+def _classify_error(exc: Exception) -> str:
+    """"timeout" or "api_error" for the llm_calls row (docs/SPEC.md)."""
+    from openai import APITimeoutError
+
+    if isinstance(exc, APITimeoutError | TimeoutError):
+        return "timeout"
+    return "api_error"
 
 
 def token_cost(
@@ -140,7 +159,7 @@ class OpenAIDecisionClient:
 
         started = time.monotonic()
         try:
-            completion = await self._client.chat.completions.create(
+            response = await self._client.chat.completions.with_raw_response.create(
                 model=self.model,
                 temperature=self.temperature,
                 response_format=cast(
@@ -155,7 +174,10 @@ class OpenAIDecisionClient:
                     {"role": "user", "content": user},
                 ],
             )
+            request_id = response.headers.get("x-request-id")
+            completion = response.parse()
         except Exception as exc:  # noqa: BLE001
+            kind = _classify_error(exc)
             return ModelResponse(
                 raw=None,
                 model=self.model,
@@ -163,14 +185,21 @@ class OpenAIDecisionClient:
                 tokens_out=None,
                 latency_ms=int((time.monotonic() - started) * 1000),
                 error=str(exc),
+                error_type=kind,
+                http_status=getattr(exc, "status_code", None),
+                error_code=getattr(exc, "code", None),
+                request_id=getattr(exc, "request_id", None),
             )
         usage = completion.usage
+        message = completion.choices[0].message if completion.choices else None
         return ModelResponse(
-            raw=completion.choices[0].message.content if completion.choices else None,
+            raw=message.content if message else None,
             model=self.model,
             tokens_in=usage.prompt_tokens if usage else None,
             tokens_out=usage.completion_tokens if usage else None,
             latency_ms=int((time.monotonic() - started) * 1000),
+            request_id=request_id,
+            refused=bool(getattr(message, "refusal", None)),
         )
 
 
@@ -246,15 +275,27 @@ class FakeDecisionClient:
         override = self.responses.get(
             (snapshot["symbol"], snapshot["context"]), self.responses.get(snapshot["symbol"])
         )
-        if isinstance(override, dict):
+        if isinstance(override, dict) and "raw" not in override:
+            # Tests exercise the error paths (a timeout, an HTTP 503, a
+            # refusal) by adding error_type/http_status/request_id/refused.
+            refused = bool(override.get("refused"))
+            status = override.get("http_status")
             return ModelResponse(
                 raw=None,
                 model=self.model,
                 tokens_in=None,
                 tokens_out=None,
-                latency_ms=int((time.monotonic() - started) * 1000),
-                error=override.get("error", "fake error"),
+                latency_ms=int(override.get("latency_ms")
+                               or (time.monotonic() - started) * 1000),
+                error=None if refused else override.get("error", "fake error"),
+                error_type=override.get("error_type"),
+                http_status=int(status) if status is not None else None,
+                error_code=override.get("error_code"),
+                request_id=override.get("request_id"),
+                refused=refused,
             )
+        if isinstance(override, dict):
+            override = str(override["raw"])
         raw = override if isinstance(override, str) else json.dumps(self._default(snapshot))
         # Deterministic pseudo-usage so cost tracking is exercised end to end.
         tokens_in = len(system + user) // 4

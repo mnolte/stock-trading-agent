@@ -32,9 +32,10 @@ from app.data.cache import _naive_utc
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome, Review, Run, Verdict
-from app.decide.client import token_cost
+from app.decide.client import ModelResponse, token_cost
 from app.decide.prompt import Prompt, cached_prompt
 from app.engine.state import ExecutionState, record_event
+from app.inspector.record import build_llm_call
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
@@ -97,6 +98,13 @@ class Composed:
     prompt_version: str
     tokens: int | None
     cost: Decimal | None
+    # The request that produced the text (or failed trying). None when no
+    # call was sent — a reached cap or a missing key — so no llm_calls
+    # row is written (docs/SPEC.md, LLM call history).
+    response: ModelResponse | None = None
+    sent_at: datetime | None = None
+    prompt_hash: str | None = None
+    detail: str | None = None
 
 
 def _words(text: str) -> int:
@@ -119,6 +127,7 @@ class ReviewService:
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[set[str]], None] | None = None,
         notifier: Notifier | None = None,
+        secrets: Callable[[], list[str]] | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -130,6 +139,8 @@ class ReviewService:
         self._session_factory = session_factory or get_session_maker()
         self._notify = notify or (lambda topics: None)
         self._notifier = notifier or NullNotifier()
+        # Scrubbed stored keys for call-history error messages.
+        self._secrets = secrets
 
     # ------------------------------------------------------------------
     # schedule helpers
@@ -250,6 +261,8 @@ class ReviewService:
         reason: str,
         prompt: Prompt,
         detail: str | None = None,
+        response: ModelResponse | None = None,
+        sent_at: datetime | None = None,
     ) -> Composed:
         record_event(
             session,
@@ -278,6 +291,10 @@ class ReviewService:
             prompt_version=prompt.version,
             tokens=None,
             cost=None,
+            response=response,
+            sent_at=sent_at,
+            prompt_hash=prompt.sha256,
+            detail=detail,
         )
 
     def _validate(self, kind: str, content: object) -> dict[str, Any] | None:
@@ -351,12 +368,17 @@ class ReviewService:
                 session, kind=kind, ref=ref, facts=facts,
                 reason=REASON_NO_KEY, prompt=prompt
             )
+        sent_at = _naive_utc(self.clock.now())
         response = await self.client.complete(
             system=prompt.text,
             user=json.dumps({"kind": kind, "facts": facts}, indent=2),
             schema=SCHEMAS[kind],
         )
-        if response.error is not None or response.raw is None:
+        if (
+            response.error is not None
+            or response.refused
+            or response.raw is None
+        ):
             return self._fallback(
                 session,
                 kind=kind,
@@ -364,7 +386,9 @@ class ReviewService:
                 facts=facts,
                 reason=REASON_CALL_FAILED,
                 prompt=prompt,
-                detail=response.error,
+                detail=response.error or "refusal",
+                response=response,
+                sent_at=sent_at,
             )
         try:
             parsed: object = json.loads(response.raw)
@@ -380,6 +404,8 @@ class ReviewService:
                 reason=REASON_INVALID,
                 prompt=prompt,
                 detail=(response.raw or "")[:200],
+                response=response,
+                sent_at=sent_at,
             )
         text = "\n".join(self._content_texts(content)).lower()
         # A fact the code produced — an empty list included — is known,
@@ -414,6 +440,8 @@ class ReviewService:
                     reason=REASON_FACT_CHECK,
                     prompt=prompt,
                     detail="; ".join(false_claims)[:200],
+                    response=response,
+                    sent_at=sent_at,
                 )
         bad = bad_numbers("\n".join(self._content_texts(content)), facts)
         if bad:
@@ -425,6 +453,8 @@ class ReviewService:
                 reason=REASON_NUMBER_CHECK,
                 prompt=prompt,
                 detail=", ".join(bad),
+                response=response,
+                sent_at=sent_at,
             )
         return Composed(
             content=content,
@@ -438,6 +468,65 @@ class ReviewService:
                 self.config,
                 model=str(self.config.get("reviews", "model", default="")),
             ),
+            response=response,
+            sent_at=sent_at,
+            prompt_hash=prompt.sha256,
+        )
+
+    def _record_call(
+        self,
+        session: Session,
+        composed: Composed,
+        *,
+        kind: str,
+        facts: dict[str, Any],
+        review_id: int | None = None,
+        verdict_id: int | None = None,
+    ) -> None:
+        """Write the llm_calls row when a request was actually sent.
+
+        A cap reached or a missing key means ``_compose`` never sent one —
+        no row (docs/SPEC.md, LLM call history — What counts as a call).
+        The fact check maps to ``number_check_failed``: a code check
+        rejected the text and the plain template was used.
+        """
+        response = composed.response
+        if response is None or composed.sent_at is None:
+            return
+        session.add(
+            build_llm_call(
+                source="review",
+                kind=kind,
+                sent_at=composed.sent_at,
+                response=response,
+                input_snapshot={"kind": kind, "facts": facts},
+                # A review's "action" is its kind; a code check that fell
+                # back to the template is a warning reason, not a rename.
+                model_action=kind,
+                final_action=kind,
+                output_invalid=composed.reason == REASON_INVALID,
+                error_detail=composed.detail,
+                number_check_failed=composed.reason
+                in (REASON_NUMBER_CHECK, REASON_FACT_CHECK),
+                review_id=review_id,
+                verdict_id=verdict_id,
+                model=response.model,
+                temperature=float(
+                    self.config.get("reviews", "temperature", default=0.2)
+                ),
+                prompt_version=composed.prompt_version,
+                prompt_hash=composed.prompt_hash,
+                cost=composed.cost,
+                slow_ms=int(
+                    float(
+                        self.config.get(
+                            "inspector", "slow_call_seconds", default=15
+                        )
+                    )
+                    * 1000
+                ),
+                scrub_values=self._secrets,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -488,6 +577,11 @@ class ReviewService:
                 created_at=_naive_utc(self.clock.now()),
             )
             session.add(review)
+            session.flush()
+            self._record_call(
+                session, composed, kind="weekly", facts=facts,
+                review_id=review.id,
+            )
             try:
                 session.commit()
             except IntegrityError:
@@ -563,6 +657,11 @@ class ReviewService:
                 created_at=_naive_utc(self.clock.now()),
             )
             session.add(review)
+            session.flush()
+            self._record_call(
+                session, composed, kind="briefing", facts=facts,
+                review_id=review.id,
+            )
             try:
                 session.commit()
             except IntegrityError:
@@ -626,17 +725,22 @@ class ReviewService:
                 composed = await self._compose(
                     session, kind="verdict", ref=ref, facts=facts
                 )
-                session.add(
-                    Verdict(
-                        decision_id=decision.id,
-                        verdict=str(composed.content["verdict"]),
-                        reason=str(composed.content["reason"]),
-                        source="draft",
-                        draft_source=composed.source,
-                        cost=composed.cost,
-                        created_at=now,
-                        updated_at=now,
-                    )
+                verdict = Verdict(
+                    decision_id=decision.id,
+                    verdict=str(composed.content["verdict"]),
+                    reason=str(composed.content["reason"]),
+                    source="draft",
+                    draft_source=composed.source,
+                    cost=composed.cost,
+                    facts=facts,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(verdict)
+                session.flush()
+                self._record_call(
+                    session, composed, kind="verdict", facts=facts,
+                    verdict_id=verdict.id,
                 )
                 # Commit per verdict: the cap counts this call's spend
                 # before the next compose, and no write transaction stays

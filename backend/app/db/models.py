@@ -4,7 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, Money
@@ -422,10 +422,85 @@ class Verdict(Base):
     # Draft-call spend; the review monthly cap covers verdict calls too.
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
+    # The facts the draft call was written from, so the LLM inspector can
+    # rebuild the user part of the prompt (PR 18).
+    facts: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
     updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
     decision: Mapped[Decision] = relationship()
+
+
+class LlmCall(Base):
+    """One request actually sent to OpenAI (docs/SPEC.md, LLM call history).
+
+    Written for live decisions, shadow decisions and reviews in the same
+    transaction as the linked row, after the call returned. Calls that
+    never happened — rules ``no_call``, the call cap, price checks, a
+    missing key, a reached cost cap, missed shadow calls — get no row.
+    ``outcome`` and ``reasons`` are set once at write time. ``backfilled``
+    marks rows the migration reconstructed from older data; their
+    latency, HTTP status and request id were never recorded.
+    """
+
+    __tablename__ = "llm_calls"
+    __table_args__ = (
+        Index("ix_llm_calls_session_sent", "session_date", "sent_at"),
+        Index("ix_llm_calls_outcome_sent", "outcome", "sent_at"),
+        Index("ix_llm_calls_source_sent", "source", "sent_at"),
+        Index("ix_llm_calls_symbol_sent", "symbol", "sent_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sent_at: Mapped[datetime] = mapped_column(nullable=False)
+    session_date: Mapped[date] = mapped_column(nullable=False)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)  # live | shadow | review
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # decision | briefing | weekly | verdict
+    strategy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("strategies.id"), nullable=True
+    )
+    decision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("decisions.id"), nullable=True
+    )
+    shadow_decision_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shadow_decisions.id"), nullable=True
+    )
+    review_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reviews.id"), nullable=True
+    )
+    verdict_id: Mapped[int | None] = mapped_column(
+        ForeignKey("verdicts.id"), nullable=True
+    )
+    cycle_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cycles.id"), nullable=True
+    )
+    symbol: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    context: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    temperature: Mapped[float | None] = mapped_column(nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
+    latency_ms: Mapped[int | None] = mapped_column(nullable=True)
+    final_action: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    outcome: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # success | warning | error
+    reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    # The primary error reason (timeout | api_error | invalid_output |
+    # refusal), the HTTP status and OpenAI's error code when it sent them.
+    error_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    http_status: Mapped[int | None] = mapped_column(nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # scrubbed
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class Notification(Base):

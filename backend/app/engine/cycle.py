@@ -30,6 +30,7 @@ from app.decide.snapshot import build_input_snapshot
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import record_event
+from app.inspector.record import sync_llm_call
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
@@ -719,6 +720,9 @@ class CycleRunner:
                     earnings_known=earnings_known,
                     force_exit_reason=force_exit,
                 )
+                # Fold gate/deferred-exit changes to final_action into the
+                # call row — same transaction as the decision's own update.
+                sync_llm_call(session, decision)
             session.commit()
             report.decisions.append(decision.id)
         # Review items past the cap are recorded without a call — the tail
