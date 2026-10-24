@@ -45,6 +45,7 @@ from app.decide.client import (
 )
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.service import DecisionService
+from app.engine.after_exit import AfterExitWorker
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
@@ -205,6 +206,23 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
             logger.info("pruned %d cached 5m bars past the keep window", pruned)
     except Exception:  # noqa: BLE001
         logger.exception("5m bar pruning failed")
+
+
+async def run_after_close_jobs(
+    config: AppConfig,
+    calendar: CalendarProvider,
+    clock: Clock,
+    notifier: Notifier,
+    publish: Callable[[set[str]], None],
+    after_exit: AfterExitWorker,
+) -> None:
+    """After each session's close: readiness snapshot, then after-exit
+    metrics for the Winners and tails card (docs/SPEC.md, Tail metrics)."""
+    run_readiness_tick(config, calendar, clock, notifier, publish)
+    try:
+        await after_exit.fill()
+    except Exception:  # noqa: BLE001
+        logger.exception("after-exit job failed")
 
 
 async def run_scheduled_cycle(
@@ -585,6 +603,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
     )
+    after_exit_worker = AfterExitWorker(
+        market_data=market_data,
+        sources=sources,
+        calendar=calendar_store,
+        config=config,
+        clock=clock,
+    )
     # Reviews have their own client and cost cap — they can never use the
     # budget or rate limits reserved for trading decisions.
     review_service = ReviewService(
@@ -911,9 +936,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         coalesce=True,
     )
     # Readiness: after each session's close evaluate the 15 criteria once
-    # and store the snapshot; backfills sessions missed while down.
+    # and store the snapshot; backfills sessions missed while down. The
+    # after-exit job for the tails card runs right after it (docs/SPEC.md,
+    # Tail metrics).
     scheduler.add_job(
-        run_readiness_tick,
+        run_after_close_jobs,
         IntervalTrigger(minutes=1),
         args=[
             config,
@@ -921,6 +948,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             clock,
             notification_service,
             lambda topics: bus.publish(*topics),
+            after_exit_worker,
         ],
         id="readiness-tick",
         coalesce=True,
