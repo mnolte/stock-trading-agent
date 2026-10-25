@@ -1,31 +1,109 @@
+# Dependabot configuration for stock-trading-agent.
+#
+# Reference: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# What this file does
+# -------------------
+# Dependabot opens pull requests that bump dependencies in three places:
+#
+#   1. `uv`             — Python dependencies declared in /pyproject.toml and
+#                         pinned in /uv.lock. The backend code lives in
+#                         /backend, but the uv project root is the repo root,
+#                         so `directory` is "/".
+#   2. `npm`            — JavaScript/TypeScript dependencies in
+#                         /frontend/package.json, locked by
+#                         /frontend/pnpm-lock.yaml. The project uses pnpm, but
+#                         Dependabot handles pnpm manifests and lockfiles under
+#                         the "npm" package-ecosystem; there is no separate
+#                         "pnpm" ecosystem value.
+#   3. `github-actions` — Action versions referenced in
+#                         /.github/workflows/*.yml (currently ci.yml).
+#
+# Version updates vs security updates
+# -----------------------------------
+# This file configures *version updates* (routine bumps on a schedule).
+# Security updates are a separate GitHub feature driven by Dependabot alerts:
+# they are raised as soon as a fix exists, are NOT governed by `schedule`,
+# `cooldown` or `open-pull-requests-limit`, and are grouped individually
+# unless a group sets `applies-to: security-updates`. The groups below
+# therefore only batch routine updates.
+#
+# Option notes
+# ------------
+# - `version: 2`      — required; the current config schema version.
+# - `schedule.interval: "weekly"` — Dependabot checks each ecosystem once a
+#   week (weekday/time default to a random slot chosen by GitHub; add `day`,
+#   `time` and `timezone` keys to pin it down).
+# - `groups`          — updates matching a group are batched into a single PR
+#   instead of one PR per dependency. `update-types: ["minor", "patch"]`
+#   keeps low-risk bumps together so they can be reviewed and merged as one
+#   unit; `major` updates still get their own PRs because they are the ones
+#   most likely to need code changes. Groups are evaluated top-down and a
+#   dependency goes into the first group it matches.
+# - `cooldown.default-days: 7` — a release is not proposed until it is at
+#   least 7 days old. This implements the repo rule in AGENTS.md ("prefer
+#   releases at least 7 days old"): freshly published versions have not been
+#   vetted, and a non-trivial share of supply-chain attacks is caught and
+#   yanked within the first few days. Dependabot's own default is 3 days;
+#   7 is the stricter repo policy. Cooldown delays version updates only —
+#   security fixes are never held back.
+# - `open-pull-requests-limit: 5` — at most 5 open Dependabot version-update
+#   PRs per ecosystem at a time. Keeps the review queue bounded; once PRs
+#   are merged or closed, Dependabot opens more on the next run. Does not
+#   cap security-update PRs. Setting this to 0 would disable version
+#   updates for that ecosystem entirely.
+#
+# Maintenance tips
+# ----------------
+# - To pin the check time, add e.g. `day: "monday"`, `time: "09:00"`,
+#   `timezone: "Europe/Amsterdam"` under `schedule`.
+# - To batch security fixes too, add `applies-to: security-updates` inside a
+#   `groups` entry (see GitHub docs "Grouping Dependabot security updates").
+# - To silence a dependency, add an `ignore:` block with `dependency-name`
+#   (optionally `versions:`) in the relevant ecosystem section.
+# - PRs can be steered with comments: `@dependabot rebase`,
+#   `@dependabot recreate`, `@dependabot ignore this major version`, etc.
+
 version: 2
 updates:
+  # Python (backend) — uv project rooted at the repository root.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Amsterdam"
+    groups:
+      # Batch all minor and patch bumps into one PR; majors arrive singly.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
     # AGENTS.md: prefer releases at least 7 days old.
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+
+  # JavaScript (frontend) — pnpm project in /frontend, managed via the
+  # "npm" ecosystem (Dependabot reads package.json + pnpm-lock.yaml).
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Amsterdam"
     groups:
+      # Batch all minor and patch bumps into one PR; majors arrive singly.
       minor-and-patch:
         update-types: ["minor", "patch"]
+    # AGENTS.md: prefer releases at least 7 days old.
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
-  - package-ecosystem: "composer"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      minor-and-patch:
-        update-types: ["minor", "patch"]
-    open-pull-requests-limit: 5
+
+  # GitHub Actions — action versions in .github/workflows/*.yml.
+  # No `groups` or `cooldown` here: action updates are few and each is
+  # typically a single-line pin bump, so batching adds little.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
