@@ -128,7 +128,22 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
       - run: cd frontend && pnpm exec playwright install --with-deps chromium
+      # The first universe screen warms 260 daily + 60 sessions of 5m bars
+      # per pool symbol — minutes of fake-bar generation on a cold DB.
+      # Caching the seeded+warmed e2e database makes the first screen in
+      # each job incremental; alembic upgrade still runs at seed time, so
+      # a stale cache migrates forward.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/stock-agent-e2e.db
+            /tmp/stock-agent-e2e-data
+          key: e2e-db-${{ matrix.project }}-${{ hashFiles('backend/universe/pool.csv', 'backend/app/data/fake.py', 'backend/tests/e2e_seed.py', 'backend/tests/e2e_backtest_seed.py', 'backend/alembic/versions/**') }}
+          restore-keys: |
+            e2e-db-${{ matrix.project }}-
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
+        env:
+          E2E_PREVIEW: '1'
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

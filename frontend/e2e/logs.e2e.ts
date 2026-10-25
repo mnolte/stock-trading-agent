@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // Screenshots land in docs/screenshots/pr-20/ when SCREENSHOT_DIR is set
 // (Logs.png / Logs-390.png next to the design PNGs).

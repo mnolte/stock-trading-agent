@@ -1,4 +1,6 @@
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+
+import { test } from './shots';
 
 // Settings pre-fill from "Promote to live" (?promote=<id>), against a mocked
 // /promotion response — no seeding endpoint in the app. The save request is

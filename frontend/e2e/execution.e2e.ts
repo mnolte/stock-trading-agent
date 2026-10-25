@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR 5 screenshots are for docs/screenshots/pr-5/ (pass SCREENSHOT_DIR, see ./shots), matching earlier PRs;
 // design/screenshots/ holds the design references only.

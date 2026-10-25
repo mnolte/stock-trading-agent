@@ -217,7 +217,12 @@ class MarketDataService:
             for symbol in wanted
         }
 
-    async def refresh_history(self, today: date) -> dict[str, DataResult[int]]:
+    async def refresh_history(
+        self,
+        today: date,
+        symbols: list[str] | None = None,
+        session_count: int | None = None,
+    ) -> dict[str, DataResult[int]]:
         """Fill the cache with ``history_sessions`` sessions of 5-minute bars.
 
         Only the uncovered tail is fetched: each symbol's request starts at
@@ -226,23 +231,29 @@ class MarketDataService:
         newest session is always refetched — a live session's cached bars
         are still forming. A warm cache costs one small request instead of
         re-downloading the whole window (docs/SPEC.md, Cycles at scale).
+
+        ``symbols`` defaults to ``universe()``; ``session_count`` defaults
+        to ``schedule.history_sessions`` — callers that read the pending
+        settings tree pass their own count so fetch and check agree.
         """
-        sessions = int(self.config.get("schedule", "history_sessions", default=60))
+        count = session_count or int(
+            self.config.get("schedule", "history_sessions", default=60)
+        )
         # Walk back through the trading calendar until we have enough sessions.
-        days = self.recent_sessions(today, sessions)
+        days = self.recent_sessions(today, count)
+        wanted = symbols if symbols is not None else self.universe()
         if not days:
             return {
                 symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
-                for symbol in self.universe()
+                for symbol in wanted
             }
-        symbols = self.universe()
         end = max(days, key=lambda d: d.close).close.astimezone(UTC)
         # Batched coverage first: only symbols short of the full window
         # get the per-symbol date query.
-        covered_counts = self.bars_cache.covered_session_counts(symbols, days)
+        covered_counts = self.bars_cache.covered_session_counts(wanted, days)
         results: dict[str, DataResult[int]] = {}
         groups: dict[datetime, list[str]] = {}
-        for symbol in symbols:
+        for symbol in wanted:
             if covered_counts.get(symbol, 0) == len(days):
                 missing: list[CalendarDay] = []
             else:
@@ -303,7 +314,12 @@ class MarketDataService:
             for bar in aggregate_1h(symbol, per_session[session.date], session)
         ]
 
-    async def refresh_daily(self, today: date) -> dict[str, DataResult[int]]:
+    async def refresh_daily(
+        self,
+        today: date,
+        symbols: list[str] | None = None,
+        session_count: int | None = None,
+    ) -> dict[str, DataResult[int]]:
         """Fetch and cache daily bars for ``daily_history_sessions`` sessions.
 
         Fetches run a few at a time: the per-symbol calls keep per-symbol
@@ -312,21 +328,26 @@ class MarketDataService:
         checked like ``refresh_history``: each symbol's request starts at
         its earliest missing session and the newest session is always
         refetched — a warm cache costs one small request per symbol.
+
+        ``symbols`` defaults to ``universe()``; ``session_count`` defaults
+        to ``schedule.daily_history_sessions`` — callers that read the
+        pending settings tree pass their own count so fetch and check
+        agree.
         """
-        count = int(
+        count = session_count or int(
             self.config.get("schedule", "daily_history_sessions", default=260)
         )
         sessions = self.recent_sessions(today, count)
+        wanted = symbols if symbols is not None else self.universe()
         if not sessions:
             return {
                 symbol: DataResult(data=0, error="no calendar days loaded", source="calendar")
-                for symbol in self.universe()
+                for symbol in wanted
             }
         end = sessions[-1].date
-        symbols = self.universe()
         # Batched coverage first: only symbols short of the full window
         # get the per-symbol date query.
-        covered_counts = self.bars_cache.daily_bar_counts(symbols, sessions)
+        covered_counts = self.bars_cache.daily_bar_counts(wanted, sessions)
         semaphore = asyncio.Semaphore(10)
 
         async def fetch(
@@ -338,7 +359,7 @@ class MarketDataService:
                 )
 
         fetches = []
-        for symbol in symbols:
+        for symbol in wanted:
             if covered_counts.get(symbol, 0) == len(sessions):
                 missing: list[date] = []
             else:

@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR screenshots are for docs/screenshots/pr-<n>/ (pass SCREENSHOT_DIR, see ./shots) (design/ stays untouched),
 // named states-1440/-390 next to the design reference States.png.
