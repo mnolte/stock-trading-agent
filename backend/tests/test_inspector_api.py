@@ -519,6 +519,7 @@ class TestErrorRowsWrittenByCalls:
             assert "••••" in call.error_message
 
 
+@pytest.mark.perf
 class TestPerformance:
     def test_list_and_summary_under_300ms_on_100k_calls(
         self, client: TestClient
@@ -560,7 +561,7 @@ class TestPerformance:
             best call still fails it."""
             client.get(path, params=params)
             best_ms, body = float("inf"), None
-            for _ in range(3):
+            for _ in range(5):
                 start = time.perf_counter()
                 response = client.get(path, params=params)
                 elapsed = (time.perf_counter() - start) * 1000

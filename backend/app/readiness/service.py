@@ -1297,31 +1297,32 @@ def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
             prev[key] = status
     from app.db.models import LogReview
 
-    for row in session.execute(
+    for review_row in session.execute(
         select(LogReview).order_by(LogReview.reviewed_at)
     ).scalars():
         entries.append(
             {
-                "at": _aware(row.reviewed_at).isoformat(),
+                "at": _aware(review_row.reviewed_at).isoformat(),
                 "kind": "log_review",
                 "change": (
-                    f"Log problem marked {row.review} — {row.note}"
+                    f"Log problem marked {review_row.review} — {review_row.note}"
                 ),
             }
         )
-    for row in session.execute(
+    for manual_row in session.execute(
         select(ReadinessManual).order_by(ReadinessManual.changed_at)
     ).scalars():
         label = next(
-            (lbl for key, lbl, _d in MANUAL_ITEMS if key == row.item), row.item
+            (lbl for key, lbl, _d in MANUAL_ITEMS if key == manual_row.item),
+            manual_row.item,
         )
         entries.append(
             {
-                "at": _aware(row.changed_at).isoformat(),
+                "at": _aware(manual_row.changed_at).isoformat(),
                 "kind": "manual",
                 "change": (
-                    f"{label} {'ticked' if row.done else 'unticked'}"
-                    f" — {row.note}"
+                    f"{label} {'ticked' if manual_row.done else 'unticked'}"
+                    f" — {manual_row.note}"
                 ),
             }
         )

@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 from app.shutdown import (
@@ -14,6 +15,8 @@ from app.shutdown import (
     ShutdownManager,
     quick_check,
 )
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 def test_lock_free(tmp_path: Path) -> None:
@@ -64,7 +67,12 @@ def test_wait_for_work_finishes() -> None:
     async def run() -> bool:
         m = ShutdownManager(grace_seconds=30)
         done = {"n": 0}
-        return await m.wait_for_work(lambda: (done.__setitem__("n", 1), True)[1])
+
+        def mark_done() -> bool:
+            done["n"] = 1
+            return True
+
+        return await m.wait_for_work(mark_done)
 
     assert asyncio.run(run()) is True
 
@@ -114,9 +122,9 @@ def test_order_slot_blocks_until_stored() -> None:
     asyncio.run(run())
 
 
-def test_writes_refused_while_shutting_down(client) -> None:
+def test_writes_refused_while_shutting_down(client: TestClient) -> None:
     """503 for POST/PUT while shutting down; GETs keep working (spec)."""
-    manager = client.app.state.shutdown
+    manager = cast(FastAPI, client.app).state.shutdown
     manager.begin()
     try:
         assert client.get("/api/health").status_code == 200
@@ -127,11 +135,12 @@ def test_writes_refused_while_shutting_down(client) -> None:
         manager.shutting_down.clear()
 
 
-def test_unclean_run_banner(client) -> None:
-    client.app.state.unclean_previous_run = True
-    client.app.state.unclean_quick_check = "ok"
+def test_unclean_run_banner(client: TestClient) -> None:
+    app = cast(FastAPI, client.app)
+    app.state.unclean_previous_run = True
+    app.state.unclean_quick_check = "ok"
     try:
         banners = client.get("/api/banners").json()["items"]
         assert any(b["kind"] == "unclean_run" for b in banners)
     finally:
-        client.app.state.unclean_previous_run = False
+        app.state.unclean_previous_run = False

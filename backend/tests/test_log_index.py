@@ -7,6 +7,7 @@ import logging
 import sqlite3
 import time
 from pathlib import Path
+from typing import cast
 
 from app.log_index import (
     LogIndexHandler,
@@ -15,6 +16,8 @@ from app.log_index import (
     prune_index,
     reindex,
 )
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 def _rec(
@@ -50,9 +53,9 @@ def test_index_failure_keeps_file_logging(tmp_path: Path) -> None:
     """A broken index reports to the fallback handler + stderr only."""
     db = tmp_path / "logs.db"
     db.write_bytes(b"not a database")
-    fallback_lines = []
+    fallback_lines: list[logging.LogRecord] = []
     fallback = logging.StreamHandler()
-    fallback.emit = fallback_lines.append
+    fallback.emit = fallback_lines.append  # type: ignore[method-assign, assignment]
     handler = LogIndexHandler(db, file_fallback=fallback)
     handler.emit(_rec("still logged"))
     handler.flush()
@@ -113,9 +116,9 @@ def test_reindex_rebuilds_from_files(tmp_path: Path) -> None:
         assert row == ("ERROR", "e-abc123", "c-0001")
 
 
-def test_logs_api_paging_and_filters(client) -> None:
+def test_logs_api_paging_and_filters(client: TestClient) -> None:
     """/api/logs: filters, newest-first keyset paging (limit ≤ 200)."""
-    handler = client.app.state.log_index_handler
+    handler = cast(FastAPI, client.app).state.log_index_handler
     assert handler is not None
     for i in range(5):
         handler.emit(_rec(f"line {i}", logging.WARNING,
@@ -138,8 +141,8 @@ def test_logs_api_paging_and_filters(client) -> None:
     assert len(found.json()["lines"]) == 5
 
 
-def test_logs_api_summary_and_around(client) -> None:
-    handler = client.app.state.log_index_handler
+def test_logs_api_summary_and_around(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
     handler.emit(_rec("a warning", logging.WARNING))
     err = _rec("an error", logging.ERROR, cycle="c-0001")
     err.error_id = "e-test01"
@@ -158,8 +161,8 @@ def test_logs_api_summary_and_around(client) -> None:
     assert any(line["id"] == err_id for line in around["lines"])
 
 
-def test_logs_api_export(client) -> None:
-    handler = client.app.state.log_index_handler
+def test_logs_api_export(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
     handler.emit(_rec("exported", logging.WARNING))
     handler.flush()
     resp = client.get("/api/logs/export.jsonl")
@@ -167,7 +170,7 @@ def test_logs_api_export(client) -> None:
     assert "exported" in resp.text
 
 
-def test_client_log_endpoint(client) -> None:
+def test_client_log_endpoint(client: TestClient) -> None:
     """Frontend errors land in the index at ERROR with logger 'frontend'."""
     resp = client.post(
         "/api/logs/client",
@@ -175,16 +178,21 @@ def test_client_log_endpoint(client) -> None:
               "tab_id": "t-test", "url": "http://localhost/"},
     )
     assert resp.status_code == 200
-    handler = client.app.state.log_index_handler
-    # The listener thread dequeues asynchronously — wait for it, then
-    # force its ~1s batch flush.
-    time.sleep(0.5)
-    handler.flush()
-    data = client.get("/api/logs?logger=frontend").json()
-    assert any("boom" in line["message"] for line in data["lines"])
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    # The listener thread dequeues asynchronously — poll until the row
+    # has been flushed into the index (bounded so a real break fails).
+    deadline = time.monotonic() + 10
+    while True:
+        handler.flush()
+        data = client.get("/api/logs?logger=frontend").json()
+        found = any("boom" in line["message"] for line in data["lines"])
+        if found or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    assert found
 
 
-def test_client_log_rate_limit(client) -> None:
+def test_client_log_rate_limit(client: TestClient) -> None:
     for _ in range(12):
         resp = client.post(
             "/api/logs/client",

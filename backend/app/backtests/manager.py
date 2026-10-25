@@ -308,7 +308,13 @@ class BacktestManager:
         kill_after = float(
             self.config.get("logging", "backtest_kill_after_seconds", default=10)
         )
-        await asyncio.sleep(kill_after)
+        if pids:
+            deadline = asyncio.get_running_loop().time() + kill_after
+            while (
+                any(_pid_alive(pid) for pid in pids)
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.05)
         for pid in pids:
             if _pid_alive(pid):
                 with contextlib.suppress(OSError):

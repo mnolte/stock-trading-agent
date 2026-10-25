@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import app.readiness.service as readiness
 import pytest
@@ -30,14 +31,14 @@ def _emit(handler: LogIndexHandler, msg: str, level: int) -> str:
         (f"%{msg}%",),
     ).fetchone()[0]
     conn.close()
-    return fp
+    return str(fp)
 
 
 def _criteria(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     session: Session,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """A fresh index in tmp_path, patched into readiness."""
     db = tmp_path / "logs.db"
     monkeypatch.setattr(readiness, "index_path", lambda _cfg: db)
@@ -46,7 +47,7 @@ def _criteria(
     )
 
 
-def _by_key(criteria: list[dict]) -> dict[str, dict]:
+def _by_key(criteria: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {c["key"]: c for c in criteria}
 
 

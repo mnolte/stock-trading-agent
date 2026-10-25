@@ -86,11 +86,35 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 
+_migration_heads: tuple[str, ...] | None = None
+
+
 def run_migrations() -> None:
     from alembic import command
     from alembic.config import Config
+    from alembic.script import ScriptDirectory
 
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    global _migration_heads
+    if _migration_heads is None:
+        _migration_heads = tuple(
+            sorted(ScriptDirectory.from_config(cfg).get_heads())
+        )
+    # A database already at head skips the full upgrade machinery: the
+    # version check is one sqlite read instead of a script walk.
+    import sqlite3 as _sqlite3
+
+    db_path = Path(get_config().env.sa_db_path)
+    if db_path.exists():
+        try:
+            with _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                version = conn.execute(
+                    "SELECT version_num FROM alembic_version"
+                ).fetchone()
+            if version is not None and (version[0],) == _migration_heads:
+                return
+        except _sqlite3.Error:
+            pass
     command.upgrade(cfg, "head")
 
 

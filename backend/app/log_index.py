@@ -22,6 +22,7 @@ import logging
 import re
 import sqlite3
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -140,6 +141,9 @@ class LogIndexHandler(logging.Handler):
         self._buffer: list[dict[str, Any]] = []
         self._last_flush = time.monotonic()
         self._conn: sqlite3.Connection | None = None
+        # flush() also runs outside the listener thread (tests, close on
+        # shutdown): serialize buffer swaps and the shared connection.
+        self._write_lock = threading.Lock()
         self._broken = False
 
     def _connect(self) -> sqlite3.Connection:
@@ -179,7 +183,10 @@ class LogIndexHandler(logging.Handler):
         except Exception:  # noqa: BLE001 - a bad record must not break logging
             return
         if row is not None:
-            self._buffer.append(row)
+            # Under the same lock as flush(): an append that lands on a
+            # just-swapped-out buffer is never seen by the next flush.
+            with self._write_lock:
+                self._buffer.append(row)
         if record.levelno >= logging.WARNING and self._on_warning is not None:
             # a broken callback must never break the listener thread
             with contextlib.suppress(Exception):
@@ -188,41 +195,43 @@ class LogIndexHandler(logging.Handler):
             self.flush()
 
     def flush(self) -> None:
-        if not self._buffer:
-            return
-        batch, self._buffer = self._buffer, []
-        self._last_flush = time.monotonic()
-        try:
-            conn = self._connect()
-            conn.executemany(
-                "INSERT INTO log_lines(ts,level,logger,event,message,context,"
-                "cycle,symbol,process,pid,error_id,exception_type,"
-                "exception_message,traceback,fingerprint) VALUES ("
-                ":ts,:level,:logger,:event,:message,:context,:cycle,:symbol,"
-                ":process,:pid,:error_id,:exception_type,:exception_message,"
-                ":traceback,:fingerprint)",
-                batch,
-            )
-            conn.commit()
-        except sqlite3.Error as exc:
-            self._report_failure(
-                logging.LogRecord("log_index", logging.ERROR, "", 0,
-                                  f"{len(batch)} rows", (), None),
-                exc,
-            )
-            # The connection may be half-open; reopen next time.
-            with contextlib.suppress(sqlite3.Error):
-                if self._conn is not None:
-                    self._conn.close()
-            self._conn = None
+        with self._write_lock:
+            if not self._buffer:
+                return
+            batch, self._buffer = self._buffer, []
+            self._last_flush = time.monotonic()
+            try:
+                conn = self._connect()
+                conn.executemany(
+                    "INSERT INTO log_lines(ts,level,logger,event,message,"
+                    "context,cycle,symbol,process,pid,error_id,exception_type,"
+                    "exception_message,traceback,fingerprint) VALUES ("
+                    ":ts,:level,:logger,:event,:message,:context,:cycle,"
+                    ":symbol,:process,:pid,:error_id,:exception_type,"
+                    ":exception_message,:traceback,:fingerprint)",
+                    batch,
+                )
+                conn.commit()
+            except sqlite3.Error as exc:
+                self._report_failure(
+                    logging.LogRecord("log_index", logging.ERROR, "", 0,
+                                      f"{len(batch)} rows", (), None),
+                    exc,
+                )
+                # The connection may be half-open; reopen next time.
+                with contextlib.suppress(sqlite3.Error):
+                    if self._conn is not None:
+                        self._conn.close()
+                self._conn = None
 
     def close(self) -> None:
         try:
             with contextlib.suppress(sqlite3.Error):
                 self.flush()
-            with contextlib.suppress(sqlite3.Error):
+            with self._write_lock, contextlib.suppress(sqlite3.Error):
                 if self._conn is not None:
                     self._conn.close()
+                self._conn = None
         finally:
             super().close()
 

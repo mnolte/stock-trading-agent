@@ -56,13 +56,16 @@ lint-frontend:
 logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
 	cd backend && ../$(PYTHON) -m app.log_index
 
-test: test-backend test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
+test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
-	cd backend && ../$(PYTEST) -v -m "not slow" -n 4 --durations=15
+	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n auto --dist worksteal --durations=15
+
+test-perf: ## timing-budget tests, serial — CPU contention skews them
+	cd backend && ../$(PYTEST) -v -m perf --durations=15
 
 test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
-	cd backend && ../$(PYTEST) -v -m slow -n 4 --durations=15
+	cd backend && ../$(PYTEST) -v -m slow -n auto --dist worksteal --durations=15
 
 test-frontend:
 	$(FE) test

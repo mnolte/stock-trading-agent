@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import subprocess
 import threading
@@ -97,21 +98,17 @@ def test_ble001_catches_uncommented(tmp_path: Path) -> None:
     assert result.returncode != 0
 
 
-def _capture() -> tuple[list, object]:
+def _capture() -> tuple[list[logging.LogRecord], logging.Logger]:
     """Attach a real handler to the `app` logger for hook/spawn tests."""
-    import logging
-
-    records: list = []
+    records: list[logging.LogRecord] = []
     handler = logging.StreamHandler()
-    handler.emit = records.append  # type: ignore[method-assign]
+    handler.emit = records.append  # type: ignore[method-assign, assignment]
     target = logging.getLogger("app")
     target.addHandler(handler)
     return records, target
 
 
 def test_spawn_logs_failure() -> None:
-    import logging
-
     records, target = _capture()
     try:
         async def boom() -> None:
@@ -131,8 +128,6 @@ def test_spawn_logs_failure() -> None:
 
 
 def test_thread_hook_logs() -> None:
-    import logging
-
     loop = asyncio.new_event_loop()
     install_global_hooks(loop)
     records, target = _capture()

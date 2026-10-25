@@ -129,14 +129,16 @@ def test_counter_kill_switch(client: TestClient) -> None:
     assert body["kill_switch"] is True
 
 
-def _shorten_shutdown_grace() -> None:
+def _shorten_shutdown_grace(client: TestClient) -> None:
     # A running row left behind makes shutdown wait out the 60 s grace —
-    # seconds are plenty in a test.
+    # seconds are plenty in a test. The manager bound the configured
+    # value at startup, so set it on the live object too.
     get_config().yaml["storage"]["shutdown_grace_seconds"] = 0.5
+    cast(Any, client.app).state.shutdown.grace_seconds = 0.5
 
 
 def test_counter_running_cycle(client: TestClient) -> None:
-    _shorten_shutdown_grace()
+    _shorten_shutdown_grace(client)
     _clock(client).set(datetime(2026, 10, 15, 16, 47, tzinfo=UTC))  # 12:47 NY
     _cycle(datetime(2026, 10, 15, 16, 46, tzinfo=UTC), status="running")
 
@@ -148,7 +150,7 @@ def test_counter_running_cycle(client: TestClient) -> None:
 def test_counter_running_check_is_not_a_cycle(client: TestClient) -> None:
     # A running position check does not light the "running" state — the
     # counter only watches kind='cycle' rows.
-    _shorten_shutdown_grace()
+    _shorten_shutdown_grace(client)
     _clock(client).set(datetime(2026, 10, 15, 16, 47, tzinfo=UTC))
     _cycle(
         datetime(2026, 10, 15, 16, 46, tzinfo=UTC),

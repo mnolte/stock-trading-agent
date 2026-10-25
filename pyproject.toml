@@ -61,4 +61,5 @@ testpaths = ["backend/tests"]
 addopts = "--disable-socket --allow-unix-socket --strict-markers --timeout=600"
 markers = [
     "slow: multi-minute tests (e.g. the 3-month replay) — run with make test-slow",
+    "perf: timing-budget tests — run serially with make test-perf",
 ]
