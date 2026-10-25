@@ -323,7 +323,7 @@ class StopOption:
 def build_stop_options(
     *,
     bars_1h: Sequence[Bar1h],
-    entry: Decimal,
+    entry: Decimal | None,
     opened_at: datetime | None,
     current_stop: Decimal | None,
     initial_stop: Decimal | None,
@@ -337,7 +337,7 @@ def build_stop_options(
     margin = cfg.tighten_min_atr_below_price * atr_1h
     initial_risk = (
         entry - initial_stop
-        if initial_stop is not None and entry > initial_stop
+        if initial_stop is not None and entry is not None and entry > initial_stop
         else None
     )
 
@@ -362,7 +362,8 @@ def build_stop_options(
                 None,
             )
         )
-    candidates.append(("break-even", entry, None))
+    if entry is not None:
+        candidates.append(("break-even", entry, None))
     since_entry = [b for b in bars_1h if opened_at is None or b.end > opened_at]
     if since_entry:
         highest_close = max(b.close for b in since_entry)
@@ -384,10 +385,14 @@ def build_stop_options(
                 id=f"T{len(options) + 1}",
                 stop=stop,
                 basis=basis,
-                locks_profit=stop >= entry,
+                locks_profit=entry is not None and stop >= entry,
                 r_at_stop=(
                     (stop - entry) / initial_risk
-                    if initial_risk is not None and initial_risk > 0
+                    if (
+                        initial_risk is not None
+                        and initial_risk > 0
+                        and entry is not None
+                    )
                     else None
                 ),
                 level=level,

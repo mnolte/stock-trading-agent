@@ -8,13 +8,14 @@ has, cut at the decision time.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from app.config import AppConfig
-from app.data.models import Bar1h, Bar5m, DailyBar
+from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 from app.decide.levels import OPTIONS_VERSION, find_levels, level_json, options_config
 from app.decide.options import (
     build_entry_options,
@@ -22,6 +23,10 @@ from app.decide.options import (
     option_json,
     stop_option_json,
 )
+from app.market.calendar import CalendarProvider
+
+# Same call shape as the shadow runner BarReader (BarCache.get).
+BarReader = Callable[[str, datetime, datetime], list[Bar5m]]
 
 _CENT = Decimal("0.01")
 
@@ -30,7 +35,7 @@ _CENT = Decimal("0.01")
 class HeldContext:
     """The position facts build_stop_options needs."""
 
-    entry: Decimal
+    entry: Decimal | None
     current_stop: Decimal | None
     initial_stop: Decimal | None
     opened_at: Any  # datetime | None
@@ -147,3 +152,64 @@ def build_v2_fields(
         options_column=column,
         reason=result.reason if result is not None and not options else None,
     )
+
+
+def rebuild_bars(
+    symbol: str,
+    at: datetime,
+    *,
+    calendar: CalendarProvider,
+    bars_reader: BarReader,
+    sessions_needed: int = 62,
+) -> tuple[list[Bar1h], list[DailyBar], list[Bar5m]]:
+    """The builder's bar inputs from the 5-minute cache at time ``at``.
+
+    Shadows, backtests and replays rebuild levels and options for a
+    decision at its cycle time — never after (no lookahead). ``calendar``
+    is a CalendarProvider; ``bars_reader`` is ``BarCache.get``.
+    """
+    from app.data.aggregate import aggregate_1h, bars_per_session
+    from app.market.clock import NY_TZ
+
+    today = at.astimezone(NY_TZ).date()
+    sessions: list[CalendarDay] = []
+    cursor = today
+    while len(sessions) < sessions_needed:
+        session = calendar.session_for(cursor)
+        if session is not None:
+            sessions.append(session)
+        prev = calendar.previous_trading_day(cursor)
+        if prev is None:
+            break
+        cursor = prev.date
+    sessions.sort(key=lambda s: s.date)
+    if not sessions:
+        return [], [], []
+    bars_5m = bars_reader(symbol, sessions[0].open, at)
+    per_session = bars_per_session(bars_5m, sessions)
+    bars_1h = [
+        bar
+        for session in sessions
+        for bar in aggregate_1h(symbol, per_session[session.date], session)
+        if bar.end <= at
+    ]
+    prior = [s for s in sessions if s.date < today]
+    daily = [
+        DailyBar(
+            symbol=symbol,
+            date=s.date,
+            open=per_session[s.date][0].open,
+            high=max(b.high for b in per_session[s.date]),
+            low=min(b.low for b in per_session[s.date]),
+            close=per_session[s.date][-1].close,
+            volume=sum(b.volume for b in per_session[s.date]),
+        )
+        for s in prior
+        if per_session.get(s.date) and s.close <= at
+    ]
+    today_5m = [
+        b
+        for b in per_session.get(today, [])
+        if b.start + timedelta(minutes=5) <= at
+    ]
+    return bars_1h, daily, today_5m
