@@ -23,14 +23,18 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
+from app.decide.levels import OPTIONS_VERSION
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     NO_CALL_REASONS,
     ModelOutput,
+    ModelOutputV2,
     ValidationResult,
     validate_model_output,
+    validate_model_output_v2,
 )
-from app.decide.prompt import Prompt, cached_prompt
+from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
+from app.decide.v2inputs import V2Build
 from app.inspector.record import build_llm_call
 from app.logging_config import ev
 from app.market.clock import Clock, make_clock
@@ -56,7 +60,17 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
-def model_output_json(output: ModelOutput) -> dict[str, Any]:
+def _levels_column(v2: V2Build | None) -> dict[str, Any] | None:
+    return {"levels": v2.fields.get("levels")} if v2 is not None else None
+
+
+def _options_column(v2: V2Build | None) -> dict[str, Any] | None:
+    return v2.options_column if v2 is not None else None
+
+
+def model_output_json(
+    output: ModelOutput | ModelOutputV2
+) -> dict[str, Any]:
     return cast(dict[str, Any], _jsonable(output.model_dump()))
 
 
@@ -130,6 +144,12 @@ class DecisionService:
         self._before_call = before_call
         version = str(config.get("decision", "prompt", default="decision.v1"))
         self._prompt: Prompt = cached_prompt(version)
+        self._spec: PromptSpec = prompt_spec(version)
+
+    @property
+    def spec(self) -> PromptSpec:
+        """The prompt version's code contract (schema, option building)."""
+        return self._spec
 
     @property
     def prompt(self) -> Prompt:
@@ -142,6 +162,7 @@ class DecisionService:
         self.client = make_decision_client(self.config, api_key=self.api_key)
         version = str(self.config.get("decision", "prompt", default="decision.v1"))
         self._prompt = cached_prompt(version)
+        self._spec = prompt_spec(version)
 
     async def decide(
         self,
@@ -155,6 +176,7 @@ class DecisionService:
         price: Decimal | None,
         atr_1h: Decimal | None,
         current_stop: Decimal | None,
+        v2: V2Build | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
         user = json.dumps(snapshot_json, indent=2)
@@ -190,7 +212,7 @@ class DecisionService:
                 symbol=symbol,
             )
             response = await self.client.complete(
-                system=self._prompt.text, user=user
+                system=self._prompt.text, user=user, schema=self._spec.json_schema
             )
             ev(
                 logger,
@@ -229,19 +251,31 @@ class DecisionService:
                     tokens_in=response.tokens_in,
                     tokens_out=response.tokens_out,
                 )
-        validation = validate_model_output(
-            response.raw,
-            symbol=symbol,
-            context=context,
-            price=(
-                Decimal(str(snapshot_json["stop_reference_price"]))
-                if snapshot_json.get("stop_reference_price") is not None else None
-            ) if context == "held" else price,
-            atr_1h=atr_1h,
-            current_stop=current_stop,
-            call_error=response.error,
-            config=self.config,
-        )
+        if self._spec.uses_options:
+            validation = validate_model_output_v2(
+                response.raw,
+                symbol=symbol,
+                context=context,
+                snapshot=snapshot_json,
+                atr_1h=atr_1h,
+                current_stop=current_stop,
+                call_error=response.error,
+                config=self.config,
+            )
+        else:
+            validation = validate_model_output(
+                response.raw,
+                symbol=symbol,
+                context=context,
+                price=(
+                    Decimal(str(snapshot_json["stop_reference_price"]))
+                    if snapshot_json.get("stop_reference_price") is not None else None
+                ) if context == "held" else price,
+                atr_1h=atr_1h,
+                current_stop=current_stop,
+                call_error=response.error,
+                config=self.config,
+            )
         # A failed call (error or refusal) left no output to fall back
         # on; "no_call" says so.
         failed = response.error is not None or response.refused
@@ -264,6 +298,7 @@ class DecisionService:
             no_call_reason="model_error" if failed else None,
             cached=from_cache,
             sent_at=sent_at,
+            v2=v2,
         )
         return decision
 
@@ -278,6 +313,7 @@ class DecisionService:
         rules: RulesResult | None,
         reason: str,
         detail: str | None = None,
+        v2: V2Build | None = None,
     ) -> Decision:
         """Store a decision row when code blocked the call before it happened."""
         if reason not in NO_CALL_REASONS:
@@ -301,6 +337,7 @@ class DecisionService:
             validation=validation,
             final_action=NO_CALL,
             no_call_reason=reason,
+            v2=v2,
         )
 
     def _store(
@@ -318,6 +355,7 @@ class DecisionService:
         no_call_reason: str | None = None,
         cached: bool = False,
         sent_at: datetime | None = None,
+        v2: V2Build | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -351,6 +389,19 @@ class DecisionService:
             raw_response=response.raw if response else None,
             cached=cached,
             cost_source="cached" if cached else "priced",
+            levels=_levels_column(v2),
+            options=_options_column(v2),
+            chosen_option=(
+                validation.chosen_option.get("id")
+                if validation.chosen_option is not None
+                else None
+            ),
+            explanation_check=(
+                validation.explanation.to_json()
+                if validation.explanation is not None
+                else None
+            ),
+            options_version=OPTIONS_VERSION if v2 is not None else None,
         )
         session.add(decision)
         session.flush()
@@ -374,6 +425,10 @@ class DecisionService:
                     and response.error is None
                     and not response.refused,
                     error_detail=validation.error,
+                    unsupported_claim=(
+                        validation.explanation is not None
+                        and not validation.explanation.passed
+                    ),
                     cycle_id=cycle_id,
                     decision_id=decision.id,
                     symbol=symbol,

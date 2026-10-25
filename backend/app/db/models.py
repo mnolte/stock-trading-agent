@@ -93,6 +93,14 @@ class Decision(Base):
     # True when the answer came from llm_cache (a backtest replay) — the
     # call cost nothing and the row keeps the stored token counts.
     cached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # decision.v2 (docs/SPEC.md, Decision v2): the levels offered, the
+    # built options, the model's chosen option, the explanation check and
+    # the builder format version. All None for decision.v1 rows.
+    levels: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    options: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    chosen_option: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    explanation_check: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    options_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class Order(Base):
@@ -741,6 +749,12 @@ class ShadowDecision(Base):
     missed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Why the work was missed: time (next live event due) | cost_cap.
     missed_reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # decision.v2 columns (same meaning as on ``decisions``).
+    levels: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    options: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    chosen_option: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    explanation_check: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    options_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Only for a symbol live made no decision on (held by shadows only):
     # the snapshot live's cycle built for it.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)

@@ -23,7 +23,7 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const subs = useRef(new Map<number, Subscription>());
   const nextId = useRef(0);
   const pending = useRef(new Set<Topic>());
-  const debounce = useRef<ReturnType<typeof setTimeout>>();
+  const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const flush = useCallback(() => {
     const topics = pending.current;

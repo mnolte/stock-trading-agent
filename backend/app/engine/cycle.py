@@ -27,6 +27,7 @@ from app.db.base import get_session_maker
 from app.db.models import Cycle, Position
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
+from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import record_event
@@ -507,9 +508,9 @@ class CycleRunner:
         evaluation = await self.signals.refresh_eval()
         if shadow_only:
             try:
-                for symbol, (snap, bars_1h) in self.signals.snapshots_for(
-                    shadow_only, now
-                ).items():
+                for symbol, (snap, bars_1h, _daily, _todays) in (
+                    self.signals.snapshots_for(shadow_only, now).items()
+                ):
                     report.shadow_snapshots[symbol] = build_input_snapshot(
                         symbol=symbol,
                         context="held",
@@ -700,7 +701,50 @@ class CycleRunner:
             )
             snapshot_json["last_bar_close"] = str(bar.close) if bar else None
             snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
-            if price_reason is not None and context == "candidate":
+            v2: V2Build | None = None
+            if self.decide.spec.uses_options:
+                v2 = build_v2_fields(
+                    context=context,
+                    bars_1h=item.bars_1h,
+                    daily=item.daily,
+                    today_5m=item.today_5m,
+                    price=price if price is not None else item.price,
+                    reference=reference,
+                    atr_1h=item.snapshot.atr_1h,
+                    config=self.config,
+                    held=(
+                        HeldContext(
+                            entry=position.avg_entry_price,
+                            current_stop=position.current_stop_price,
+                            initial_stop=position.initial_stop,
+                            opened_at=position.opened_at,
+                        )
+                        if context == "held" and position is not None
+                        else None
+                    ),
+                )
+                snapshot_json.update(v2.fields)
+            if (
+                context == "candidate"
+                and v2 is not None
+                and not v2.fields["options"]
+            ):
+                # No code-built option survived the band and R/R rules —
+                # the model is never asked (docs/SPEC.md, Decision v2).
+                ev(logger, logging.DEBUG, "cycle.no_options",
+                   f"{item.symbol}: {v2.reason}", symbol=item.symbol)
+                decision = self.decide.record_no_call(
+                    session,
+                    cycle_id=cycle_id,
+                    symbol=item.symbol,
+                    context=context,
+                    snapshot_json=snapshot_json,
+                    rules=item.rules,
+                    reason="no_options",
+                    detail=v2.reason or "no option met the rules",
+                    v2=v2,
+                )
+            elif price_reason is not None and context == "candidate":
                 # An unusable market price means no new entries this
                 # cycle — and no model call, so the cap slot stays free
                 # for the next one. Held positions are always reviewed.
@@ -730,6 +774,7 @@ class CycleRunner:
                     current_stop=(
                         position.current_stop_price if position else None
                     ),
+                    v2=v2,
                 )
             if self.executor is not None:
                 # Hard rule 13: commit the stored decision before the
