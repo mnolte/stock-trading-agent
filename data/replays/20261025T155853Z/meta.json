@@ -1,0 +1,11 @@
+{
+  "id": "20261025T155853Z",
+  "prompt": "decision.v2",
+  "model": "gpt-4o-mini",
+  "from": "2026-10-18",
+  "to": "2026-10-25",
+  "snapshots": 892,
+  "estimated_usd": 0.3474786,
+  "cost_usd": 0.42355095,
+  "created_at": "2026-10-25T16:24:16.709513+00:00"
+}

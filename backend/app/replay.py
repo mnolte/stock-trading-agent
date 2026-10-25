@@ -391,9 +391,11 @@ async def replay(
         explanation_detail: dict[str, Any] | None = None
         error: str | None = None
         cost: Decimal | None = None
-        if v2.reason is not None and decision.context == "candidate":
+        if decision.context == "candidate" and not v2.fields["options"]:
+            # No code-built option survived (or the inputs for one were
+            # missing) — the model is never asked (docs/SPEC.md).
             final_action = "no_call"
-            error = f"no_options: {v2.reason}"
+            error = f"no_options: {v2.reason or 'no option met the rules'}"
         else:
             response = await client.complete(
                 system=prompt.text,
