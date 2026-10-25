@@ -183,14 +183,35 @@ class ReplayRow:
         }
 
 
+@dataclass(frozen=True)
+class SnapshotRow:
+    """The columns a replay needs — the live table may predate the v2
+    columns (read-only, no migration required)."""
+
+    id: int
+    cycle_id: int
+    symbol: str
+    context: str
+    input_snapshot: dict[str, Any] | None
+    final_action: str | None
+
+
 def _candidate_snapshots(
     session: Session, run_start: datetime, from_day: date, to_day: date
-) -> list[tuple[Decision, datetime]]:
+) -> list[tuple[SnapshotRow, datetime]]:
     """Stored input snapshots of the live run within the session range."""
     start = datetime.combine(from_day, datetime.min.time(), tzinfo=UTC)
     end = datetime.combine(to_day + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
     rows = session.execute(
-        select(Decision, Cycle.scheduled_time)
+        select(
+            Decision.id,
+            Decision.cycle_id,
+            Decision.symbol,
+            Decision.context,
+            Decision.input_snapshot,
+            Decision.final_action,
+            Cycle.scheduled_time,
+        )
         .join(Cycle, Decision.cycle_id == Cycle.id)
         .where(
             Cycle.kind == "cycle",
@@ -201,7 +222,20 @@ def _candidate_snapshots(
         )
         .order_by(Cycle.scheduled_time, Decision.id)
     ).all()
-    return [(d, scheduled) for d, scheduled in rows if (d.input_snapshot or {}).get("price")]
+    out: list[tuple[SnapshotRow, datetime]] = []
+    for _id, cycle_id, symbol, context, snap, action, scheduled in rows:
+        if (snap or {}).get("price"):
+            out.append(
+                (
+                    SnapshotRow(
+                        id=_id, cycle_id=cycle_id, symbol=symbol,
+                        context=context, input_snapshot=snap,
+                        final_action=action,
+                    ),
+                    scheduled,
+                )
+            )
+    return out
 
 
 async def replay(
