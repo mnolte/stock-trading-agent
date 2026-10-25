@@ -703,24 +703,43 @@ test('toasts: a critical notification stays until dismissed (role alert)', async
 // on the mobile viewport the sidebar is a dialog with Escape + focus return.
 // ---------------------------------------------------------------------------
 
-async function expectVisibleFocus(page: Page, steps: number) {
-  for (let i = 0; i < steps; i += 1) {
+// Walk the whole tab order: every landed control must show a visible ring.
+// Stops when focus leaves the page (body) or wraps to a seen element — the
+// tabbable count differs between desktop and mobile, so no fixed step count.
+async function expectVisibleFocus(page: Page) {
+  const seen = new Set<string>();
+  for (let i = 0; i < 80; i += 1) {
     await page.keyboard.press('Tab');
     const info = await page.evaluate(() => {
       const el = document.activeElement;
-      if (!el || el === document.body) return { ok: false, who: 'body' };
+      if (!el || el === document.body)
+        return { ok: false, who: 'body', key: 'body' };
       const style = getComputedStyle(el);
+      const path: number[] = [];
+      let node: Element | null = el;
+      while (node && node !== document.body) {
+        path.unshift(
+          node.parentElement
+            ? Array.prototype.indexOf.call(node.parentElement.children, node)
+            : 0,
+        );
+        node = node.parentElement;
+      }
       return {
         ok: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0,
         who: `${el.tagName} "${(el.textContent ?? '').slice(0, 40)}" label=${el.getAttribute('aria-label') ?? ''} cls=${el.getAttribute('class') ?? ''}`,
         outline: `${style.outlineStyle} ${style.outlineWidth}`,
+        key: path.join('.'),
       };
     });
+    if (info.who === 'body' || seen.has(info.key)) break;
     expect(
       info.ok,
       `Tab ${i + 1}: focused element has a visible ring — ${JSON.stringify(info)}`,
     ).toBeTruthy();
+    seen.add(info.key);
   }
+  expect(seen.size, 'no focusable element found on the page').toBeGreaterThan(0);
 }
 
 test('keyboard: dashboard, settings and strategies keep a visible focus ring', async ({
@@ -734,21 +753,21 @@ test('keyboard: dashboard, settings and strategies keep a visible focus ring', a
     page.getByRole('link', { name: 'Positions, open Positions and orders' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Dashboard/);
-  await expectVisibleFocus(page, 10);
+  await expectVisibleFocus(page);
 
   await page.goto('/settings');
   await expect(
     page.getByRole('heading', { name: 'API keys and data' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Settings/);
-  await expectVisibleFocus(page, 8);
+  await expectVisibleFocus(page);
 
   await page.goto('/strategies');
   await expect(
     page.getByRole('heading', { name: 'Compare', exact: true }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Strategies/);
-  await expectVisibleFocus(page, 8);
+  await expectVisibleFocus(page);
 
   // Mobile: the sidebar opens as a dialog — Escape closes it and focus
   // returns to the Menu button.

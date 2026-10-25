@@ -187,11 +187,17 @@ class LogIndexHandler(logging.Handler):
             # just-swapped-out buffer is never seen by the next flush.
             with self._write_lock:
                 self._buffer.append(row)
-        if record.levelno >= logging.WARNING and self._on_warning is not None:
-            # a broken callback must never break the listener thread
-            with contextlib.suppress(Exception):
-                self._on_warning(record)
-        if time.monotonic() - self._last_flush >= 1:
+        if record.levelno >= logging.WARNING:
+            # The "logs" ping must land after the row is committed: a
+            # refetch that raced the batch would miss the very line it
+            # announces. Warning-and-up therefore commits right away;
+            # lower levels keep the ~1 s batch.
+            self.flush()
+            if self._on_warning is not None:
+                # a broken callback must never break the listener thread
+                with contextlib.suppress(Exception):
+                    self._on_warning(record)
+        elif time.monotonic() - self._last_flush >= 1:
             self.flush()
 
     def flush(self) -> None:

@@ -54,9 +54,24 @@ test('expanding a line shows traceback and surrounding lines', async ({
   const row = page.locator('div[role="log"] button', {
     hasText: 'e2e seeded error',
   });
-  await expect(row.first()).toBeVisible({ timeout: 30_000 });
+  // The seeded line lands on the index's listener thread just after the
+  // POST returns; reload until the committed row is listed (bounded).
+  await expect
+    .poll(
+      async () => {
+        if (await row.first().isVisible()) return true;
+        await page.reload();
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
   await row.first().click();
-  await expect(page.getByText('e2e stack line one')).toBeVisible();
+  // The stack travels inside the stored message (client errors have no
+  // exc_info): it shows in the expanded line's JSON dump — and in the
+  // Recurring problems sample, so the assertion is scoped to the panel.
+  const detail = row.first().locator('xpath=following-sibling::div[1]');
+  await expect(detail.getByText('e2e stack line one')).toBeVisible();
   // Surrounding lines render the neighbouring ids.
   await expect(page.locator('div[role="log"] button').first()).toBeVisible();
 });
