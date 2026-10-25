@@ -5,36 +5,149 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Monday 06:00 UTC — weekly full run including the slow tests.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint-and-test:
+  backend-lint:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - uses: astral-sh/setup-uv@v7
         with:
-          version: 12
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: make lint-backend
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+  backend-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: make test-backend
+        env:
+          PYTEST_ADDOPTS: --junitxml=junit-backend.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-backend
+          path: backend/junit-backend.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  backend-slow:
+    # -m slow tests (e.g. the 3-month replay) run on main pushes, the weekly
+    # schedule and manual runs — kept off PRs so feedback stays fast.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - run: make test-slow
+        env:
+          PYTEST_ADDOPTS: --junitxml=junit-slow.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytest-slow
+          path: backend/junit-slow.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+  frontend-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --allow-build=esbuild
+      - run: make lint-frontend
+      - run: make test-frontend
 
-      - name: Install dependencies
-        run: make install
-
-      - name: Lint
-        run: make lint
-
-      - name: Test
-        run: make test
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --allow-build=esbuild
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+      - run: cd frontend && pnpm exec playwright install --with-deps chromium
+      # The first universe screen warms 260 daily + 60 sessions of 5m bars
+      # per pool symbol — minutes of fake-bar generation on a cold DB.
+      # Caching the seeded+warmed e2e database makes the first screen in
+      # each job incremental; alembic upgrade still runs at seed time, so
+      # a stale cache migrates forward.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/stock-agent-e2e.db
+            /tmp/stock-agent-e2e-data
+          key: e2e-db-${{ matrix.project }}-${{ hashFiles('backend/universe/pool.csv', 'backend/app/data/fake.py', 'backend/tests/e2e_seed.py', 'backend/tests/e2e_backtest_seed.py', 'backend/alembic/versions/**') }}
+          restore-keys: |
+            e2e-db-${{ matrix.project }}-
+      - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
+        env:
+          E2E_PREVIEW: '1'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-${{ matrix.project }}
+          path: frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7

@@ -75,6 +75,9 @@ class PositionChecker:
             session_day.open <= ny_now < session_day.close
         ):
             return report
+        from app.logging_config import ev, log_context
+
+        log = logging.getLogger("check")
         with self._session_factory() as session:
             cycle = Cycle(
                 kind="position_check",
@@ -84,17 +87,26 @@ class PositionChecker:
             )
             session.add(cycle)
             session.commit()
-            try:
-                await self._run(session, report)
-            except _ReconcileFailed:
-                report.ok = False
-            except Exception as exc:  # noqa: BLE001
-                report.ok = False
-                report.errors.append(str(exc))
-            cycle.status = "done" if report.ok else "error"
-            cycle.errors = report.errors or None
-            cycle.finished_at = _naive_utc(self.clock.now())
-            session.commit()
+            with log_context(check=f"chk-{cycle.id:04d}"):
+                try:
+                    await self._run(session, report)
+                except _ReconcileFailed:
+                    report.ok = False
+                except Exception as exc:  # noqa: BLE001
+                    report.ok = False
+                    report.errors.append(str(exc))
+                    log.exception("position check %s failed", cycle.id)
+                cycle.status = "done" if report.ok else "error"
+                cycle.errors = report.errors or None
+                cycle.finished_at = _naive_utc(self.clock.now())
+                session.commit()
+                ev(
+                    log, logging.INFO, "check.end",
+                    f"check chk-{cycle.id:04d} {cycle.status}",
+                    mismatches=report.mismatches,
+                    stops_placed=report.stops_placed,
+                    entries_cancelled=report.entries_cancelled,
+                )
 
         if report.ok:
             self.state.failed_checks = 0

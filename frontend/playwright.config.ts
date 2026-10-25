@@ -2,6 +2,10 @@ import { defineConfig } from '@playwright/test';
 
 const apiPort = process.env.E2E_API_PORT ?? '8020';
 const webPort = process.env.E2E_WEB_PORT ?? '5300';
+// E2E_PREVIEW=1 serves the built bundle (vite preview) instead of the dev
+// server: one `pnpm build` up front, then fast static page loads. CI sets
+// it; locally the dev server stays for reuseExistingServer + HMR.
+const preview = process.env.E2E_PREVIEW === '1';
 
 export default defineConfig({
   testDir: './e2e',
@@ -24,11 +28,13 @@ export default defineConfig({
       timeout: 120_000,
     },
     {
-      command: `pnpm dev --host 127.0.0.1 --port ${webPort} --strictPort`,
+      command: preview
+        ? `pnpm build && pnpm preview --host 127.0.0.1 --port ${webPort} --strictPort`
+        : `pnpm dev --host 127.0.0.1 --port ${webPort} --strictPort`,
       url: `http://127.0.0.1:${webPort}`,
       env: { VITE_API_PORT: apiPort },
       reuseExistingServer: true,
-      timeout: 60_000,
+      timeout: preview ? 240_000 : 60_000,
     },
   ],
   projects: [

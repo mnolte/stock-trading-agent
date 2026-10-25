@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // Screenshots for docs/screenshots/e2e/ (pass SCREENSHOT_DIR, see ./shots).
 const outDir = screenshotDir('e2e');

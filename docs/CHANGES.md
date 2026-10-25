@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-10-25 — Decision v2: code-built options (PR 21)
+
+- New "Decision v2" section, from the 22 October analysis (32 of 33 entry proposals failed the code checks, mostly a stop about 1 ATR away):
+  - Code finds levels (1h and daily swings, session levels) and builds up to 6 entry options that already meet the stop-distance and reward-to-risk rules, each with its basis and the levels in the way; held positions get up to 3 stop options (swing low, break-even, ATR trail).
+  - The model picks an option id or skips, and writes no prices. `confidence` now means the chance of reaching the target before the stop.
+  - Code checks the choice, rechecks it at order time and checks the explanation (level ids exist, decimals match the input). No option means no call, stored as `no_options`.
+  - Risk rules unchanged.
+- New prompt `backend/prompts/decision.v2.md`. Config: `decision.options`, `decision.replay`. Storage: levels, options, chosen option, explanation check on decisions and shadow decisions. LLM call history: warning `unsupported_claim`; invalid choice is `invalid_output`. Readiness: under v2 the proposal criterion also needs the explanation check and order-time recheck.
+- `make replay` runs a prompt on stored snapshots and reports validity, explanation failures, choices and first touch, with rules-only alongside.
+- Path to live: replay, then a shadow "C · Options (decision.v2)" for at least 10 sessions, then Marc decides; promotion only with "Start new run". Live stays on v1 in PR 21.
+- AGENTS.md rule 8 covers every prompt version and forbids moving levels to make a choice pass.
+- Build plan: PR 21, after PR 13 and 15, independent of PR 16–20.
+
 ## 2026-10-24 — Logging, error handling and shutdown (PR 20)
 
 - New "Logging, error handling and shutdown" section: JSON-lines log file with all five levels (console info and up), rotation, key scrubbing and a level table saying what goes where; tracing ids per cycle, check, job and request; no swallowed exceptions (ruff rules, global hooks, `spawn()` for tasks, API `error_id`, frontend error reporting and an error boundary); graceful shutdown on Ctrl+C and SIGTERM (scheduler paused, 60 s grace, shielded order submission, interrupted cycles, backtest child stopped, WAL checkpoint, log closed last; second Ctrl+C skips the wait) and unclean-stop detection with `data/run.lock`.

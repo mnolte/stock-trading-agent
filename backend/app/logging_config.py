@@ -1,70 +1,423 @@
-"""Logging configuration with rotation (docs/SPEC.md, Build plan, PR 8, Hardening).
+"""Logging core (docs/SPEC.md, Logging, error handling and shutdown).
 
-Logs are written in the app timezone (Europe/Amsterdam per spec) to a daily
-rotated file in the data directory; 30 days of rotated logs are kept.
+One JSON object per line in ``data/logs/stock-agent.log``, written through
+a queue: producers put records on the queue and the ``QueueListener``
+thread owns the real handlers (file, console, later the log index), so
+logging never blocks a cycle.
+
+- Format: ``ts`` (UTC, ms), ``level``, ``logger``, ``event``, ``message``,
+  ``context``, ``process``, ``pid``, and ``error_id`` + ``exception`` on
+  ERROR and CRITICAL.
+- Rotation: size-based at ``logging.max_file_mb``; the rotated file is
+  gzipped and files beyond ``logging.max_files`` or older than
+  ``logging.keep_days`` are deleted.
+- Scrubbing: every handler shares one filter that replaces stored keys,
+  key-shaped strings and Authorization headers with ``[redacted]``.
+- Tracing: ``log_context()`` sets cycle/check/job/request ids (and
+  symbol, decision, order, notification) on every line in scope.
+- The backtest child calls ``setup_backtest_logging(run_id)`` and writes
+  ``data/logs/backtest-<id>.log`` in the same format.
 """
 
 from __future__ import annotations
 
+import gzip
 import logging
 import logging.handlers
+import queue
+import re
+import secrets as _secrets
+import shutil
+import sys
+import threading
+import time
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.config import get_config
 
-LOG_RETENTION_DAYS = 30
+REDACTED = "[redacted]"
+
+_log_ctx: ContextVar[dict[str, Any]] = ContextVar("sa_log_ctx")
+
+# Fields a log_context or an explicit ``context`` extra may carry. Order
+# is the JSON field order; unknown keys are appended alphabetically.
+CONTEXT_FIELDS = (
+    "cycle", "check", "job", "request", "symbol", "decision", "order",
+    "notification", "run", "strategy",
+)
+
+# Things that look like a key or an Authorization header: OpenAI keys,
+# Alpaca key ids/secrets, bearer tokens and Authorization headers.
+_KEY_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"sk-proj-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"\b(PK|AK)[A-Z0-9]{14,}\b"),
+    re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?\S+"),
+    re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}"),
+)
 
 
-class _AppTimeFormatter(logging.Formatter):
-    """Formats log timestamps in the app timezone (Amsterdam per spec)."""
+def _scrub_text(text: str, secrets: list[str]) -> str:
+    """Replace stored keys and key-shaped strings with ``[redacted]``."""
+    for value in secrets:
+        if value and len(value) >= 8:
+            text = text.replace(value, REDACTED)
+    for pattern in _KEY_PATTERNS:
+        text = pattern.sub(
+            lambda m: (m.group(1) + REDACTED) if m.lastindex else REDACTED,
+            text,
+        )
+    return text
 
-    def __init__(self, fmt: str, tz: ZoneInfo) -> None:
-        super().__init__(fmt)
+
+def _no_secrets() -> list[str]:
+    return []
+
+
+_secret_provider: Callable[[], list[str]] = _no_secrets
+
+
+def register_secret_provider(provider: Callable[[], list[str]]) -> None:
+    """Feed the scrub filter the live key values (secrets table + .env)."""
+    global _secret_provider
+    _secret_provider = provider
+
+
+class SecretScrubFilter(logging.Filter):
+    """Removes stored keys, key-shaped strings and Authorization headers
+    from every record before a handler writes it."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        secrets = [v for v in _secret_provider() if v]
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - never break logging
+            return True
+        needs = any(v in message for v in secrets if len(v) >= 8) or any(
+            p.search(message) for p in _KEY_PATTERNS
+        )
+        if needs:
+            record.msg = _scrub_text(message, secrets)
+            record.args = ()
+        if record.exc_text:
+            record.exc_text = _scrub_text(record.exc_text, secrets)
+        # A formatted-but-not-yet-cached exception: scrub the rendered
+        # args too when they sit on the record itself.
+        return True
+
+
+class _ContextFilter(logging.Filter):
+    """Merges the ambient ``log_context`` fields and assigns error ids."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR and not getattr(
+            record, "error_id", None
+        ):
+            record.error_id = f"e-{_secrets.token_hex(3)}"
+        ambient = _log_ctx.get({})
+        explicit = getattr(record, "context", None)
+        merged: dict[str, Any] = {}
+        for key in CONTEXT_FIELDS:
+            if key in ambient:
+                merged[key] = ambient[key]
+            if isinstance(explicit, dict) and explicit.get(key) is not None:
+                merged[key] = explicit[key]
+        if isinstance(explicit, dict):
+            for key in sorted(explicit):
+                if key not in merged and explicit[key] is not None:
+                    merged[key] = explicit[key]
+        for key in ambient:
+            if key not in merged and ambient[key] is not None:
+                merged[key] = ambient[key]
+        record.context = merged
+        return True
+
+
+@contextmanager
+def log_context(**fields: Any) -> Generator[None, None, None]:
+    """Attach tracing fields to every log line written in scope."""
+    merged = {
+        **_log_ctx.get({}),
+        **{k: v for k, v in fields.items() if v is not None},
+    }
+    token = _log_ctx.set(merged)
+    try:
+        yield
+    finally:
+        _log_ctx.reset(token)
+
+
+def ev(
+    logger: logging.Logger,
+    level: int,
+    event: str,
+    message: str | None = None,
+    *,
+    exc_info: Any = False,
+    **context: Any,
+) -> None:
+    """One structured log line with a stable event code and context."""
+    logger.log(
+        level,
+        message or event,
+        exc_info=exc_info,
+        extra={"event": event, "context": context},
+    )
+
+
+class JsonFormatter(logging.Formatter):
+    """One JSON object per line in the spec's field order."""
+
+    def __init__(self, process: str) -> None:
+        super().__init__()
+        self._process = process
+
+    def format(self, record: logging.LogRecord) -> str:
+        import json
+
+        ts = datetime.fromtimestamp(record.created, tz=ZoneInfo("UTC"))
+        line: dict[str, Any] = {
+            "ts": ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "event": getattr(record, "event", None),
+            "message": record.getMessage(),
+            "context": getattr(record, "context", {}) or {},
+            "process": getattr(record, "process", self._process),
+            "pid": record.process,
+        }
+        if record.levelno >= logging.ERROR:
+            line["error_id"] = getattr(record, "error_id", None)
+        if record.exc_info:
+            exc_type, exc, _tb = record.exc_info
+            line["exception"] = {
+                "type": getattr(exc_type, "__name__", str(exc_type)),
+                "message": str(exc) if exc is not None else "",
+                "traceback": self.formatException(record.exc_info),
+            }
+        elif record.exc_text:
+            line["exception"] = {"type": None, "message": "", "traceback": record.exc_text}
+        return json.dumps(line, default=str, ensure_ascii=False)
+
+
+class _ConsoleFormatter(logging.Formatter):
+    """Short readable console format (app timezone per spec/design)."""
+
+    def __init__(self, tz: ZoneInfo) -> None:
+        super().__init__("%(asctime)s %(levelname)-8s %(name)-14s %(message)s")
         self._tz = tz
 
     def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
         dt = datetime.fromtimestamp(record.created, tz=self._tz)
-        return dt.strftime(datefmt or "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%H:%M:%S") + f".{int(record.msecs):03d}"
 
 
-def setup_logging() -> None:
-    """Configure rotating file logs in the data directory. Safe to call
-    twice — a second lifespan in the same process adds no extra handler."""
+class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """Size rotation; the rotated file is gzipped, old files pruned."""
+
+    def __init__(
+        self,
+        filename: Path,
+        *,
+        max_bytes: int,
+        max_files: int,
+        keep_days: int,
+    ) -> None:
+        super().__init__(filename, maxBytes=max_bytes, backupCount=0, encoding="utf-8")
+        self._max_files = max_files
+        self._keep_days = keep_days
+
+    def doRollover(self) -> None:
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        base = Path(self.baseFilename)
+        rotated = base.with_name(
+            f"{base.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{base.suffix}.gz"
+        )
+        if base.exists():
+            with base.open("rb") as src, gzip.open(rotated, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            base.unlink()
+        self._prune(base.parent)
+        self.stream = self._open()
+
+    def _prune(self, directory: Path) -> None:
+        base = Path(self.baseFilename)
+        rotated = sorted(
+            directory.glob(f"{base.stem}-*{base.suffix}.gz"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        cutoff = time.time() - self._keep_days * 86400
+        keep = rotated[-self._max_files:] if self._max_files else []
+        for path in rotated:
+            if path in keep and path.stat().st_mtime >= cutoff:
+                continue
+            path.unlink(missing_ok=True)
+
+
+class LogPipeline:
+    """The queue + listener + handlers; ``stop`` flushes and closes last."""
+
+    def __init__(
+        self,
+        *,
+        file_path: Path,
+        process: str,
+        file_level: int,
+        console_level: int,
+        max_file_mb: int,
+        max_files: int,
+        keep_days: int,
+        console_tz: ZoneInfo,
+        console: bool = True,
+    ) -> None:
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.queue: queue.Queue[logging.LogRecord] = queue.Queue()
+        self.scrub = SecretScrubFilter()
+        context = _ContextFilter()
+
+        self.file_handler = GzipRotatingFileHandler(
+            file_path,
+            max_bytes=max_file_mb * 1024 * 1024,
+            max_files=max_files,
+            keep_days=keep_days,
+        )
+        self.file_handler.setLevel(file_level)
+        self.file_handler.setFormatter(JsonFormatter(process))
+        self.file_handler.addFilter(self.scrub)
+        self.file_handler.addFilter(context)
+
+        handlers: list[logging.Handler] = [self.file_handler]
+        self.console_handler: logging.StreamHandler[Any] | None
+        if console:
+            self.console_handler = logging.StreamHandler(sys.stderr)
+            self.console_handler.setLevel(console_level)
+            self.console_handler.setFormatter(_ConsoleFormatter(console_tz))
+            self.console_handler.addFilter(self.scrub)
+            self.console_handler.addFilter(context)
+            handlers.append(self.console_handler)
+        else:
+            self.console_handler = None
+
+        self._queue_handler = logging.handlers.QueueHandler(self.queue)
+        self.listener = logging.handlers.QueueListener(
+            self.queue, *handlers, respect_handler_level=True
+        )
+
+    def add_handler(self, handler: logging.Handler) -> None:
+        """Attach another listener-side handler (the log index, PR 20)."""
+        handler.addFilter(self.scrub)
+        handler.addFilter(_ContextFilter())
+        self.listener.handlers = (*self.listener.handlers, handler)
+
+    def start(self) -> None:
+        self.listener.start()
+
+    def stop(self) -> None:
+        self.listener.stop()
+
+
+_pipeline: LogPipeline | None = None
+_pipeline_lock = threading.Lock()
+
+
+def install_queue_root(pipeline: LogPipeline) -> None:
+    """Root logger → the queue; uvicorn and library loggers propagate.
+
+    alembic's ``fileConfig`` clears every handler when migrations run, so
+    the lifespan calls this again after ``run_migrations()``.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    root.addHandler(pipeline._queue_handler)
+    # uvicorn and the libraries log to the same handlers via propagation.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx",
+                 "websockets", "apscheduler", "apscheduler.executors.default",
+                 "apscheduler.scheduler", "alembic"):
+        lib = logging.getLogger(name)
+        for handler in list(lib.handlers):
+            lib.removeHandler(handler)
+        lib.setLevel(logging.DEBUG)
+        lib.propagate = True
+    logging.captureWarnings(True)
+
+
+def log_dir(config: Any) -> Path:
+    """The log directory: ``logging.dir`` relative paths under ``data/``
+    live inside the data dir (SA_DATA_DIR in tests), others under ROOT."""
+    from app.config import ROOT
+
+    d = Path(str(config.get("logging", "dir", default="data/logs")))
+    if d.is_absolute():
+        return d
+    if d.parts and d.parts[0] == "data":
+        return Path(config.env.sa_data_dir).joinpath(*d.parts[1:])
+    return ROOT / d
+
+
+def setup_logging(
+    *,
+    process: str = "app",
+    console: bool = True,
+) -> LogPipeline:
+    """Configure the JSON-lines queue pipeline. Safe to call twice."""
+    global _pipeline
     cfg = get_config()
     app_tz = ZoneInfo(str(cfg.get("app", "timezone", default="Europe/Amsterdam")))
-    log_dir = Path(cfg.env.sa_data_dir) / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "stock-agent.log"
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    already = any(
-        isinstance(h, logging.handlers.TimedRotatingFileHandler)
-        and Path(h.baseFilename) == log_file
-        for h in root.handlers
+    file_level = str(cfg.get("logging", "file_level", default="DEBUG"))
+    console_level = str(cfg.get("logging", "console_level", default="INFO"))
+    pipeline = LogPipeline(
+        file_path=log_dir(cfg) / "stock-agent.log",
+        process=process,
+        file_level=getattr(logging, file_level.upper(), logging.DEBUG),
+        console_level=getattr(logging, console_level.upper(), logging.INFO),
+        max_file_mb=int(cfg.get("logging", "max_file_mb", default=50)),
+        max_files=int(cfg.get("logging", "max_files", default=20)),
+        keep_days=int(cfg.get("logging", "keep_days", default=30)),
+        console_tz=app_tz,
+        console=console,
     )
-    if not already:
-        # Rollover happens at system-local midnight; the machine is expected
-        # to run in the app timezone, matching the stamped times.
-        handler = logging.handlers.TimedRotatingFileHandler(
-            log_file,
-            when="midnight",
-            interval=1,
-            backupCount=LOG_RETENTION_DAYS,
-            encoding="utf-8",
-        )
-        handler.suffix = "%Y-%m-%d"
-        handler.setFormatter(
-            _AppTimeFormatter(
-                "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-                tz=app_tz,
-            )
-        )
-        root.addHandler(handler)
+    with _pipeline_lock:
+        previous = _pipeline
+        _pipeline = pipeline
+    if previous is not None:
+        # A second lifespan in the same process swaps pipelines cleanly.
+        previous.stop()
+    install_queue_root(pipeline)
+    pipeline.start()
+    return pipeline
 
-    # Reduce noisy third-party loggers
-    logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("websockets").setLevel(logging.WARNING)
+
+def setup_backtest_logging(run_id: int) -> LogPipeline:
+    """The backtest child's own file: data/logs/backtest-<id>.log."""
+    pipeline = setup_logging(process=f"backtest-{run_id}", console=False)
+    base = pipeline.file_handler.baseFilename
+    # Same format, sibling file named for the run.
+    pipeline.file_handler.baseFilename = str(
+        Path(base).parent / f"backtest-{run_id}.log"
+    )
+    pipeline.file_handler.stream = pipeline.file_handler._open()
+    return pipeline
+
+
+def get_pipeline() -> LogPipeline | None:
+    return _pipeline
+
+
+def shutdown_logging() -> None:
+    """Flush and close the listener — always the last shutdown step."""
+    global _pipeline
+    with _pipeline_lock:
+        pipeline = _pipeline
+        _pipeline = None
+    if pipeline is not None:
+        pipeline.stop()

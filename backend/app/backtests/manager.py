@@ -148,8 +148,11 @@ class BacktestManager:
             self.config.get("backtest", "cancel_grace_seconds", default=60)
         )
         if pid:
-            self._cancel_task = asyncio.create_task(
-                self._stop_after_grace(run_id, pid, grace)
+            from app.spawn import spawn
+
+            self._cancel_task = spawn(
+                self._stop_after_grace(run_id, pid, grace),
+                f"backtest-cancel-{run_id}",
             )
         return True
 
@@ -268,6 +271,13 @@ class BacktestManager:
         row.process_id = proc.pid
         self._process = proc
         self._run_id = row.id
+        from app.logging_config import ev
+
+        ev(
+            logger, logging.INFO, "backtest.spawned",
+            f"backtest {row.id} spawned (pid {proc.pid})",
+            run=row.id,
+        )
 
     def set_paused(self, paused: bool) -> None:
         """The app calls this while a live cycle or check runs."""
@@ -293,10 +303,18 @@ class BacktestManager:
                 if row.process_id:
                     pids.append(row.process_id)
             session.commit()
-        grace = float(
-            self.config.get("backtest", "cancel_grace_seconds", default=60)
+        # Cancel flag first; a child that ignores it is SIGTERMed by its
+        # recorded PID after logging.backtest_kill_after_seconds.
+        kill_after = float(
+            self.config.get("logging", "backtest_kill_after_seconds", default=10)
         )
-        await asyncio.sleep(min(grace, 10))
+        if pids:
+            deadline = asyncio.get_running_loop().time() + kill_after
+            while (
+                any(_pid_alive(pid) for pid in pids)
+                and asyncio.get_running_loop().time() < deadline
+            ):
+                await asyncio.sleep(0.05)
         for pid in pids:
             if _pid_alive(pid):
                 with contextlib.suppress(OSError):
@@ -305,7 +323,9 @@ class BacktestManager:
             for row in session.execute(
                 select(Backtest).where(Backtest.status.in_(ACTIVE_STATUSES))
             ).scalars():
-                row.status = "cancelled"
+                # An app shutdown interrupts the run — "cancelled" stays
+                # for the Cancel button (docs/SPEC.md, Clean shutdown).
+                row.status = "interrupted"
                 row.finished_at = _naive_utc(self.clock.now())
             session.commit()
 

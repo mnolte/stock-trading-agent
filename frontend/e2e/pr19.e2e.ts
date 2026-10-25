@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR 19 screenshots are for docs/screenshots/pr-19/ (pass SCREENSHOT_DIR),
 // next to the design references Performance.png and Performance-390.png.

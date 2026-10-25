@@ -52,30 +52,37 @@ def session_1h_windows(session: CalendarDay) -> list[tuple[datetime, datetime]]:
 
 def aggregate_1h(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> list[Bar1h]:
     """Aggregate 5-minute bars into session-aligned 1-hour bars for one session."""
-    bars = sorted(bars_5m, key=lambda b: b.start)
+    windows = session_1h_windows(session)
+    matched: list[list[Bar5m]] = [[] for _ in windows]
+    idx = 0
+    # Bars and windows are both time-ordered: each bar joins its window in
+    # one pass instead of rescanning the session per window.
+    for bar in sorted(bars_5m, key=lambda b: b.start):
+        start = bar.start.astimezone(windows[0][0].tzinfo)
+        while idx < len(windows) and start >= windows[idx][1]:
+            idx += 1
+        if idx == len(windows):
+            break
+        if start >= windows[idx][0]:
+            matched[idx].append(bar)
     result: list[Bar1h] = []
-    for win_start, win_end in session_1h_windows(session):
-        matched = [
-            b
-            for b in bars
-            if win_start <= b.start.astimezone(win_start.tzinfo) < win_end
-        ]
-        if not matched:
+    for (win_start, win_end), window_bars in zip(windows, matched, strict=True):
+        if not window_bars:
             continue
         expected = int((win_end - win_start).total_seconds() // 300)
-        first, last = matched[0], matched[-1]
+        first, last = window_bars[0], window_bars[-1]
         result.append(
             Bar1h(
                 symbol=symbol,
                 start=win_start,
                 end=win_end,
                 open=first.open,
-                high=max(b.high for b in matched),
-                low=min(b.low for b in matched),
+                high=max(b.high for b in window_bars),
+                low=min(b.low for b in window_bars),
                 close=last.close,
-                volume=sum(b.volume for b in matched),
+                volume=sum(b.volume for b in window_bars),
                 feed=first.feed,
-                complete=len(matched) == expected,
+                complete=len(window_bars) == expected,
             )
         )
     return result

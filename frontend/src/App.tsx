@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Decision = lazy(() => import('./pages/Decision'));
 const DevComponents = lazy(() => import('./pages/DevComponents'));
 const Inspector = lazy(() => import('./pages/Inspector'));
+const Logs = lazy(() => import('./pages/Logs'));
 const Performance = lazy(() => import('./pages/Performance'));
 const Positions = lazy(() => import('./pages/Positions'));
 const Readiness = lazy(() => import('./pages/Readiness'));
@@ -50,6 +51,7 @@ function AppRoutes() {
             <Route path="settings" element={<Settings />} />
             <Route path="universe" element={<Universe />} />
             <Route path="states" element={<States />} />
+            <Route path="logs" element={<Logs />} />
             <Route path="dev/components" element={<DevComponents />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

@@ -15,6 +15,7 @@ venv/
 .ruff_cache/
 .coverage
 htmlcov/
+junit-*.xml
 
 # Node / frontend
 node_modules/
@@ -26,6 +27,7 @@ docs/screenshots/e2e/
 
 # Local config / data
 backend/config.yaml
+data/run.lock
 *.db
 *.db-shm
 *.db-wal

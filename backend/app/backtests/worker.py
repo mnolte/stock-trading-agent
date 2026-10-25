@@ -898,11 +898,16 @@ def _read_with_care(run: RunParams) -> list[str]:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
     run_id = int(sys.argv[1])
     config = AppConfig()
 
+    # The child writes its own JSON-lines log next to the app's
+    # (docs/SPEC.md, Logging: data/logs/backtest-<id>.log).
     from app.api.main import load_saved_settings
+    from app.logging_config import setup_backtest_logging
+
+    setup_backtest_logging(run_id)
+
     from app.secrets_service import SecretsStore
 
     live_sf = get_session_maker()

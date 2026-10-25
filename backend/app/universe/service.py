@@ -23,6 +23,7 @@ switch applies at the next daily screen, never mid-session.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import logging
@@ -40,12 +41,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.broker.base import Broker
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, _resolve_path
-from app.data.aggregate import session_bars
 from app.data.factory import DataSources
 from app.data.models import CalendarDay, DailyBar
 from app.data.service import MarketDataService
 from app.db.models import Event, Order, Position, UniversePoolRow, UniverseScreenRow
 from app.engine.state import record_event
+from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock
 
@@ -504,35 +505,40 @@ class UniverseService:
             for symbol in symbols
         }
 
-    async def _fetch_daily(
-        self, symbol: str, sessions: list[CalendarDay]
-    ) -> str | None:
-        """Top up cached daily bars; returns an error string or None."""
-        if not sessions:
-            return None
-        res = await self._sources.bars.fetch_daily_bars(
-            symbol, sessions[0].date, sessions[-1].date
-        )
-        if res.error is not None:
-            return res.error
-        if res.data is not None:
-            self._market_data.bars_cache.store_daily(res.data)
-        return None
+    async def _refresh_history(self, symbols: list[str], today: date) -> dict[str, str]:
+        """Top up the daily + 5m history for ``symbols``; symbol → error.
 
-    async def _fetch_5m(
-        self, symbol: str, sessions: list[CalendarDay]
-    ) -> str | None:
-        """Top up cached 5m bars over the given sessions; error or None."""
-        if not sessions:
-            return None
-        res = await self._sources.bars.fetch_5m_bars(
-            [symbol], sessions[0].open, sessions[-1].close
+        Goes through the shared refresh paths: covered sessions are
+        skipped, the newest bar is refetched and symbols share batched
+        requests, so a warm pool costs small requests instead of a full
+        window per symbol (docs/SPEC.md, Cycles at scale).
+        """
+        daily = await self._market_data.refresh_daily(
+            today,
+            symbols=symbols,
+            session_count=self._daily_history_sessions(),
         )
-        if res.error is not None:
-            return res.error
-        if res.data is not None:
-            self._market_data.bars_cache.store(session_bars(res.data, sessions))
-        return None
+        errors = {
+            symbol: f"daily bars: {res.error}"
+            for symbol, res in daily.items()
+            if res.error is not None
+        }
+        # A symbol whose daily fetch failed skips its 5m fetch too, like
+        # the serial loop did.
+        remaining = [s for s in symbols if s not in errors]
+        history = await self._market_data.refresh_history(
+            today,
+            symbols=remaining,
+            session_count=self._history_sessions(),
+        )
+        errors.update(
+            {
+                symbol: f"5m bars: {res.error}"
+                for symbol, res in history.items()
+                if res.error is not None
+            }
+        )
+        return errors
 
     async def warm_up(
         self, symbols: list[str] | None = None
@@ -544,34 +550,13 @@ class UniverseService:
         ``symbol → error`` map; a symbol whose history could not be loaded
         stays ``warming_up`` at the next screen.
         """
-        now = self._clock.now()
-        ny_today = now.astimezone(NY_TZ).date()
-        daily_sessions = self._market_data.recent_sessions(
-            ny_today, self._daily_history_sessions()
-        )
-        sessions = self._market_data.recent_sessions(
-            ny_today, self._history_sessions()
-        )
-        started = [s for s in sessions if s.open <= now]
+        ny_today = self._clock.now().astimezone(NY_TZ).date()
         wanted = (
             symbols
             if symbols is not None
             else [r.symbol for r in self.active_pool()]
         )
-        errors: dict[str, str] = {}
-        for symbol in wanted:
-            err = await self._fetch_daily(symbol, daily_sessions)
-            if err:
-                errors[symbol] = err
-                continue
-            covered = self._market_data.bars_cache.covered_session_dates(
-                symbol, started
-            )
-            if len(covered) < min(self._history_sessions(), len(started)):
-                err = await self._fetch_5m(symbol, started)
-                if err:
-                    errors[symbol] = err
-        return errors
+        return await self._refresh_history(wanted, ny_today)
 
     # ------------------------------------------------------------------
     # The daily screen
@@ -622,7 +607,7 @@ class UniverseService:
         self.ensure_pool_loaded()
         try:
             return await self._run_screen(now, today)
-        except Exception as exc:  # keep the previous list, raise the banner
+        except Exception as exc:  # noqa: BLE001 - keep the previous list, raise the banner
             _log.exception("universe screen failed")
             with self._sf() as session:
                 record_event(
@@ -663,9 +648,10 @@ class UniverseService:
         if not pool:
             raise ScreenError("the universe pool is empty")
 
-        # 1. Refresh history — every pool symbol gets its daily top-up; new
-        #    symbols also get their 5m warm-up. A fetch failure fails the
-        #    whole screen (data error → keep the previous list).
+        # 1. Refresh history — covered sessions are skipped and only the
+        #    newest bar is refetched, so a warm pool costs small requests
+        #    instead of a full window per symbol. A fetch failure fails
+        #    the whole screen (data error → keep the previous list).
         daily_sessions = self._market_data.recent_sessions(
             today, self._daily_history_sessions()
         )
@@ -674,19 +660,14 @@ class UniverseService:
         )
         started = [s for s in sessions if s.open <= now]
         want_5m = min(self._history_sessions(), len(started))
-        for row in pool:
-            err = await self._fetch_daily(row.symbol, daily_sessions)
-            if err:
-                raise ScreenError(f"{row.symbol} daily bars: {err}")
-            covered = self._market_data.bars_cache.covered_session_dates(
-                row.symbol, started
-            )
-            if len(covered) < want_5m:
-                err = await self._fetch_5m(row.symbol, started)
-                if err:
-                    raise ScreenError(f"{row.symbol} 5m bars: {err}")
+        symbols = [row.symbol for row in pool]
+        errors = await self._refresh_history(symbols, today)
+        if errors:
+            symbol = next(s for s in symbols if s in errors)
+            raise ScreenError(f"{symbol} {errors[symbol]}")
 
-        # 2. Check every symbol.
+        # 2. Check every symbol — the checks are independent, so they run
+        #    a few at a time instead of one broker call at a time.
         completed = [s for s in daily_sessions if s.close <= now]
         windows = _HistoryWindows(
             completed=completed,
@@ -696,17 +677,21 @@ class UniverseService:
         )
         spy_bars = self._market_data.get_daily_bars("SPY", completed)
         spy_return = _period_return(spy_bars, lookback)
-        metrics: dict[str, _ScreenMetrics] = {}
-        for row in pool:
-            metrics[row.symbol] = await self._screen_symbol(
-                row.symbol,
-                windows,
-                min_price,
-                min_dv,
-                max_position_usd,
-                lookback,
-                spy_return,
-            )
+        semaphore = asyncio.Semaphore(10)
+
+        async def check(symbol: str) -> tuple[str, _ScreenMetrics]:
+            async with semaphore:
+                return symbol, await self._screen_symbol(
+                    symbol,
+                    windows,
+                    min_price,
+                    min_dv,
+                    max_position_usd,
+                    lookback,
+                    spy_return,
+                )
+
+        metrics = dict(await asyncio.gather(*(check(s) for s in symbols)))
 
         # 3. Hysteresis + rank, then persist.
         with self._sf() as session:
@@ -780,6 +765,11 @@ class UniverseService:
             session.add_all(out_rows)
 
             funnel = _funnel_counts(out_rows)
+            ev(
+                _log, logging.INFO, "universe.screen",
+                f"universe screen {today}: {len(eligible)} eligible",
+                eligible=len(eligible), funnel=funnel,
+            )
             record_event(
                 session,
                 self._clock,

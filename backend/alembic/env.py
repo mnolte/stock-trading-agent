@@ -9,7 +9,9 @@ from sqlalchemy import engine_from_config, pool
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # fileConfig defaults to disabling every logger that already exists —
+    # that would silence the app's structured pipeline (PR 20).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

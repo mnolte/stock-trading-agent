@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from itertools import batched
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data.models import Bar5m, CalendarDay, DailyBar
@@ -52,21 +53,22 @@ class BarCache:
                 ).all()
             }
             new_rows = [
-                Bar5mRow(
-                    symbol=b.symbol,
-                    start=_naive_utc(b.start),
-                    open=b.open,
-                    high=b.high,
-                    low=b.low,
-                    close=b.close,
-                    volume=b.volume,
-                    feed=b.feed,
-                )
+                {
+                    "symbol": b.symbol,
+                    "start": _naive_utc(b.start),
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                    "feed": b.feed,
+                }
                 for b in bars
                 if (b.symbol, _naive_utc(b.start)) not in existing
             ]
-            session.add_all(new_rows)
-            session.commit()
+            if new_rows:
+                session.execute(insert(Bar5mRow), new_rows)
+                session.commit()
             return len(new_rows)
 
     def prune_5m(self, before: datetime) -> int:
@@ -111,20 +113,21 @@ class BarCache:
                 ).all()
             }
             new_rows = [
-                Bar1dRow(
-                    symbol=b.symbol,
-                    date=b.date,
-                    open=b.open,
-                    high=b.high,
-                    low=b.low,
-                    close=b.close,
-                    volume=b.volume,
-                )
+                {
+                    "symbol": b.symbol,
+                    "date": b.date,
+                    "open": b.open,
+                    "high": b.high,
+                    "low": b.low,
+                    "close": b.close,
+                    "volume": b.volume,
+                }
                 for b in bars
                 if (b.symbol, b.date) not in existing
             ]
-            session.add_all(new_rows)
-            session.commit()
+            if new_rows:
+                session.execute(insert(Bar1dRow), new_rows)
+                session.commit()
             return len(new_rows)
 
     def count_daily(self, symbol: str) -> int:
@@ -254,27 +257,24 @@ class BarCache:
         """Return cached daily bars for a symbol in [start, end], by date."""
         with self._session_factory() as session:
             rows = (
-                session.execute(
-                    select(Bar1dRow)
-                    .where(
-                        Bar1dRow.symbol == symbol,
-                        Bar1dRow.date >= start,
-                        Bar1dRow.date <= end,
-                    )
-                    .order_by(Bar1dRow.date)
+                session.connection()
+                .exec_driver_sql(
+                    "SELECT date, open, high, low, close, volume FROM bars_1d"
+                    " WHERE symbol = ? AND date >= ? AND date <= ?"
+                    " ORDER BY date",
+                    (symbol, start.isoformat(), end.isoformat()),
                 )
-                .scalars()
-                .all()
+                .fetchall()
             )
             return [
                 DailyBar(
-                    symbol=r.symbol,
-                    date=r.date,
-                    open=r.open,
-                    high=r.high,
-                    low=r.low,
-                    close=r.close,
-                    volume=r.volume,
+                    symbol=symbol,
+                    date=date.fromisoformat(r[0]),
+                    open=Decimal(str(r[1])),
+                    high=Decimal(str(r[2])),
+                    low=Decimal(str(r[3])),
+                    close=Decimal(str(r[4])),
+                    volume=r[5],
                 )
                 for r in rows
             ]
@@ -297,30 +297,30 @@ class BarCache:
 
     def get(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
         """Return cached bars for a symbol in [start, end], sorted by start."""
+        # Stored as 'YYYY-MM-DD HH:MM:SS.ffffff' — lexicographic bounds.
+        lo = _naive_utc(start).strftime("%Y-%m-%d %H:%M:%S.%f")
+        hi = _naive_utc(end).strftime("%Y-%m-%d %H:%M:%S.%f")
         with self._session_factory() as session:
             rows = (
-                session.execute(
-                    select(Bar5mRow)
-                    .where(
-                        Bar5mRow.symbol == symbol,
-                        Bar5mRow.start >= _naive_utc(start),
-                        Bar5mRow.start <= _naive_utc(end),
-                    )
-                    .order_by(Bar5mRow.start)
+                session.connection()
+                .exec_driver_sql(
+                    "SELECT start, open, high, low, close, volume, feed"
+                    " FROM bars_5m WHERE symbol = ? AND start >= ? AND start <= ?"
+                    " ORDER BY start",
+                    (symbol, lo, hi),
                 )
-                .scalars()
-                .all()
+                .fetchall()
             )
             return [
                 Bar5m(
-                    symbol=r.symbol,
-                    start=_aware_utc(r.start),
-                    open=r.open,
-                    high=r.high,
-                    low=r.low,
-                    close=r.close,
-                    volume=r.volume,
-                    feed=r.feed,
+                    symbol=symbol,
+                    start=datetime.fromisoformat(r[0]).replace(tzinfo=UTC),
+                    open=Decimal(str(r[1])),
+                    high=Decimal(str(r[2])),
+                    low=Decimal(str(r[3])),
+                    close=Decimal(str(r[4])),
+                    volume=r[5],
+                    feed=r[6],
                 )
                 for r in rows
             ]

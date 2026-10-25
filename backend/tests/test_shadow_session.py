@@ -48,8 +48,12 @@ DAY = date(2026, 10, 15)
 
 
 @pytest.fixture
-def sf(session_factory: sessionmaker[Session]) -> sessionmaker[Session]:
-    return session_factory
+def sf() -> sessionmaker[Session]:
+    # The warm per-test database (the autouse fixture copies the seeded
+    # template): refresh calls hit coverage instead of regenerating bars.
+    from app.db.base import get_session_maker
+
+    return get_session_maker()
 
 
 async def test_full_session_two_shadows_and_rules_only_never_delay_live(

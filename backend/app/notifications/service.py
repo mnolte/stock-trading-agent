@@ -346,7 +346,9 @@ class NotificationService:
         self._loop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
         self._wake.set()  # flush anything queued before start()
-        self._worker = asyncio.create_task(self._run_worker())
+        from app.spawn import spawn
+
+        self._worker = spawn(self._run_worker(), "notifications-worker")
 
     async def _run_worker(self) -> None:
         assert self._wake is not None
@@ -550,9 +552,22 @@ class NotificationService:
                     session.commit()
         except Exception:  # noqa: BLE001
             logger.exception("could not update notification %s", notification_id)
+        from app.logging_config import ev
+
         if error and error.startswith("email is not configured"):
-            pass  # missing config is not a send failure
+            # missing config is not a send failure — the channel status
+            # already shows it on the row.
+            ev(
+                logger, logging.DEBUG, "notify.email_not_configured",
+                "email skipped — SMTP not configured",
+                notification=notification_id,
+            )
         elif error:
+            ev(
+                logger, logging.ERROR, "notify.email_failed",
+                f"notification {notification_id} email failed: {error}",
+                notification=notification_id,
+            )
             self._email_failures += 1
             if self._email_failures == EMAIL_FAILURE_BANNER_AT:
                 self._publish({"banners"})
@@ -562,6 +577,11 @@ class NotificationService:
                 error,
             )
         else:
+            ev(
+                logger, logging.DEBUG, "notify.sent",
+                f"notification {notification_id} emailed",
+                notification=notification_id,
+            )
             self._email_failures = 0
         self._publish({"notifications"})
 

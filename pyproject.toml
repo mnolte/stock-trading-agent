@@ -44,7 +44,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM"]
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM", "E722", "BLE001", "S110", "TRY400", "TRY203"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -61,4 +61,5 @@ testpaths = ["backend/tests"]
 addopts = "--disable-socket --allow-unix-socket --strict-markers --timeout=600"
 markers = [
     "slow: multi-minute tests (e.g. the 3-month replay) — run with make test-slow",
+    "perf: timing-budget tests — run serially with make test-perf",
 ]

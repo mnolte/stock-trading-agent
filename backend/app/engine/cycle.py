@@ -291,6 +291,8 @@ class CycleRunner:
 
     async def run(self, scheduled_ny: datetime) -> CycleReport:
         """Run one cycle for the given New York scheduled time."""
+        from app.logging_config import ev, log_context
+
         now = self.clock.now()
         report = CycleReport()
         with self._session_factory() as session:
@@ -307,80 +309,94 @@ class CycleRunner:
             # push, and back to the countdown on the one after commit.
             self._notify({"header", "decisions"})
 
-            try:
-                await self._run(session, cycle.id, scheduled_ny, now, report)
-            except Exception as exc:  # noqa: BLE001
-                report.status = "error"
-                report.errors.append(str(exc))
-                logger.error(
-                    "Cycle %s failed at %s: %s",
-                    report.cycle_id,
-                    scheduled_ny,
-                    exc,
-                    exc_info=True,
-                )
-                session.rollback()
-                stored = session.get(Cycle, report.cycle_id)
-                assert stored is not None
-                cycle = stored
-
-            # Post-decision outcomes and the equity snapshot are part of
-            # every cycle, whatever the decision stage produced.
-            if self.outcomes is not None:
+            with log_context(cycle=f"c-{cycle.id:04d}"):
+                ev(logger, logging.INFO, "cycle.start",
+                   f"Cycle c-{cycle.id:04d} started ({scheduled_ny:%H:%M} NY)")
                 try:
-                    self.outcomes.fill(session, self.clock.now())
-                    account = (
-                        self.executor.state.account
-                        if self.executor is not None
-                        else None
-                    )
-                    if account is not None:
-                        self.outcomes.write_equity_snapshot(
-                            session, equity=account.equity, cash=account.cash
-                        )
-                except Exception as exc:
+                    await self._run(session, cycle.id, scheduled_ny, now, report)
+                except Exception as exc:  # noqa: BLE001
                     report.status = "error"
                     report.errors.append(str(exc))
-                    logger.exception("cycle %s outcomes failed", report.cycle_id)
+                    logger.exception(
+                        "Cycle %s failed at %s: %s",
+                        report.cycle_id,
+                        scheduled_ny,
+                        exc,
+                    )
                     session.rollback()
                     stored = session.get(Cycle, report.cycle_id)
                     assert stored is not None
                     cycle = stored
 
-            cycle.status = report.status
-            cycle.finished_at = _naive_utc(self.clock.now())
-            cycle.errors = report.errors or None
-            cycle.data_source_health = report.data_source_health or None
-            if cycle.started_at is not None and cycle.finished_at is not None:
-                cycle.duration_seconds = (
-                    cycle.finished_at - cycle.started_at
-                ).total_seconds()
-            report.duration_seconds = cycle.duration_seconds
-            # A cycle slower than the configured limit raises a warning
-            # banner — at scale the screen, fetches and model calls add up
-            # (docs/SPEC.md, Cycles at scale).
-            warn_minutes = float(
-                self.config.get(
-                    "schedule", "cycle_duration_warn_minutes", default=10
+                # Post-decision outcomes and the equity snapshot are part of
+                # every cycle, whatever the decision stage produced.
+                if self.outcomes is not None:
+                    try:
+                        self.outcomes.fill(session, self.clock.now())
+                        account = (
+                            self.executor.state.account
+                            if self.executor is not None
+                            else None
+                        )
+                        if account is not None:
+                            self.outcomes.write_equity_snapshot(
+                                session, equity=account.equity, cash=account.cash
+                            )
+                    except Exception as exc:
+                        report.status = "error"
+                        report.errors.append(str(exc))
+                        logger.exception("cycle %s outcomes failed", report.cycle_id)
+                        session.rollback()
+                        stored = session.get(Cycle, report.cycle_id)
+                        assert stored is not None
+                        cycle = stored
+
+                cycle.status = report.status
+                cycle.finished_at = _naive_utc(self.clock.now())
+                cycle.errors = report.errors or None
+                cycle.data_source_health = report.data_source_health or None
+                if cycle.started_at is not None and cycle.finished_at is not None:
+                    cycle.duration_seconds = (
+                        cycle.finished_at - cycle.started_at
+                    ).total_seconds()
+                report.duration_seconds = cycle.duration_seconds
+                # A cycle slower than the configured limit raises a warning
+                # banner — at scale the screen, fetches and model calls add up
+                # (docs/SPEC.md, Cycles at scale).
+                warn_minutes = float(
+                    self.config.get(
+                        "schedule", "cycle_duration_warn_minutes", default=10
+                    )
                 )
-            )
-            if (
-                cycle.duration_seconds is not None
-                and cycle.duration_seconds > warn_minutes * 60
-            ):
-                record_event(
-                    session,
-                    self.clock,
-                    level="warning",
-                    event_type="cycle_slow",
-                    details={
-                        "cycle_id": cycle.id,
-                        "scheduled_time": scheduled_ny.isoformat(),
-                        "duration_seconds": round(cycle.duration_seconds, 1),
-                        "warn_minutes": warn_minutes,
-                    },
+                if (
+                    cycle.duration_seconds is not None
+                    and cycle.duration_seconds > warn_minutes * 60
+                ):
+                    record_event(
+                        session,
+                        self.clock,
+                        level="warning",
+                        event_type="cycle_slow",
+                        details={
+                            "cycle_id": cycle.id,
+                            "scheduled_time": scheduled_ny.isoformat(),
+                            "duration_seconds": round(cycle.duration_seconds, 1),
+                            "warn_minutes": warn_minutes,
+                        },
+                    )
+                    ev(logger, logging.WARNING, "cycle.slow",
+                       f"Cycle c-{cycle.id:04d} took "
+                       f"{cycle.duration_seconds:.0f}s (>{warn_minutes}m)")
+                session.commit()
+                ev(
+                    logger, logging.INFO, "cycle.end",
+                    f"Cycle c-{cycle.id:04d} {report.status} in "
+                    f"{(cycle.duration_seconds or 0):.1f}s",
+                    symbols=len(report.decisions),
+                    calls=report.calls,
+                    decisions=len(report.decisions),
+                    status=report.status,
                 )
-            session.commit()
         self._notify({"header", "decisions", "banners"})
         failing = {
             name: status
@@ -435,13 +451,18 @@ class CycleRunner:
     ) -> None:
         # Pre-checks: calendar loaded, market open, then reconcile with the
         # broker. A failed reconciliation blocks entries through the gates.
+        from app.logging_config import ev
+
         if not getattr(self.calendar, "is_loaded", True):
             report.status = "skipped"
             report.errors.append("trading calendar unavailable")
+            ev(logger, logging.INFO, "cycle.skipped",
+               "trading calendar unavailable")
             return
         if not await self._market_open(report):
             report.status = "skipped"
             report.errors.append("market not open")
+            ev(logger, logging.INFO, "cycle.skipped", "market not open")
             return
 
         # A full cycle starts here: pending approvals expire and saved
@@ -468,6 +489,8 @@ class CycleRunner:
                 report.data_source_health["account"] = "error"
 
         symbols = self.market_data.universe()
+        ev(logger, logging.DEBUG, "cycle.universe",
+           f"universe: {len(symbols)} symbols", symbols=symbols)
         try:
             shadow_only = [s for s in self.shadow_symbols() if s not in symbols]
         except Exception:  # noqa: BLE001
@@ -578,8 +601,19 @@ class CycleRunner:
         # Symbols the rules reject — and held positions skipped for a
         # pending acknowledgment — still get a stored decision: "no_call"
         # with reason "rules", so the inspector shows why they were skipped.
+        rules_log = logging.getLogger("rules")
         review_symbols = {item.symbol for item in reviews}
         for item in evaluation.items:
+            ev(
+                rules_log, logging.DEBUG, "rules.eval",
+                f"{item.symbol}: {item.rules.status}"
+                + (f" — {item.rules.reason}" if item.rules.reason else ""),
+                symbol=item.symbol,
+                checks={
+                    c.name: {"passed": c.passed, "detail": c.detail}
+                    for c in item.rules.checks
+                },
+            )
             if item.symbol in review_symbols:
                 continue
             position = positions.get(item.symbol)
@@ -670,6 +704,8 @@ class CycleRunner:
                 # An unusable market price means no new entries this
                 # cycle — and no model call, so the cap slot stays free
                 # for the next one. Held positions are always reviewed.
+                ev(logger, logging.WARNING, "cycle.price_blocked",
+                   f"{item.symbol}: {price_reason}", symbol=item.symbol)
                 decision = self.decide.record_no_call(
                     session,
                     cycle_id=cycle_id,

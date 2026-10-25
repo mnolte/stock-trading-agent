@@ -43,6 +43,7 @@ from app.db.models import (
     Strategy,
 )
 from app.engine.performance import compute_performance
+from app.log_index import index_available, index_path
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
@@ -115,6 +116,10 @@ _META: tuple[tuple[str, str, str, str, str], ...] = (
      "Candidate checks blocked as price_stale or price_suspect, last 20 sessions."),
     ("reconciliation", "Operations", "Reconciliation", "0",
      "Unacknowledged reconciliation mismatches right now."),
+    ("log_errors", "Operations", "Errors in the log", "0",
+     "Unreviewed ERROR problems in the log index, last 10 sessions."),
+    ("log_critical", "Operations", "Critical lines in the log", "0",
+     "CRITICAL lines in the log index, last 20 sessions."),
 )
 _META_BY_KEY = {m[0]: m for m in _META}
 
@@ -1013,7 +1018,86 @@ def evaluate(
         )
     )
 
+    criteria.extend(
+        _log_criteria(session, calendar, session_date, config)
+    )
+
     return criteria
+
+
+def _log_criteria(
+    session: Session,
+    calendar: CalendarProvider,
+    session_date: date,
+    config: AppConfig,
+) -> list[dict[str, Any]]:
+    """The two log-index Operations criteria (docs/SPEC.md, Readiness).
+
+    An unavailable or incomplete index means "not yet", never pass.
+    "Errors in the log" counts unreviewed ERROR fingerprints in the last
+    10 sessions: ``expected`` stays reviewed when it recurs, ``fixed``
+    becomes unreviewed again once a newer line appears after the review.
+    "Critical lines in the log" counts CRITICAL lines in the last 20
+    sessions — never reviewable.
+    """
+    import sqlite3
+
+    unavailable = [
+        _criterion(key, value="—", status=NOT_YET,
+                   sub="log index unavailable")
+        for key in ("log_errors", "log_critical")
+    ]
+    db_path = index_path(config)
+    if not index_available(db_path):
+        return unavailable
+
+    start10 = _window_start(calendar, session_date, 10).isoformat()
+    start20 = _window_start(calendar, session_date, 20).isoformat()
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        error_fps = conn.execute(
+            "SELECT fingerprint, count(*), max(ts) FROM log_lines "
+            "WHERE level = 'ERROR' AND ts >= ? AND fingerprint IS NOT NULL "
+            "GROUP BY fingerprint",
+            (start10,),
+        ).fetchall()
+        critical_n = int(
+            conn.execute(
+                "SELECT count(*) FROM log_lines WHERE level = 'CRITICAL' "
+                "AND ts >= ?",
+                (start20,),
+            ).fetchone()[0]
+        )
+    # Latest review per fingerprint (reviews are append-only).
+    from app.db.models import LogReview
+
+    reviews: dict[str, tuple[str, datetime]] = {}
+    for fp, review, reviewed_at in session.execute(
+        select(
+            LogReview.fingerprint, LogReview.review, LogReview.reviewed_at
+        ).order_by(LogReview.reviewed_at)
+    ):
+        reviews[fp] = (review, reviewed_at)
+    unreviewed = 0
+    for fp, _n, last_ts in error_fps:
+        state = reviews.get(fp)
+        if state is None:
+            unreviewed += 1
+        elif state[0] == "fixed" and last_ts > _aware(state[1]).isoformat():
+            unreviewed += 1  # a Fixed problem that recurs is unreviewed again
+    return [
+        _criterion(
+            "log_errors",
+            value=str(unreviewed),
+            status=PASS if unreviewed == 0 else NOT_YET,
+            sample=int(unreviewed),
+        ),
+        _criterion(
+            "log_critical",
+            value=str(critical_n),
+            status=PASS if critical_n == 0 else NOT_YET,
+            sample=int(critical_n),
+        ),
+    ]
 
 
 def due_session_dates(
@@ -1211,19 +1295,34 @@ def _history(session: Session, run: Run | None) -> list[dict[str, Any]]:
                     }
                 )
             prev[key] = status
-    for row in session.execute(
+    from app.db.models import LogReview
+
+    for review_row in session.execute(
+        select(LogReview).order_by(LogReview.reviewed_at)
+    ).scalars():
+        entries.append(
+            {
+                "at": _aware(review_row.reviewed_at).isoformat(),
+                "kind": "log_review",
+                "change": (
+                    f"Log problem marked {review_row.review} — {review_row.note}"
+                ),
+            }
+        )
+    for manual_row in session.execute(
         select(ReadinessManual).order_by(ReadinessManual.changed_at)
     ).scalars():
         label = next(
-            (lbl for key, lbl, _d in MANUAL_ITEMS if key == row.item), row.item
+            (lbl for key, lbl, _d in MANUAL_ITEMS if key == manual_row.item),
+            manual_row.item,
         )
         entries.append(
             {
-                "at": _aware(row.changed_at).isoformat(),
+                "at": _aware(manual_row.changed_at).isoformat(),
                 "kind": "manual",
                 "change": (
-                    f"{label} {'ticked' if row.done else 'unticked'}"
-                    f" — {row.note}"
+                    f"{label} {'ticked' if manual_row.done else 'unticked'}"
+                    f" — {manual_row.note}"
                 ),
             }
         )

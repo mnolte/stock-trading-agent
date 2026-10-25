@@ -2,6 +2,19 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-25 — Decision drawer for decision.v2
+
+- New `DecisionV2.dc.html` (560 px drawer, same structure as `Decision.dc.html`):
+  - header with strategy and prompt version, and a "shadow · no real order" chip;
+  - ENTER with the option letter and confidence ("chance of reaching the target before the stop" on hover);
+  - tiles for entry limit, stop/invalidation, target and R/R with risk per share;
+  - "Options offered": a table A–E with stop (basis, ATR distance), target (basis, levels in the way) and R/R, with the chosen row highlighted, and a note on how they were built and what was merged;
+  - "Levels" L1–L9 with the price and limit line between them, the used ids in accent, and why unused levels were not stops;
+  - reasoning with a "Levels used" chip and an explanation check banner;
+  - gates starting with "Option D offered" and "Explanation check";
+  - a note comparing with live v1 and explaining the order-time recheck.
+- Sample data: shadow A ("Stricter trend") now reads decision.v1 with RSI 45–65 on Strategies and Backtest, because decision.v2 is now the options prompt.
+
 ## 2026-10-24 — Logs in Readiness
 
 - `Readiness.dc.html`: Operations gains "Errors in the log" (2 unreviewed · 4 lines, not yet, with a link to review on Logs) and "Critical lines in the log" (0, pass); the group links to Logs; tiles now count 17 criteria (8 pass, 5 not yet); History line added.

@@ -37,18 +37,8 @@ from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 TEMPLATE_NOW = datetime(2026, 10, 15, 13, 30, tzinfo=UTC)
 
 
-@pytest.fixture(scope="session")
-def template_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """A fully warmed database, built once per xdist worker.
-
-    Seeded with the same fetches a real simulated boot runs — migrated
-    schema, calendar, earnings, corporate actions, FX, daily bars and
-    60 sessions of 5-minute bars for the default universe — but without
-    booting the app, so no cycles, decisions, events or runs are written.
-    Every test gets a copy: refresh_history sees full coverage and costs
-    one small fetch instead of regenerating ~47k fake bars, and
-    refresh_daily hits its own coverage check.
-    """
+def _build_template(path: Path) -> None:
+    """Seed one warm template database at ``path`` (see ``template_db``)."""
     from alembic import command
     from alembic.config import Config as AlembicConfig
     from app.api.main import refresh_calendar_and_daily_data
@@ -69,7 +59,6 @@ def template_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     from app.market.clock import NY_TZ, FakeClock
     from sqlalchemy import text
 
-    path = tmp_path_factory.mktemp("template") / "template.db"
     previous = os.environ.get("SA_DB_PATH")
     os.environ["SA_DB_PATH"] = str(path)
     config_module._config = None
@@ -115,7 +104,101 @@ def template_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
         else:
             os.environ["SA_DB_PATH"] = previous
         config_module._config = None
-    return path
+
+
+def _template_fingerprint() -> str:
+    """Everything that determines the template's content: schema, fake
+    data, refresh logic, config defaults, the universe and the frozen
+    clock. A change to any of them rebuilds the shared database."""
+    import hashlib
+
+    backend = Path(__file__).resolve().parents[1]
+    files = (
+        sorted(backend.glob("alembic/versions/*.py"))
+        + [backend / "universe" / "pool.csv"]
+        + [
+            backend / "app" / part
+            for part in (
+                "api/main.py",
+                "config.py",
+                "data/factory.py",
+                "data/fake.py",
+                "data/service.py",
+                "data/models.py",
+                "db/models.py",
+                "market/calendar.py",
+                "market/clock.py",
+            )
+            if (backend / "app" / part).exists()
+        ]
+        + [Path(__file__), backend / "config.example.yaml"]
+    )
+    digest = hashlib.sha256(str(TEMPLATE_NOW).encode())
+    for path in files:
+        digest.update(path.name.encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def _ensure_template() -> Path:
+    """Build the shared warm template once, across processes and runs.
+
+    Whoever takes the flock builds to a temp file and renames it into
+    place; everyone else blocks on the same lock and reuses the result.
+    The file lives under ``$TMPDIR`` keyed by ``_template_fingerprint``,
+    so unchanged inputs skip the ~15 s fake-data seed entirely.
+    """
+    try:
+        import fcntl
+    except ImportError:  # Windows: lock is best-effort only
+        fcntl = None  # type: ignore[assignment]
+    import tempfile
+    import time
+
+    cache_dir = Path(tempfile.gettempdir()) / "stock-agent-test-template"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    shared = cache_dir / f"template-{_template_fingerprint()}.db"
+    with open(cache_dir / "template.lock", "a+b") as lock:
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if not shared.exists():
+                tmp = cache_dir / f"template-{os.getpid()}.tmp"
+                _build_template(tmp)
+                os.replace(tmp, shared)
+            # Fingerprinted templates accumulate a few MB per change;
+            # keep the cache small.
+            stale = time.time() - 24 * 3600
+            for old in cache_dir.glob("template-*.db"):
+                if old != shared and old.stat().st_mtime < stale:
+                    old.unlink(missing_ok=True)
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return shared
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Pre-build the warm template on the xdist controller so workers
+    don't each repeat the fake-data seed in parallel."""
+    if hasattr(session.config, "workerinput"):
+        return
+    _ensure_template()
+
+
+@pytest.fixture(scope="session")
+def template_db() -> Path:
+    """A fully warmed database, shared by every test and worker.
+
+    Seeded with the same fetches a real simulated boot runs — migrated
+    schema, calendar, earnings, corporate actions, FX, daily bars and
+    60 sessions of 5-minute bars for the default universe — but without
+    booting the app, so no cycles, decisions, events or runs are written.
+    Every test gets a copy: refresh_history sees full coverage and costs
+    one small fetch instead of regenerating ~47k fake bars, and
+    refresh_daily hits its own coverage check.
+    """
+    return _ensure_template()
 
 
 @pytest.fixture(autouse=True)

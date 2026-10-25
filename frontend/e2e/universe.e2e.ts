@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR 12 screenshots are for docs/screenshots/pr-12/ (pass SCREENSHOT_DIR, see ./shots); design/ is untouched.
 const outDir = screenshotDir('pr-12');

@@ -1,4 +1,4 @@
-.PHONY: install dev run run-backend run-frontend lint test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
+.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -12,13 +12,19 @@ FE := cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM)
 
 # Backend port: SA_PORT from .env (fallback 8001). The frontend proxy gets
 # the same value via VITE_API_PORT so both sides always agree.
-SA_PORT ?= $(shell sed -n 's/^SA_PORT=\([0-9][0-9]*\).*/\1/p' .env)
+SA_PORT ?= $(shell sed -n 's/^SA_PORT=\([0-9][0-9]*\).*/\1/p' .env 2>/dev/null)
 SA_PORT := $(if $(strip $(SA_PORT)),$(strip $(SA_PORT)),8001)
 
-install:
-	python3 -m venv .venv
-	$(PIP) install -U pip
-	$(PIP) install -e ".[dev]"
+install: install-backend install-frontend
+
+install-backend: ## uv sync when uv is available (uses uv.lock), else pip -e .[dev]
+	@if command -v uv >/dev/null 2>&1; then \
+	  uv sync --extra dev; \
+	else \
+	  python3 -m venv .venv && $(PIP) install -U pip && $(PIP) install -e ".[dev]"; \
+	fi
+
+install-frontend:
 	$(FE) install --allow-build=esbuild
 
 dev: ## backend (uvicorn --reload) + Vite dev server, Ctrl-C stops both
@@ -37,19 +43,29 @@ run-backend:
 run-frontend:
 	cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev
 
-lint:
+lint: lint-backend lint-frontend
+
+lint-backend:
 	cd backend && ../$(RUFF) check .
 	cd backend && ../$(MYPY) .
+
+lint-frontend:
 	$(FE) lint
 	$(FE) typecheck
 
-test: test-backend test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
+logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
+	cd backend && ../$(PYTHON) -m app.log_index
+
+test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
-	cd backend && ../$(PYTEST) -v -m "not slow" -n 4 --durations=15
+	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n auto --dist worksteal --durations=15
+
+test-perf: ## timing-budget tests, serial — CPU contention skews them
+	cd backend && ../$(PYTEST) -v -m perf --durations=15
 
 test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
-	cd backend && ../$(PYTEST) -v -m slow -n 4 --durations=15
+	cd backend && ../$(PYTEST) -v -m slow -n auto --dist worksteal --durations=15
 
 test-frontend:
 	$(FE) test

@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR screenshots are for docs/screenshots/pr-9/ (pass SCREENSHOT_DIR, see ./shots) (design/ stays untouched):
 // the latest-decision card on Main and the rebuilt decision drawer.
@@ -39,10 +39,19 @@ test('decision drawer: gates, signal stack, reasoning, outcome', async ({
 }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
 
-  await page.goto('/');
+  // The card tracks ?symbol= and the default symbol's latest decision is a
+  // rules no_call — no model call, so no "Open model call" link. XOM's
+  // seeded decision did reach the model.
+  await page.goto('/?symbol=XOM');
 
+  const card = page.locator('section', {
+    has: page.getByRole('heading', { name: 'Latest decision' }),
+  });
   const button = page.getByRole('link', { name: 'Open full decision' });
   await expect(button).toBeVisible({ timeout: 60_000 });
+  // The card refetches when ?symbol= resolves — wait until it shows XOM's
+  // decision before opening the drawer.
+  await expect(card.getByText('XOM', { exact: true }).first()).toBeVisible();
   await button.click();
   await expect(page).toHaveURL(/\/decisions\/\d+/);
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import time
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -84,11 +86,35 @@ logger = logging.getLogger(__name__)
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 
+_migration_heads: tuple[str, ...] | None = None
+
+
 def run_migrations() -> None:
     from alembic import command
     from alembic.config import Config
+    from alembic.script import ScriptDirectory
 
     cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    global _migration_heads
+    if _migration_heads is None:
+        _migration_heads = tuple(
+            sorted(ScriptDirectory.from_config(cfg).get_heads())
+        )
+    # A database already at head skips the full upgrade machinery: the
+    # version check is one sqlite read instead of a script walk.
+    import sqlite3 as _sqlite3
+
+    db_path = Path(get_config().env.sa_db_path)
+    if db_path.exists():
+        try:
+            with _sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+                version = conn.execute(
+                    "SELECT version_num FROM alembic_version"
+                ).fetchone()
+            if version is not None and (version[0],) == _migration_heads:
+                return
+        except _sqlite3.Error:
+            pass
     command.upgrade(cfg, "head")
 
 
@@ -402,15 +428,11 @@ def spawn_background(
     tasks: set[asyncio.Task[object]], coro: Coroutine[Any, Any, object], name: str
 ) -> None:
     """Start shadow work as its own task so the live job returns at once."""
-    task: asyncio.Task[object] = asyncio.get_running_loop().create_task(coro, name=name)
+    from app.spawn import spawn
+
+    task = spawn(coro, name)
     tasks.add(task)
-
-    def _done(t: asyncio.Task[object]) -> None:
-        tasks.discard(t)
-        if not t.cancelled() and t.exception() is not None:
-            logger.error("%s failed", name, exc_info=t.exception())
-
-    task.add_done_callback(_done)
+    task.add_done_callback(tasks.discard)
 
 
 def check_model_prices_at_startup(config: AppConfig) -> None:
@@ -523,10 +545,47 @@ async def retry_calendar_load(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    setup_logging()
+    pipeline = setup_logging()
+    from app.spawn import install_global_hooks
+
+    install_global_hooks(asyncio.get_running_loop())
     config = get_config()
+
+    from app.shutdown import (
+        make_shutdown,
+        quick_check,
+        set_current,
+    )
+    from app.spawn import spawn
+
+    shutdown_manager, run_lock = make_shutdown(config)
+    app.state.shutdown = shutdown_manager
+    # The run lock: a live pid refuses startup, a stale lock marks the
+    # last run unclean (quick_check + the banner, docs/SPEC.md, Clean
+    # shutdown).
+    lock_state = run_lock.check()
+    if lock_state.status == "stale":
+        integrity = quick_check(Path(config.env.sa_db_path))
+        logger.warning(
+            "previous run did not shut down cleanly (quick_check: %s)",
+            integrity,
+            extra={"event": "app.unclean_previous_run"},
+        )
+        app.state.unclean_previous_run = True
+        app.state.unclean_quick_check = integrity
+    run_lock.acquire(
+        int(config.get("logging", "heartbeat_seconds", default=30))
+    )
+    set_current(shutdown_manager)
+    app.state.run_lock = run_lock
+
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
     run_migrations()
+    # alembic's fileConfig closes every handler (env.py can't skip it —
+    # CLI runs need it): re-attach the queue to the root logger.
+    from app.logging_config import install_queue_root
+
+    install_queue_root(pipeline)
     # Migrations are immutable; a schema that drifted outside them fails
     # here with the differing table/column instead of a raw SQL error.
     check_schema_matches_models()
@@ -538,6 +597,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     clock = make_clock(config)
     bus = UpdateBus()
+
+    # Log index: the listener thread batches rows into logs.db; warning
+    # and up also pings the "logs" topic (debounced 1s, spec).
+    from app.log_index import make_index_handler
+
+    loop = asyncio.get_running_loop()
+    _last_logs_push = [0.0]
+
+    def _push_logs_topic(_record: object) -> None:
+        now = time.monotonic()
+        if now - _last_logs_push[0] >= 1:
+            _last_logs_push[0] = now
+            loop.call_soon_threadsafe(bus.publish, "logs")
+
+    index_handler = make_index_handler(
+        config,
+        file_fallback=pipeline.file_handler,
+        on_warning_or_above=_push_logs_topic,
+    )
+    if index_handler is not None:
+        pipeline.add_handler(index_handler)
+    app.state.log_index_handler = index_handler
     # Encrypted keys come first: a one-time .env import runs before any
     # client is built, and the scrub filter is in place before anything
     # can log a value that passed through the environment.
@@ -962,18 +1043,77 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         misfire_grace_time=10,
         coalesce=True,
     )
+    # Scheduler error listener: a failed job is logged with its id at
+    # ERROR through the same pipeline — never just APScheduler's stderr.
+    from apscheduler.events import EVENT_JOB_ERROR, JobExecutionEvent
+
+    def _on_job_error(event: JobExecutionEvent[object]) -> None:
+        logger.error(
+            "scheduler job %s failed: %s",
+            event.job_id,
+            event.exception,
+            exc_info=event.exception,
+        )
+
+    scheduler.add_listener(_on_job_error, EVENT_JOB_ERROR)
     scheduler.start()
     app.state.scheduler = scheduler
+    from app.logging_config import ev as _ev
+
+    _ev(
+        logger, logging.INFO, "app.started",
+        f"stock agent started ({config.env.mode})",
+        mode=config.env.mode,
+    )
+
+    # run.lock heartbeat: the file carries pid + heartbeat timestamps so
+    # the next startup can tell "still running" from "died uncleanly".
+    heartbeat_seconds = int(
+        config.get("logging", "heartbeat_seconds", default=30)
+    )
+
+    async def _heartbeat() -> None:
+        while not shutdown_manager.shutting_down.is_set():
+            await asyncio.sleep(heartbeat_seconds)
+            try:
+                run_lock.heartbeat()
+            except OSError:
+                logger.exception("run.lock heartbeat failed")
+
+    heartbeat_task = spawn(_heartbeat(), "run-lock-heartbeat")
+
     try:
         yield
     finally:
+        # Clean shutdown (docs/SPEC.md). A second Ctrl+C/SIGTERM during
+        # this block skips the grace wait — cleanup still runs.
+        import signal as _signal
+
+        loop = asyncio.get_running_loop()
+
+        def _force(*_args: object) -> None:
+            loop.call_soon_threadsafe(shutdown_manager.skip_wait.set)
+
+        for _sig in (_signal.SIGINT, _signal.SIGTERM):
+            # ValueError/OSError off the main thread (tests) — the test
+            # calls force() directly instead of signalling.
+            with contextlib.suppress(ValueError, OSError):
+                _signal.signal(_sig, _force)
+        shutdown_manager.begin()
+        logger.info("shutdown requested", extra={"event": "app.shutdown_requested"})
+        bus.publish("shutdown", "banners", "header")
+        scheduler.pause()
+        heartbeat_task.cancel()
         await backtest_manager.shutdown()
         scheduler.shutdown(wait=False)
         # Shadow work is never waited for: it is cut, never live.
         for task in list(shadow_tasks):
             task.cancel()
         set_event_sink(None)
-        await notification_service.stop()
+        try:
+            await asyncio.wait_for(notification_service.stop(), timeout=5)
+        except TimeoutError:
+            logger.warning("notification drain exceeded 5s on shutdown")
         # Normal shutdown: give a running cycle or check the grace window
         # to finish; leftovers become "interrupted" and never count as
         # failures — only rows still "running" at the next startup (a real
@@ -981,6 +1121,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         grace = float(
             config.get("storage", "shutdown_grace_seconds", default=60)
         )
+
+        def _work_done() -> bool:
+            with get_session_maker()() as session:
+                running = session.execute(
+                    select(func.count()).select_from(Cycle).where(
+                        Cycle.status == "running"
+                    )
+                ).scalar_one()
+            return running == 0
+
+        await shutdown_manager.wait_for_work(_work_done)
         interrupted = await finalize_interrupted_cycles(
             get_session_maker(), clock, grace
         )
@@ -990,10 +1141,80 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 interrupted,
             )
         await broker.stop_stream()
+        # Clients and sessions are closed above; fold the WAL back and
+        # dispose the engine, then release the lock, and close the log
+        # pipeline last (docs/SPEC.md, Clean shutdown).
+        from app.db.base import shutdown_engine
+
+        shutdown_engine()
+        run_lock.release()
+        set_current(None)
+        from app.logging_config import shutdown_logging
+
+        _ev(
+            logger, logging.INFO, "app.shutdown_complete",
+            "shutdown complete",
+        )
+        shutdown_logging()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Stock Agent", version="0.2.0", lifespan=lifespan)
+
+    import secrets as _secrets_mod
+
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    from app.logging_config import log_context
+
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next: Any) -> Any:
+        """One request id per call: X-Request-Id back, ``request`` context
+        on every log line written while it runs."""
+        rid = f"r-{_secrets_mod.token_hex(4)}"
+        manager = getattr(request.app.state, "shutdown", None)
+        if (
+            manager is not None
+            and manager.shutting_down.is_set()
+            and request.method not in ("GET", "HEAD", "OPTIONS")
+        ):
+            return JSONResponse(
+                status_code=503, content={"detail": "shutting down"}
+            )
+        import time as _time
+
+        started = _time.monotonic()
+        with log_context(request=rid):
+            response = await call_next(request)
+        response.headers["X-Request-Id"] = rid
+        logging.getLogger("api").debug(
+            "%s %s -> %s in %dms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int((_time.monotonic() - started) * 1000),
+            extra={"event": "api.request"},
+        )
+        return response
+
+    @app.exception_handler(Exception)
+    async def unhandled_api_error(request: Request, exc: Exception) -> Any:
+        """500 with an error_id; the same id is on the log line (spec)."""
+        error_id = f"e-{_secrets_mod.token_hex(3)}"
+        logger.error(
+            "unhandled API error on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=exc,
+            extra={"error_id": error_id},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "internal error", "error_id": error_id},
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],

@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from sqlalchemy import Engine, Numeric, create_engine, event, inspect
@@ -68,6 +69,24 @@ def get_engine() -> Engine:
 
 def get_session_maker() -> sessionmaker[Session]:
     return sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
+
+
+def shutdown_engine() -> None:
+    """Clean shutdown tail: WAL checkpoint (TRUNCATE) then dispose.
+
+    Called last before the log pipeline closes; every session is closed
+    by then, so the checkpoint folds the -wal back into the main file.
+    """
+    for url, engine in list(_engines.items()):
+        try:
+            with engine.connect() as conn:
+                conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:  # noqa: BLE001 - checkpoint failure must not stop disposal
+            logging.getLogger("db").exception(
+                "wal_checkpoint(TRUNCATE) failed for %s", url
+            )
+        engine.dispose()
+        _engines.pop(url, None)
 
 
 def check_schema_matches_models() -> None:

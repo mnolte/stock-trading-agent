@@ -1,8 +1,8 @@
 import path from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
-import { screenshotDir } from './shots';
+import { screenshotDir, test } from './shots';
 
 // PR 17 screenshots are for docs/screenshots/pr-17/ (pass SCREENSHOT_DIR,
 // see ./shots); design/ is untouched.
@@ -565,11 +565,15 @@ test('races: a slow first chart response cannot overwrite a later pick', async (
 }) => {
   await mockApi(page, 'positions', positionsJson());
   await mockApi(page, 'approvals', emptyApprovals);
-  // MSFT's chart takes 2.5 s; NVDA answers immediately. The MSFT response
+  // MSFT's chart takes 1.5 s; NVDA answers immediately. The MSFT response
   // lands last and must be dropped — the chart stays on NVDA.
+  let msftServed = false;
   await page.route('**/api/chart/*', async (route) => {
     const symbol = route.request().url().split('/').pop() ?? '';
-    if (symbol === 'MSFT') await new Promise((r) => setTimeout(r, 2500));
+    if (symbol === 'MSFT') {
+      await new Promise((r) => setTimeout(r, 1500));
+      msftServed = true;
+    }
     await route.fulfill({
       contentType: 'application/json',
       json: chartJson(symbol, symbol === 'MSFT' ? '111.00' : '999.00'),
@@ -588,8 +592,11 @@ test('races: a slow first chart response cannot overwrite a later pick', async (
     page.getByRole('heading', { name: 'NVDA', exact: true }),
   ).toBeVisible();
   await expect(page.getByText('$999.00')).toBeVisible();
-  // MSFT's late response arrives now — the chart and heading must not move.
-  await page.waitForTimeout(3000);
+  // Wait until MSFT's late response was actually served — a fixed sleep
+  // could pass before it lands and never exercise the race. Then give a
+  // buggy overwrite a moment to render before asserting it didn't.
+  await expect.poll(() => msftServed, { timeout: 15_000 }).toBe(true);
+  await page.waitForTimeout(400);
   await expect(page.getByText('$999.00')).toBeVisible();
   await expect(page.getByText('$111.00')).toHaveCount(0);
   await expect(
@@ -639,6 +646,16 @@ async function mockNotifications(
   });
 }
 
+/** The toast-expiry timers run on the page's fake clock so the 10 s
+ * waits cost no wall time. The WS wake-up refetch is debounced (300 ms,
+ * also fake) — advance the clock until the toast has actually mounted. */
+async function tickUntilMounted(page: Page, toast: Locator) {
+  await expect(async () => {
+    await page.clock.runFor(500);
+    expect(await toast.count()).toBe(1);
+  }).toPass({ timeout: 30_000, intervals: [200] });
+}
+
 test('toasts: one toast per event, info closes after 10 s, hover pauses', async ({
   page,
   request,
@@ -647,6 +664,7 @@ test('toasts: one toast per event, info closes after 10 s, hover pauses', async 
     page,
     notificationsFixture('info', '[Stock Agent] This is a test notification'),
   );
+  await page.clock.install();
   await page.goto('/');
   await expect(page.locator('.sa-skel').first()).toBeHidden({
     timeout: 60_000,
@@ -658,16 +676,17 @@ test('toasts: one toast per event, info closes after 10 s, hover pauses', async 
   await request.post('/api/notifications/test');
   const region = page.getByRole('region', { name: 'Notifications' });
   const toast = region.getByRole('status');
-  await expect(toast).toHaveCount(1, { timeout: 30_000 });
+  await tickUntilMounted(page, toast);
   await expect(toast.getByText(/test notification/i)).toBeVisible();
   await expect(toast.getByText('closes in 10 s')).toBeVisible();
 
   // Hover pauses the expiry: still there past the 10 s mark.
   await toast.hover();
-  await page.waitForTimeout(11_000);
+  await page.clock.runFor(11_000);
   await expect(toast).toBeVisible();
   await page.mouse.move(10, 10);
-  await expect(toast).toBeHidden({ timeout: 15_000 });
+  await page.clock.runFor(15_000);
+  await expect(toast).toBeHidden();
 });
 
 test('toasts: a critical notification stays until dismissed (role alert)', async ({
@@ -681,6 +700,7 @@ test('toasts: a critical notification stays until dismissed (role alert)', async
     notificationsFixture('critical', '[Stock Agent] Kill switch turned on'),
   );
 
+  await page.clock.install();
   await page.goto('/');
   await expect(page.locator('.sa-skel').first()).toBeHidden({
     timeout: 60_000,
@@ -689,10 +709,10 @@ test('toasts: a critical notification stays until dismissed (role alert)', async
 
   const region = page.getByRole('region', { name: 'Notifications' });
   const alert = region.getByRole('alert');
-  await expect(alert).toHaveCount(1, { timeout: 30_000 });
+  await tickUntilMounted(page, alert);
   await expect(alert.getByText('Kill switch turned on')).toBeVisible();
   // Past the info timeout it is still there — it only leaves on Dismiss.
-  await page.waitForTimeout(11_000);
+  await page.clock.runFor(11_000);
   await expect(alert).toBeVisible();
   await alert.getByRole('button', { name: 'Dismiss' }).click();
   await expect(alert).toHaveCount(0);
@@ -703,24 +723,43 @@ test('toasts: a critical notification stays until dismissed (role alert)', async
 // on the mobile viewport the sidebar is a dialog with Escape + focus return.
 // ---------------------------------------------------------------------------
 
-async function expectVisibleFocus(page: Page, steps: number) {
-  for (let i = 0; i < steps; i += 1) {
+// Walk the whole tab order: every landed control must show a visible ring.
+// Stops when focus leaves the page (body) or wraps to a seen element — the
+// tabbable count differs between desktop and mobile, so no fixed step count.
+async function expectVisibleFocus(page: Page) {
+  const seen = new Set<string>();
+  for (let i = 0; i < 80; i += 1) {
     await page.keyboard.press('Tab');
     const info = await page.evaluate(() => {
       const el = document.activeElement;
-      if (!el || el === document.body) return { ok: false, who: 'body' };
+      if (!el || el === document.body)
+        return { ok: false, who: 'body', key: 'body' };
       const style = getComputedStyle(el);
+      const path: number[] = [];
+      let node: Element | null = el;
+      while (node && node !== document.body) {
+        path.unshift(
+          node.parentElement
+            ? Array.prototype.indexOf.call(node.parentElement.children, node)
+            : 0,
+        );
+        node = node.parentElement;
+      }
       return {
         ok: style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) > 0,
         who: `${el.tagName} "${(el.textContent ?? '').slice(0, 40)}" label=${el.getAttribute('aria-label') ?? ''} cls=${el.getAttribute('class') ?? ''}`,
         outline: `${style.outlineStyle} ${style.outlineWidth}`,
+        key: path.join('.'),
       };
     });
+    if (info.who === 'body' || seen.has(info.key)) break;
     expect(
       info.ok,
       `Tab ${i + 1}: focused element has a visible ring — ${JSON.stringify(info)}`,
     ).toBeTruthy();
+    seen.add(info.key);
   }
+  expect(seen.size, 'no focusable element found on the page').toBeGreaterThan(0);
 }
 
 test('keyboard: dashboard, settings and strategies keep a visible focus ring', async ({
@@ -734,21 +773,21 @@ test('keyboard: dashboard, settings and strategies keep a visible focus ring', a
     page.getByRole('link', { name: 'Positions, open Positions and orders' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Dashboard/);
-  await expectVisibleFocus(page, 10);
+  await expectVisibleFocus(page);
 
   await page.goto('/settings');
   await expect(
     page.getByRole('heading', { name: 'API keys and data' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Settings/);
-  await expectVisibleFocus(page, 8);
+  await expectVisibleFocus(page);
 
   await page.goto('/strategies');
   await expect(
     page.getByRole('heading', { name: 'Compare', exact: true }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Agent — Strategies/);
-  await expectVisibleFocus(page, 8);
+  await expectVisibleFocus(page);
 
   // Mobile: the sidebar opens as a dialog — Escape closes it and focus
   // returns to the Menu button.

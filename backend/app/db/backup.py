@@ -42,6 +42,15 @@ def create_backup(clock: Clock | None = None) -> None:
         raise RuntimeError(
             f"backup {backup_path.name} failed integrity_check: {integrity}"
         )
+    import logging
+
+    from app.logging_config import ev
+
+    ev(
+        logging.getLogger("db"), logging.INFO, "db.backup",
+        f"backup {backup_path.name} ok (integrity_check)",
+        job="backup",
+    )
 
     # Prune backups outside the retention window: the last
     # ``storage.backup_days`` days including today.
