@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal
+from typing import Any, cast
 
 from app.config import AppConfig
 from app.decide.output import (
@@ -21,7 +22,7 @@ from app.signals.snapshot import IndicatorSnapshot
 
 CFG = AppConfig()
 
-_SNAPSHOT = {
+_SNAPSHOT: dict[str, Any] = {
     "symbol": "ABC",
     "context": "candidate",
     "price": 100.0,
@@ -68,9 +69,10 @@ _SNAPSHOT = {
 
 
 def _v2(
-    action="enter", option_id="A", thesis="breakout above L2 at 104.50",
-    levels_used=None, confidence=0.62,
-):
+    action: str = "enter", option_id: str | None = "A",
+    thesis: str = "breakout above L2 at 104.50",
+    levels_used: list[str] | None = None, confidence: float = 0.62,
+) -> str:
     return json.dumps(
         {
             "symbol": "ABC",
@@ -86,22 +88,24 @@ def _v2(
 
 
 class TestRegistry:
-    def test_v2_spec(self):
+    def test_v2_spec(self) -> None:
         spec = prompt_spec("decision.v2")
         assert spec.uses_options
-        assert "option_id" in spec.json_schema["schema"]["properties"]
+        schema = cast("dict[str, Any]", spec.json_schema)
+        assert "option_id" in schema["schema"]["properties"]
 
-    def test_v1_spec_unchanged(self):
+    def test_v1_spec_unchanged(self) -> None:
         spec = prompt_spec("decision.v1")
         assert not spec.uses_options
-        assert "stop_price" in spec.json_schema["schema"]["properties"]
+        schema = cast("dict[str, Any]", spec.json_schema)
+        assert "stop_price" in schema["schema"]["properties"]
 
-    def test_unknown_version_gets_v1(self):
+    def test_unknown_version_gets_v1(self) -> None:
         assert prompt_spec("decision.v99").uses_options is False
 
 
 class TestV2Validation:
-    def test_valid_enter(self):
+    def test_valid_enter(self) -> None:
         v = validate_model_output_v2(
             _v2(), symbol="ABC", context="candidate", snapshot=_SNAPSHOT,
             atr_1h=Decimal("2"), current_stop=None, config=CFG,
@@ -110,7 +114,7 @@ class TestV2Validation:
         assert v.chosen_option is not None and v.chosen_option["id"] == "A"
         assert v.explanation is not None and v.explanation.passed
 
-    def test_invalid_option_id_is_skip(self):
+    def test_invalid_option_id_is_skip(self) -> None:
         v = validate_model_output_v2(
             _v2(option_id="Z"), symbol="ABC", context="candidate",
             snapshot=_SNAPSHOT, atr_1h=Decimal("2"), current_stop=None,
@@ -119,7 +123,7 @@ class TestV2Validation:
         assert not v.valid and v.final_action == "skip"
         assert "option_id" in (v.error or "")
 
-    def test_missing_option_id_is_skip(self):
+    def test_missing_option_id_is_skip(self) -> None:
         v = validate_model_output_v2(
             _v2(option_id=None), symbol="ABC", context="candidate",
             snapshot=_SNAPSHOT, atr_1h=Decimal("2"), current_stop=None,
@@ -127,7 +131,7 @@ class TestV2Validation:
         )
         assert not v.valid and v.final_action == "skip"
 
-    def test_invalid_option_id_is_hold_for_held(self):
+    def test_invalid_option_id_is_hold_for_held(self) -> None:
         snap = {**_SNAPSHOT, "context": "held", "options": [],
                 "stop_options": [{"id": "T1", "stop": 97.0, "basis": "trail",
                                    "locks_profit": False, "r_at_stop": -0.5,
@@ -139,7 +143,7 @@ class TestV2Validation:
         )
         assert not v.valid and v.final_action == "hold"
 
-    def test_price_fields_rejected(self):
+    def test_price_fields_rejected(self) -> None:
         raw = json.loads(_v2())
         raw["stop_price"] = 95.8
         v = validate_model_output_v2(
@@ -149,7 +153,7 @@ class TestV2Validation:
         )
         assert not v.valid and v.final_action == "skip"
 
-    def test_low_confidence_skips(self):
+    def test_low_confidence_skips(self) -> None:
         v = validate_model_output_v2(
             _v2(confidence=0.3), symbol="ABC", context="candidate",
             snapshot=_SNAPSHOT, atr_1h=Decimal("2"), current_stop=None,
@@ -157,7 +161,7 @@ class TestV2Validation:
         )
         assert v.valid and v.final_action == "skip"
 
-    def test_exit_has_no_option(self):
+    def test_exit_has_no_option(self) -> None:
         snap = {**_SNAPSHOT, "context": "held", "stop_options": []}
         v = validate_model_output_v2(
             _v2(action="exit", option_id=None),
@@ -166,45 +170,48 @@ class TestV2Validation:
         )
         assert v.valid and v.final_action == "exit"
 
-    def test_no_options_reason_enumerated(self):
+    def test_no_options_reason_enumerated(self) -> None:
         assert "no_options" in NO_CALL_REASONS
         assert "reference_missing" in NO_CALL_REASONS
 
 
 class TestExplanationCheck:
-    def _out(self, thesis="", levels=None, risks=None):
+    def _out(
+        self, thesis: str = "", levels: list[str] | None = None,
+        risks: list[str] | None = None,
+    ) -> ModelOutputV2:
         return ModelOutputV2(
             symbol="ABC", action="enter", option_id="A", confidence=0.6,
             thesis=thesis, levels_used=levels or [], risks=risks or [],
         )
 
-    def test_pass(self):
+    def test_pass(self) -> None:
         r = check_explanation(
             self._out("stop sits at 95.80 below L3", levels=["L3"]),
             _SNAPSHOT, _SNAPSHOT["options"][0],
         )
         assert r.passed
 
-    def test_unknown_level_id(self):
+    def test_unknown_level_id(self) -> None:
         r = check_explanation(
             self._out("clean", levels=["L9"]), _SNAPSHOT, _SNAPSHOT["options"][0],
         )
         assert not r.passed and r.bad_ids == ["L9"]
 
-    def test_invented_decimal(self):
+    def test_invented_decimal(self) -> None:
         r = check_explanation(
             self._out("momentum at 88.44"), _SNAPSHOT, _SNAPSHOT["options"][0],
         )
         assert not r.passed and "88.44" in r.bad_numbers
 
-    def test_whole_numbers_ignored(self):
+    def test_whole_numbers_ignored(self) -> None:
         r = check_explanation(
             self._out("14 bars up, 2 sessions flat", levels=["L3"]),
             _SNAPSHOT, _SNAPSHOT["options"][0],
         )
         assert r.passed
 
-    def test_decimals_matching_snapshot_pass(self):
+    def test_decimals_matching_snapshot_pass(self) -> None:
         r = check_explanation(
             self._out("VWAP near 100.00 and target 108.60",
                       levels=["L1"], risks=["headline-driven"]),
@@ -214,26 +221,26 @@ class TestExplanationCheck:
 
 
 class TestTradePrices:
-    def test_v2_resolves_chosen_option(self):
+    def test_v2_resolves_chosen_option(self) -> None:
         stop, target = decision_trade_prices(
             {"option_id": "A"}, {"options": _SNAPSHOT["options"]}, "A",
         )
         assert stop == Decimal("95.8") and target == Decimal("108.6")
 
-    def test_v1_prices_unchanged(self):
+    def test_v1_prices_unchanged(self) -> None:
         stop, target = decision_trade_prices(
             {"stop_price": 95.0, "target_price": 110.0}, None, None,
         )
         assert stop == Decimal("95.0") and target == Decimal("110.0")
 
-    def test_unknown_id_yields_none(self):
+    def test_unknown_id_yields_none(self) -> None:
         stop, target = decision_trade_prices(
             {"option_id": "Z"}, {"options": _SNAPSHOT["options"]}, "Z",
         )
         assert stop is None and target is None
 
 
-def test_v1_snapshot_keys_unchanged():
+def test_v1_snapshot_keys_unchanged() -> None:
     """A v1-shaped snapshot carries no v2 keys (registry gate keeps the
     builder out of the v1 path)."""
     snap = build_input_snapshot(

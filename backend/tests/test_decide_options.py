@@ -79,13 +79,13 @@ def wave_bars(day: date, n: int, base: float = 100.0, step: float = 1.0,
 class TestBuildEntryOptions:
     day = date(2026, 10, 15)
 
-    def _levels(self):
+    def _levels(self) -> list[Level]:
         return find_levels(
             bars_1h=wave_bars(self.day, 10), daily=[], today_5m=[],
             price=Decimal("100"), cfg=CFG,
         )
 
-    def test_level_and_atr_stops_and_targets(self):
+    def test_level_and_atr_stops_and_targets(self) -> None:
         # Price 100, ATR 2: band = 3–8 below reference.
         levels = find_levels(
             bars_1h=[], daily=[], today_5m=[], price=Decimal("100"), cfg=CFG,
@@ -115,7 +115,7 @@ class TestBuildEntryOptions:
         assert any("× ATR" in b for b in bases)  # the 2 × ATR stop
         assert any("swing low" in b for b in bases)
 
-    def test_no_options_when_no_stop_in_band(self):
+    def test_no_options_when_no_stop_in_band(self) -> None:
         from dataclasses import replace
 
         cfg = replace(CFG, atr_stop_multiples=())
@@ -127,7 +127,7 @@ class TestBuildEntryOptions:
         assert result.options == []
         assert result.reason
 
-    def test_merged_stops_keep_level(self):
+    def test_merged_stops_keep_level(self) -> None:
         levels = [_level("L1", "95.9", "swing_low", "1h")]
         # level stop = 95.9 - 0.2 = 95.7 → 4.3 away = 2.15 ATR; the 2 x ATR
         # stop at 96.0 is within 0.5 ATR of 95.7 → merged, level wins.
@@ -140,7 +140,7 @@ class TestBuildEntryOptions:
         assert all("swing low" in o.stop_basis for o in result.options)
         assert len(stops) == 1
 
-    def test_level_on_the_band_edge(self):
+    def test_level_on_the_band_edge(self) -> None:
         # stop at exactly 4 × ATR below reference is kept.
         levels = [_level("L1", "92.2", "swing_low", "1h")]  # stop 92.0, distance 8 = 4 ATR
         result = build_entry_options(
@@ -149,7 +149,7 @@ class TestBuildEntryOptions:
         )
         assert any(o.stop == Decimal("92.0") for o in result.options)
 
-    def test_levels_in_way(self):
+    def test_levels_in_way(self) -> None:
         levels = [
             _level("L1", "120", "swing_high", "daily"),
             _level("L2", "105", "session_high", "session"),
@@ -165,7 +165,7 @@ class TestBuildEntryOptions:
         assert opt.levels_in_way == ["L2"]
 
 
-def _level(lid: str, price: str, kind: str, tf: str) -> object:
+def _level(lid: str, price: str, kind: str, tf: str) -> Level:
 
     return Level(
         id=lid, price=Decimal(price), kind=kind, timeframe=tf,
@@ -176,7 +176,7 @@ def _level(lid: str, price: str, kind: str, tf: str) -> object:
 class TestBuildStopOptions:
     day = date(2026, 10, 15)
 
-    def test_swing_breakeven_trail(self):
+    def test_swing_breakeven_trail(self) -> None:
         bars = wave_bars(self.day, 10, base=100.0)
         options = build_stop_options(
             bars_1h=bars,
@@ -198,7 +198,7 @@ class TestBuildStopOptions:
         be = next(o for o in options if o.basis == "break-even")
         assert be.locks_profit and be.r_at_stop == Decimal("0")
 
-    def test_nothing_above_current_stop(self):
+    def test_nothing_above_current_stop(self) -> None:
         bars = wave_bars(self.day, 10, base=100.0)
         options = build_stop_options(
             bars_1h=bars,
@@ -212,7 +212,7 @@ class TestBuildStopOptions:
         )
         assert options == []
 
-    def test_locks_profit_false_below_entry(self):
+    def test_locks_profit_false_below_entry(self) -> None:
         bars = wave_bars(self.day, 10, base=100.0)
         options = build_stop_options(
             bars_1h=bars,
@@ -232,7 +232,7 @@ class TestBuildStopOptions:
 class TestProperty:
     """Over random bars every offered option meets the band and R/R rules."""
 
-    def test_random_bars(self):
+    def test_random_bars(self) -> None:
         rng = random.Random(20261015)
         day = date(2026, 10, 15)
         for _ in range(200):
@@ -292,5 +292,5 @@ class TestProperty:
                 assert result.reason
 
 
-def test_options_version_marker():
+def test_options_version_marker() -> None:
     assert OPTIONS_VERSION == "v2"

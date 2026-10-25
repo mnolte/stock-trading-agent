@@ -78,7 +78,7 @@ def wave_bars(day: date, n: int, base: float = 100.0, step: float = 1.0,
 class TestFindLevels:
     day = date(2026, 10, 14)
 
-    def test_confirmed_swings_only(self):
+    def test_confirmed_swings_only(self) -> None:
         # strength=2: the newest two bars can never be a swing.
         bars = wave_bars(self.day, 12)
         levels = find_levels(
@@ -91,7 +91,7 @@ class TestFindLevels:
             assert lv.time not in {bars[-1].start, bars[-2].start}
         assert all(lv.id.startswith("L") for lv in levels)
 
-    def test_ids_numbered_highest_down(self):
+    def test_ids_numbered_highest_down(self) -> None:
         bars = wave_bars(self.day, 8)
         levels = find_levels(
             bars_1h=bars, daily=[], today_5m=[], price=Decimal("100"), cfg=CFG,
@@ -100,7 +100,7 @@ class TestFindLevels:
         assert prices == sorted(prices, reverse=True)
         assert [lv.id for lv in levels] == [f"L{i + 1}" for i in range(len(levels))]
 
-    def test_max_eight_each_side_nearest_first(self):
+    def test_max_eight_each_side_nearest_first(self) -> None:
         # Many swings both sides of the price → at most 8 each side.
         bars = wave_bars(self.day, 60, step=0.5)
         prices = sorted({b.high for b in bars} | {b.low for b in bars})
@@ -117,7 +117,7 @@ class TestFindLevels:
         if len(below) == 8:
             assert below[0].price == max(lv.price for lv in below)
 
-    def test_session_levels(self):
+    def test_session_levels(self) -> None:
         prior = dbar(date(2026, 10, 13), "100", "105", "98", "103")
         todays = [
             bar5m(self.day, 9, 30, "104", "101", "103"),
@@ -135,7 +135,7 @@ class TestFindLevels:
         assert kinds["session_low"].price == Decimal("101")
         assert "vwap" in kinds
 
-    def test_early_close_partial_bar_is_a_level_input(self):
+    def test_early_close_partial_bar_is_a_level_input(self) -> None:
         # An early-close session still yields session high/low/vwap; the
         # partial last 1h bar is just another bar for swings.
         todays = [
