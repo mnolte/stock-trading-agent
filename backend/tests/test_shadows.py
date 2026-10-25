@@ -803,7 +803,9 @@ class SlowClient:
         self.clock = clock
         self.inner = FakeDecisionClient(enter_symbols=set())
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         self.clock.advance(timedelta(minutes=6))
         return await self.inner.complete(system=system, user=user)
 
