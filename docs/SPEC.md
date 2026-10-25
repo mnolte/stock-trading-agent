@@ -237,9 +237,9 @@ Code checks after the model answers:
 - Reward to risk, computed by code from entry, stop and target, is at least 1.5.
 - `confidence` is at least 0.55 for `enter`.
 - A `tighten_stop` only raises the stop, and the new stop must be at least 0.25 × ATR(1h) below the lowest of market price, plausible bid and last closed bar close (`decision.tighten_min_atr_below_price`); this is checked again right before the stop is replaced, and if the price has moved too far the stop stays where it is and the reason is stored. The last closed bar and ATR are required, and the market price must not be stale or suspect; otherwise the existing stop stays and the reason is stored.
-- Invalid or unparseable output counts as `skip` (or `hold` for a position) and is stored with the raw text. When no model call is made or the call fails, the decision is stored with final action `no_call` and a reason: `rules`, `call_cap`, `quote_missing` or `model_error`. A model call times out after 30 seconds and is not retried; for a held position `no_call` means the position is left as it is.
+- Invalid or unparseable output counts as `skip` (or `hold` for a position) and is stored with the raw text. When no model call is made or the call fails, the decision is stored with final action `no_call` and a reason: `rules`, `call_cap`, `quote_missing`, `model_error` or, under decision.v2, `no_options` (see Decision v2). A model call times out after 30 seconds and is not retried; for a held position `no_call` means the position is left as it is.
 
-**Prompt.** `prompts/decision.v1.md`, versioned; each decision stores the prompt version and hash, the model name and the token cost. The USD cost is computed in code from `model_prices` for the call's model and stored with the call, with its source (`priced`, `cached` or `legacy` for older calls stored with tokens but no cost; legacy costs are never rewritten). The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. It also states the time of the quote and of the last completed signal bar, so the model can tell a current quote from a delayed bar. For a held position it includes the entry, the initial stop, the current stop, the original thesis and invalidation, and progress in R measured against the initial risk (entry − initial stop), with the remaining downside to the current stop shown separately. Headlines come per symbol with a status: `complete`, `empty` (complete, no headlines), `truncated` or `failed`; only `empty` may be read as "no news". News is fetched until every symbol's result is complete or the request budget runs out, never under one shared cap. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
+**Prompt.** `prompts/decision.v1.md` (decision.v2 with code-built options is specified in Decision v2), versioned; each decision stores the prompt version and hash, the model name and the token cost. The USD cost is computed in code from `model_prices` for the call's model and stored with the call, with its source (`priced`, `cached` or `legacy` for older calls stored with tokens but no cost; legacy costs are never rewritten). The input snapshot is a JSON block with the indicators, regime, position (if any), last 24h headlines and earnings date. It also states the time of the quote and of the last completed signal bar, so the model can tell a current quote from a delayed bar. For a held position it includes the entry, the initial stop, the current stop, the original thesis and invalidation, and progress in R measured against the initial risk (entry − initial stop), with the remaining downside to the current stop shown separately. Headlines come per symbol with a status: `complete`, `empty` (complete, no headlines), `truncated` or `failed`; only `empty` may be read as "no news". News is fetched until every symbol's result is complete or the request budget runs out, never under one shared cap. Data that could not be fetched is marked `"unavailable"`. The prompt tells the model to treat unavailable data as unknown and never to invent numbers or news.
 
 **Outcome tracking.** For every decision, including skips, record the price after 1 hour, 1 session and 5 sessions. 1 session means the same New York time on the next trading session; 5 sessions means the same time on the 5th trading session after the decision (weekends and holidays don't count). If that time falls after the session's close (early-close days), the close is used. The price is the last closed 5-minute bar at or before the target time, stored with that bar's timestamp. For trades, also record the best and worst price reached while open, and whether the stop or the target was touched first, judging each bar against the stop that was active at that bar's time (from the stop-leg order history), never against today's stop. This feeds the Performance screen and later prompt reviews.
 
@@ -387,7 +387,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | --- | --- |
 | `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start). Daily bars live in `bars_1d` (symbol, session date, OHLCV), unique on (symbol, date) |
 | `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health |
-| `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live) |
+| `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live); under decision.v2 also levels JSON, options JSON, chosen option, explanation check, options version |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
 | `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, initial stop, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason, after-exit best price and time, after-exit close price, after-exit status and done at (see Tail metrics) |
@@ -398,7 +398,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
 | `strategies` | name, kind (llm or rules_only), prompt version, model, temperature, rule and check overrides JSON, status (active, paused, archived), created, archived at (v0.2) |
-| `shadow_decisions` | strategy, cycle, symbol, context, live decision (shares its input snapshot), own input snapshot (only for a symbol only a shadow holds), model output JSON, final action, gates result, tokens, cost, missed and its reason (time or cost_cap) (v0.2) |
+| `shadow_decisions` | strategy, cycle, symbol, context, live decision (shares its input snapshot), own input snapshot (only for a symbol only a shadow holds), model output JSON, final action, gates result, tokens, cost, missed and its reason (time or cost_cap); under decision.v2 also levels, options, chosen option and explanation check (v0.2) |
 | `shadow_positions` | strategy, symbol, qty, entry, stop, target, opened, closed, exit reason, R (v0.2) |
 | `shadow_equity` | strategy, time, equity (v0.2) |
 | `backtests` | name, period, universe mode, strategies JSON, starting equity, slippage, status (queued, downloading, running, done, cancelled, stopped at cost cap, interrupted, refused), progress, cost, run folder path, process id, cancel and pause flags, size on disk, warnings JSON, summary JSON, created, finished (v0.2) |
@@ -453,6 +453,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 18. **LLM call history.** `llm_calls` table with backfill, outcome and reasons at write time, list, summary, detail and CSV endpoints with keyset paging, filters in the URL, LLM inspector rebuilt with filters, summary, per-session list and error details; dashboard, feed and decision links updated. After PR 17. *Done when:* every model call since the start can be found by period, outcome and source; the backfill gives each existing call the outcome the spec rules give; a timeout and an HTTP 503 show as errors with their details; list and summary answer within 300 ms on a 100,000-call fixture.
 19. **Tail metrics.** After-exit job and `positions` columns, the tails function (R distribution, largest win and loss, top 20% share, net without the best trade, winners kept, after-exit medians per exit reason), `/api/performance/tails`, "Winners and tails" card on Performance. Measures only; exits and prompts don't change. Independent of PR 16–18. *Done when:* on a fixture run every metric matches a hand calculation, a trade inside its 5-session window shows pending, a symbol outside the bar cache is fetched, and the card shows the small-sample banner below 20 closed trades.
 20. **Logging, error handling and shutdown.** Audit report first; JSON log file with rotation and scrubbing, levels per the table, DEBUG and INFO lines in every component, tracing ids; no swallowed exceptions (ruff rules, global hooks, `spawn()`, API `error_id`, frontend error reporting and error boundary); graceful shutdown on Ctrl+C and SIGTERM with unclean-stop detection; log index, logs API and Logs screen with error reviews (`log_reviews`); the two log criteria on Readiness; shutdown banners. After PR 17. *Done when:* the audit's findings are fixed or listed as questions; one cycle can be followed from schedule to order by its id at DEBUG; `make lint` fails on a swallowed exception; Ctrl+C during a cycle, an order submission, a backtest and a backup leaves `PRAGMA integrity_check` ok with no half-written rows; the Logs screen opens on warnings and up, and an unreviewed error in the last 10 sessions keeps Readiness at "not yet".
+21. **Decision v2: code-built options.** Level finder (1h and daily swings, session levels), entry option builder and held stop options, `constraints` in the snapshot, `prompts/decision.v2.md` with its strict schema, option and explanation checks, order-time recheck of the chosen option, `no_options`, storage fields, v2 in strategies, shadows and backtests, `make replay` with its report, v2 decision drawer. Live stays on v1. Needs PR 13 and PR 15; independent of PR 16–20. *Done when:* the builder gives the expected options on fixture bars (including no options, merged stops and targets, and levels in the way), no offered option ever breaks a rule, an option id that wasn't offered becomes skip, the replay report runs on the current run's snapshots, and a v2 shadow runs next to live.
 
 ## Reviews
 
@@ -553,7 +554,7 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 | Evidence | Average R (adjusted) | ≥ +0.2R | 30 closed trades |
 | Evidence | Profit factor (adjusted) | ≥ 1.3 | 30 closed trades |
 | Evidence | Live average R above the rules-only shadow's, same sessions | live > rules-only | 30 closed trades each; the rules-only shadow must have been active since the run started |
-| Model | Share of the last 100 model entry proposals that pass the code checks | ≥ 75% | 30 proposals |
+| Model | Share of the last 100 model entry proposals that pass the code checks (under decision.v2: valid option, explanation check and order-time recheck; see Decision v2) | ≥ 75% | 30 proposals |
 | Model | Confidence calibration: per 0.1 confidence group with at least 10 filled entries, the gap between stated confidence and actual win rate, averaged weighted by group size | within 10 pts | 50 filled entries |
 | Operations | Scheduled cycles completed, last 20 sessions | ≥ 98% | — |
 | Operations | Times a position had no live stop at Alpaca for longer than one position check, last 30 sessions | 0 | — |
@@ -595,8 +596,8 @@ The LLM inspector shows every model call ever made, not just today's, and can fi
 | Outcome | When | Reasons |
 | --- | --- | --- |
 | Success | A valid response used as the model chose; for reviews, the number check passed | — |
-| Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check, risk gate or deferred exit), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15) |
-| Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and OpenAI error code stored), `invalid_output` (unparseable, or fails the schema or Pydantic; counts as skip or hold), `refusal` (the structured-output refusal field is set) |
+| Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check, risk gate or deferred exit), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15), `unsupported_claim` (decision.v2: the explanation check failed) |
+| Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and OpenAI error code stored), `invalid_output` (unparseable, fails the schema or Pydantic, or picks an option that wasn't offered; counts as skip or hold), `refusal` (the structured-output refusal field is set) |
 
 A size reduced by a gate is not a warning; the model's action was kept.
 
@@ -795,6 +796,108 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
   - every component and its current logging, and the INFO and DEBUG lines it needs to be traced;
   - shutdown behaviour today under Ctrl+C during a cycle, an order submission, a backtest and a backup.
 - **Order of work.** The fixes follow the report. Anything that changes trading behaviour beyond logging and shutdown is listed as a question, not fixed.
+
+## Decision v2: code-built options
+
+In the 22 October analysis, 32 of 33 model entry proposals failed the code checks. Most failed the stop distance, and 21 put the stop about 1 ATR away despite the prompt's explicit 1.5–4 ATR rule. Some explanations also cited levels that didn't match the input. Decision v2 moves all trade geometry into code:
+- Code finds the price levels and builds every stop and target combination that meets the rules.
+- The model only judges the setup and picks one of those options, or skips.
+
+The risk rules don't change: no threshold is lowered to let more trades through. Built as PR 21, then tested in replay and as a shadow before it can become live.
+
+**Levels.** Computed per symbol each cycle from the stored bars and added to the snapshot as `levels`:
+- **Swing lows and highs on 1h bars.** A session-aligned 1h bar whose low (high) is below (above) the lows (highs) of the `decision.options.swing_strength` (2) bars on each side, within the last `decision.options.swing_lookback_bars_1h` (60) bars. Only confirmed swings count, so the newest two bars can't be one.
+- **Swing lows and highs on daily bars.** The same rule over the last `decision.options.swing_lookback_sessions` (60) sessions.
+- **Session levels.** The prior session's high, low and close; today's session high and low so far; the session VWAP.
+- **Selection.** At most 8 levels below the market price and 8 above, nearest first. Each has an id (L1, L2, …, numbered from the highest price down), price, kind, timeframe and time.
+
+**Entry options (candidates).** Built after the price checks, using the market price, entry limit `L` (market price + 0.05%), ATR(1h), and the stop reference used for the order-time rule (the lowest of market price, plausible ask and last closed bar close).
+- **Stops.**
+  - Each swing low, prior session low and session low below the price, placed `decision.options.level_buffer_atr` (0.1) × ATR below the level.
+  - Plus a stop at reference − k × ATR for each k in `decision.options.atr_stop_multiples` ([2.0]).
+  - A stop is kept only when it lies 1.5–4 × ATR below the reference: the same rule as today, with the strategy's override if it has one.
+  - Stops within `decision.options.dedupe_atr` (0.5) × ATR of each other are merged, keeping the level-based one.
+  - At most 3 stops are kept, nearest first.
+- **Targets per stop.**
+  - Each swing high, prior session high and session high above `L`, placed the buffer below the level.
+  - Plus `L` + r × risk for each r in `decision.options.target_r_multiples` ([2.0, 3.0]).
+  - A target is kept only when reward to risk is at least `decision.min_reward_risk` (1.5). Close targets are merged the same way.
+  - Each target lists `levels_in_way`: the level ids strictly between `L` and the target.
+- **Option list.**
+  - At most `decision.options.max_options` (6), lettered A–F: by stop, nearest first, then by reward to risk.
+  - Each option has id, stop, stop_basis (for example "0.1 ATR below L8, 1h swing low 13 Oct 14:30" or "2.0 × ATR"), stop_atr, target, target_basis, rr, risk per share and levels_in_way.
+  - If no option exists, no model call is made: the decision is stored as `no_call` with the new reason `no_options` and the reason why (for example "nearest swing low 1.1 ATR away; daily swing low 4.7 ATR away; no target with rr ≥ 1.5").
+- **Constraints block.** The snapshot also gets `constraints` (atr_1h, entry_limit, allowed stop range, min_rr), so the model sees the rules the options already meet.
+
+**Stop options (held positions).** At most 3, named T1–T3:
+- below the most recent 1h swing low that is above the current stop;
+- break-even (the entry price);
+- a trail at the highest 1h close since entry − 2 × ATR.
+
+Each one is kept only when it is above the current stop and satisfies the existing tighten rule (at least 0.25 × ATR below the lowest of market price, plausible bid and bar close). Each shows `locks_profit` (the stop is at or above the entry) and `r_at_stop` (R at that stop against the initial risk). With no valid stop option, `tighten_stop` is not allowed for that call. The snapshot's `position` also carries the original thesis and invalidation (already required since PR 15).
+
+**Model output.** `prompts/decision.v2.md` (in the spec package), with a strict JSON schema:
+- symbol, action, `option_id` (A–F for enter, T1–T3 for tighten_stop, otherwise null), confidence, thesis, `levels_used`, risks, news_used.
+- There are no price fields. The invalidation is the chosen stop, written by code.
+- `confidence` now has a defined meaning: the model's estimate that price reaches the target before the stop.
+
+**Code checks under v2.**
+- **Invalid choice.** An `option_id` that wasn't offered (or a missing one for enter or tighten_stop) is invalid output: `skip` or `hold`, as today.
+- **Rechecks and gates.** The chosen option's stop distance and reward to risk are checked again, then confidence and every risk gate as today.
+- **Order time.**
+  - The final limit is recomputed as today, and the chosen stop and target stay fixed prices.
+  - Stop distance against the fresh reference and reward to risk from the final limit are checked again. If either now fails, the entry fails the Fresh quote gate with that reason.
+  - Code never picks another option or moves a level to make a trade pass.
+- **Explanation check.** Every level id in `levels_used`, thesis and risks must exist in the snapshot. Every decimal number in the text (prices, percentages, ratios) must match a number in the snapshot or the chosen option, after rounding to the text's precision. Whole numbers are not checked, because they are mostly indicator names and dates (EMA 20, 13 Oct).
+- **When the explanation check fails.** The decision still stands (explanations don't move money). The failing tokens are stored, the decision drawer shows them, and the LLM call gets the warning reason `unsupported_claim` (see LLM call history).
+
+**Strategies and backtests.**
+- A strategy's prompt version decides the decision schema: v1 strategies keep free prices, v2 strategies get options. The option builder uses the strategy's own check overrides (stop distance range, minimum reward to risk).
+- New shadow and the backtest strategy picker offer decision.v2.
+- Backtests build levels and options from the bar store with the same function and the same time cut-offs.
+
+**Replay.**
+- **What it is.** `make replay PROMPT=decision.v2 FROM=… TO=…` runs a prompt on stored input snapshots of the live run. For each candidate and held decision, it rebuilds the levels and options from the cached bars as they were at that cycle, calls the model, and scores the chosen option on the bars that followed: did the stop or the target come first within 5 sessions?
+- **Output.** `data/replays/<id>/results.jsonl` and a `report.md` with:
+  - enter rate;
+  - invalid choice rate and explanation check failure rate;
+  - which options were chosen (structure or ATR stop, level or R target);
+  - agreement with the live v1 decision;
+  - first touch and R of the chosen options;
+  - the same counts for rules-only on the same snapshots.
+- **Cost.** It counts toward the backtest monthly cap. The tool shows an estimate first and refuses more than $2 without `--yes`. Replays never write to the live tables.
+
+**Path to live. Nothing switches automatically.**
+1. Replay on every candidate snapshot of the current run. The first bar to clear: invalid choices under 2%, explanation check failures under 5%, and the share of valid entries clearly above v1's 3%, without lowering any rule.
+2. A shadow "C · Options (decision.v2)" with gpt-4o-mini at temperature 0, for at least 10 sessions next to live and rules-only. Shadows are capped at 3, so one slot has to be freed first; archive "A · Stricter trend".
+3. Marc decides with the Strategies comparison and the replay report. Promotion to live happens only with "Start new run", so the readiness evidence stays under one prompt.
+
+**Readiness.** Under v2, "Share of the last 100 model entry proposals that pass the code checks" counts a proposal as passing when:
+- its option id is valid;
+- the explanation check passes;
+- the order-time recheck passes, or no order was attempted.
+
+The criterion keeps meaning something even though the options meet the geometry rules by construction.
+
+**Storage.** `decisions` and `shadow_decisions` gain:
+- `levels` JSON and `options` JSON (as offered);
+- `chosen_option`;
+- `explanation_check` (passed or failed, with the failing tokens);
+- `options_version` (the builder version, `1`).
+
+The no_call reason list gains `no_options`.
+
+**GUI.** The decision drawer shows, for a v2 decision:
+- the header with the strategy and prompt;
+- the action with confidence;
+- **Options offered:** each option's stop with basis and ATR distance, target with basis and levels in the way, and reward to risk, with the chosen one marked;
+- **Levels:** id, price, kind and time, with the price's position marked;
+- the explanation check;
+- the gates;
+- the reasoning with the levels it used;
+- the entry, stop, target and reward to risk tiles.
+
+A v1 decision looks as before. On the dashboard, the latest-decision card shows the chosen option ("D · stop below L8 · target 2R") instead of free prices.
 
 ## Out of scope and later versions
 

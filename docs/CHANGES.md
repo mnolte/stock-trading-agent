@@ -2,9 +2,18 @@
 
 Newest first.
 
-## 2026-10-24 — Fix: phantom `invalid_output` call rows
+## 2026-10-25 — Decision v2: code-built options (PR 21)
 
-- Bug fix, no spec change. The PR 18 `llm_calls` backfill treated a stored JSON `null` (what the ORM writes for Python `None`) as a real model output, so every `no_call` decision — rules, call cap, price checks — got a call-history row classified `invalid_output`, even though no request was ever sent. A new migration deletes those phantom rows and normalises stored JSON `null` to SQL NULL; nullable JSON columns now write NULL (`none_as_null`).
+- New "Decision v2" section, from the 22 October analysis (32 of 33 entry proposals failed the code checks, mostly a stop about 1 ATR away):
+  - Code finds levels (1h and daily swings, session levels) and builds up to 6 entry options that already meet the stop-distance and reward-to-risk rules, each with its basis and the levels in the way; held positions get up to 3 stop options (swing low, break-even, ATR trail).
+  - The model picks an option id or skips, and writes no prices. `confidence` now means the chance of reaching the target before the stop.
+  - Code checks the choice, rechecks it at order time and checks the explanation (level ids exist, decimals match the input). No option means no call, stored as `no_options`.
+  - Risk rules unchanged.
+- New prompt `backend/prompts/decision.v2.md`. Config: `decision.options`, `decision.replay`. Storage: levels, options, chosen option, explanation check on decisions and shadow decisions. LLM call history: warning `unsupported_claim`; invalid choice is `invalid_output`. Readiness: under v2 the proposal criterion also needs the explanation check and order-time recheck.
+- `make replay` runs a prompt on stored snapshots and reports validity, explanation failures, choices and first touch, with rules-only alongside.
+- Path to live: replay, then a shadow "C · Options (decision.v2)" for at least 10 sessions, then Marc decides; promotion only with "Start new run". Live stays on v1 in PR 21.
+- AGENTS.md rule 8 covers every prompt version and forbids moving levels to make a choice pass.
+- Build plan: PR 21, after PR 13 and 15, independent of PR 16–20.
 
 ## 2026-10-24 — Logging, error handling and shutdown (PR 20)
 

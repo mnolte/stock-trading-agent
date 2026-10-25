@@ -37,7 +37,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 5. **Time is injected.** No `datetime.now()` in engine code; use the clock object. Schedule in `America/New_York` with `zoneinfo`; never hard-code a UTC or Amsterdam offset.
 6. **No network in tests.** Every external service sits behind an interface with a fake. Sockets are blocked in the test setup.
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
-8. **Prompts are immutable once used.** Never edit `backend/prompts/decision.v1.md` after it has made a decision; create `decision.v2.md`.
+8. **Prompts are immutable once used.** Never edit a prompt file (`decision.v1.md`, `decision.v2.md`, …) after it has made a decision; create the next version. Never move a level or pick another option in code to make a model's choice pass.
 9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys.
 10. **Local only.** The backend binds to `127.0.0.1` in v0.1.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.

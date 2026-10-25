@@ -534,6 +534,117 @@ design PNGs (Logs, Logs-390, States, Readiness). List remaining design differenc
 the audit's open questions.
 ```
 
+## PR 21 — Decision v2: code-built options
+
+```
+PR 21 (Decision v2: code-built options). Live stays on decision.v1 in this
+PR: v2 runs only in replay, shadows and backtests until Marc promotes it at
+a new run. It needs PR 13 (shadows) and PR 15 (integrity fixes) merged, and
+is independent of PR 16–20. Pull the latest spec and design packages, then
+read:
+1. docs/CHANGES.md, entry 2026-10-25 "Decision v2: code-built options
+   (PR 21)" (spec) and "Decision drawer for decision.v2" (design)
+2. docs/SPEC.md → "Decision v2: code-built options" (whole section),
+   Decision layer (code checks, no_call reasons), Strategies and shadows,
+   Backtesting → Model calls, Data model (decisions, shadow_decisions),
+   Readiness (Model group), Build plan item 21
+3. docs/analysis/2026-10-22-live-data-and-llm.md §3 and
+   2026-10-22-bugs-and-faulty-logic.md §8–9 (why)
+4. backend/prompts/decision.v2.md (new; copy it into the repo unchanged)
+   and backend/config.example.yaml → decision.options, decision.replay
+5. AGENTS.md hard rule 8; design/screens/DecisionV2.dc.html with
+   DecisionV2.png
+
+Before you start: if backend/prompts/decision.v2.md already exists in the
+repo (for example made for a shadow), stop and ask; don't overwrite it.
+
+Build PR 21 only, in this order (one commit per step):
+1. Level finder, a pure function: confirmed 1h and daily swing highs and
+   lows (swing_strength bars each side, lookbacks from config), prior
+   session high, low and close, session high and low so far, session
+   VWAP; at most 8 levels each side of the price, ids L1… from the highest
+   price down. Unit tests on fixture bars, including unconfirmed newest
+   bars and early-close sessions.
+2. Option builder, a pure function:
+   - entry options from the stop reference (lowest of market price,
+     plausible ask, bar close), the limit (+0.05%) and ATR(1h); level
+     stops with the buffer plus ATR stops; kept only within the stop band
+     (the strategy's overrides apply); merged within dedupe_atr, level
+     first; max 3 stops;
+   - targets from levels above the limit and R multiples, kept at R/R ≥
+     the minimum, merged the same way, with levels_in_way; max 6 options
+     lettered A–F;
+   - held stop options T1–T3 (swing low above the current stop,
+     break-even, trail) under the existing tighten rule, with
+     locks_profit and r_at_stop.
+   No options means no model call: no_call with reason no_options and the
+   reason text. Property test: no offered option ever breaks the stop band
+   or minimum R/R.
+3. Snapshot and schema: levels, constraints, options or stop_options
+   added for v2 strategies; the strict v2 JSON schema (option_id, no price
+   fields, levels_used); prompt registry by version, so a strategy's
+   prompt version picks the schema and the builder. v1 stays byte-for-byte
+   unchanged (test with a stored v1 snapshot).
+4. Checks:
+   - an unknown or missing option_id is invalid_output (skip or hold);
+   - the chosen option goes through the same code checks and risk gates;
+   - at order time (live and approvals) the stop band and R/R are
+     rechecked from the final limit with the stop and target fixed; a
+     failure fails the Fresh quote gate with its reason; never pick
+     another option or move a level;
+   - explanation check: level ids exist; decimals match the snapshot or
+     the chosen option after rounding; a failure is stored with its
+     tokens, the decision still stands, and llm_calls gets the warning
+     unsupported_claim (if PR 18 is merged).
+   Readiness proposal criterion counted per the spec for v2 decisions (if
+   PR 16 is merged).
+5. Storage: a new Alembic revision adding levels, options, chosen_option,
+   explanation_check and options_version to decisions and
+   shadow_decisions; the no_options reason everywhere no_call reasons
+   are listed or labelled.
+6. Shadows and backtests: decision.v2 selectable in New shadow and in the
+   backtest strategy picker; the same builder in backtests, cut at the
+   decision time.
+7. Replay: make replay PROMPT= FROM= TO= [MODEL=] [--yes]
+   - rebuild levels and options from the cached bars at each stored
+     snapshot's cycle time; call the model;
+   - score the chosen option's first touch and R over the next 5 sessions
+     from bars; run rules-only on the same snapshots;
+   - write data/replays/<id>/results.jsonl and report.md (enter rate,
+     invalid choice rate, explanation failures, choices by basis,
+     agreement with v1, first touch and R);
+   - estimate first and refuse above decision.replay.confirm_above_usd
+     without --yes; count the cost toward the backtest cap; never write to
+     live tables.
+8. GUI: the decision drawer for v2 per DecisionV2.dc.html (options table,
+   levels list, explanation check, option gates); v1 decisions unchanged;
+   the dashboard latest-decision card shows the chosen option for v2.
+
+Then, without changing live:
+- Run make replay with decision.v2 on every candidate snapshot of the
+  current run and attach report.md to the PR.
+- Tell me which shadow to archive to make room for "C · Options
+  (decision.v2)" (I'll confirm), then start it.
+
+Tests:
+- Level finder and builder fixtures, including: no options, merged stops
+  and targets, a level exactly on the band edge, levels in the way, and
+  held options with and without locks_profit.
+- Property test over random bars: every offered option meets the rules.
+- Invalid option id → skip or hold.
+- Explanation check pass and fail cases (unknown id, invented decimal,
+  whole numbers ignored).
+- Order-time recheck failure → Fresh quote gate with reason, and no other
+  option is picked.
+- A v1 snapshot and prompt are unchanged.
+- A v2 shadow runs a full simulated session.
+- The replay estimate and refusal, and no writes to live tables.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-21/ next to the
+design PNGs (DecisionV2). List remaining design differences.
+```
+
 ## Each later PR
 
 ```

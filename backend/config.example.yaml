@@ -76,6 +76,20 @@ decision:
   tighten_min_atr_below_price: 0.25   # new stop must sit this far below bid/last/bar close
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
+  options:                      # PR 21, decision.v2 option builder (strategies' check overrides apply)
+    swing_strength: 2           # bars on each side for a swing high or low
+    swing_lookback_bars_1h: 60
+    swing_lookback_sessions: 60 # daily swings
+    max_levels_each_side: 8
+    level_buffer_atr: 0.1       # stops sit this far below a level, targets this far below resistance
+    atr_stop_multiples: [2.0]   # plain ATR stops next to level-based ones
+    target_r_multiples: [2.0, 3.0]
+    dedupe_atr: 0.5             # merge stops or targets this close; level-based wins
+    max_stops: 3
+    max_options: 6
+    held_trail_atr: 2.0         # T option: highest 1h close since entry minus this x ATR
+  replay:
+    confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 
 risk:
   risk_per_trade_pct: 0.5
@@ -107,8 +121,6 @@ performance:
     bucket_r: 0.5               # R distribution bucket width
     top_share_pct: 20           # "top 20% of trades"
     after_exit_sessions: 5      # window for best and close after exit
-    after_exit_bar_delay_minutes: 16  # delay before trusting a closed session's bars
-    after_exit_max_failures: 3  # failed fetches before a row is "unavailable"
     min_trades: 20              # below this the card shows the small-sample banner
 
 reviews:
