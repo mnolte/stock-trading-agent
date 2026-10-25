@@ -108,6 +108,10 @@ export interface ModelOutput {
   invalidation: string | null;
   risks: string[];
   news_used: string[];
+  /** decision.v2: the picked option id and the level ids it cites —
+   * stop_price/target_price are absent on v2 rows. */
+  option_id?: string | null;
+  levels_used?: string[];
 }
 
 export interface CodeCheck {
@@ -481,6 +485,15 @@ export interface DecisionDetail {
   prompt_version: string | null;
   prompt_hash: string | null;
   prompt_text: string | null;
+  /** decision.v2: the code-built levels and options as stored. */
+  levels?: { levels?: V2Level[] } | null;
+  options?: V2OptionsColumn | null;
+  chosen_option?: string | null;
+  explanation_check?: {
+    passed: boolean;
+    bad_ids: string[];
+    bad_numbers: string[];
+  } | null;
   model: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
@@ -1097,6 +1110,8 @@ export interface DashboardLatestDecision {
   /** False when this is the most recent decision from an earlier session —
    * the card then shows the date instead of the full in-session layout. */
   in_session: boolean;
+  /** decision.v2: the chosen option id (e.g. "D"), when one was picked. */
+  chosen_option?: string | null;
 }
 
 export interface DashboardFeedItem {
@@ -1676,4 +1691,44 @@ export interface LlmCallDetail extends LlmCallRow {
   result: string;
   explanation: string | null;
   link: string | null;
+}
+
+
+export interface V2Level {
+  id: string;
+  price: number;
+  kind: string;
+  timeframe: string;
+  time: string | null;
+}
+
+export interface V2Option {
+  id: string;
+  stop: number;
+  stop_basis: string;
+  stop_atr: number | null;
+  stop_level: string | null;
+  target: number;
+  target_basis: string;
+  target_level: string | null;
+  rr: number;
+  risk: number;
+  levels_in_way: string[];
+}
+
+export interface V2StopOption {
+  id: string;
+  stop: number;
+  basis: string;
+  locks_profit: boolean;
+  r_at_stop: number | null;
+  level: string | null;
+}
+
+export interface V2OptionsColumn {
+  options?: V2Option[];
+  stop_options?: V2StopOption[];
+  merged?: string[];
+  level_notes?: Record<string, string>;
+  options_version?: string;
 }

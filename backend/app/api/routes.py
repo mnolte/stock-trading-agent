@@ -662,6 +662,11 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "prompt_version": decision.prompt_version,
         "prompt_hash": decision.prompt_hash,
         "prompt_text": prompt_text,
+        # decision.v2: the offered levels/options and the stored checks
+        "levels": decision.levels,
+        "options": decision.options,
+        "chosen_option": decision.chosen_option,
+        "explanation_check": decision.explanation_check,
         "model": decision.model,
         "tokens_in": decision.tokens_in,
         "tokens_out": decision.tokens_out,
@@ -3243,6 +3248,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "final_action": d.final_action,
             "no_call_reason": d.no_call_reason,
             "confidence": output.get("confidence"),
+            "chosen_option": decision.chosen_option
+            if decision.prompt_version == "decision.v2"
+            else None,
             "why": why,
             "model": d.model,
             "regime": snapshot.get("regime"),

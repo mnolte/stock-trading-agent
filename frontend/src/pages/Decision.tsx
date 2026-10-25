@@ -5,7 +5,7 @@ import type { Location } from 'react-router-dom';
 import { getBacktestDecision, getDecision, postVerdict } from '../api/state';
 import { Chip } from '../components/Chip';
 import { displayDayTime, nyTime } from '../format';
-import type { DecisionDetail, VerdictValue } from '../types/api';
+import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption } from '../types/api';
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
@@ -357,6 +357,301 @@ function Reasoning({ decision }: { decision: DecisionDetail }) {
         </div>
       )}
     </Section>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// decision.v2: code-built options (design/screens/DecisionV2.dc.html)
+
+const MONO = 'var(--sa-font-mono)';
+
+function _v2Levels(decision: DecisionDetail): V2Level[] {
+  const stored = decision.levels?.levels;
+  if (Array.isArray(stored)) return stored as V2Level[];
+  const snap = decision.input_snapshot?.levels;
+  return Array.isArray(snap) ? (snap as V2Level[]) : [];
+}
+
+function _v2Options(decision: DecisionDetail): V2Option[] {
+  const col = decision.options?.options;
+  if (Array.isArray(col)) return col;
+  const snap = decision.input_snapshot?.options;
+  return Array.isArray(snap) ? (snap as V2Option[]) : [];
+}
+
+function _v2StopOptions(decision: DecisionDetail): V2StopOption[] {
+  const col = decision.options?.stop_options;
+  if (Array.isArray(col)) return col;
+  const snap = decision.input_snapshot?.stop_options;
+  return Array.isArray(snap) ? (snap as V2StopOption[]) : [];
+}
+
+function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
+  const options = _v2Options(decision);
+  const stopOptions = _v2StopOptions(decision);
+  const chosen = decision.chosen_option;
+  const merged = decision.options?.merged ?? [];
+  if (options.length === 0 && stopOptions.length === 0) {
+    return (
+      <Section label="Options offered" right="built by code — the model picks an id">
+        {muted('No option met the stop band and R/R rules — the model was not asked.')}
+      </Section>
+    );
+  }
+  return (
+    <Section label="Options offered" right="built by code — the model picks an id">
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+        }}
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
+              {['', 'Stop', 'Target', 'R/R'].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    textAlign: 'left',
+                    padding: '8px 10px',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {options.map((o) => (
+              <tr
+                key={o.id}
+                style={{
+                  borderBottom: '1px solid var(--sa-border)',
+                  background:
+                    o.id === chosen ? 'var(--sa-accent-bg, rgba(127,184,255,0.10))' : undefined,
+                }}
+              >
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontWeight: 600,
+                    color:
+                      o.id === chosen ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+                  }}
+                >
+                  {o.id}
+                </td>
+                <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
+                  <div style={{ fontFamily: MONO }}>{o.stop.toFixed(2)}</div>
+                  <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
+                    {o.stop_basis}
+                    {o.stop_atr != null ? ` · ${o.stop_atr.toFixed(2)} ATR` : ''}
+                  </div>
+                </td>
+                <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
+                  <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
+                  <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
+                    {o.target_basis}
+                    {o.levels_in_way.length > 0
+                      ? ` · in the way ${o.levels_in_way.join(', ')}`
+                      : ''}
+                  </div>
+                </td>
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontSize: 'var(--sa-text-sm)',
+                  }}
+                >
+                  {o.rr.toFixed(2)}
+                </td>
+              </tr>
+            ))}
+            {stopOptions.map((o) => (
+              <tr
+                key={o.id}
+                style={{
+                  borderBottom: '1px solid var(--sa-border)',
+                  background:
+                    o.id === chosen ? 'var(--sa-accent-bg, rgba(127,184,255,0.10))' : undefined,
+                }}
+              >
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontWeight: 600,
+                    color:
+                      o.id === chosen ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+                  }}
+                >
+                  {o.id}
+                </td>
+                <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }} colSpan={2}>
+                  <span style={{ fontFamily: MONO }}>{o.stop.toFixed(2)}</span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>
+                    {' '}
+                    · {o.basis}
+                  </span>
+                </td>
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontSize: 'var(--sa-text-sm)',
+                  }}
+                >
+                  {o.r_at_stop != null ? `${o.r_at_stop.toFixed(2)}R` : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {merged.length > 0 &&
+        muted(`Merged: ${merged.join('; ')}`)}
+    </Section>
+  );
+}
+
+function _levelKindLabel(level: V2Level): string {
+  const when = level.time
+    ? new Date(level.time).toLocaleDateString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        timeZone: 'UTC',
+      })
+    : '';
+  const label: Record<string, string> = {
+    swing_low: `${level.timeframe} swing low`,
+    swing_high: `${level.timeframe} swing high`,
+    prior_session_high: 'prior session high',
+    prior_session_low: 'prior session low',
+    prior_session_close: 'prior session close',
+    session_high: 'session high so far',
+    session_low: 'session low so far',
+    vwap: 'session VWAP',
+  };
+  return `${label[level.kind] ?? level.kind}${when ? ` · ${when}` : ''}`;
+}
+
+function V2Levels({ decision }: { decision: DecisionDetail }) {
+  const levels = _v2Levels(decision);
+  const notes = decision.options?.level_notes ?? {};
+  const used = new Set(decision.model_output?.levels_used ?? []);
+  const limit = Number(
+    (decision.input_snapshot?.constraints as Record<string, unknown> | undefined)
+      ?.entry_limit,
+  );
+  if (levels.length === 0) return null;
+  const limitIdx = Number.isFinite(limit)
+    ? levels.findIndex((lv) => lv.price < limit)
+    : -1;
+  return (
+    <Section label="Levels" right="nearest first on each side of the price">
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          padding: '0 var(--sa-space-3)',
+        }}
+      >
+        {levels.map((lv, i) => (
+          <Fragment key={lv.id}>
+            {i === limitIdx && limitIdx > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '7px 0',
+                  borderBottom: '1px dashed var(--sa-accent)',
+                  fontSize: 'var(--sa-text-sm)',
+                  color: 'var(--sa-accent)',
+                  fontFamily: MONO,
+                }}
+              >
+                <span>entry limit</span>
+                <span>{limit.toFixed(2)}</span>
+              </div>
+            )}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: 'var(--sa-space-3)',
+                padding: '7px 0',
+                fontSize: 'var(--sa-text-md)',
+                borderBottom:
+                  i < levels.length - 1 ? '1px solid var(--sa-border)' : 'none',
+              }}
+            >
+              <span style={{ display: 'flex', gap: '8px', minWidth: 0 }}>
+                <b
+                  style={{
+                    fontFamily: MONO,
+                    color: used.has(lv.id) ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+                  }}
+                >
+                  {lv.id}
+                </b>
+                <span style={{ fontFamily: MONO, color: 'var(--sa-text)' }}>
+                  {lv.price.toFixed(2)}
+                </span>
+                <span
+                  style={{
+                    color: 'var(--sa-text-muted)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {_levelKindLabel(lv)}
+                </span>
+              </span>
+              <span
+                style={{
+                  fontSize: 'var(--sa-text-sm)',
+                  color: 'var(--sa-text-muted)',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {notes[lv.id] ?? ''}
+              </span>
+            </div>
+          </Fragment>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function V2Explanation({ decision }: { decision: DecisionDetail }) {
+  const check = decision.explanation_check;
+  if (check === undefined || check === null) return null;
+  return check.passed ? null : (
+    <div
+      style={{
+        border: '1px solid var(--sa-warning)',
+        borderRadius: 'var(--sa-radius-md)',
+        padding: '8px 10px',
+        fontSize: 'var(--sa-text-sm)',
+        color: 'var(--sa-warning-text)',
+      }}
+    >
+      Explanation check failed
+      {check.bad_ids.length > 0 && ` — unknown ids ${check.bad_ids.join(', ')}`}
+      {check.bad_numbers.length > 0 &&
+        ` — unsupported numbers ${check.bad_numbers.join(', ')}`}
+      {' '}— the decision stands.
+    </div>
   );
 }
 
@@ -961,8 +1256,17 @@ export default function Decision() {
           </div>
 
           <SafetyGates decision={decision} />
+          {decision.prompt_version === 'decision.v2' && (
+            <>
+              <V2OptionsTable decision={decision} />
+              <V2Levels decision={decision} />
+            </>
+          )}
           <SignalStack decision={decision} />
           <Reasoning decision={decision} />
+          {decision.prompt_version === 'decision.v2' && (
+            <V2Explanation decision={decision} />
+          )}
 
           {/* level tiles */}
           <div

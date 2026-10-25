@@ -405,6 +405,9 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
             <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
               {d.confidence !== null ? d.confidence.toFixed(2) : '—'}
             </span>
+            {d.chosen_option && (
+              <span style={{ color: 'var(--sa-accent)' }}> · option {d.chosen_option}</span>
+            )}
           </span>
         </div>
       </div>
