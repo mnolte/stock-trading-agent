@@ -22,7 +22,7 @@ export default defineConfig({
       // review is due (the clock is frozen on Thursday 15 Oct).
       // tests/e2e_backtest_seed.py adds a finished backtest run so the
       // Results panels have data (the frozen clock can't run one).
-      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db SA_DATA_DIR=/tmp/stock-agent-e2e-data && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/python -m tests.e2e_backtest_seed && ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
+      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db SA_DATA_DIR=/tmp/stock-agent-e2e-data && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/python -m tests.e2e_backtest_seed && rm -f /tmp/stock-agent-e2e-data/run.lock && ../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: true,
       timeout: 120_000,
