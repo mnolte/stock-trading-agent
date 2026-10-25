@@ -2895,3 +2895,55 @@ async def test_enter_and_approve_share_the_fresh_quote_step(
         assert decision.final_action == "enter"
     assert calls == ["MSFT"]
     assert broker.submit_calls == 1
+
+
+async def test_v2_order_time_recheck_fails_fresh_quote(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """decision.v2: the fresh-price recheck fails the Fresh quote gate with
+    the reason, and code never picks another option (docs/SPEC.md)."""
+    clock = FakeClock(NOW)
+    executor = _executor(
+        session_factory,
+        FakeBroker(clock, prices={"MSFT": Decimal("420")}),
+        clock,
+        sources=_sources(quotes=_AgedQuotes(clock, 0, ask="421.30", bid="421.20")),
+    )
+    with session_factory() as session:
+        session.commit()
+        _store_reference(executor, "MSFT", Decimal("420.10"))
+        decision = _decision(
+            session,
+            "MSFT",
+            "enter",
+            # v2 output carries no prices — only the chosen option id.
+            {"action": "enter", "option_id": "A", "confidence": 0.62},
+        )
+        decision.prompt_version = "decision.v2"
+        decision.chosen_option = "A"
+        decision.options = {
+            "options_version": "v2",
+            "options": [
+                {"id": "A", "stop": 412.0, "target": 435.0, "rr": 1.42},
+                {"id": "B", "stop": 410.0, "target": 450.0, "rr": 2.5},
+            ],
+        }
+        await executor.apply_decision(
+            session,
+            decision,
+            _item("MSFT"),
+            None,
+            _quote("MSFT"),
+            NOW,
+            account=_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "fresh_quote"
+        checks = cast("list[dict[str, object]]", decision.gates_result["checks"])
+        assert "reward to risk" in str(checks[-1]["detail"])
+        # The chosen option stands; nothing swapped in its place.
+        assert decision.chosen_option == "A"
+        assert "option_id" in (decision.model_output or {})
