@@ -123,7 +123,7 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --allow-build=esbuild
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
@@ -133,7 +133,7 @@ jobs:
       # Caching the seeded+warmed e2e database makes the first screen in
       # each job incremental; alembic upgrade still runs at seed time, so
       # a stale cache migrates forward.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             /tmp/stock-agent-e2e.db
