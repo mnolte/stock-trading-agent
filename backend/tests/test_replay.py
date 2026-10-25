@@ -9,14 +9,13 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, sessionmaker
-
 from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.db.models import Cycle, Decision, Run
 from app.decide.client import FakeDecisionClient
 from app.replay import replay, replay_spent_usd
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
@@ -131,9 +130,9 @@ def _counts(sf: sessionmaker[Session]) -> dict[str, int]:
 
 
 def _provider(config: AppConfig, sf: sessionmaker[Session]):
+    from app.data.cache import BarCache
     from app.market.calendar import StaticCalendarProvider
     from app.replay import _sessions_from_bars
-    from app.data.cache import BarCache
 
     days = _sessions_from_bars(
         BarCache(sf),

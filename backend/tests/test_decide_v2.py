@@ -9,9 +9,9 @@ from decimal import Decimal
 from app.config import AppConfig
 from app.decide.output import (
     NO_CALL_REASONS,
+    ModelOutputV2,
     check_explanation,
     decision_trade_prices,
-    ModelOutputV2,
     validate_model_output_v2,
 )
 from app.decide.prompt import prompt_spec
@@ -32,7 +32,10 @@ _SNAPSHOT = {
         {"id": "L2", "price": 104.5, "kind": "swing_high", "timeframe": "1h", "time": None},
         {"id": "L3", "price": 96.0, "kind": "swing_low", "timeframe": "1h", "time": None},
     ],
-    "constraints": {"atr_1h": 2.0, "entry_limit": 100.05, "stop_atr_min": 1.5, "stop_atr_max": 4.0, "min_reward_risk": 1.5},
+    "constraints": {
+        "atr_1h": 2.0, "entry_limit": 100.05, "stop_atr_min": 1.5,
+        "stop_atr_max": 4.0, "min_reward_risk": 1.5,
+    },
     "options": [
         {
             "id": "A",
@@ -64,7 +67,10 @@ _SNAPSHOT = {
 }
 
 
-def _v2(action="enter", option_id="A", thesis="breakout above L2 at 104.50", levels_used=None, confidence=0.62):
+def _v2(
+    action="enter", option_id="A", thesis="breakout above L2 at 104.50",
+    levels_used=None, confidence=0.62,
+):
     return json.dumps(
         {
             "symbol": "ABC",
