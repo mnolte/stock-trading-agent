@@ -3642,6 +3642,8 @@ _NO_CALL_WHY = {
     "price_stale": "no fresh price — the model was not asked",
     "price_suspect": "price check failed — the model was not asked",
     "model_error": "the model call failed",
+    "no_options": "no option met the rules — the model was not asked",
+    "reference_missing": "no usable reference price — the model was not asked",
 }
 
 
