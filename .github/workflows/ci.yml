@@ -47,7 +47,7 @@ jobs:
       - run: make test-backend
         env:
           PYTEST_ADDOPTS: --junitxml=junit-backend.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-backend
@@ -73,7 +73,7 @@ jobs:
       - run: make test-slow
         env:
           PYTEST_ADDOPTS: --junitxml=junit-slow.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-slow
@@ -144,7 +144,7 @@ jobs:
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
         env:
           E2E_PREVIEW: '1'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-${{ matrix.project }}
