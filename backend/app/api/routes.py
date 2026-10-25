@@ -3248,9 +3248,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "final_action": d.final_action,
             "no_call_reason": d.no_call_reason,
             "confidence": output.get("confidence"),
-            "chosen_option": decision.chosen_option
-            if decision.prompt_version == "decision.v2"
-            else None,
+            "chosen_option": (
+                d.chosen_option if d.prompt_version == "decision.v2" else None
+            ),
             "why": why,
             "model": d.model,
             "regime": snapshot.get("regime"),
