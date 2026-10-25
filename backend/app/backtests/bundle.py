@@ -246,6 +246,7 @@ class RulesOnlyDecisionService(DecisionService):
         price: Decimal | None,
         atr_1h: Decimal | None,
         current_stop: Decimal | None,
+        v2: Any = None,
     ) -> Any:
         from app.decide.output import ModelOutput, ValidationResult
 

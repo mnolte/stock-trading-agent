@@ -157,6 +157,8 @@ def _item(symbol: str) -> SymbolEval:
         snapshot=_snapshot(symbol),
         rules=RulesResult(symbol, "pass", None, []),
         bars_1h=[],
+        daily=[],
+        today_5m=[],
         price=Decimal("420"),
         day_change_pct=Decimal("0.5"),
     )

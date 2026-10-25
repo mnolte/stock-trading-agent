@@ -17,6 +17,28 @@ PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 
 
 @dataclass(frozen=True)
+class PromptSpec:
+    """What a prompt version means in code (docs/SPEC.md, Decision v2).
+
+    A strategy's prompt version picks the response schema and whether the
+    snapshot carries code-built levels and options.
+    """
+
+    version: str
+    json_schema: dict[str, object]  # OpenAI strict JSON schema
+    uses_options: bool = False  # decision.v2: code-built options
+
+
+def prompt_spec(version: str) -> PromptSpec:
+    """The code contract for a prompt version; unknown versions get v1's."""
+    from app.decide.output import DECISION_JSON_SCHEMA, DECISION_V2_JSON_SCHEMA
+
+    if version == "decision.v2":
+        return PromptSpec(version, DECISION_V2_JSON_SCHEMA, uses_options=True)
+    return PromptSpec(version, DECISION_JSON_SCHEMA)
+
+
+@dataclass(frozen=True)
 class Prompt:
     """A versioned prompt file."""
 

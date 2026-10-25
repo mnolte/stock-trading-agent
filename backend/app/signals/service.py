@@ -84,6 +84,10 @@ class SymbolEval:
     snapshot: IndicatorSnapshot
     rules: RulesResult
     bars_1h: list[Bar1h]
+    # Raw inputs the v2 level/option builders need (docs/SPEC.md,
+    # Decision v2): completed daily bars and today's closed 5m bars.
+    daily: list[DailyBar]
+    today_5m: list[Bar5m]
     price: Decimal | None
     day_change_pct: Decimal | None
     warming_up: bool = False
@@ -261,7 +265,7 @@ class SignalService:
 
     def snapshots_for(
         self, symbols: list[str], now: datetime
-    ) -> dict[str, tuple[IndicatorSnapshot, list[Bar1h]]]:
+    ) -> dict[str, tuple[IndicatorSnapshot, list[Bar1h], list[DailyBar], list[Bar5m]]]:
         """Indicator snapshots (and closed 1h bars) for symbols outside the
         cycle universe — the ones only shadow strategies hold. No rules
         check: live makes no decision for them (docs/SPEC.md, Running
@@ -275,7 +279,9 @@ class SignalService:
         earnings_status = self.market_data.latest_earnings
         earnings_ok = earnings_status is not None and earnings_status.error is None
         earnings_next = self.next_earnings(symbols, today)
-        out: dict[str, tuple[IndicatorSnapshot, list[Bar1h]]] = {}
+        out: dict[
+            str, tuple[IndicatorSnapshot, list[Bar1h], list[DailyBar], list[Bar5m]]
+        ] = {}
         for symbol in symbols:
             bars_1h, daily, todays = self._symbol_bars(
                 symbol, sessions, daily_sessions, today, now
@@ -292,6 +298,8 @@ class SignalService:
                     today,
                 ),
                 bars_1h,
+                daily,
+                todays,
             )
         return out
 
@@ -467,6 +475,8 @@ class SignalService:
                     snapshot=snap,
                     rules=rules,
                     bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
                     price=price,
                     day_change_pct=change,
                     warming_up=warming is not None,

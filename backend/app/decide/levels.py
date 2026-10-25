@@ -240,3 +240,14 @@ def find_levels(
     ]
 
 
+
+
+def level_json(level: Level) -> dict[str, Any]:
+    """The level as stored in snapshots and the ``levels`` column."""
+    return {
+        "id": level.id,
+        "price": float(level.price),
+        "kind": level.kind,
+        "timeframe": level.timeframe,
+        "time": level.time.isoformat() if level.time else None,
+    }

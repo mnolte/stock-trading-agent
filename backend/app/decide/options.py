@@ -325,7 +325,7 @@ def build_stop_options(
     bars_1h: Sequence[Bar1h],
     entry: Decimal,
     opened_at: datetime | None,
-    current_stop: Decimal,
+    current_stop: Decimal | None,
     initial_stop: Decimal | None,
     reference: Decimal,
     atr_1h: Decimal,
@@ -348,7 +348,7 @@ def build_stop_options(
     )
     swing = next(
         (
-            s for s in reversed(lows) if s.price > current_stop
+            s for s in reversed(lows) if current_stop is None or s.price > current_stop
         ),
         None,
     )
@@ -377,7 +377,7 @@ def build_stop_options(
 
     options: list[StopOption] = []
     for basis, stop, level in candidates:
-        if stop <= current_stop or reference - stop < margin:
+        if (current_stop is not None and stop <= current_stop) or reference - stop < margin:
             continue
         options.append(
             StopOption(
