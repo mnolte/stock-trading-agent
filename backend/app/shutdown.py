@@ -8,9 +8,11 @@ the wait. Clients are closed, the WAL is checkpointed, the engine
 disposed and the log pipeline closed last.
 
 ``RunLock`` writes ``data/run.lock`` ({pid, boot_id, heartbeat}) at
-startup: a live pid from the same boot refuses startup; a stale lock
-means the last run died uncleanly — a quick_check runs and the GUI shows
-the unclean-run banner.
+startup: a live pid from the same boot with a fresh heartbeat refuses
+startup; a stale lock means the last run died uncleanly — a quick_check
+runs and the GUI shows the unclean-run banner. A lock from a different
+boot or a live pid whose heartbeat has gone quiet counts as stale: pids
+get recycled across boots and within one.
 """
 
 from __future__ import annotations
@@ -30,6 +32,12 @@ if TYPE_CHECKING:
     from app.config import AppConfig
 
 logger = logging.getLogger("app")
+
+# Missed heartbeats tolerated before a live pid reads as recycled — pids
+# get reused, and a restored cache can carry a lock whose pid now belongs
+# to an unrelated process.
+_HEARTBEAT_MISS_LIMIT = 3
+_HEARTBEAT_SECONDS_DEFAULT = 30
 
 
 def _pid_alive(pid: int) -> bool:
@@ -72,13 +80,33 @@ class RunLock:
             return LockCheck("free")
         try:
             data = json.loads(self.path.read_text())
+            if not isinstance(data, dict):
+                return LockCheck("stale")
             pid = int(data.get("pid", 0))
-        except (OSError, ValueError, AttributeError):
+        except (OSError, TypeError, ValueError):
             return LockCheck("stale")
         boot_id = data.get("boot_id")
         if boot_id is not None and boot_id != _boot_id():
             return LockCheck("stale", pid)
-        if pid == os.getpid() or _pid_alive(pid):
+        if pid == os.getpid():
+            return LockCheck("live", pid)
+        if not _pid_alive(pid):
+            return LockCheck("stale", pid)
+        # A live pid is the holder only while the lock is fresh. Pids get
+        # recycled, so an old lock can name a pid that now belongs to an
+        # unrelated process; more than a few missed heartbeats reads as
+        # an unclean stop, not a running agent.
+        try:
+            last_beat = max(
+                float(data.get("heartbeat_at") or 0),
+                float(data.get("started_at") or 0),
+            )
+            interval = float(
+                data.get("heartbeat_seconds") or _HEARTBEAT_SECONDS_DEFAULT
+            )
+        except (TypeError, ValueError):
+            return LockCheck("stale", pid)
+        if time.time() - last_beat <= interval * _HEARTBEAT_MISS_LIMIT:
             return LockCheck("live", pid)
         return LockCheck("stale", pid)
 

@@ -24,7 +24,7 @@ dependencies = [
     "apscheduler>=3.11.0",
     "finnhub-python>=2.4.29",
     "pandas>=2.2.3",
-    "openai>=1.109,<2",
+    "openai>=1.109,<4",
     "cryptography>=41.0.0",
 ]
 
