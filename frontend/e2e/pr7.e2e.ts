@@ -15,7 +15,7 @@ test('performance: stat cards, equity chart, aggregates, closed trades', async (
   await page.goto('/performance');
 
   await expect(
-    page.getByRole('heading', { name: 'Performance', level: 2 })
+    page.getByRole('heading', { name: 'Performance', level: 1 })
   ).toBeVisible({ timeout: 60_000 });
 
   // Six stat cards.
