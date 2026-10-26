@@ -371,3 +371,40 @@ async def test_live_entries_section_lists_v1_entries(
     assert "## Live entries" in report
     assert "offered" in report and "chose" in report
     assert "not_replayable: missing_reference" in report
+
+
+async def test_report_groups_entries_per_session(
+    session_factory: sessionmaker[Session], tmp_path: Path
+) -> None:
+    """Entries are counted per New York session with their R — same-day
+    entries are one market move, not independent trades (docs/SPEC.md,
+    Replays — entries per session)."""
+    with session_factory() as session:
+        _seed(session, bars=True)
+        # A second decision in a later cycle of the same session.
+        session.add(
+            Cycle(
+                kind="cycle",
+                scheduled_time=_naive_utc(CYCLE_AT + timedelta(minutes=10)),
+                status="done",
+            )
+        )
+        session.flush()
+        cycle_id = session.execute(select(func.max(Cycle.id))).scalar_one()
+        session.add(
+            Decision(
+                cycle_id=cycle_id,
+                symbol="MSFT",
+                context="candidate",
+                input_snapshot=dict(SNAP),
+                final_action="skip",
+                prompt_version="decision.v1",
+                prompt_hash="0" * 64,
+                model="fake",
+            )
+        )
+        session.commit()
+    out = await _run(session_factory, tmp_path, "sessions")
+    report = (out / "report.md").read_text()
+    assert "entries per session: 1 distinct session" in report
+    assert "2 entries" in report
