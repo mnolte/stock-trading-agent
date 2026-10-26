@@ -100,6 +100,12 @@ updates:
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
+    # eslint-plugin-react-refresh 0.5.x is ESM-only and requires ESLint 9;
+    # the frontend is on ESLint 8 with .eslintrc.cjs. Lift this ignore when
+    # the frontend moves to ESLint 9 and flat config.
+    ignore:
+      - dependency-name: "eslint-plugin-react-refresh"
+        versions: [">=0.5"]
 
   # GitHub Actions — action versions in .github/workflows/*.yml.
   # No `groups` or `cooldown` here: action updates are few and each is
