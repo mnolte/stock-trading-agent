@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import cast
 
@@ -24,13 +24,50 @@ def test_lock_free(tmp_path: Path) -> None:
 
 
 def test_lock_live_pid_refuses(tmp_path: Path) -> None:
-    """A live pid in run.lock refuses startup (spec: never two writers)."""
+    """A live pid with a fresh run.lock refuses startup (spec: never two
+    writers). pid 1 is always alive and is never this process."""
     path = tmp_path / "run.lock"
-    path.write_text(json.dumps({"pid": os.getpid(), "started_at": 1}))
+    path.write_text(json.dumps({"pid": 1, "started_at": time.time()}))
     lock = RunLock(path)
     assert lock.check().status == "live"
     with pytest.raises(SystemExit):
         lock.acquire()
+
+
+def test_lock_fresh_heartbeat_stays_live(tmp_path: Path) -> None:
+    """started_at ages past the grace window; heartbeat_at keeps it live."""
+    path = tmp_path / "run.lock"
+    path.write_text(
+        json.dumps(
+            {
+                "pid": 1,
+                "started_at": time.time() - 3600,
+                "heartbeat_at": time.time(),
+                "heartbeat_seconds": 30,
+            }
+        )
+    )
+    assert RunLock(path).check().status == "live"
+
+
+def test_lock_recycled_pid_is_stale(tmp_path: Path) -> None:
+    """A live pid whose heartbeat went quiet is pid reuse, not the
+    holder — a cache-restored lock must not refuse startup."""
+    path = tmp_path / "run.lock"
+    path.write_text(
+        json.dumps(
+            {
+                "pid": 1,
+                "started_at": time.time() - 3600,
+                "heartbeat_seconds": 30,
+            }
+        )
+    )
+    lock = RunLock(path)
+    assert lock.check().status == "stale"
+    lock.acquire()
+    assert lock.check().status == "live"
+    lock.release()
 
 
 def test_lock_stale_detected_and_replaced(tmp_path: Path) -> None:
