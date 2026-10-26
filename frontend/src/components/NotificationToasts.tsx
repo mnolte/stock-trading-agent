@@ -174,6 +174,12 @@ export default function NotificationToasts() {
   const lastId = useRef(0);
   const seeded = useRef(false);
   const seen = useRef(new Set<number>());
+  // Fetches are serialised: a wake during an in-flight fetch is queued and
+  // run after it, so responses are always applied in request order. Without
+  // this a refetch that overtakes the first load would land in the seed
+  // branch and mark its rows seen without ever toasting them.
+  const fetching = useRef(false);
+  const queued = useRef(false);
   const navigate = useNavigate();
 
   const dismiss = useCallback(
@@ -191,27 +197,40 @@ export default function NotificationToasts() {
   );
 
   const fetchNew = useCallback(async () => {
+    if (fetching.current) {
+      queued.current = true;
+      return;
+    }
+    fetching.current = true;
     try {
-      const res = await getNotifications(lastId.current, 20);
-      if (!seeded.current) {
-        // First load seeds the cursor only — old rows are not toasted.
-        for (const item of res.items) seen.current.add(item.id);
-        lastId.current = res.latest_id;
-        seeded.current = true;
-        return;
-      }
-      // Oldest → newest so the newest ends up first in the stack.
-      for (const item of [...res.items].reverse()) {
-        lastId.current = Math.max(lastId.current, item.id);
-        // One toast per notification event, whatever the channels or the
-        // way it arrived (poll, websocket wake).
-        if (seen.current.has(item.id)) continue;
-        seen.current.add(item.id);
-        raiseBrowserNotification(item);
-        setToasts((current) => [item, ...current]);
-      }
-    } catch {
-      // Backend briefly unreachable; the next topic update retries.
+      do {
+        queued.current = false;
+        try {
+          const res = await getNotifications(lastId.current, 20);
+          if (!seeded.current) {
+            // First load seeds the cursor only — old rows are not toasted.
+            // The follow-up pass picks up anything newer than the cursor.
+            for (const item of res.items) seen.current.add(item.id);
+            lastId.current = res.latest_id;
+            seeded.current = true;
+            continue;
+          }
+          // Oldest → newest so the newest ends up first in the stack.
+          for (const item of [...res.items].reverse()) {
+            lastId.current = Math.max(lastId.current, item.id);
+            // One toast per notification event, whatever the channels or
+            // the way it arrived (poll, websocket wake).
+            if (seen.current.has(item.id)) continue;
+            seen.current.add(item.id);
+            raiseBrowserNotification(item);
+            setToasts((current) => [item, ...current]);
+          }
+        } catch {
+          // Backend briefly unreachable; the next topic update retries.
+        }
+      } while (queued.current);
+    } finally {
+      fetching.current = false;
     }
   }, []);
 
