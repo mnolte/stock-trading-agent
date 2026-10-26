@@ -2,6 +2,23 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-26 — Error pages
+
+- New `Errors.dc.html` with six pages shown in browser frames:
+  - **In the app:** "Decision 98213 doesn't exist" (404 for a record, with a matching search), "There is no page here" (404 for a route), "Something went wrong on this page" (error id, Reload, Copy error id, Open in Logs), and "The app isn't answering" (first load, retrying every 15 s, with a note that stops at Alpaca still protect positions).
+  - **Served by Caddy:** "Stock Agent isn't responding" (502/504) and "Updating" (503). Brand mark only; no version, host or data.
+- The in-app pages use the normal shell (simplified here); the static ones stand alone with system fonts.
+
+## 2026-10-26 — Sign-in and server
+
+- New `Login.dc.html`: one card per step (password, authenticator code, locked out) with the PAPER badge and host name. There is no sidebar before signing in.
+- Sidebar on every screen: "Sign out" above the status line (new `signout` icon; `lock` icon moved to the shared set).
+- `Settings.dc.html`: new sections Access (sign-in mode, password, authenticator and recovery codes, idle sign-out, risky actions, signed-in devices, failed sign-ins) and Server (version, address and certificate, running since, clock, disk with warning, OS updates, local and offsite backups, restore test, heartbeat, single instance, Back up now and Download).
+- `States.dc.html`:
+  - new group "Access and server": session expired, restarted and resumed, restarted paused, another instance (critical), offsite backup failed, and the new sign-in toast;
+  - new dialog "Confirm it is you".
+- All screens re-rendered.
+
 ## 2026-10-26 — Insights
 
 - New `Insights.dc.html` in the Learn group (sidebar: Reviews, Insights, Strategies, Backtest, LLM inspector; new `bulb` icon), with:

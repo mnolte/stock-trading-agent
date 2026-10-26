@@ -36,6 +36,8 @@ For development, `make dev` runs the backend with auto-reload on 127.0.0.1:SA_PO
 
 Without keys, run `MODE=simulated make run` (or `make dev`): recorded bars and a fake broker, no network.
 
+Production runs on a VPS with Docker Compose (app + Caddy for HTTPS) and sign-in with a password and an authenticator app. Provisioning, deploying, backups, restoring and moving your local database are in `docs/DEPLOY.md` (written in PR 24); the rules are in `docs/SPEC.md` → VPS deployment.
+
 Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the first run.
 
 Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily at 03:00 Amsterdam time to `data/backups/` (14 days). On a VPS, run the app with `TZ=Europe/Amsterdam` so log rotation follows Amsterdam time.

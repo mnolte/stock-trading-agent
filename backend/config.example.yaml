@@ -230,6 +230,27 @@ logging:                        # PR 20, Logging, error handling and shutdown
   heartbeat_seconds: 30         # data/run.lock heartbeat for unclean-stop detection
   backtest_kill_after_seconds: 10   # on shutdown, after the cancel flag
 
+auth:                           # PR 23; only used when SA_AUTH=required
+  idle_hours: 12                # sign out after this long without activity
+  remember_days: 30             # "Keep me signed in", absolute maximum
+  min_password_length: 14
+  lockout_failures: 5           # per address, in lockout_window_minutes
+  lockout_window_minutes: 15
+  lockout_minutes: 15
+  global_failures_per_hour: 20  # across all addresses: sign-in pauses for an hour, warning sent
+  confirm_minutes: 5            # "Confirm it is you" stays valid this long on a device
+  recovery_codes: 10
+
+ops:                            # PR 24, VPS
+  resume_after_clean_restart: auto   # auto = on when SA_AUTH=required, off locally
+  heartbeat_url: ""             # dead-man's-switch ping after each cycle and position check
+  disk_warn_pct: 80
+  disk_critical_pct: 90
+  clock_max_offset_seconds: 1
+  cert_warn_days: 14
+  offsite_backup: {enabled: false, time: "03:05", keep_daily: 30, keep_weekly: 12, restore_test_day: 1}
+  deploy_guard_market_hours: true
+
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check
   backup_days: 14

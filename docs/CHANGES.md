@@ -2,11 +2,29 @@
 
 Newest first.
 
-## 2026-10-26 — Stale GUI chunks after a rebuild
+## 2026-10-26 — Error pages and API errors (PR 25)
 
-- A tab left open across a `make run` rebuild kept asking for hashed chunks that no longer existed; the SPA fallback answered `index.html` (200, text/html), the module load failed and the error boundary showed "Something went wrong" until a reload.
-- `SpaStaticFiles` now returns a real 404 for missing paths with a file extension; only extensionless page paths fall back to `index.html`. `index.html` goes out `Cache-Control: no-cache` and hashed assets under `/assets/` go out `immutable`.
-- Client error reports now use `keepalive` so the "stale chunk" report survives the immediate reload in the `vite:preloadError` handler.
+- New "Error pages and API errors" section:
+  - **API errors:** one JSON shape (`code`, `message`, `error_id` on 500, `fields` on 422), never tracebacks, SQL, paths or secrets. A table maps each status (400, 401, 403, 404, 409, 422, 429, 500, 503) to what the frontend does.
+  - **In-app pages:** not found for a page or a record, "Something went wrong" per screen with the error id, "The app isn't answering" on first load, and an offline banner.
+  - **Static pages from Caddy:** 502/504 "isn't responding" and 503 "Updating" (maintenance flag set by `deploy.sh` and `restore.sh`). They are self-contained and reveal no data, version or host details; API calls during an outage get the same JSON shape.
+- GUI table: Error pages row. Build plan: PR 25.
+
+## 2026-10-26 — VPS deployment (PR 23 and 24)
+
+- New "VPS deployment" section: production on a Linux VPS (provider open; 2 vCPU, 4 GB, 40 GB, EU).
+  - **Containers:** Docker Compose with `app` (one worker, non-root, read-only filesystem, data on a volume, internal network only, 90 s stop grace) and `caddy` (HTTPS, security headers, the only public entry point).
+  - **Hardening:** SSH keys only, ufw, fail2ban, automatic updates with a Sunday 05:00 reboot window, chrony.
+- **Sign-in (PR 23):** one user from `make create-user`; password (Argon2id) plus authenticator code with recovery codes; session cookie with 12 h idle and 30-day maximum; CSRF and WebSocket origin checks; lockouts; "Confirm it is you" before risky actions; `SA_AUTH`, and the app refuses to start without sign-in off loopback.
+- **Safety:** an instance id in every client order id, and reconciliation turns the kill switch on when another instance trades the account. After a clean planned restart on the VPS the agent resumes on its own; otherwise it stays paused.
+- **Deployment (PR 24):**
+  - CI images and `deploy.sh` with a market-hours guard, pre-deploy backup, migrations, health check and rollback;
+  - encrypted offsite backups with a monthly restore test;
+  - an outside heartbeat and uptime check;
+  - Settings → Server;
+  - `docs/DEPLOY.md`, including how to move the local database.
+- Data model: `users`, `sessions`, `sign_in_attempts`; `secrets` gains backup_password and backup_credentials. Config: `auth`, `ops`. `.env`: `SA_AUTH`, `SA_PUBLIC_URL`, `SA_TRUSTED_PROXY`, `SA_INSTANCE_ID`. Notifications: 8 new events. AGENTS.md rule 10 rewritten. Readiness manual item "Hosting with login" gets concrete conditions.
+- Build plan: PR 23 (local) and PR 24 (after PR 20 and 23).
 
 ## 2026-10-26 — Insights (PR 22)
 

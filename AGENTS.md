@@ -26,7 +26,7 @@ make lint        # ruff + mypy (backend), pnpm lint + pnpm typecheck (frontend)
 make test        # pytest with sockets blocked, vitest, playwright e2e when browsers are installed
 ```
 
-`make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both with a graceful shutdown. `make logs-reindex` rebuilds the log index from the log files. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
+`make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both with a graceful shutdown. `make logs-reindex` rebuilds the log index from the log files. `make create-user` creates or resets the single account (server only). `deploy/` holds provision, deploy and restore scripts (see `docs/DEPLOY.md`); never run them from a PR. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
 
 ## Hard rules
 
@@ -39,7 +39,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
 8. **Prompts are immutable once used.** Never edit a prompt file (`decision.v1.md`, `decision.v2.md`, …) after it has made a decision; create the next version. Never move a level or pick another option in code to make a model's choice pass.
 9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys.
-10. **Local only.** The backend binds to `127.0.0.1` in v0.1.
+10. **Never open without sign-in.** Locally the backend binds to `127.0.0.1` with `SA_AUTH=off`. On any other address `SA_AUTH=required` is mandatory and the app refuses to start otherwise. Every route except `/healthz` and sign-in needs a session; a test walks the route table. Never publish the app port directly; only Caddy is public. One instance per Alpaca account: `SA_INSTANCE_ID` must differ per copy.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
 13. **No write lock across a network call.** Commit before any model, broker or data call; never keep a SQLite write transaction open while awaiting I/O. Live jobs and shadows share one event loop and one database file.
