@@ -31,9 +31,15 @@ export function sessionLabel(state: string): string {
   }
 }
 
-/** The session pill text, from design/screens (States + Main). */
-export function sessionTail(state: string, session: HeaderState['session']): string {
-  const now = session.now;
+/** The session pill text, from design/screens (States + Main). `nowIso`
+ * defaults to the fetched server time; the header passes a skew-corrected
+ * local now so the countdown ticks between refetches. */
+export function sessionTail(
+  state: string,
+  session: HeaderState['session'],
+  nowIso?: string,
+): string {
+  const now = nowIso ?? session.now;
   const check = session.next_check ? `next check ${displayTime(session.next_check)}` : null;
 
   switch (state) {

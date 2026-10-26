@@ -36,6 +36,7 @@
 | 19 | Tail metrics | Tail metrics; Data model (`positions`); GUI table | `Performance` (Winners and tails card) |
 | 20 | Logging, error handling and shutdown | Logging, error handling and shutdown; GUI table; AGENTS.md rules 15–16 | `Logs`, `States` (shutdown and restart) |
 | 21 | Decision v2: code-built options | Decision v2; Decision layer (no_call reasons); Data model; `backend/prompts/decision.v2.md` | `DecisionV2` |
+| 22 | Insights | Insights; Strategies (entry_cycles); Data model | `Insights` |
 
 ## PR description template
 

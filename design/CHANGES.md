@@ -2,6 +2,17 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-26 — Insights
+
+- New `Insights.dc.html` in the Learn group (sidebar: Reviews, Insights, Strategies, Backtest, LLM inspector; new `bulb` icon), with:
+  - headline tiles with definitions on hover and a 90% range bar on Expectancy;
+  - finding cards (accent chip for findings, greyed early signals) with "Test in a shadow" and "Show the trades";
+  - the trade funnel on a log scale with what was lost per step, and Skipped setups (missed and avoided);
+  - Slices: 16 dimension chips, a table by entry cycle with an average-R range bar, missed and avoided skips and sample status, and the 15:46 rule row;
+  - Calibration bars against dashed stated-confidence lines (early greyed, hidden counted); Execution key-value list; Overnight vs in-session bars.
+- The sample is deliberately a fuller run (Fri 18 Dec, 58 sessions, 112 closed trades) so findings, early signals and hidden slices all appear; the subtitle says so.
+- All screens re-rendered for the new sidebar item.
+
 ## 2026-10-25 — Decision drawer for decision.v2
 
 - New `DecisionV2.dc.html` (560 px drawer, same structure as `Decision.dc.html`):

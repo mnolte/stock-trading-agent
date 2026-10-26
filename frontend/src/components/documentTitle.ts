@@ -13,6 +13,8 @@ export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/universe')) return 'Universe';
   if (pathname.startsWith('/settings')) return 'Settings';
   if (pathname.startsWith('/states')) return 'States & dialogs';
+  if (pathname.startsWith('/logs')) return 'Logs';
+  if (pathname.startsWith('/dev/components')) return 'Components';
   return 'Dashboard';
 }
 

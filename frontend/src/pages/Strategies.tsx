@@ -166,6 +166,7 @@ function NewShadowDialog({
     <Modal
       open
       title="New shadow"
+      onClose={onClose}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onClose}>
@@ -566,6 +567,7 @@ export default function Strategies() {
       <Modal
         open={archiveOpen && selected !== null}
         title={`Archive ${selected?.name ?? ''}?`}
+        onClose={() => setArchiveOpen(false)}
         footer={
           <>
             <DialogButton variant="cancel" onClick={() => setArchiveOpen(false)}>

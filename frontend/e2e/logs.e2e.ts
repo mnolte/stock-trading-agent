@@ -13,16 +13,23 @@ test('logs opens on warning and up, toggle shows debug and info', async ({
 }, testInfo) => {
   await page.goto('/logs');
 
-  const toggles = page.locator('button[aria-pressed]');
-  await expect(toggles).toHaveCount(3);
-  await expect(toggles.nth(0)).toHaveAttribute('aria-pressed', 'true');
-  await expect(toggles.nth(1)).toHaveAttribute('aria-pressed', 'true');
+  const toggles = page
+    .getByRole('group', { name: 'Levels' })
+    .locator('button[aria-pressed]');
+  await expect(toggles).toHaveCount(5);
+  await expect(toggles.nth(0)).toHaveAttribute('aria-pressed', 'false');
+  await expect(toggles.nth(1)).toHaveAttribute('aria-pressed', 'false');
   await expect(toggles.nth(2)).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggles.nth(3)).toHaveAttribute('aria-pressed', 'true');
+  await expect(toggles.nth(4)).toHaveAttribute('aria-pressed', 'true');
 
   // "Show debug and info" switch → all five levels active via ?levels=.
-  await page.getByLabel('Show debug and info').check();
+  const debugSwitch = page.getByRole('switch', { name: 'Show debug and info' });
+  await expect(debugSwitch).toHaveAttribute('aria-checked', 'false');
+  await debugSwitch.click();
   await expect(page).toHaveURL(/levels=DEBUG/);
-  await page.getByLabel('Show debug and info').uncheck();
+  await expect(debugSwitch).toHaveAttribute('aria-checked', 'true');
+  await debugSwitch.click();
   await expect(page).toHaveURL(/levels=WARNING/);
 
   const name = testInfo.project.name === 'mobile' ? 'Logs-390.png' : 'Logs.png';
@@ -30,10 +37,12 @@ test('logs opens on warning and up, toggle shows debug and info', async ({
 });
 
 test('levels survive a reload via ?levels=', async ({ page }) => {
+  const toggles = (p: typeof page) =>
+    p.getByRole('group', { name: 'Levels' }).locator('button[aria-pressed="true"]');
   await page.goto('/logs?levels=ERROR%2CCRITICAL');
-  await expect(page.locator('button[aria-pressed="true"]')).toHaveCount(2);
+  await expect(toggles(page)).toHaveCount(2);
   await page.reload();
-  await expect(page.locator('button[aria-pressed="true"]')).toHaveCount(2);
+  await expect(toggles(page)).toHaveCount(2);
 });
 
 test('expanding a line shows traceback and surrounding lines', async ({

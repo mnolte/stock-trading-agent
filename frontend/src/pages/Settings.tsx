@@ -1594,11 +1594,8 @@ export default function Settings() {
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>Settings</h2>
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          Changes apply from the next cycle · keys are saved separately
-        </div>
+      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+        Changes apply from the next cycle · keys are saved separately
       </div>
 
       {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}

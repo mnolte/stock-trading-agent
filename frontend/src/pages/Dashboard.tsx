@@ -201,6 +201,7 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
       label={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
+      style={{ flex: 1 }}
     >
       <CardBody
         res={res}
@@ -522,6 +523,7 @@ function OpenPositionsMini({
       label="Open positions"
       right={<Link to="/positions">Positions & orders</Link>}
       busy={res.loading}
+      style={{ flex: 1 }}
     >
       <CardBody
         res={res}
@@ -734,6 +736,7 @@ function FindSymbolDialog({
     <Modal
       open={open}
       title="Find symbol"
+      onClose={onClose}
       footer={
         <DialogButton variant="cancel" onClick={onClose}>
           Close
@@ -1373,14 +1376,28 @@ export default function Dashboard() {
         onSelect={pickSymbol}
       />
 
-      <OpenPositionsMini
-        res={positionsRes}
-        nextCycle={dashboard?.session.next_cycle ?? null}
-        nextCycleToday={dashboard?.cycle_counter?.next_cycle_today !== false}
-        passCount={passCount}
-      />
-
-      <Feed res={dashboardRes} />
+      {/* Design: positions and the feed sit side by side, wrapping at
+          narrow widths (Main.dc.html). */}
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-5)',
+          alignItems: 'stretch',
+        }}
+      >
+        <div style={{ flex: '3 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <OpenPositionsMini
+            res={positionsRes}
+            nextCycle={dashboard?.session.next_cycle ?? null}
+            nextCycleToday={dashboard?.cycle_counter?.next_cycle_today !== false}
+            passCount={passCount}
+          />
+        </div>
+        <div style={{ flex: '2 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <Feed res={dashboardRes} />
+        </div>
+      </div>
 
       <FindSymbolDialog
         open={pickerOpen}

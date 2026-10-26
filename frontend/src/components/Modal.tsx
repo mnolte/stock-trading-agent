@@ -1,20 +1,69 @@
+import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /** Dialog shell matching design/screens/States.dc.html: 480px panel,
- * negative border for destructive flows, strong border otherwise. */
+ * negative border for destructive flows, strong border otherwise.
+ * Interaction rules (design/DESIGN.md): focus moves in, stays in, Escape
+ * closes (via onClose), and focus returns to what opened it. */
 export function Modal({
   open,
   title,
   destructive = false,
+  onClose,
   children,
   footer,
 }: {
   open: boolean;
   title: string;
   destructive?: boolean;
+  /** Called on Escape. Pass the same handler as the Cancel button. */
+  onClose?: () => void;
   children: ReactNode;
   footer: ReactNode;
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    // Focus moves in: the first control, else the panel itself.
+    (panel?.querySelector<HTMLElement>(FOCUSABLE) ?? panel)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCloseRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab' || !panel) return;
+      const items = panel.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        last.focus();
+        e.preventDefault();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        first.focus();
+        e.preventDefault();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      previous?.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
@@ -30,8 +79,11 @@ export function Modal({
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
+        aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         style={{
           width: '480px',
           maxWidth: '100%',

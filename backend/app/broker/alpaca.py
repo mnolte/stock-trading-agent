@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from concurrent.futures import Future
 from datetime import datetime
 from decimal import Decimal
@@ -160,6 +161,7 @@ class AlpacaPaperBroker:
         self._keyed = keyed
         self._handlers: list[TradeUpdateHandler] = []
         self._stream_started = False
+        self._stream_thread: threading.Thread | None = None
         # The app event loop the stream hands updates to; captured in
         # start_stream (the SDK stream runs its own loop on its thread).
         self._main_loop: asyncio.AbstractEventLoop | None = None
@@ -401,7 +403,24 @@ class AlpacaPaperBroker:
     # trade-updates stream
 
     def stream_connected(self) -> bool:
-        return self._stream_started
+        """Whether the trade-updates stream is live right now.
+
+        The SDK reconnects inside ``run()``: while it waits between
+        attempts ``_running`` is False and fills are genuinely being
+        missed, so readiness should say "down". A dead runner thread
+        (``run()`` returned or raised) is down until the app restarts
+        it. If a future SDK drops ``_running`` we fall back to thread
+        liveness rather than a permanent false alarm.
+        """
+        thread = self._stream_thread
+        if (
+            not self._stream_started
+            or thread is None
+            or not thread.is_alive()
+        ):
+            return False
+        running = getattr(self._stream, "_running", None)
+        return True if running is None else bool(running)
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         self._handlers.append(handler)
@@ -445,18 +464,34 @@ class AlpacaPaperBroker:
     def _run_stream_blocking(self) -> None:
         # TradingStream.run() calls asyncio.run(); it must live on a
         # dedicated thread, not the API event loop.
-        import threading
-
-        thread = threading.Thread(
-            target=self._stream.run, name="alpaca-trade-stream", daemon=True
+        self._stream_thread = threading.Thread(
+            target=self._stream_thread_main,
+            name="alpaca-trade-stream",
+            daemon=True,
         )
-        thread.start()
+        self._stream_thread.start()
+
+    def _stream_thread_main(self) -> None:
+        """Run the SDK loop; a death it didn't plan reaches the JSON log.
+
+        Without this wrapper an exception in the thread surfaces only on
+        stderr through ``threading.excepthook`` — invisible to the log
+        index — while ``stream_connected`` keeps claiming "connected".
+        """
+        try:
+            self._stream.run()
+        except Exception:
+            if self._stream_started:
+                logger.error(
+                    "trade-updates stream stopped unexpectedly", exc_info=True
+                )
 
     async def stop_stream(self) -> None:
         if not self._stream_started:
             return
         self._stream_started = False
         await asyncio.to_thread(self._stream.stop)
+        self._stream_thread = None
 
 
 __all__ = [

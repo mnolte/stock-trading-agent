@@ -690,9 +690,6 @@ export default function Reviews() {
           gap: 'var(--sa-space-3)',
         }}
       >
-        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>
-          Reviews
-        </h2>
         {schedule && (
           <span
             style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}

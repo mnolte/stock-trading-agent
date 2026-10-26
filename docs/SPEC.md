@@ -290,6 +290,7 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Decision detail | Same layout as Trading Agent's decision drawer: action with size and a confidence bar; safety gates (code checks, then risk gates, each pass, fail or reduced); signal stack with 1h and daily columns; agent reasoning with named risks and news used; entry, stop, target and invalidation tiles; outcome after 1h, 1 session and 5 sessions with best and worst R and which of stop or target was touched first; order status; links to the position and the model call |
 | Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime, winners and tails (see Tail metrics) |
+| Insights | Where results come from: expectancy with its range, edge over SPY at the same exposure, beta, overnight vs in session, gaps, cost; findings; trade funnel; slices by time of day, sector, earnings distance, gap, VWAP, pullback, strength, regime, confidence and more; calibration; execution; skipped setups (see Insights) |
 | LLM inspector | Every model call since the start (live, shadows, reviews), filtered by period, outcome (success, warning, error), source and more; summary per session; prompt, raw response or error, tokens, cost, latency, outcome and reasons (see LLM call history) |
 | Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | Universe (v0.2) | Pool, daily screen and eligible symbols (see Larger universe) |
@@ -410,6 +411,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON, affects (decision, order, fill or none), resolved at, resolution (auto or dismissed), note |
 | `readiness_snapshots` | session date, run, criteria JSON (value, target, status, sample, estimate) |
 | `readiness_manual` | item, done, note, changed at |
+| `insights_snapshots` | session date, strategy, period, computed at, JSON (headline, funnel, findings, slices, calibration) (PR 22) |
 | `log_reviews` | fingerprint, level, sample message, review (expected or fixed), note, reviewed at, app version (PR 20; in the trading database, so it is backed up) |
 | `llm_calls` | sent at, session date, source (live, shadow, review), strategy, kind, linked decision, shadow decision or review, cycle, symbol, context, model, temperature, prompt version and hash, tokens, cost and source, latency, final action, outcome (success, warning, error), reasons JSON, error type, HTTP status, error message, request id, raw response, backfilled (see LLM call history) |
 
@@ -454,6 +456,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 19. **Tail metrics.** After-exit job and `positions` columns, the tails function (R distribution, largest win and loss, top 20% share, net without the best trade, winners kept, after-exit medians per exit reason), `/api/performance/tails`, "Winners and tails" card on Performance. Measures only; exits and prompts don't change. Independent of PR 16–18. *Done when:* on a fixture run every metric matches a hand calculation, a trade inside its 5-session window shows pending, a symbol outside the bar cache is fetched, and the card shows the small-sample banner below 20 closed trades.
 20. **Logging, error handling and shutdown.** Audit report first; JSON log file with rotation and scrubbing, levels per the table, DEBUG and INFO lines in every component, tracing ids; no swallowed exceptions (ruff rules, global hooks, `spawn()`, API `error_id`, frontend error reporting and error boundary); graceful shutdown on Ctrl+C and SIGTERM with unclean-stop detection; log index, logs API and Logs screen with error reviews (`log_reviews`); the two log criteria on Readiness; shutdown banners. After PR 17. *Done when:* the audit's findings are fixed or listed as questions; one cycle can be followed from schedule to order by its id at DEBUG; `make lint` fails on a swallowed exception; Ctrl+C during a cycle, an order submission, a backtest and a backup leaves `PRAGMA integrity_check` ok with no half-written rows; the Logs screen opens on warnings and up, and an unreviewed error in the last 10 sessions keeps Readiness at "not yet".
 21. **Decision v2: code-built options.** Level finder (1h and daily swings, session levels), entry option builder and held stop options, `constraints` in the snapshot, `prompts/decision.v2.md` with its strict schema, option and explanation checks, order-time recheck of the chosen option, `no_options`, storage fields, v2 in strategies, shadows and backtests, `make replay` with its report, v2 decision drawer. Live stays on v1. Needs PR 13 and PR 15; independent of PR 16–20. *Done when:* the builder gives the expected options on fixture bars (including no options, merged stops and targets, and levels in the way), no offered option ever breaks a rule, an option id that wasn't offered becomes skip, the replay report runs on the current run's snapshots, and a v2 shadow runs next to live.
+22. **Insights.** Daily insights snapshot per strategy and period (headline numbers, funnel, findings, slices by 16 dimensions, calibration, execution, overnight, skipped setups), `entry_cycles` strategy override and "Test in a shadow", Insights screen, findings in the weekly review facts. Uses PR 19 for after-exit data and PR 21 for the stop and target basis when present. *Done when:* on a fixture run every number matches a hand calculation, sample statuses switch at 10 and 30 trades, a planted difference becomes a finding and noise doesn't, and the page shows the before-data state under 10 trades.
 
 ## Reviews
 
@@ -505,7 +508,7 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
 
 A shadow strategy decides on exactly the same inputs as live, every cycle, but never trades. It answers questions like "would another prompt, a bigger model, or no model at all have done better?" with evidence from the same market, instead of opinions. Built as PR 13.
 
-**Strategies.** A strategy is a named configuration: kind (`llm` or `rules_only`), prompt version, model, temperature, and overrides of the entry rules and code checks (RSI range, minimum confidence, stop distance range, minimum reward to risk). Risk gates, sizing, the day-trade rule and earnings handling can never be overridden; every strategy runs under the live limits. Live is the strategy defined by the current settings version. `rules_only` enters whenever the rules pass, with the stop at entry − 2 × ATR(1h) and the target at 2R, and exits only through its stop, target or the earnings exit.
+**Strategies.** A strategy is a named configuration: kind (`llm` or `rules_only`), prompt version, model, temperature, and overrides of the entry rules and code checks (RSI range, minimum confidence, stop distance range, minimum reward to risk, and from PR 22 `entry_cycles`: the cycles in which it may enter). Risk gates, sizing, the day-trade rule and earnings handling can never be overridden; every strategy runs under the live limits. Live is the strategy defined by the current settings version. `rules_only` enters whenever the rules pass, with the stop at entry − 2 × ATR(1h) and the target at 2R, and exits only through its stop, target or the earnings exit.
 
 **Running shadows.** At most 3 shadows are active or paused; archiving frees a slot. A paused shadow makes no model calls and no entries but keeps managing its virtual positions (stops, targets, earnings exits). After each live cycle has finished and its orders are sent, every active shadow runs on that cycle's stored input snapshots: the market part is reused as it is, and the position part is rebuilt from the shadow's own virtual portfolio. Calls go to the shadow's held positions first, then to candidates that pass its rules in rank order, up to the same 10-call cap. Shadow work never delays live: if the next live cycle or position check is due, unfinished shadow work for that cycle is skipped and recorded as missed, with the reason (`time` or `cost_cap`). Live's cycle also builds snapshots for symbols held by any active or paused shadow, so a shadow can decide on them; live makes no rules check, model call or decision for a symbol only a shadow holds.
 
@@ -911,6 +914,108 @@ The no_call reason list gains `no_options`.
 - the entry, stop, target and reward to risk tiles.
 
 A v1 decision looks as before. On the dashboard, the latest-decision card shows the chosen option ("D · stop below L8 · target 2R") instead of free prices.
+
+## Insights
+
+An Insights screen in the Learn group shows where the results come from, sliced the way US stocks behave: by time of day in the session, sector, earnings distance, opening gaps and overnight holds. It also shows what the market, the fills and the calendar cost, separately from the model's choices. It never changes anything. A finding is a question to test in a shadow or a backtest, not a rule. Built as PR 22.
+
+**Scope and timing.**
+- **What is computed.** Insights are computed by one function after each session's close (after the readiness snapshot) for each active strategy (live, shadows, rules-only) and for three periods: this run, the last 20 sessions, and all runs.
+- **Storage.** The result is stored as a snapshot; the screen reads the latest one and never recomputes per request.
+- **P&L basis.** All P&L is adjusted (slippage and dividends). 1R is the trade's initial risk.
+
+**Headline numbers.**
+
+| Number | Definition | Why it matters for stocks |
+| --- | --- | --- |
+| Expectancy | Average R per closed trade, with a 90% range (± 1.64 standard errors) | Whether there is an edge at all, and how sure we are |
+| Edge over SPY at the same exposure | Run return − SPY return over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
+| Beta to SPY | Slope and correlation of daily equity returns against SPY's, from 20 sessions | Whether the result is just the market going up |
+| Overnight vs in session | P&L of held positions from the previous close to the open, versus from the open to the close or exit | Stops at Alpaca can't protect against overnight gaps; the edge should come from the session |
+| Gaps through the stop | Count of stop exits that filled more than 0.1R below the stop, and the extra R lost beyond −1R | The real risk per trade is larger than 1R when gaps are frequent |
+| Model cost per trade | Decision model cost ÷ closed trades, and as a share of gross profit | Whether the model pays for itself |
+
+**Findings.**
+- **When a slice is a finding.** It has at least `insights.min_trades` (30) closed trades, and its average R differs from all other trades by at least `insights.finding_sigma` (2) times the noise (the standard error of the difference).
+- **Early signals.** Slices with 10–29 trades and the same size of difference show as early signals.
+- **Ordering.** Findings are listed newest first, with how long each has held.
+- **Testing a finding.** Each one links to its trades and, when the dimension maps to a strategy override, offers "Test in a shadow" with that override filled in. PR 22 adds the override `entry_cycles`, the cycles in which a strategy may enter, so time-of-day findings can be tested.
+- **Wording.** The screen says that checking many slices finds some differences by chance, and that a finding is a question.
+- **Weekly review.** Its facts include new findings and findings that stopped holding.
+
+**Where trades come from.** A funnel for the period:
+- symbol checks;
+- passed the rules pre-filter;
+- model called for a candidate;
+- model proposed an entry;
+- passed code checks;
+- passed risk gates;
+- filled;
+- closed.
+
+Next to each step is what was lost and why: rules, call cap, price checks, model skips, each code check, each risk gate, and unfilled limits. This shows whether the agent trades rarely because of the market, the rules, the model or the risk limits.
+
+**Slices.** One dimension at a time.
+- **Dimensions:**
+  - entry cycle (time of day, New York with Amsterdam alongside);
+  - weekday;
+  - sector;
+  - symbol;
+  - market regime;
+  - days to earnings at entry (4–10, 11–20, 21+);
+  - the day's opening gap (down more than 1%, within 1%, up more than 1%);
+  - entry vs session VWAP;
+  - pullback depth (distance from the 1h EMA 20 in ATR: under 0.5, 0.5–1.5, over 1.5);
+  - strength vs SPY (20-session, terciles);
+  - SPY on the day at entry (down, flat, up, at 0.3%);
+  - volatility (ATR percentile terciles);
+  - confidence (0.1 buckets);
+  - stop and target basis (decision.v2);
+  - sessions held (1, 2–3, 4+);
+  - prompt and model.
+- **Columns:** trades, win rate, average R with its 90% range, total R, model skips with missed and avoided (see Skipped setups), and the sample status.
+- **Sample status:**
+  - finding: 30 or more trades and a large enough difference;
+  - early signal: 10–29, greyed;
+  - hidden: under 10, counted in one line.
+- **Rules shown as rows.** A slice with no entries because of a rule (the 15:46 cycle) shows that rule instead of numbers.
+
+**Calibration.**
+- **Chart.** Per 0.1 confidence bucket, stated confidence against the share of entries that reached the target before the stop, with the same sample statuses.
+- **Gap.** The weighted gap is the same number as the Readiness criterion. Under decision.v1, confidence has no defined meaning, so the chart says it is approximate.
+
+**Execution.**
+- **Fills:** entry fill rate (with the worst cycle); entry and exit slippage in basis points (exits split by stop, target and agent exit).
+- **Gaps:** stops filled through the stop.
+- **Rules and calendar:** exits deferred by the day-trade rule with their cost in R (exit price the next day vs the price at the deferred decision); earnings exits with their average R and the median move in the 5 sessions after (from Tail metrics, when PR 19 is merged).
+- **Dividends** received.
+
+**Overnight and in session.**
+- **Totals.** In-session and overnight P&L.
+- **Nights.** The number of nights positions were held, the share of nights that gapped against the position, and the largest gap in R with its symbol and date.
+
+**Skipped setups.**
+- **How skips are scored.** Every model skip is scored with the rules-only geometry: entry at the decision's limit, stop 2 × ATR below, target 2R, within 5 sessions. "Missed" means the target came first, "avoided" means the stop came first, "neither" means neither was hit.
+- **Baseline.** The average R of taking every skip is shown as the rules-only baseline on the same setups.
+- **Reading it.** More avoided than missed means skipping adds value.
+
+**Shadows and rules-only.** A strategy picker shows the same page for any strategy. Rules-only has no model, so its findings and slices work, but calibration and skips don't apply.
+
+**Storage.**
+- `insights_snapshots`: session date, strategy, period, computed at, JSON with headline numbers, funnel, findings, slices per dimension and calibration.
+- Each position's overnight P&L is computed from daily bars and fills; the after-exit data comes from Tail metrics when present.
+
+**API.** `GET /api/insights?strategy=&period=` returns the latest snapshot as numbers, and `GET /api/insights/trades?strategy=&period=&dimension=&slice=` returns the trades behind a slice.
+
+**GUI.** The page shows, top to bottom:
+- strategy and period toggles, with when the snapshot was computed;
+- the headline tiles, each explaining its definition on hover;
+- Findings;
+- "Where trades come from" next to "Skipped setups";
+- Slices, with a dimension picker;
+- Calibration, Execution, and Overnight and in session.
+
+Before 10 closed trades, the page shows the funnel, skips and execution, and says when slices start to count.
 
 ## Out of scope and later versions
 

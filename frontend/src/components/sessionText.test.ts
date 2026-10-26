@@ -29,6 +29,17 @@ describe('countdown', () => {
 });
 
 describe('sessionTail', () => {
+  it('open: the countdown follows an injected now instead of the fetched one', () => {
+    // The header passes a skew-corrected local now so "in N min" ticks
+    // between refetches rather than staying at the fetch-time value.
+    const s = session({ next_cycle: '2026-10-15T17:46:00Z' });
+    expect(sessionTail('open', s, '2026-10-15T16:52:00Z')).toBe(
+      ' · next cycle 19:46 · in 54 min',
+    );
+    expect(sessionTail('open', s, '2026-10-15T17:31:00Z')).toBe(
+      ' · next cycle 19:46 · in 15 min',
+    );
+  });
   it('open: next cycle + countdown', () => {
     const tail = sessionTail('open', session({ next_cycle: '2026-10-15T17:46:00Z' }));
     expect(tail).toBe(' · next cycle 19:46 · in 54 min');

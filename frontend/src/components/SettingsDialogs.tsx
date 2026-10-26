@@ -25,6 +25,7 @@ export function ResetAccountDialog({
       open={open}
       title="Reset the paper account?"
       destructive
+      onClose={onCancel}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onCancel}>Cancel</DialogButton>
@@ -74,6 +75,7 @@ export function SaveSettingsDialog({
     <Modal
       open={open}
       title={`Save settings as v${version}?`}
+      onClose={onCancel}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onCancel}>Cancel</DialogButton>

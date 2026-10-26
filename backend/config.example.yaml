@@ -202,6 +202,16 @@ readiness:                      # PR 16; evidence from the current run, adjusted
   log_error_sessions: 10          # PR 20: unreviewed ERROR problems in the log, target 0 (fixed)
   log_critical_sessions: 20       # PR 20: CRITICAL lines in the log, target 0 (fixed); keep within logging.keep_days
 
+insights:                       # PR 22
+  min_trades: 30                # a slice can be a finding from here
+  early_trades: 10              # 10-29: early signal; below: hidden
+  finding_sigma: 2.0            # difference vs the rest, in standard errors
+  range_z: 1.64                 # 90% range on averages
+  skip_score: {stop_atr: 2.0, target_r: 2.0, sessions: 5}   # rules-only geometry for missed / avoided
+  gap_through_stop_r: 0.1       # a stop fill this far below the stop counts as a gap
+  spy_flat_pct: 0.3             # "SPY that day" flat band
+  opening_gap_pct: 1.0          # opening gap buckets
+
 inspector:                      # PR 18, LLM call history
   page_size: 50                 # calls per page; the API allows up to 100
   slow_call_seconds: 15         # a returned call slower than this gets the warning "slow"

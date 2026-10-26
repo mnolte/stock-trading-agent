@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-10-26 — Insights (PR 22)
+
+- New "Insights" section and screen (Learn group):
+  - **Headline numbers:** expectancy with a 90% range, edge over SPY at the same exposure, beta to SPY, overnight vs in-session P&L, gaps through the stop, and model cost per trade.
+  - **Findings:** at least 30 trades and at least twice the noise; early signals at 10–29; never applied automatically.
+  - **Funnel:** from symbol checks to closed trades, with what was lost at each step.
+  - **Slices** in 16 stock-specific dimensions: time of day, weekday, sector, symbol, regime, earnings distance, opening gap, VWAP, pullback depth, strength vs SPY, SPY that day, volatility, confidence, stop and target basis, sessions held, prompt and model.
+  - **Also:** calibration, execution (fills, slippage, deferred exits, earnings exits, dividends), overnight gaps, and skipped setups scored with the rules-only geometry.
+- Strategy override `entry_cycles`, so time-of-day findings can be tested in a shadow. The weekly review's facts include new findings and findings that stopped holding.
+- Data model: `insights_snapshots`. Config: `insights` block. GUI table: Insights row.
+- Build plan: PR 22.
+
 ## 2026-10-26 — Replay statuses (PR 21 follow-up)
 
 - The first replay showed 762 "no_options" rows, but the builder never rejected a snapshot. About 720 rows were from before `stop_reference_price` existed (pre-PR 15) and 42 had price "unavailable". Every snapshot with complete inputs (125) got options and a model call.

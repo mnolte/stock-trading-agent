@@ -182,7 +182,6 @@ export default function States() {
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
-      <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>States & dialogs</h2>
 
       <Card label="Session states">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>

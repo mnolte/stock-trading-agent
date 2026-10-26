@@ -271,6 +271,63 @@ async def test_trade_update_without_main_loop_is_dropped() -> None:
     assert called == []
 
 
+async def test_stream_connected_tracks_runner_thread() -> None:
+    """A dead SDK runner must not keep reporting "connected": readiness
+    and the reconciliation card read stream_connected. The SDK's own
+    reconnect gaps (_running False between attempts) are down too."""
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    assert broker.stream_connected() is False
+
+    up = threading.Event()
+    release = threading.Event()
+
+    def fake_run() -> None:
+        broker._stream._running = True  # set by the SDK while consuming
+        up.set()
+        release.wait(timeout=10)
+
+    broker._stream.run = fake_run  # type: ignore[method-assign]
+    await broker.start_stream()
+    assert up.wait(timeout=5)
+    assert broker.stream_connected() is True
+
+    broker._stream._running = False
+    assert broker.stream_connected() is False
+    broker._stream._running = True
+
+    release.set()
+    assert broker._stream_thread is not None
+    broker._stream_thread.join(timeout=5)
+    assert broker.stream_connected() is False
+
+
+async def test_stream_thread_unexpected_exit_is_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A run() that raises otherwise dies on stderr via excepthook —
+    the wrapper logs it and stream_connected drops to False."""
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+
+    def boom() -> None:
+        raise RuntimeError("ws died")
+
+    broker._stream.run = boom  # type: ignore[method-assign]
+    await broker.start_stream()
+    assert broker._stream_thread is not None
+    broker._stream_thread.join(timeout=5)
+
+    assert broker.stream_connected() is False
+    assert any(
+        "stopped unexpectedly" in record.getMessage()
+        and record.levelname == "ERROR"
+        for record in caplog.records
+    )
+
+
 async def test_check_paper_account_accepts_pa_account() -> None:
     client = AlpacaDataClient("test-key", "test-secret")
 

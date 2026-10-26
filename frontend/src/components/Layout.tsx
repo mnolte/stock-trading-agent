@@ -177,7 +177,7 @@ export function Layout() {
           onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
           menuOpen={menuOpen}
         />
-        <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>
+        <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
           {liveStatus === 'paused' && (
             <div
               style={{

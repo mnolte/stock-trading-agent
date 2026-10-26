@@ -4351,9 +4351,12 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             "WHERE level IN ('WARNING','ERROR','CRITICAL') "
             "GROUP BY day, level ORDER BY day"
         ).fetchall()
+        level_counts = conn.execute(
+            "SELECT level, count(*) FROM log_lines GROUP BY level"
+        ).fetchall()
         problems = conn.execute(
-            "SELECT fingerprint, level, max(ts) last_ts, count(*) n, "
-            "substr(message,1,160) sample FROM log_lines "
+            "SELECT fingerprint, level, min(ts) first_ts, max(ts) last_ts, "
+            "count(*) n, substr(message,1,160) sample FROM log_lines "
             "WHERE level IN ('ERROR','CRITICAL') "
             "GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50"
         ).fetchall()
@@ -4371,12 +4374,14 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             logging.getLogger("api").debug("log_reviews not available yet")
     return {
         "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
+        "level_counts": dict(level_counts),
         "problems": [
             {
-                "fingerprint": fp, "level": lv, "last_ts": ts, "count": n,
+                "fingerprint": fp, "level": lv, "first_ts": fts,
+                "last_ts": ts, "count": n,
                 "sample": smp, "review": reviews.get(fp),
             }
-            for fp, lv, ts, n, smp in problems
+            for fp, lv, fts, ts, n, smp in problems
         ],
         "index_available": True,
     }

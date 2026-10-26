@@ -645,6 +645,75 @@ Use the PR template, screenshots in docs/screenshots/pr-21/ next to the
 design PNGs (DecisionV2). List remaining design differences.
 ```
 
+## PR 22 — Insights
+
+```
+PR 22 (Insights). Measures only: nothing on this screen changes trading.
+It doesn't depend on PR 16–21, but uses PR 19 (after-exit data) and PR 21
+(stop and target basis) when they are merged; leave those parts empty
+otherwise. Pull the latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-26 "Insights (PR 22)" (spec) and
+   "Insights" (design)
+2. docs/SPEC.md → "Insights" (whole section), Strategies and shadows
+   (entry_cycles override), Data model (insights_snapshots), GUI table,
+   Build plan item 22
+3. backend/config.example.yaml → insights
+4. design/screens/Insights.dc.html with Insights.png and Insights-390.png
+
+Build PR 22 only, in this order (one commit per step):
+1. One pure insights function in the performance module, per strategy and
+   period (this run, last 20 sessions, all runs), adjusted P&L, 1R =
+   initial risk:
+   - headline numbers: expectancy with a 90% range; edge over SPY at the
+     same exposure; beta and correlation from 20 sessions;
+     overnight vs in-session P&L from daily bars and fills; gaps through
+     the stop; model cost per trade;
+   - the funnel with losses per step and per reason;
+   - slices for all 16 dimensions with the sample statuses (finding at
+     30+ and 2 sigma vs the rest; early signal at 10–29; hidden under
+     10 and counted), and rule rows (15:46);
+   - calibration per 0.1 bucket (target before stop);
+   - execution (fill rate, slippage in bps, deferred-exit cost, earnings
+     exits, dividends);
+   - skips scored with the rules-only geometry (missed, avoided, neither,
+     baseline R).
+   Unit-test every number against hand calculations on a fixture run.
+2. A daily job after the readiness snapshot writes insights_snapshots (new
+   Alembic revision), one per strategy and period. No write lock across
+   any fetch (hard rule 13).
+3. API: GET /api/insights?strategy=&period= and
+   /api/insights/trades?strategy=&period=&dimension=&slice=, numbers
+   only.
+4. Strategy override entry_cycles (new shadow dialog, strategies
+   comparison, and the engine honours it); "Test in a shadow" on a
+   finding opens New shadow with the override filled in, only for
+   dimensions that map to an override.
+5. Weekly review facts: new findings and findings that stopped holding.
+6. Frontend per the design: strategy and period toggles; headline tiles
+   with definitions on hover; findings; funnel; skipped setups; slices
+   with the dimension picker and range bars; calibration; execution;
+   overnight; before-data state under 10 trades; Insights in the Learn
+   sidebar group; card states and focus per the interaction rules.
+
+Tests:
+- Fixture run with known trades and bars: every headline number,
+  funnel count, slice and calibration bucket matches the hand
+  calculation.
+- Sample statuses switch at 10 and 30.
+- A planted difference becomes a finding; random noise across 16
+  dimensions produces at most the expected chance findings with a fixed
+  seed.
+- Overnight split with a gap day.
+- A gap through the stop is counted with its extra R.
+- A skip is scored missed, avoided or neither.
+- entry_cycles blocks entries in excluded cycles in a shadow.
+- The rules-only strategy shows no calibration or skips.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-22/ next to the
+design PNGs (Insights, Insights-390). List remaining design differences.
+```
+
 ## Each later PR
 
 ```

@@ -26,6 +26,7 @@ export function KillSwitchDialog({
       open={open}
       title="Kill switch"
       destructive
+      onClose={onCancel}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onCancel}>Cancel</DialogButton>
@@ -109,6 +110,7 @@ export function FlattenConfirmDialog({
       open={open}
       title="Sell everything now?"
       destructive
+      onClose={onCancel}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onCancel}>Cancel</DialogButton>
@@ -205,6 +207,7 @@ export function ResumeDialog({
     <Modal
       open={open}
       title="Resume trading?"
+      onClose={onCancel}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onCancel}>Cancel</DialogButton>
