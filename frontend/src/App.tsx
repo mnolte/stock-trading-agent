@@ -71,7 +71,7 @@ function AppRoutes() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter useTransitions={false}>
       <LiveUpdatesProvider>
         <AppRoutes />
       </LiveUpdatesProvider>
