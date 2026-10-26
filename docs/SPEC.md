@@ -856,20 +856,32 @@ Each one is kept only when it is above the current stop and satisfies the existi
 - New shadow and the backtest strategy picker offer decision.v2.
 - Backtests build levels and options from the bar store with the same function and the same time cut-offs.
 
-**Replay.**
 - **What it is.** `make replay PROMPT=decision.v2 FROM=… TO=…` runs a prompt on stored input snapshots of the live run. For each candidate and held decision, it rebuilds the levels and options from the cached bars as they were at that cycle, calls the model, and scores the chosen option on the bars that followed: did the stop or the target come first within 5 sessions?
+- **Replayable or not.** Each snapshot gets one status before anything else:
+  - `replayed`: the builder ran.
+    - If it produced options, the model was called.
+    - If it produced none, the result is `no_options` with the builder's own reason (`EntryOptions.reason`).
+  - `not_replayable`: an input the builder needs is missing. The reason is one of `missing_reference` (a snapshot from before `stop_reference_price` existed), `price_unavailable` (live had no usable price, so v1 made no model call either), `missing_atr` or `missing_bars`. No model call, no cost.
+  - `no_options` is never used for missing inputs.
+- **Approximate reference** (`--approx-reference`, off by default).
+  - **What it does.** For snapshots that only lack `stop_reference_price`, the replay uses min(stored price, last closed 5-min bar close at the cycle time) from the rebuilt bars. The plausible ask isn't stored for those snapshots, so it's left out.
+  - **Labelling.** These rows have status `replayed_approx`. The report shows them in their own section and never mixes them into the main rates, because a missing ask can only make the reference higher than it really was.
+  - **Price.** A snapshot whose price is `"unavailable"` stays `not_replayable`; the price is never reconstructed.
 - **Output.** `data/replays/<id>/results.jsonl` and a `report.md` with:
+  - **counts per status, first:** replayed, no_options (with reasons), replayed_approx, and not_replayable per reason;
   - enter rate;
   - invalid choice rate and explanation check failure rate;
   - which options were chosen (structure or ATR stop, level or R target);
   - agreement with the live v1 decision;
   - first touch and R of the chosen options;
   - the same counts for rules-only on the same snapshots.
+  - **Base of the rates:** they are computed over `replayed` rows only, and each says how many rows it is based on.
+- **Live entries.** The report lists every snapshot where live v1 entered, with what v2 offered and chose. If such a snapshot wasn't replayable, the report says why, so a missing comparison is visible instead of silent.
 - **Cost.** It counts toward the backtest monthly cap. The tool shows an estimate first and refuses more than $2 without `--yes`. Replays never write to the live tables.
 
 **Path to live. Nothing switches automatically.**
-1. Replay on every candidate snapshot of the current run. The first bar to clear: invalid choices under 2%, explanation check failures under 5%, and the share of valid entries clearly above v1's 3%, without lowering any rule.
-2. A shadow "C · Options (decision.v2)" with gpt-4o-mini at temperature 0, for at least 10 sessions next to live and rules-only. Shadows are capped at 3, so one slot has to be freed first; archive "A · Stricter trend".
+1. Replay on every replayable candidate snapshot of the current run. The first bar to clear: invalid choices under 2% and explanation check failures under 5%, without lowering any rule. Whether v2 enters more often than v1 can't be judged from a quiet week: if v2 made fewer than 20 entry proposals, the replay only shows that v2 works mechanically, and the shadow decides the rest.
+2. A shadow "C · Options (decision.v2)" with gpt-4o-mini at temperature 0, for at least 10 sessions and at least 20 v2 entry proposals, next to live and rules-only. Shadows are capped at 3, so one slot has to be freed first; archive "A · Stricter trend".
 3. Marc decides with the Strategies comparison and the replay report. Promotion to live happens only with "Start new run", so the readiness evidence stays under one prompt.
 
 **Readiness.** Under v2, "Share of the last 100 model entry proposals that pass the code checks" counts a proposal as passing when:

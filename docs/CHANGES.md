@@ -2,11 +2,15 @@
 
 Newest first.
 
-## 2026-10-26 — run.lock survives pid reuse (e2e CI fix)
+## 2026-10-26 — Replay statuses (PR 21 follow-up)
 
-- `data/run.lock` now carries the Linux boot id. A lock written under a different boot or VM is stale even when its pid is locally alive: pids recycle across boots, so a pid can only prove "another run is live" within the same boot.
-- Within the same boot, `RunLock.check` counts a live pid as the holder only while the lock's heartbeat is fresh (up to three missed beats): a recycled pid no longer refuses startup. Locks without a boot id or heartbeat fields keep failing safe to stale once their timestamps age out.
-- The Playwright e2e web server deletes a leftover `run.lock` before seeding, so a cached or killed earlier run can't refuse startup or raise the unclean-run banner. Fixes the e2e CI refusal where a `run.lock` restored from the cached data dir held a pid that was alive on the new runner.
+- The first replay showed 762 "no_options" rows, but the builder never rejected a snapshot. About 720 rows were from before `stop_reference_price` existed (pre-PR 15) and 42 had price "unavailable". Every snapshot with complete inputs (125) got options and a model call.
+- Replay now gives each snapshot a status:
+  - `replayed`, which includes `no_options` from the builder with `EntryOptions.reason`;
+  - `not_replayable`, with a reason: `missing_reference`, `price_unavailable`, `missing_atr` or `missing_bars`;
+  - `replayed_approx`, with the opt-in `--approx-reference`: min(price, last 5-min close) for pre-PR 15 snapshots, reported separately and never mixed into the main rates.
+- The report leads with counts per status, bases every rate on replayed rows, and lists every live v1 entry with what v2 did, or why it couldn't.
+- Path to live: the replay gate checks validity only. The entry-rate comparison needs at least 20 v2 entry proposals, which the shadow (at least 10 sessions and 20 proposals) provides.
 
 ## 2026-10-25 — Decision v2: code-built options (PR 21)
 
