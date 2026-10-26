@@ -17,7 +17,7 @@
     "lightweight-charts": "5.2.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "react-router-dom": "^6.27.0"
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
