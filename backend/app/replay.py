@@ -1,12 +1,21 @@
 """Replay a decision prompt over stored snapshots (docs/SPEC.md, Replays).
 
-``make replay PROMPT=decision.v2 FROM=2026-10-20 TO=2026-10-25 [--yes]``
-runs a prompt on the live run's stored input snapshots: for each
-candidate and held decision the levels and options are rebuilt from the
-cached 5-minute bars as they were at that cycle's time — never later —
-then the model picks an option. The chosen option is scored on the bars
-of the next five sessions (first touch and R), and the rules-only
-baseline answers the same snapshots for comparison.
+``make replay PROMPT=decision.v2 FROM=2026-10-20 TO=2026-10-25 [--yes]
+[APPROX=1]`` runs a prompt on the live run's stored input snapshots:
+for each candidate and held decision the levels and options are rebuilt
+from the cached 5-minute bars as they were at that cycle's time — never
+later — then the model picks an option. The chosen option is scored on
+the bars of the next five sessions (first touch and R), and the
+rules-only baseline answers the same snapshots for comparison.
+
+Every snapshot gets one status before anything else: ``replayed`` (the
+builder ran — ``no_options`` only ever means the builder itself returned
+none), ``not_replayable`` with a reason (``missing_reference``,
+``price_unavailable``, ``missing_atr``, ``missing_bars`` — no model call,
+no cost, excluded from every rate), or ``replayed_approx`` when
+``--approx-reference`` fills a missing ``stop_reference_price`` with
+min(price, last closed 5-minute bar close) — reported separately, never
+in the main rates.
 
 Replays never write to the live tables: every artefact lands in
 ``data/replays/<id>/`` (``results.jsonl``, ``report.md``, ``meta.json``).
@@ -42,11 +51,26 @@ from app.decide.output import (
     validate_model_output_v2,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
-from app.decide.v2inputs import HeldContext, build_v2_fields, rebuild_bars
+from app.decide.v2inputs import (
+    HeldContext,
+    V2Build,
+    build_v2_fields,
+    rebuild_bars,
+)
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
 
 CENT = Decimal("0.01")
+
+REPLAYED = "replayed"
+REPLAYED_APPROX = "replayed_approx"
+NOT_REPLAYABLE = "not_replayable"
+NOT_REPLAYABLE_REASONS = (
+    "missing_reference",
+    "price_unavailable",
+    "missing_atr",
+    "missing_bars",
+)
 
 
 # ----------------------------------------------------------------------
@@ -132,6 +156,14 @@ def _dec(value: Any) -> Decimal | None:
         return None
 
 
+def _last_closed_bar(cache: BarCache, symbol: str, at: datetime) -> Bar5m | None:
+    """The last 5-minute bar that closed at or before ``at`` (the
+    ``--approx-reference`` bar close)."""
+    bars = cache.get(symbol, at - timedelta(days=10), at)
+    closed = [b for b in bars if b.start + timedelta(minutes=5) <= at]
+    return closed[-1] if closed else None
+
+
 # ----------------------------------------------------------------------
 # one replayed decision
 
@@ -154,6 +186,8 @@ class ReplayRow:
     score: Score | None
     cost: Decimal | None
     error: str | None
+    status: str = REPLAYED
+    offered: list[str] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -162,9 +196,11 @@ class ReplayRow:
             "context": self.context,
             "at": self.at.isoformat(),
             "decision_id": self.decision_id,
+            "status": self.status,
             "v1_action": self.v1_action,
             "model_action": self.model_action,
             "final_action": self.final_action,
+            "offered": self.offered,
             "option_id": self.option_id,
             "stop_basis": self.option_basis.get("stop_basis"),
             "target_basis": self.option_basis.get("target_basis"),
@@ -224,17 +260,21 @@ def _candidate_snapshots(
     ).all()
     out: list[tuple[SnapshotRow, datetime]] = []
     for _id, cycle_id, symbol, context, snap, action, scheduled in rows:
-        if (snap or {}).get("price"):
-            out.append(
-                (
-                    SnapshotRow(
-                        id=_id, cycle_id=cycle_id, symbol=symbol,
-                        context=context, input_snapshot=snap,
-                        final_action=action,
-                    ),
-                    scheduled,
-                )
+        # Every stored snapshot gets a status — a missing price becomes
+        # not_replayable/price_unavailable, never silently dropped.
+        out.append(
+            (
+                SnapshotRow(
+                    id=_id,
+                    cycle_id=cycle_id,
+                    symbol=symbol,
+                    context=context,
+                    input_snapshot=snap,
+                    final_action=action,
+                ),
+                scheduled,
             )
+        )
     return out
 
 
@@ -245,6 +285,7 @@ async def replay(
     to_day: date,
     model: str | None,
     assume_yes: bool,
+    approx_reference: bool = False,
     session_factory: sessionmaker[Session] | None = None,
     client: DecisionClient | None = None,
     config: AppConfig | None = None,
@@ -257,9 +298,7 @@ async def replay(
     cache = BarCache(sf)
     prompt = cached_prompt(prompt_version)
     spec = prompt_spec(prompt_version)
-    use_model = str(
-        model or config.get("decision", "model", default="gpt-4o-mini")
-    )
+    use_model = str(model or config.get("decision", "model", default="gpt-4o-mini"))
 
     with sf() as session:
         run_start = session.execute(
@@ -290,9 +329,7 @@ async def replay(
         model=use_model,
     )
     estimate_usd = (unit or Decimal(0)) * len(decisions)
-    threshold = Decimal(
-        str(config.get("decision", "replay", "confirm_above_usd", default=2.0))
-    )
+    threshold = Decimal(str(config.get("decision", "replay", "confirm_above_usd", default=2.0)))
     print(
         f"replay: {len(decisions)} snapshots, est. ${estimate_usd:.2f} "
         f"(prompt {prompt_version}, model {use_model})"
@@ -319,8 +356,7 @@ async def replay(
         days = _sessions_from_bars(
             cache,
             first_symbol,
-            datetime.combine(from_day, datetime.min.time(), tzinfo=UTC)
-            - timedelta(days=120),
+            datetime.combine(from_day, datetime.min.time(), tzinfo=UTC) - timedelta(days=120),
             datetime.now(UTC),
         )
         sessions_provider = StaticCalendarProvider(days)
@@ -334,12 +370,8 @@ async def replay(
     rows: list[ReplayRow] = []
     rules_rows: list[ReplayRow] = []
     total_cost = Decimal(0)
-    stop_atr = Decimal(
-        str(config.get("shadows", "rules_only", "stop_atr", default=2.0))
-    )
-    target_r = Decimal(
-        str(config.get("shadows", "rules_only", "target_r", default=2.0))
-    )
+    stop_atr = Decimal(str(config.get("shadows", "rules_only", "stop_atr", default=2.0)))
+    target_r = Decimal(str(config.get("shadows", "rules_only", "target_r", default=2.0)))
     horizon_days = 5
 
     for decision, scheduled in decisions:
@@ -356,9 +388,7 @@ async def replay(
                 current_stop=_dec(pos.get("stop")),
                 initial_stop=_dec(pos.get("initial_stop")),
                 opened_at=(
-                    datetime.fromisoformat(str(pos["opened_at"]))
-                    if pos.get("opened_at")
-                    else None
+                    datetime.fromisoformat(str(pos["opened_at"])) if pos.get("opened_at") else None
                 ),
             )
         bars_1h, daily, todays = rebuild_bars(
@@ -367,33 +397,66 @@ async def replay(
             calendar=sessions_provider,
             bars_reader=cache.get,
         )
-        v2 = build_v2_fields(
-            context=decision.context,
-            bars_1h=bars_1h,
-            daily=daily,
-            today_5m=todays,
-            price=price,
-            reference=reference,
-            atr_1h=atr_1h,
-            config=config,
-            held=held,
-        )
-        snap.update(v2.fields)
+
+        # --- one status before anything else (docs/SPEC.md, Replays)
+        status = REPLAYED
+        error: str | None = None
+        if price is None:
+            status, error = NOT_REPLAYABLE, "price_unavailable"
+        elif atr_1h is None or atr_1h <= 0:
+            status, error = NOT_REPLAYABLE, "missing_atr"
+        elif not (bars_1h or daily or todays):
+            status, error = NOT_REPLAYABLE, "missing_bars"
+        elif reference is None:
+            if approx_reference:
+                last_bar = _last_closed_bar(cache, symbol, scheduled.replace(tzinfo=UTC))
+                if last_bar is None:
+                    status, error = NOT_REPLAYABLE, "missing_bars"
+                else:
+                    # min(stored price, last closed 5m close); the
+                    # plausible ask isn't stored pre-PR 15, so the
+                    # reference can only sit too high (docs/SPEC.md).
+                    reference = min(price, last_bar.close)
+                    snap["stop_reference_price"] = str(reference)
+                    status = REPLAYED_APPROX
+            else:
+                status, error = NOT_REPLAYABLE, "missing_reference"
+
+        v2: V2Build | None = None
+        offered: list[str] | None = None
+        if status != NOT_REPLAYABLE:
+            v2 = build_v2_fields(
+                context=decision.context,
+                bars_1h=bars_1h,
+                daily=daily,
+                today_5m=todays,
+                price=price,
+                reference=reference,
+                atr_1h=atr_1h,
+                config=config,
+                held=held,
+            )
+            snap.update(v2.fields)
+            offered = [
+                str(o.get("id"))
+                for o in (v2.fields.get("options") or v2.fields.get("stop_options") or [])
+            ]
 
         # --- model call for this snapshot
         score: Score | None = None
         option_basis: dict[str, str | None] = {}
         option_id: str | None = None
-        final_action = "no_call"
+        final_action = "no_call" if decision.context == "candidate" else "hold"
         model_action: str | None = None
         valid = False
         explanation_passed: bool | None = None
         explanation_detail: dict[str, Any] | None = None
-        error: str | None = None
         cost: Decimal | None = None
-        if decision.context == "candidate" and not v2.fields["options"]:
-            # No code-built option survived (or the inputs for one were
-            # missing) — the model is never asked (docs/SPEC.md).
+        if v2 is None:
+            pass  # not_replayable: no builder run, no model call, no cost
+        elif decision.context == "candidate" and not v2.fields["options"]:
+            # The builder ran and no code-built option survived — the
+            # model is never asked (docs/SPEC.md).
             final_action = "no_call"
             error = f"no_options: {v2.reason or 'no option met the rules'}"
         else:
@@ -440,9 +503,7 @@ async def replay(
                 option_basis = {
                     "stop_basis": str(chosen.get("stop_basis") or chosen.get("basis")),
                     "target_basis": (
-                        str(chosen.get("target_basis"))
-                        if chosen.get("target_basis")
-                        else None
+                        str(chosen.get("target_basis")) if chosen.get("target_basis") else None
                     ),
                 }
                 stop = _dec(chosen.get("stop"))
@@ -451,8 +512,7 @@ async def replay(
                     future = cache.get(
                         symbol,
                         scheduled.replace(tzinfo=UTC),
-                        scheduled.replace(tzinfo=UTC)
-                        + timedelta(days=horizon_days * 2 + 4),
+                        scheduled.replace(tzinfo=UTC) + timedelta(days=horizon_days * 2 + 4),
                     )
                     horizon_sessions = {
                         b.start.astimezone(NY_TZ).date()
@@ -467,9 +527,7 @@ async def replay(
                     )
                     score = _score_option(
                         [b for b in future if b.start > scheduled.replace(tzinfo=UTC)],
-                        limit=_dec(
-                            (snap.get("constraints") or {}).get("entry_limit")
-                        ),
+                        limit=_dec((snap.get("constraints") or {}).get("entry_limit")),
                         stop=stop,
                         target=target,
                         horizon_end=horizon_end,
@@ -492,6 +550,8 @@ async def replay(
                 score=score,
                 cost=cost,
                 error=error,
+                status=status,
+                offered=offered,
             )
         )
 
@@ -544,6 +604,7 @@ async def replay(
                 score=r_score,
                 cost=None,
                 error=None,
+                status="rules_only",
             )
         )
 
@@ -556,8 +617,15 @@ async def replay(
         for row in rules_rows:
             fh.write(json.dumps(row.to_json()) + "\n")
     report = _report(
-        replay_id, prompt_version, use_model, from_day, to_day,
-        rows, rules_rows, estimate_usd, total_cost,
+        replay_id,
+        prompt_version,
+        use_model,
+        from_day,
+        to_day,
+        rows,
+        rules_rows,
+        estimate_usd,
+        total_cost,
     )
     (root / "report.md").write_text(report)
     (root / "meta.json").write_text(
@@ -569,6 +637,11 @@ async def replay(
                 "from": from_day.isoformat(),
                 "to": to_day.isoformat(),
                 "snapshots": len(decisions),
+                "approx_reference": approx_reference,
+                "statuses": {
+                    status: sum(1 for r in rows if r.status == status)
+                    for status in (REPLAYED, REPLAYED_APPROX, NOT_REPLAYABLE)
+                },
                 "estimated_usd": float(estimate_usd),
                 "cost_usd": float(total_cost),
                 "created_at": datetime.now(UTC).isoformat(),
@@ -584,6 +657,10 @@ def _mean(values: Sequence[Decimal]) -> Decimal | None:
     return (sum(values, Decimal(0)) / len(values)) if values else None
 
 
+def _no_options_reason(error: str | None) -> str:
+    return (error or "").removeprefix("no_options: ") or "unknown"
+
+
 def _report(
     replay_id: str,
     prompt: str,
@@ -595,49 +672,119 @@ def _report(
     estimate: Decimal,
     cost: Decimal,
 ) -> str:
-    called = [r for r in rows if r.model_action is not None]
-    candidates = [r for r in rows if r.context == "candidate"]
-    invalid = [r for r in called if not r.valid]
-    expl_fail = [r for r in rows if r.explanation_passed is False]
-    v1_same = [
-        r for r in rows if r.model_action is not None and r.v1_action == r.final_action
-    ]
-    bases: dict[str, int] = {}
-    for r in rows:
-        if r.option_id is not None:
-            key = (
-                ("level" if (r.option_basis.get("stop_basis") or "").find("L") >= 0 else "atr")
-                + "/"
-                + ("level" if (r.option_basis.get("target_basis") or "").find("L") >= 0 else "r")
-            )
-            bases[key] = bases.get(key, 0) + 1
+    replayed = [r for r in rows if r.status == REPLAYED]
+    approx = [r for r in rows if r.status == REPLAYED_APPROX]
+    not_replayable = [r for r in rows if r.status == NOT_REPLAYABLE]
 
-    def stats(lines: list[ReplayRow]) -> list[str]:
-        enter_rate = (
-            f"{len([r for r in lines if r.final_action == 'enter']) / len(lines) * 100:.0f}%"
-            if lines
-            else "—"
-        )
-        touched = [r.score.touched for r in lines if r.score is not None]
+    # --- counts per status first: no_options is a builder outcome,
+    # never a missing input (docs/SPEC.md, Replays).
+    status_lines = [
+        "## Statuses",
+        "",
+    ]
+    for label, group in (("replayed", replayed), ("replayed_approx", approx)):
+        if not group:
+            continue
+        calls = sum(1 for r in group if r.model_action is not None)
+        no_opts = [r for r in group if (r.error or "").startswith("no_options")]
+        status_lines.append(f"- {label}: {len(group)} (calls {calls} · no_options {len(no_opts)})")
+        reasons: dict[str, int] = {}
+        for r in no_opts:
+            key = _no_options_reason(r.error)
+            reasons[key] = reasons.get(key, 0) + 1
+        for reason, n in sorted(reasons.items()):
+            status_lines.append(f"  - no_options: {reason} — {n}")
+    nr_reasons: dict[str, int] = {}
+    for r in not_replayable:
+        nr_reasons[r.error or "?"] = nr_reasons.get(r.error or "?", 0) + 1
+    nr_detail = " · ".join(
+        f"{reason} {nr_reasons.get(reason, 0)}"
+        for reason in NOT_REPLAYABLE_REASONS
+        if nr_reasons.get(reason)
+    )
+    status_lines += [
+        f"- not_replayable: {len(not_replayable)}" + (f" — {nr_detail}" if nr_detail else ""),
+        f"- total snapshots: {len(rows)}",
+        "",
+    ]
+
+    def stats(group: list[ReplayRow], what: str) -> list[str]:
+        """Every rate over the rows in ``group`` only, with its base
+        stated (docs/SPEC.md, Replays — base of the rates)."""
+        candidates = [r for r in group if r.context == "candidate"]
+        called = [r for r in group if r.model_action is not None]
+        invalid = [r for r in called if not r.valid]
+        expl_fail = [r for r in group if r.explanation_passed is False]
+        v1_same = [r for r in group if r.model_action is not None and r.v1_action == r.final_action]
+        entered = [r for r in candidates if r.final_action == "enter"]
+        touched = [r.score.touched for r in candidates if r.score is not None]
         rs = [
             r.score.r_multiple
-            for r in lines
+            for r in candidates
             if r.score is not None and r.score.r_multiple is not None
         ]
         mean_r = _mean(rs)
+        bases: dict[str, int] = {}
+        for r in group:
+            if r.option_id is not None:
+                key = (
+                    ("level" if (r.option_basis.get("stop_basis") or "").find("L") >= 0 else "atr")
+                    + "/"
+                    + (
+                        "level"
+                        if (r.option_basis.get("target_basis") or "").find("L") >= 0
+                        else "r"
+                    )
+                )
+                bases[key] = bases.get(key, 0) + 1
+        enter_rate = f"{len(entered) / len(candidates) * 100:.0f}%" if candidates else "—"
         return [
-            f"- snapshots: {len(lines)}, calls: "
-            f"{sum(1 for r in lines if r.model_action is not None)}",
-            f"- enter rate (candidates): {enter_rate}",
+            f"- snapshots: {len(group)} · candidates: {len(candidates)} · calls: {len(called)}",
+            f"- enter rate (candidates): {enter_rate}"
+            f" ({len(entered)} of {len(candidates)} {what} candidates)",
+            f"- invalid choices: {len(invalid)}"
+            + (
+                f" ({len(invalid) / len(called) * 100:.0f}% of {len(called)} calls)"
+                if called
+                else ""
+            ),
+            f"- explanation failures: {len(expl_fail)} of {len(called)} calls",
+            f"- agreement with v1: {len(v1_same)} of {len(called)} calls",
+            "- choices by stop/target basis: "
+            + (", ".join(f"{k}: {n}" for k, n in sorted(bases.items())) or "—"),
             "- first touch: stop "
             f"{touched.count('stop')}, target {touched.count('target')}, "
-            f"neither {touched.count('none')}",
+            f"neither {touched.count('none')} (of {len(entered)} entered)",
             (
-                f"- mean R over the next sessions: {float(mean_r):+.2f}"
+                f"- mean R over the next sessions: {float(mean_r):+.2f} (n={len(rs)})"
                 if mean_r is not None
                 else "- mean R: —"
             ),
         ]
+
+    # --- live entries: every snapshot where live v1 entered, with what
+    # v2 offered and chose, or why it couldn't be replayed.
+    entry_lines = ["## Live entries", ""]
+    entries = [r for r in rows if r.v1_action == "enter"]
+    if not entries:
+        entry_lines.append("- none in range")
+    for r in entries:
+        when = r.at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+        head = f"- #{r.decision_id} {r.symbol} · {when} · v1 enter"
+        if r.status == NOT_REPLAYABLE:
+            entry_lines.append(f"{head} · not_replayable: {r.error}")
+        else:
+            offered = ",".join(r.offered or []) or "none"
+            if r.option_id is not None:
+                chose = f"chose {r.option_id}"
+            elif r.model_action is not None:
+                chose = f"model said {r.model_action}" + (
+                    "" if r.valid else f" (invalid: {r.error})"
+                )
+            else:
+                chose = r.error or "no options"
+            entry_lines.append(f"{head} · {r.status} · offered {offered} · {chose}")
+    entry_lines.append("")
 
     out = [
         f"# Replay {replay_id}",
@@ -645,20 +792,53 @@ def _report(
         f"prompt `{prompt}` · model `{model}` · {from_day} → {to_day}",
         f"estimated ${estimate:.2f} · actual ${cost:.4f}",
         "",
+        *status_lines,
         "## decision prompt",
         "",
-        *stats(candidates),
-        f"- invalid choices: {len(invalid)} ({len(invalid) / len(called) * 100:.0f}% of calls)"
-        if called
-        else "- invalid choices: 0",
-        f"- explanation failures: {len(expl_fail)}",
-        f"- agreement with v1: {len(v1_same)}/{len(called)} rows",
-        "- choices by stop/target basis: "
-        + (", ".join(f"{k}: {n}" for k, n in sorted(bases.items())) or "—"),
+        *stats(replayed, "replayed"),
         "",
+    ]
+    if approx:
+        out += [
+            "## decision prompt — approximate reference",
+            "",
+            "Reference = min(stored price, last closed 5m bar close); the"
+            " plausible ask isn't stored for these snapshots. Counted"
+            " separately, never in the rates above.",
+            "",
+            *stats(approx, "replayed_approx"),
+            "",
+        ]
+    rules_candidates = [r for r in rules_rows if r.context == "candidate"]
+    rules_entered = [r for r in rules_candidates if r.final_action == "enter"]
+    rules_touched = [r.score.touched for r in rules_candidates if r.score is not None]
+    rules_rs = [
+        r.score.r_multiple
+        for r in rules_candidates
+        if r.score is not None and r.score.r_multiple is not None
+    ]
+    rules_mean = _mean(rules_rs)
+    out += [
+        *entry_lines,
         "## rules-only baseline",
         "",
-        *stats(rules_rows),
+        f"- snapshots: {len(rules_rows)} · candidates: {len(rules_candidates)}",
+        "- enter rate (candidates): "
+        + (
+            f"{len(rules_entered) / len(rules_candidates) * 100:.0f}%"
+            f" ({len(rules_entered)} of {len(rules_candidates)} candidates)"
+            if rules_candidates
+            else "—"
+        ),
+        "- first touch: stop "
+        f"{rules_touched.count('stop')}, "
+        f"target {rules_touched.count('target')}, "
+        f"neither {rules_touched.count('none')}",
+        (
+            f"- mean R over the next sessions: {float(rules_mean):+.2f} (n={len(rules_rs)})"
+            if rules_mean is not None
+            else "- mean R: —"
+        ),
         "",
     ]
     return "\n".join(out)
@@ -688,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--to", dest="to_day", required=True)
     parser.add_argument("--model", default=None)
     parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--approx-reference", action="store_true")
     args = parser.parse_args(argv)
     result = asyncio.run(
         replay(
@@ -696,6 +877,7 @@ def main(argv: list[str] | None = None) -> int:
             to_day=date.fromisoformat(args.to_day),
             model=args.model,
             assume_yes=args.yes,
+            approx_reference=args.approx_reference,
         )
     )
     return 0 if result is not None else 1
