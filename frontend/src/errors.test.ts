@@ -18,12 +18,13 @@ function fakeBrowser() {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => void store.set(key, value),
   });
-  globalThis.fetch = vi
+  const fetchMock = vi
     .fn()
     .mockResolvedValue({ ok: true, json: async () => ({}) });
+  globalThis.fetch = fetchMock;
   const fire = (name: string, event: Event) =>
     (listeners[name] ?? []).forEach((fn) => fn(event));
-  return { fire, reload };
+  return { fire, reload, fetchMock };
 }
 
 function preloadError(): Event {
@@ -39,13 +40,18 @@ describe('installErrorHooks', () => {
   });
 
   it('reloads once when a lazy chunk goes stale after a rebuild', () => {
-    const { fire, reload } = fakeBrowser();
+    const { fire, reload, fetchMock } = fakeBrowser();
     installErrorHooks();
 
     const first = preloadError();
     fire('vite:preloadError', first);
     expect(first.defaultPrevented).toBe(true);
     expect(reload).toHaveBeenCalledTimes(1);
+    // keepalive: the reload must not abort the report on its way out.
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/logs/client',
+      expect.objectContaining({ keepalive: true }),
+    );
   });
 
   it('lets a repeat failure inside the guard window reach the boundary', () => {

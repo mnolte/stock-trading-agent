@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-26 — Stale GUI chunks after a rebuild
+
+- A tab left open across a `make run` rebuild kept asking for hashed chunks that no longer existed; the SPA fallback answered `index.html` (200, text/html), the module load failed and the error boundary showed "Something went wrong" until a reload.
+- `SpaStaticFiles` now returns a real 404 for missing paths with a file extension; only extensionless page paths fall back to `index.html`. `index.html` goes out `Cache-Control: no-cache` and hashed assets under `/assets/` go out `immutable`.
+- Client error reports now use `keepalive` so the "stale chunk" report survives the immediate reload in the `vite:preloadError` handler.
+
 ## 2026-10-26 — Insights (PR 22)
 
 - New "Insights" section and screen (Learn group):

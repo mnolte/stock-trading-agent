@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -1233,15 +1233,29 @@ def create_app() -> FastAPI:
 
 
 class SpaStaticFiles(StaticFiles):
-    """Serve the built Vite app; unknown paths fall back to index.html."""
+    """Serve the built Vite app; unknown page paths fall back to index.html.
+
+    The fallback only answers paths without a file extension — a missing
+    file (like a hashed chunk a stale tab still asks for after a rebuild)
+    gets a real 404, not HTML a script loader cannot use. index.html goes
+    out no-cache so a rebuilt GUI is picked up on the next navigation;
+    hashed assets under /assets/ are immutable.
+    """
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
-                return await super().get_response("index.html", scope)
-            raise
+            if exc.status_code != 404 or PurePosixPath(path).suffix:
+                raise
+            response = await super().get_response("index.html", scope)
+        if not PurePosixPath(path).suffix or path == "index.html":
+            response.headers["Cache-Control"] = "no-cache"
+        elif path.startswith("assets/"):
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+            )
+        return response
 
 
 app = create_app()

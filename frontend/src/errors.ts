@@ -37,6 +37,9 @@ export function reportError(report: {
       url: window.location.href,
       tab_id: tabId(),
     }),
+    // keepalive: the preloadError handler reloads right after reporting —
+    // without it the navigation aborts the request before it is sent.
+    keepalive: true,
     // A reporting failure must never surface to the user.
   }).catch(() => undefined);
 }
