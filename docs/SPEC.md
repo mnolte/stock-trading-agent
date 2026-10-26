@@ -876,6 +876,7 @@ Each one is kept only when it is above the current stop and satisfies the existi
   - first touch and R of the chosen options;
   - the same counts for rules-only on the same snapshots.
   - **Base of the rates:** they are computed over `replayed` rows only, and each says how many rows it is based on.
+  - **Entries per session:** entries and their R are also shown per session, with the number of distinct sessions. Entries on the same day mostly ride the same market move, so 60 entries on one day count as roughly one observation, not 60.
 - **Live entries.** The report lists every snapshot where live v1 entered, with what v2 offered and chose. If such a snapshot wasn't replayable, the report says why, so a missing comparison is visible instead of silent.
 - **Cost.** It counts toward the backtest monthly cap. The tool shows an estimate first and refuses more than $2 without `--yes`. Replays never write to the live tables.
 

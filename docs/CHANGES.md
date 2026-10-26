@@ -10,6 +10,7 @@ Newest first.
   - `not_replayable`, with a reason: `missing_reference`, `price_unavailable`, `missing_atr` or `missing_bars`;
   - `replayed_approx`, with the opt-in `--approx-reference`: min(price, last 5-min close) for pre-PR 15 snapshots, reported separately and never mixed into the main rates.
 - The report leads with counts per status, bases every rate on replayed rows, and lists every live v1 entry with what v2 did, or why it couldn't.
+- The report also shows entries and R per session, with the number of distinct sessions, because same-day entries are one market move, not independent trades (added after the second replay: 59 of 60 approximate entries fell on 22 Oct).
 - Path to live: the replay gate checks validity only. The entry-rate comparison needs at least 20 v2 entry proposals, which the shadow (at least 10 sessions and 20 proposals) provides.
 
 ## 2026-10-25 — Decision v2: code-built options (PR 21)
