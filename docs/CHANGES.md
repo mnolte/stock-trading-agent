@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-26 — run.lock records the boot id
+
+- `data/run.lock` now carries the Linux boot id. A lock written under a different boot or VM is stale even when its pid is locally alive: pids recycle across boots, so a pid can only prove "another run is live" within the same boot. Locks without a boot id keep the pid-only check.
+- Fixes the e2e CI refusal where a `run.lock` restored from the cached data dir held a pid that was alive on the new runner; the Playwright webServer command also deletes a leftover e2e lock before starting uvicorn.
+
 ## 2026-10-25 — Decision v2: code-built options (PR 21)
 
 - New "Decision v2" section, from the 22 October analysis (32 of 33 entry proposals failed the code checks, mostly a stop about 1 ATR away):
