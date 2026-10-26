@@ -60,6 +60,7 @@ def build_llm_call(
     output_invalid: bool = False,
     error_detail: str | None = None,
     number_check_failed: bool = False,
+    unsupported_claim: bool = False,
     cycle_id: int | None = None,
     decision_id: int | None = None,
     shadow_decision_id: int | None = None,
@@ -92,6 +93,7 @@ def build_llm_call(
             final_action=final_action,
             input_incomplete=input_incomplete(input_snapshot),
             number_check_failed=number_check_failed,
+            unsupported_claim=unsupported_claim,
             latency_ms=response.latency_ms,
             slow_ms=slow_ms,
         )

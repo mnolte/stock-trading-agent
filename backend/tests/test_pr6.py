@@ -2,12 +2,14 @@
 versioned settings, warming-up symbols and the WebSocket update bus
 (docs/SPEC.md, GUI)."""
 
+import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from app.api.websocket import UpdateBus
+from app.api.websocket import UpdateBus, feed
 from app.broker.fake import FakeBroker, _PosRec
 from app.broker.models import BrokerAccount
 from app.config import AppConfig
@@ -39,6 +41,7 @@ from app.rules.prefilter import RulesResult
 from app.settings_service import SettingsError, validate_settings
 from app.signals.service import SignalService, SymbolEval
 from app.signals.snapshot import IndicatorSnapshot
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -161,6 +164,8 @@ def _item(symbol: str) -> SymbolEval:
         snapshot=_snapshot(symbol),
         rules=RulesResult(symbol, "pass", None, []),
         bars_1h=[],
+        daily=[],
+        today_5m=[],
         price=Decimal("420"),
         day_change_pct=Decimal("0.5"),
     )
@@ -1151,6 +1156,45 @@ def test_update_bus_fans_out_topics() -> None:
     bus.unsubscribe(first)
     bus.publish("header")
     assert second.get_nowait() == {"header"}
+
+
+class _WsDouble:
+    """WebSocket stand-in for feed(): publishes to the bus from inside
+    accept(), where a real socket could publish mid-handshake."""
+
+    def __init__(self, bus: UpdateBus) -> None:
+        self.app = SimpleNamespace(state=SimpleNamespace(update_bus=bus))
+        self._bus = bus
+        self._receive_calls = 0
+        self.sent: list[dict[str, object]] = []
+
+    async def accept(self) -> None:
+        # A publish that lands while the handshake finishes must still
+        # reach this client — feed() subscribes before accepting.
+        self._bus.publish("notifications")
+
+    async def receive_text(self) -> str:
+        self._receive_calls += 1
+        if self._receive_calls == 1:
+            # Idle like a quiet client: long enough for the queued update
+            # to win the FIRST_COMPLETED race, short enough that a lost
+            # publish fails the test fast instead of hanging it.
+            await asyncio.sleep(0.05)
+        raise WebSocketDisconnect()
+
+    async def send_json(self, payload: dict[str, object]) -> None:
+        self.sent.append(payload)
+
+
+@pytest.mark.anyio
+async def test_ws_feed_delivers_publish_during_handshake() -> None:
+    """A publish between accept() and the subscription used to be lost —
+    the client would miss the update until the next event or reconnect."""
+    bus = UpdateBus()
+    ws = _WsDouble(bus)
+    await feed(cast(WebSocket, ws))
+    assert {"type": "update", "topics": ["notifications"]} in ws.sent
+    assert not bus._subscribers
 
 
 # ----------------------------------------------------------------------

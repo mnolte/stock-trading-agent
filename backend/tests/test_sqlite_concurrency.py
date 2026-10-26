@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from app.config import get_config
@@ -104,7 +105,9 @@ class LockProbeClient:
         self.inner = FakeDecisionClient(enter_symbols={"MSFT"})
         self.probes = 0
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         conn = sqlite3.connect(self.db_path, timeout=0)
         try:
             try:

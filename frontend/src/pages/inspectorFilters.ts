@@ -43,6 +43,7 @@ export const REASON_OPTIONS = [
   'changed_by_code',
   'input_incomplete',
   'number_check_failed',
+  'unsupported_claim',
   'slow',
   'timeout',
   'api_error',

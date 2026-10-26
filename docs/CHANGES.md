@@ -4,8 +4,9 @@ Newest first.
 
 ## 2026-10-26 — run.lock survives pid reuse (e2e CI fix)
 
-- `RunLock.check` counts a live pid as the holder only while the lock's heartbeat is fresh (up to three missed beats): a recycled pid or a data dir restored from the e2e CI cache no longer refuses startup. Sits under "Clean shutdown"; the "pid still running" rule now reads the heartbeat before refusing.
-- The Playwright e2e web server deletes a leftover `run.lock` before seeding, so a cached or killed earlier run can't refuse startup or raise the unclean-run banner.
+- `data/run.lock` now carries the Linux boot id. A lock written under a different boot or VM is stale even when its pid is locally alive: pids recycle across boots, so a pid can only prove "another run is live" within the same boot.
+- Within the same boot, `RunLock.check` counts a live pid as the holder only while the lock's heartbeat is fresh (up to three missed beats): a recycled pid no longer refuses startup. Locks without a boot id or heartbeat fields keep failing safe to stale once their timestamps age out.
+- The Playwright e2e web server deletes a leftover `run.lock` before seeding, so a cached or killed earlier run can't refuse startup or raise the unclean-run banner. Fixes the e2e CI refusal where a `run.lock` restored from the cached data dir held a pid that was alive on the new runner.
 
 ## 2026-10-25 — Decision v2: code-built options (PR 21)
 

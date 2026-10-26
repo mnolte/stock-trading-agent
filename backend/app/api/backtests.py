@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import csv
 import io
+import sqlite3
+import threading
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -387,6 +390,44 @@ def clear_store(request: Request) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # per-strategy detail (the run's own databases)
 
+_MIGRATE_LOCK = threading.Lock()
+
+
+def _alembic_version(path: Path) -> str | None:
+    row = (
+        sqlite3.connect(path)
+        .execute("SELECT version_num FROM alembic_version")
+        .fetchone()
+    )
+    return str(row[0]) if row else None
+
+
+def _alembic_head() -> str:
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+    return str(ScriptDirectory.from_config(Config(str(ini))).get_current_head())
+
+
+def _migrate_strategy_db_if_behind(path: Path) -> None:
+    """A finished run's strategy DB predates any later schema change.
+
+    Alembic upgrade is idempotent and additive, so an old DB is brought
+    to head on open; at head it is skipped with one version read. The
+    lock serializes the rare real migration — alembic's command context
+    is not re-entrant across the request threadpool.
+    """
+    if _alembic_version(path) == _alembic_head():
+        return
+    with _MIGRATE_LOCK:
+        if _alembic_version(path) != _alembic_head():
+            from app.backtests.bundle import migrate_db
+
+            migrate_db(path)
+
+
+
 
 def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Session]:
     with get_session_maker()() as session:
@@ -398,6 +439,7 @@ def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Sessi
     path = run_dir_for(get_config(), run_id) / f"{slug}.db"
     if not path.exists():
         raise HTTPException(404, "strategy database not found")
+    _migrate_strategy_db_if_behind(path)
     return session_maker_for(path, get_config())
 
 
@@ -592,6 +634,10 @@ def run_decision_detail(
         "prompt_version": decision.prompt_version,
         "prompt_hash": decision.prompt_hash,
         "prompt_text": prompt_text,
+        "levels": decision.levels,
+        "options": decision.options,
+        "chosen_option": decision.chosen_option,
+        "explanation_check": decision.explanation_check,
         "model": decision.model,
         "tokens_in": decision.tokens_in,
         "tokens_out": decision.tokens_out,

@@ -7,11 +7,12 @@ cycles/checks and in-flight order submissions — a second signal skips
 the wait. Clients are closed, the WAL is checkpointed, the engine
 disposed and the log pipeline closed last.
 
-``RunLock`` writes ``data/run.lock`` ({pid, heartbeat}) at startup: a
-live pid with a fresh heartbeat refuses startup; a stale lock means the
-last run died uncleanly — a quick_check runs and the GUI shows the
-unclean-run banner. A live pid whose heartbeat has gone quiet counts as
-stale: pids get recycled.
+``RunLock`` writes ``data/run.lock`` ({pid, boot_id, heartbeat}) at
+startup: a live pid from the same boot with a fresh heartbeat refuses
+startup; a stale lock means the last run died uncleanly — a quick_check
+runs and the GUI shows the unclean-run banner. A lock from a different
+boot or a live pid whose heartbeat has gone quiet counts as stale: pids
+get recycled across boots and within one.
 """
 
 from __future__ import annotations
@@ -52,6 +53,16 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _boot_id() -> str:
+    """Linux boot id; "" where /proc is absent. A lock written under a
+    different boot (or a different VM, e.g. a restored e2e cache) can
+    only hold a recycled pid, so it must never count as live."""
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return ""
+
+
 @dataclass
 class LockCheck:
     status: str  # "free" | "live" | "stale"
@@ -74,6 +85,9 @@ class RunLock:
             pid = int(data.get("pid", 0))
         except (OSError, TypeError, ValueError):
             return LockCheck("stale")
+        boot_id = data.get("boot_id")
+        if boot_id is not None and boot_id != _boot_id():
+            return LockCheck("stale", pid)
         if pid == os.getpid():
             return LockCheck("live", pid)
         if not _pid_alive(pid):
@@ -116,6 +130,7 @@ class RunLock:
             json.dumps(
                 {
                     "pid": os.getpid(),
+                    "boot_id": _boot_id(),
                     "started_at": time.time(),
                     "heartbeat_seconds": heartbeat_seconds,
                 }

@@ -22,6 +22,7 @@ WARNING_REASONS = (
     "changed_by_code",
     "input_incomplete",
     "number_check_failed",
+    "unsupported_claim",
     "slow",
 )
 ERROR_REASONS = ("timeout", "api_error", "invalid_output", "refusal")
@@ -54,6 +55,9 @@ class CallFacts:
     input_incomplete: bool = False
     # Review text failed the number check; the plain template was used.
     number_check_failed: bool = False
+    # decision.v2: a level id or decimal in the explanation matched
+    # nothing in the snapshot or the chosen option.
+    unsupported_claim: bool = False
     latency_ms: int | None = None
     # inspector.slow_call_seconds converted to ms; None disables the check.
     slow_ms: int | None = None
@@ -83,6 +87,8 @@ def classify(facts: CallFacts) -> tuple[str, list[str]]:
         warnings.append("input_incomplete")
     if facts.number_check_failed:
         warnings.append("number_check_failed")
+    if facts.unsupported_claim:
+        warnings.append("unsupported_claim")
     if (
         facts.latency_ms is not None
         and facts.slow_ms is not None

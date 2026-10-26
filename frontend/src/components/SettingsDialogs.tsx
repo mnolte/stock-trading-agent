@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { DialogButton, Modal } from './Modal';
 
@@ -15,9 +15,11 @@ export function ResetAccountDialog({
   onConfirm: () => void;
 }) {
   const [typed, setTyped] = useState('');
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setTyped('');
-  }, [open]);
+  }
   return (
     <Modal
       open={open}
@@ -63,9 +65,11 @@ export function SaveSettingsDialog({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setReason('');
-  }, [open]);
+  }
   return (
     <Modal
       open={open}

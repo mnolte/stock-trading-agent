@@ -166,7 +166,7 @@ def print_report(
         o = validation.output
         out(
             f"  model:  {o.action} · confidence {o.confidence} · "
-            f"stop {o.stop_price} · target {o.target_price}"
+            f"stop {getattr(o, "stop_price", None)} · target {getattr(o, "target_price", None)}"
         )
     out(
         f"  result: {'valid' if validation.valid else 'invalid'} — "

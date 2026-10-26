@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
@@ -36,8 +36,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
@@ -47,7 +47,7 @@ jobs:
       - run: make test-backend
         env:
           PYTEST_ADDOPTS: --junitxml=junit-backend.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-backend
@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
@@ -73,7 +73,7 @@ jobs:
       - run: make test-slow
         env:
           PYTEST_ADDOPTS: --junitxml=junit-slow.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pytest-slow
@@ -85,11 +85,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: frontend/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "pnpm"
@@ -106,24 +106,24 @@ jobs:
       matrix:
         project: [desktop, mobile]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
       - run: uv sync --extra dev --locked
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: frontend/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --allow-build=esbuild
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
@@ -133,7 +133,7 @@ jobs:
       # Caching the seeded+warmed e2e database makes the first screen in
       # each job incremental; alembic upgrade still runs at seed time, so
       # a stale cache migrates forward.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             /tmp/stock-agent-e2e.db
@@ -144,7 +144,7 @@ jobs:
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
         env:
           E2E_PREVIEW: '1'
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-${{ matrix.project }}

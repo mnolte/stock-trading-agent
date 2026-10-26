@@ -720,6 +720,42 @@ def evaluate(
     )
 
     # ---- Model ------------------------------------------------------------
+    # Under decision.v2 a proposal passes when the option id is valid, the
+    # explanation check passed and the order-time recheck passed — or no
+    # order was attempted (docs/SPEC.md, Readiness — Model).
+    def _v2_passed(d: Decision) -> bool:
+        checks = cast(
+            "list[dict[str, Any]]", (d.validation_result or {}).get("checks") or []
+        )
+        option_check = next(
+            (c for c in checks if str(c.get("name", "")).startswith("Option ")),
+            None,
+        )
+        if not option_check or not option_check.get("passed"):
+            return False
+        explanation = d.explanation_check or {}
+        if explanation and explanation.get("passed") is False:
+            return False
+        gates = cast(
+            "list[dict[str, Any]]", (d.gates_result or {}).get("checks") or []
+        )
+        fresh = next(
+            (c for c in gates if c.get("name") == "fresh_quote"), None
+        )
+        if fresh is not None and not fresh.get("passed"):
+            return False
+        # The other code checks (confidence, band, R/R) still count.
+        return all(
+            bool(c.get("passed"))
+            for c in checks
+            if c.get("name") != "Explanation check"
+        )
+
+    def _proposal_passed(d: Decision) -> bool:
+        if d.prompt_version == "decision.v2":
+            return _v2_passed(d)
+        return d.final_action == "enter"
+
     proposals = list(
         session.execute(
             select(Decision)
@@ -734,7 +770,7 @@ def evaluate(
         ).scalars()
     )
     prop_total = len(proposals)
-    prop_pass = sum(1 for d in proposals if d.final_action == "enter")
+    prop_pass = sum(1 for d in proposals if _proposal_passed(d))
     prop_pct = Decimal(prop_pass) / prop_total * 100 if prop_total else None
     criteria.append(
         _criterion(

@@ -23,19 +23,27 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const subs = useRef(new Map<number, Subscription>());
   const nextId = useRef(0);
   const pending = useRef(new Set<Topic>());
-  const debounce = useRef<ReturnType<typeof setTimeout>>();
+  const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const flush = useCallback(() => {
     const topics = pending.current;
     pending.current = new Set();
+    const delivered = new Set<Topic>();
     subs.current.forEach((sub) => {
       for (const topic of topics) {
         if (sub.topics.has(topic)) {
+          delivered.add(topic);
           sub.cb();
-          return;
+          break;
         }
       }
     });
+    // Topics nobody is subscribed to yet stay pending — a component that
+    // mounts after the message arrived (lazy route, Suspense fallback)
+    // must still see its wake-up instead of dropping it here.
+    for (const topic of topics) {
+      if (!delivered.has(topic)) pending.current.add(topic);
+    }
   }, []);
 
   const fireAll = useCallback(() => {
@@ -99,6 +107,14 @@ export function LiveUpdatesProvider({ children }: { children: ReactNode }) {
   const subscribe = useCallback((topics: Topic[], cb: () => void) => {
     const id = nextId.current++;
     subs.current.set(id, { topics: new Set(topics), cb });
+    // Deliver an update that arrived before this subscriber existed.
+    for (const topic of pending.current) {
+      if (topics.includes(topic)) {
+        pending.current.delete(topic);
+        cb();
+        break;
+      }
+    }
     return () => {
       subs.current.delete(id);
     };

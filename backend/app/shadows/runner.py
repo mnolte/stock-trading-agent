@@ -40,10 +40,15 @@ from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
-from app.decide.output import validate_model_output
-from app.decide.prompt import cached_prompt
-from app.decide.service import model_output_json, rules_result_json, validation_result_json
+from app.decide.output import decision_trade_prices, validate_model_output, validate_model_output_v2
+from app.decide.prompt import cached_prompt, prompt_spec
+from app.decide.service import (
+    model_output_json,
+    rules_result_json,
+    validation_result_json,
+)
 from app.decide.snapshot import UNAVAILABLE, _position_block
+from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
 from app.market.clock import Clock, SessionClock
@@ -549,11 +554,13 @@ class ShadowRunner:
             price: Decimal | None,
             current_stop: Decimal | None,
             rules: RulesResult | None,
+            v2: V2Build | None = None,
         ) -> ShadowDecision:
             assert deadline is None or deadline > self.clock.now()
             state["calls"] = int(state["calls"]) + 1
             sr.calls += 1
             prompt = cached_prompt(str(strategy.prompt_version))
+            spec = prompt_spec(prompt.version)
             budget = (deadline - self.clock.now()).total_seconds() if deadline is not None else None
             sent_at = _naive_utc(self.clock.now())
             # Never hold a database write transaction across an await: live
@@ -563,7 +570,9 @@ class ShadowRunner:
             try:
                 response = await asyncio.wait_for(
                     self._client(strategy).complete(
-                        system=prompt.text, user=json.dumps(snap_json, indent=2)
+                        system=prompt.text,
+                        user=json.dumps(snap_json, indent=2),
+                        schema=spec.json_schema,
                     ),
                     timeout=budget,
                 )
@@ -593,16 +602,32 @@ class ShadowRunner:
                     tokens_out=response.tokens_out,
                 )
             ind = indicators_from_snapshot(d.symbol, d.snapshot)
-            validation = validate_model_output(
-                response.raw,
-                symbol=d.symbol,
-                context=context,
-                price=_dec(snap_json.get("stop_reference_price")) if context == "held" else price,
-                atr_1h=ind.atr_1h,
-                current_stop=current_stop,
-                call_error=response.error,
-                config=cfg,
-            )
+            if spec.uses_options:
+                validation = validate_model_output_v2(
+                    response.raw,
+                    symbol=d.symbol,
+                    context=context,
+                    snapshot=snap_json,
+                    atr_1h=ind.atr_1h,
+                    current_stop=current_stop,
+                    call_error=response.error,
+                    config=cfg,
+                )
+            else:
+                validation = validate_model_output(
+                    response.raw,
+                    symbol=d.symbol,
+                    context=context,
+                    price=(
+                        _dec(snap_json.get("stop_reference_price"))
+                        if context == "held"
+                        else price
+                    ),
+                    atr_1h=ind.atr_1h,
+                    current_stop=current_stop,
+                    call_error=response.error,
+                    config=cfg,
+                )
             row = self._row(
                 strategy,
                 cycle,
@@ -617,6 +642,20 @@ class ShadowRunner:
                 row.input_snapshot = snap_json
             row.model_output = model_output_json(validation.output) if validation.output else None
             row.validation_result = validation_result_json(validation)
+            if v2 is not None:
+                row.levels = {"levels": v2.fields.get("levels")}
+                row.options = v2.options_column
+                row.options_version = v2.options_column.get("options_version")
+            row.chosen_option = (
+                validation.chosen_option.get("id")
+                if validation.chosen_option is not None
+                else None
+            )
+            row.explanation_check = (
+                validation.explanation.to_json()
+                if validation.explanation is not None
+                else None
+            )
             row.prompt_version = prompt.version
             row.prompt_hash = prompt.sha256
             row.model = strategy.model
@@ -702,6 +741,29 @@ class ShadowRunner:
                     quote.provenance(quote.quote_plausible(dev_pct))
                     | {"synthetic": synthetic}
                 )
+            v2_held: V2Build | None = None
+            if llm and prompt_spec(str(strategy.prompt_version)).uses_options:
+                h_bars, h_daily, h_todays = rebuild_bars(
+                    d.symbol, scheduled, calendar=self.calendar,
+                    bars_reader=self._bars,
+                )
+                v2_held = build_v2_fields(
+                    context="held",
+                    bars_1h=h_bars,
+                    daily=h_daily,
+                    today_5m=h_todays,
+                    price=price,
+                    reference=reference,
+                    atr_1h=indicators_from_snapshot(d.symbol, snap_json).atr_1h,
+                    config=cfg,
+                    held=HeldContext(
+                        entry=sp.entry,
+                        current_stop=sp.stop,
+                        initial_stop=sp.initial_stop,
+                        opened_at=aware(sp.opened_at) if sp.opened_at else None,
+                    ),
+                )
+                snap_json.update(v2_held.fields)
             # Held positions are always reviewed; a stale or suspect
             # market price only blocks a tighten_stop (docs/SPEC.md,
             # Entries — Market price).
@@ -720,7 +782,9 @@ class ShadowRunner:
                 )
             elif llm:
                 try:
-                    row = await call(d, "held", snap_json, price, sp.stop, None)
+                    row = await call(
+                        d, "held", snap_json, price, sp.stop, None, v2=v2_held
+                    )
                 except _OutOfTime as oot:
                     missed = self._missed(
                         session, strategy, cycle, d, "held", sr, str(state["out"])
@@ -792,8 +856,56 @@ class ShadowRunner:
                     snap_json = copy.deepcopy(dict(snap))
                     snap_json["context"] = "candidate"
                     snap_json["position"] = None
+                    v2_cand: V2Build | None = None
+                    if prompt_spec(str(strategy.prompt_version)).uses_options:
+                        atr_v2 = indicators_from_snapshot(
+                            d.symbol, snap_json
+                        ).atr_1h
+                        ref_v2 = quote.stop_reference(
+                            _dec(snap_json.get("last_bar_close")),
+                            atr_v2,
+                            entry=True,
+                            max_deviation_pct=dev_pct,
+                        )
+                        snap_json["stop_reference_price"] = (
+                            str(ref_v2) if ref_v2 is not None else None
+                        )
+                        c_bars, c_daily, c_todays = rebuild_bars(
+                            d.symbol, scheduled, calendar=self.calendar,
+                            bars_reader=self._bars,
+                        )
+                        v2_cand = build_v2_fields(
+                            context="candidate",
+                            bars_1h=c_bars,
+                            daily=c_daily,
+                            today_5m=c_todays,
+                            price=price,
+                            reference=ref_v2,
+                            atr_1h=atr_v2,
+                            config=cfg,
+                        )
+                        snap_json.update(v2_cand.fields)
+                    if v2_cand is not None and not v2_cand.fields["options"]:
+                        row = self._row(
+                            strategy, cycle, d, "candidate",
+                            final_action="no_call",
+                            no_call_reason="no_options",
+                            rules=rules,
+                        )
+                        row.levels = {"levels": v2_cand.fields.get("levels")}
+                        row.options = v2_cand.options_column
+                        row.options_version = v2_cand.options_column.get(
+                            "options_version"
+                        )
+                        session.add(row)
+                        session.flush()
+                        sr.decisions += 1
+                        continue
                     try:
-                        row = await call(d, "candidate", snap_json, price, None, rules)
+                        row = await call(
+                            d, "candidate", snap_json, price, None, rules,
+                            v2=v2_cand,
+                        )
                     except _OutOfTime as oot:
                         missed = self._missed(
                             session, strategy, cycle, d, "candidate", sr,
@@ -806,8 +918,15 @@ class ShadowRunner:
                         )
                         continue
                     output = row.model_output or {}
-                    stop = _dec(output.get("stop_price"))
-                    target = _dec(output.get("target_price"))
+                    rstop, rtarget = decision_trade_prices(
+                        row.model_output, row.options, row.chosen_option
+                    )
+                    stop = rstop if rstop is not None else _dec(output.get("stop_price"))
+                    target = (
+                        rtarget
+                        if rtarget is not None
+                        else _dec(output.get("target_price"))
+                    )
             else:
                 atr = indicators_from_snapshot(d.symbol, snap).atr_1h
                 row = self._row(strategy, cycle, d, "candidate", final_action="skip", rules=rules)
@@ -962,7 +1081,12 @@ class ShadowRunner:
         if sp.exit_pending:
             return  # an earnings exit is already on its way
         if row.final_action == "tighten_stop":
-            new_stop = _dec(output.get("stop_price"))
+            rstop, _ = decision_trade_prices(
+                row.model_output, row.options, row.chosen_option
+            )
+            new_stop = (
+                rstop if rstop is not None else _dec(output.get("stop_price"))
+            )
             margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
             if price_failure is not None:
                 row.final_action = "hold"

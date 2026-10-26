@@ -46,10 +46,13 @@ class UpdateBus:
 
 @router.websocket("/ws")
 async def feed(websocket: WebSocket) -> None:
-    await websocket.accept()
     bus: UpdateBus = websocket.app.state.update_bus
+    # Subscribe before accepting: a publish between accept() and
+    # subscribe() would be dropped, leaving the client without the
+    # update until the next event or reconnect.
     queue = bus.subscribe()
     try:
+        await websocket.accept()
         while True:
             topics_task = asyncio.ensure_future(queue.get())
             receive_task = asyncio.ensure_future(websocket.receive_text())

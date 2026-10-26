@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 from app.shutdown import (
     RunLock,
     ShutdownManager,
+    _boot_id,
     quick_check,
 )
 from fastapi import FastAPI
@@ -88,6 +90,36 @@ def test_lock_corrupt_file_is_stale(tmp_path: Path) -> None:
     path = tmp_path / "run.lock"
     path.write_text("not json")
     assert RunLock(path).check().status == "stale"
+
+
+def test_lock_other_boot_is_stale(tmp_path: Path) -> None:
+    """A lock written under a different boot or VM is stale even when its
+    pid is locally alive — pids recycle across boots (the e2e cache
+    restore that refused CI startup carried exactly this)."""
+    path = tmp_path / "run.lock"
+    path.write_text(
+        json.dumps({"pid": os.getpid(), "boot_id": "other-boot"})
+    )
+    lock = RunLock(path)
+    assert lock.check().status == "stale"
+    lock.acquire()  # must not refuse
+
+
+def test_lock_same_boot_live_pid_stays_live(tmp_path: Path) -> None:
+    path = tmp_path / "run.lock"
+    path.write_text(
+        json.dumps({"pid": os.getpid(), "boot_id": _boot_id()})
+    )
+    lock = RunLock(path)
+    assert lock.check().status == "live"
+    with pytest.raises(SystemExit):
+        lock.acquire()
+
+
+def test_acquire_writes_boot_id(tmp_path: Path) -> None:
+    path = tmp_path / "run.lock"
+    RunLock(path).acquire()
+    assert json.loads(path.read_text())["boot_id"] == _boot_id()
 
 
 def test_quick_check_ok_and_missing(tmp_path: Path) -> None:

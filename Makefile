@@ -56,6 +56,11 @@ lint-frontend:
 logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
 	cd backend && ../$(PYTHON) -m app.log_index
 
+replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2 FROM=2026-10-20 TO=2026-10-25 [MODEL=] [YES=1]
+	cd backend && ../$(PYTHON) -m app.replay \
+		--prompt $(PROMPT) --from $(FROM) --to $(TO) \
+		$(if $(MODEL),--model $(MODEL),) $(if $(filter 1 true yes,$(YES)),--yes,)
+
 test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:

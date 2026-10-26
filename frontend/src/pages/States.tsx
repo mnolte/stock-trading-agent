@@ -178,6 +178,7 @@ const bannerButtonStyle = { height: '36px', padding: '0 12px', fontSize: 'var(--
 /** Gallery of the execution states and dialogs (design/screens/States.dc.html). */
 export default function States() {
   const [dialog, setDialog] = useState<DemoDialog>(null);
+  const [sampleNow] = useState(() => Date.now());
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -306,7 +307,7 @@ export default function States() {
       <Card label="Pending approval · supervised mode">
         <ApprovalCard
           approval={sampleApproval}
-          nextCycle={new Date(Date.now() + 48 * 60_000).toISOString()}
+          nextCycle={new Date(sampleNow + 48 * 60_000).toISOString()}
           killSwitchOn={false}
           onResolved={() => {}}
         />
@@ -337,8 +338,8 @@ export default function States() {
       />
       <ResumeDialog
         open={dialog === 'resume'}
-        since={new Date(Date.now() - 45 * 60 * 1000).toISOString()}
-        nextCycle={new Date(Date.now() + 20 * 60 * 1000).toISOString()}
+        since={new Date(sampleNow - 45 * 60 * 1000).toISOString()}
+        nextCycle={new Date(sampleNow + 20 * 60 * 1000).toISOString()}
         onCancel={() => setDialog(null)}
         onConfirm={() => setDialog(null)}
       />

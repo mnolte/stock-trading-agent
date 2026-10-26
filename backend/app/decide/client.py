@@ -56,7 +56,9 @@ class ModelResponse:
 class DecisionClient(Protocol):
     """Sends one prompt and returns the raw completion."""
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         """Complete one decision call; ``error`` is set on failure."""
         ...
 
@@ -154,7 +156,9 @@ class OpenAIDecisionClient:
         """Swap the key in place after a Settings save."""
         self._build(api_key)
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         from openai.types.chat.completion_create_params import ResponseFormat
 
         started = time.monotonic()
@@ -166,7 +170,7 @@ class OpenAIDecisionClient:
                     ResponseFormat,
                     {
                         "type": "json_schema",
-                        "json_schema": DECISION_JSON_SCHEMA,
+                        "json_schema": schema or DECISION_JSON_SCHEMA,
                     },
                 ),
                 messages=[
@@ -222,8 +226,12 @@ class FakeDecisionClient:
         self.enter_symbols = enter_symbols or {"MSFT"}
         self.model = "fake-decision"
 
-    def _default(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+    def _default(
+        self, snapshot: dict[str, Any], *, v2: bool = False
+    ) -> dict[str, Any]:
         symbol = snapshot["symbol"]
+        if v2:
+            return self._default_v2(snapshot)
         if snapshot["context"] == "held":
             return {
                 "symbol": symbol,
@@ -269,7 +277,38 @@ class FakeDecisionClient:
             "news_used": [],
         }
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    def _default_v2(self, snapshot: dict[str, Any]) -> dict[str, Any]:
+        """The v2 answer shape: pick the first offered option, else skip."""
+        symbol = snapshot["symbol"]
+        base = {
+            "symbol": symbol,
+            "thesis": f"{symbol}: simulated decision.",
+            "levels_used": [],
+            "risks": ["Simulated decision"],
+            "news_used": [],
+        }
+        if snapshot["context"] == "held":
+            return {**base, "action": "hold", "option_id": None, "confidence": 0.55}
+        options = snapshot.get("options") or []
+        if symbol in self.enter_symbols and options:
+            chosen = options[0]
+            return {
+                **base,
+                "action": "enter",
+                "option_id": chosen["id"],
+                "confidence": 0.62,
+                "levels_used": [
+                    lv
+                    for lv in (chosen.get("stop_level"), chosen.get("target_level"))
+                    if lv
+                ],
+            }
+        return {**base, "action": "skip", "option_id": None, "confidence": 0.4}
+
+
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         started = time.monotonic()
         snapshot = json.loads(user)
         override = self.responses.get(
@@ -296,7 +335,11 @@ class FakeDecisionClient:
             )
         if isinstance(override, dict):
             override = str(override["raw"])
-        raw = override if isinstance(override, str) else json.dumps(self._default(snapshot))
+        raw = (
+            override
+            if isinstance(override, str)
+            else json.dumps(self._default(snapshot, v2=_uses_v2(schema, snapshot)))
+        )
         # Deterministic pseudo-usage so cost tracking is exercised end to end.
         tokens_in = len(system + user) // 4
         tokens_out = len(raw) // 4
@@ -318,3 +361,12 @@ def make_decision_client(
     if config.env.mode == "simulated":
         return FakeDecisionClient()
     return OpenAIDecisionClient(config, api_key=api_key or MISSING_KEY)
+
+
+def _uses_v2(schema: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
+    """True when the call uses the v2 contract (schema or option input)."""
+    if schema is not None:
+        props = (schema.get("schema") or {}).get("properties") or {}
+        return "option_id" in props
+    return "options" in snapshot or "stop_options" in snapshot
+

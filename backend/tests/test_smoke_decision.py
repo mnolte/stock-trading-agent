@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime, timedelta
+from typing import Any
 
 import pytest
 from app.config import AppConfig
@@ -50,7 +51,9 @@ class CountingFake(FakeDecisionClient):
         super().__init__()
         self.calls: list[str] = []
 
-    async def complete(self, *, system: str, user: str) -> ModelResponse:
+    async def complete(
+        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+    ) -> ModelResponse:
         self.calls.append(json.loads(user)["symbol"])
         return await super().complete(system=system, user=user)
 

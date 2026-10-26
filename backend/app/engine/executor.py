@@ -44,6 +44,7 @@ from app.db.models import (
     Position,
     Run,
 )
+from app.decide.output import decision_trade_prices
 from app.engine.state import ExecutionState, record_event
 from app.logging_config import ev
 from app.market.calendar import CalendarProvider
@@ -1934,11 +1935,15 @@ class Executor:
                 session, decision, item, quote, account, earnings_known
             )
         elif action == "tighten_stop" and position is not None:
-            new_stop = output.get("stop_price")
+            new_stop, _ = decision_trade_prices(
+                decision.model_output, decision.options, decision.chosen_option
+            )
+            raw_stop = new_stop if new_stop is not None else output.get("stop_price")
             await self._tighten(
-                session, decision, position, Decimal(str(new_stop))
-                if new_stop is not None
-                else None,
+                session,
+                decision,
+                position,
+                Decimal(str(raw_stop)) if raw_stop is not None else None,
                 atr_1h=item.snapshot.atr_1h,
             )
         elif action == "exit" and position is not None:
@@ -1963,6 +1968,10 @@ class Executor:
         output = decision.model_output or {}
         stop = output.get("stop_price")
         target = output.get("target_price")
+        if stop is None or target is None:
+            stop, target = decision_trade_prices(
+                decision.model_output, decision.options, decision.chosen_option
+            )
         ctx = self._gate_context(
             session,
             account,

@@ -82,6 +82,8 @@ def _item(symbol: str, status: str) -> SymbolEval:
             [],
         ),
         bars_1h=[],
+        daily=[],
+        today_5m=[],
         price=Decimal("420.00"),
         day_change_pct=Decimal("0.5"),
     )
