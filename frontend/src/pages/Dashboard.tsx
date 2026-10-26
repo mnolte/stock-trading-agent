@@ -721,9 +721,11 @@ function FindSymbolDialog({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setQuery('');
-  }, [open]);
+  }
   const options = useMemo(() => {
     const q = query.trim().toUpperCase();
     return q ? symbols.filter((s) => s.includes(q)) : symbols;
@@ -910,7 +912,9 @@ export default function Dashboard() {
   const backendDown =
     failures.some((f) => f.unreachable) || failures.length >= 2;
   const failedRef = useRef(resources.filter((r) => r.failure !== null));
-  failedRef.current = resources.filter((r) => r.failure !== null);
+  useEffect(() => {
+    failedRef.current = resources.filter((r) => r.failure !== null);
+  });
   useEffect(() => {
     if (!backendDown) return;
     const timer = setInterval(() => {

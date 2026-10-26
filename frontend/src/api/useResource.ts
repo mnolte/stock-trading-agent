@@ -37,7 +37,9 @@ export function useApiResource<T>(
   const [settled, setSettled] = useState(false);
   const seq = useRef(createSequence());
   const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
+  useEffect(() => {
+    fetcherRef.current = fetcher;
+  });
 
   const reload = useCallback(() => {
     const isCurrent = seq.current.next();

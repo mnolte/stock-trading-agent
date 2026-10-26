@@ -609,17 +609,23 @@ export default function Reviews() {
       .catch(() => setVerdicts([]));
   }, [kind]);
 
-  useEffect(() => {
+  const [prevKind, setPrevKind] = useState(kind);
+  if (kind !== prevKind) {
+    setPrevKind(kind);
     setSelectedId(null);
+  }
+  useEffect(() => {
     refresh();
   }, [refresh]);
   useLiveUpdates(['reviews'], refresh);
 
+  const [prevSelectedId, setPrevSelectedId] = useState(selectedId);
+  if (selectedId !== prevSelectedId) {
+    setPrevSelectedId(selectedId);
+    if (selectedId === null) setDetail(null);
+  }
   useEffect(() => {
-    if (selectedId === null) {
-      setDetail(null);
-      return;
-    }
+    if (selectedId === null) return;
     getReview(selectedId)
       .then(setDetail)
       .catch(() => setDetail(null));

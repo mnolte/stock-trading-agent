@@ -49,8 +49,15 @@ export function Layout() {
     ['header', 'banners', 'positions', 'orders', 'approvals'],
     refreshAll,
   );
-  useEffect(refreshAll, [refreshAll]);
-  useEffect(() => setMenuOpen(false), [location.pathname]);
+  // BannerStrip fetches on mount; only the header needs a fetch here.
+  useEffect(() => {
+    refreshHeader();
+  }, [refreshHeader]);
+  const [prevPath, setPrevPath] = useState(location.pathname);
+  if (location.pathname !== prevPath) {
+    setPrevPath(location.pathname);
+    setMenuOpen(false);
+  }
 
   // Browser tab shows the page and the agent's state (open, paused, kill
   // switch) — docs/SPEC.md, Interaction and states.

@@ -928,9 +928,11 @@ export default function Inspector() {
     () => getLlmCallsSummary(effective),
     [effectiveSig],
   );
-  useEffect(() => {
+  const [prevSummaryData, setPrevSummaryData] = useState(summary.data);
+  if (summary.data !== prevSummaryData) {
+    setPrevSummaryData(summary.data);
     if (summary.data) setDates(summary.data.session_dates);
-  }, [summary.data]);
+  }
 
   // The list pages accumulate under a latest-wins sequence: a filter change
   // or a new page supersedes anything still in flight.
@@ -941,13 +943,23 @@ export default function Inspector() {
   const [listRetry, setListRetry] = useState(0);
   const listSeq = useRef(createSequence());
   const effectiveRef = useRef(effective);
-  effectiveRef.current = effective;
+  useEffect(() => {
+    effectiveRef.current = effective;
+  });
+
+  const fetchKey = `${effectiveSig}${filters.order}${rangeReady}${listRetry}`;
+  const [prevFetchKey, setPrevFetchKey] = useState(fetchKey);
+  if (fetchKey !== prevFetchKey) {
+    setPrevFetchKey(fetchKey);
+    if (rangeReady) {
+      setListLoading(true);
+      setListFailure(null);
+    }
+  }
 
   useEffect(() => {
     if (!rangeReady) return;
     const isCurrent = listSeq.current.next();
-    setListLoading(true);
-    setListFailure(null);
     getLlmCalls(effectiveRef.current, undefined, PAGE_SIZE, filters.order)
       .then((result: LlmCallsPage) => {
         if (!isCurrent()) return;
