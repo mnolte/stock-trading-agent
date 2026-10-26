@@ -1,0 +1,17 @@
+{
+  "id": "20261026T131116Z",
+  "prompt": "decision.v2",
+  "model": "gpt-4o-mini",
+  "from": "2026-10-18",
+  "to": "2026-10-26",
+  "snapshots": 892,
+  "approx_reference": true,
+  "statuses": {
+    "replayed": 128,
+    "replayed_approx": 719,
+    "not_replayable": 45
+  },
+  "estimated_usd": 0.3474786,
+  "cost_usd": 0.4687563,
+  "created_at": "2026-10-26T13:42:11.532404+00:00"
+}
