@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import type { PositionRow } from '../types/api';
 import { displayTime, openedTodayNy } from '../format';
@@ -16,9 +16,11 @@ export function KillSwitchDialog({
   onConfirm: (scope: 'entries' | 'flatten') => void;
 }) {
   const [scope, setScope] = useState<'entries' | 'flatten'>('entries');
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setScope('entries');
-  }, [open]);
+  }
   return (
     <Modal
       open={open}
@@ -194,9 +196,11 @@ export function ResumeDialog({
   onConfirm: (reason: string) => void;
 }) {
   const [reason, setReason] = useState('');
-  useEffect(() => {
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setReason('');
-  }, [open]);
+  }
   return (
     <Modal
       open={open}

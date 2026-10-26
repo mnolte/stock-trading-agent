@@ -40,7 +40,7 @@ function Segment({ segment }: { segment: CycleCounterSegment }) {
  * comes from the backend; only the countdown ticks client-side (it
  * resyncs when the header topic refetches the dashboard). */
 export function CycleCounter({ counter }: { counter: CycleCounterData }) {
-  const [, forceTick] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // Drift between the server clock and the client clock, measured on each
   // fresh payload, so the countdown tracks the server's idea of now.
   const skew = useRef(0);
@@ -48,7 +48,7 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
     skew.current = counter.now ? Date.parse(counter.now) - Date.now() : 0;
   }, [counter.now]);
   useEffect(() => {
-    const timer = setInterval(() => forceTick((n) => n + 1), 1_000);
+    const timer = setInterval(() => setNowMs(Date.now() + skew.current), 1_000);
     return () => clearInterval(timer);
   }, []);
 
@@ -58,7 +58,7 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
     );
   }
 
-  const tail = counterTail(counter, Date.now() + skew.current);
+  const tail = counterTail(counter, nowMs);
   const check = checkLabel(counter);
   const run = runLabel(counter);
   const today = todayLabel(counter);

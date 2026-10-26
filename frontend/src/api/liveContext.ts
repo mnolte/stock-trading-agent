@@ -45,7 +45,9 @@ export const RECONNECT_MS = 3_000;
 export function useLiveUpdates(topics: Topic[], cb: () => void): void {
   const { subscribe } = useContext(LiveContext);
   const cbRef = useRef(cb);
-  cbRef.current = cb;
+  useEffect(() => {
+    cbRef.current = cb;
+  });
   const key = topics.join(',');
   useEffect(
     () => subscribe(key.split(',') as Topic[], () => cbRef.current()),

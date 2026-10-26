@@ -139,7 +139,8 @@ export default function Logs() {
   }, [buildQuery]);
 
   useEffect(() => {
-    void load();
+    const t = setTimeout(() => void load(), 0);
+    return () => clearTimeout(t);
   }, [load]);
 
   // Follow new lines: the "logs" topic pings on warning-and-up.

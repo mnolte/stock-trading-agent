@@ -328,8 +328,8 @@ function NewBacktestCard({
   const [picked, setPicked] = useState<string[]>(['live', 'rules_only']);
   const [equity, setEquity] = useState('10000');
   const [slippage, setSlippage] = useState('0.05');
-  const [estimate, setEstimate] = useState<BacktestEstimate | null>(null);
-  const [estimating, setEstimating] = useState(false);
+  const [fetchedEstimate, setEstimate] = useState<BacktestEstimate | null>(null);
+  const [fetchingEstimate, setEstimating] = useState(false);
   const [running, setRunning] = useState(false);
   const seq = useRef(0);
 
@@ -348,14 +348,18 @@ function NewBacktestCard({
     [start, end, universe, picked, equity, slippage],
   );
 
+  const inputsValid = start !== '' && end !== '' && picked.length > 0;
+  const estimate = inputsValid ? fetchedEstimate : null;
+  const estimating = inputsValid && fetchingEstimate;
+
   useEffect(() => {
-    if (!start || !end || picked.length === 0) {
-      setEstimate(null);
+    if (!inputsValid) {
+      seq.current += 1;
       return;
     }
     const ticket = ++seq.current;
-    setEstimating(true);
     const t = setTimeout(() => {
+      setEstimating(true);
       postBacktestEstimate(body)
         .then((est) => {
           if (ticket === seq.current) setEstimate(est);
@@ -368,7 +372,7 @@ function NewBacktestCard({
         });
     }, 350);
     return () => clearTimeout(t);
-  }, [body, start, end, picked.length]);
+  }, [body, inputsValid]);
 
   const quick = (from: string) => {
     setStart(from);
