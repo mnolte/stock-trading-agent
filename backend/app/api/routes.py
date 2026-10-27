@@ -751,9 +751,12 @@ def _keys_issue(request: Request) -> str | None:
 @router.post("/kill-switch")
 async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Turn the kill switch on, or stop & flatten everything."""
+    from app.auth.api import require_confirmed
+
     executor = _executor(request)
     action = str(body.get("action", "entries"))
     if action == "flatten":
+        require_confirmed(request)
         result = await executor.flatten()
         return {"kill_switch": True, **result}
     reason = str(body.get("reason") or "manual")
@@ -790,6 +793,9 @@ async def kill_switch_resume(
 ) -> dict[str, object]:
     """Resume after a kill switch; the typed reason is stored in the log.
     Same key gate as a normal resume: nothing works without them."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     issue = _keys_issue(request)
     if issue is not None:
@@ -2351,10 +2357,15 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         )
     # "Promote to live" saves like any other change, then archives the
     # shadow (docs/SPEC.md, Strategies and shadows — Promote to live).
+    # Promoting is a risky action: it needs a fresh "Confirm it is you".
     promote_raw = body.get("promote_strategy_id")
     promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
         promote_raw
     ).isdigit() else None
+    if promote_id is not None:
+        from app.auth.api import require_confirmed
+
+        require_confirmed(request)
     new_tree = _deep_merge(base, cleaned)
     with get_session_maker()() as session:
         if promote_id is not None:
@@ -2597,6 +2608,9 @@ async def save_api_key(
 ) -> dict[str, object]:
     """Test a candidate key, then save it only when the test passes —
     the old key keeps working until then. Alpaca has extra guards."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)  # replacing a key is a risky action
     store = _secrets(request)
     if store is None:
         raise HTTPException(status_code=503, detail="key store unavailable")
@@ -2722,6 +2736,9 @@ async def test_api_key(request: Request, group: str) -> dict[str, object]:
 @router.post("/paper-reset")
 async def paper_reset(request: Request) -> dict[str, object]:
     """Step 1: kill switch on, close all positions, cancel all orders."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     return await executor.paper_reset()
 
@@ -2729,6 +2746,9 @@ async def paper_reset(request: Request) -> dict[str, object]:
 @router.post("/runs")
 async def start_new_run(request: Request) -> dict[str, object]:
     """Step 2: verify the reset balance, then start a new performance run."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     result = await executor.start_new_run()
     if not result.get("ok"):

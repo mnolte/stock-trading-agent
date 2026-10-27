@@ -53,13 +53,17 @@ CONTEXT_FIELDS = (
 )
 
 # Things that look like a key or an Authorization header: OpenAI keys,
-# Alpaca key ids/secrets, bearer tokens and Authorization headers.
+# Alpaca key ids/secrets, bearer tokens and Authorization headers, plus
+# the PR 23 auth shapes (sa_-prefixed session/pending/CSRF tokens and
+# XXXX-XXXX-XXXX recovery codes) so they can never reach a log line.
 _KEY_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"sk-proj-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\b(PK|AK)[A-Z0-9]{14,}\b"),
     re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?\S+"),
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}"),
+    re.compile(r"\bsa[tpc]_[A-Za-z0-9_\-]{12,}\b"),
+    re.compile(r"\b[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}\b"),
 )
 
 
@@ -76,17 +80,23 @@ def _scrub_text(text: str, secrets: list[str]) -> str:
     return text
 
 
-def _no_secrets() -> list[str]:
-    return []
-
-
-_secret_provider: Callable[[], list[str]] = _no_secrets
+_secret_providers: list[Callable[[], list[str]]] = []
 
 
 def register_secret_provider(provider: Callable[[], list[str]]) -> None:
-    """Feed the scrub filter the live key values (secrets table + .env)."""
-    global _secret_provider
-    _secret_provider = provider
+    """Feed the scrub filter live secret values (keys, then auth values:
+    TOTP secret and pending sign-in tokens, PR 23)."""
+    _secret_providers.append(provider)
+
+
+def _all_secrets() -> list[str]:
+    values: list[str] = []
+    for provider in _secret_providers:
+        try:
+            values.extend(provider())
+        except Exception:  # noqa: BLE001 - scrubbing must never break logging
+            continue
+    return values
 
 
 class SecretScrubFilter(logging.Filter):
@@ -94,7 +104,7 @@ class SecretScrubFilter(logging.Filter):
     from every record before a handler writes it."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        secrets = [v for v in _secret_provider() if v]
+        secrets = [v for v in _all_secrets() if v]
         try:
             message = record.getMessage()
         except Exception:  # noqa: BLE001 - never break logging

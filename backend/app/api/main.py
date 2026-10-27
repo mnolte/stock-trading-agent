@@ -780,6 +780,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await secrets_store.import_env_keys(read_env_keys(), key_testers)
     install_secret_scrub_filter(secrets_store.scrub_values)
 
+    # Sign-in (PR 23): the service exists in both modes; with SA_AUTH=off
+    # it is dormant and the middleware is a passthrough.
+    from app.auth.service import AuthService
+    from app.logging_config import register_secret_provider
+
+    auth_service = AuthService(
+        config, clock, notifier=notification_service
+    )
+    app.state.auth = auth_service
+    register_secret_provider(auth_service.scrub_values)
+
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)
@@ -1383,6 +1394,25 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    from app.auth.middleware import AuthMiddleware
+
+    app.add_middleware(AuthMiddleware)
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        """The one open probe: Caddy's health check and the uptime monitor
+        (docs/SPEC.md, VPS deployment). Version only — nothing else."""
+        return {"status": "ok", "version": app.version}
+
+    from app.auth.api import error_response
+    from app.auth.api import router as auth_router
+    from app.auth.service import AuthError
+
+    @app.exception_handler(AuthError)
+    async def auth_error_handler(request: Request, exc: AuthError) -> Any:
+        return error_response(exc)
+
+    app.include_router(auth_router, prefix="/api")
     app.include_router(api_router, prefix="/api")
     app.include_router(strategies_router, prefix="/api")
     app.include_router(backtests_router, prefix="/api")
