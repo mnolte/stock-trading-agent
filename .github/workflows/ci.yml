@@ -144,6 +144,12 @@ jobs:
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
         env:
           E2E_PREVIEW: '1'
+      # The PR 23 sign-in spec runs against the auth backend: SA_AUTH=required
+      # and the seeded single account (tests/e2e_auth_seed.py).
+      - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github e2e/pr23.e2e.ts
+        env:
+          E2E_PREVIEW: '1'
+          E2E_AUTH: '1'
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

@@ -1,42 +1,15 @@
-import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { expect } from '@playwright/test';
 
 import { test } from './shots';
 
-/** RFC 6238 TOTP for the frozen e2e clock (2026-10-15T17:00:00Z). */
-function totp(secretB32: string, unixSeconds: number): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-  const bits: number[] = [];
-  for (const c of secretB32.replace(/=+$/, '')) {
-    const v = alphabet.indexOf(c);
-    for (let i = 4; i >= 0; i--) bits.push((v >> i) & 1);
-  }
-  const bytes: number[] = [];
-  for (let i = 0; i + 8 <= bits.length; i += 8) {
-    bytes.push(bits.slice(i, i + 8).reduce((a, b) => (a << 1) | b, 0));
-  }
-  const key = Buffer.from(bytes);
-  const counter = Math.floor(unixSeconds / 30);
-  const msg = Buffer.alloc(8);
-  msg.writeBigUInt64BE(BigInt(counter));
-  const digest = createHmac('sha1', key).update(msg).digest();
-  const offset = digest[digest.length - 1] & 0x0f;
-  const code =
-    ((digest[offset] & 0x7f) << 24) |
-    (digest[offset + 1] << 16) |
-    (digest[offset + 2] << 8) |
-    digest[offset + 3];
-  return String(code % 1_000_000).padStart(6, '0');
-}
+// Only meaningful with the auth backend (E2E_AUTH=1 → SA_AUTH=required
+// plus the seeded account). Without it sign-in is off and these run
+// nowhere — the default e2e job skips them.
+test.skip(process.env.E2E_AUTH !== '1', 'auth e2e needs the E2E_AUTH=1 backend');
 
 const PASSWORD = 'e2e-test-password-14c';
-const FROZEN_UNIX = Date.parse('2026-10-15T17:00:00Z') / 1000;
-
-function totpSecret(): string {
-  return readFileSync('/tmp/stock-agent-e2e-data/e2e-totp-secret', 'utf8').trim();
-}
 
 async function fillPasswordAndContinue(page: import('@playwright/test').Page) {
   await page.goto('/login');
