@@ -27,18 +27,18 @@ install-backend: ## uv sync when uv is available (uses uv.lock), else pip -e .[d
 install-frontend:
 	$(FE) install --allow-build=esbuild
 
-dev: ## backend (uvicorn --reload) + Vite dev server, Ctrl-C stops both
+dev: ## backend (python -m app.serve, SA_RELOAD=1) + Vite dev server, Ctrl-C stops both
 	@trap 'trap - INT TERM EXIT; kill 0' INT TERM EXIT; \
-	  $(UVICORN) --app-dir backend app.api.main:app --reload --host 127.0.0.1 --port $(SA_PORT) & \
+	  cd backend && SA_RELOAD=1 ../$(PYTHON) -m app.serve & \
 	  cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev & \
 	  wait
 
 run: ## build the UI, serve everything on 127.0.0.1:$(SA_PORT)
 	$(FE) build
-	$(UVICORN) --app-dir backend app.api.main:app --host 127.0.0.1 --port $(SA_PORT)
+	cd backend && ../$(PYTHON) -m app.serve
 
 run-backend:
-	$(UVICORN) --app-dir backend app.api.main:app --host 127.0.0.1 --port $(SA_PORT) --reload
+	cd backend && SA_RELOAD=1 ../$(PYTHON) -m app.serve
 
 run-frontend:
 	cd frontend && VITE_API_PORT=$(SA_PORT) PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM) dev

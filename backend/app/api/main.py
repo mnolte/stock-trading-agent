@@ -688,6 +688,11 @@ async def retry_calendar_load(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # umask 077 before anything creates a file — app.serve sets it too,
+    # but the `make dev`/`make run` uvicorn paths come straight here.
+    from app.filemodes import apply_umask
+
+    apply_umask()
     pipeline = setup_logging()
     from app.spawn import install_global_hooks
 
@@ -733,6 +738,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.run_lock = run_lock
 
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
+    # Files on disk (docs/SPEC.md, Security hardening): SA_DATA_DIR 0700,
+    # its files 0600; wrong modes are corrected with one INFO line.
+    from app.filemodes import enforce_file_modes
+
+    corrected_modes = enforce_file_modes(Path(config.env.sa_data_dir))
+    if corrected_modes:
+        logger.info(
+            "corrected file modes on %d path(s) under %s",
+            corrected_modes,
+            config.env.sa_data_dir,
+        )
     run_migrations()
     # alembic's fileConfig closes every handler (env.py can't skip it —
     # CLI runs need it): re-attach the queue to the root logger.
@@ -1429,7 +1445,7 @@ def create_app() -> FastAPI:
     def healthz() -> dict[str, str]:
         """The one open probe: Caddy's health check and the uptime monitor
         (docs/SPEC.md, VPS deployment). Version only — nothing else."""
-        return {"status": "ok", "version": app.version}
+        return {"version": app.version}
 
     from app.auth.api import error_response
     from app.auth.api import router as auth_router
