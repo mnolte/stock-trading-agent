@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
+.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -55,6 +55,9 @@ lint-frontend:
 
 logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
 	cd backend && ../$(PYTHON) -m app.log_index
+
+create-user: ## create or reset the single sign-in account (server only, PR 23)
+	cd backend && ../$(PYTHON) -m app.auth.create_user
 
 broker-guard: ## set + verify no_shorting and 1x margin on the paper account
 	cd backend && ../$(PYTHON) -m app.broker_guard
