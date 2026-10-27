@@ -9,6 +9,7 @@ const Backtest = lazy(() => import('./pages/Backtest'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Decision = lazy(() => import('./pages/Decision'));
 const DevComponents = lazy(() => import('./pages/DevComponents'));
+const Insights = lazy(() => import('./pages/Insights'));
 const Inspector = lazy(() => import('./pages/Inspector'));
 const Logs = lazy(() => import('./pages/Logs'));
 const Performance = lazy(() => import('./pages/Performance'));
@@ -41,7 +42,8 @@ function AppRoutes() {
             <Route index element={<Dashboard />} />
             <Route path="positions" element={<Positions />} />
             <Route path="performance" element={<Performance />} />
-            <Route path="inspector" element={<Inspector />} />
+            <Route path="insights" element={<Insights />} />
+          <Route path="inspector" element={<Inspector />} />
             <Route path="reviews" element={<Reviews />} />
             <Route path="strategies" element={<Strategies />} />
             <Route path="backtest" element={<Backtest />} />
