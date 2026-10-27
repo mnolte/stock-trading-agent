@@ -683,12 +683,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     install_global_hooks(asyncio.get_running_loop())
     config = get_config()
 
+    from app.auth.guard import check_auth_guard
     from app.shutdown import (
         make_shutdown,
         quick_check,
         set_current,
     )
     from app.spawn import spawn
+
+    # Hard rule 10: sign-in off on a non-loopback address refuses to
+    # start — checked before the run lock, database or any client.
+    check_auth_guard(config)
 
     shutdown_manager, run_lock = make_shutdown(config)
     app.state.shutdown = shutdown_manager

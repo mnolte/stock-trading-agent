@@ -41,6 +41,14 @@ class EnvSettings(BaseSettings):
     # Which agent copy this is on a shared paper account — stamped into
     # every client order id (PR 23); empty until instances exist.
     sa_instance_id: str = Field(default="", alias="SA_INSTANCE_ID")
+    # Sign-in (PR 23): "off" (loopback only) or "required". Off on any
+    # other bind address refuses startup (hard rule 10).
+    sa_auth: str = Field(default="off", alias="SA_AUTH")
+    # The public base URL Caddy serves (VPS); used for cookie/WebSocket
+    # origin checks. Locally the bind address is the origin.
+    sa_public_url: str = Field(default="", alias="SA_PUBLIC_URL")
+    # Comma-separated addresses whose X-Forwarded-For is trusted.
+    sa_trusted_proxy: str = Field(default="", alias="SA_TRUSTED_PROXY")
 
     @field_validator("sa_data_dir", "sa_db_path", mode="before")
     @classmethod
