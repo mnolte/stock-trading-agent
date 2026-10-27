@@ -161,6 +161,9 @@ notifications:
     daily_briefing: [email]
     weekly_review: [email]
     verdicts_waiting: []
+    another_instance: [browser, email]     # PR 23; critical: browser always on
+    new_sign_in: [browser, email]
+    sign_in_lockout: [browser, email]
 
 model_prices:                   # USD per million tokens per model; the only price source (check current OpenAI prices)
   gpt-4o-mini: {input: 0.15, output: 0.60}

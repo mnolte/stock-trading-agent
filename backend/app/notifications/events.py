@@ -38,6 +38,7 @@ CRITICAL_EVENTS = {
     "missing_stop",
     "reconciliation",
     "order_rejected",
+    "another_instance",
 }
 
 # Table group headers, in design order (screens/Settings.dc.html).
@@ -162,6 +163,27 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "reviews",
         INFO,
     ),
+    EventDef(
+        "another_instance",
+        "Another instance is trading this Alpaca account",
+        "An order or fill carries another instance id — kill switch on",
+        "critical",
+        CRITICAL,
+    ),
+    EventDef(
+        "new_sign_in",
+        "New sign-in",
+        "A device signed in",
+        "warnings",
+        INFO,
+    ),
+    EventDef(
+        "sign_in_lockout",
+        "Failed sign-ins: lockout started",
+        "5 failures from an address, or 20 in an hour overall",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}
@@ -187,6 +209,7 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "backup_failed": "source_failing",
     "api_key": "source_failing",
     "review_fallback": "model_failing",
+    "another_instance": "another_instance",
 }
 
 
@@ -305,6 +328,12 @@ def format_recorded(
         extra = _detail(details, "detail")
         if extra:
             line += f" ({extra})"
+        return key, line, "/settings"
+    if event_type == "another_instance":
+        line = str(
+            details.get("message")
+            or f"order carries instance id {details.get('foreign_instance')}"
+        )
         return key, line, "/settings"
     if event_type == "review_fallback":
         line = (
