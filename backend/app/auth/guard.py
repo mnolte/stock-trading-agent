@@ -71,6 +71,24 @@ def client_ip(request: Request | WebSocket, config: AppConfig) -> str:
     return peer
 
 
+def request_is_https(request: Request | WebSocket, config: AppConfig) -> bool:
+    """"Is this request HTTPS" as the browser sees it.
+
+    On the VPS the app talks plain HTTP to Caddy, so the scheme comes
+    from ``X-Forwarded-Proto`` — believed only when the direct peer is a
+    trusted proxy, or when ``SA_PUBLIC_URL`` is https (then the browser
+    is on HTTPS by definition; the Caddy hop stays internal).
+    """
+    if request.url.scheme == "https":
+        return True
+    if config.env.sa_public_url.strip().lower().startswith("https://"):
+        return True
+    peer = request.client.host if request.client is not None else ""
+    if not _is_trusted_proxy(peer, config):
+        return False
+    return request.headers.get("x-forwarded-proto", "").lower() == "https"
+
+
 def host_is_loopback(host: str) -> bool:
     """True for literal loopback addresses (127.0.0.0/8, ::1)."""
     try:

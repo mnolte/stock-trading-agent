@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, Request, Response
 
-from app.auth.guard import auth_required, client_ip, host_is_loopback
+from app.auth.guard import auth_required, client_ip, request_is_https
 from app.auth.service import (
     CSRF_COOKIE,
     PENDING_COOKIE,
@@ -110,7 +110,9 @@ def session_cookie_name(request: Request) -> str:
 
 
 def _secure_cookies(request: Request) -> bool:
-    return not host_is_loopback(request.url.hostname or "")
+    """Secure cookies on HTTPS — the real scheme, or the trusted
+    ``X-Forwarded-Proto`` behind Caddy on the VPS."""
+    return request_is_https(request, get_config())
 
 
 @router.get("/status")
