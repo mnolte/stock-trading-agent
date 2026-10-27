@@ -25,6 +25,7 @@ from starlette.responses import Response
 from starlette.types import Scope
 
 from app.api.backtests import router as backtests_router
+from app.api.insights import router as insights_router
 from app.api.inspector import router as inspector_router
 from app.api.routes import router as api_router
 from app.api.strategies import router as strategies_router
@@ -245,6 +246,12 @@ async def run_after_close_jobs(
     """After each session's close: readiness snapshot, then after-exit
     metrics for the Winners and tails card (docs/SPEC.md, Tail metrics)."""
     run_readiness_tick(config, calendar, clock, notifier, publish)
+    try:
+        from app.insights.service import tick as insights_tick
+
+        insights_tick(config=config, calendar=calendar, clock=clock, publish=publish)
+    except Exception:  # noqa: BLE001
+        logger.exception("insights job failed")
     try:
         await after_exit.fill()
     except Exception:  # noqa: BLE001
@@ -1365,6 +1372,7 @@ def create_app() -> FastAPI:
     app.include_router(strategies_router, prefix="/api")
     app.include_router(backtests_router, prefix="/api")
     app.include_router(inspector_router, prefix="/api")
+    app.include_router(insights_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
     if FRONTEND_DIST.is_dir():
         app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")
