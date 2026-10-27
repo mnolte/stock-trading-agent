@@ -384,7 +384,18 @@ def weekly_facts(
         "by_regime": _group(lambda t, _p: t["regime"] or "Unknown"),
         "by_symbol": _group(lambda t, _p: t["symbol"]),
         "strategies": _strategy_facts(session, config=config, clock=clock, calendar=calendar),
+        "insights": _insights_facts(session, monday=monday, friday=friday),
     }
+
+
+def _insights_facts(session: Session, *, monday: date, friday: date) -> dict[str, Any]:
+    """New findings and findings that stopped holding (PR 22)."""
+    try:
+        from app.insights.service import findings_changes
+
+        return findings_changes(session, since=monday, until=friday)
+    except Exception:  # noqa: BLE001
+        return {"new": [], "stopped": []}
 
 
 def _strategy_facts(
