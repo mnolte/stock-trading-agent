@@ -1,7 +1,13 @@
 """Scheduler wiring: misfire grace, coalescing and startup catch-up rules."""
 
-from typing import cast
+import asyncio
+import logging
+import threading
+from collections.abc import Callable
+from typing import Any, cast
+from unittest.mock import AsyncMock
 
+import pytest
 from app.api.main import startup_catch_up_allowed
 from app.config import AppConfig, get_config
 from fastapi import FastAPI
@@ -37,3 +43,61 @@ def test_startup_catch_up_only_in_simulated_mode() -> None:
     assert not startup_catch_up_allowed(config)
     config.env.mode = "simulated"
     assert startup_catch_up_allowed(config)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failed", [None, "readiness", "insights"])
+async def test_after_close_snapshots_do_not_block_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failed: str | None,
+) -> None:
+    from app.api.main import run_after_close_jobs
+
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    order: list[str] = []
+    worker_threads: list[int] = []
+    responsive: list[bool] = []
+    published: list[set[str]] = []
+
+    def tick(name: str) -> Callable[..., None]:
+        def run(**kwargs: Any) -> None:
+            order.append(name)
+            worker_threads.append(threading.get_ident())
+            heartbeat = threading.Event()
+            loop.call_soon_threadsafe(heartbeat.set)
+            responsive.append(heartbeat.wait(timeout=0.5))
+            if failed == name:
+                raise RuntimeError(f"{name} failed")
+            kwargs["publish"]({name})
+
+        return run
+
+    def publish(topics: set[str]) -> None:
+        assert threading.get_ident() == loop_thread
+        published.append(topics)
+
+    async def fill() -> None:
+        assert threading.get_ident() == loop_thread
+        order.append("after_exit")
+
+    after_exit = AsyncMock()
+    after_exit.fill.side_effect = fill
+    monkeypatch.setattr("app.readiness.service.tick", tick("readiness"))
+    monkeypatch.setattr("app.insights.service.tick", tick("insights"))
+    with caplog.at_level(logging.ERROR):
+        await run_after_close_jobs(
+            AppConfig(), cast(Any, None), cast(Any, None),
+            cast(Any, None), publish, after_exit,
+        )
+
+    assert order == ["readiness", "insights", "after_exit"]
+    assert all(thread != loop_thread for thread in worker_threads)
+    assert responsive == [True, True]
+    assert published == [{name} for name in ("readiness", "insights") if name != failed]
+    after_exit.fill.assert_awaited_once()
+    if failed is not None:
+        assert f"{failed} {'tick' if failed == 'readiness' else 'job'} failed" in caplog.text
+    else:
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]

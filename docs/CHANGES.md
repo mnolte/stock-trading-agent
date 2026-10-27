@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-27 — Snapshot backfill no longer blocks the scheduler
+
+- Run synchronous readiness and Insights snapshot work in the thread pool, in the same order as before. Backfilling missed sessions no longer blocks the API event loop or delays the backtest scheduler tick. WebSocket updates stay on the event loop; failures remain logged and later jobs still run.
+- Regression tests cover event-loop responsiveness, update delivery and failures in either snapshot stage. The log-expansion browser test checks that its seed was accepted and filters to errors so DEBUG traffic cannot push it out of the newest 200 rows. No trading rules, thresholds or spec changes.
+
 ## 2026-10-27 — Sign-in details (PR 23 review)
 
 - Sign-in: wrong codes count toward the lockouts; the ticket between password and code is single-use, tied to the browser and dropped after 3 wrong codes; a used code can't be replayed. New session token at every sign-in; a password change signs out every other session; `__Host-` cookie name over HTTPS.

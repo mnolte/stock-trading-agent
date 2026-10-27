@@ -51,7 +51,7 @@ test('expanding a line shows traceback and surrounding lines', async ({
 }) => {
   // Seed an error through the client-error endpoint so an ERROR line with
   // a traceback exists regardless of what the app logged on its own.
-  await request.post('/api/logs/client', {
+  const seeded = await request.post('/api/logs/client', {
     data: {
       message: 'e2e seeded error',
       error_id: 'e-e2e000',
@@ -59,7 +59,9 @@ test('expanding a line shows traceback and surrounding lines', async ({
       stack: 'Traceback: e2e stack line one\nline two',
     },
   });
-  await page.goto('/logs?levels=DEBUG%2CINFO%2CWARNING%2CERROR%2CCRITICAL');
+  expect(seeded.ok()).toBe(true);
+  expect(await seeded.json()).toMatchObject({ logged: true });
+  await page.goto('/logs?levels=ERROR');
   const row = page.locator('div[role="log"] button', {
     hasText: 'e2e seeded error',
   });

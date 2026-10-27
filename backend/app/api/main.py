@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
@@ -245,11 +246,21 @@ async def run_after_close_jobs(
 ) -> None:
     """After each session's close: readiness snapshot, then after-exit
     metrics for the Winners and tails card (docs/SPEC.md, Tail metrics)."""
-    run_readiness_tick(config, calendar, clock, notifier, publish)
+    loop = asyncio.get_running_loop()
+
+    def publish_from_thread(topics: set[str]) -> None:
+        loop.call_soon_threadsafe(publish, topics)
+
+    await run_in_threadpool(
+        run_readiness_tick, config, calendar, clock, notifier, publish_from_thread
+    )
     try:
         from app.insights.service import tick as insights_tick
 
-        insights_tick(config=config, calendar=calendar, clock=clock, publish=publish)
+        await run_in_threadpool(
+            insights_tick, config=config, calendar=calendar, clock=clock,
+            publish=publish_from_thread,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("insights job failed")
     try:
