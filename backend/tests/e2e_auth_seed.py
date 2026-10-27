@@ -25,7 +25,7 @@ now = datetime.fromisoformat(
 )
 config = get_config()
 with get_session_maker()() as session:
-    _user, secret, _codes = create_or_reset_user(
+    _user, secret, codes = create_or_reset_user(
         session,
         config,
         FakeClock(now.replace(tzinfo=UTC)),
@@ -35,4 +35,9 @@ with get_session_maker()() as session:
 out = os.path.join(config.env.sa_data_dir, "e2e-totp-secret")
 with open(out, "w") as handle:
     handle.write(secret)
+# Recovery codes too: the TOTP step can be used once (replay check), so
+# the spec's later sign-ins spend one recovery code each.
+codes_out = os.path.join(config.env.sa_data_dir, "e2e-recovery-codes")
+with open(codes_out, "w") as handle:
+    handle.write("\n".join(codes))
 print(f"e2e auth user ready (totp secret in {out})")

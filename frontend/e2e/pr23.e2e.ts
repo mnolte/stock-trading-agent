@@ -46,9 +46,23 @@ async function fillPasswordAndContinue(page: import('@playwright/test').Page) {
   await expect(page.getByRole('heading', { name: 'Authenticator code' })).toBeVisible();
 }
 
-async function signIn(page: import('@playwright/test').Page) {
+// The frozen clock gives every sign-in the same TOTP code — and the
+// replay check refuses a used step — so real sign-ins spend one
+// recovery code each (codes are single-use; indexed per project so the
+// desktop and mobile workers never collide).
+let recoveryIndex = 0;
+
+function nextRecoveryCode(project: string): string {
+  const codes = readFileSync('/tmp/stock-agent-e2e-data/e2e-recovery-codes', 'utf8')
+    .trim()
+    .split('\n');
+  return codes[(project === 'mobile' ? 5 : 0) + recoveryIndex++];
+}
+
+async function signIn(page: import('@playwright/test').Page, project: string) {
   await fillPasswordAndContinue(page);
-  await page.getByLabel('Code').fill(totp(totpSecret(), FROZEN_UNIX));
+  await page.getByText('Use a recovery code').click();
+  await page.getByLabel('Recovery code').fill(nextRecoveryCode(project));
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.waitForURL('**/');
 }
@@ -79,8 +93,8 @@ test('sign-in screen: password, code and locked states', async ({ page }) => {
   await page.screenshot({ path: `${process.env.SCREENSHOT_DIR ?? '/tmp'}/login-recovery.png`, fullPage: true });
 });
 
-test('session-expired banner and redirect back', async ({ page }) => {
-  await signIn(page);
+test('session-expired banner and redirect back', async ({ page }, info) => {
+  await signIn(page, info.project.name);
   // Drop the session cookie — the next fetch answers 401 and the app
   // redirects to sign-in, then comes back to the same page.
   await page.context().clearCookies();
@@ -90,8 +104,8 @@ test('session-expired banner and redirect back', async ({ page }) => {
   await page.screenshot({ path: `${process.env.SCREENSHOT_DIR ?? '/tmp'}/login-redirect.png`, fullPage: true });
 });
 
-test('settings Access section and sign out in the sidebar', async ({ page }) => {
-  await signIn(page);
+test('settings Access section and sign out in the sidebar', async ({ page }, info) => {
+  await signIn(page, info.project.name);
   await page.goto('/settings');
   await page.getByRole('heading', { name: 'Access' }).scrollIntoViewIfNeeded();
   await expect(page.getByText('required · password + authenticator')).toBeVisible();
