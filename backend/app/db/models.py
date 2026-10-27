@@ -895,6 +895,33 @@ class Backtest(Base):
     finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
+class InsightsSnapshot(Base):
+    """One daily insights computation per strategy and period (PR 22).
+
+    Written after the readiness snapshot once the session's close has
+    passed; the screen reads the latest row and never recomputes.
+    ``strategy_id`` NULL means live. ``data`` holds the headline numbers,
+    funnel, findings, slices per dimension, calibration, execution,
+    overnight and skipped-setups sections as JSON.
+    """
+
+    __tablename__ = "insights_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_date", "strategy_id", "period", name="uq_insights_snap"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    strategy_id: Mapped[int | None] = mapped_column(
+        ForeignKey("strategies.id"), nullable=True, index=True
+    )
+    period: Mapped[str] = mapped_column(String(8), nullable=False)  # run | last20 | all
+    computed_at: Mapped[datetime] = mapped_column(nullable=False)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 class LogReview(Base):
     """One review of a recurring log problem (docs/SPEC.md, Readiness).
 

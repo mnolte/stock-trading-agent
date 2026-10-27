@@ -55,6 +55,7 @@ def evaluate_entry_rules(
     open_entry_order: bool,
     is_last_cycle: bool,
     config: AppConfig,
+    cycle_time: str | None = None,
 ) -> RulesResult:
     rsi_min = config.get("rules", "rsi_min", default=40)
     rsi_max = config.get("rules", "rsi_max", default=70)
@@ -165,6 +166,22 @@ def evaluate_entry_rules(
                 "not last cycle",
                 passed=not is_last_cycle,
                 detail="last cycle: no new entries" if is_last_cycle else "entries allowed",
+            )
+        )
+
+    # Strategy override (PR 22): entry_cycles limits the cycles a
+    # strategy may enter in; absent means every cycle is allowed.
+    allowed_cycles = config.get("rules", "entry_cycles")
+    if isinstance(allowed_cycles, list) and allowed_cycles and cycle_time is not None:
+        checks.append(
+            RuleCheck(
+                "entry cycle",
+                passed=cycle_time in allowed_cycles,
+                detail=(
+                    "entries allowed"
+                    if cycle_time in allowed_cycles
+                    else "no entries in this cycle (strategy)"
+                ),
             )
         )
 

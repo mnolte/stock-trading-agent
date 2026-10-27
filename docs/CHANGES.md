@@ -2,6 +2,22 @@
 
 Newest first.
 
+## 2026-10-27 — Unclean-run banner: Open logs + Dismiss
+
+- The "previous run did not shut down cleanly" banner now matches the design: it shows when the dead run was last seen (from `data/run.lock`'s heartbeat), the startup `PRAGMA quick_check` result, the reconciliation summary and the cycles marked interrupted.
+- `LockCheck` reports `last_seen`; the lifespan stores `unclean_stopped_at`, `unclean_reconcile` and `unclean_interrupted` for the banner.
+- New `POST /api/banners/unclean-run/dismiss` hides the banner for the rest of the run; it returns on the next unclean stop. The banner's Open logs goes to the Logs screen.
+
+## 2026-10-27 — Insights (PR 22, implementation)
+
+- New `insights_snapshots` table and `app/insights/` package: the daily job after the readiness snapshot writes one row per strategy (live = NULL) and period (`run`, `last20`, `all`) with headline numbers, funnel, findings, slices, calibration, execution, overnight and skipped-setups JSON.
+- `GET /api/insights?strategy=&period=` serves the latest stored snapshot (numbers only); `GET /api/insights/trades?...&dimension=&slice=` resolves the trades behind a slice row.
+- New strategy override `entry_cycles` (New York `HH:MM` list): shadows skip entries outside the listed cycles through a new prefilter check; live is unaffected. The New shadow dialog offers a per-cycle picker, the strategies comparison shows the difference, and entry-cycle findings expose "Test in a shadow".
+- Weekly review facts include `insights.new` and `insights.stopped` findings for the covered week.
+- The Insights screen sits in the Learn sidebar group: strategy/period toggles, headline tiles with hover definitions, findings, funnel, skipped setups, the 16-dimension slice table, calibration, execution, overnight, and the before-data state under 10 closed trades.
+- Deviations from the spec text: the calibration weighted gap uses the chart's own measure (share reaching the target before the stop) with the readiness grouping rules — the spec says "the same number as the Readiness criterion" but readiness still uses win rate (PR 19); noted in the PR.
+- Skips that never fill their rules-only limit inside the entry window count as "neither" (the spec names only three outcomes).
+
 ## 2026-10-27 — Protective stops hardened (PR 27)
 
 - From Devin's live-data review: a protective stop was rejected because the stored stop was above the market; a stop leg was held invisibly under a filled parent while the target held all shares; and a sell stop for an already-exited position could have opened a short.

@@ -1365,6 +1365,7 @@ export interface StrategiesResponse {
   promote_min_closed_trades: number;
   rules_only: { stop_atr: number; target_r: number };
   options: {
+    cycles: string[];
     models: string[];
     prompts: string[];
     live: { prompt_version: string; model: string; temperature: number };
@@ -1378,7 +1379,7 @@ export interface NewStrategyBody {
   prompt_version?: string;
   model?: string;
   temperature?: number;
-  overrides?: Record<string, number>;
+  overrides?: Record<string, number | string[]>;
 }
 
 export interface StrategyPromotion {

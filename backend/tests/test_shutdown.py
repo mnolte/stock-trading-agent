@@ -7,10 +7,12 @@ import json
 import os
 import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 import pytest
+from app.engine.executor import ReconcileReport
 from app.shutdown import (
     RunLock,
     ShutdownManager,
@@ -90,6 +92,21 @@ def test_lock_corrupt_file_is_stale(tmp_path: Path) -> None:
     path = tmp_path / "run.lock"
     path.write_text("not json")
     assert RunLock(path).check().status == "stale"
+
+
+def test_lock_stale_reports_last_seen(tmp_path: Path) -> None:
+    """The stale lock's last heartbeat feeds the banner timestamp
+    (design: States — "did not shut down cleanly (14 Oct 23:12)")."""
+    path = tmp_path / "run.lock"
+    heartbeat = time.time() - 3600
+    path.write_text(
+        json.dumps(
+            {"pid": 2**30, "started_at": 1, "heartbeat_at": heartbeat}
+        )
+    )
+    check = RunLock(path).check()
+    assert check.status == "stale"
+    assert check.last_seen == heartbeat
 
 
 def test_lock_other_boot_is_stale(tmp_path: Path) -> None:
@@ -204,12 +221,62 @@ def test_writes_refused_while_shutting_down(client: TestClient) -> None:
         manager.shutting_down.clear()
 
 
+def _unclean_banner(client: TestClient) -> dict[str, object]:
+    banners = client.get("/api/banners").json()["items"]
+    return next(b for b in banners if b["kind"] == "unclean_run")
+
+
 def test_unclean_run_banner(client: TestClient) -> None:
+    """The banner carries the startup check results and the design's
+    Open logs + Dismiss actions (design: States)."""
+    app = cast(FastAPI, client.app)
+    app.state.unclean_previous_run = True
+    app.state.unclean_quick_check = "ok"
+    app.state.unclean_reconcile = ReconcileReport()
+    app.state.unclean_interrupted = 0
+    # 21:12 UTC is 23:12 in the app timezone (Europe/Amsterdam, CEST).
+    app.state.unclean_stopped_at = datetime(2026, 10, 14, 21, 12, tzinfo=UTC)
+    try:
+        banner = _unclean_banner(client)
+        message = str(banner["message"])
+        assert "The previous run did not shut down cleanly (14 Oct 23:12)" in message
+        assert "Database integrity check ok" in message
+        assert "reconciliation with Alpaca: no differences" in message
+        assert "0 cycles marked interrupted" in message
+        assert banner["actions"] == ["open_logs", "dismiss"]
+
+        app.state.unclean_reconcile = ReconcileReport(
+            mismatches=["MSFT: adopted 4 shares"]
+        )
+        assert "reconciliation with Alpaca: 1 difference" in str(
+            _unclean_banner(client)["message"]
+        )
+        app.state.unclean_reconcile = ReconcileReport(
+            ok=False, errors=["positions: down"]
+        )
+        assert "reconciliation with Alpaca: failed" in str(
+            _unclean_banner(client)["message"]
+        )
+    finally:
+        app.state.unclean_previous_run = False
+
+
+def test_unclean_run_banner_dismiss(client: TestClient) -> None:
+    """One click hides the banner for the rest of the run."""
     app = cast(FastAPI, client.app)
     app.state.unclean_previous_run = True
     app.state.unclean_quick_check = "ok"
     try:
-        banners = client.get("/api/banners").json()["items"]
-        assert any(b["kind"] == "unclean_run" for b in banners)
+        assert any(
+            b["kind"] == "unclean_run"
+            for b in client.get("/api/banners").json()["items"]
+        )
+        resp = client.post("/api/banners/unclean-run/dismiss")
+        assert resp.status_code == 200
+        assert resp.json()["dismissed"] is True
+        assert not any(
+            b["kind"] == "unclean_run"
+            for b in client.get("/api/banners").json()["items"]
+        )
     finally:
         app.state.unclean_previous_run = False

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
@@ -111,10 +111,12 @@ function NewShadowDialog({
   data,
   onClose,
   onCreated,
+  initialExcludedCycles = [],
 }: {
   data: StrategiesResponse;
   onClose: () => void;
   onCreated: (id: number) => void;
+  initialExcludedCycles?: string[];
 }) {
   const live = data.options.live;
   const [name, setName] = useState('');
@@ -125,6 +127,7 @@ function NewShadowDialog({
   );
   const [temperature, setTemperature] = useState(String(live.temperature));
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [excludedCycles, setExcludedCycles] = useState<string[]>(initialExcludedCycles);
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -143,6 +146,10 @@ function NewShadowDialog({
       chosen[option.key] = Number(raw);
     }
     if (Object.keys(chosen).length > 0) body.overrides = chosen;
+    if (excludedCycles.length > 0) {
+      const all = data.options.cycles ?? [];
+      body.overrides = { ...body.overrides, entry_cycles: all.filter((c) => !excludedCycles.includes(c)) };
+    }
     setBusy(true);
     setErrors([]);
     postStrategy(body)
@@ -254,6 +261,32 @@ function NewShadowDialog({
             ))}
         </div>
       </div>
+      {(data.options.cycles ?? []).length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            Entry cycles · uncheck to block entries in that cycle
+          </span>
+          <div style={{ display: 'flex', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
+            {(data.options.cycles ?? []).map((c) => {
+              const excluded = excludedCycles.includes(c);
+              return (
+                <label key={c} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--sa-text-sm)', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!excluded}
+                    onChange={() =>
+                      setExcludedCycles((cur) =>
+                        excluded ? cur.filter((x) => x !== c) : [...cur, c],
+                      )
+                    }
+                  />
+                  {c}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -263,7 +296,15 @@ function NewShadowDialog({
 export default function Strategies() {
   const [data, setData] = useState<StrategiesResponse | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [dialog, setDialog] = useState(false);
+  const [searchParams] = useSearchParams();
+  const [dialog, setDialog] = useState(
+    () => searchParams.get('new_shadow') === '1',
+  );
+  const [dialogExcluded, setDialogExcluded] = useState<string[]>(() => {
+    const excl =
+      searchParams.get('new_shadow') === '1' && searchParams.get('exclude_cycle');
+    return excl ? [excl] : [];
+  });
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const navigate = useNavigate();
@@ -556,9 +597,11 @@ export default function Strategies() {
       {dialog && (
         <NewShadowDialog
           data={data}
-          onClose={() => setDialog(false)}
+          initialExcludedCycles={dialogExcluded}
+          onClose={() => { setDialog(false); setDialogExcluded([]); }}
           onCreated={(id) => {
             setDialog(false);
+            setDialogExcluded([]);
             setSelectedId(id);
             refresh();
           }}
