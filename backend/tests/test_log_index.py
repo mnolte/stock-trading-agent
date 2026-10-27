@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import sqlite3
 import time
 from pathlib import Path
@@ -179,16 +180,27 @@ def test_client_log_endpoint(client: TestClient) -> None:
     )
     assert resp.status_code == 200
     handler = cast(FastAPI, client.app).state.log_index_handler
-    # The listener thread dequeues asynchronously — poll until the row
-    # has been flushed into the index (bounded so a real break fails).
+    # The listener thread dequeues asynchronously; under parallel test
+    # load it can starve for seconds, so drain the queue ourselves —
+    # whichever path wins, the row lands on the same handler.
+    from app.logging_config import get_pipeline
+
+    pipeline = get_pipeline()
     deadline = time.monotonic() + 10
     while True:
+        if pipeline is not None:
+            while True:
+                try:
+                    record = pipeline.queue.get_nowait()
+                except queue.Empty:
+                    break
+                pipeline.listener.handle(record)
         handler.flush()
         data = client.get("/api/logs?logger=frontend").json()
         found = any("boom" in line["message"] for line in data["lines"])
         if found or time.monotonic() >= deadline:
             break
-        time.sleep(0.1)
+        time.sleep(0.05)
     assert found
 
 

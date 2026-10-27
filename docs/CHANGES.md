@@ -2,21 +2,29 @@
 
 Newest first.
 
-## 2026-10-27 — Unclean-run banner: Open logs + Dismiss
+## 2026-10-27 — Sign-in details (PR 23 review)
 
-- The "previous run did not shut down cleanly" banner now matches the design: it shows when the dead run was last seen (from `data/run.lock`'s heartbeat), the startup `PRAGMA quick_check` result, the reconciliation summary and the cycles marked interrupted.
-- `LockCheck` reports `last_seen`; the lifespan stores `unclean_stopped_at`, `unclean_reconcile` and `unclean_interrupted` for the banner.
-- New `POST /api/banners/unclean-run/dismiss` hides the banner for the rest of the run; it returns on the next unclean stop. The banner's Open logs goes to the Logs screen.
+- Sign-in: wrong codes count toward the lockouts; the ticket between password and code is single-use, tied to the browser and dropped after 3 wrong codes; a used code can't be replayed. New session token at every sign-in; a password change signs out every other session; `__Host-` cookie name over HTTPS.
+- Open endpoints return nothing beyond the version or whether sign-in is required; the session check covers every HTTP method.
+- Design: signed-in devices show the masked address only (no location lookup).
 
-## 2026-10-27 — Insights (PR 22, implementation)
+## 2026-10-27 — Security hardening (PR 28)
 
-- New `insights_snapshots` table and `app/insights/` package: the daily job after the readiness snapshot writes one row per strategy (live = NULL) and period (`run`, `last20`, `all`) with headline numbers, funnel, findings, slices, calibration, execution, overnight and skipped-setups JSON.
-- `GET /api/insights?strategy=&period=` serves the latest stored snapshot (numbers only); `GET /api/insights/trades?...&dimension=&slice=` resolves the trades behind a slice row.
-- New strategy override `entry_cycles` (New York `HH:MM` list): shadows skip entries outside the listed cycles through a new prefilter check; live is unaffected. The New shadow dialog offers a per-cycle picker, the strategies comparison shows the difference, and entry-cycle findings expose "Test in a shadow".
-- Weekly review facts include `insights.new` and `insights.stopped` findings for the covered week.
-- The Insights screen sits in the Learn sidebar group: strategy/period toggles, headline tiles with hover definitions, findings, funnel, skipped setups, the 16-dimension slice table, calibration, execution, overnight, and the before-data state under 10 closed trades.
-- Deviations from the spec text: the calibration weighted gap uses the chart's own measure (share reaching the target before the stop) with the readiness grouping rules — the spec says "the same number as the Readiness criterion" but readiness still uses win rate (PR 19); noted in the PR.
-- Skips that never fill their rules-only limit inside the entry window count as "neither" (the spec names only three outcomes).
+- From Devin's security audit. The main finding: until sign-in exists, any web page Marc visits could send write requests to the app on 127.0.0.1 (Stop & flatten, settings, key replacement), because CORS doesn't stop simple `text/plain` POSTs.
+- New "Security hardening" section:
+  - a request gate on every route and the WebSocket: Host (against DNS rebinding), Origin and `Sec-Fetch-Site` on writes, JSON-only writes, body size; the app's own security headers; fonts bundled now;
+  - `SA_AUTH` parsed once and failing closed; the startup guard ships with the session layer; `python -m app.serve` as the only source of the bind address;
+  - exception text and tracebacks scrubbed in every handler, plus URL tokens;
+  - prompt versions whitelisted, contained in `prompts/` and hash-checked against a manifest (enforces hard rule 8);
+  - clamped list parameters, capped exports, safe log search, no 500 on bad query values;
+  - frontend error reports rate-limited per address, bounded and sanitised;
+  - the stored SMTP password is never sent to a changed server; outbound URLs https and public;
+  - `umask 077`, file modes, read-only run databases, exclusive `run.lock`;
+  - CI: ruff `S` rules, `pip-audit` and `pnpm audit`, gitleaks, pinned Actions, `make security`, `docs/SECURITY.md`.
+- VPS deployment: two more actions ask "Confirm it is you" (loosening a risk limit; changing the SMTP server, "To" address or heartbeat URL); the app container also drops all capabilities with `no-new-privileges`.
+- VPS deployment: Caddy always adds HSTS and Permissions-Policy and sets the other headers only when the app hasn't, so PR 28's app headers win. PR 24 doesn't wait for PR 28: bundled fonts, `python -m app.serve` and file modes are built by whichever comes first; the first real deploy waits for PR 28.
+- Error pages: new codes `bad_host`, `origin_refused`, `too_large`, `unsupported_media_type`, `password_required`.
+- AGENTS.md: hard rule 9 extended (exceptions), new rules 18–20. Config: `security` block. Build plan: PR 28, before PR 23 is merged.
 
 ## 2026-10-27 — Protective stops hardened (PR 27)
 

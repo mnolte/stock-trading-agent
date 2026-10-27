@@ -940,3 +940,66 @@ class LogReview(Base):
     note: Mapped[str] = mapped_column(Text, nullable=False)
     reviewed_at: Mapped[datetime] = mapped_column(nullable=False)
     app_version: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class User(Base):
+    """The one sign-in account (PR 23, docs/SPEC.md, VPS deployment).
+
+    Created and reset by ``make create-user`` on the server. The TOTP
+    secret is Fernet-encrypted with the same ``secret.key`` as the API
+    keys; recovery codes are stored as hashes, shown once at creation.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    totp_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    recovery_code_hashes: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    password_changed_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Last accepted TOTP step — a code at or below it is a replay.
+    last_totp_step: Mapped[int] = mapped_column(nullable=False, default=-1)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class AuthSession(Base):
+    """A signed-in device (PR 23).
+
+    The cookie carries a random token; only its SHA-256 hash is stored.
+    ``expires_at`` is the absolute cap (``auth.remember_days``); the idle
+    cut-off is ``last_seen_at + auth.idle_hours``. ``confirmed_until``
+    marks a fresh "Confirm it is you" for risky actions.
+    """
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    device_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    user_agent: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    ip: Mapped[str] = mapped_column(String(45), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    keep_signed_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    confirmed_until: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class SignInAttempt(Base):
+    """One sign-in attempt for rate limiting (PR 23; kept 90 days).
+
+    ``result`` is ``ok``, ``wrong`` or ``locked``. No usernames, passwords
+    or codes are ever stored.
+    """
+
+    __tablename__ = "sign_in_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    time: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    ip: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
+    result: Mapped[str] = mapped_column(String(8), nullable=False)

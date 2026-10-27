@@ -37,11 +37,12 @@
 | 20 | Logging, error handling and shutdown | Logging, error handling and shutdown; GUI table; AGENTS.md rules 15–16 | `Logs`, `States` (shutdown and restart) |
 | 21 | Decision v2: code-built options | Decision v2; Decision layer (no_call reasons); Data model; `backend/prompts/decision.v2.md` | `DecisionV2` |
 | 22 | Insights | Insights; Strategies (entry_cycles); Data model | `Insights` |
-| 23 | Sign-in and access | VPS deployment (Sign-in, Restarts, instance id); Data model; AGENTS.md rule 10 | `Login`, `Settings` (Access), `States` (Access and server, Confirm it is you), sidebar Sign out |
+| 23 | Sign-in and access | VPS deployment (Sign-in, Restarts, instance id); Security hardening (Sign-in fails closed, more confirmed actions); Data model; AGENTS.md rule 10 | `Login`, `Settings` (Access), `States` (Access and server, Confirm it is you), sidebar Sign out |
 | 24 | VPS deployment | VPS deployment (How it runs, hardening, deploying, backups, monitoring) | `Settings` (Server), `States` (server banners) |
 | 25 | Error pages and API errors | Error pages and API errors; GUI table | `Errors` |
 | 26 | Day-trade rule retired | Alpaca integration → Day trades (rule retired); Risk; GUI; Notifications | `Positions` (Today card), `Main` (risk card), `Decision` (gate), `Settings` (notifications), `States`, `Insights` |
 | 27 | Protective stops hardened | Alpaca integration → Protective stops; Position checks; Larger universe → Daily screen | none |
+| 28 | Security hardening | Security hardening; Error pages and API errors (new codes); VPS deployment (Sign-in → Fails closed); AGENTS.md rules 9, 18–20 | `Settings` (SMTP note, Access → risky actions) |
 
 ## PR description template
 

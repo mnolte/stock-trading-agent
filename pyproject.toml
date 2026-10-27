@@ -26,6 +26,8 @@ dependencies = [
     "pandas>=2.2.3",
     "openai>=1.109,<4",
     "cryptography>=41.0.0",
+    "argon2-cffi>=23.1.0",
+    "qrcode>=7.4.2",
 ]
 
 [project.optional-dependencies]
@@ -53,7 +55,7 @@ warn_unreachable = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["finnhub", "apscheduler.*"]
+module = ["finnhub", "apscheduler.*", "qrcode"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

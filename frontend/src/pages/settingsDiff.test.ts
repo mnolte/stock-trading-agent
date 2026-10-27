@@ -53,6 +53,7 @@ function base(): SettingsForm {
       max_price_blocked_pct: 5,
       error_auto_resolve_minutes: 60,
     },
+    auth: { idle_hours: 12 },
     schedule: { cycles: ['10:46', '11:46'] },
     notifications: {
       repeat_limit_minutes: 30,

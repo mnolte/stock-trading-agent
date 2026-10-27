@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
-from app.broker.client_id import client_order_id, order_kind
+from app.broker.client_id import client_order_id, order_instance, order_kind
 from app.broker.models import (
     OPEN_ORDER_STATUSES,
     BrokerAccount,
@@ -1036,6 +1036,51 @@ class Executor:
             self._order_seq,
         )
 
+    def _check_foreign_instance(
+        self, session: Session, order: BrokerOrder
+    ) -> str | None:
+        """Returns the foreign instance id the first time it is seen.
+
+        An order or fill carrying another instance's client id means a
+        second agent copy trades this account (docs/SPEC.md, Two copies on
+        one account): critical event, kill switch on, banner. Ids without
+        an ``sa-`` prefix and our own ids never trip it. Once per order.
+        """
+        other = order_instance(order.client_order_id)
+        own = "".join(
+            c for c in str(self.config.env.sa_instance_id) if c.isalnum()
+        )
+        if other is None or other == own:
+            return None
+        existing = session.execute(
+            select(func.count(Event.id)).where(
+                Event.event_type == "another_instance",
+                Event.details["order"].as_string() == order.id,
+            )
+        ).scalar_one()
+        if existing:
+            return None
+        message = (
+            f"Another instance is trading this Alpaca account: order "
+            f"{order.id[:8]}… carries instance id {other}"
+            + (f", not {own}" if own else "")
+            + ". Kill switch turned on. Stop the other copy, then acknowledge."
+        )
+        record_event(
+            session,
+            self.clock,
+            level="critical",
+            event_type="another_instance",
+            details={
+                "order": order.id,
+                "client_order_id": order.client_order_id,
+                "foreign_instance": other,
+                "own_instance": own or None,
+                "message": message,
+            },
+        )
+        return other
+
     @staticmethod
     def _leg_for(order: BrokerOrder, parent: BrokerOrder | None) -> str:
         if order.side == "buy":
@@ -1128,7 +1173,10 @@ class Executor:
 
     async def on_trade_update(self, update: TradeUpdateInfo) -> None:
         """A trade-updates event: mark the order, then reconcile the rest."""
+        foreign: str | None = None
         with self._session_factory() as session:
+            foreign = self._check_foreign_instance(session, update.order)
+            session.commit()
             row = session.execute(
                 select(Order).where(Order.alpaca_order_id == update.order.id)
             ).scalar_one_or_none()
@@ -1150,6 +1198,14 @@ class Executor:
                     )
                 self._record_fills(session, row, update.order)
                 session.commit()
+        if foreign is not None:
+            await self.activate_kill_switch(
+                reason=(
+                    f"another instance ({foreign}) is trading "
+                    "this Alpaca account"
+                ),
+                automatic=True,
+            )
         self._notify({"positions", "orders", "header"})
         await self.reconcile()
 
@@ -1216,7 +1272,13 @@ class Executor:
 
         with self._session_factory() as session:
             # 1. Store/update rows for every open order at the broker.
+            foreign_instance: str | None = None
             for order in orders_r.data:
+                seen = self._check_foreign_instance(session, order)
+                foreign_instance = foreign_instance or seen
+                for leg_order in order.legs:
+                    seen = self._check_foreign_instance(session, leg_order)
+                    foreign_instance = foreign_instance or seen
                 known = session.execute(
                     select(Order.id).where(Order.alpaca_order_id == order.id)
                 ).scalar_one_or_none()
@@ -1403,6 +1465,15 @@ class Executor:
                         f"cancel {row.alpaca_order_id}: {result.error}"
                     )
             session.commit()
+        if foreign_instance is not None:
+            # Another agent copy is trading this account: stop everything.
+            await self.activate_kill_switch(
+                reason=(
+                    f"another instance ({foreign_instance}) is trading "
+                    "this Alpaca account"
+                ),
+                automatic=True,
+            )
         ev(
             log_reconcile, logging.INFO, "reconcile.result",
             f"reconcile: {report.orders_synced} orders synced, "

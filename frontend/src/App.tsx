@@ -10,6 +10,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Decision = lazy(() => import('./pages/Decision'));
 const DevComponents = lazy(() => import('./pages/DevComponents'));
 const Insights = lazy(() => import('./pages/Insights'));
+const Login = lazy(() => import('./pages/Login'));
 const Inspector = lazy(() => import('./pages/Inspector'));
 const Logs = lazy(() => import('./pages/Logs'));
 const Performance = lazy(() => import('./pages/Performance'));
@@ -38,6 +39,7 @@ function AppRoutes() {
     <>
       <Suspense fallback={<PageFallback />}>
         <Routes location={background ?? location}>
+          <Route path="/login" element={<Login />} />
           <Route path="/" element={<Layout />}>
             <Route index element={<Dashboard />} />
             <Route path="positions" element={<Positions />} />

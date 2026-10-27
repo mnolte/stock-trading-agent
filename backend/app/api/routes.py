@@ -751,9 +751,12 @@ def _keys_issue(request: Request) -> str | None:
 @router.post("/kill-switch")
 async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Turn the kill switch on, or stop & flatten everything."""
+    from app.auth.api import require_confirmed
+
     executor = _executor(request)
     action = str(body.get("action", "entries"))
     if action == "flatten":
+        require_confirmed(request)
         result = await executor.flatten()
         return {"kill_switch": True, **result}
     reason = str(body.get("reason") or "manual")
@@ -790,6 +793,9 @@ async def kill_switch_resume(
 ) -> dict[str, object]:
     """Resume after a kill switch; the typed reason is stored in the log.
     Same key gate as a normal resume: nothing works without them."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     issue = _keys_issue(request)
     if issue is not None:
@@ -1381,6 +1387,7 @@ def banners(request: Request) -> dict[str, object]:
                         "universe_screen_pending",
                         "broker_guard_unconfirmed",
                         "cycle_slow",
+                        "another_instance",
                     ]
                 ),
             )
@@ -1389,7 +1396,22 @@ def banners(request: Request) -> dict[str, object]:
         ).scalars().all()
         for event in unacked:
             details = event.details or {}
-            if event.event_type == "reconciliation":
+            if event.event_type == "another_instance":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "another_instance",
+                        "level": "critical",
+                        "message": str(
+                            details.get("message")
+                            or "Another instance is trading this Alpaca account"
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "reconciliation":
                 kind = str(details.get("kind", "mismatch"))
                 if kind == "adopted_position":
                     message = (
@@ -2068,6 +2090,9 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "auth": {
+            "idle_hours": get("auth", "idle_hours", default=12),
+        },
         "notifications": {
             "repeat_limit_minutes": get(
                 "notifications", "repeat_limit_minutes", default=30
@@ -2351,10 +2376,18 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         )
     # "Promote to live" saves like any other change, then archives the
     # shadow (docs/SPEC.md, Strategies and shadows — Promote to live).
+    # Promoting is a risky action: it needs a fresh "Confirm it is you".
     promote_raw = body.get("promote_strategy_id")
     promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
         promote_raw
     ).isdigit() else None
+    # Promote, and loosening any risk limit, need "Confirm it is you";
+    # tightening a limit never asks (design, Settings → Access).
+    loosens = _settings_loosen_risk(cleaned, base)
+    if promote_id is not None or loosens:
+        from app.auth.api import require_confirmed
+
+        require_confirmed(request)
     new_tree = _deep_merge(base, cleaned)
     with get_session_maker()() as session:
         if promote_id is not None:
@@ -2386,6 +2419,25 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
+
+
+def _settings_loosen_risk(
+    submitted: dict[str, object], base: dict[str, object]
+) -> bool:
+    """True when a numeric risk limit goes up — loosening asks for a
+    fresh confirmation; tightening never does (design, Access)."""
+    new_risk = submitted.get("risk")
+    if not isinstance(new_risk, dict):
+        return False
+    old_risk = _nested_get(base, "risk") or {}
+    for key, value in new_risk.items():
+        old = old_risk.get(key) if isinstance(old_risk, dict) else None
+        try:
+            if value is not None and old is not None and float(value) > float(old):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -2441,6 +2493,18 @@ async def save_smtp(
         errors.append("SMTP port must be 1–65535")
     if errors:
         raise HTTPException(status_code=422, detail=errors)
+    # Changing where the stored password is sent (host, port, username)
+    # or where alerts go (To) needs "Confirm it is you" (design, Access).
+    from app.auth.api import require_confirmed
+
+    current = service.smtp_status()
+    if (
+        current.get("host") != host
+        or current.get("port") != port
+        or current.get("username") != username
+        or current.get("to_addr") != to_addr
+    ) and current.get("configured"):
+        require_confirmed(request)
     result = await service.save_smtp(
         host=host,
         port=port,
@@ -2597,6 +2661,9 @@ async def save_api_key(
 ) -> dict[str, object]:
     """Test a candidate key, then save it only when the test passes —
     the old key keeps working until then. Alpaca has extra guards."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)  # replacing a key is a risky action
     store = _secrets(request)
     if store is None:
         raise HTTPException(status_code=503, detail="key store unavailable")
@@ -2722,6 +2789,9 @@ async def test_api_key(request: Request, group: str) -> dict[str, object]:
 @router.post("/paper-reset")
 async def paper_reset(request: Request) -> dict[str, object]:
     """Step 1: kill switch on, close all positions, cancel all orders."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     return await executor.paper_reset()
 
@@ -2729,6 +2799,9 @@ async def paper_reset(request: Request) -> dict[str, object]:
 @router.post("/runs")
 async def start_new_run(request: Request) -> dict[str, object]:
     """Step 2: verify the reset balance, then start a new performance run."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     executor = _executor(request)
     result = await executor.start_new_run()
     if not result.get("ok"):

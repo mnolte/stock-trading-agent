@@ -683,12 +683,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     install_global_hooks(asyncio.get_running_loop())
     config = get_config()
 
+    from app.auth.guard import check_auth_guard
     from app.shutdown import (
         make_shutdown,
         quick_check,
         set_current,
     )
     from app.spawn import spawn
+
+    # Hard rule 10: sign-in off on a non-loopback address refuses to
+    # start — checked before the run lock, database or any client.
+    check_auth_guard(config)
 
     shutdown_manager, run_lock = make_shutdown(config)
     app.state.shutdown = shutdown_manager
@@ -774,6 +779,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     key_testers = make_key_testers(config, clock)
     await secrets_store.import_env_keys(read_env_keys(), key_testers)
     install_secret_scrub_filter(secrets_store.scrub_values)
+
+    # Sign-in (PR 23): the service exists in both modes; with SA_AUTH=off
+    # it is dormant and the middleware is a passthrough.
+    from app.auth.service import AuthService
+    from app.logging_config import register_secret_provider
+
+    auth_service = AuthService(
+        config, clock, notifier=notification_service
+    )
+    app.state.auth = auth_service
+    register_secret_provider(auth_service.scrub_values)
+    if auth_service.enabled:
+        # Fail closed: no route outside the session guard may exist.
+        from app.auth.guard import check_route_coverage
+
+        check_route_coverage(app)
 
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
@@ -1315,7 +1336,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Stock Trading Agent", version="0.2.0", lifespan=lifespan)
+    # With SA_AUTH=required the only open endpoints are /healthz and the
+    # sign-in calls — the API docs are switched off entirely so no doc
+    # route ships reachable without a session.
+    docs_off = get_config().env.sa_auth == "required"
+    app = FastAPI(
+        title="Stock Trading Agent",
+        version="0.2.0",
+        lifespan=lifespan,
+        openapi_url=None if docs_off else "/openapi.json",
+        docs_url=None if docs_off else "/docs",
+        redoc_url=None if docs_off else "/redoc",
+    )
 
     import secrets as _secrets_mod
 
@@ -1378,6 +1410,25 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    from app.auth.middleware import AuthMiddleware
+
+    app.add_middleware(AuthMiddleware)
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        """The one open probe: Caddy's health check and the uptime monitor
+        (docs/SPEC.md, VPS deployment). Version only — nothing else."""
+        return {"status": "ok", "version": app.version}
+
+    from app.auth.api import error_response
+    from app.auth.api import router as auth_router
+    from app.auth.service import AuthError
+
+    @app.exception_handler(AuthError)
+    async def auth_error_handler(request: Request, exc: AuthError) -> Any:
+        return error_response(exc)
+
+    app.include_router(auth_router, prefix="/api")
     app.include_router(api_router, prefix="/api")
     app.include_router(strategies_router, prefix="/api")
     app.include_router(backtests_router, prefix="/api")

@@ -604,6 +604,7 @@ export interface SettingsForm {
     error_auto_resolve_minutes: number;
   };
   schedule: { cycles: string[] };
+  auth: { idle_hours: number };
   notifications: {
     repeat_limit_minutes: number;
     quiet_hours: { start: string; end: string };

@@ -19,6 +19,9 @@ import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
 import { Sidebar } from './Sidebar';
+import { ConfirmYouDialog } from './ConfirmYouDialog';
+import { registerConfirmHandler, useAuthStatus } from '../api/auth';
+import type { ConfirmRequest } from '../api/auth';
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
 
@@ -33,6 +36,31 @@ export function Layout() {
   const liveStatus = useLiveStatus();
   const narrow = useMediaQuery('(max-width: 820px)');
   const location = useLocation();
+  const authStatus = useAuthStatus();
+  const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+
+  // Not signed in while auth is required → the sign-in page; a session-
+  // expired cookie change is picked up on the next API call anyway.
+  useEffect(() => {
+    if (authStatus && authStatus.required && !authStatus.signed_in) {
+      const next = window.location.pathname + window.location.search;
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    }
+  }, [authStatus]);
+
+  // client.ts asks here when a write answers 403 confirm_required.
+  useEffect(() => {
+    registerConfirmHandler((req) => {
+      setConfirmReq({
+        action: req.action,
+        resolve: (ok) => {
+          req.resolve(ok);
+          setConfirmReq(null);
+        },
+      });
+    });
+    return () => registerConfirmHandler(null);
+  }, []);
 
   const refreshHeader = useCallback(() => {
     getHeaderState().then(setState).catch(console.error);
@@ -162,10 +190,10 @@ export function Layout() {
         background: 'var(--sa-bg)',
       }}
     >
-      {!narrow && <Sidebar />}
+      {!narrow && <Sidebar authRequired={authStatus?.required ?? false} />}
       {narrow && menuOpen && (
         <div ref={menuWrapRef}>
-          <Sidebar overlay onNavigate={() => setMenuOpen(false)} />
+          <Sidebar overlay onNavigate={() => setMenuOpen(false)} authRequired={authStatus?.required ?? false} />
         </div>
       )}
       <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -222,6 +250,7 @@ export function Layout() {
         onCancel={() => setDialog(null)}
         onConfirm={onResumeConfirm}
       />
+      <ConfirmYouDialog request={confirmReq} />
     </div>
   );
 }
