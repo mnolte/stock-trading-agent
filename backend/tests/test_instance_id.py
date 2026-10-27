@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import select
-
 from app.broker.client_id import client_order_id, order_instance
 from app.broker.fake import FakeBroker, _OrderRec
 from app.config import AppConfig
 from app.db.models import Event
 from app.market.clock import FakeClock
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
 from tests.test_executor import NOW, _executor
 
 pytestmark = pytest.mark.anyio
@@ -49,7 +49,7 @@ def _foreign_order(broker: FakeBroker, client_id: str) -> _OrderRec:
 
 
 async def test_foreign_instance_turns_kill_switch_on(
-    session_factory, monkeypatch: pytest.MonkeyPatch
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SA_INSTANCE_ID", "sa-vps-1")
     config = AppConfig()
@@ -65,7 +65,7 @@ async def test_foreign_instance_turns_kill_switch_on(
         ).scalars().all()
         assert len(events) == 1
         assert events[0].level == "critical"
-        assert events[0].details["foreign_instance"] == "salocal"
+        assert (events[0].details or {})["foreign_instance"] == "salocal"
     # A second reconcile does not record the same order twice.
     await executor.reconcile()
     with session_factory() as session:
@@ -77,7 +77,7 @@ async def test_foreign_instance_turns_kill_switch_on(
 
 
 async def test_own_and_plain_ids_do_not_trip_it(
-    session_factory, monkeypatch: pytest.MonkeyPatch
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("SA_INSTANCE_ID", "sa-vps-1")
     config = AppConfig()

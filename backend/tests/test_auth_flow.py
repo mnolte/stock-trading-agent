@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import app.config as config_module
 import pytest
@@ -20,6 +20,7 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import AuthSession, SignInAttempt
 from app.market.clock import FakeClock
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
@@ -48,17 +49,18 @@ def app_auth(monkeypatch: pytest.MonkeyPatch) -> Generator[Any, None, None]:
 
 def _sign_in(client: TestClient, secret: str) -> str:
     """Full sign-in; returns the CSRF token for write calls."""
+    app = cast(FastAPI, client.app)
     r = client.post("/api/auth/sign-in", json={"password": PASSWORD, "remember": True})
     assert r.status_code == 200, r.text
     pending = r.json()["pending"]
-    code = totp_code(secret, client.app.state.clock.now())
+    code = totp_code(secret, app.state.clock.now())
     r = client.post("/api/auth/code", json={"pending": pending, "code": code})
     assert r.status_code == 200, r.text
-    return client.cookies.get("sa_csrf", "")
+    return client.cookies.get("sa_csrf") or ""
 
 
 def _csrf(client: TestClient) -> dict[str, str]:
-    return {"X-CSRF-Token": client.cookies.get("sa_csrf", "")}
+    return {"X-CSRF-Token": client.cookies.get("sa_csrf") or ""}
 
 
 # ---------------------------------------------------------------------
@@ -175,7 +177,7 @@ def test_sign_out_and_sign_out_everywhere(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
-        first = client.cookies.get("sa_session", "")
+        first = client.cookies.get("sa_session") or ""
         _sign_in(client, secret)  # a second device
         with get_session_maker()() as session:
             assert len(session.execute(select(AuthSession)).scalars().all()) == 2
@@ -183,7 +185,7 @@ def test_sign_out_and_sign_out_everywhere(app_auth: Any) -> None:
         assert r.status_code == 200
         assert client.get("/api/header").status_code == 401
         # The first device's token is dead too.
-        client.cookies.set("sa_session", first)
+        client.cookies.set("sa_session", first or "")
         assert client.get("/api/header").status_code == 401
 
 
@@ -266,7 +268,7 @@ def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
             client.websocket_connect("/ws/ws").__enter__()
         # A foreign Origin is refused even with a session.
         _sign_in(client, secret)
-        session_cookie = client.cookies.get("sa_session", "")
+        session_cookie = client.cookies.get("sa_session") or ""
         ws_headers = {"Cookie": f"sa_session={session_cookie}"}
         with pytest.raises(WebSocketDisconnect):
             client.websocket_connect(
@@ -322,9 +324,9 @@ def test_scrubber_hides_auth_values(app_auth: Any) -> None:
     app, secret, codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
-        token = client.cookies.get("sa_session", "")
+        token = client.cookies.get("sa_session") or ""
         blob = (
-            f"token={token} csrf={client.cookies.get('sa_csrf', '')} "
+            f"token={token} csrf={client.cookies.get('sa_csrf') or ''} "
             f"code={codes[0]} secret={secret}"
         )
         out = scrub(blob, [PASSWORD, codes[0], secret, token])

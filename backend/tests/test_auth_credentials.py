@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from app.auth.create_user import create_or_reset_user
@@ -68,7 +69,7 @@ def test_otpauth_uri() -> None:
     assert "issuer=Stock%20Trading%20Agent" in uri
 
 
-def test_create_or_reset_user(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_or_reset_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Creates the row encrypted, and a reset wipes sessions and codes."""
     monkeypatch.setenv("SA_DATA_DIR", str(tmp_path / "data"))
     import app.config as config_module

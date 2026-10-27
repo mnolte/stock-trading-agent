@@ -6,12 +6,12 @@ import app.config as config_module
 import pytest
 from app.api.main import create_app
 from app.auth.guard import check_auth_guard, client_ip
-from app.config import get_config
+from app.config import AppConfig, get_config
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 
-def _config(monkeypatch: pytest.MonkeyPatch, **env: str):
+def _config(monkeypatch: pytest.MonkeyPatch, **env: str) -> AppConfig:
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(config_module, "_config", None)

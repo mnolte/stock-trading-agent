@@ -53,6 +53,7 @@ export const FIELD_RULES: Record<string, FieldRule> = {
   'performance.slippage_pct_per_side': { kind: 'number', min: 0, max: 10, label: 'Assumed slippage' },
   'reviews.briefing_enabled': { kind: 'bool', label: 'Daily briefing' },
   'reviews.monthly_cost_cap_usd': { kind: 'number', min: 0, max: 100, label: 'Review cost cap' },
+  'auth.idle_hours': { kind: 'int', min: 1, max: 168, label: 'Sign out after inactivity' },
   'notifications.repeat_limit_minutes': { kind: 'int', min: 0, max: 1440, label: 'Repeat limit' },
   'notifications.quiet_hours.start': { kind: 'time', label: 'Quiet hours from' },
   'notifications.quiet_hours.end': { kind: 'time', label: 'Quiet hours to' },

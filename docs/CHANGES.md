@@ -2,21 +2,33 @@
 
 Newest first.
 
-## 2026-10-27 — Unclean-run banner: Open logs + Dismiss
+## 2026-10-27 — Sign-in and access (PR 23, implementation)
 
-- The "previous run did not shut down cleanly" banner now matches the design: it shows when the dead run was last seen (from `data/run.lock`'s heartbeat), the startup `PRAGMA quick_check` result, the reconciliation summary and the cycles marked interrupted.
-- `LockCheck` reports `last_seen`; the lifespan stores `unclean_stopped_at`, `unclean_reconcile` and `unclean_interrupted` for the banner.
-- New `POST /api/banners/unclean-run/dismiss` hides the banner for the rest of the run; it returns on the next unclean stop. The banner's Open logs goes to the Logs screen.
+- `SA_AUTH=off|required` (default off): the app refuses to start with auth off on a non-loopback `SA_HOST`, and `X-Forwarded-For` is trusted only from `SA_TRUSTED_PROXY`.
+- `users`, `sessions` and `sign_in_attempts` tables (Alembic a8b9c0d1e2f3; attempts pruned after 90 days). `make create-user` creates or resets the single account: 14+ character Argon2id password, TOTP with the otpauth URI and a terminal QR, and 10 recovery codes shown once. The TOTP secret is Fernet-encrypted with `data/secret.key` like the API keys.
+- Two-step sign-in (password, then authenticator or recovery code) → an HttpOnly, Secure-off-loopback, SameSite=Strict session cookie (hash stored) plus a readable CSRF cookie. Idle expiry `auth.idle_hours`, absolute `remember_days`; generic errors never say which step failed; per-address lockout (5 in 15 min → 15 min wait) and a global pause after 20 failures in an hour, both answering 429 with `Retry-After`; sign out, sign out others, sign out everywhere.
+- One ASGI middleware guards every `/api` route and the WebSocket (only `/healthz` and the sign-in endpoints are open); writes need the `X-CSRF-Token` double-submit and the socket checks Origin. Stop & flatten, kill-switch resume, paper reset, new run, promote, key replacement, credential changes, loosening a risk limit and changing the SMTP destination need a fresh "Confirm it is you" (`auth.confirm_minutes`). Errors use the PR 25 JSON shape.
+- Reconciliation treats an open order or fill whose client id carries another `SA_INSTANCE_ID` as critical: kill switch on, blocking banner until Acknowledge, notification. PR 27's `client_id.py` already writes `sa-<instance>-<kind>-…`; this PR only adds `order_instance()` to parse it — no second format.
+- New notification events: `new_sign_in`, `sign_in_lockout`, `another_instance` (critical: always browser+email).
+- Frontend: the sign-in screen (three states, "Stock Trading Agent"), session-expired redirect back to the same page, the confirm dialog that repeats the request once, Settings → Access (devices, password, authenticator, recovery codes, idle hours, failed sign-ins) and Sign out in the sidebar. With `SA_AUTH=off` Access shows "Sign-in off (local only)" and no sign-in UI appears.
+- Screenshots: `docs/screenshots/pr-23/` (Login password/code/recovery/wrong/redirect, Settings Access).
 
-## 2026-10-27 — Insights (PR 22, implementation)
+## 2026-10-27 — Security hardening (PR 28)
 
-- New `insights_snapshots` table and `app/insights/` package: the daily job after the readiness snapshot writes one row per strategy (live = NULL) and period (`run`, `last20`, `all`) with headline numbers, funnel, findings, slices, calibration, execution, overnight and skipped-setups JSON.
-- `GET /api/insights?strategy=&period=` serves the latest stored snapshot (numbers only); `GET /api/insights/trades?...&dimension=&slice=` resolves the trades behind a slice row.
-- New strategy override `entry_cycles` (New York `HH:MM` list): shadows skip entries outside the listed cycles through a new prefilter check; live is unaffected. The New shadow dialog offers a per-cycle picker, the strategies comparison shows the difference, and entry-cycle findings expose "Test in a shadow".
-- Weekly review facts include `insights.new` and `insights.stopped` findings for the covered week.
-- The Insights screen sits in the Learn sidebar group: strategy/period toggles, headline tiles with hover definitions, findings, funnel, skipped setups, the 16-dimension slice table, calibration, execution, overnight, and the before-data state under 10 closed trades.
-- Deviations from the spec text: the calibration weighted gap uses the chart's own measure (share reaching the target before the stop) with the readiness grouping rules — the spec says "the same number as the Readiness criterion" but readiness still uses win rate (PR 19); noted in the PR.
-- Skips that never fill their rules-only limit inside the entry window count as "neither" (the spec names only three outcomes).
+- From Devin's security audit. The main finding: until sign-in exists, any web page Marc visits could send write requests to the app on 127.0.0.1 (Stop & flatten, settings, key replacement), because CORS doesn't stop simple `text/plain` POSTs.
+- New "Security hardening" section:
+  - a request gate on every route and the WebSocket: Host (against DNS rebinding), Origin and `Sec-Fetch-Site` on writes, JSON-only writes, body size; the app's own security headers; fonts bundled now;
+  - `SA_AUTH` parsed once and failing closed; the startup guard ships with the session layer; `python -m app.serve` as the only source of the bind address;
+  - exception text and tracebacks scrubbed in every handler, plus URL tokens;
+  - prompt versions whitelisted, contained in `prompts/` and hash-checked against a manifest (enforces hard rule 8);
+  - clamped list parameters, capped exports, safe log search, no 500 on bad query values;
+  - frontend error reports rate-limited per address, bounded and sanitised;
+  - the stored SMTP password is never sent to a changed server; outbound URLs https and public;
+  - `umask 077`, file modes, read-only run databases, exclusive `run.lock`;
+  - CI: ruff `S` rules, `pip-audit` and `pnpm audit`, gitleaks, pinned Actions, `make security`, `docs/SECURITY.md`.
+- VPS deployment: two more actions ask "Confirm it is you" (loosening a risk limit; changing the SMTP server, "To" address or heartbeat URL); the app container also drops all capabilities with `no-new-privileges`.
+- Error pages: new codes `bad_host`, `origin_refused`, `too_large`, `unsupported_media_type`, `password_required`.
+- AGENTS.md: hard rule 9 extended (exceptions), new rules 18–20. Config: `security` block. Build plan: PR 28, before PR 23 is merged.
 
 ## 2026-10-27 — Protective stops hardened (PR 27)
 
