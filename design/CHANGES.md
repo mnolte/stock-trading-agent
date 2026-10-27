@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-27 — Signed-in devices
+
+- `Settings.dc.html`, Access → Signed-in devices: the masked address only, without a location; the app does no location lookup.
+
 ## 2026-10-27 — Security hardening
 
 - `Settings.dc.html`, Notifications → Email (SMTP): the note says the stored password is only sent to the server it was saved for, and that changing the host, port or username asks for the password again (the field is then required).

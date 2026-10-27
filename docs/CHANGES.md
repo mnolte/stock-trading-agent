@@ -2,16 +2,11 @@
 
 Newest first.
 
-## 2026-10-27 — Sign-in and access (PR 23, implementation)
+## 2026-10-27 — Sign-in details (PR 23 review)
 
-- `SA_AUTH=off|required` (default off): the app refuses to start with auth off on a non-loopback `SA_HOST`, and `X-Forwarded-For` is trusted only from `SA_TRUSTED_PROXY`.
-- `users`, `sessions` and `sign_in_attempts` tables (Alembic a8b9c0d1e2f3; attempts pruned after 90 days). `make create-user` creates or resets the single account: 14+ character Argon2id password, TOTP with the otpauth URI and a terminal QR, and 10 recovery codes shown once. The TOTP secret is Fernet-encrypted with `data/secret.key` like the API keys.
-- Two-step sign-in (password, then authenticator or recovery code) → an HttpOnly, Secure-off-loopback, SameSite=Strict session cookie (hash stored) plus a readable CSRF cookie. Idle expiry `auth.idle_hours`, absolute `remember_days`; generic errors never say which step failed; per-address lockout (5 in 15 min → 15 min wait) and a global pause after 20 failures in an hour, both answering 429 with `Retry-After`; sign out, sign out others, sign out everywhere.
-- One ASGI middleware guards every `/api` route and the WebSocket (only `/healthz` and the sign-in endpoints are open); writes need the `X-CSRF-Token` double-submit and the socket checks Origin. Stop & flatten, kill-switch resume, paper reset, new run, promote, key replacement, credential changes, loosening a risk limit and changing the SMTP destination need a fresh "Confirm it is you" (`auth.confirm_minutes`). Errors use the PR 25 JSON shape.
-- Reconciliation treats an open order or fill whose client id carries another `SA_INSTANCE_ID` as critical: kill switch on, blocking banner until Acknowledge, notification. PR 27's `client_id.py` already writes `sa-<instance>-<kind>-…`; this PR only adds `order_instance()` to parse it — no second format.
-- New notification events: `new_sign_in`, `sign_in_lockout`, `another_instance` (critical: always browser+email).
-- Frontend: the sign-in screen (three states, "Stock Trading Agent"), session-expired redirect back to the same page, the confirm dialog that repeats the request once, Settings → Access (devices, password, authenticator, recovery codes, idle hours, failed sign-ins) and Sign out in the sidebar. With `SA_AUTH=off` Access shows "Sign-in off (local only)" and no sign-in UI appears.
-- Screenshots: `docs/screenshots/pr-23/` (Login password/code/recovery/wrong/redirect, Settings Access).
+- Sign-in: wrong codes count toward the lockouts; the ticket between password and code is single-use, tied to the browser and dropped after 3 wrong codes; a used code can't be replayed. New session token at every sign-in; a password change signs out every other session; `__Host-` cookie name over HTTPS.
+- Open endpoints return nothing beyond the version or whether sign-in is required; the session check covers every HTTP method.
+- Design: signed-in devices show the masked address only (no location lookup).
 
 ## 2026-10-27 — Security hardening (PR 28)
 
@@ -27,6 +22,7 @@ Newest first.
   - `umask 077`, file modes, read-only run databases, exclusive `run.lock`;
   - CI: ruff `S` rules, `pip-audit` and `pnpm audit`, gitleaks, pinned Actions, `make security`, `docs/SECURITY.md`.
 - VPS deployment: two more actions ask "Confirm it is you" (loosening a risk limit; changing the SMTP server, "To" address or heartbeat URL); the app container also drops all capabilities with `no-new-privileges`.
+- VPS deployment: Caddy always adds HSTS and Permissions-Policy and sets the other headers only when the app hasn't, so PR 28's app headers win. PR 24 doesn't wait for PR 28: bundled fonts, `python -m app.serve` and file modes are built by whichever comes first; the first real deploy waits for PR 28.
 - Error pages: new codes `bad_host`, `origin_refused`, `too_large`, `unsupported_media_type`, `password_required`.
 - AGENTS.md: hard rule 9 extended (exceptions), new rules 18–20. Config: `security` block. Build plan: PR 28, before PR 23 is merged.
 

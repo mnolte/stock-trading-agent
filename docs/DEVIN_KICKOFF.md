@@ -836,90 +836,165 @@ November). Leave SA_AUTH unset locally after merging; switching it on is
 part of PR 24. Say in the PR when you restarted.
 ```
 
-## PR 24 — VPS deployment
+## PR 24 — VPS deployment (after PR 23)
 
 ```
-PR 24 (VPS deployment). Needs PR 20 (graceful shutdown) and PR 23
-(sign-in) merged. Don't provision, deploy to or touch any real server in
-this PR: everything is scripts, files and tests, run locally or in CI. I
-run the scripts on the server myself. Pull the latest spec and design
+PR 24 (VPS deployment). Start after PR 23 (sign-in) is merged; it also
+uses PR 20 (graceful shutdown) and PR 27 (broker guard); check both are
+in main and say so in the PR if not. It does not wait for PR 28 (security
+hardening): a few pieces are shared with PR 28, and whichever of the two
+is merged first builds them (see below). Don't provision, deploy to or touch any real server in this
+PR: everything is scripts, files and tests, run locally or in CI. I run
+the scripts on the server myself. Pull the latest spec and design
 packages, then read:
-1. docs/CHANGES.md, entry 2026-10-26 "VPS deployment (PR 23 and 24)"
-2. docs/SPEC.md → "VPS deployment" (whole section), Logging, error
-   handling and shutdown (grace period, run.lock), Build plan item 24
-3. AGENTS.md → hard rules 10, 12, 14 and 16; backend/config.example.yaml
-   → ops, storage
+1. docs/CHANGES.md, entries 2026-10-26 "VPS deployment (PR 23 and 24)",
+   2026-10-27 "Security hardening (PR 28)", "Protective stops hardened
+   (PR 27)" and "Name: Stock Trading Agent"
+2. docs/SPEC.md → "VPS deployment" (whole section); "Security hardening"
+   (request gate, headers, one bind source, files on disk, stored
+   credentials); Logging, error handling and shutdown (grace period,
+   run.lock); Alpaca integration → Protective stops (broker guard at
+   startup); Build plan item 24
+3. AGENTS.md → hard rules 10, 12, 14 and 16 (and 18 and 20 for the
+   shared pieces); backend/config.example.yaml → ops, storage
 4. design/screens/Settings.dc.html (Server section) and States.dc.html
    (Access and server), with their screenshots
 
+From PR 23, reuse: sign-in, SA_AUTH, SA_TRUSTED_PROXY and SA_INSTANCE_ID
+in client order ids (PR 27's client_id.py).
+
+Shared with PR 28. Check main first: if PR 28 is merged, reuse its
+version; if not, build it here as the spec describes, so PR 28 only has
+to reuse it:
+- IBM Plex bundled with the frontend, no Google Fonts;
+- python -m app.serve as the only way to start, reading SA_HOST and
+  SA_PORT;
+- umask 077 at startup, SA_DATA_DIR 0700 and its files 0600.
+Not shared: the request gate, the app's own security headers and the
+other PR 28 items stay in PR 28. Don't build them here.
+
 Build PR 24 only, in this order (one commit per step):
 1. Container:
-   - a multi-stage Dockerfile: the frontend is built with IBM Plex fonts
-     bundled, so there are no Google Fonts requests;
-   - a non-root user, read-only root filesystem, everything writable
-     under /data, TZ=Europe/Amsterdam;
+   - a multi-stage Dockerfile; the entrypoint is python -m app.serve,
+     never uvicorn with --host/--port;
+   - a non-root user, everything writable under /data owned by that user,
+     TZ=Europe/Amsterdam;
    - one Uvicorn worker; GET /healthz returns the version only.
-2. Compose: app (internal network only, no published port, restart
-   unless-stopped, stop_grace_period 90s, memory limit) and caddy (80 and
-   443, automatic HTTPS for SA_PUBLIC_URL's host, the spec's security
-   headers, reverse proxy to app). Add docker-compose.local.yml so the
-   same stack runs on a laptop for testing.
+2. Compose:
+   - app: internal network only, no published port, read_only: true with
+     a small tmpfs for /tmp, security_opt no-new-privileges, cap_drop
+     ALL, restart unless-stopped, stop_grace_period 90s, a memory limit;
+   - app environment: SA_HOST=0.0.0.0 inside the container,
+     SA_AUTH=required, SA_PUBLIC_URL, SA_TRUSTED_PROXY set to Caddy's
+     address on the internal network, SA_INSTANCE_ID=sa-vps-1. .env holds
+     no secrets;
+   - caddy: 80 and 443, automatic HTTPS for SA_PUBLIC_URL's host,
+     reverse proxy to app with the original Host and X-Forwarded-For;
+   - caddy headers: HSTS and Permissions-Policy always; CSP,
+     X-Frame-Options, X-Content-Type-Options, Referrer-Policy and COOP as
+     defaults only (Caddy's "header ?Name value" form), with the values
+     from SPEC → Security hardening. That way the headers are there now,
+     and PR 28's own app headers win once it's merged, with no
+     duplicates;
+   - the healthcheck calls /healthz with a Host that PR 28's gate will
+     accept (localhost with SA_PORT);
+   - add docker-compose.local.yml so the same stack runs on a laptop for
+     testing (a local hostname, Caddy's internal CA).
 3. Restarts: ops.resume_after_clean_restart (auto = on when
    SA_AUTH=required). Resume only when trading was running before, the
-   previous shutdown was clean, the kill switch is off and reconciliation
-   finds no differences; banner and notification either way.
+   previous shutdown was clean, the kill switch is off, reconciliation
+   finds no differences and the broker guard (no_shorting, 1× margin) is
+   confirmed. Banner and notification either way.
 4. Scripts in deploy/ (bash, set -euo pipefail, idempotent, with --help):
    - provision.sh: user and SSH keys, no password or root login, ufw
      22/80/443, fail2ban, unattended-upgrades with the Sunday 05:00
-     reboot window, chrony, Docker;
-   - deploy.sh <tag>: market-hours guard (refuse 09:30–16:00 New York
-     unless --emergency); backup; pull; migrations in a one-off
-     container; restart; wait for /healthz and a clean startup
-     reconciliation; on failure within 2 min, restore the pre-deploy
-     backup if a migration ran, start the previous image, report;
+     Amsterdam reboot window, chrony, Docker;
+   - deploy.sh <tag>:
+     - market-hours guard: refuse 09:30–16:00 New York, worked out in
+       America/New_York, never a fixed offset; --emergency overrides;
+     - backup; pull; migrations in a one-off container; restart;
+     - wait for /healthz and a clean startup reconciliation;
+     - on failure within 2 min: restore the pre-deploy backup if a
+       migration ran, start the previous image, report;
+     - leave one clearly marked hook before stop and after the health
+       check for PR 25's maintenance flag;
    - restore.sh <snapshot>: from the local or offsite copy, with
-     integrity_check.
+     integrity_check, file modes 0600 afterwards.
    Stop only containers by name from our compose project; never kill
    processes by name (hard rule 12).
-5. CI: build and push a versioned image to a private registry on every
-   tag; run tests in the image.
-6. Backups: offsite with restic to S3-compatible storage (credentials and
-   password from the secrets table), after the 03:00 local copy; keep 30
-   daily and 12 weekly; monthly restore test into a temp folder with
-   integrity_check; Back up now and Download latest backup (a
-   confirmation is needed for the download).
-7. Monitoring: heartbeat ping to ops.heartbeat_url after every cycle and
-   position check; checks for clock offset, disk use, certificate expiry,
-   backup age and restore test; the notifications from the spec.
+5. CI:
+   - on every tag, build and push a versioned image to a private
+     registry;
+   - run the tests in the image (and make security once PR 28 adds it);
+   - pin the new Actions by commit SHA with permissions: contents: read
+     plus packages: write only for the push job; the registry token is
+     a CI secret, never in the repo.
+6. Backups:
+   - offsite with restic to S3-compatible storage, after the 03:00 local
+     copy; keep 30 daily and 12 weekly;
+   - the backup password and storage credentials come from the secrets
+     table; validate the endpoint as https and not loopback or private
+     (SPEC → Security hardening → Stored credentials);
+   - a monthly restore test into a temp folder with integrity_check;
+   - Back up now, and Download latest backup (behind "Confirm it is
+     you").
+7. Monitoring:
+   - a heartbeat ping to ops.heartbeat_url after every cycle and position
+     check; validate the URL on save as https and not loopback or
+     private;
+   - checks for clock offset, disk use, certificate expiry, backup age
+     and the restore test;
+   - the notifications from the spec, with subjects "[Stock Trading Agent
+     · PAPER] …".
 8. Settings → Server per the design (read-only plus the two backup
    buttons), shown when SA_AUTH=required.
 9. docs/DEPLOY.md, a runbook I can follow alone:
    - choosing a VPS and DNS;
    - provision; first deploy; make create-user;
    - entering keys;
+   - running make broker-guard against the paper account;
    - setting up offsite storage and the heartbeat service;
-   - moving the local database and secret.key (stop locally first; set
-     SA_INSTANCE_ID per copy);
-   - deploy and rollback; restore; rotating the backup password.
+   - moving the local database and secret.key: stop locally first with
+     Ctrl+C after the close, set SA_INSTANCE_ID per copy, and never start
+     the local copy against the same account again;
+   - deploy and rollback; restore; rotating the backup password;
+   - a go-live checklist at the top: PR 23 and PR 28 merged before the
+     first real deploy, sign-in tested from a phone, and the restore
+     test passed once.
+   Use "Stock Trading Agent" for the name; technical names stay
+   stock-agent.
 
 Tests:
-- The container runs as non-root with a read-only root.
+- The container runs as non-root with a read-only root and no
+  capabilities.
 - /healthz says nothing beyond the version.
+- Through Caddy with the public Host, the GUI loads and a write works;
+  with another Host, Caddy doesn't serve the app.
+- Through Caddy every header from the spec is present exactly once;
+  when the app sends its own CSP (simulate it), Caddy keeps the app's.
+- No --host/--port in the Dockerfile, compose files or scripts (a test
+  greps for them; PR 28 extends it to the Makefile).
 - docker stop during a simulated cycle waits for the graceful shutdown
   and leaves integrity_check ok.
-- deploy.sh refuses during market hours (injected clock) and rolls back
-  on a failing health check (fake image).
-- restore.sh round trip.
-- The resume rules: clean and running resumes; unclean, kill switch or
-  mismatch stays paused.
-- Heartbeat is called once per cycle and check (mocked).
+- deploy.sh refuses during market hours on both sides of the 1 November
+  US clock change (injected clock), and rolls back on a failing health
+  check (fake image).
+- restore.sh round trip, with file modes checked afterwards.
+- The resume rules: clean and running resumes; an unclean stop, the kill
+  switch, a mismatch or an unconfirmed broker guard stays paused.
+- The heartbeat is called once per cycle and check (mocked), and an http
+  or private heartbeat URL is refused.
 - Each Server check and its notification thresholds.
-- Security headers present via a local compose run in CI.
-- No network in unit tests.
+- No network in unit tests; the compose test runs in CI only.
 
 Use the PR template, screenshots in docs/screenshots/pr-24/ (Settings
 Server section, States server banners). List anything in docs/DEPLOY.md
 you couldn't verify without a real server.
+
+Merging changes nothing on my machine: locally the app still runs with
+make run and SA_AUTH unset. If a local restart is needed, do it outside
+14:30–21:00 Amsterdam this week (15:30–22:00 from 2 November), and say in
+the PR when.
 ```
 
 ## PR 25 — Error pages and API errors
