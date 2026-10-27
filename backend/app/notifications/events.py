@@ -184,6 +184,20 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "warnings",
         WARNING,
     ),
+    EventDef(
+        "restarted_resumed",
+        "Restarted and resumed",
+        "Clean planned restart on the server; every check passed",
+        "warnings",
+        INFO,
+    ),
+    EventDef(
+        "restarted_paused",
+        "Restarted paused",
+        "New entries stay paused until you press Resume",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}
@@ -210,6 +224,8 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "api_key": "source_failing",
     "review_fallback": "model_failing",
     "another_instance": "another_instance",
+    "restart_resumed": "restarted_resumed",
+    "restart_paused": "restarted_paused",
 }
 
 
@@ -335,6 +351,14 @@ def format_recorded(
             or f"order carries instance id {details.get('foreign_instance')}"
         )
         return key, line, "/settings"
+    if event_type == "restart_resumed":
+        return key, "resumed after a clean restart", "/"
+    if event_type == "restart_paused":
+        reasons = details.get("reasons")
+        line = "stayed paused"
+        if isinstance(reasons, list) and reasons:
+            line = "stayed paused: " + "; ".join(str(r) for r in reasons)
+        return key, line, "/logs"
     if event_type == "review_fallback":
         line = (
             f"{details.get('kind', 'review')} {details.get('ref', '')}"

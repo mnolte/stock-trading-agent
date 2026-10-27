@@ -39,7 +39,7 @@ from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
 from app.db.base import check_schema_matches_models, get_session_maker
-from app.db.models import Strategy
+from app.db.models import Event, Strategy
 from app.decide.client import (
     DecisionClient,
     FakeDecisionClient,
@@ -1009,6 +1009,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             session.commit()
         if getattr(app.state, "unclean_previous_run", False):
             app.state.unclean_interrupted = recovered
+        # Was trading running before this start? The last pause event
+        # decides (on=False = entries were live) — needed by the
+        # resume-after-clean-restart check below.
+        last_pause = session.execute(
+            select(Event)
+            .where(Event.event_type == "pause")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        was_running = bool(
+            last_pause is not None
+            and (last_pause.details or {}).get("on") is False
+        )
         # Paused at startup (docs/SPEC.md, Risk management): the state was
         # set by load_execution_state; log it like every other state change.
         record_event(
@@ -1054,6 +1067,47 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 cash=exec_state.account.cash,
             )
         session.commit()
+
+    # Resume after a clean planned restart (docs/SPEC.md → VPS deployment
+    # → Restarts). Only where sign-in is required (the VPS): the local
+    # app always starts paused. A previous run existed when the events
+    # log holds a pause row from before this boot.
+    from app.restart import decide_restart, resume_after_clean_restart_enabled
+
+    had_previous_run = last_pause is not None
+    if resume_after_clean_restart_enabled(config) and had_previous_run:
+        decision = decide_restart(
+            was_running=was_running,
+            clean_shutdown=not getattr(
+                app.state, "unclean_previous_run", False
+            ),
+            kill_switch_on=exec_state.kill_switch_on,
+            reconcile=report,
+            broker_guard_confirmed=exec_state.broker_guard_confirmed,
+        )
+        with get_session_maker()() as session:
+            if decision.resume:
+                exec_state.paused = False
+                exec_state.paused_at_startup = False
+                exec_state.paused_since = None
+                record_event(
+                    session,
+                    clock,
+                    level="info",
+                    event_type="restart_resumed",
+                    details={},
+                )
+            else:
+                record_event(
+                    session,
+                    clock,
+                    level="warning",
+                    event_type="restart_paused",
+                    details={"reasons": decision.reasons},
+                )
+            session.commit()
+        app.state.restart_resumed = decision.resume
+        bus.publish("banners", "header")
 
     # A review missed while the app was down is written now with its
     # original date; a briefing older than its trading day is skipped.

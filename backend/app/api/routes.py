@@ -1388,6 +1388,8 @@ def banners(request: Request) -> dict[str, object]:
                         "broker_guard_unconfirmed",
                         "cycle_slow",
                         "another_instance",
+                        "restart_resumed",
+                        "restart_paused",
                     ]
                 ),
             )
@@ -1497,6 +1499,51 @@ def banners(request: Request) -> dict[str, object]:
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
                         "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "restart_resumed":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "restart_resumed",
+                        "level": "info",
+                        "message": (
+                            "Restarted after a clean shutdown; "
+                            "reconciliation found no differences, so "
+                            "trading resumed."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "restart_paused":
+                reasons = details.get("reasons")
+                reason_text = (
+                    "; ".join(str(r) for r in reasons)
+                    if isinstance(reasons, list) and reasons
+                    else "a check did not pass"
+                )
+                kill_switch_on = bool(
+                    getattr(state, "kill_switch_on", False)
+                )
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "restart_paused",
+                        "level": "warning",
+                        "message": (
+                            "Restarted and stayed paused: "
+                            f"{reason_text}. New entries wait until you "
+                            "press Resume."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": [
+                            "open_logs",
+                            "resume" if kill_switch_on else "resume_pause",
+                            "acknowledge",
+                        ],
                     }
                 )
             elif event.event_type == "cycle_slow":
