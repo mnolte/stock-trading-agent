@@ -18,7 +18,9 @@ export function Toggle({
         setInner(!on);
         onChange?.(!on);
       }}
-      aria-pressed={on}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

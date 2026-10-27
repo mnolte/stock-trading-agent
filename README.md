@@ -1,8 +1,8 @@
-# Stock Agent
+# Stock Trading Agent
 
 A paper-trading agent for liquid US stocks and ETFs. It trades through an Alpaca **paper** account, uses an OpenAI model to decide, and runs every trade through fixed rules and risk gates in code.
 
-> **Paper only.** Stock Agent v0.1 cannot place real-money orders. It is a personal experiment, not financial advice.
+> **Paper only.** Stock Trading Agent v0.1 cannot place real-money orders. It is a personal experiment, not financial advice.
 
 ## What it does
 
@@ -36,6 +36,8 @@ For development, `make dev` runs the backend with auto-reload on 127.0.0.1:SA_PO
 
 Without keys, run `MODE=simulated make run` (or `make dev`): recorded bars and a fake broker, no network.
 
+Production runs on a VPS with Docker Compose (app + Caddy for HTTPS) and sign-in with a password and an authenticator app. Provisioning, deploying, backups, restoring and moving your local database are in `docs/DEPLOY.md` (written in PR 24); the rules are in `docs/SPEC.md` → VPS deployment.
+
 Reset the Alpaca paper account to $10,000 in the Alpaca dashboard before the first run.
 
 Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily at 03:00 Amsterdam time to `data/backups/` (14 days). On a VPS, run the app with `TZ=Europe/Amsterdam` so log rotation follows Amsterdam time.
@@ -63,7 +65,7 @@ Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily
 - Paper endpoint only; the live URL does not exist in the code.
 - A stop order at Alpaca on every position, checked every cycle and every 15 minutes.
 - Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
-- Daily loss limit, drawdown kill switch, PDT guard, earnings blackout.
+- Daily loss limit, drawdown kill switch, no re-entry the same session, earnings blackout.
 - Keys are stored encrypted, shown only as the last 4 characters, and never logged.
 
 ## Build plan

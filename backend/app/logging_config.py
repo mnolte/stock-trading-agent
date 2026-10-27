@@ -348,6 +348,11 @@ def install_queue_root(pipeline: LogPipeline) -> None:
             lib.removeHandler(handler)
         lib.setLevel(logging.DEBUG)
         lib.propagate = True
+    # Per-run "Running job / executed successfully" lines are INFO noise:
+    # with the 10-second backtest tick alone that is ~17k lines a day.
+    # Job failures still reach the log — APScheduler logs those at
+    # WARNING/ERROR and main's EVENT_JOB_ERROR listener at ERROR.
+    logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
     logging.captureWarnings(True)
 
 

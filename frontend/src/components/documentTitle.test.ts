@@ -26,24 +26,24 @@ function header(over: Partial<HeaderState> & { sessionState?: string } = {}): He
 }
 
 describe('documentTitle', () => {
-  it('is "Stock Agent — <page>" per design for each route', () => {
-    expect(documentTitle('/settings', null)).toBe('Stock Agent — Settings');
-    expect(documentTitle('/universe', null)).toBe('Stock Agent — Universe');
+  it('is "Stock Trading Agent — <page>" per design for each route', () => {
+    expect(documentTitle('/settings', null)).toBe('Stock Trading Agent — Settings');
+    expect(documentTitle('/universe', null)).toBe('Stock Trading Agent — Universe');
     expect(documentTitle('/positions', null)).toBe(
-      'Stock Agent — Positions & orders',
+      'Stock Trading Agent — Positions & orders',
     );
-    expect(documentTitle('/', null)).toBe('Stock Agent — Dashboard');
+    expect(documentTitle('/', null)).toBe('Stock Trading Agent — Dashboard');
   });
 
   it('shows "Open" while the session is open', () => {
     expect(documentTitle('/', header({ sessionState: 'open' }))).toBe(
-      'Stock Agent — Dashboard · Open',
+      'Stock Trading Agent — Dashboard · Open',
     );
   });
 
   it('shows "Paused" when the agent is paused', () => {
     expect(documentTitle('/reviews', header({ paused: true }))).toBe(
-      'Stock Agent — Reviews · Paused',
+      'Stock Trading Agent — Reviews · Paused',
     );
   });
 
@@ -53,10 +53,10 @@ describe('documentTitle', () => {
         '/',
         header({ kill_switch: true, paused: true, sessionState: 'open' }),
       ),
-    ).toBe('Stock Agent — Dashboard · Kill switch');
+    ).toBe('Stock Trading Agent — Dashboard · Kill switch');
   });
 
   it('shows no state suffix for a normal closed session', () => {
-    expect(documentTitle('/', header())).toBe('Stock Agent — Dashboard');
+    expect(documentTitle('/', header())).toBe('Stock Trading Agent — Dashboard');
   });
 });

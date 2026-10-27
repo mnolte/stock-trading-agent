@@ -5,6 +5,7 @@ the in-memory fake and the clock is frozen. Each check gets a pass and a
 fail case, plus the hysteresis, ranking and failure rules.
 """
 
+import asyncio
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -1052,3 +1053,71 @@ async def test_screened_universe_keeps_held_symbols(
     assert rows is not None
     assert universe[: len(rows)] == [r.symbol for r in rows]
     assert "ZZZ" in universe[len(rows) :]
+
+
+async def test_missed_screen_runs_at_startup(
+    session_factory: sessionmaker[Session],
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """App up at 09:00 New York on a trading day without today's screen:
+    the missed screen runs and a pending banner records the stale list's
+    date (docs/SPEC.md, Daily screen)."""
+    from unittest.mock import AsyncMock
+
+    from app.api.main import run_missed_screen_at_startup
+
+    calendar = FakeCalendarSource()
+    # Monday 26 Oct 2026 — FakeCalendarSource covers trading days around it.
+    clock = FakeClock(datetime(2026, 10, 26, 13, 0, tzinfo=UTC))
+    config = make_config(tmp_path)
+    service, *_ = make_service(session_factory, clock, calendar, config)
+    service.run_screen = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    await run_missed_screen_at_startup(
+        service, clock, calendar, session_factory, bus=None
+    )
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert service.run_screen.await_count == 1
+    with session_factory() as session:
+        pending = session.execute(
+            select(Event).where(Event.event_type == "universe_screen_pending")
+        ).scalars().all()
+        assert len(pending) == 1
+        details = pending[0].details or {}
+        assert details["session_date"] == "2026-10-26"
+        assert "missed universe screen" in caplog.text
+
+
+async def test_screen_done_today_skips_catch_up(
+    session_factory: sessionmaker[Session],
+    tmp_path: Path,
+) -> None:
+    """A screen row for today means nothing runs at startup."""
+    from unittest.mock import AsyncMock
+
+    from app.api.main import run_missed_screen_at_startup
+
+    calendar = FakeCalendarSource()
+    clock = FakeClock(datetime(2026, 10, 26, 13, 0, tzinfo=UTC))
+    config = make_config(tmp_path)
+    service, *_ = make_service(session_factory, clock, calendar, config)
+    service.run_screen = AsyncMock(return_value={})  # type: ignore[method-assign]
+    with session_factory() as session:
+        session.add(
+            UniverseScreenRow(
+                session_date=clock.now().astimezone(NY_TZ).date(),
+                symbol="MSFT",
+                status="eligible",
+            )
+        )
+        session.commit()
+
+    await run_missed_screen_at_startup(
+        service, clock, calendar, session_factory, bus=None
+    )
+    await asyncio.sleep(0)
+
+    assert service.run_screen.await_count == 0

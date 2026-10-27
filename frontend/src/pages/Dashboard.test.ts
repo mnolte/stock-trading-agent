@@ -34,7 +34,6 @@ describe('actionText', () => {
     expect(actionText('enter').label).toBe('ENTER');
     expect(actionText('skip').label).toBe('SKIP');
     expect(actionText('tighten_stop').label).toBe('TIGHTEN STOP');
-    expect(actionText('deferred').label).toBe('DEFERRED');
     expect(actionText('exit').label).toBe('EXIT');
     expect(actionText('blocked').label).toBe('BLOCKED');
   });

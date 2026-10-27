@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { HeaderState } from '../types/api';
 import { displayTime, nyTime } from '../format';
@@ -39,16 +39,26 @@ export function Header({
   onMenu?: () => void;
   menuOpen?: boolean;
 }) {
-  const [, forceTick] = useState(0);
+  // Server-clock skew measured on each fresh header payload, so countdowns
+  // ("next cycle · in 15 min") tick between refetches instead of staying
+  // frozen at the last fetch's server time (same pattern as CycleCounter).
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const skew = useRef(0);
   useEffect(() => {
-    const timer = setInterval(() => forceTick((n) => n + 1), 30_000);
+    if (state?.session.now) {
+      skew.current = Date.parse(state.session.now) - Date.now();
+    }
+  }, [state?.session.now]);
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now() + skew.current), 15_000);
     return () => clearInterval(timer);
   }, []);
 
   const sessionState = state?.session.state ?? 'closed';
   const paused = state?.paused ?? false;
   const pillState = paused ? 'paused' : sessionState;
-  const tail = state ? sessionTail(pillState, state.session) : '';
+  const estNow = new Date(nowMs).toISOString();
+  const tail = state ? sessionTail(pillState, state.session, estNow) : '';
   const sessionTitle = state
     ? [
         `New York ${nyTime(state.session.now)}`,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
 import {
@@ -259,9 +260,11 @@ export default function Readiness() {
           label={group}
           right={
             group === 'Evidence' ? (
-              <a href="/performance" style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>Performance</a>
+              <Link to="/performance" style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>Performance</Link>
             ) : group === 'Model' ? (
-              <a href="/strategies" style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>Strategies</a>
+              <Link to="/strategies" style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>Strategies</Link>
+            ) : group === 'Operations' ? (
+              <Link to="/logs" style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>Logs</Link>
             ) : undefined
           }
         >
@@ -429,6 +432,7 @@ export default function Readiness() {
       <Modal
         open={manualDialog != null}
         title={manualDialog ? `${manualDialog.done ? 'Tick' : 'Untick'} “${manualDialog.label}”` : ''}
+        onClose={() => setManualDialog(null)}
         footer={
           <>
             <DialogButton variant="cancel" onClick={() => setManualDialog(null)}>Cancel</DialogButton>
@@ -462,6 +466,7 @@ export default function Readiness() {
       <Modal
         open={dismissDialog != null}
         title="Dismiss error"
+        onClose={() => setDismissDialog(null)}
         footer={
           <>
             <DialogButton variant="cancel" onClick={() => setDismissDialog(null)}>Cancel</DialogButton>

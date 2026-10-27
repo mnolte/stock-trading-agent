@@ -13,12 +13,14 @@ export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/universe')) return 'Universe';
   if (pathname.startsWith('/settings')) return 'Settings';
   if (pathname.startsWith('/states')) return 'States & dialogs';
+  if (pathname.startsWith('/logs')) return 'Logs';
+  if (pathname.startsWith('/dev/components')) return 'Components';
   return 'Dashboard';
 }
 
-/** Browser tab: "Stock Agent — Dashboard" (design) plus the agent's state
- * when it is not the normal running one (docs/SPEC.md, Interaction and
- * states — open, paused, kill switch). */
+/** Browser tab: "Stock Trading Agent — Dashboard" (design) plus the
+ * agent's state when it is not the normal running one (docs/SPEC.md,
+ * Interaction and states — open, paused, kill switch). */
 export function documentTitle(
   pathname: string,
   state: HeaderState | null,
@@ -31,6 +33,6 @@ export function documentTitle(
         ? 'Open'
         : null;
   return (
-    `Stock Agent — ${pageTitle(pathname)}` + (agent ? ` · ${agent}` : '')
+    `Stock Trading Agent — ${pageTitle(pathname)}` + (agent ? ` · ${agent}` : '')
   );
 }

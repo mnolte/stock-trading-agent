@@ -2,6 +2,73 @@
 
 Newest first.
 
+## 2026-10-27 — Protective stops hardened (PR 27)
+
+- From Devin's live-data review: a protective stop was rejected because the stored stop was above the market; a stop leg was held invisibly under a filled parent while the target held all shares; and a sell stop for an already-exited position could have opened a short.
+- New "Protective stops" rules in Alpaca integration:
+  - confirm the position and orders at Alpaca before acting;
+  - a stop at or above the market becomes a market sale with reason `stop_breached`, replacing the one-cent clamp; this is the only sale a position check makes;
+  - an orphaned stop with the target holding the shares is repaired by cancelling the target and placing an OCO exit order, with the stop alone as fallback and the gap logged at CRITICAL;
+  - every sell is capped at the confirmed quantity, so the agent never goes short;
+  - broker-side `no_shorting` and 1× margin are set and checked at startup.
+- Larger universe: a daily screen missed while the app was down runs at startup; the first cycle uses the previous list with a warning and a dated banner if needed.
+- Accepted as fixed by Devin: held-leg recovery, the cycle error double-append, `active_until` on terminal trade updates, APScheduler executor logs at WARNING (job errors still at ERROR), and the old `quote_suspect` reason counted with `price_suspect`.
+- Build plan: PR 27.
+
+## 2026-10-27 — Name: Stock Trading Agent
+
+- The application is called **Stock Trading Agent** everywhere it is shown: GUI, page titles, email subjects (`[Stock Trading Agent · PAPER] …`), error pages and docs.
+- Technical names stay `stock-agent` (repo, database and log files, containers, zip names), so nothing has to be migrated.
+- Used prompts (`decision.v1.md`, `decision.v2.md`) keep the old name, because used prompts are never edited. The next prompt version uses the new one.
+- No behaviour change; it can ride along with any PR touching the GUI.
+
+## 2026-10-27 — Day-trade rule retired (PR 26)
+
+- FINRA replaced the pattern day trader rule and the $25,000 minimum with intraday margin standards on 4 June 2026 (Regulatory Notice 26-10). Alpaca applied them from that date and removed `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power` from its API by 6 July 2026.
+- Removed:
+  - the same-day exit deferral (the agent may now sell a position the day it bought it);
+  - the day-trade guard and its notification;
+  - the day-trade counter and the Stop & flatten day-trade warning;
+  - deferred exits in the snapshot, the feed and Insights.
+- Added: no re-entry in a symbol closed earlier the same session (`risk.reentry_same_session: false`), as a brake on churning. Cash-only sizing against `cash`, never `buying_power`, is stated explicitly.
+- `day_trades` is no longer written and is kept for history. AGENTS.md: new hard rule 17. Config: `pdt_max_day_trades` and the `pdt_guard` notification removed. Build plan: PR 26, first in the queue.
+
+## 2026-10-26 — Error pages and API errors (PR 25)
+
+- New "Error pages and API errors" section:
+  - **API errors:** one JSON shape (`code`, `message`, `error_id` on 500, `fields` on 422), never tracebacks, SQL, paths or secrets. A table maps each status (400, 401, 403, 404, 409, 422, 429, 500, 503) to what the frontend does.
+  - **In-app pages:** not found for a page or a record, "Something went wrong" per screen with the error id, "The app isn't answering" on first load, and an offline banner.
+  - **Static pages from Caddy:** 502/504 "isn't responding" and 503 "Updating" (maintenance flag set by `deploy.sh` and `restore.sh`). They are self-contained and reveal no data, version or host details; API calls during an outage get the same JSON shape.
+- GUI table: Error pages row. Build plan: PR 25.
+
+## 2026-10-26 — VPS deployment (PR 23 and 24)
+
+- New "VPS deployment" section: production on a Linux VPS (provider open; 2 vCPU, 4 GB, 40 GB, EU).
+  - **Containers:** Docker Compose with `app` (one worker, non-root, read-only filesystem, data on a volume, internal network only, 90 s stop grace) and `caddy` (HTTPS, security headers, the only public entry point).
+  - **Hardening:** SSH keys only, ufw, fail2ban, automatic updates with a Sunday 05:00 reboot window, chrony.
+- **Sign-in (PR 23):** one user from `make create-user`; password (Argon2id) plus authenticator code with recovery codes; session cookie with 12 h idle and 30-day maximum; CSRF and WebSocket origin checks; lockouts; "Confirm it is you" before risky actions; `SA_AUTH`, and the app refuses to start without sign-in off loopback.
+- **Safety:** an instance id in every client order id, and reconciliation turns the kill switch on when another instance trades the account. After a clean planned restart on the VPS the agent resumes on its own; otherwise it stays paused.
+- **Deployment (PR 24):**
+  - CI images and `deploy.sh` with a market-hours guard, pre-deploy backup, migrations, health check and rollback;
+  - encrypted offsite backups with a monthly restore test;
+  - an outside heartbeat and uptime check;
+  - Settings → Server;
+  - `docs/DEPLOY.md`, including how to move the local database.
+- Data model: `users`, `sessions`, `sign_in_attempts`; `secrets` gains backup_password and backup_credentials. Config: `auth`, `ops`. `.env`: `SA_AUTH`, `SA_PUBLIC_URL`, `SA_TRUSTED_PROXY`, `SA_INSTANCE_ID`. Notifications: 8 new events. AGENTS.md rule 10 rewritten. Readiness manual item "Hosting with login" gets concrete conditions.
+- Build plan: PR 23 (local) and PR 24 (after PR 20 and 23).
+
+## 2026-10-26 — Insights (PR 22)
+
+- New "Insights" section and screen (Learn group):
+  - **Headline numbers:** expectancy with a 90% range, edge over SPY at the same exposure, beta to SPY, overnight vs in-session P&L, gaps through the stop, and model cost per trade.
+  - **Findings:** at least 30 trades and at least twice the noise; early signals at 10–29; never applied automatically.
+  - **Funnel:** from symbol checks to closed trades, with what was lost at each step.
+  - **Slices** in 16 stock-specific dimensions: time of day, weekday, sector, symbol, regime, earnings distance, opening gap, VWAP, pullback depth, strength vs SPY, SPY that day, volatility, confidence, stop and target basis, sessions held, prompt and model.
+  - **Also:** calibration, execution (fills, slippage, deferred exits, earnings exits, dividends), overnight gaps, and skipped setups scored with the rules-only geometry.
+- Strategy override `entry_cycles`, so time-of-day findings can be tested in a shadow. The weekly review's facts include new findings and findings that stopped holding.
+- Data model: `insights_snapshots`. Config: `insights` block. GUI table: Insights row.
+- Build plan: PR 22.
+
 ## 2026-10-26 — Replay statuses (PR 21 follow-up)
 
 - The first replay showed 762 "no_options" rows, but the builder never rejected a snapshot. About 720 rows were from before `stop_reference_price` existed (pre-PR 15) and 42 had price "unavailable". Every snapshot with complete inputs (125) got options and a model call.
@@ -10,6 +77,7 @@ Newest first.
   - `not_replayable`, with a reason: `missing_reference`, `price_unavailable`, `missing_atr` or `missing_bars`;
   - `replayed_approx`, with the opt-in `--approx-reference`: min(price, last 5-min close) for pre-PR 15 snapshots, reported separately and never mixed into the main rates.
 - The report leads with counts per status, bases every rate on replayed rows, and lists every live v1 entry with what v2 did, or why it couldn't.
+- The report also shows entries and R per session, with the number of distinct sessions, because same-day entries are one market move, not independent trades (added after the second replay: 59 of 60 approximate entries fell on 22 Oct).
 - Path to live: the replay gate checks validity only. The entry-rate comparison needs at least 20 v2 entry proposals, which the shadow (at least 10 sessions and 20 proposals) provides.
 
 ## 2026-10-25 — Decision v2: code-built options (PR 21)

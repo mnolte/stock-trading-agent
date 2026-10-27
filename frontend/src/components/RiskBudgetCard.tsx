@@ -5,9 +5,9 @@ import type { BudgetMeter, BudgetMeterLevel, RiskBudgetResponse } from '../types
 import { CardBody } from './cardState';
 import {
   budgetHints,
-  dayTradesText,
   drawdownUsed,
   pct2,
+  reEntryText,
   riskPerTradeText,
   roomText,
   sectorsText,
@@ -117,7 +117,14 @@ function Limit({ children }: { children: ReactNode }) {
   return <span style={{ color: 'var(--sa-text-muted)' }}>{children}</span>;
 }
 
-export function RiskBudgetCard({ res }: { res: Resource<RiskBudgetResponse> }) {
+export function RiskBudgetCard({
+  res,
+  reentryBlocked = [],
+}: {
+  res: Resource<RiskBudgetResponse>;
+  /** Symbols closed earlier this session (from /api/positions). */
+  reentryBlocked?: string[];
+}) {
   const budget = res.data;
   const sb = budget?.shock_brake;
   const sectorCap = budget?.sectors[0]?.cap ?? 0;
@@ -239,9 +246,9 @@ export function RiskBudgetCard({ res }: { res: Resource<RiskBudgetResponse> }) {
             warn={sb?.on}
           />
           <FactRow
-            label="Day trades"
-            hint={budgetHints.dayTrades(budget?.day_trades.max ?? 0)}
-            value={budget ? dayTradesText(budget) : '—'}
+            label="Re-entry"
+            hint={budgetHints.reEntry}
+            value={budget ? reEntryText(budget, reentryBlocked) : '—'}
           />
         </div>
       </div>

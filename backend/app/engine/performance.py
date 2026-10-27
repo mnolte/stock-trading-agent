@@ -55,7 +55,6 @@ _DECISION_ORDER = [
     "hold",
     "tighten_stop",
     "exit",
-    "deferred",
     "blocked",
     "no_call",
     "model_error",
@@ -68,7 +67,6 @@ _DECISION_LABELS = {
     "hold": "Hold",
     "tighten_stop": "Tighten stop",
     "exit": "Exit",
-    "deferred": "Exit deferred",
     "blocked": "Enter blocked",
     "no_call": "Held by rules",
     "model_error": "Model error",
@@ -79,6 +77,7 @@ _EXIT_LABELS = {
     "stop": "stop",
     "target": "target",
     "exit": "agent exit",
+    "stop_breached": "stop breached",
 }
 
 
@@ -183,8 +182,6 @@ def _decision_outcome_row(
         read = "stop moved up"
     elif key == "exit":
         read = "agent closed the position"
-    elif key == "deferred":
-        read = "day-trade rule — re-asked next session"
     elif key == "blocked":
         gates = [
             str((d.gates_result or {}).get("blocked_by"))

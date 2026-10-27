@@ -104,10 +104,6 @@ def _position_block(
         "opened_at": _ny_iso(position.opened_at),
         "r_so_far": r_so_far,
     }
-    # A same-day exit deferred by the day-trade rule is shown to the model
-    # when the position is re-reviewed at the next session's first cycle.
-    if position.deferred_exit:
-        block["deferred_exit"] = position.deferred_exit
     return block
 
 

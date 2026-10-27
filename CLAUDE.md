@@ -4,7 +4,7 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 
 ## Context
 
-- Stock Agent is a paper-only trading agent for US stocks on Alpaca. Behaviour is in `docs/SPEC.md`, look and wording in `design/`.
+- Stock Trading Agent is a paper-only trading agent for US stocks on Alpaca. Behaviour is in `docs/SPEC.md`, look and wording in `design/`.
 - Marc builds with Devin for implementation and Claude for architecture, reviews and spec work. Expect to be asked to review PRs, check code against the spec, and update docs.
 
 ## When reviewing a PR

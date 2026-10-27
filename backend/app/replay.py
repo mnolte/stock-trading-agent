@@ -661,6 +661,33 @@ def _no_options_reason(error: str | None) -> str:
     return (error or "").removeprefix("no_options: ") or "unknown"
 
 
+def _entries_per_session(entered: list[ReplayRow]) -> list[str]:
+    """Entries and their R grouped by New York session — same-day
+    entries ride one market move, so the distinct-session count is the
+    honest sample size (docs/SPEC.md, Replays — entries per session)."""
+    by_session: dict[date, list[ReplayRow]] = {}
+    for r in entered:
+        by_session.setdefault(r.at.astimezone(NY_TZ).date(), []).append(r)
+    if not by_session:
+        return ["- entries per session: —"]
+    n = len(by_session)
+    lines = [f"- entries per session: {n} distinct session{'s' if n != 1 else ''}"]
+    for day in sorted(by_session):
+        day_rows = by_session[day]
+        rs = [
+            r.score.r_multiple
+            for r in day_rows
+            if r.score is not None and r.score.r_multiple is not None
+        ]
+        mean_r = _mean(rs)
+        lines.append(
+            f"  - {day}: {len(day_rows)} "
+            f"{'entry' if len(day_rows) == 1 else 'entries'}"
+            + (f", mean R {float(mean_r):+.2f} (n={len(rs)})" if mean_r is not None else "")
+        )
+    return lines
+
+
 def _report(
     replay_id: str,
     prompt: str,
@@ -760,6 +787,7 @@ def _report(
                 if mean_r is not None
                 else "- mean R: —"
             ),
+            *_entries_per_session(entered),
         ]
 
     # --- live entries: every snapshot where live v1 entered, with what
@@ -839,6 +867,7 @@ def _report(
             if rules_mean is not None
             else "- mean R: —"
         ),
+        *_entries_per_session(rules_entered),
         "",
     ]
     return "\n".join(out)

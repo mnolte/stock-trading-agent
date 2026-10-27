@@ -801,7 +801,7 @@ class CycleRunner:
                     earnings_known=earnings_known,
                     force_exit_reason=force_exit,
                 )
-                # Fold gate/deferred-exit changes to final_action into the
+                # Fold gate changes to final_action into the
                 # call row — same transaction as the decision's own update.
                 sync_llm_call(session, decision)
             session.commit()

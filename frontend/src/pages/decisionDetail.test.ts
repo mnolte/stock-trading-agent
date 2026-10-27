@@ -100,10 +100,40 @@ describe('gateRows', () => {
   it('humanizes gate names', () => {
     const rows = gateRows(
       detail({
-        gates_result: { checks: [{ name: 'pdt_guard', passed: true, detail: '0 of 3' }] },
+        gates_result: {
+          checks: [{ name: 'max_position', passed: true, detail: '4 sh' }],
+        },
       }),
     );
-    expect(rows[0].name).toBe('pdt guard');
+    expect(rows[0].name).toBe('max position');
+  });
+
+  it('renders the re-entry gate as "Not traded today" with the symbol', () => {
+    const rows = gateRows(
+      detail({
+        gates_result: {
+          checks: [{ name: 'reentry', passed: true, detail: 'not traded today' }],
+        },
+      }),
+    );
+    expect(rows[0]).toEqual({ name: 'Not traded today', detail: 'MSFT', state: 'pass' });
+  });
+
+  it('keeps the reason when re-entry blocks an entry', () => {
+    const rows = gateRows(
+      detail({
+        gates_result: {
+          checks: [
+            { name: 'reentry', passed: false, detail: 'sold earlier this session' },
+          ],
+        },
+      }),
+    );
+    expect(rows[0]).toEqual({
+      name: 'Not traded today',
+      detail: 'sold earlier this session',
+      state: 'fail',
+    });
   });
 });
 

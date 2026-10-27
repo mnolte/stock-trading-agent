@@ -177,7 +177,7 @@ export function Layout() {
           onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
           menuOpen={menuOpen}
         />
-        <main style={{ flex: 1, padding: 'var(--sa-space-5)' }}>
+        <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
           {liveStatus === 'paused' && (
             <div
               style={{
@@ -212,8 +212,6 @@ export function Layout() {
       <FlattenConfirmDialog
         open={dialog === 'flatten'}
         positions={positions?.open ?? []}
-        dayTrades={positions?.day_trades_5d ?? 0}
-        dayTradesMax={positions?.day_trades?.max ?? 3}
         onCancel={() => setDialog(null)}
         onConfirm={onFlattenConfirm}
       />

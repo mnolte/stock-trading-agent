@@ -23,7 +23,7 @@ def _ctx(**overrides: object) -> GateContext:
         "peak_equity": Decimal("10000"),
         "open_positions": [],
         "working_entries": (),
-        "day_trades_5d": 0,
+        "closed_today": False,
         "losing_streak": 0,
         "shock_brake_1h": False,
         "shock_brake_session": False,
@@ -329,14 +329,14 @@ def test_earnings_outside_blackout_passes() -> None:
     assert result.allowed
 
 
-def test_pdt_guard_blocks_at_three() -> None:
-    result = _run(_ctx(day_trades_5d=3))
+def test_reentry_blocked_when_closed_today() -> None:
+    result = _run(_ctx(closed_today=True))
     assert not result.allowed
-    assert result.blocked_by == "pdt_guard"
+    assert result.blocked_by == "reentry"
 
 
-def test_pdt_guard_passes_below_three() -> None:
-    result = _run(_ctx(day_trades_5d=2))
+def test_reentry_passes_when_not_traded_today() -> None:
+    result = _run(_ctx(closed_today=False))
     assert result.allowed
 
 

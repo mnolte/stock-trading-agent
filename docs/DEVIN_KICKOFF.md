@@ -3,7 +3,7 @@
 ## First message (PR 1)
 
 ```
-We're building Stock Agent, a paper-only trading agent for US stocks on Alpaca,
+We're building Stock Trading Agent, a paper-only trading agent for US stocks on Alpaca,
 from scratch in the empty repo stock-agent.
 
 Read these first, in this order:
@@ -643,6 +643,365 @@ Tests:
 
 Use the PR template, screenshots in docs/screenshots/pr-21/ next to the
 design PNGs (DecisionV2). List remaining design differences.
+```
+
+## PR 22 — Insights
+
+```
+PR 22 (Insights). Measures only: nothing on this screen changes trading.
+It doesn't depend on PR 16–21, but uses PR 19 (after-exit data) and PR 21
+(stop and target basis) when they are merged; leave those parts empty
+otherwise. Pull the latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-26 "Insights (PR 22)" (spec) and
+   "Insights" (design)
+2. docs/SPEC.md → "Insights" (whole section), Strategies and shadows
+   (entry_cycles override), Data model (insights_snapshots), GUI table,
+   Build plan item 22
+3. backend/config.example.yaml → insights
+4. design/screens/Insights.dc.html with Insights.png and Insights-390.png
+
+Build PR 22 only, in this order (one commit per step):
+1. One pure insights function in the performance module, per strategy and
+   period (this run, last 20 sessions, all runs), adjusted P&L, 1R =
+   initial risk:
+   - headline numbers: expectancy with a 90% range; edge over SPY at the
+     same exposure; beta and correlation from 20 sessions;
+     overnight vs in-session P&L from daily bars and fills; gaps through
+     the stop; model cost per trade;
+   - the funnel with losses per step and per reason;
+   - slices for all 16 dimensions with the sample statuses (finding at
+     30+ and 2 sigma vs the rest; early signal at 10–29; hidden under
+     10 and counted), and rule rows (15:46);
+   - calibration per 0.1 bucket (target before stop);
+   - execution (fill rate, slippage in bps, deferred-exit cost, earnings
+     exits, dividends);
+   - skips scored with the rules-only geometry (missed, avoided, neither,
+     baseline R).
+   Unit-test every number against hand calculations on a fixture run.
+2. A daily job after the readiness snapshot writes insights_snapshots (new
+   Alembic revision), one per strategy and period. No write lock across
+   any fetch (hard rule 13).
+3. API: GET /api/insights?strategy=&period= and
+   /api/insights/trades?strategy=&period=&dimension=&slice=, numbers
+   only.
+4. Strategy override entry_cycles (new shadow dialog, strategies
+   comparison, and the engine honours it); "Test in a shadow" on a
+   finding opens New shadow with the override filled in, only for
+   dimensions that map to an override.
+5. Weekly review facts: new findings and findings that stopped holding.
+6. Frontend per the design: strategy and period toggles; headline tiles
+   with definitions on hover; findings; funnel; skipped setups; slices
+   with the dimension picker and range bars; calibration; execution;
+   overnight; before-data state under 10 trades; Insights in the Learn
+   sidebar group; card states and focus per the interaction rules.
+
+Tests:
+- Fixture run with known trades and bars: every headline number,
+  funnel count, slice and calibration bucket matches the hand
+  calculation.
+- Sample statuses switch at 10 and 30.
+- A planted difference becomes a finding; random noise across 16
+  dimensions produces at most the expected chance findings with a fixed
+  seed.
+- Overnight split with a gap day.
+- A gap through the stop is counted with its extra R.
+- A skip is scored missed, avoided or neither.
+- entry_cycles blocks entries in excluded cycles in a shadow.
+- The rules-only strategy shows no calibration or skips.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-22/ next to the
+design PNGs (Insights, Insights-390). List remaining design differences.
+```
+
+## PR 23 — Sign-in and access
+
+```
+PR 23 (Sign-in and access). Built and tested locally; nothing is deployed
+in this PR. It doesn't depend on PR 16–22. Pull the latest spec and design
+packages, then read:
+1. docs/CHANGES.md, entry 2026-10-26 "VPS deployment (PR 23 and 24)"
+   (spec) and "Sign-in and server" (design)
+2. docs/SPEC.md → "VPS deployment": Sign-in, Secrets on the server,
+   Moving from local to the VPS (instance id), Restarts; Data model
+   (users, sessions, sign_in_attempts); Notifications (new rows); API
+   keys; Build plan item 23
+3. AGENTS.md → hard rule 10 (rewritten); backend/config.example.yaml →
+   auth; .env.example (SA_AUTH, SA_PUBLIC_URL, SA_TRUSTED_PROXY,
+   SA_INSTANCE_ID)
+4. design/screens/Login.dc.html, Settings.dc.html (Access section),
+   States.dc.html (Access and server; Confirm it is you) and the sidebar
+   Sign out, with their screenshots
+
+Build PR 23 only, in this order (one commit per step):
+1. Startup guard: SA_AUTH (off | required). Refuse to start with
+   SA_AUTH=off when SA_HOST isn't 127.0.0.1 or ::1, with a clear
+   message. Trust X-Forwarded-For only from SA_TRUSTED_PROXY.
+2. Tables and CLI: users, sessions, sign_in_attempts (new Alembic
+   revision; attempts pruned after 90 days); make create-user creates or
+   resets the single account (password at least 14 characters, Argon2id
+   via argon2-cffi), sets up TOTP (shows the otpauth URI and a QR code in
+   the terminal) and prints 10 recovery codes once. TOTP secrets are
+   encrypted with the same Fernet key as the API keys.
+3. Sign-in flow: password step, then TOTP or recovery code; session token
+   in an HttpOnly, Secure (except on loopback), SameSite=Strict cookie,
+   hash stored; idle expiry (auth.idle_hours) and absolute expiry
+   (remember_days); generic error messages; per-address lockout and the
+   global hourly limit; sign-out, sign out others, sign out everywhere.
+4. Protection: one dependency on every API route and the WebSocket (only
+   /healthz and the sign-in endpoints are open); a test walks the FastAPI
+   route table and fails on any unprotected route. CSRF double-submit
+   token on writes; WebSocket Origin check. "Confirm it is you"
+   (password or code, valid auth.confirm_minutes) on: Stop & flatten,
+   Resume after the kill switch, Reset paper account, Start new run,
+   Promote strategy, replacing a key, and changing the password,
+   authenticator or recovery codes.
+5. Instance id: SA_INSTANCE_ID in every client order id; reconciliation
+   treats an open order or fill with another instance id as a critical
+   mismatch (kill switch on, banner, notification). Existing orders
+   without an id are left as they are.
+6. Notifications: New sign-in, Failed sign-ins (lockout), Another instance
+   (critical).
+7. Frontend: the sign-in screen (three states), a session-expired redirect
+   that returns to the same page, the Confirm-it-is-you dialog wired to
+   those actions, Settings → Access (devices, password change,
+   authenticator and recovery codes, idle setting), and Sign out in the
+   sidebar. With SA_AUTH=off, Access shows "Sign-in off (local only)" and
+   none of the sign-in UI appears.
+
+Tests:
+- The route-table walk: every route except /healthz and sign-in returns
+  401 without a session; the WebSocket closes without a session or with a
+  foreign Origin.
+- Wrong password and wrong code give the same message; lockout after 5
+  failures; the global limit.
+- Idle and absolute expiry with the injected clock.
+- A recovery code works once only.
+- A risky action without a fresh confirmation returns 403; with one it
+  works, and stops working after 5 minutes.
+- CSRF: a write without the token is refused.
+- Startup refusal with SA_AUTH=off on 0.0.0.0.
+- An order with another instance id turns the kill switch on.
+- Passwords, TOTP secrets, codes and session tokens never appear in logs
+  (the PR 20 scrubber, or a test if PR 20 isn't merged).
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-23/ next to the
+design PNGs (Login, Login-390, Settings, States). List remaining design
+differences.
+```
+
+## PR 24 — VPS deployment
+
+```
+PR 24 (VPS deployment). Needs PR 20 (graceful shutdown) and PR 23
+(sign-in) merged. Don't provision, deploy to or touch any real server in
+this PR: everything is scripts, files and tests, run locally or in CI. I
+run the scripts on the server myself. Pull the latest spec and design
+packages, then read:
+1. docs/CHANGES.md, entry 2026-10-26 "VPS deployment (PR 23 and 24)"
+2. docs/SPEC.md → "VPS deployment" (whole section), Logging, error
+   handling and shutdown (grace period, run.lock), Build plan item 24
+3. AGENTS.md → hard rules 10, 12, 14 and 16; backend/config.example.yaml
+   → ops, storage
+4. design/screens/Settings.dc.html (Server section) and States.dc.html
+   (Access and server), with their screenshots
+
+Build PR 24 only, in this order (one commit per step):
+1. Container:
+   - a multi-stage Dockerfile: the frontend is built with IBM Plex fonts
+     bundled, so there are no Google Fonts requests;
+   - a non-root user, read-only root filesystem, everything writable
+     under /data, TZ=Europe/Amsterdam;
+   - one Uvicorn worker; GET /healthz returns the version only.
+2. Compose: app (internal network only, no published port, restart
+   unless-stopped, stop_grace_period 90s, memory limit) and caddy (80 and
+   443, automatic HTTPS for SA_PUBLIC_URL's host, the spec's security
+   headers, reverse proxy to app). Add docker-compose.local.yml so the
+   same stack runs on a laptop for testing.
+3. Restarts: ops.resume_after_clean_restart (auto = on when
+   SA_AUTH=required). Resume only when trading was running before, the
+   previous shutdown was clean, the kill switch is off and reconciliation
+   finds no differences; banner and notification either way.
+4. Scripts in deploy/ (bash, set -euo pipefail, idempotent, with --help):
+   - provision.sh: user and SSH keys, no password or root login, ufw
+     22/80/443, fail2ban, unattended-upgrades with the Sunday 05:00
+     reboot window, chrony, Docker;
+   - deploy.sh <tag>: market-hours guard (refuse 09:30–16:00 New York
+     unless --emergency); backup; pull; migrations in a one-off
+     container; restart; wait for /healthz and a clean startup
+     reconciliation; on failure within 2 min, restore the pre-deploy
+     backup if a migration ran, start the previous image, report;
+   - restore.sh <snapshot>: from the local or offsite copy, with
+     integrity_check.
+   Stop only containers by name from our compose project; never kill
+   processes by name (hard rule 12).
+5. CI: build and push a versioned image to a private registry on every
+   tag; run tests in the image.
+6. Backups: offsite with restic to S3-compatible storage (credentials and
+   password from the secrets table), after the 03:00 local copy; keep 30
+   daily and 12 weekly; monthly restore test into a temp folder with
+   integrity_check; Back up now and Download latest backup (a
+   confirmation is needed for the download).
+7. Monitoring: heartbeat ping to ops.heartbeat_url after every cycle and
+   position check; checks for clock offset, disk use, certificate expiry,
+   backup age and restore test; the notifications from the spec.
+8. Settings → Server per the design (read-only plus the two backup
+   buttons), shown when SA_AUTH=required.
+9. docs/DEPLOY.md, a runbook I can follow alone:
+   - choosing a VPS and DNS;
+   - provision; first deploy; make create-user;
+   - entering keys;
+   - setting up offsite storage and the heartbeat service;
+   - moving the local database and secret.key (stop locally first; set
+     SA_INSTANCE_ID per copy);
+   - deploy and rollback; restore; rotating the backup password.
+
+Tests:
+- The container runs as non-root with a read-only root.
+- /healthz says nothing beyond the version.
+- docker stop during a simulated cycle waits for the graceful shutdown
+  and leaves integrity_check ok.
+- deploy.sh refuses during market hours (injected clock) and rolls back
+  on a failing health check (fake image).
+- restore.sh round trip.
+- The resume rules: clean and running resumes; unclean, kill switch or
+  mismatch stays paused.
+- Heartbeat is called once per cycle and check (mocked).
+- Each Server check and its notification thresholds.
+- Security headers present via a local compose run in CI.
+- No network in unit tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-24/ (Settings
+Server section, States server banners). List anything in docs/DEPLOY.md
+you couldn't verify without a real server.
+```
+
+## PR 25 — Error pages and API errors
+
+```
+PR 25 (Error pages and API errors). Independent of PR 16–22. The Caddy
+part needs PR 24; if PR 24 isn't merged yet, commit the static pages in
+deploy/errors/ and leave the wiring to PR 24 (say so in the PR). Pull the
+latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-26 "Error pages and API errors (PR 25)"
+   (spec) and "Error pages" (design)
+2. docs/SPEC.md → "Error pages and API errors" (whole section),
+   Interaction and states (backend banner), Logging, error handling and
+   shutdown (error_id, POST /api/logs/client), Build plan item 25
+3. design/screens/Errors.dc.html with Errors.png and Errors-390.png;
+   copy the texts as written
+
+Build PR 25 only, in this order (one commit per step):
+1. Backend:
+   - one exception handler set producing {"error": {code, message,
+     error_id?, fields?}} for every /api error: HTTPException,
+     validation, and unhandled (500 with error_id, logged with the
+     traceback);
+   - a code registry (an enum) so codes are stable;
+   - every non-/api GET path serves the frontend; unknown /api paths
+     return 404 JSON.
+2. Frontend API client: one place that maps status to behaviour per the
+   spec's table:
+   - 401: sign-in, then back to the same page;
+   - 403 confirm_required: the dialog, then retry once;
+   - 409: a reload offer;
+   - 422: field messages;
+   - 429: Retry-After;
+   - 500: a toast with error_id and Open in Logs;
+   - 503: the backend banner.
+3. Pages: not found for routes and for records (each record screen
+   handles 404 with its own title and search link); an error boundary
+   around every screen (reporting to /api/logs/client and showing the
+   returned error_id); the first-load "The app isn't answering" page with
+   a 15 s retry; the offline banner.
+4. Static pages: deploy/errors/502.html and 503.html, self-contained
+   (inline CSS and SVG, system fonts, no external requests, a small
+   reload script). They show no version, host, commands or data. Also
+   JSON bodies for /api during an outage (app_unavailable, updating).
+5. Caddy and scripts (if PR 24 is merged): handle_errors for 502/503/504
+   by path (HTML for pages, JSON for /api); a maintenance flag file that
+   deploy.sh and restore.sh set before stopping the app and clear after
+   the health check (also cleared on rollback), with Retry-After: 15.
+
+Tests:
+- A route walk: force each error path (404, 422, 500 via a test-only
+  failing route) and assert the JSON shape with no traceback, path or
+  HTML.
+- Frontend unit tests for every status mapping.
+- Playwright: an unknown route shows the 404 page; a missing decision id
+  shows the record page; a forced render error on one screen leaves the
+  sidebar and other screens working and shows an error id; the first load
+  with the API down shows the retry page; going offline shows the
+  banner.
+- Static pages pass a check for no external URLs.
+- With the compose stack and the app stopped (CI), / returns the 502 page
+  and /api/x returns JSON; with the flag set, 503 with Retry-After.
+- No network in unit tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-25/ next to the
+design PNGs (Errors, Errors-390). List remaining design differences.
+```
+
+## PR 26 — Day-trade rule retired (do first)
+
+```
+PR 26 (Day-trade rule retired). Do this first in the queue: live trading
+currently defers exits for a rule that no longer exists. FINRA replaced the
+pattern day trader rule on 4 June 2026 (Regulatory Notice 26-10); Alpaca
+applied it from that date and removed pattern_day_trader, daytrade_count
+and daytrading_buying_power from its API by 6 July 2026. Pull the latest
+spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-27 "Day-trade rule retired (PR 26)"
+   (spec) and "Day-trade rule retired" (design)
+2. docs/SPEC.md → Alpaca integration → "Day trades (rule retired)"; Risk
+   table (Re-entry); Kill switch; GUI table (Positions); Risk budget card;
+   Notifications; Strategies and shadows; Build plan item 26
+3. AGENTS.md hard rule 17; backend/config.example.yaml →
+   risk.reentry_same_session, notifications
+4. design/screens/Positions, Main, Decision, Settings, States and Insights
+   with their screenshots
+
+Before you start: tell me what the code does today with the old fields
+(does anything read daytrade_count or pattern_day_trader, and what
+happens now that they're gone?) and whether any exit is currently
+deferred. Don't change live behaviour mid-session (hard rule 14).
+
+Build PR 26 only, in this order (one commit per step):
+1. Remove: the same-day exit deferral (a model exit on the entry day is
+   carried out like any other); the day-trade guard gate and its
+   config, notification and banner; the deferred-exit field in the input
+   snapshot; the Stop & flatten day-trade warning; every read of the
+   three removed Alpaca fields. Exits deferred before this PR are not
+   replayed. A test fails on any reference to those fields.
+2. Add the re-entry gate: no new entry in a symbol the agent sold or that
+   was stopped out earlier in the same New York session
+   (risk.reentry_same_session: false), for live and shadows; shown as a
+   gate in the decision drawer and as "Re-entry" on the risk card.
+3. Cash only, made explicit: size against cash minus working entries,
+   never buying_power. Handle Alpaca pre-trade rejections as "Order
+   rejected by Alpaca".
+4. Storage: stop writing day_trades (keep the table; no edits to old
+   migrations).
+5. GUI per the design: the Positions "Today" card (entries, exits,
+   same-session round trips, symbols blocked from re-entry); the risk card
+   Re-entry fact; the decision drawer gate "Not traded today"; Settings
+   notifications without the day-trade rows; States without the day-trade
+   banner and warning; Insights "Agent exits on the entry day".
+
+Tests:
+- A model exit on the entry day sells at once.
+- A symbol stopped out at 10:46 New York is refused a new entry at 12:46
+  and allowed at the next session's first cycle (live and shadow).
+- Sizing ignores buying_power when it is larger than cash.
+- No reference to the removed fields (static check).
+- A pre-trade rejection raises the critical notification and leaves the
+  stop in place.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-26/ next to the
+design PNGs (Positions, Main, Decision, Settings, States, Insights). List
+remaining design differences.
 ```
 
 ## Each later PR

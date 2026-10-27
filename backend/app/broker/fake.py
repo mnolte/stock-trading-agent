@@ -73,6 +73,8 @@ class FakeBroker:
         self.start_cash = cash
         self.prices: dict[str, Decimal] = dict(prices or {})
         self.positions: dict[str, _PosRec] = {}
+        self.reject_oco: set[str] = set()
+        self.account_config: dict[str, str | bool | None] = {}
         self.orders: dict[str, _OrderRec] = {}
         self._seq = 0
         self._handlers: list[TradeUpdateHandler] = []
@@ -238,6 +240,40 @@ class FakeBroker:
             source="fake",
         )
 
+    async def get_position(
+        self, symbol: str
+    ) -> DataResult[BrokerPosition | None]:
+        pos = self.positions.get(symbol)
+        if pos is None or self.fail_reads:
+            return DataResult(
+                data=None,
+                error="fake read failure" if self.fail_reads else None,
+                source="fake",
+            )
+        return DataResult(
+            data=BrokerPosition(
+                symbol=symbol,
+                qty=pos.qty,
+                avg_entry_price=pos.avg_entry_price,
+                current_price=self.prices.get(symbol),
+                market_value=self.prices.get(symbol, pos.avg_entry_price) * pos.qty,
+            ),
+            source="fake",
+        )
+
+    async def get_account_config(
+        self,
+    ) -> DataResult[dict[str, str | bool | None]]:
+        return DataResult(data=dict(self.account_config), source="fake")
+
+    async def set_account_config(
+        self, **fields: object
+    ) -> DataResult[dict[str, str | bool | None]]:
+        self.account_config.update(
+            {k: v for k, v in fields.items() if isinstance(v, (str, bool)) or v is None}
+        )
+        return DataResult(data=dict(self.account_config), source="fake")
+
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         if self.fail_reads:
             return DataResult(data=[], error="fake read failure", source="fake")
@@ -379,6 +415,68 @@ class FakeBroker:
         if self.place_then_fail:
             return self._write_error()
         return DataResult(data=self._to_broker_order(rec), source="fake")
+
+    async def submit_oco_exit(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        limit_price: Decimal,
+        stop_price: Decimal,
+        client_order_id: str,
+    ) -> DataResult[BrokerOrder]:
+        self.submit_calls += 1
+        if self.fail_writes or symbol in self.reject_oco:
+            return self._write_error()
+        if self._duplicate_client_id(client_order_id):
+            return DataResult(
+                data=None,  # type: ignore[arg-type]
+                error="client_order_id must be unique",
+                source="fake",
+            )
+        now = self._now()
+        parent = _OrderRec(
+            id=self._next_id(),
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side="sell",
+            order_type="limit",
+            order_class="oco",
+            status="new",
+            qty=qty,
+            filled_qty=0,
+            filled_avg_price=None,
+            limit_price=limit_price,
+            stop_price=None,
+            created_at=now,
+            updated_at=now,
+            filled_at=None,
+        )
+        for order_type, price in (("limit", limit_price), ("stop", stop_price)):
+            leg = _OrderRec(
+                id=self._next_id(),
+                client_order_id=None,
+                symbol=symbol,
+                side="sell",
+                order_type=order_type,
+                order_class="",
+                status="new",
+                qty=qty,
+                filled_qty=0,
+                filled_avg_price=None,
+                limit_price=price if order_type == "limit" else None,
+                stop_price=price if order_type == "stop" else None,
+                created_at=now,
+                updated_at=now,
+                filled_at=None,
+                parent_id=parent.id,
+            )
+            self.orders[leg.id] = leg
+            parent.legs.append(leg.id)
+        self.orders[parent.id] = parent
+        if self.place_then_fail:
+            return self._write_error()
+        return DataResult(data=self._to_broker_order(parent), source="fake")
 
     async def submit_market_sell(
         self,

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Trading Agent — Sign in</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+button,input{font-family:inherit}
+:focus-visible{outline:2px solid #F2B94B;outline-offset:2px;border-radius:6px}.sa-row{cursor:pointer}.sa-row:hover{background:#1C222C}button:not([disabled]):hover{filter:brightness(1.15)}.sa-tile{text-decoration:none;color:inherit}.sa-tile:hover{border-color:#2E3643 !important;background:#171C24 !important}@keyframes sa-pulse{0%{opacity:.45}50%{opacity:.9}100%{opacity:.45}}.sa-skel{animation:sa-pulse 1.4s ease-in-out infinite}@media (prefers-reduced-motion: reduce){.sa-skel{animation:none}}
+</style>
+</helmet>
+<div style="min-height: 900px; background: #0B0E13; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; padding: 48px 24px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 28px">
+  <div style="display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; width: 100%; max-width: 1260px">
+<div style="display: flex; flex-direction: column; gap: 10px; flex: 1 1 340px; max-width: 400px; min-width: 0">
+  <div><div style="font-size: 12px; font-weight: 600; color: #F2B94B; text-transform: uppercase; letter-spacing: 0.08em">1 · Password</div><div style="font-size: 13px; color: #98A2AF; margin-top: 2px">Shown at every visit without a valid session</div></div>
+  <main style="background: #12161D; border: 1px solid #232A35; border-radius: 12px; padding: 28px 28px 24px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 20px 40px rgba(0,0,0,0.35)">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="width: 40px; height: 40px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600">SA</div>
+      <div style="display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600; font-size: 16px">Stock Trading Agent</span><span style="font-size: 12px; color: #98A2AF">stock.example.nl</span></div>
+      <span style="flex: 1"></span>
+      <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+    </div>
+    <h1 style="margin: 0; font-size: 20px; font-weight: 600">Sign in</h1>
+    <form style="display: flex; flex-direction: column; gap: 14px" onsubmit="return false">
+      <div style="display: flex; flex-direction: column; gap: 6px"><label for="pw" style="font-size: 13px; color: #C9CFD6">Password</label><input id="pw" type="password" autocomplete="current-password" value="••••••••••••••" style="height: 44px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 15px; padding: 0 12px; width: 100%"></div>
+      <label style="display: flex; gap: 10px; align-items: center; font-size: 13px; color: #C9CFD6"><input type="checkbox" checked style="width: 18px; height: 18px"> Keep me signed in on this device for 30 days</label>
+      <button type="submit" style="height: 44px; border-radius: 8px; border: 1px solid #F2B94B; background: #F2B94B; color: #0B0E13; font-size: 15px; font-weight: 600; cursor: pointer">Continue</button>
+    </form>
+    <p style="margin: 0; font-size: 12px; color: #98A2AF; line-height: 1.5">One account. It is created on the server with <span style="font-family: 'IBM Plex Mono', monospace">make create-user</span>; there is no sign-up page.</p>
+  </main>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; flex: 1 1 340px; max-width: 400px; min-width: 0">
+  <div><div style="font-size: 12px; font-weight: 600; color: #F2B94B; text-transform: uppercase; letter-spacing: 0.08em">2 · Second step</div><div style="font-size: 13px; color: #98A2AF; margin-top: 2px">Always required when the app is reachable from the internet</div></div>
+  <main style="background: #12161D; border: 1px solid #232A35; border-radius: 12px; padding: 28px 28px 24px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 20px 40px rgba(0,0,0,0.35)">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="width: 40px; height: 40px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600">SA</div>
+      <div style="display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600; font-size: 16px">Stock Trading Agent</span><span style="font-size: 12px; color: #98A2AF">stock.example.nl</span></div>
+      <span style="flex: 1"></span>
+      <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+    </div>
+    <h1 style="margin: 0; font-size: 20px; font-weight: 600">Authenticator code</h1>
+    <p style="margin: 0; font-size: 13px; color: #C9CFD6; line-height: 1.5">Enter the 6-digit code from your authenticator app.</p>
+    <form style="display: flex; flex-direction: column; gap: 14px" onsubmit="return false">
+      <div style="display: flex; flex-direction: column; gap: 6px"><label for="otp" style="font-size: 13px; color: #C9CFD6">Code</label><input id="otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="482 913" style="height: 44px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 15px; padding: 0 12px; width: 100%; font-family: 'IBM Plex Mono', monospace; font-size: 22px; letter-spacing: 0.3em; text-align: center"></div>
+      <button type="submit" style="height: 44px; border-radius: 8px; border: 1px solid #F2B94B; background: #F2B94B; color: #0B0E13; font-size: 15px; font-weight: 600; cursor: pointer">Sign in</button>
+    </form>
+    <div style="display: flex; justify-content: space-between; gap: 8px; font-size: 13px"><a href="#">Use a recovery code</a><a href="#" style="color: #98A2AF">Back</a></div>
+  </main>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; flex: 1 1 340px; max-width: 400px; min-width: 0">
+  <div><div style="font-size: 12px; font-weight: 600; color: #F2B94B; text-transform: uppercase; letter-spacing: 0.08em">3 · Locked out</div><div style="font-size: 13px; color: #98A2AF; margin-top: 2px">Rate limit per address; the agent keeps trading meanwhile</div></div>
+  <main style="background: #12161D; border: 1px solid #232A35; border-radius: 12px; padding: 28px 28px 24px; display: flex; flex-direction: column; gap: 18px; box-shadow: 0 20px 40px rgba(0,0,0,0.35)">
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="width: 40px; height: 40px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600">SA</div>
+      <div style="display: flex; flex-direction: column; gap: 2px"><span style="font-weight: 600; font-size: 16px">Stock Trading Agent</span><span style="font-size: 12px; color: #98A2AF">stock.example.nl</span></div>
+      <span style="flex: 1"></span>
+      <span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; background: #211C10; border: 1px solid #4A3A16; color: #F2B94B; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.08em">PAPER</span>
+    </div>
+    <h1 style="margin: 0; font-size: 20px; font-weight: 600">Sign in</h1>
+    <div role="alert" style="display: flex; gap: 10px; padding: 12px 14px; border: 1px solid #7A2A2E; background: #3A1416; border-radius: 8px; color: #FFB3B6; font-size: 13px; line-height: 1.5"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px; margin-top: 2px"><rect x="5" y="11" width="14" height="10" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg><span>Too many failed attempts from this address. Try again at <b style="font-family: 'IBM Plex Mono', monospace; font-weight: 600">19:42</b>. You were notified by email.</span></div>
+    <form style="display: flex; flex-direction: column; gap: 14px; opacity: 0.5" onsubmit="return false">
+      <div style="display: flex; flex-direction: column; gap: 6px"><label for="pw3" style="font-size: 13px; color: #C9CFD6">Password</label><input id="pw3" type="password" disabled style="height: 44px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 15px; padding: 0 12px; width: 100%"></div>
+      <button type="submit" disabled style="height: 44px; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #98A2AF; font-size: 15px; font-weight: 600">Continue</button>
+    </form>
+    <p style="margin: 0; font-size: 12px; color: #98A2AF; line-height: 1.5">After 5 failed attempts in 15 minutes an address waits 15 minutes. Errors never say whether the password or the code was wrong.</p>
+  </main>
+</div>
+  </div>
+<div style="max-width: 1260px; font-size: 13px; color: #98A2AF; line-height: 1.6">
+  No sidebar or data before signing in: the page reveals nothing about positions or equity. The agent keeps running whether anyone is signed in or not. On a phone the card fills the width with a 16 px margin.
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 1440, "height": 900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

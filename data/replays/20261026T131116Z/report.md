@@ -20,6 +20,7 @@ estimated $0.35 · actual $0.4688
 - choices by stop/target basis: —
 - first touch: stop 0, target 0, neither 0 (of 0 entered)
 - mean R: —
+- entries per session: —
 
 ## decision prompt — approximate reference
 
@@ -33,6 +34,9 @@ Reference = min(stored price, last closed 5m bar close); the plausible ask isn't
 - choices by stop/target basis: atr/level: 14, atr/r: 23, level/level: 8, level/r: 17
 - first touch: stop 40, target 0, neither 19 (of 60 entered)
 - mean R over the next sessions: -0.65 (n=59)
+- entries per session: 2 distinct sessions
+  - 2026-10-21: 1 entry, mean R -1.00 (n=1)
+  - 2026-10-22: 59 entries, mean R -0.64 (n=58)
 
 ## Live entries
 
@@ -44,3 +48,9 @@ Reference = min(stored price, last closed 5m bar close); the plausible ask isn't
 - enter rate (candidates): 100% (887 of 887 candidates)
 - first touch: stop 287, target 35, neither 482
 - mean R over the next sessions: -0.31 (n=804)
+- entries per session: 5 distinct sessions
+  - 2026-10-19: 66 entries, mean R -0.57 (n=66)
+  - 2026-10-20: 33 entries, mean R -0.46 (n=33)
+  - 2026-10-21: 83 entries, mean R -0.43 (n=81)
+  - 2026-10-22: 282 entries, mean R -0.43 (n=273)
+  - 2026-10-23: 423 entries, mean R -0.13 (n=351)

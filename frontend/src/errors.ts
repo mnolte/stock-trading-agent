@@ -37,6 +37,9 @@ export function reportError(report: {
       url: window.location.href,
       tab_id: tabId(),
     }),
+    // keepalive: the preloadError handler reloads right after reporting —
+    // without it the navigation aborts the request before it is sent.
+    keepalive: true,
     // A reporting failure must never surface to the user.
   }).catch(() => undefined);
 }
@@ -60,5 +63,22 @@ export function installErrorHooks(): void {
           : `unhandled rejection: ${String(reason)}`,
       stack: reason instanceof Error ? reason.stack : undefined,
     });
+  });
+  // A rebuilt GUI replaces the hashed asset files; a tab still holding
+  // the old index.html 404s on its lazy chunks and lands on the error
+  // boundary. Vite fires vite:preloadError first — reload so the tab
+  // picks up the new build; the minute-guard keeps a broken build from
+  // looping, and then the error still reaches the boundary.
+  window.addEventListener('vite:preloadError', (event) => {
+    const last = Number(sessionStorage.getItem('sa-chunk-reload') ?? 0);
+    if (Date.now() - last < 60_000) return;
+    sessionStorage.setItem('sa-chunk-reload', String(Date.now()));
+    event.preventDefault();
+    reportError({
+      message: `stale chunk after rebuild: ${String(
+        (event as Event & { payload?: unknown }).payload ?? 'preload failed',
+      )}`,
+    });
+    window.location.reload();
   });
 }

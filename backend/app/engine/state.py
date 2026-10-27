@@ -59,6 +59,10 @@ class ExecutionState:
     # the kill switch: positions keep being reviewed, stops stay active.
     paused: bool = False
     paused_since: datetime | None = None
+    # The startup broker-guard check confirmed no_shorting + 1x margin
+    # for this run. When unconfirmed, an exit may only sell a quantity
+    # Alpaca confirms fresh; the guard is re-verified each reconcile.
+    broker_guard_confirmed: bool = True
     # True while this pause is the startup one — drives the blue banner.
     paused_at_startup: bool = False
     # Consecutive failed decision cycles; 3 in a row turn the switch on.

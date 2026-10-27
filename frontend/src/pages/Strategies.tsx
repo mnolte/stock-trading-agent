@@ -166,6 +166,7 @@ function NewShadowDialog({
     <Modal
       open
       title="New shadow"
+      onClose={onClose}
       footer={
         <>
           <DialogButton variant="cancel" onClick={onClose}>
@@ -178,7 +179,7 @@ function NewShadowDialog({
       }
     >
       <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
-        Runs after each live cycle on the same inputs and never trades. Risk gates, sizing, the day-trade
+        Runs after each live cycle on the same inputs and never trades. Risk gates, sizing, the re-entry
         rule and earnings handling are always live's.
       </div>
       {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
@@ -566,6 +567,7 @@ export default function Strategies() {
       <Modal
         open={archiveOpen && selected !== null}
         title={`Archive ${selected?.name ?? ''}?`}
+        onClose={() => setArchiveOpen(false)}
         footer={
           <>
             <DialogButton variant="cancel" onClick={() => setArchiveOpen(false)}>

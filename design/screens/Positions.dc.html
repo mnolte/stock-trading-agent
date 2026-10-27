@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Stock Agent — Positions & orders</title>
+<title>Stock Trading Agent — Positions & orders</title>
 <script src="./support.js"></script>
 </head>
 <body>
@@ -25,7 +25,7 @@ table{border-collapse:collapse}
       <div style="width: 36px; height: 36px; flex: 0 0 36px; border-radius: 8px; background: #F2B94B; color: #0B0E13; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px">SA</div>
       <sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}">
         <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
-          <div style="font-weight: 600; font-size: 16px; white-space: nowrap">Stock Agent</div>
+          <div style="font-weight: 600; font-size: 15px; line-height: 1.25">Stock Trading Agent</div>
           <div style="font-size: 12px; color: #98A2AF; white-space: nowrap">Paper · Alpaca · v0.1</div>
         </div>
       </sc-if>
@@ -37,6 +37,7 @@ table{border-collapse:collapse}
       <a href="Performance.dc.html" aria-label="Performance" title="Performance" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="20" x2="6" y2="14"></line><line x1="12" y1="20" x2="12" y2="9"></line><line x1="18" y1="20" x2="18" y2="4"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Performance</span></sc-if></a>
       <div style="{{nav.group}}">Learn</div>
       <a href="Reviews.dc.html" aria-label="Reviews" title="Reviews" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="5" width="18" height="16" rx="2"></rect><line x1="3" y1="10" x2="21" y2="10"></line><line x1="8" y1="3" x2="8" y2="7"></line><line x1="16" y1="3" x2="16" y2="7"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Reviews</span></sc-if></a>
+      <a href="Insights.dc.html" aria-label="Insights" title="Insights" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M9 18h6"></path><path d="M10 21h4"></path><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"></path></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Insights</span></sc-if></a>
       <a href="Strategies.dc.html" aria-label="Strategies" title="Strategies" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="6" cy="5" r="2"></circle><circle cx="6" cy="19" r="2"></circle><circle cx="18" cy="9" r="2"></circle><line x1="6" y1="7" x2="6" y2="17"></line><path d="M18 11c0 4-6 3-12 6"></path></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Strategies</span></sc-if></a>
       <a href="Backtest.dc.html" aria-label="Backtest" title="Backtest" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M3 12a9 9 0 1 0 3-6.7"></path><polyline points="3 4 3 9 8 9"></polyline><polyline points="12 8 12 12 15 14"></polyline></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Backtest</span></sc-if></a>
       <a href="Inspector.dc.html" aria-label="LLM inspector" title="LLM inspector" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><circle cx="11" cy="11" r="6"></circle><line x1="16" y1="16" x2="21" y2="21"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>LLM inspector</span></sc-if></a>
@@ -47,6 +48,7 @@ table{border-collapse:collapse}
       <a href="Settings.dc.html" aria-label="Settings" title="Settings" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line><circle cx="9" cy="6" r="2" fill="#0F131A"></circle><circle cx="15" cy="12" r="2" fill="#0F131A"></circle><circle cx="7" cy="18" r="2" fill="#0F131A"></circle></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Settings</span></sc-if></a>
     </nav>
     <div style="flex: 1"></div>
+    <a href="Login.dc.html" aria-label="Sign out" title="Signed in as Marc · sign out" style="{{nav.item}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><path d="M15 4h4v16h-4"></path><polyline points="10 8 6 12 10 16"></polyline><line x1="6" y1="12" x2="16" y2="12"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Sign out</span></sc-if></a>
     <div style="{{nav.status}}"><span style="{{nav.dot}}"></span><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Running · paper</span></sc-if></div>
     <button type="button" onClick="{{nav.toggle}}" aria-label="{{nav.toggleLabel}}" aria-expanded="{{nav.expandedStr}}" title="{{nav.toggleLabel}}" style="{{nav.toggleStyle}}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><rect x="3" y="4" width="18" height="16" rx="2"></rect><line x1="9" y1="4" x2="9" y2="20"></line></svg><sc-if value="{{nav.expanded}}" hint-placeholder-val="{{ true }}"><span>Collapse</span></sc-if></button>
   </aside>
@@ -93,7 +95,7 @@ table{border-collapse:collapse}
     <span style="flex: 1"></span>
     <span style="font-size: 12px; color: #98A2AF">opened today 16:48</span>
   </div>
-  <div style="display: flex; flex-wrap: wrap; gap: 6px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">opened today: agent exit waits until tomorrow (day-trade guard)</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #1A2230; color: #9FB4CC; border: 1px solid #2E3B4E">earnings exit 27 Oct 20:46 (15:46 NY)</span></div>
+  <div style="display: flex; flex-wrap: wrap; gap: 6px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #1A2230; color: #9FB4CC; border: 1px solid #2E3B4E">earnings exit 27 Oct 20:46 (15:46 NY)</span></div>
   <div style="overflow-x: auto"><div style="min-width: 600px"><div style="display: grid; grid-template-columns: 110px 120px 90px 1fr; gap: 8px; padding: 8px 0 8px 16px; border-top: 1px solid #232A35; font-size: 13px; align-items: baseline">
   <span style="color: #C9CFD6">Entry</span><span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF">limit · gtc</span><span style="font-family: 'IBM Plex Mono', monospace">418.40</span><span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">filled</span> <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">7c41…e9a2</span><span style="color: #98A2AF"> · 418.20 at 16:48:10</span></span>
 </div><div style="display: grid; grid-template-columns: 110px 120px 90px 1fr; gap: 8px; padding: 8px 0 8px 16px; border-top: 1px solid #232A35; font-size: 13px; align-items: baseline">
@@ -123,11 +125,15 @@ table{border-collapse:collapse}
 </div>
 </section>
 <div style="display: flex; flex-wrap: wrap; gap: 20px">
-<section aria-label="Day trades" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 320px">
-  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Day trades</h2></div>
-<div style="display: flex; align-items: baseline; gap: 10px"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 22px">0 of 3</span><span style="font-size: 13px; color: #98A2AF">in the last 5 trading days</span></div>
-<div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px"><div style="padding: 8px; border: 1px solid #232A35; border-radius: 6px; text-align: center; font-size: 12px; color: #98A2AF">9 Oct<div style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6; margin-top: 4px">0</div></div><div style="padding: 8px; border: 1px solid #232A35; border-radius: 6px; text-align: center; font-size: 12px; color: #98A2AF">12 Oct<div style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6; margin-top: 4px">0</div></div><div style="padding: 8px; border: 1px solid #232A35; border-radius: 6px; text-align: center; font-size: 12px; color: #98A2AF">13 Oct<div style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6; margin-top: 4px">0</div></div><div style="padding: 8px; border: 1px solid #232A35; border-radius: 6px; text-align: center; font-size: 12px; color: #98A2AF">14 Oct<div style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6; margin-top: 4px">0</div></div><div style="padding: 8px; border: 1px solid #232A35; border-radius: 6px; text-align: center; font-size: 12px; color: #98A2AF">15 Oct<div style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6; margin-top: 4px">0</div></div></div>
-<div style="font-size: 12px; color: #98A2AF">The agent never closes a position on the day it opened it. Only a stop or target at Alpaca can, and that would count here.</div>
+<section aria-label="Today" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 320px">
+  <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Today</h2></div>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; font-size: 13px">
+<span style="color: #98A2AF">Entries</span><span style="font-family: 'IBM Plex Mono', monospace; text-align: right">1 · MSFT</span>
+<span style="color: #98A2AF">Exits</span><span style="font-family: 'IBM Plex Mono', monospace; text-align: right">0</span>
+<span style="color: #98A2AF">Bought and sold the same session</span><span style="font-family: 'IBM Plex Mono', monospace; text-align: right">0</span>
+<span style="color: #98A2AF">Not to be bought again today</span><span style="font-family: 'IBM Plex Mono', monospace; text-align: right">—</span>
+</div>
+<div style="font-size: 12px; color: #98A2AF; line-height: 1.5">There is no day-trade limit since 4 June 2026 (FINRA replaced the pattern day trader rule). The agent may sell a position the day it bought it. A symbol it closed today isn't bought again until the next session.</div>
 </section>
 <section aria-label="Account at Alpaca" style="background: #12161D; border: 1px solid #232A35; border-radius: 10px; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; min-width: 0; box-sizing: border-box; flex: 1 1 320px">
   <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap"><h2 style="margin: 0; font-size: 13px; font-weight: 600; color: #C9CFD6; text-transform: uppercase; letter-spacing: 0.06em">Account at Alpaca</h2></div>

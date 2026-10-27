@@ -67,7 +67,6 @@ function positionsJson() {
         target_price: null,
         origin: 'entry',
         pending_ack: false,
-        deferred_exit: null,
         opened_at: '2026-10-15T13:36:00Z',
         closed_at: null,
         realized_pnl_raw: null,
@@ -88,7 +87,6 @@ function positionsJson() {
         target_price: null,
         origin: 'entry',
         pending_ack: false,
-        deferred_exit: null,
         opened_at: '2026-10-15T14:06:00Z',
         closed_at: null,
         realized_pnl_raw: null,
@@ -101,7 +99,7 @@ function positionsJson() {
       },
     ],
     closed_today: [],
-    day_trades_5d: 0,
+    today: { entries: 0, exits: 0, round_trips: 0, reentry_blocked: [] },
   };
 }
 
@@ -466,7 +464,7 @@ test('off-hours: the dashboard shows the last session, not an empty today', asyn
 test('states gallery page', async ({ page }, testInfo) => {
   await page.goto('/states');
   await expect(
-    page.locator('h2', { hasText: 'States & dialogs' }),
+    page.getByRole('heading', { name: 'States & dialogs', level: 1 }),
   ).toBeVisible();
   await expect(page.getByText('Market closed · Dashboard')).toBeVisible();
   await page.screenshot({
@@ -540,7 +538,7 @@ test('backend down: page banner, Retry now, recovery without reload', async ({
   await page.goto('/');
 
   await expect(
-    page.getByText(/Can’t reach the Stock Agent backend/),
+    page.getByText(/Can’t reach the Stock Trading Agent backend/),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/Retrying every 15 seconds/)).toBeVisible();
   const retryNow = page.getByRole('button', { name: 'Retry now' });
@@ -552,7 +550,7 @@ test('backend down: page banner, Retry now, recovery without reload', async ({
     page.getByRole('heading', { name: /decisions|last session/ }),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
-    page.getByText(/Can’t reach the Stock Agent backend/),
+    page.getByText(/Can’t reach the Stock Trading Agent backend/),
   ).toHaveCount(0);
 });
 
@@ -662,7 +660,7 @@ test('toasts: one toast per event, info closes after 10 s, hover pauses', async 
 }) => {
   await mockNotifications(
     page,
-    notificationsFixture('info', '[Stock Agent] This is a test notification'),
+    notificationsFixture('info', '[Stock Trading Agent · PAPER] This is a test notification'),
   );
   await page.clock.install();
   await page.goto('/');
@@ -697,7 +695,7 @@ test('toasts: a critical notification stays until dismissed (role alert)', async
   // one critical row. The real send-test POST still drives the wake-up.
   await mockNotifications(
     page,
-    notificationsFixture('critical', '[Stock Agent] Kill switch turned on'),
+    notificationsFixture('critical', '[Stock Trading Agent · PAPER] Kill switch turned on'),
   );
 
   await page.clock.install();
@@ -772,21 +770,21 @@ test('keyboard: dashboard, settings and strategies keep a visible focus ring', a
   await expect(
     page.getByRole('link', { name: 'Positions, open Positions and orders' }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page).toHaveTitle(/Stock Agent — Dashboard/);
+  await expect(page).toHaveTitle(/Stock Trading Agent — Dashboard/);
   await expectVisibleFocus(page);
 
   await page.goto('/settings');
   await expect(
     page.getByRole('heading', { name: 'API keys and data' }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page).toHaveTitle(/Stock Agent — Settings/);
+  await expect(page).toHaveTitle(/Stock Trading Agent — Settings/);
   await expectVisibleFocus(page);
 
   await page.goto('/strategies');
   await expect(
     page.getByRole('heading', { name: 'Compare', exact: true }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page).toHaveTitle(/Stock Agent — Strategies/);
+  await expect(page).toHaveTitle(/Stock Trading Agent — Strategies/);
   await expectVisibleFocus(page);
 
   // Mobile: the sidebar opens as a dialog — Escape closes it and focus

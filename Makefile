@@ -56,6 +56,9 @@ lint-frontend:
 logs-reindex: ## rebuild data/logs/logs.db from the log files (PR 20)
 	cd backend && ../$(PYTHON) -m app.log_index
 
+broker-guard: ## set + verify no_shorting and 1x margin on the paper account
+	cd backend && ../$(PYTHON) -m app.broker_guard
+
 replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2 FROM=2026-10-20 TO=2026-10-25 [MODEL=] [YES=1] [APPROX=1]
 	cd backend && ../$(PYTHON) -m app.replay \
 		--prompt $(PROMPT) --from $(FROM) --to $(TO) \

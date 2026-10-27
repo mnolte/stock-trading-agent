@@ -322,11 +322,11 @@ def test_dashboard_latest_decision_held_box(client: TestClient) -> None:
     card = client.get("/api/dashboard?symbol=MSFT").json()["latest_decision"]
     assert card["symbol"] == "MSFT"
     labels = [row["label"] for row in card["box"]]
-    assert labels == ["Position", "Stop / target", "Agent exit from"]
+    assert labels == ["Position", "Stop / target", "Agent exit"]
     assert card["box"][0]["value"] == "4 sh @ 418.20 · +0.36R"
     assert card["box"][1]["value"] == "409.60 / 435.40"
-    # Same-day position: an agent exit waits until tomorrow.
-    assert card["box"][2]["value"] == "tomorrow"
+    # The day-trade rule is retired: an agent exit can happen this session.
+    assert card["box"][2]["value"] == "now"
 
 
 def test_dashboard_latest_decision_skip_box(client: TestClient) -> None:

@@ -20,7 +20,6 @@ from app.data.cache import _naive_utc
 from app.data.service import MarketDataService
 from app.db.models import (
     Cycle,
-    DayTrade,
     Decision,
     Earning,
     EquitySnapshot,
@@ -49,6 +48,8 @@ _BANNER_EVENTS = (
     "protective_stop",
     "position_check_failed",
     "flatten_sell_rejected",
+    "universe_screen_pending",
+    "broker_guard_unconfirmed",
 )
 
 
@@ -447,21 +448,6 @@ def banner_facts(
                 else []
             )
             if sessions:
-                day_trades = session.execute(
-                    select(func.count(DayTrade.id)).where(
-                        DayTrade.date >= _naive_utc(sessions[0].open)
-                    )
-                ).scalar_one()
-                if day_trades >= int(
-                    config.get("risk", "pdt_max_day_trades", default=3)
-                ):
-                    items.append(
-                        {
-                            "kind": "day_trade_guard",
-                            "level": "warning",
-                            "count": day_trades,
-                        }
-                    )
                 closed_q = (
                     select(Position)
                     .where(

@@ -231,7 +231,6 @@ export interface PositionRow {
   target_price: string | null;
   origin: string;
   pending_ack: boolean;
-  deferred_exit: { at: string; reason: string; detail?: string } | null;
   opened_at: string;
   closed_at: string | null;
   realized_pnl_raw: number | null;
@@ -244,11 +243,6 @@ export interface PositionRow {
   stop_distance_label?: string;
   earnings_date?: string | null;
   opened_today?: boolean;
-}
-
-export interface DayTradeDay {
-  date: string;
-  count: number;
 }
 
 export interface AccountSummary {
@@ -269,11 +263,18 @@ export interface ReconciliationSummary {
   account_number: string | null;
 }
 
+export interface PositionsToday {
+  entries: number;
+  exits: number;
+  round_trips: number;
+  /** Symbols closed earlier this session — not bought again today. */
+  reentry_blocked: string[];
+}
+
 export interface PositionsResponse {
   open: PositionRow[];
   closed_today: PositionRow[];
-  day_trades_5d: number;
-  day_trades?: { days: DayTradeDay[]; count: number; max: number };
+  today: PositionsToday;
   account?: AccountSummary;
   reconciliation?: ReconciliationSummary;
   max_open_positions?: number;
@@ -1075,7 +1076,7 @@ export interface RiskBudgetResponse {
     spy_1h_pct: string | null;
     spy_session_pct: string | null;
   };
-  day_trades: { count: number; max: number };
+  re_entry: { allowed: boolean };
   positions: { open: number; cap: number };
 }
 

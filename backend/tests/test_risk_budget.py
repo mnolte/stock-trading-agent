@@ -26,7 +26,7 @@ def _ctx(**overrides: object) -> GateContext:
         "peak_equity": Decimal("10000"),
         "open_positions": [],
         "working_entries": (),
-        "day_trades_5d": 0,
+        "closed_today": False,
         "losing_streak": 0,
         "shock_brake_1h": False,
         "shock_brake_session": False,
@@ -78,7 +78,6 @@ def test_card_figures_equal_gate_inputs() -> None:
         peak_equity=Decimal("10200"),
         open_positions=positions,
         working_entries=entries,
-        day_trades_5d=2,
         losing_streak=1,
     )
     budget = risk_budget(ctx, CONFIG)
@@ -106,8 +105,6 @@ def test_card_figures_equal_gate_inputs() -> None:
     # position count does; day trades and the losing streak pass through.
     assert budget.open_count == 3
     assert budget.max_positions == 4
-    assert budget.day_trades_5d == 2
-    assert budget.day_trades_max == 3
     assert budget.losing_streak == 1
     assert budget.risk_per_trade_pct == Decimal("0.5")
 
@@ -214,7 +211,7 @@ def test_risk_budget_endpoint_shape(client: TestClient) -> None:
         "risk_per_trade_pct",
         "losing_streak",
         "shock_brake",
-        "day_trades",
+        "re_entry",
         "positions",
     } <= set(body)
     assert {
@@ -228,7 +225,7 @@ def test_risk_budget_endpoint_shape(client: TestClient) -> None:
     assert Decimal(body["daily_loss"]["limit_pct"]) == Decimal("2")
     assert Decimal(body["drawdown"]["limit_pct"]) == Decimal("8")
     assert {"trades", "limited_by"} <= set(body["room"])
-    assert body["day_trades"]["max"] == 3
+    assert body["re_entry"]["allowed"] is False
     assert body["positions"]["cap"] == 4
     assert {
         "on",

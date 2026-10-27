@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
-from app.broker.fake import FakeBroker, _PosRec
+from app.broker.fake import FakeBroker, _OrderRec, _PosRec
 from app.broker.models import BrokerAccount, BrokerOrder
 from app.config import AppConfig
 from app.data.factory import DataSources
@@ -23,7 +23,16 @@ from app.data.fake import (
 )
 from app.data.models import Bar5m, DailyBar, DataResult, Quote
 from app.data.service import MarketDataService
-from app.db.models import Approval, Cycle, DayTrade, Decision, Event, Order, Position
+from app.db.models import (
+    Approval,
+    Cycle,
+    DayTrade,
+    Decision,
+    Event,
+    Fill,
+    Order,
+    Position,
+)
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
@@ -338,8 +347,8 @@ def test_client_order_ids_unique_across_processes(
     broker = FakeBroker(FakeClock(NOW))
     first = _executor(session_factory, broker)
     second = _executor(session_factory, broker)
-    assert first._client_id("protect", 1, "TSLA") != second._client_id(
-        "protect", 1, "TSLA"
+    assert first._client_id("stop", 1, "TSLA") != second._client_id(
+        "stop", 1, "TSLA"
     )
 
 
@@ -771,6 +780,172 @@ async def test_held_bracket_stop_leg_counts_as_coverage(
     with session_factory() as session:
         assert not _events(session, "protective_stop")
         assert not _events(session, "protective_stop_failed")
+
+
+
+async def test_no_protective_stop_when_sell_fills_cover_the_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The stop leg already sold every share but the broker's position
+    list hasn't caught up — a sell stop for shares we no longer hold
+    would open a short. Reconcile skips it; the row closes next pass."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("409")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        stop_row = Order(
+            alpaca_order_id="filled-stop",
+            symbol="MSFT",
+            side="sell",
+            order_type="stop",
+            leg="stop",
+            qty=4,
+            stop_price=Decimal("410"),
+            status="filled",
+            created_at=YESTERDAY,
+            filled_at=YESTERDAY,
+        )
+        session.add(stop_row)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=stop_row.id,
+                qty=4,
+                price=Decimal("409.50"),
+                filled_at=YESTERDAY + timedelta(hours=1),
+            )
+        )
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == []
+    assert not report.errors
+    assert not any(
+        o.symbol == "MSFT" and o.order_type == "stop" and o.status != "filled"
+        for o in broker.orders.values()
+    )
+    with session_factory() as session:
+        assert not _events(session, "protective_stop")
+        assert not _events(session, "protective_stop_failed")
+
+
+async def test_breached_stop_sells_at_market(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A stored stop at or above the market was already breached — the
+    repair is a market sale of the confirmed qty, reason stop_breached,
+    and no new stop is placed."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("409")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    await executor.reconcile()
+
+    orders = list(broker.orders.values())
+    assert len(orders) == 1
+    assert orders[0].order_type == "market"
+    assert orders[0].side == "sell"
+    assert orders[0].qty == 4
+    assert not any(o.order_type == "stop" for o in orders)
+    with session_factory() as session:
+        row = session.execute(select(Order)).scalar_one()
+        assert row.leg == "exit"  # legs stay entry/stop/target/exit
+        assert _events(session, "protective_stop")
+
+    # The position closes on the next pass: the sa-breach client id maps
+    # the reason to stop_breached (docs/SPEC.md, Protective stops).
+    await executor.reconcile()
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        assert position.exit_reason == "stop_breached"
+        assert position.closed_at is not None
+
+
+async def test_orphaned_stop_with_target_gets_oco_repair(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The stop leg is gone while the target limit still holds the
+    shares: the target is cancelled and an OCO exit order takes over,
+    with the unprotected gap logged at CRITICAL."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="tgt-1", client_order_id=None, symbol="MSFT", side="sell",
+        order_type="limit", order_class="", status="new", qty=4,
+        filled_qty=0, filled_avg_price=None, limit_price=Decimal("435"),
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["MSFT"]
+    oco = [o for o in broker.orders.values() if o.order_class == "oco"]
+    assert len(oco) == 1
+    assert rec.status == "canceled"  # the target was cancelled first
+    with session_factory() as session:
+        assert _events(session, "protective_stop")
+
+
+async def test_orphan_repair_falls_back_to_plain_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An OCO rejection falls back to the stop alone — protection
+    comes before the target."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    broker.reject_oco.add("MSFT")
+    now = broker._now()
+    rec = _OrderRec(
+        id="tgt-1", client_order_id=None, symbol="MSFT", side="sell",
+        order_type="limit", order_class="", status="new", qty=4,
+        filled_qty=0, filled_avg_price=None, limit_price=Decimal("435"),
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["MSFT"]
+    assert not [o for o in broker.orders.values() if o.order_class == "oco"]
+    stops = [o for o in broker.orders.values() if o.order_type == "stop"]
+    assert len(stops) == 1
+    assert stops[0].stop_price == Decimal("410")
+
+
+async def test_protective_sell_capped_at_confirmed_qty(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The DB position is larger than what Alpaca confirms — the stop
+    goes out for the confirmed qty only; the agent never over-sells."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=2, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    await executor.reconcile()
+
+    stops = [o for o in broker.orders.values() if o.order_type == "stop"]
+    assert len(stops) == 1
+    assert stops[0].qty == 2
 
 
 # ----------------------------------------------------------------------
@@ -1373,16 +1548,40 @@ async def test_every_working_status_counts_in_the_gates(
 # exits and stop moves
 
 
-async def test_same_day_exit_is_deferred(
+async def test_same_day_exit_sells_at_once(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """A model exit on the entry day is carried out like any other —
+    the day-trade deferral is retired (docs/SPEC.md, Day trades)."""
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
         position = _open_position(
             session,
             "MSFT",
-            opened_at=datetime(2026, 10, 15, 15, 0),  # today, 11:00 NY
+            qty=4,
+            entry="415",
+            stop="410",
+            opened_at=NOW.replace(tzinfo=None),
+        )
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=NOW.replace(tzinfo=None),
+            )
         )
         decision = _decision(session, "MSFT", "exit")
         await executor.apply_decision(
@@ -1396,12 +1595,13 @@ async def test_same_day_exit_is_deferred(
             earnings_known=True,
         )
         session.commit()
-        assert decision.final_action == "deferred"
-        assert position.deferred_exit is not None
-        assert position.deferred_exit["reason"] == "day_trade_rule"
-        assert "at" in position.deferred_exit
-        assert _events(session, "exit_deferred")
-    assert broker.submit_calls == 0  # nothing was sold
+        assert decision.final_action == "exit"
+        assert broker.orders[stop.data.id].status == "canceled"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.side == "sell"
+        assert exit_order.status == "filled"
 
 
 async def test_next_day_exit_cancels_legs_then_sells(
@@ -2021,9 +2221,8 @@ async def test_same_day_round_trip_records_day_trade(
     await executor.reconcile()
 
     with session_factory() as session:
-        trades = session.execute(select(DayTrade)).scalars().all()
-        assert len(trades) == 1
-        assert trades[0].symbol == "MSFT"
+        # day_trades rows are no longer written (table kept for history)
+        assert session.execute(select(DayTrade)).scalars().all() == []
 
 
 async def test_overnight_close_is_not_a_day_trade(
@@ -2085,7 +2284,7 @@ async def test_flatten_never_refuses_same_day_positions(
     with session_factory() as session:
         events = _events(session, "flatten")
         assert events[0].details is not None
-        assert events[0].details["day_trade_warnings"] == ["MSFT"]
+        assert "day_trade_warnings" not in (events[0].details or {})
 
 
 async def test_flatten_outside_hours_queues_market_on_open(
@@ -2289,6 +2488,9 @@ async def test_trade_update_updates_order_and_reconciles(
     with session_factory() as session:
         row = session.execute(select(Order)).scalar_one()
         assert row.status == "canceled"
+        # A terminal update ends the order's live window — without it the
+        # leg would count as live for every later bar in outcome metrics.
+        assert row.active_until is not None
 
 
 # ----------------------------------------------------------------------

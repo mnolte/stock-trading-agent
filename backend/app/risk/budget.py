@@ -69,8 +69,6 @@ class RiskBudget:
     shock_session_limit_pct: Decimal
     spy_1h_pct: Decimal | None
     spy_session_pct: Decimal | None
-    day_trades_5d: int
-    day_trades_max: int
     open_count: int  # open positions + working entries
     max_positions: int
 
@@ -178,8 +176,6 @@ def risk_budget(
         ),
         spy_1h_pct=spy_1h_pct,
         spy_session_pct=spy_session_pct,
-        day_trades_5d=ctx.day_trades_5d,
-        day_trades_max=int(config.get("risk", "pdt_max_day_trades", default=3)),
         open_count=open_count,
         max_positions=max_positions,
     )

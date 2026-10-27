@@ -2,6 +2,48 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-27 — Name: Stock Trading Agent
+
+- All screens: the sidebar brand, the page titles, Sign in and the Caddy error page say "Stock Trading Agent". The sidebar brand is 15 px and may wrap to two lines; the "SA" mark is unchanged.
+- DESIGN.md and tokens.css headers renamed; the page-title examples now read "● Market open · Stock Trading Agent".
+
+## 2026-10-27 — Day-trade rule retired
+
+- `Positions.dc.html`: the "Day trades 0 of 3" card is now "Today" (entries, exits, bought and sold the same session, symbols not to be bought again today, and a note on the retired rule). MSFT no longer shows "agent exit waits until tomorrow".
+- `Main.dc.html`: the risk card fact "Day trades" is now "Re-entry"; the positions note no longer mentions the day-trade guard.
+- `Decision.dc.html`: the gate "Day-trade guard" is now "Not traded today".
+- `Settings.dc.html`: the notifications drop "Day-trade guard at 3 of 3"; "Exit deferred or earnings exit tomorrow" is now "Earnings exit tomorrow".
+- `States.dc.html`: the day-trade guard banner and the day-trade warning in the Stop & flatten dialog are removed.
+- `Insights.dc.html`: "Exits deferred by the day-trade rule" is now "Agent exits on the entry day".
+
+## 2026-10-26 — Error pages
+
+- New `Errors.dc.html` with six pages shown in browser frames:
+  - **In the app:** "Decision 98213 doesn't exist" (404 for a record, with a matching search), "There is no page here" (404 for a route), "Something went wrong on this page" (error id, Reload, Copy error id, Open in Logs), and "The app isn't answering" (first load, retrying every 15 s, with a note that stops at Alpaca still protect positions).
+  - **Served by Caddy:** "Stock Trading Agent isn't responding" (502/504) and "Updating" (503). Brand mark only; no version, host or data.
+- The in-app pages use the normal shell (simplified here); the static ones stand alone with system fonts.
+
+## 2026-10-26 — Sign-in and server
+
+- New `Login.dc.html`: one card per step (password, authenticator code, locked out) with the PAPER badge and host name. There is no sidebar before signing in.
+- Sidebar on every screen: "Sign out" above the status line (new `signout` icon; `lock` icon moved to the shared set).
+- `Settings.dc.html`: new sections Access (sign-in mode, password, authenticator and recovery codes, idle sign-out, risky actions, signed-in devices, failed sign-ins) and Server (version, address and certificate, running since, clock, disk with warning, OS updates, local and offsite backups, restore test, heartbeat, single instance, Back up now and Download).
+- `States.dc.html`:
+  - new group "Access and server": session expired, restarted and resumed, restarted paused, another instance (critical), offsite backup failed, and the new sign-in toast;
+  - new dialog "Confirm it is you".
+- All screens re-rendered.
+
+## 2026-10-26 — Insights
+
+- New `Insights.dc.html` in the Learn group (sidebar: Reviews, Insights, Strategies, Backtest, LLM inspector; new `bulb` icon), with:
+  - headline tiles with definitions on hover and a 90% range bar on Expectancy;
+  - finding cards (accent chip for findings, greyed early signals) with "Test in a shadow" and "Show the trades";
+  - the trade funnel on a log scale with what was lost per step, and Skipped setups (missed and avoided);
+  - Slices: 16 dimension chips, a table by entry cycle with an average-R range bar, missed and avoided skips and sample status, and the 15:46 rule row;
+  - Calibration bars against dashed stated-confidence lines (early greyed, hidden counted); Execution key-value list; Overnight vs in-session bars.
+- The sample is deliberately a fuller run (Fri 18 Dec, 58 sessions, 112 closed trades) so findings, early signals and hidden slices all appear; the subtitle says so.
+- All screens re-rendered for the new sidebar item.
+
 ## 2026-10-25 — Decision drawer for decision.v2
 
 - New `DecisionV2.dc.html` (560 px drawer, same structure as `Decision.dc.html`):

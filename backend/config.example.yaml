@@ -1,4 +1,4 @@
-# Stock Agent configuration. Copy to config.yaml.
+# Stock Trading Agent configuration. Copy to config.yaml.
 # Every value here is a default from docs/SPEC.md. Change behaviour here, not in code.
 # Secrets never go in this file; they live in .env.
 
@@ -103,9 +103,9 @@ risk:
   losing_streak_risk_factor: 0.5
   shock_brake_1h_pct: 1.5
   shock_brake_session_pct: 2.5
+  reentry_same_session: false  # a symbol closed this session is not bought again today
   earnings_blackout_days: 3
   hold_through_earnings: false
-  pdt_max_day_trades: 3
   drawdown_kill_pct: 8
   adopted_stop_atr: 3                 # protective stop for a position found at Alpaca
   protective_stop_fallback_pct: 3     # when ATR is unavailable
@@ -152,12 +152,11 @@ notifications:
     order_rejected: [browser, email]
     daily_loss_limit: [browser, email]
     shock_brake: [browser]
-    pdt_guard: [browser]
     source_failing: [browser, email]
     position_checks_failing: [browser, email]
     model_failing: [browser]
     approval_waiting: [browser]
-    exit_deferred_or_earnings_exit: [browser]
+    earnings_exit_tomorrow: [browser]
     trade: []
     daily_briefing: [email]
     weekly_review: [email]
@@ -202,6 +201,16 @@ readiness:                      # PR 16; evidence from the current run, adjusted
   log_error_sessions: 10          # PR 20: unreviewed ERROR problems in the log, target 0 (fixed)
   log_critical_sessions: 20       # PR 20: CRITICAL lines in the log, target 0 (fixed); keep within logging.keep_days
 
+insights:                       # PR 22
+  min_trades: 30                # a slice can be a finding from here
+  early_trades: 10              # 10-29: early signal; below: hidden
+  finding_sigma: 2.0            # difference vs the rest, in standard errors
+  range_z: 1.64                 # 90% range on averages
+  skip_score: {stop_atr: 2.0, target_r: 2.0, sessions: 5}   # rules-only geometry for missed / avoided
+  gap_through_stop_r: 0.1       # a stop fill this far below the stop counts as a gap
+  spy_flat_pct: 0.3             # "SPY that day" flat band
+  opening_gap_pct: 1.0          # opening gap buckets
+
 inspector:                      # PR 18, LLM call history
   page_size: 50                 # calls per page; the API allows up to 100
   slow_call_seconds: 15         # a returned call slower than this gets the warning "slow"
@@ -219,6 +228,27 @@ logging:                        # PR 20, Logging, error handling and shutdown
   client_errors_per_minute: 10  # frontend errors per tab
   heartbeat_seconds: 30         # data/run.lock heartbeat for unclean-stop detection
   backtest_kill_after_seconds: 10   # on shutdown, after the cancel flag
+
+auth:                           # PR 23; only used when SA_AUTH=required
+  idle_hours: 12                # sign out after this long without activity
+  remember_days: 30             # "Keep me signed in", absolute maximum
+  min_password_length: 14
+  lockout_failures: 5           # per address, in lockout_window_minutes
+  lockout_window_minutes: 15
+  lockout_minutes: 15
+  global_failures_per_hour: 20  # across all addresses: sign-in pauses for an hour, warning sent
+  confirm_minutes: 5            # "Confirm it is you" stays valid this long on a device
+  recovery_codes: 10
+
+ops:                            # PR 24, VPS
+  resume_after_clean_restart: auto   # auto = on when SA_AUTH=required, off locally
+  heartbeat_url: ""             # dead-man's-switch ping after each cycle and position check
+  disk_warn_pct: 80
+  disk_critical_pct: 90
+  clock_max_offset_seconds: 1
+  cert_warn_days: 14
+  offsite_backup: {enabled: false, time: "03:05", keep_daily: 30, keep_weekly: 12, restore_test_day: 1}
+  deploy_guard_market_hours: true
 
 storage:
   backup_time: "03:00"          # app timezone; SQLite online backup API + integrity_check

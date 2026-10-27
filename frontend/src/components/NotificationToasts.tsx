@@ -39,7 +39,7 @@ const SEVERITY_STYLE: Record<
 };
 
 function toastSubject(item: NotificationItem): string {
-  return item.subject.replace(/^\[Stock Agent[^\]]*\]\s*/, '');
+  return item.subject.replace(/^\[Stock(?: Trading)? Agent[^\]]*\]\s*/, '');
 }
 
 function toastBody(item: NotificationItem): string {

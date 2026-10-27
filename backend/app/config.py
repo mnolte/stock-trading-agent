@@ -38,6 +38,9 @@ class EnvSettings(BaseSettings):
     sa_port: int = Field(default=8000, alias="SA_PORT")
     sa_data_dir: str = Field(default="./data", alias="SA_DATA_DIR")
     sa_db_path: str = Field(default="./data/stock-agent.db", alias="SA_DB_PATH")
+    # Which agent copy this is on a shared paper account — stamped into
+    # every client order id (PR 23); empty until instances exist.
+    sa_instance_id: str = Field(default="", alias="SA_INSTANCE_ID")
 
     @field_validator("sa_data_dir", "sa_db_path", mode="before")
     @classmethod

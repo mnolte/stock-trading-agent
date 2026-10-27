@@ -15,7 +15,7 @@ test('states: error banners and dialogs gallery', async ({ page }, testInfo) => 
   await page.goto('/states');
 
   await expect(
-    page.getByRole('heading', { name: 'States & dialogs', level: 2 })
+    page.getByRole('heading', { name: 'States & dialogs', level: 1 })
   ).toBeVisible({ timeout: 60_000 });
 
   // Error states from the PR 8 spec section (Risk management, Errors):
@@ -30,7 +30,6 @@ test('states: error banners and dialogs gallery', async ({ page }, testInfo) => 
     'Market data missing',
     'Shock brake',
     'Daily loss limit',
-    'Day-trade guard',
     'Losing streak',
   ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();

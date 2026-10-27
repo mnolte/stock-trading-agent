@@ -1,6 +1,6 @@
 # Using the spec
 
-`SPEC.md` is the source of truth for what Stock Agent does. These rules say how to use it.
+`SPEC.md` is the source of truth for what Stock Trading Agent does. These rules say how to use it.
 
 ## Rules
 
@@ -36,6 +36,12 @@
 | 19 | Tail metrics | Tail metrics; Data model (`positions`); GUI table | `Performance` (Winners and tails card) |
 | 20 | Logging, error handling and shutdown | Logging, error handling and shutdown; GUI table; AGENTS.md rules 15–16 | `Logs`, `States` (shutdown and restart) |
 | 21 | Decision v2: code-built options | Decision v2; Decision layer (no_call reasons); Data model; `backend/prompts/decision.v2.md` | `DecisionV2` |
+| 22 | Insights | Insights; Strategies (entry_cycles); Data model | `Insights` |
+| 23 | Sign-in and access | VPS deployment (Sign-in, Restarts, instance id); Data model; AGENTS.md rule 10 | `Login`, `Settings` (Access), `States` (Access and server, Confirm it is you), sidebar Sign out |
+| 24 | VPS deployment | VPS deployment (How it runs, hardening, deploying, backups, monitoring) | `Settings` (Server), `States` (server banners) |
+| 25 | Error pages and API errors | Error pages and API errors; GUI table | `Errors` |
+| 26 | Day-trade rule retired | Alpaca integration → Day trades (rule retired); Risk; GUI; Notifications | `Positions` (Today card), `Main` (risk card), `Decision` (gate), `Settings` (notifications), `States`, `Insights` |
+| 27 | Protective stops hardened | Alpaca integration → Protective stops; Position checks; Larger universe → Daily screen | none |
 
 ## PR description template
 

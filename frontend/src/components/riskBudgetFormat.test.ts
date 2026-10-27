@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   budgetHints,
-  dayTradesText,
   drawdownUsed,
   pct2,
+  reEntryText,
   riskPerTradeText,
   roomText,
   sectorsText,
@@ -41,7 +41,7 @@ const budget = (over: Partial<RiskBudgetResponse>): RiskBudgetResponse => ({
     spy_1h_pct: '0.12',
     spy_session_pct: '0.38',
   },
-  day_trades: { count: 0, max: 3 },
+  re_entry: { allowed: false },
   positions: { open: 2, cap: 4 },
   ...over,
 });
@@ -132,8 +132,13 @@ describe('fact rows', () => {
       ),
     ).toBe('off');
   });
-  it('counts day trades over the last five trading days', () => {
-    expect(dayTradesText(budget({}))).toBe('0 of 3 · last 5 trading days');
+  it('lists symbols blocked from re-entry this session', () => {
+    expect(reEntryText(budget({}), [])).toBe('none today');
+    expect(reEntryText(budget({}), ['MSFT'])).toBe('MSFT');
+    expect(reEntryText(budget({}), ['JPM', 'MSFT'])).toBe('JPM · MSFT');
+    expect(reEntryText(budget({ re_entry: { allowed: true } }), ['MSFT'])).toBe(
+      'allowed by settings',
+    );
   });
 });
 
@@ -145,8 +150,8 @@ describe('hover explanations', () => {
     expect(budgetHints.shockBrake('1.5', '2.5')).toBe(
       'No new entries this session when SPY drops 1.5% in a 1h bar or 2.5% since the open.',
     );
-    expect(budgetHints.dayTrades(3)).toBe(
-      'Pattern day trading guard. At 3, no new entries until the count drops.',
+    expect(budgetHints.reEntry).toBe(
+      'A symbol sold or stopped out today is not bought again until the next session.',
     );
     expect(budgetHints.riskPerTrade({ max: 3, factor: '0.5' })).toBe(
       'After 3 losses in a row risk per trade is halved until a win.',

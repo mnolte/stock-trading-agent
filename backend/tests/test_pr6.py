@@ -827,7 +827,7 @@ async def test_validate_settings_rejects_bad_values(
         )
     with pytest.raises(SettingsError, match="not editable"):
         await validate_settings(
-            {"risk": {"pdt_max_day_trades": 2}},
+            {"risk": {"reentry_same_session": True}},
             active,
             broker=broker,
             held_symbols=set(),

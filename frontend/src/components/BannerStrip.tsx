@@ -177,6 +177,7 @@ export function BannerStrip({
       <Modal
         open={dismissItem != null}
         title="Dismiss error"
+        onClose={() => setDismissItem(null)}
         footer={
           <>
             <DialogButton variant="cancel" onClick={() => setDismissItem(null)}>Cancel</DialogButton>

@@ -93,13 +93,6 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         WARNING,
     ),
     EventDef(
-        "pdt_guard",
-        "Day-trade guard at 3 of 3",
-        "No new entries until the count drops",
-        "warnings",
-        WARNING,
-    ),
-    EventDef(
         "source_failing",
         "Data source or API key failing",
         "Alpaca, OpenAI, Finnhub or ECB",
@@ -129,8 +122,8 @@ EVENT_DEFS: tuple[EventDef, ...] = (
     ),
     EventDef(
         "exit_deferred_or_earnings_exit",
-        "Exit deferred or earnings exit tomorrow",
-        "",
+        "Earnings exit tomorrow",
+        "Held symbol reports before the next close",
         "trading",
         INFO,
     ),
@@ -190,7 +183,6 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "flatten_sell_blocked": "order_rejected",
     "leg_cancel_unconfirmed": "order_rejected",
     "position_check_failed": "position_checks_failing",
-    "exit_deferred": "exit_deferred_or_earnings_exit",
     "universe_screen_failed": "source_failing",
     "backup_failed": "source_failing",
     "api_key": "source_failing",
@@ -292,9 +284,6 @@ def format_recorded(
     if event_type == "position_check_failed":
         count = details.get("consecutive") or details.get("count") or "3"
         return key, f"{count} checks failed in a row", "/positions"
-    if event_type == "exit_deferred":
-        reason = str(details.get("reason") or "").replace("_", " ")
-        return key, f"{symbol}: exit deferred ({reason})", "/positions"
     if event_type == "universe_screen_failed":
         extra = _detail(details, "error")
         return key, f"universe screen failed ({extra or 'error'})", "/settings"

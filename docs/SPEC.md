@@ -1,12 +1,12 @@
-# Stock Agent — Spec v0.1
+# Stock Trading Agent — Spec v0.1
 
 15 October 2026 · Marc Nolte
 
 ## Overview and goals
 
-Stock Agent v0.1 is a standalone, paper-only agent that trades a fixed list of liquid US stocks and ETFs through Alpaca's paper account, with an OpenAI model as its decision layer. It is a new application built from scratch, not a fork of Trading Agent. It reuses Trading Agent's visual design and proven ideas (rules pre-filter, risk gates, outcome tracking, kill switch), adapted to stock markets.
+Stock Trading Agent v0.1 is a standalone, paper-only agent that trades a fixed list of liquid US stocks and ETFs through Alpaca's paper account, with an OpenAI model as its decision layer. It is a new application built from scratch, not a fork of Trading Agent. It reuses Trading Agent's visual design and proven ideas (rules pre-filter, risk gates, outcome tracking, kill switch), adapted to stock markets.
 
-**Currency.** Stock Agent trades in US dollars (USD). The Alpaca account, cash, orders, prices, P&L, risk limits and every stored money value are in USD. Euro amounts in the GUI are for display only, converted with the ECB daily rate, and never used in trading decisions or risk checks.
+**Currency.** Stock Trading Agent trades in US dollars (USD). The Alpaca account, cash, orders, prices, P&L, risk limits and every stored money value are in USD. Euro amounts in the GUI are for display only, converted with the ECB daily rate, and never used in trading decisions or risk checks.
 
 **Timezone.** The application timezone is Europe/Amsterdam. The GUI, logs, alerts, settings history and daily jobs (backups, the daily database copy) use Amsterdam time. Two exceptions: timestamps are stored in UTC, and the decision cycles follow the New York exchange clock (see Market, schedule and data) so they stay aligned to market hours when the US and EU change clocks on different dates. Cycle times are shown in Amsterdam time.
 
@@ -18,7 +18,7 @@ v0.1 is done when:
 - Performance is shown against a SPY buy-and-hold benchmark started on the same day.
 - No code path can place an order against a live (real-money) Alpaca endpoint.
 
-Working title: **Stock Agent**. Repo: `stock-agent`.
+Name: **Stock Trading Agent** (shown in the GUI, page titles, emails and error pages). Technical names stay `stock-agent`: the repo, the database file, log files and containers. Prompt files already used (`decision.v1.md`, `decision.v2.md`) keep the old name because used prompts are never edited; the next prompt version uses the new one.
 
 ## Decisions
 
@@ -41,7 +41,7 @@ These defaults are set so Devin can start. Items marked **(review)** are Marc's 
 | Earnings data | Finnhub free earnings calendar | Alpaca has no earnings calendar |
 | News | Alpaca News API | Included with the Alpaca account |
 | Benchmark | SPY buy-and-hold from day one | Honest comparison against doing nothing |
-| Hosting | Local during development, VPS later | Same as Trading Agent |
+| Hosting | Local during development; production on a VPS (Docker Compose, Caddy, sign-in with password and authenticator) | See VPS deployment |
 
 ## Architecture and stack
 
@@ -109,7 +109,7 @@ The agent only acts during regular US trading hours (09:30 to 16:00 New York tim
 Between the hourly cycles a lighter position check runs at 09:46, 10:01, 10:16 and 10:31, then at :01, :16 and :31 past every hour until 15:31 New York time. It makes no model calls, opens no positions, sells nothing and moves no stops. It only:
 
 - Reconciles Alpaca positions and open orders with the database, with the same rules as a full cycle.
-- Confirms every position has a live stop order at Alpaca; if one is missing, it places a protective stop at the stored stop price and alerts.
+- Confirms every position has a live stop order at Alpaca; if one is missing, it repairs it as in Alpaca integration → Protective stops (including the market sale when the stop level is already breached) and alerts.
 - Updates the safety brakes from the real-time IEX quote and the Alpaca account: the since-open part of the shock brake (SPY down more than 2.5%), the daily loss limit and the drawdown kill. The 1h part of the shock brake stays on the hourly cycle.
 - Cancels entry orders still unfilled after 10 minutes.
 
@@ -160,15 +160,30 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 - Subscribe to Alpaca's trade-updates stream for fills, cancels and rejects.
 - At startup and at the start of every cycle, compare Alpaca positions and open orders with the database.
 - On any mismatch: record it, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
-- A position without a live stop order is a critical error: place a protective stop at the stored stop price immediately, then alert.
+- A position without a live stop order is a critical error, repaired as described in **Protective stops** below, then alerted.
 
-**Pattern day trading (PDT)**
+**Protective stops** (decided 27 October after the WMT incidents)
+- **Confirm first.** Before any protective order, fetch the symbol's position and open orders from Alpaca again. Do nothing when the position is flat, or when recorded sell fills already cover its quantity (it is exiting; the row closes on the next pass).
+- **Stop below the market.** Place a gtc stop at the stored stop price.
+- **Stop at or above the market** (the stop level was already breached). Don't place a stop one cent below the market. Sell the confirmed quantity at market during the session, or market-on-open outside it. Record the exit reason `stop_breached`. This is the only sale a position check may make.
+- **Orphaned stop leg, target still holds the shares** (`held_for_orders`). A new stop would be rejected for insufficient quantity, so:
+  1. cancel the target and wait for Alpaca to confirm the cancel;
+  2. submit an OCO exit order (`order_class: oco`) with the stored target as its take-profit and the stored stop as its stop-loss;
+  3. if the OCO is rejected, place the stop alone. Protection comes before the target. Raise a critical alert either way.
 
-The $10,000 paper account is below the $25,000 PDT threshold, and Alpaca checks the PDT rule on every order. To stay safe:
+  The position is briefly without a stop between the cancel and the new order, and that gap is logged at CRITICAL with its length.
+- **Never sell more than is held.** Every sell order the agent sends (exits, protective stops, Stop & flatten) is capped at the position quantity Alpaca confirms right before it is sent. The agent never goes short.
+- **Broker-side guard.** At startup the app sets, and then checks, the account configuration that blocks shorting (`no_shorting`) and limits margin to 1× (`max_margin_multiplier: 1`) where Alpaca offers them. If it can't confirm them, it shows a warning banner; it doesn't refuse to start, because cash-only sizing and the sell cap still protect.
 
-- The agent never closes a position on the day it opened it. Only the broker-side stop or target can do that. A same-day exit decision is not carried out: it is recorded as deferred, and at the next session's first cycle the position is reviewed again as usual. That cycle's input snapshot includes the deferred exit (time and reason), and the dashboard shows "Exit deferred (day-trade rule)" on the position.
-- Count day trades over the last 5 trading days. At 3, no new entries until the count drops.
-- Check Alpaca's current PDT documentation before PR 5; the rule has been under revision.
+**Day trades (rule retired)**
+
+FINRA replaced the pattern day trader rule and its $25,000 minimum with intraday margin standards on 4 June 2026, and Alpaca applies them from that date (FINRA Regulatory Notice 26-10). There is no day-trade limit any more. PR 26 removes the old guard.
+- **Same-day exits.** The agent may close a position on the day it opened it. A model `exit` on the entry day is carried out like any other exit, and earlier deferred exits are not replayed.
+- **No re-entry the same session.** A symbol the agent sold or that was stopped out today is not bought again until the next session. This rule is new (`risk.reentry_same_session: false`). It replaces the brake the old rule gave against churning.
+- **Cash only, unchanged.** Entries are sized against Alpaca's `cash` minus working entries, never `buying_power`, so intraday margin is never used. Alpaca's own pre-trade checks can still reject an order; that is handled as "Order rejected by Alpaca".
+- **Old API fields.** The code no longer reads `pattern_day_trader`, `daytrade_count` or `daytrading_buying_power` (Alpaca removed them by 6 July 2026). A test fails if they are referenced.
+- **History.** The `day_trades` table is no longer written. It stays for history; migrations are never edited.
+- **Count shown.** Positions shows a count of positions bought and sold in the same session, for information only.
 
 **Paper realism**
 
@@ -260,15 +275,15 @@ Risk gates run in code after the model answers, in the order below; the first ga
 | Shock brake | SPY down more than 1.5% in the last 1h bar, or more than 2.5% since the open | No new entries this session |
 | Earnings blackout | Earnings within the next 3 trading days | No new entry |
 | Earnings exit | Held symbol reports before the next session's close (an unknown time of day counts as before the open) | Exit in the 15:46 cycle the day before (setting "Hold through earnings": off) |
-| PDT guard | 3 day trades in the last 5 trading days | No new entries |
+| Re-entry | The symbol was sold or stopped out earlier this session | No new entry in that symbol until the next session |
 | Drawdown kill | Equity 8% below its peak | Kill switch turns on automatically |
 | Order sanity | No single order above 25% of equity; at most 6 orders per cycle | Block and alert |
 
 **Working entry orders.** An entry order that is submitted, accepted or partially filled, and not yet cancelled, expired or rejected, counts in the gates as if it were already a position: its unfilled quantity × (limit − stop) counts toward total open risk, its unfilled quantity × limit toward cash, and it counts toward max open positions, the sector cap and max position size. Filled quantity counts as a position only, never twice. Entries in one cycle are gated one by one in submission order, each against the budget left after the earlier ones. A cancel, expiry or rejection frees the budget. In supervised mode an entry waiting for approval does not count; the gates run again when Marc approves.
 
-**Kill switch.** Manual (header button) or automatic (drawdown kill, repeated errors). It stops all new entries and leaves existing stops in place. "Stop & flatten" also cancels all open orders and sells every position at market; outside regular hours the sells are queued as market-on-open orders. Stop & flatten never refuses because of the day-trade rule: it warns when a sale would count as a day trade, and if Alpaca rejects a sale (for example under its own day-trade protection), that position keeps its stop and the rejection shows as a critical banner. Resuming requires an explicit acknowledgment with a typed reason, which is stored.
+**Kill switch.** Manual (header button) or automatic (drawdown kill, repeated errors). It stops all new entries and leaves existing stops in place. "Stop & flatten" also cancels all open orders and sells every position at market; outside regular hours the sells are queued as market-on-open orders. If Alpaca rejects a Stop & flatten sale, that position keeps its stop and the rejection shows as a critical banner. Resuming requires an explicit acknowledgment with a typed reason, which is stored.
 
-**Paused at startup.** The agent always starts with new entries paused. Startup, reconciliation with Alpaca, position checks, the stops and targets at Alpaca, earnings exits and outcome tracking all run as normal; cycles still run and review held positions, so the model can still decide to hold, tighten a stop or exit. No new entries are placed until Marc presses Resume in the header: one click, no reason needed. Pause is the same button in reverse and can be used at any time. Pause and the kill switch are separate: the kill switch needs a typed reason to resume and can also flatten. Both states are stored and survive a restart: a kill switch that was on stays on, and startup always comes up paused even if trading was running before.
+**Paused at startup.** The agent always starts with new entries paused. Startup, reconciliation with Alpaca, position checks, the stops and targets at Alpaca, earnings exits and outcome tracking all run as normal; cycles still run and review held positions, so the model can still decide to hold, tighten a stop or exit. No new entries are placed until Marc presses Resume in the header: one click, no reason needed. Pause is the same button in reverse and can be used at any time. Pause and the kill switch are separate: the kill switch needs a typed reason to resume and can also flatten. Both states are stored and survive a restart: a kill switch that was on stays on, and startup always comes up paused even if trading was running before, except after a clean planned restart on the VPS (see VPS deployment → Restarts).
 
 **Errors.** Three failed cycles in a row (any unhandled error) turn the kill switch on. Only a completed cycle resets this count; skipped (market closed, holiday), interrupted and running rows leave it unchanged, so error, skipped, error, error still turns the kill switch on. Position checks have their own failure count (alert after 3) and do not affect this one. A failed model call is never retried with a different model silently. On a normal shutdown the app waits up to 60 seconds for a running cycle or position check to finish; if it doesn't, it is marked interrupted, which does not count as a failure. Only a cycle or check still marked running at the next startup (a real crash) counts as failed. Startup always reconciles with Alpaca before anything else runs.
 
@@ -288,16 +303,19 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | --- | --- |
 | Dashboard | Risk budget card and cycle counter (see below); price chart for the selected symbol (1h bars, VWAP, EMAs, entry, stop and target lines); watchlist with price, day change, rules status and earnings date; open positions with unrealized P&L and stop distance; latest decisions feed; next-cycle timer; latest-decision card for the selected symbol (action, confidence, market regime, earnings date, reasoning, signal chips, and a three-line summary: the failed check and proposed stop and target for a skip, the position and its stop and target for a held symbol, or the pre-filter reason when no model call was made) |
 | Decision detail | Same layout as Trading Agent's decision drawer: action with size and a confidence bar; safety gates (code checks, then risk gates, each pass, fail or reduced); signal stack with 1h and daily columns; agent reasoning with named risks and news used; entry, stop, target and invalidation tiles; outcome after 1h, 1 session and 5 sessions with best and worst R and which of stop or target was touched first; order status; links to the position and the model call |
-| Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, day-trade counter (last 5 trading days) |
+| Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, today's entries, exits and same-session round trips (information only) |
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime, winners and tails (see Tail metrics) |
+| Insights | Where results come from: expectancy with its range, edge over SPY at the same exposure, beta, overnight vs in session, gaps, cost; findings; trade funnel; slices by time of day, sector, earnings distance, gap, VWAP, pullback, strength, regime, confidence and more; calibration; execution; skipped setups (see Insights) |
 | LLM inspector | Every model call since the start (live, shadows, reviews), filtered by period, outcome (success, warning, error), source and more; summary per session; prompt, raw response or error, tokens, cost, latency, outcome and reasons (see LLM call history) |
-| Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
+| Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, access (sign-in, devices), server (health, backups, monitoring; on the VPS), paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | Universe (v0.2) | Pool, daily screen and eligible symbols (see Larger universe) |
 | Strategies (v0.2) | Live, shadows and baselines compared; equity curves; disagreements; Promote to live (see Strategies and shadows) |
 | Backtest (v0.2) | New backtest with estimate, runs, results (see Backtesting) |
 | Readiness | Whether the paper evidence would justify live trading (see Readiness) |
 | Logs | Every log line, warnings and up by default with a switch for debug and info; level toggles, period, search, component, symbol and cycle filters; warnings and errors per day; recurring problems; traceback, stored line and surrounding lines (see Logging, error handling and shutdown) |
-| States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode), shutting down, previous run not shut down cleanly; confirm dialogs for Stop & flatten, reset paper account and settings changes |
+| Error pages | Not found (page, record), something went wrong (with error id), app not answering, offline; static pages from Caddy when the app is down or updating (see Error pages and API errors) |
+| Sign in | Password, then authenticator code; locked-out state; no data before signing in (see VPS deployment) |
+| States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode), shutting down, previous run not shut down cleanly, session expired, restarted (resumed or paused), another instance on the account, server warnings, new sign-in; confirm dialogs (including "Confirm it is you" before risky actions) for Stop & flatten, reset paper account and settings changes |
 
 The layout must also work at phone width, so the VPS version can be checked from a phone.
 
@@ -308,7 +326,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 **Dashboard at scale and off-hours.**
 - **Session day.** "Today" on the dashboard is the current New York session or, outside a session, the last completed one, never the Amsterdam calendar day. Outside a session the feed is titled with that session's date ("Friday 23 Oct · last session"), the model-call tile counts that session, and the cycle strip summarises it. A countdown longer than 24 hours shows only the day and time.
 - **Latest decision.** The card shows the selected symbol's latest decision in that session. If the symbol wasn't decided this cycle, it says why from the stored snapshot (pre-filter reason, call cap, price check). If it has no decision in the session, it shows its most recent decision with the date.
-- **Decisions feed.** Grouped per cycle (by cycle, not by minute), with the cycle's Amsterdam time (New York on hover) and a header that can collapse. Changes (entries, exits, stop moves, deferred exits, approvals) always show as their own rows. Other decisions are grouped by final action and reason into one row: the symbols (the first 8, then "+n more") and a count. The current cycle is open; earlier cycles start collapsed and show only their changes. A single row opens the decision; a grouped row opens the LLM inspector filtered to that cycle and action.
+- **Decisions feed.** Grouped per cycle (by cycle, not by minute), with the cycle's Amsterdam time (New York on hover) and a header that can collapse. Changes (entries, exits, stop moves, approvals) always show as their own rows. Other decisions are grouped by final action and reason into one row: the symbols (the first 8, then "+n more") and a count. The current cycle is open; earlier cycles start collapsed and show only their changes. A single row opens the decision; a grouped row opens the LLM inspector filtered to that cycle and action.
 - **Picking a symbol.** By clicking a watchlist row, a button for each held symbol in the chart header, or "Find symbol" (search over the universe). There is never a button for every symbol. The selected symbol is in the URL (`?symbol=`); without one, the dashboard opens on the first held position, otherwise the first watchlist row.
 - **Watchlist.** In screened mode it shows a rank column and "sorted by rank, 15 rows, then Show all"; in fixed mode neither.
 - **Tiles.** Positions links to Positions and orders, Model calls to the LLM inspector, Since start to Performance.
@@ -329,7 +347,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 **Cycle counter.** The this-cycle strip at the top of the dashboard ends with a cycle counter: the next cycle's time in Amsterdam and New York with a live countdown (mm:ss under an hour, otherwise h:mm), one segment per cycle of today's session (done, next, later; an early-close day has fewer), "Cycle n of 6 today", the cycle's number in this run, and the next position check. Market closed: the next session's first cycle with its day. Kill switch on: "Kill switch on · no cycles". A cycle that is running shows "running" instead of the countdown. The count in this run comes from the `cycles` table (kind cycle) since the run started.
 
-**Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and day trades in the last 5 trading days. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
+**Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and symbols blocked from re-entry this session. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
 
 **Settings screen.** Sections with a section list on the left (a scrolling row on a phone) and a "Find a setting" filter: API keys and data, Trading (execution mode, universe, slippage), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Earnings, Model and reviews, Notifications, Readiness, Schedule (read-only), History and Paper account. Each setting is one row: name, one-line explanation, the control with its unit, and its default underneath. Values fixed by the spec (cash only, cycle times) are shown locked. A changed value is highlighted with "Changed from …" and Reset, and the section list shows how many changes each section has. A bar at the bottom lists the unsaved changes (old → new), asks for a reason (required, shown in History) and has Discard and "Save as v<n>". Values are checked as they are typed against the allowed ranges (for example RSI from must be below RSI to); Save is disabled while one is invalid. Leaving the page with unsaved changes asks first. Keys are not part of this flow: they are saved per key, straight away (see API keys).
 
@@ -345,7 +363,7 @@ API keys are entered in Settings, not in `.env`. There are four: Alpaca key ID a
 - **Replacing Alpaca keys** is only allowed while the agent is paused or the kill switch is on, with no open positions or orders. If the new keys belong to a different paper account, the change requires "Start new run".
 - **Missing or failing keys.** The app always starts (paused, as usual) and shows a banner naming the missing or failing key with a link to Settings. Resume stays disabled until the Alpaca, OpenAI and Finnhub keys are all set and passing. Simulated mode needs no keys.
 - **Moving from `.env`.** At startup, a key found in the environment with nothing stored under that name is imported once, tested, and stored; a banner then says "Keys imported from .env — remove them from .env". After that, keys in the environment are ignored with a warning in the log.
-- Settings, keys and the kill switch have no login, so the backend stays bound to `127.0.0.1` (hard rule 10). On a VPS later the GUI is reached over an SSH tunnel until login exists.
+- Locally, settings, keys and the kill switch have no sign-in, so the backend stays bound to `127.0.0.1`. On any other address sign-in is required and the app refuses to start without it (hard rule 10; see VPS deployment).
 
 ## Notifications
 
@@ -361,21 +379,27 @@ The agent tells Marc about what matters while he is away from the screen. Every 
 | Order rejected by Alpaca (including a Stop & flatten sale) | Critical | always | on |
 | Daily loss limit reached | Warning | on | on |
 | Shock brake on | Warning | on | off |
-| Day-trade guard at 3 of 3 | Warning | on | off |
 | Data source or API key failing | Warning | on | on |
 | Position checks failing (3 in a row) | Warning | on | on |
 | Model failing, or review or shadow cost cap reached | Warning | on | off |
 | Entry waiting for approval (supervised mode) | Info | on | off |
-| Exit deferred (day-trade rule) or earnings exit tomorrow | Info | on | off |
+| Earnings exit tomorrow | Info | on | off |
 | Trade opened or closed | Info | off | off |
 | Daily briefing | Info | off | on |
 | Weekly review ready | Info | off | on |
 | Verdicts waiting to confirm (once a day, with the briefing) | Info | off | off |
 | Readiness changed (a criterion passes or stops passing) | Info | on | off |
+| Another instance is trading this Alpaca account (VPS) | Critical | always | on |
+| New sign-in (VPS) | Info | on | on |
+| Failed sign-ins: lockout started (VPS) | Warning | on | on |
+| Backup or restore test failed; disk at 80%; certificate expires within 14 days; clock off by more than 1 s (VPS) | Warning | on | on |
+| Disk at 90% (VPS) | Critical | always | on |
+| Restarted and resumed (VPS) | Info | on | off |
+| Restarted paused after an unclean stop (VPS) | Warning | on | on |
 
 **Rules.** Critical events always go to the browser and are never held back. Any other event with the same subject is sent at most once per 30 minutes (repeat limit). During quiet hours (23:00–08:00 Amsterdam) only critical events are sent; the rest are held and sent as one summary when quiet hours end. Sending runs in the background: a slow or failing channel never delays a cycle, a check or an order. Three failed emails in a row show a banner.
 
-**Content.** Subject `[Stock Agent · PAPER] <event>: <one line with the key number>`, for example "Kill switch on: drawdown −8.1% from peak". The body has the figures, the time in Amsterdam and New York, what the agent did and what Marc needs to do, and a link to the right GUI page. Briefings and reviews carry their text. Notifications never contain keys or passwords.
+**Content.** Subject `[Stock Trading Agent · PAPER] <event>: <one line with the key number>`, for example "Kill switch on: drawdown −8.1% from peak". The body has the figures, the time in Amsterdam and New York, what the agent did and what Marc needs to do, and a link to the right GUI page. Briefings and reviews carry their text. Notifications never contain keys or passwords.
 
 **Settings.** The event × channel choices, the repeat limit and quiet hours are settings (versioned, in Settings → Notifications). SMTP details are saved on their own, like the keys.
 
@@ -393,7 +417,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, initial stop, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason, after-exit best price and time, after-exit close price, after-exit status and done at (see Tail metrics) |
 | `outcomes` | decision, price after 1h, 1 session and 5 sessions; best and worst price while open |
 | `equity_snapshots` | time, equity, cash, SPY benchmark value, EUR/USD rate |
-| `day_trades` | date, symbol, order ids |
+| `day_trades` | date, symbol, order ids (no longer written since PR 26; kept for history) |
 | `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
@@ -406,10 +430,14 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `universe_pool` | symbol, sector, source (default, added or import), added at, removed at (v0.2) |
 | `universe_screens` | session date, symbol, status (eligible, excluded or warming_up), check results JSON, last close, average dollar volume, return vs SPY, rank, failed screens in a row (v0.2) |
 | `notifications` | time, event, severity, subject, channels, status per channel (sent, failed, held back, quiet hours), error |
-| `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub, smtp_password), encrypted value, last 4 characters, saved at, tested at, test result |
+| `secrets` | name (alpaca_key_id, alpaca_secret, openai, finnhub, smtp_password, backup_password, backup_credentials), encrypted value, last 4 characters, saved at, tested at, test result |
 | `events` | time, level, type (reconciliation, kill switch, error, acknowledgment), details JSON, affects (decision, order, fill or none), resolved at, resolution (auto or dismissed), note |
 | `readiness_snapshots` | session date, run, criteria JSON (value, target, status, sample, estimate) |
 | `readiness_manual` | item, done, note, changed at |
+| `users` | username, password hash (Argon2id), TOTP secret (encrypted like the keys), recovery code hashes, password changed at (PR 23) |
+| `sessions` | token hash, device name, user agent, IP, created, last seen, expires, keep signed in, confirmed until (risky actions) (PR 23) |
+| `sign_in_attempts` | time, IP, result (ok, wrong, locked) (PR 23; kept 90 days) |
+| `insights_snapshots` | session date, strategy, period, computed at, JSON (headline, funnel, findings, slices, calibration) (PR 22) |
 | `log_reviews` | fingerprint, level, sample message, review (expected or fixed), note, reviewed at, app version (PR 20; in the trading database, so it is backed up) |
 | `llm_calls` | sent at, session date, source (live, shadow, review), strategy, kind, linked decision, shadow decision or review, cycle, symbol, context, model, temperature, prompt version and hash, tokens, cost and source, latency, final action, outcome (success, warning, error), reasons JSON, error type, HTTP status, error message, request id, raw response, backfilled (see LLM call history) |
 
@@ -422,7 +450,7 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 - **No network in tests.** Every external call goes through an interface with a fake. A test that touches the network fails: block sockets in the test setup (for example `pytest-socket`).
 - **Simulated mode.** `MODE=simulated` runs the full cycle against recorded bars and the fake broker, at accelerated time. It is used for demos and end-to-end tests.
 - **Time is injected.** No direct `datetime.now()` in engine code; use a clock object so tests can run any date, including DST-change weeks and early closes.
-- **Required tests:** every indicator against hand-checked values; every risk gate pass and fail; bar aggregation into session-aligned 1h bars; PDT counting; reconciliation mismatches; a position-without-stop recovery; DST weeks (25 Oct to 1 Nov 2026); an early-close day; invalid model output.
+- **Required tests:** every indicator against hand-checked values; every risk gate pass and fail; bar aggregation into session-aligned 1h bars; the same-session re-entry rule; reconciliation mismatches; a position-without-stop recovery; DST weeks (25 Oct to 1 Nov 2026); an early-close day; invalid model output.
 - **Risk math consistency.** One function computes stop distance, risk and reward to risk; rules, gates and the GUI all call it. A test checks that each default symbol can produce a valid trade at typical ATR values.
 - **Processes.** Never kill processes by name or with broad patterns; stop only the process the task started, by its PID.
 - **Secrets.** Never print, log or commit keys, `secret.key` or the database; `.env` and `data/` stay in `.gitignore`. Tests use fake keys only.
@@ -437,7 +465,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 2. **Market and data.** Calendar and clock, 5-min bar download and cache, session-aligned 1h bars, IEX quotes, news, Finnhub earnings, ECB rate; fakes for each. *Done when:* aggregation, DST and early-close tests pass, and a read-only run fills the cache for all 10 symbols.
 3. **Signals, regime and rules.** Indicators, regime, rules pre-filter, shared risk-math function. *Done when:* indicator tests match hand-checked values and the dashboard shows rules status per symbol.
 4. **Decision layer.** Prompt v1, input snapshot builder, OpenAI client, output validation, decision storage, LLM inspector screen. *Done when:* simulated cycles produce stored decisions; invalid outputs are handled per spec.
-5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard, risk gates, kill switch. *Done when:* a simulated session runs with every position protected by a stop, and startup, the paper-account check and reconciliation are verified read-only against the real paper account. Marc runs the first real paper session himself after review, with the paper account reset to $10,000.
+5. **Execution.** Alpaca paper broker, bracket entries, stop moves, exits, trade-updates stream, reconciliation, 15-minute position check, PDT guard (removed in PR 26), risk gates, kill switch. *Done when:* a simulated session runs with every position protected by a stop, and startup, the paper-account check and reconciliation are verified read-only against the real paper account. Marc runs the first real paper session himself after review, with the paper account reset to $10,000.
 6. **GUI.** Dashboard, decision detail, positions and orders, settings, states and dialogs, supervised-mode approvals, WebSocket updates, phone-width layout.
 7. **Performance and outcomes.** Outcome worker, equity snapshots, SPY benchmark, raw vs adjusted P&L, performance screen.
 8. **Hardening.** Logging and rotation, daily database copy, error kill switch, startup recovery after a crash mid-cycle, README for running locally. *Done when:* a crash mid-cycle recovers cleanly.
@@ -454,6 +482,12 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 19. **Tail metrics.** After-exit job and `positions` columns, the tails function (R distribution, largest win and loss, top 20% share, net without the best trade, winners kept, after-exit medians per exit reason), `/api/performance/tails`, "Winners and tails" card on Performance. Measures only; exits and prompts don't change. Independent of PR 16–18. *Done when:* on a fixture run every metric matches a hand calculation, a trade inside its 5-session window shows pending, a symbol outside the bar cache is fetched, and the card shows the small-sample banner below 20 closed trades.
 20. **Logging, error handling and shutdown.** Audit report first; JSON log file with rotation and scrubbing, levels per the table, DEBUG and INFO lines in every component, tracing ids; no swallowed exceptions (ruff rules, global hooks, `spawn()`, API `error_id`, frontend error reporting and error boundary); graceful shutdown on Ctrl+C and SIGTERM with unclean-stop detection; log index, logs API and Logs screen with error reviews (`log_reviews`); the two log criteria on Readiness; shutdown banners. After PR 17. *Done when:* the audit's findings are fixed or listed as questions; one cycle can be followed from schedule to order by its id at DEBUG; `make lint` fails on a swallowed exception; Ctrl+C during a cycle, an order submission, a backtest and a backup leaves `PRAGMA integrity_check` ok with no half-written rows; the Logs screen opens on warnings and up, and an unreviewed error in the last 10 sessions keeps Readiness at "not yet".
 21. **Decision v2: code-built options.** Level finder (1h and daily swings, session levels), entry option builder and held stop options, `constraints` in the snapshot, `prompts/decision.v2.md` with its strict schema, option and explanation checks, order-time recheck of the chosen option, `no_options`, storage fields, v2 in strategies, shadows and backtests, `make replay` with its report, v2 decision drawer. Live stays on v1. Needs PR 13 and PR 15; independent of PR 16–20. *Done when:* the builder gives the expected options on fixture bars (including no options, merged stops and targets, and levels in the way), no offered option ever breaks a rule, an option id that wasn't offered becomes skip, the replay report runs on the current run's snapshots, and a v2 shadow runs next to live.
+22. **Insights.** Daily insights snapshot per strategy and period (headline numbers, funnel, findings, slices by 16 dimensions, calibration, execution, overnight, skipped setups), `entry_cycles` strategy override and "Test in a shadow", Insights screen, findings in the weekly review facts. Uses PR 19 for after-exit data and PR 21 for the stop and target basis when present. *Done when:* on a fixture run every number matches a hand calculation, sample statuses switch at 10 and 30 trades, a planted difference becomes a finding and noise doesn't, and the page shows the before-data state under 10 trades.
+23. **Sign-in and access.** Users, sessions and sign-in attempts tables; `make create-user`; password and authenticator sign-in with recovery codes; session cookie, idle and absolute expiry, CSRF and WebSocket origin checks; rate limits and lockouts; "Confirm it is you" before risky actions; `SA_AUTH` with refusal to start without sign-in off loopback; instance id in client order ids and the "another instance" check in reconciliation; Sign in screen, Settings → Access, Sign out, new notifications. Built and tested locally. *Done when:* every API route and the WebSocket refuse without a session (a test walks the route table), a lockout starts after 5 failures, a risky action without a fresh confirmation is refused, the app refuses `SA_AUTH=off` on 0.0.0.0, and an order with another instance id turns the kill switch on.
+24. **VPS deployment.** Dockerfile and Compose (`app`, `caddy`), security headers, bundled fonts, `/healthz`, graceful stop within the grace period; `deploy/provision.sh` (SSH, ufw, fail2ban, updates with the Sunday window, chrony), `deploy/deploy.sh` (market-hours guard, backup, migrate, health check, rollback), `deploy/restore.sh`; CI image builds; offsite encrypted backups with monthly restore test; heartbeat and uptime check; resume after a clean planned restart; Settings → Server and its notifications; `docs/DEPLOY.md` including moving the local database. After PR 20 (shutdown) and PR 23. *Done when:* a fresh VPS can be provisioned and deployed from `docs/DEPLOY.md` alone, a failed health check rolls back to the previous image, a restore from the offsite copy passes `integrity_check`, and stopping the app outside a session triggers the heartbeat email.
+25. **Error pages and API errors.** One JSON error shape for every `/api` error with stable codes and `error_id` on 500; the frontend's handling per status (sign-in redirect and return, confirm-and-retry once, conflict reload, field messages, retry-after, error toasts); not-found pages for routes and records, a per-screen error boundary, the first-load "isn't answering" page and the offline banner; static 502/504 and 503 pages in `deploy/errors/` with Caddy wiring and the maintenance flag in `deploy.sh` and `restore.sh` (when PR 24 is merged). *Done when:* a test walks every API route's error paths and finds only the JSON shape (no traceback or HTML), each status in the table leads to its documented behaviour, a thrown render error on one screen leaves the others working, and with the app container stopped the browser gets the static 502 page and the API gets JSON.
+26. **Day-trade rule retired.** Remove the same-day exit deferral, the day-trade guard and every read of `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power`; add the same-session re-entry rule; stop writing `day_trades`; update Positions (Today card), the dashboard risk card, the decision drawer gate, Settings notifications, States, Insights and shadows. Do it first in the queue, since live trading currently defers exits for no reason. *Done when:* a model exit on the entry day is carried out, a symbol stopped out today is refused a new entry until the next session (live and shadows), a test fails on any reference to the removed Alpaca fields, and no screen mentions day trades as a limit.
+27. **Protective stops hardened.** Confirm the position and orders at Alpaca before any protective order; a market sale (`stop_breached`) when the stored stop is at or above the market, replacing the one-cent clamp; the orphaned-stop repair (cancel the target, OCO exit order, stop alone as fallback); every sell capped at the confirmed quantity; broker-side `no_shorting` and 1× margin set and checked at startup; the missed daily screen run at startup. *Done when:* tests cover a breached stop (market sale, no stop placed), a stop leg missing while the target holds the shares (OCO placed, gap logged), a sell larger than the confirmed position (capped), a flat position (nothing sent), and a start after 08:10 without today's screen (screen runs, the first cycle waits or uses the previous list with a warning).
 
 ## Reviews
 
@@ -493,7 +527,7 @@ Watch more of the market without taking more risk: risk limits, gates and the 10
 | One share fits in max position | price ≤ max position size × equity at screen time (fixed by the spec) | Excluded |
 | Average dollar volume (close × volume) | ≥ $100M over the last 20 sessions | Excluded |
 
-A symbol that passes every check is eligible. An eligible symbol stays eligible until it fails 3 screens in a row; a new or warming-up symbol becomes eligible on its first pass. The eligible list is fixed for the whole session. If the screen itself fails (data error), the previous list is kept and a banner says so. Held symbols are always handled by cycles, position checks, exits and earnings exits, whatever their screen status; a held symbol removed from the pool leaves it when the position is closed.
+A symbol that passes every check is eligible. An eligible symbol stays eligible until it fails 3 screens in a row; a new or warming-up symbol becomes eligible on its first pass. The eligible list is fixed for the whole session. If the screen itself fails (data error), the previous list is kept and a banner says so. If the app was down at 08:10 on a trading day, it runs the missed screen at startup. When that can't finish before the session's first cycle, that cycle uses the previous list and logs a WARNING; a banner shows the date of the list in use until today's screen is done. Held symbols are always handled by cycles, position checks, exits and earnings exits, whatever their screen status; a held symbol removed from the pool leaves it when the position is closed.
 
 **Rank.** At the screen, each eligible symbol gets a rank: its return over the last 20 completed sessions minus SPY's over the same sessions (ties broken by dollar volume). The rank is shown on the Universe screen and the dashboard and is part of the input snapshot.
 
@@ -505,11 +539,11 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
 
 A shadow strategy decides on exactly the same inputs as live, every cycle, but never trades. It answers questions like "would another prompt, a bigger model, or no model at all have done better?" with evidence from the same market, instead of opinions. Built as PR 13.
 
-**Strategies.** A strategy is a named configuration: kind (`llm` or `rules_only`), prompt version, model, temperature, and overrides of the entry rules and code checks (RSI range, minimum confidence, stop distance range, minimum reward to risk). Risk gates, sizing, the day-trade rule and earnings handling can never be overridden; every strategy runs under the live limits. Live is the strategy defined by the current settings version. `rules_only` enters whenever the rules pass, with the stop at entry − 2 × ATR(1h) and the target at 2R, and exits only through its stop, target or the earnings exit.
+**Strategies.** A strategy is a named configuration: kind (`llm` or `rules_only`), prompt version, model, temperature, and overrides of the entry rules and code checks (RSI range, minimum confidence, stop distance range, minimum reward to risk, and from PR 22 `entry_cycles`: the cycles in which it may enter). Risk gates, sizing, the re-entry rule and earnings handling can never be overridden; every strategy runs under the live limits. Live is the strategy defined by the current settings version. `rules_only` enters whenever the rules pass, with the stop at entry − 2 × ATR(1h) and the target at 2R, and exits only through its stop, target or the earnings exit.
 
 **Running shadows.** At most 3 shadows are active or paused; archiving frees a slot. A paused shadow makes no model calls and no entries but keeps managing its virtual positions (stops, targets, earnings exits). After each live cycle has finished and its orders are sent, every active shadow runs on that cycle's stored input snapshots: the market part is reused as it is, and the position part is rebuilt from the shadow's own virtual portfolio. Calls go to the shadow's held positions first, then to candidates that pass its rules in rank order, up to the same 10-call cap. Shadow work never delays live: if the next live cycle or position check is due, unfinished shadow work for that cycle is skipped and recorded as missed, with the reason (`time` or `cost_cap`). Live's cycle also builds snapshots for symbols held by any active or paused shadow, so a shadow can decide on them; live makes no rules check, model call or decision for a symbol only a shadow holds.
 
-**Virtual trading.** Each shadow has a virtual portfolio that starts with the live run's starting equity when the shadow starts. Shadow orders are timed at the live cycle's scheduled time. Entries use the same limit price and timeout as live and fill when a later 5-min bar trades at or through the limit, at the limit or at a better bar open. The stop is already checked on the fill bar (if its low reaches the stop, the stop counts); the target counts from the next bar. Stops and targets are checked on 5-min bars at every position check and cycle; when both are touched in the same bar, the stop counts; a gap through the stop fills at the open. Market exits (model exit, earnings exit, Stop & flatten) fill at the next 5-min bar's open plus slippage. When live fetched a market price and quote for that symbol and cycle, the shadow uses them under the same rules as live (a price or quote that blocks live blocks the shadow). When live fetched none, the shadow uses the last closed 5-min bar's close as its market price, marked `synthetic`: entry limit = close + 0.05%, stop at least 1.5 × ATR(1h) below it; the bar and ATR are required (`reference_missing` otherwise). Shadows place no real orders and skip the second, order-time fetch; this slightly favours shadows, and the Strategies screen shows how many shadow entries used a synthetic price. Slippage per side, dividends from corporate actions, the day-trade rule and earnings exits apply as for live. While live can't place new entries (paused, kill switch on, unacknowledged reconciliation mismatch), shadows can't either, recorded under the same gate name; they keep managing their virtual positions. Stop & flatten also closes every shadow's virtual positions at the next 5-min bar's open plus slippage. All other gates (risk per trade, open risk, positions, sectors, daily loss, losing streak, drawdown, day trades) are computed on the shadow's own virtual portfolio; the shock brake is market-wide. The shadow code has no broker client at all; a test fails the build if it can reach one.
+**Virtual trading.** Each shadow has a virtual portfolio that starts with the live run's starting equity when the shadow starts. Shadow orders are timed at the live cycle's scheduled time. Entries use the same limit price and timeout as live and fill when a later 5-min bar trades at or through the limit, at the limit or at a better bar open. The stop is already checked on the fill bar (if its low reaches the stop, the stop counts); the target counts from the next bar. Stops and targets are checked on 5-min bars at every position check and cycle; when both are touched in the same bar, the stop counts; a gap through the stop fills at the open. Market exits (model exit, earnings exit, Stop & flatten) fill at the next 5-min bar's open plus slippage. When live fetched a market price and quote for that symbol and cycle, the shadow uses them under the same rules as live (a price or quote that blocks live blocks the shadow). When live fetched none, the shadow uses the last closed 5-min bar's close as its market price, marked `synthetic`: entry limit = close + 0.05%, stop at least 1.5 × ATR(1h) below it; the bar and ATR are required (`reference_missing` otherwise). Shadows place no real orders and skip the second, order-time fetch; this slightly favours shadows, and the Strategies screen shows how many shadow entries used a synthetic price. Slippage per side, dividends from corporate actions, the re-entry rule and earnings exits apply as for live. While live can't place new entries (paused, kill switch on, unacknowledged reconciliation mismatch), shadows can't either, recorded under the same gate name; they keep managing their virtual positions. Stop & flatten also closes every shadow's virtual positions at the next 5-min bar's open plus slippage. All other gates (risk per trade, open risk, positions, sectors, daily loss, losing streak, drawdown, re-entry) are computed on the shadow's own virtual portfolio; the shock brake is market-wide. The shadow code has no broker client at all; a test fails the build if it can reach one.
 
 **Cost.** Shadow model calls have their own monthly cap ($5). When it is reached, LLM shadows pause until the next month (rules-only shadows keep running) and a warning notification is sent. Shadows never use live call budget or rate limits needed by live. Shadows and backtests can use other models than live, so PR 13 makes the `model_prices` block in `config.yaml` (input and output USD per million tokens, keyed by model) the only source of prices and removes the `decision` and `reviews` `*_cost_per_mtok` keys; every cost (decisions, reviews, shadows, backtests) is computed from it. Startup refuses to start if the live, reviews or an active shadow's model has no price; Settings refuses such a model change; New shadow and the backtest strategy picker only offer priced models. Each model call stores its own USD cost when it is made, so a later price change never rewrites past costs.
 
@@ -596,7 +630,7 @@ The LLM inspector shows every model call ever made, not just today's, and can fi
 | Outcome | When | Reasons |
 | --- | --- | --- |
 | Success | A valid response used as the model chose; for reviews, the number check passed | — |
-| Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check, risk gate or deferred exit), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15), `unsupported_claim` (decision.v2: the explanation check failed) |
+| Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check or risk gate), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15), `unsupported_claim` (decision.v2: the explanation check failed) |
 | Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and OpenAI error code stored), `invalid_output` (unparseable, fails the schema or Pydantic, or picks an option that wasn't offered; counts as skip or hold), `refusal` (the structured-output refusal field is set) |
 
 A size reduced by a gate is not a warning; the model's action was kept.
@@ -721,7 +755,7 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
 | --- | --- | --- |
 | DEBUG | The steps and values behind a decision | Bars fetched per symbol and their last time, each rule check with its value, snapshot hash, gate inputs and results, sizing math, model call sent and returned (tokens, latency), API calls with status and duration (no bodies), limiter waits, WebSocket topics sent |
 | INFO | The workflow, one line per milestone | App start and stop with version and config hash, cycle start and end with a summary, position check summary, each decision's final action, order submitted, filled, cancelled or replaced, stop moved, settings saved, keys tested (never the key), jobs run (backup, screen, readiness, reviews, after-exit), reconciliation result, notification sent |
-| WARNING | Something degraded but handled | `price_stale`, `price_suspect`, `spread_unknown`, news truncated or failed, slow or invalid model output, a fetch retried, a cycle over 10 minutes, a limiter wait over 5 s, an exit deferred, an unclean previous shutdown, a missing optional data source |
+| WARNING | Something degraded but handled | `price_stale`, `price_suspect`, `spread_unknown`, news truncated or failed, slow or invalid model output, a fetch retried, a cycle over 10 minutes, a limiter wait over 5 s, an unclean previous shutdown, a missing optional data source |
 | ERROR | An operation failed and its unit of work was given up | An unhandled exception in a cycle step, an order call failing, a model error, a job failing, an email failing, a database error that was rolled back |
 | CRITICAL | Safety at risk or the app can't continue | The kill switch turned on automatically, a position without a broker-side stop, a reconciliation mismatch, the database can't be written, startup refused, shutdown with an order whose result is unknown |
 
@@ -876,6 +910,7 @@ Each one is kept only when it is above the current stop and satisfies the existi
   - first touch and R of the chosen options;
   - the same counts for rules-only on the same snapshots.
   - **Base of the rates:** they are computed over `replayed` rows only, and each says how many rows it is based on.
+  - **Entries per session:** entries and their R are also shown per session, with the number of distinct sessions. Entries on the same day mostly ride the same market move, so 60 entries on one day count as roughly one observation, not 60.
 - **Live entries.** The report lists every snapshot where live v1 entered, with what v2 offered and chose. If such a snapshot wasn't replayable, the report says why, so a missing comparison is visible instead of silent.
 - **Cost.** It counts toward the backtest monthly cap. The tool shows an estimate first and refuses more than $2 without `--yes`. Replays never write to the live tables.
 
@@ -911,9 +946,286 @@ The no_call reason list gains `no_options`.
 
 A v1 decision looks as before. On the dashboard, the latest-decision card shows the chosen option ("D · stop below L8 · target 2R") instead of free prices.
 
+## Insights
+
+An Insights screen in the Learn group shows where the results come from, sliced the way US stocks behave: by time of day in the session, sector, earnings distance, opening gaps and overnight holds. It also shows what the market, the fills and the calendar cost, separately from the model's choices. It never changes anything. A finding is a question to test in a shadow or a backtest, not a rule. Built as PR 22.
+
+**Scope and timing.**
+- **What is computed.** Insights are computed by one function after each session's close (after the readiness snapshot) for each active strategy (live, shadows, rules-only) and for three periods: this run, the last 20 sessions, and all runs.
+- **Storage.** The result is stored as a snapshot; the screen reads the latest one and never recomputes per request.
+- **P&L basis.** All P&L is adjusted (slippage and dividends). 1R is the trade's initial risk.
+
+**Headline numbers.**
+
+| Number | Definition | Why it matters for stocks |
+| --- | --- | --- |
+| Expectancy | Average R per closed trade, with a 90% range (± 1.64 standard errors) | Whether there is an edge at all, and how sure we are |
+| Edge over SPY at the same exposure | Run return − SPY return over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
+| Beta to SPY | Slope and correlation of daily equity returns against SPY's, from 20 sessions | Whether the result is just the market going up |
+| Overnight vs in session | P&L of held positions from the previous close to the open, versus from the open to the close or exit | Stops at Alpaca can't protect against overnight gaps; the edge should come from the session |
+| Gaps through the stop | Count of stop exits that filled more than 0.1R below the stop, and the extra R lost beyond −1R | The real risk per trade is larger than 1R when gaps are frequent |
+| Model cost per trade | Decision model cost ÷ closed trades, and as a share of gross profit | Whether the model pays for itself |
+
+**Findings.**
+- **When a slice is a finding.** It has at least `insights.min_trades` (30) closed trades, and its average R differs from all other trades by at least `insights.finding_sigma` (2) times the noise (the standard error of the difference).
+- **Early signals.** Slices with 10–29 trades and the same size of difference show as early signals.
+- **Ordering.** Findings are listed newest first, with how long each has held.
+- **Testing a finding.** Each one links to its trades and, when the dimension maps to a strategy override, offers "Test in a shadow" with that override filled in. PR 22 adds the override `entry_cycles`, the cycles in which a strategy may enter, so time-of-day findings can be tested.
+- **Wording.** The screen says that checking many slices finds some differences by chance, and that a finding is a question.
+- **Weekly review.** Its facts include new findings and findings that stopped holding.
+
+**Where trades come from.** A funnel for the period:
+- symbol checks;
+- passed the rules pre-filter;
+- model called for a candidate;
+- model proposed an entry;
+- passed code checks;
+- passed risk gates;
+- filled;
+- closed.
+
+Next to each step is what was lost and why: rules, call cap, price checks, model skips, each code check, each risk gate, and unfilled limits. This shows whether the agent trades rarely because of the market, the rules, the model or the risk limits.
+
+**Slices.** One dimension at a time.
+- **Dimensions:**
+  - entry cycle (time of day, New York with Amsterdam alongside);
+  - weekday;
+  - sector;
+  - symbol;
+  - market regime;
+  - days to earnings at entry (4–10, 11–20, 21+);
+  - the day's opening gap (down more than 1%, within 1%, up more than 1%);
+  - entry vs session VWAP;
+  - pullback depth (distance from the 1h EMA 20 in ATR: under 0.5, 0.5–1.5, over 1.5);
+  - strength vs SPY (20-session, terciles);
+  - SPY on the day at entry (down, flat, up, at 0.3%);
+  - volatility (ATR percentile terciles);
+  - confidence (0.1 buckets);
+  - stop and target basis (decision.v2);
+  - sessions held (1, 2–3, 4+);
+  - prompt and model.
+- **Columns:** trades, win rate, average R with its 90% range, total R, model skips with missed and avoided (see Skipped setups), and the sample status.
+- **Sample status:**
+  - finding: 30 or more trades and a large enough difference;
+  - early signal: 10–29, greyed;
+  - hidden: under 10, counted in one line.
+- **Rules shown as rows.** A slice with no entries because of a rule (the 15:46 cycle) shows that rule instead of numbers.
+
+**Calibration.**
+- **Chart.** Per 0.1 confidence bucket, stated confidence against the share of entries that reached the target before the stop, with the same sample statuses.
+- **Gap.** The weighted gap is the same number as the Readiness criterion. Under decision.v1, confidence has no defined meaning, so the chart says it is approximate.
+
+**Execution.**
+- **Fills:** entry fill rate (with the worst cycle); entry and exit slippage in basis points (exits split by stop, target and agent exit).
+- **Gaps:** stops filled through the stop.
+- **Rules and calendar:** agent exits on the entry day with their average R; earnings exits with their average R and the median move in the 5 sessions after (from Tail metrics, when PR 19 is merged).
+- **Dividends** received.
+
+**Overnight and in session.**
+- **Totals.** In-session and overnight P&L.
+- **Nights.** The number of nights positions were held, the share of nights that gapped against the position, and the largest gap in R with its symbol and date.
+
+**Skipped setups.**
+- **How skips are scored.** Every model skip is scored with the rules-only geometry: entry at the decision's limit, stop 2 × ATR below, target 2R, within 5 sessions. "Missed" means the target came first, "avoided" means the stop came first, "neither" means neither was hit.
+- **Baseline.** The average R of taking every skip is shown as the rules-only baseline on the same setups.
+- **Reading it.** More avoided than missed means skipping adds value.
+
+**Shadows and rules-only.** A strategy picker shows the same page for any strategy. Rules-only has no model, so its findings and slices work, but calibration and skips don't apply.
+
+**Storage.**
+- `insights_snapshots`: session date, strategy, period, computed at, JSON with headline numbers, funnel, findings, slices per dimension and calibration.
+- Each position's overnight P&L is computed from daily bars and fills; the after-exit data comes from Tail metrics when present.
+
+**API.** `GET /api/insights?strategy=&period=` returns the latest snapshot as numbers, and `GET /api/insights/trades?strategy=&period=&dimension=&slice=` returns the trades behind a slice.
+
+**GUI.** The page shows, top to bottom:
+- strategy and period toggles, with when the snapshot was computed;
+- the headline tiles, each explaining its definition on hover;
+- Findings;
+- "Where trades come from" next to "Skipped setups";
+- Slices, with a dimension picker;
+- Calibration, Execution, and Overnight and in session.
+
+Before 10 closed trades, the page shows the funnel, skips and execution, and says when slices start to count.
+
+## VPS deployment
+
+Production runs on a rented Linux VPS, so the agent trades and watches positions whether or not Marc's computer is on. Development stays local. The provider isn't chosen yet; this section describes what the server needs, not who supplies it. Built in two PRs:
+- **PR 23 (sign-in and access)** works and is tested locally.
+- **PR 24 (deployment, backups and monitoring)** puts it on the server.
+
+**Server.**
+- **Size.** 2 vCPU, 4 GB RAM (backtests run as a separate process), at least 40 GB disk, in an EU data centre close to Marc. Hourly cycles don't need low latency to New York.
+- **System.** Ubuntu 24.04 LTS on UTC; the app sets `TZ=Europe/Amsterdam` itself.
+- **Domain.** A DNS name pointing at the server, for example `stock.example.nl`.
+
+**How it runs.** Docker Compose with two containers:
+- **`app`:**
+  - The backend serves the built frontend, with one Uvicorn worker, because exactly one engine may run per database.
+  - It runs as a non-root user, with a read-only root filesystem and every writable path on the `/data` volume (database, `secret.key`, logs, log index, backups, bar store, replays).
+  - It listens only on the internal Docker network; its port is never published.
+  - Health check: `GET /healthz`, which returns 200 and the version and nothing else.
+  - `stop_grace_period: 90s`, longer than the 60-second graceful shutdown (see Logging, error handling and shutdown), so `docker stop` never cuts a cycle or an order submission.
+  - Restart policy `unless-stopped`.
+- **`caddy`:**
+  - The only public entry point, on ports 80 and 443. It gets and renews the HTTPS certificate automatically and redirects HTTP to HTTPS.
+  - Security headers: HSTS, a Content-Security-Policy that allows only the app's own origin (fonts are bundled with the frontend, not loaded from Google), `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, and a restrictive Permissions-Policy.
+  - It forwards the real client address; the app trusts `X-Forwarded-For` only from Caddy.
+
+**Server hardening** (scripted in `deploy/provision.sh`, explained in `docs/DEPLOY.md`):
+- SSH with keys only: no passwords, no root login. fail2ban on SSH.
+- Firewall (ufw): only 22, 80 and 443 open.
+- Automatic security updates, with a reboot window on Sunday at 05:00 Amsterdam. That is never during a US session or the 03:00 backup.
+- Time sync (chrony), checked hourly by the app: an offset over 1 second is a warning, because cycles depend on the exact time.
+
+**Sign-in (PR 23).**
+- **The account.** There is one user, created on the server with `make create-user`. There is no sign-up page.
+- **Password.** At least 14 characters, stored as an Argon2id hash.
+- **Second step.** A 6-digit TOTP code from an authenticator app is required. 10 single-use recovery codes are shown once, when created.
+- **When sign-in is required.**
+  - It is required whenever the app listens on anything other than 127.0.0.1: `SA_AUTH=required`.
+  - With `SA_AUTH=off` the app refuses to start on any other address (hard rule 10).
+  - Locally, sign-in can stay off.
+- **Sessions.**
+  - A random token in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie. The server keeps only its hash.
+  - Signed out after `auth.idle_hours` (12) without activity, and after 30 days at most with "Keep me signed in".
+  - Settings → Access lists the sessions and can sign them out one at a time or all at once.
+- **Requests.**
+  - Every API request and the WebSocket need a valid session. Only `/healthz` and the sign-in endpoints are open.
+  - Write requests also need a CSRF header (double-submit token).
+  - The WebSocket checks the `Origin`.
+- **Rate limits.** After 5 failed attempts in 15 minutes, an address waits 15 minutes. After 20 failures in an hour across all addresses, sign-in pauses for an hour and a warning is sent. Error messages never say whether the password or the code was wrong.
+- **Confirming risky actions.** These ask for the password or a code again (valid 5 minutes on that device):
+  - Stop & flatten, and Resume after the kill switch;
+  - Reset paper account, Start new run, Promote strategy;
+  - replacing an API key;
+  - changing the password, the authenticator or recovery codes.
+- **Notifications.** "New sign-in" (info, browser and email on), and "Failed sign-ins" (warning, email on) when a lockout starts.
+
+**Secrets on the server.**
+- API keys are entered in Settings over HTTPS, as locally. `.env` holds no secrets.
+- `secret.key` sits on the data volume with mode 600, owned by the app user.
+- The offsite backup password and storage credentials are stored in the `secrets` table like the API keys (names `backup_password`, `backup_credentials`), never in files or logs.
+
+**Moving from local to the VPS.**
+- **Steps.**
+  1. Stop the local app cleanly with Ctrl+C. It must not run again against the paper account.
+  2. Copy the database and `secret.key` to the server with `scp`.
+  3. Start the app on the server.
+- **What carries over.** Settings, keys, runs and history move with the database, so the paper run continues.
+- **Two copies on one account.** To catch two copies trading the same account:
+  - every client order id carries the instance id (`SA_INSTANCE_ID`, for example `sa-local` and `sa-vps-1`);
+  - reconciliation treats an open order or fill with another instance id as a critical mismatch: kill switch on, banner "Another instance is trading this Alpaca account" and a notification.
+
+**Restarts.**
+- **Default.** The agent starts paused (see Paused at startup).
+- **Exception on the VPS** (`ops.resume_after_clean_restart`, on by default when `SA_AUTH=required`). After a planned restart the agent resumes by itself when all of these hold:
+  - it was running before;
+  - the previous shutdown was clean (no `run.lock` left);
+  - the kill switch is off;
+  - reconciliation finds no differences.
+
+  Planned restarts include a deploy and the Sunday reboot. The agent then says so in a banner and a notification.
+- **Otherwise it stays paused** with a warning banner, and Marc presses Resume.
+
+**Deploying (PR 24).**
+- **Builds.** CI builds a versioned image for every tag (`v0.4.2`) and pushes it to a private registry.
+- **Deploy.** `deploy/deploy.sh v0.4.2` on the server:
+  - refuses between 09:30 and 16:00 New York unless `--emergency` is given (hard rule 14);
+  - makes a backup;
+  - pulls the image;
+  - runs the migrations in a one-off container;
+  - restarts `app` and waits for the health check and a clean startup reconciliation.
+- **Rollback.** If either fails within 2 minutes, the script restores the pre-deploy backup when a migration ran, starts the previous image, and reports what happened. Positions are safe meanwhile because their stops are at Alpaca.
+- **Record.** Settings → Server shows the running version and when it was deployed.
+
+**Backups (PR 24).**
+- **Local.** The existing 03:00 local backup stays.
+- **Offsite.** The backup is then encrypted (restic) and uploaded to S3-compatible storage at another provider. 30 daily and 12 weekly copies are kept. It includes `secret.key`, protected by the backup password, so a restore works on a new server.
+- **Restore test.** Monthly, the latest offsite copy is restored to a temporary folder and checked with `PRAGMA integrity_check`.
+- **Failures.** A failed backup or restore test is a warning notification.
+- **Manual.** "Back up now" and "Download latest backup" are in Settings → Server. Restoring is done on the server with `deploy/restore.sh` and is described in `docs/DEPLOY.md`.
+
+**Monitoring (PR 24).**
+- **Heartbeat.** After every cycle and position check the app pings `ops.heartbeat_url`, an outside dead-man's-switch service. If the pings stop, that service emails Marc. It is the only alert that still works when the server itself is down.
+- **Uptime.** An outside uptime check watches `/healthz`.
+- **Settings → Server** shows:
+  - version, address and certificate expiry;
+  - running since and how it started;
+  - clock offset;
+  - disk use (warning at 80%, critical at 90%);
+  - OS updates and the next reboot window;
+  - local backup, offsite backup and restore test;
+  - heartbeat;
+  - the instance id.
+- **Notifications:** a backup or restore test failed; disk at 80% (warning) or 90% (critical); the certificate expires within 14 days; the clock is off by more than 1 second; restarted and resumed (info); restarted paused (warning).
+
+**Readiness.** The manual item "Hosting with login (VPS)" is ticked once:
+- the app has run on the VPS for 10 sessions;
+- an offsite restore test has passed;
+- the heartbeat has been checked by stopping the app once outside a session.
+
+**Phone.** The layout already works at phone width. Installing it as an app on the home screen (PWA) is left for later.
+
+## Error pages and API errors
+
+Every failure the browser can see has a defined page or message, and none of them shows a stack trace, a key or trading data to someone who isn't signed in. Built as PR 25.
+
+**API error format.** Every error response from `/api` is JSON in one shape: `{"error": {"code": "<stable code>", "message": "<one sentence for people>", "error_id": "e-…"}}`.
+- **`error_id`.** Present on 500 responses and matches the log line (see Logging, error handling and shutdown).
+- **Never in the body:** tracebacks, SQL, file paths or values of secrets.
+- **Shape.** Validation errors (422) add `fields`: a list of the field name and its message.
+- **Status codes and what the frontend does:**
+
+| Status | Code examples | What the frontend does |
+| --- | --- | --- |
+| 400 | `bad_request` | Message in the card or dialog that sent it |
+| 401 | `not_signed_in`, `session_expired` | Goes to sign-in and comes back to the same page afterwards |
+| 403 | `confirm_required` | Opens "Confirm it is you", then repeats the request once |
+| 403 | `forbidden` | Message; never retried |
+| 404 | `not_found` | The record's not-found page (below) |
+| 409 | `conflict`, `settings_changed` | Says what changed and offers to reload; never overwrites |
+| 422 | `invalid` | Messages next to the fields |
+| 429 | `rate_limited`, `locked_out` | Says when to try again (from `Retry-After`) |
+| 500 | `internal` | Toast or card with the error id and "Open in Logs" |
+| 503 | `shutting_down`, `starting_up` | The backend banner; retried every 15 s |
+
+**In the app** (frontend, inside the normal sidebar and header):
+- **Not found, a page.**
+  - **When.** Unknown routes: the backend answers every non-`/api` path with the frontend, so the router decides.
+  - **Content.** "There is no page here" and Go to Dashboard.
+- **Not found, a record.** A decision, order, model call, run, strategy, replay or backtest id that doesn't exist. The page:
+  - names it ("Decision 98213 doesn't exist");
+  - explains the likely reason;
+  - offers Go to Dashboard, plus a search fitting the record (for example "Search the LLM inspector").
+- **Something went wrong.**
+  - **Scope.** Each screen has its own error boundary, so one broken screen doesn't take down the sidebar or other screens.
+  - **Content.** It shows the `error_id` from `POST /api/logs/client` (PR 20), "Reload page", "Copy error id" and "Open in Logs". It says the agent itself is not affected.
+- **The app isn't answering.** Shown when the first load of a screen can't reach the API.
+  - **What it says.** Open positions keep their stops at Alpaca. It retries every 15 seconds, with "Try now".
+  - **After a successful load,** the existing backend banner is used instead (see Interaction and states).
+- **Offline.** When the browser reports no network, a banner says so and requests pause until it's back.
+
+**Served by Caddy** (static HTML in `deploy/errors/`, used from PR 24's Compose setup):
+- **Rules for these pages.**
+  - They are plain HTML with inline CSS and an inline SVG icon. They use system fonts, so they work when nothing else does.
+  - They load nothing from the app and don't need JavaScript. A small script only adds the automatic reload.
+  - They show no data, no version, no host details and no server commands, because anyone can see them without signing in.
+  - Each says that open positions keep their stops at Alpaca.
+- **502 or 504, app down.** "Stock Trading Agent isn't responding". It reloads every 30 seconds, and says the outside heartbeat emails Marc if it lasts.
+- **503, updating.**
+  - **When.** `deploy.sh` sets a maintenance flag file before it stops the app and removes it after the health check. While the flag exists, Caddy answers 503 with `Retry-After: 15`.
+  - **Content.** "Updating", saying it takes about a minute and that the previous version comes back if the new one doesn't start.
+  - **Scope.** The flag also covers `restore.sh`.
+- **API requests during an outage.** These get the same JSON error shape from Caddy (`app_unavailable` or `updating`), so the frontend's banner logic doesn't need a special case.
+
+**Not covered.** Caddy's own failure or the server being off can't be shown by the server. The outside uptime check and heartbeat cover those (see VPS deployment → Monitoring).
+
+**GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written.
+
 ## Out of scope and later versions
 
-Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login.
+Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login (VPS deployment is specified for PR 23 and 24).
 
 Likely v0.2+, in rough order:
 
@@ -921,11 +1233,12 @@ Likely v0.2+, in rough order:
 - Shadow strategies: specified for PR 13 (see Strategies and shadows).
 - Backtesting: specified for PR 14 (see Backtesting).
 - Larger universe with a liquidity screen: specified for PR 11 and 12 (see Larger universe).
-- VPS deployment with HTTPS and login.
+- VPS deployment with HTTPS and login: specified for PR 23 and 24 (see VPS deployment). Later: install as a phone app (PWA) with push notifications.
 - Live-readiness checklist (including Alpaca's real-time SIP data, so entries use the consolidated market quote instead of the IEX last trade), and a separate spec for live trading (including Dutch tax treatment, which needs checking with an advisor before going live).
 
 ## Sources
 
 - [Alpaca Market Data API: plans and feeds](https://docs.alpaca.markets/docs/about-market-data-api)
-- [Alpaca: paper-only accounts and PDT checks](https://alpaca.markets/deprecated/docs/trading-on-alpaca)
+- [FINRA Regulatory Notice 26-10: intraday margin standards replace the day trading requirements](https://www.finra.org/rules-guidance/notices/26-10)
+- [Alpaca: FINRA retires the PDT rule](https://alpaca.markets/blog/finra-retires-the-pdt-rule-introducing-alpacas-new-intraday-margin-framework/)
 - [Alpaca paper trading: what it does not simulate](https://blog.traderspost.io/article/alpaca-paper-trading)

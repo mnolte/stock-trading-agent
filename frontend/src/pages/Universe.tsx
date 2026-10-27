@@ -144,6 +144,7 @@ export default function Universe() {
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('All');
   const [find, setFind] = useState('');
+  const [showAllRows, setShowAllRows] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [newSector, setNewSector] = useState('');
   const [importOpen, setImportOpen] = useState(false);
@@ -170,10 +171,80 @@ export default function Universe() {
     return q ? all.filter((r) => r.symbol.includes(q)) : all;
   }, [data, tab, find]);
 
+  // The "All" pool view collapses its middle (design/screens/Universe.dc.html):
+  // first rows, a "n more eligible symbols" expander, then the tail with the
+  // warming-up and excluded rows. Filtering or searching shows everything.
+  const filtered = tab !== 'All' || find.trim() !== '';
+  const HEAD = 8;
+  const TAIL = 4;
+  const collapsible = !filtered && !showAllRows && rows.length > HEAD + TAIL + 2;
+  const headRows = collapsible ? rows.slice(0, HEAD) : rows;
+  const hiddenRows = collapsible ? rows.slice(HEAD, -TAIL) : [];
+  const tailRows = collapsible ? rows.slice(-TAIL) : [];
+  const renderRow = (r: UniverseRow) => {
+    const vs = vsSpy(r.return_vs_spy);
+    return (
+      <tr key={r.symbol}>
+        <td style={tdMono('var(--sa-text-muted)')}>{r.rank ?? '—'}</td>
+        <td style={{ ...td(), fontWeight: 600 }}>{r.symbol}</td>
+        <td style={{ ...td(), color: 'var(--sa-text-2)' }}>{r.sector || '—'}</td>
+        <td style={tdMono()}>{usd(r.last_close, 2)}</td>
+        <td style={tdMono()}>{dollarVolumeM(r.avg_dollar_volume)}</td>
+        <td
+          style={{
+            ...tdMono(),
+            color:
+              vs.up === null
+                ? 'var(--sa-text-muted)'
+                : vs.up
+                  ? 'var(--sa-positive)'
+                  : 'var(--sa-negative)',
+          }}
+        >
+          {vs.text}
+        </td>
+        <td style={td()}>
+          <StatusChip row={r} />
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
+            {r.detail}
+            {r.held && r.qty > 0 ? `${r.detail ? ' · ' : ''}${r.qty} sh` : ''}
+          </div>
+        </td>
+        <td style={{ ...td(), textAlign: 'right' }}>
+          {r.in_pool && r.symbol !== 'SPY' && (
+            <button
+              type="button"
+              aria-label={`Remove ${r.symbol} from the pool`}
+              title="Remove from the pool"
+              disabled={busy}
+              onClick={() => removeSymbol(r.symbol)}
+              style={{
+                width: 44,
+                height: 44,
+                border: 0,
+                borderRadius: 'var(--sa-radius-sm)',
+                background: 'transparent',
+                color: 'var(--sa-text-muted)',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+              </svg>
+            </button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   if (!data) {
     return (
       <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto' }}>
-        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>Universe</h2>
         {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
       </div>
     );
@@ -244,13 +315,10 @@ export default function Universe() {
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>Universe</h2>
-        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {screened && data.pool && counts
-            ? `Pool of ${data.pool.size} · ${counts.eligible} eligible for the next session`
-            : `Fixed list · ${data.fixed_symbols.length} symbols`}
-        </div>
+      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+        {screened && data.pool && counts
+          ? `Pool of ${data.pool.size} · ${counts.eligible} eligible for the next session`
+          : `Fixed list · ${data.fixed_symbols.length} symbols`}
       </div>
 
       {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
@@ -577,66 +645,31 @@ export default function Universe() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => {
-                    const vs = vsSpy(r.return_vs_spy);
-                    return (
-                      <tr key={r.symbol}>
-                        <td style={tdMono('var(--sa-text-muted)')}>{r.rank ?? '—'}</td>
-                        <td style={{ ...td(), fontWeight: 600 }}>{r.symbol}</td>
-                        <td style={{ ...td(), color: 'var(--sa-text-2)' }}>{r.sector || '—'}</td>
-                        <td style={tdMono()}>{usd(r.last_close, 2)}</td>
-                        <td style={tdMono()}>{dollarVolumeM(r.avg_dollar_volume)}</td>
-                        <td
+                  {headRows.map(renderRow)}
+                  {hiddenRows.length > 0 && (
+                    <tr>
+                      <td colSpan={8} style={{ padding: 0, borderBottom: '1px solid var(--sa-border)' }}>
+                        <button
+                          type="button"
+                          className="sa-row"
+                          onClick={() => setShowAllRows(true)}
                           style={{
-                            ...tdMono(),
-                            color:
-                              vs.up === null
-                                ? 'var(--sa-text-muted)'
-                                : vs.up
-                                  ? 'var(--sa-positive)'
-                                  : 'var(--sa-negative)',
+                            width: '100%',
+                            padding: '10px',
+                            border: 0,
+                            background: 'transparent',
+                            color: 'var(--sa-text-muted)',
+                            fontSize: 'var(--sa-text-md)',
+                            textAlign: 'center',
+                            cursor: 'pointer',
                           }}
                         >
-                          {vs.text}
-                        </td>
-                        <td style={td()}>
-                          <StatusChip row={r} />
-                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
-                            {r.detail}
-                            {r.held && r.qty > 0 ? `${r.detail ? ' · ' : ''}${r.qty} sh` : ''}
-                          </div>
-                        </td>
-                        <td style={{ ...td(), textAlign: 'right' }}>
-                          {r.in_pool && r.symbol !== 'SPY' && (
-                            <button
-                              type="button"
-                              aria-label={`Remove ${r.symbol} from the pool`}
-                              title="Remove from the pool"
-                              disabled={busy}
-                              onClick={() => removeSymbol(r.symbol)}
-                              style={{
-                                width: 32,
-                                height: 32,
-                                border: 0,
-                                borderRadius: 'var(--sa-radius-sm)',
-                                background: 'transparent',
-                                color: 'var(--sa-text-muted)',
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                              }}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <line x1="6" y1="6" x2="18" y2="18" />
-                                <line x1="18" y1="6" x2="6" y2="18" />
-                              </svg>
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          {hiddenRows.length} more eligible symbols — show all
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {tailRows.map(renderRow)}
                   {rows.length === 0 && (
                     <tr>
                       <td colSpan={8} style={{ padding: '12px 10px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>

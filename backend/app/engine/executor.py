@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
+from app.broker.client_id import client_order_id, order_kind
 from app.broker.models import (
     OPEN_ORDER_STATUSES,
     BrokerAccount,
@@ -36,7 +37,6 @@ from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import (
     Approval,
-    DayTrade,
     Decision,
     Event,
     Fill,
@@ -50,7 +50,6 @@ from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
-from app.risk.earnings import exit_blocked_same_day
 from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates, resolve_sectors
 from app.risk.math import (
     WorkingEntry,
@@ -409,7 +408,6 @@ class Executor:
         errors: list[str] = []
         rejected: list[str] = []
         blocked: list[str] = []
-        day_trade_warnings: list[str] = []
         # Confirm the cancels landed before selling: a stop leg still live
         # at the broker could fill after the market sell and leave an
         # unintended short. A symbol with unconfirmed orders is not sold.
@@ -455,7 +453,7 @@ class Executor:
                     symbol=pos.symbol,
                     qty=pos.qty,
                     market_on_open=not regular_hours,
-                    client_order_id=self._client_id("flat", 0, pos.symbol),
+                    client_order_id=self._client_id("exit", 0, pos.symbol),
                 )
                 if result.error is not None or result.data is None:
                     errors.append(f"{pos.symbol}: {result.error}")
@@ -484,20 +482,6 @@ class Executor:
                         self._store_broker_order(
                             session, result.data, None, leg="exit"
                         )
-                        # Flatten never refuses on the day-trade rule, but a
-                        # same-day sale still counts toward the PDT limit —
-                        # warn about it in the flatten event.
-                        opened_today = session.execute(
-                            select(Position).where(
-                                Position.symbol == pos.symbol,
-                                Position.closed_at.is_(None),
-                            )
-                        ).scalar_one_or_none()
-                        if (
-                            opened_today is not None
-                            and _ny_date(opened_today.opened_at) == _ny_date(now)
-                        ):
-                            day_trade_warnings.append(pos.symbol)
                         session.commit()
         with self._session_factory() as session:
             record_event(
@@ -510,7 +494,6 @@ class Executor:
                     "sold": sold,
                     "rejected": rejected,
                     "blocked": blocked,
-                    "day_trade_warnings": day_trade_warnings,
                     "market_on_open": not regular_hours,
                     "errors": errors,
                 },
@@ -1044,18 +1027,20 @@ class Executor:
 
     def _client_id(self, kind: str, ref_id: int, symbol: str) -> str:
         self._order_seq += 1
-        return (
-            f"sa-{kind}-{ref_id}-{symbol}-"
-            f"{self._order_nonce}-{self._order_seq}"
+        return client_order_id(
+            self.config.env.sa_instance_id,
+            kind,
+            ref_id,
+            symbol,
+            self._order_nonce,
+            self._order_seq,
         )
 
     @staticmethod
     def _leg_for(order: BrokerOrder, parent: BrokerOrder | None) -> str:
         if order.side == "buy":
             return "entry"
-        if order.client_order_id and order.client_order_id.startswith(
-            ("sa-exit", "sa-flat")
-        ):
+        if order_kind(order.client_order_id) in ("exit", "breach"):
             return "exit"
         if order.order_type in ("stop", "stop_limit"):
             return "stop"
@@ -1151,6 +1136,18 @@ class Executor:
                 row.status = update.order.status
                 if update.order.filled_at is not None:
                     row.filled_at = _naive_utc(update.order.filled_at)
+                if (
+                    update.order.status not in OPEN_ORDER_STATUSES
+                    and row.active_until is None
+                ):
+                    # A terminal update (filled, replaced, ...) ends the
+                    # order's live window — a row left without
+                    # active_until counts as live for every later bar.
+                    row.active_until = _naive_utc(
+                        update.order.updated_at
+                        or update.timestamp
+                        or self.clock.now()
+                    )
                 self._record_fills(session, row, update.order)
                 session.commit()
         self._notify({"positions", "orders", "header"})
@@ -1159,10 +1156,42 @@ class Executor:
     async def reconcile(self) -> ReconcileReport:
         """Compare broker state with the database; Alpaca wins on mismatch."""
         async with self._reconcile_lock:
+            await self._verify_broker_guard()
             report = await self._reconcile()
         self.state.last_reconcile_at = self.clock.now()
         self.state.last_reconcile_ok = report.ok and not report.mismatches
         return report
+
+    async def _verify_broker_guard(self) -> None:
+        """Re-check the account guard when it was unconfirmed, once per
+        reconcile (each position check and cycle). A confirm lifts the
+        flag and acknowledges the warning banner (docs/SPEC.md,
+        Protective stops)."""
+        if self.state.broker_guard_confirmed:
+            return
+        read = await self.broker.get_account_config()
+        cfg = read.data or {}
+        if not (
+            read.error is None
+            and cfg.get("no_shorting") is True
+            and str(cfg.get("max_margin_multiplier")) in ("1", "1.0")
+        ):
+            return
+        self.state.broker_guard_confirmed = True
+        with self._session_factory() as session:
+            stale = session.execute(
+                select(Event).where(
+                    Event.event_type == "broker_guard_unconfirmed",
+                    Event.acknowledged_at.is_(None),
+                )
+            ).scalars().all()
+            for event in stale:
+                event.acknowledged_at = _naive_utc(self.clock.now())
+            session.commit()
+        ev(
+            logger, logging.INFO, "executor.broker_guard_confirmed",
+            "broker-side guard confirmed (no_shorting, 1x margin)",
+        )
 
     async def _reconcile(self) -> ReconcileReport:
         report = ReconcileReport()
@@ -1507,51 +1536,6 @@ class Executor:
             )
         return opened
 
-    def _record_day_trade(
-        self, session: Session, position: Position, closed_at: datetime
-    ) -> None:
-        """A round trip on the same NY session is a day trade (PDT)."""
-        opened_date = _ny_date(position.opened_at)
-        closed_date = _ny_date(closed_at)
-        if opened_date != closed_date:
-            return
-        existing = session.execute(
-            select(DayTrade).where(
-                DayTrade.date == _naive_utc(closed_at),
-                DayTrade.symbol == position.symbol,
-            )
-        ).scalar_one_or_none()
-        if existing is None:
-            session.add(
-                DayTrade(
-                    date=_naive_utc(closed_at),
-                    symbol=position.symbol,
-                    order_ids=[],
-                )
-            )
-            session.flush()
-            # Same window the entry gate uses: the last 5 sessions.
-            days = self.market_data.recent_sessions(closed_date, 5)
-            count = (
-                session.execute(
-                    select(func.count(DayTrade.id)).where(
-                        DayTrade.date >= _naive_utc(days[0].open)
-                    )
-                ).scalar_one()
-                if days
-                else 0
-            )
-            max_dt = int(
-                self.config.get("risk", "pdt_max_day_trades", default=3)
-            )
-            if count >= max_dt:
-                self._notifier.notify(
-                    "pdt_guard",
-                    f"{count} of {max_dt} day trades in the last "
-                    "5 sessions",
-                    link="/positions",
-                )
-
     def _close_position(
         self,
         session: Session,
@@ -1574,7 +1558,11 @@ class Executor:
         qty_closed = position.qty
         exit_price: Decimal | None = None
         if fills:
-            exit_reason = fills[0][1].leg  # newest sell leg wins
+            newest = fills[0][1]
+            if order_kind(newest.client_order_id) == "breach":
+                exit_reason = "stop_breached"
+            else:
+                exit_reason = newest.leg  # newest sell leg wins
             total_qty = sum(f.qty for f, _ in fills)
             if total_qty > 0:
                 exit_price = sum(
@@ -1604,7 +1592,6 @@ class Executor:
         position.exit_reason = exit_reason
         position.closed_at = _naive_utc(self.clock.now())
         # Keep qty at the closed size: Performance shows the shares traded.
-        position.deferred_exit = None
         report.mismatches.append(f"{position.symbol}: closed at broker")
         pnl = (
             f"P&L {raw:+.2f}" if raw is not None else "P&L unknown"
@@ -1614,7 +1601,6 @@ class Executor:
             f"closed {position.symbol}: {exit_reason}, {pnl}",
             link="/positions",
         )
-        self._record_day_trade(session, position, self.clock.now())
 
     async def _adopt_position(
         self,
@@ -1678,7 +1664,7 @@ class Executor:
                 qty=bp.qty,
                 stop_price=stop,
                 client_order_id=self._client_id(
-                    "protect", position.id, bp.symbol
+                    "stop", position.id, bp.symbol
                 ),
             )
             if result.error is not None or result.data is None:
@@ -1722,10 +1708,57 @@ class Executor:
         bp: BrokerPosition | None,
         report: ReconcileReport,
     ) -> Decimal | None:
-        """A known position has no live stop: place one, then alert.
+        """A known position has no live stop: repair per spec and alert.
 
-        Returns the protected qty, or None when the write failed.
+        Confirm first (fresh position and open orders for the symbol),
+        then, in order: nothing when flat or already sold, a market sale
+        when the stored stop is breached, the orphaned-leg OCO repair
+        when a sibling order holds the shares, else a plain gtc stop —
+        every sell capped at the confirmed qty (docs/SPEC.md, Protective
+        stops). Returns the protected/sold qty, or None on a failed
+        write.
         """
+        # Confirm first: the symbol's position and open orders straight
+        # from the broker, never the state this reconcile fetched.
+        pos_r = await self.broker.get_position(position.symbol)
+        orders_r = await self.broker.get_open_orders()
+        if pos_r.error is not None:
+            report.errors.append(
+                f"protective check {position.symbol}: {pos_r.error}"
+            )
+            return None
+        confirmed = pos_r.data
+        if confirmed is None or confirmed.qty <= 0:
+            # Flat at the broker — nothing to protect. The row closes on
+            # the next pass.
+            return Decimal(0)
+        live_sells: list[BrokerOrder] = []
+        for order in orders_r.data or []:
+            for leg in (order, *order.legs):
+                if leg.is_open and leg.side == "sell" and leg.symbol == position.symbol:
+                    live_sells.append(leg)
+        if any(o.order_type in ("stop", "stop_limit") for o in live_sells):
+            return Decimal(0)  # a live stop appeared on the fresh read
+        # Never sell more than is held (and a position already sold in
+        # full is exiting, not uncovered).
+        qty = min(position.qty, confirmed.qty)
+        sold = session.execute(
+            select(func.coalesce(func.sum(Fill.qty), 0))
+            .join(Order, Fill.order_id == Order.id)
+            .where(
+                Order.symbol == position.symbol,
+                Order.side == "sell",
+                Fill.filled_at >= position.opened_at,
+            )
+        ).scalar_one()
+        if int(sold) >= qty:
+            ev(
+                log_reconcile, logging.INFO, "reconcile.protective_skip",
+                f"{position.symbol}: sell fills already cover "
+                f"{qty} — nothing sent",
+                symbol=position.symbol,
+            )
+            return Decimal(0)
         stop = position.current_stop_price
         if stop is None:
             fallback = Decimal(
@@ -1736,21 +1769,166 @@ class Executor:
                 )
             )
             mark = (
-                bp.current_price
-                if bp is not None and bp.current_price is not None
+                confirmed.current_price
+                if confirmed.current_price is not None
                 else position.avg_entry_price
             )
             stop = _cents(mark * (1 - fallback / 100))
             position.current_stop_price = stop
+        current = confirmed.current_price
+        if current is not None and stop >= current:
+            # The stored stop is at or above the market: the level was
+            # already breached, so the repair is the market sale itself
+            # (MOO outside the session) — the only sale a check may make.
+            ny_now = self.clock.now().astimezone(NY_TZ)
+            today = self.calendar.session_for(ny_now.date())
+            moo = today is None or not (today.open <= ny_now <= today.close)
+            session.commit()
+            result = await self.broker.submit_market_sell(
+                symbol=position.symbol,
+                qty=qty,
+                market_on_open=moo,
+                client_order_id=self._client_id(
+                    "breach", position.id, position.symbol
+                ),
+            )
+            if result.error is not None or result.data is None:
+                report.errors.append(
+                    f"stop_breached {position.symbol}: {result.error}"
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="protective_stop_failed",
+                    details={"symbol": position.symbol, "error": result.error},
+                    affects="order",
+                )
+                return None
+            self._store_broker_order(session, result.data, None, leg="exit")
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="protective_stop",
+                details={
+                    "symbol": position.symbol,
+                    "action": "stop_breached",
+                    "qty": qty,
+                    "stop": str(stop),
+                    "market": str(current),
+                },
+                affects="order",
+            )
+            return Decimal(qty)
         if position.initial_stop is None:
             position.initial_stop = stop
+        # Orphaned stop leg while a sibling sell order (the target) holds
+        # the shares: a new stop would be rejected for insufficient qty.
+        # Cancel the sibling, confirm, then an OCO exit — or the stop
+        # alone when the OCO is refused. Protection before the target.
+        holders = [
+            o for o in live_sells if o.order_type not in ("stop", "stop_limit")
+        ]
+        if holders:
+            unprotected_since = self.clock.now()
+            for leg in holders:
+                ok, final, error = await self._ensure_dead(leg.id)
+                if not ok:
+                    report.errors.append(
+                        f"orphan repair {position.symbol}: cancel "
+                        f"{leg.id}: {error or 'still live'}"
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="protective_stop_failed",
+                        details={
+                            "symbol": position.symbol,
+                            "error": f"target cancel: {error or 'still live'}",
+                        },
+                        affects="order",
+                    )
+                    return None
+                row = session.execute(
+                    select(Order).where(Order.alpaca_order_id == leg.id)
+                ).scalar_one_or_none()
+                if row is not None and final is not None:
+                    row.status = final.status
+                    if row.active_until is None:
+                        row.active_until = _naive_utc(
+                            final.updated_at or self.clock.now()
+                        )
+            session.commit()
+            target = position.target_price or stop
+            result = await self.broker.submit_oco_exit(
+                symbol=position.symbol,
+                qty=qty,
+                limit_price=target,
+                stop_price=stop,
+                client_order_id=self._client_id(
+                    "stop", position.id, position.symbol
+                ),
+            )
+            repaired_by = "oco"
+            if result.error is not None or result.data is None:
+                # Protection comes before the target: the stop alone.
+                result = await self.broker.submit_stop_order(
+                    symbol=position.symbol,
+                    qty=qty,
+                    stop_price=stop,
+                    client_order_id=self._client_id(
+                        "stop", position.id, position.symbol
+                    ),
+                )
+                repaired_by = "stop"
+            if result.error is not None or result.data is None:
+                report.errors.append(
+                    f"protective stop {position.symbol}: {result.error}"
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="protective_stop_failed",
+                    details={"symbol": position.symbol, "error": result.error},
+                    affects="order",
+                )
+                return None
+            self._store_broker_order(session, result.data, None, leg="stop")
+            gap = (self.clock.now() - unprotected_since).total_seconds()
+            ev(
+                log_reconcile, logging.CRITICAL,
+                "reconcile.unprotected_gap",
+                f"{position.symbol}: unprotected for {gap:.1f}s while "
+                f"the orphaned leg was repaired ({repaired_by})",
+                symbol=position.symbol,
+                gap_seconds=round(gap, 3),
+            )
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="protective_stop",
+                details={
+                    "symbol": position.symbol,
+                    "qty": qty,
+                    "stop": str(stop),
+                    "repaired_by": repaired_by,
+                    "gap_seconds": round(gap, 3),
+                },
+                affects="order",
+            )
+            report.protective_stops.append(position.symbol)
+            return Decimal(qty)
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
         result = await self.broker.submit_stop_order(
             symbol=position.symbol,
-            qty=position.qty,
+            qty=qty,
             stop_price=stop,
-            client_order_id=self._client_id("protect", position.id, position.symbol),
+            client_order_id=self._client_id("stop", position.id, position.symbol),
         )
         if result.error is not None or result.data is None:
             report.errors.append(
@@ -1777,11 +1955,11 @@ class Executor:
             event_type="protective_stop",
             details={
                 "symbol": position.symbol,
-                "qty": position.qty,
+                "qty": qty,
                 "stop": str(stop),
             },
         )
-        return Decimal(position.qty)
+        return Decimal(qty)
 
     def _atr_1h(self, symbol: str) -> Decimal | None:
         now = self.clock.now()
@@ -1851,16 +2029,16 @@ class Executor:
                 )
             )
         since = self.clock.now().astimezone(NY_TZ).date()
-        # Day trades over the last 5 trading days, inclusive of today.
-        days = self.market_data.recent_sessions(since, 5)
-        if days:
-            day_trades = session.execute(
-                select(func.count(DayTrade.id)).where(
-                    DayTrade.date >= _naive_utc(days[0].open)
-                )
-            ).scalar_one()
-        else:
-            day_trades = 0
+        recent_closed = session.execute(
+            select(Position.closed_at).where(
+                Position.symbol == symbol,
+                Position.closed_at.is_not(None),
+            )
+        ).scalars().all()
+        closed_today = any(
+            closed_at is not None and _ny_date(closed_at) == since
+            for closed_at in recent_closed
+        )
         closed_query = (
             select(Position)
             .where(
@@ -1891,7 +2069,7 @@ class Executor:
             peak_equity=max(self.state.peak_equity, equity),
             open_positions=list(open_positions),
             working_entries=tuple(working),
-            day_trades_5d=int(day_trades),
+            closed_today=bool(closed_today),
             losing_streak=streak,
             shock_brake_1h=self.state.shock_brake_1h,
             shock_brake_session=self.state.shock_brake_session,
@@ -2328,32 +2506,9 @@ class Executor:
     ) -> None:
         """Agent exit: cancel the open legs, confirm, then market sell.
 
-        A position is never closed on the day it opened (PDT): the exit is
-        recorded as deferred and the next session's first cycle re-asks.
+        Same-session exits sell at once — the PDT deferral is retired
+        (docs/SPEC.md, Day trades (rule retired)).
         """
-        now = self.clock.now()
-        if exit_blocked_same_day(position.opened_at, now):
-            position.deferred_exit = {
-                "at": now.isoformat(),
-                "reason": "day_trade_rule",
-                "detail": reason,
-            }
-            decision.final_action = "deferred"
-            record_event(
-                session,
-                self.clock,
-                level="info",
-                event_type="exit_deferred",
-                details={
-                    "symbol": position.symbol,
-                    "position_id": position.id,
-                    "decision_id": decision.id,
-                    "reason": "day_trade_rule",
-                },
-            )
-            session.flush()
-            return
-
         # Cancel every open order for the symbol and confirm each is dead
         # before selling — both sides: a still-working buy parent (a
         # partially filled entry, or an order placed outside the agent)
@@ -2445,6 +2600,7 @@ class Executor:
         # Hard rule 13: the order statuses are durable before the market sell.
         session.commit()
 
+        now = self.clock.now()
         ny_now = now.astimezone(NY_TZ)
         today_session = self.calendar.session_for(ny_now.date())
         regular_hours = (
@@ -2452,9 +2608,30 @@ class Executor:
             and today_session.open <= ny_now <= today_session.close
         )
         self._orders_this_cycle += 1
+        # Never sell more than is held: cap at the qty Alpaca confirms
+        # right before the send. Falling back to the stored qty is only
+        # allowed while the broker guard is confirmed — without it the
+        # exit waits for a confirmed qty (retried at the next check).
+        confirmed = await self.broker.get_position(position.symbol)
+        if confirmed.error is None and confirmed.data is not None:
+            sell_qty = min(position.qty, confirmed.data.qty)
+        elif self.state.broker_guard_confirmed:
+            sell_qty = position.qty
+        else:
+            ev(
+                logger, logging.WARNING, "executor.exit_unconfirmed_qty",
+                f"{position.symbol}: exit held back — position qty "
+                f"could not be confirmed ({confirmed.error}); retrying "
+                "at the next position check",
+                symbol=position.symbol,
+            )
+            session.flush()
+            return
+        if sell_qty <= 0:
+            return
         sold = await self.broker.submit_market_sell(
             symbol=position.symbol,
-            qty=position.qty,
+            qty=sell_qty,
             market_on_open=not regular_hours,
             client_order_id=self._client_id("exit", position.id, position.symbol),
         )
@@ -2477,7 +2654,7 @@ class Executor:
         if reason == "earnings_exit":
             self._notifier.notify(
                 "exit_deferred_or_earnings_exit",
-                f"{position.symbol}: sold ahead of tomorrow's earnings",
+                f"Earnings exit tomorrow: {position.symbol}",
                 link="/positions",
             )
         self._notify({"positions", "orders"})

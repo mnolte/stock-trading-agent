@@ -2,7 +2,7 @@ import type { DashboardFeedItem } from '../types/api';
 
 // Feed presentation helpers (design/screens/Main.dc.html, "Today's
 // decisions"): decisions are grouped per cycle; changes (entries, exits,
-// stop moves, deferred exits, approvals) always show as their own rows —
+// stop moves, approvals) always show as their own rows —
 // everything else collapses into one row per (action, reason).
 
 export interface FeedActionText {
@@ -20,8 +20,6 @@ export function actionText(action: string): FeedActionText {
       return { label: 'EXIT', color: 'var(--sa-negative-text)' };
     case 'tighten_stop':
       return { label: 'TIGHTEN STOP', color: 'var(--sa-info)' };
-    case 'deferred':
-      return { label: 'DEFERRED', color: 'var(--sa-warning-text)' };
     case 'blocked':
       return { label: 'BLOCKED', color: 'var(--sa-negative-text)' };
     case 'skip':
@@ -69,11 +67,10 @@ const ROW_ORDER: Record<string, number> = {
   enter: 0,
   exit: 1,
   tighten_stop: 2,
-  deferred: 3,
-  blocked: 4,
-  hold: 5,
-  skip: 6,
-  no_call: 7,
+  blocked: 3,
+  hold: 4,
+  skip: 5,
+  no_call: 6,
 };
 
 function toRow(

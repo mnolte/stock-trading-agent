@@ -53,7 +53,7 @@ from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
 from app.market.clock import Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
-from app.risk.earnings import earnings_exit_due, exit_blocked_same_day, next_earnings
+from app.risk.earnings import earnings_exit_due, next_earnings
 from app.risk.gates import evaluate_entry_gates, resolve_sectors
 from app.risk.math import trade_risk
 from app.rules.prefilter import STATUS_PASS, RulesResult, evaluate_entry_rules
@@ -163,7 +163,6 @@ def _virtual_position(sp: ShadowPosition) -> Position:
         current_stop_price=sp.stop,
         target_price=sp.target,
         opened_at=sp.opened_at,
-        deferred_exit=sp.deferred_exit,
     )
 
 
@@ -485,7 +484,7 @@ class ShadowRunner:
                 last_cycle=last_cycle,
                 calendar=self.calendar,
                 config=self.config,
-            ) and not exit_blocked_same_day(aware(sp.opened_at or sp.created_at), scheduled):
+            ):
                 sp.exit_pending = "earnings_exit"
                 sp.exit_requested_at = _naive_utc(scheduled)
 
@@ -1102,13 +1101,8 @@ class ShadowRunner:
             else:
                 row.gates_result = {"tighten_noop": True}
         elif row.final_action == "exit":
-            opened = aware(sp.opened_at or sp.created_at)
-            if exit_blocked_same_day(opened, at):
-                sp.deferred_exit = {"at": at.isoformat(), "reason": "day_trade_rule"}
-                row.final_action = "deferred"
-            else:
-                sp.exit_pending = "exit"
-                sp.exit_requested_at = _naive_utc(at)
+            sp.exit_pending = "exit"
+            sp.exit_requested_at = _naive_utc(at)
 
     def _market_quote(
         self, symbol: str, snapshot: dict[str, Any], at: datetime,
