@@ -1402,7 +1402,10 @@ def banners(request: Request) -> dict[str, object]:
                         "id": event.id,
                         "kind": "another_instance",
                         "level": "critical",
-                        "message": str(details.get("message") or "Another instance is trading this Alpaca account"),
+                        "message": str(
+                            details.get("message")
+                            or "Another instance is trading this Alpaca account"
+                        ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
                         "actions": ["acknowledge"],
@@ -2086,6 +2089,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
+        },
+        "auth": {
+            "idle_hours": get("auth", "idle_hours", default=12),
         },
         "notifications": {
             "repeat_limit_minutes": get(

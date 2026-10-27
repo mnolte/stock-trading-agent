@@ -81,6 +81,9 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
     },
+    "auth": {
+        "idle_hours": ("int", 1, 168),
+    },
     "notifications": {
         "repeat_limit_minutes": ("int", 0, 1440),
         "quiet_hours": ("quiet_hours", None, None),
@@ -165,6 +168,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("notifications", "quiet_hours.start"): "Quiet hours from",
     ("notifications", "quiet_hours.end"): "Quiet hours to",
     ("notifications", "events"): "Notification channels",
+    ("auth", "idle_hours"): "Sign out after inactivity",
     ("readiness", "min_closed_trades"): "Readiness closed trades",
     ("readiness", "min_sessions"): "Readiness paper sessions",
     ("readiness", "max_drawdown_pct"): "Readiness max drawdown",

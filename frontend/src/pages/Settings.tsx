@@ -31,6 +31,8 @@ import type {
   UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
+import { AccessSection } from '../components/AccessSection';
+import { useAuthStatus } from '../api/auth';
 import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
 import { displayDateTime, displayDayTime, displayTime } from '../format';
@@ -257,6 +259,7 @@ const SECTION_OF: Record<string, string> = {
   'reviews.briefing_enabled': 'model',
   'reviews.monthly_cost_cap_usd': 'model',
   'readiness.min_closed_trades': 'ready',
+  'auth.idle_hours': 'access',
   'readiness.min_sessions': 'ready',
   'readiness.max_drawdown_pct': 'ready',
   'readiness.min_avg_r': 'ready',
@@ -277,6 +280,7 @@ const SECTIONS = [
   { id: 'notify', label: 'Notifications' },
   { id: 'ready', label: 'Readiness' },
   { id: 'schedule', label: 'Schedule' },
+  { id: 'access', label: 'Access' },
   { id: 'history', label: 'History' },
   { id: 'danger', label: 'Paper account' },
 ] as const;
@@ -1256,6 +1260,7 @@ export default function Settings() {
   const [activeSection, setActiveSection] = useState('keys');
   const [newSymbol, setNewSymbol] = useState('');
   const [newSector, setNewSector] = useState('');
+  const authStatus = useAuthStatus();
   const [resetOpen, setResetOpen] = useState(false);
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
@@ -2545,6 +2550,35 @@ export default function Settings() {
               times are an hour earlier (the EU changes clocks a week before the US). Early-close days
               run only the cycles before 13:00 New York.
             </div>
+          </Section>
+
+          <Section
+            id="access"
+            title="Access"
+            blurb="Who can open this app. Required whenever it is reachable from another computer."
+          >
+            {authStatus && authStatus.required && (
+              <Row
+                id="idle-hours"
+                label="Sign out after inactivity"
+                help="A device that is kept signed in still signs out after 30 days."
+                changed={'auth.idle_hours' in changed}
+                changedFrom={changed['auth.idle_hours'] ? String(changed['auth.idle_hours']) : undefined}
+                defaultText={DEFAULTS['auth.idle_hours']}
+                pendingText={pendingText('auth.idle_hours')}
+                onReset={() => reset('auth', 'idle_hours')}
+              >
+                <NumBox
+                  id="idle-hours-box"
+                  value={s.auth?.idle_hours ?? 12}
+                  unit="hours"
+                  accent={'auth.idle_hours' in changed}
+                  invalid={!!fieldErrors['auth.idle_hours']}
+                  onChange={(v) => patch('auth', 'idle_hours', v)}
+                />
+              </Row>
+            )}
+            {authStatus && <AccessSection auth={authStatus} />}
           </Section>
 
           <Section

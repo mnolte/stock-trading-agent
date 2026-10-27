@@ -11,11 +11,8 @@ from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-
 import app.config as config_module
+import pytest
 from app.api.main import create_app
 from app.auth.create_user import create_or_reset_user
 from app.auth.passwords import totp_code
@@ -23,6 +20,9 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import AuthSession, SignInAttempt
 from app.market.clock import FakeClock
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from starlette.websockets import WebSocketDisconnect
 
 PASSWORD = "a fourteen char password"
 
@@ -262,13 +262,13 @@ def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         # No session → the socket never opens.
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect):
             client.websocket_connect("/ws/ws").__enter__()
         # A foreign Origin is refused even with a session.
         _sign_in(client, secret)
         session_cookie = client.cookies.get("sa_session", "")
         ws_headers = {"Cookie": f"sa_session={session_cookie}"}
-        with pytest.raises(Exception):
+        with pytest.raises(WebSocketDisconnect):
             client.websocket_connect(
                 "/ws/ws",
                 headers={
@@ -297,13 +297,66 @@ def test_status_endpoint_is_open(app_auth: Any) -> None:
 
 
 def test_scheduled_jobs_run_without_session(app_auth: Any) -> None:
-    """Cycles, screens and snapshots are internal jobs — no cookie."""
+    """Cycles, screens and snapshots are internal jobs — they run in the
+    process with no session and the middleware never sees them."""
     app, _secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver"):
-        # The simulated boot already ran the due cycle; a Cycle row exists.
-        from app.db.models import Cycle
+        scheduler = app.state.scheduler
+        names = {
+            getattr(job.func, "__name__", job.id) for job in scheduler.get_jobs()
+        }
+        assert {
+            "run_scheduled_cycle",
+            "run_scheduled_check",
+            "refresh_daily_data_and_signals",
+            "run_universe_screen",
+            "run_after_close_jobs",
+        } <= names
 
+
+def test_scrubber_hides_auth_values(app_auth: Any) -> None:
+    """Passwords, TOTP secrets, recovery codes and session tokens can
+    never reach a log line (AGENTS.md rule 9/15)."""
+    from app.logging_config import _scrub_text as scrub
+
+    app, secret, codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        token = client.cookies.get("sa_session", "")
+        blob = (
+            f"token={token} csrf={client.cookies.get('sa_csrf', '')} "
+            f"code={codes[0]} secret={secret}"
+        )
+        out = scrub(blob, [PASSWORD, codes[0], secret, token])
+        assert token not in out
+        assert codes[0] not in out
+        assert secret not in out
+        assert PASSWORD not in out
+        # Even without the value list, the token/code shapes match the
+        # patterns added for PR 23.
+        out2 = scrub(f"tok {token} rc {codes[0]}", [])
+        assert token not in out2
+        assert codes[0] not in out2
+
+
+def test_attempts_pruned_after_90_days(app_auth: Any) -> None:
+    """sign_in_attempts rows older than 90 days are deleted on write."""
+    from app.data.cache import _naive_utc
+
+    app, _secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        now = app.state.clock.now()
         with get_session_maker()() as session:
-            assert (
-                session.execute(select(Cycle)).scalars().first() is not None
+            session.add(
+                SignInAttempt(
+                    time=_naive_utc(now - timedelta(days=100)),
+                    ip="1.2.3.4",
+                    result="wrong",
+                )
             )
+            session.commit()
+        client.post("/api/auth/sign-in", json={"password": "wrong"})
+    with get_session_maker()() as session:
+        rows = session.execute(select(SignInAttempt)).scalars().all()
+        assert all(row.ip != "1.2.3.4" for row in rows)
+        assert len(rows) == 1

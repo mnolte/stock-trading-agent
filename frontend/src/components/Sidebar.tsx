@@ -218,9 +218,12 @@ function NavLinkItem({
 export function Sidebar({
   overlay = false,
   onNavigate,
+  authRequired = false,
 }: {
   overlay?: boolean;
   onNavigate?: () => void;
+  /** Shows "Sign out" — only meaningful when SA_AUTH=required. */
+  authRequired?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const expanded = overlay ? true : !collapsed;
@@ -296,6 +299,41 @@ export function Sidebar({
       </nav>
 
       <div style={{ flex: 1 }} />
+
+      {authRequired && (
+        <button
+          type="button"
+          aria-label="Sign out"
+          title="Signed in — sign out"
+          onClick={() => {
+            void import('../api/auth').then((m) => m.signOut());
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--sa-space-3)',
+            height: 'var(--sa-control-height)',
+            padding: expanded ? '0 var(--sa-space-4)' : '0 calc(var(--sa-sidebar-collapsed) / 2 - 9px)',
+            borderRadius: 'var(--sa-radius-md)',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--sa-text-2)',
+            cursor: 'pointer',
+            fontSize: 'var(--sa-text-base)',
+            fontWeight: 500,
+            whiteSpace: 'nowrap',
+            justifyContent: expanded ? 'flex-start' : 'center',
+            width: '100%',
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 18px' }}>
+            <path d="M15 4h4v16h-4"></path>
+            <polyline points="10 8 6 12 10 16"></polyline>
+            <line x1="6" y1="12" x2="16" y2="12"></line>
+          </svg>
+          {expanded && <span>Sign out</span>}
+        </button>
+      )}
 
       <div
         style={{
