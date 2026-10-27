@@ -79,14 +79,25 @@ def totp_code(secret_b32: str, at: datetime, step: int = 30) -> str:
 
 def verify_totp(secret_b32: str, code: str, at: datetime, step: int = 30) -> bool:
     """Accept the current step and one step each side (clock drift)."""
+    ok, _ = verify_totp_step(secret_b32, code, at, step)
+    return ok
+
+
+def verify_totp_step(
+    secret_b32: str, code: str, at: datetime, step: int = 30
+) -> tuple[bool, int]:
+    """Like verify_totp but also returns the step that matched — sign-in
+    stores it as ``last_totp_step`` so a code can never be replayed."""
     cleaned = code.replace(" ", "").strip()
     if not cleaned.isdigit() or len(cleaned) != 6:
-        return False
+        return False, -1
     counter = int(at.timestamp()) // step
-    return any(
-        hmac.compare_digest(_totp_counter(secret_b32, counter + drift), cleaned)
-        for drift in (-1, 0, 1)
-    )
+    for drift in (-1, 0, 1):
+        if hmac.compare_digest(
+            _totp_counter(secret_b32, counter + drift), cleaned
+        ):
+            return True, counter + drift
+    return False, counter
 
 
 def new_recovery_codes(count: int) -> list[str]:

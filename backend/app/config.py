@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import Field, field_validator
@@ -42,8 +42,9 @@ class EnvSettings(BaseSettings):
     # every client order id (PR 23); empty until instances exist.
     sa_instance_id: str = Field(default="", alias="SA_INSTANCE_ID")
     # Sign-in (PR 23): "off" (loopback only) or "required". Off on any
-    # other bind address refuses startup (hard rule 10).
-    sa_auth: str = Field(default="off", alias="SA_AUTH")
+    # other bind address refuses startup (hard rule 10). Parsed once,
+    # fail-closed: anything else is refused at settings load.
+    sa_auth: Literal["off", "required"] = Field(default="off", alias="SA_AUTH")
     # The public base URL Caddy serves (VPS); used for cookie/WebSocket
     # origin checks. Locally the bind address is the origin.
     sa_public_url: str = Field(default="", alias="SA_PUBLIC_URL")
@@ -54,6 +55,12 @@ class EnvSettings(BaseSettings):
     @classmethod
     def _resolve_relative_path(cls, value: str) -> str:
         return _resolve_path(value)
+
+    @field_validator("sa_auth", mode="before")
+    @classmethod
+    def _normalise_auth(cls, value: object) -> object:
+        """Whitespace and case are not significant: ' Required ' = required."""
+        return value.strip().lower() if isinstance(value, str) else value
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

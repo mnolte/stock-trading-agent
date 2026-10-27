@@ -15,7 +15,7 @@ export default function Login() {
 
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
+  const [step, setStep] = useState<"password" | "code">("password");
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,11 +75,13 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      const r = await post<{ pending: string }>('/api/auth/sign-in', {
+      await post('/api/auth/sign-in', {
         password,
         remember,
       });
-      setPending(r.pending);
+      // The pending ticket arrives as an HttpOnly cookie (sa_pending) —
+      // bound to this browser, single-use, ten minutes.
+      setStep('code');
     } catch (e) {
       setError(errorMessages(e)[0]);
     } finally {
@@ -91,7 +93,7 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      await post('/api/auth/code', { pending, code });
+      await post('/api/auth/code', { code });
       window.location.assign(next);
     } catch (e) {
       setError(errorMessages(e)[0]);
@@ -157,7 +159,7 @@ export default function Login() {
             You were signed out after a while without activity. The agent kept running.
           </div>
         )}
-        {pending === null ? (
+        {step === "password" ? (
           <>
             <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>Sign in</h1>
             <div>
@@ -243,7 +245,7 @@ export default function Login() {
                 type="button"
                 style={link}
                 onClick={() => {
-                  setPending(null);
+                  setStep('password');
                   setCode('');
                   setError(null);
                 }}

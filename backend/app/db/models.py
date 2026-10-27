@@ -960,6 +960,8 @@ class User(Base):
         JSON, nullable=False, default=list
     )
     password_changed_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Last accepted TOTP step — a code at or below it is a replay.
+    last_totp_step: Mapped[int] = mapped_column(nullable=False, default=-1)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 

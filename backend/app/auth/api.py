@@ -17,6 +17,8 @@ from fastapi import APIRouter, Request, Response
 from app.auth.guard import auth_required, client_ip, host_is_loopback
 from app.auth.service import (
     CSRF_COOKIE,
+    PENDING_COOKIE,
+    PENDING_TTL,
     SESSION_COOKIE,
     AuthError,
     AuthService,
@@ -53,13 +55,15 @@ def _set_session_cookies(request: Request, response: Response, signed: SignedIn)
     """HttpOnly session cookie + readable CSRF cookie.
 
     ``Secure`` everywhere except plain-http loopback (local dev), and
-    ``SameSite=Strict``. The CSRF cookie is readable so the SPA can echo
-    it in the ``X-CSRF-Token`` header (double-submit).
+    ``SameSite=Strict`` — over HTTPS the session cookie is
+    ``__Host-sa_session`` (Secure, Path=/, no Domain). The CSRF cookie is
+    readable so the SPA can echo it in the ``X-CSRF-Token`` header.
     """
-    secure = not host_is_loopback(request.url.hostname or "")
+    secure = _secure_cookies(request)
+    name = session_cookie_name(request)
     days = int(get_config().get("auth", "remember_days", default=30))
     response.set_cookie(
-        SESSION_COOKIE,
+        name,
         signed.session_token,
         max_age=days * 86400 if signed.keep_signed_in else None,
         httponly=True,
@@ -78,37 +82,53 @@ def _set_session_cookies(request: Request, response: Response, signed: SignedIn)
     )
 
 
-def _clear_session_cookies(response: Response) -> None:
+def _set_pending_cookie(request: Request, response: Response, token: str) -> None:
+    """The between-steps ticket is bound to the browser that entered the
+    password — an HttpOnly cookie, matching the session cookie policy."""
+    response.set_cookie(
+        PENDING_COOKIE,
+        token,
+        max_age=int(PENDING_TTL.total_seconds()),
+        httponly=True,
+        secure=_secure_cookies(request),
+        samesite="strict",
+        path="/",
+    )
+
+
+def _clear_session_cookies(request: Request, response: Response) -> None:
+    response.delete_cookie(session_cookie_name(request), path="/")
     response.delete_cookie(SESSION_COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
 
 
+def session_cookie_name(request: Request) -> str:
+    """``__Host-sa_session`` over HTTPS, ``sa_session`` on loopback
+    (docs/SPEC.md, Sign-in). The ``__Host-`` prefix requires Secure,
+    Path=/ and no Domain — all set in ``_set_session_cookies``."""
+    return "__Host-sa_session" if _secure_cookies(request) else SESSION_COOKIE
+
+
+def _secure_cookies(request: Request) -> bool:
+    return not host_is_loopback(request.url.hostname or "")
+
+
 @router.get("/status")
 def auth_status(request: Request) -> dict[str, object]:
-    """Open endpoint: what the login screen and Settings need to know."""
-    config = get_config()
-    required = auth_required(config)
+    """Open endpoint: only what the sign-in gate itself needs to know."""
+    required = auth_required(get_config())
     auth = getattr(request.app.state, "auth", None)
     signed_in = False
-    confirmed = False
     if required and auth is not None:
-        row, reason = auth.authenticate(request.cookies.get(SESSION_COOKIE))
+        row, _ = auth.authenticate(_session_token(request) or None)
         signed_in = row is not None
-        confirmed = signed_in and auth.confirmed(row)
-    return {
-        "required": required,
-        "has_user": auth.has_user() if (required and auth is not None) else False,
-        "signed_in": signed_in,
-        "confirmed": confirmed,
-        "idle_hours": int(config.get("auth", "idle_hours", default=12)),
-        "confirm_minutes": int(config.get("auth", "confirm_minutes", default=5)),
-        "instance_id": config.env.sa_instance_id,
-    }
+    return {"required": required, "signed_in": signed_in}
 
 
 @router.post("/sign-in")
 async def sign_in(request: Request) -> Response:
-    """Step 1: password → pending token for the code step."""
+    """Step 1: password → a pending ticket in an HttpOnly cookie, bound
+    to this browser (docs/SPEC.md, Sign-in: two steps)."""
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
@@ -124,24 +144,27 @@ async def sign_in(request: Request) -> Response:
         )
     except AuthError as exc:
         return error_response(exc)
-    return JSONResponse({"step": "code", "pending": pending})
+    response = JSONResponse({"step": "code"})
+    _set_pending_cookie(request, response, pending)
+    return response
 
 
 @router.post("/code")
 async def sign_in_code(request: Request) -> Response:
-    """Step 2: TOTP or recovery code → session + CSRF cookies."""
+    """Step 2: TOTP or recovery code → session + CSRF cookies. The
+    pending ticket comes from the ``sa_pending`` cookie, not the body."""
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
     body = await request.json()
     ip = client_ip(request, get_config())
+    pending = request.cookies.get(PENDING_COOKIE, "")
     try:
-        signed = auth.finish_sign_in(
-            str(body.get("pending", "")), str(body.get("code", "")), ip
-        )
+        signed = auth.finish_sign_in(pending, str(body.get("code", "")), ip)
     except AuthError as exc:
         return error_response(exc)
     response = JSONResponse({"ok": True})
+    response.delete_cookie(PENDING_COOKIE, path="/")
     _set_session_cookies(request, response, signed)
     logger.info(
         "sign-in ok for %s", mask_log_ip(ip), extra={"event": "auth.sign_in"}
@@ -155,10 +178,18 @@ def mask_log_ip(ip: str) -> str:
     return mask_ip(ip)
 
 
+def _session_token(request: Request) -> str:
+    """The session cookie — ``__Host-sa_session`` over HTTPS, else
+    ``sa_session``; both are accepted on read."""
+    return request.cookies.get(session_cookie_name(request)) or request.cookies.get(
+        SESSION_COOKIE
+    ) or ""
+
+
 def _session_row(request: Request) -> tuple[AuthService, AuthSession]:
     """The caller's session row or an AuthError (used inside endpoints)."""
     auth = _auth(request)
-    row, reason = auth.authenticate(request.cookies.get(SESSION_COOKIE))
+    row, reason = auth.authenticate(_session_token(request) or None)
     if row is None:
         raise AuthError(401, reason, "Sign in first.")
     return auth, row
@@ -186,7 +217,7 @@ async def confirm(request: Request) -> Response:
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
-    token = request.cookies.get(SESSION_COOKIE, "")
+    token = _session_token(request)
     body = await request.json()
     try:
         auth.confirm(token, str(body.get("secret", "")))
@@ -200,18 +231,18 @@ def sign_out(request: Request) -> Response:
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
-    token = request.cookies.get(SESSION_COOKIE)
+    token = _session_token(request)
     if token:
         auth.sign_out(token)
     response = JSONResponse({"ok": True})
-    _clear_session_cookies(response)
+    _clear_session_cookies(request, response)
     return response
 
 
 @router.post("/sign-out-others")
 def sign_out_others(request: Request) -> dict[str, object]:
     auth = _auth(request)
-    count = auth.sign_out_others(request.cookies.get(SESSION_COOKIE, ""))
+    count = auth.sign_out_others(_session_token(request))
     return {"ok": True, "signed_out": count}
 
 
@@ -222,7 +253,7 @@ def sign_out_everywhere(request: Request) -> Response:
     auth = _auth(request)
     count = auth.sign_out_everywhere()
     response = JSONResponse({"ok": True, "signed_out": count})
-    _clear_session_cookies(response)
+    _clear_session_cookies(request, response)
     return response
 
 
@@ -230,7 +261,7 @@ def sign_out_everywhere(request: Request) -> Response:
 def sessions(request: Request) -> dict[str, object]:
     auth = _auth(request)
     return {
-        "devices": auth.list_sessions(request.cookies.get(SESSION_COOKIE)),
+        "devices": auth.list_sessions(_session_token(request) or None),
         "failed": auth.failed_attempts_summary(),
         "recovery_codes_left": auth.codes_left(),
     }
@@ -252,17 +283,14 @@ async def change_password(request: Request) -> Response:
         auth = _auth(request)
         body = await request.json()
         auth.change_password(
+            _session_token(request),
             str(body.get("current_password", "")),
             str(body.get("new_password", "")),
         )
     except AuthError as exc:
-        response = error_response(exc)
-        if exc.status < 500:
-            return response
-        return response
-    response = JSONResponse({"ok": True})
-    _clear_session_cookies(response)
-    return response
+        return error_response(exc)
+    # The other sessions are gone; this device's cookie stays.
+    return JSONResponse({"ok": True})
 
 
 @router.post("/totp")

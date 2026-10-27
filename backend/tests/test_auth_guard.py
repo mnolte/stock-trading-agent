@@ -25,9 +25,18 @@ def test_refuses_auth_off_on_public_bind(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_refuses_unknown_auth_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    config = _config(monkeypatch, SA_AUTH="maybe", SA_HOST="127.0.0.1")
-    with pytest.raises(RuntimeError, match="unknown SA_AUTH"):
-        check_auth_guard(config)
+    # SA_AUTH is parsed once as an enum in EnvSettings — anything else
+    # fails closed at settings load, before any startup work.
+    with pytest.raises(Exception, match="SA_AUTH"):
+        _config(monkeypatch, SA_AUTH="maybe", SA_HOST="127.0.0.1")
+
+
+def test_auth_mode_normalises_case_and_space(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(monkeypatch, SA_AUTH=" Required ", SA_HOST="0.0.0.0")
+    assert config.env.sa_auth == "required"
+    check_auth_guard(config)  # required on any bind is fine
 
 
 def test_auth_off_on_loopback_is_fine(monkeypatch: pytest.MonkeyPatch) -> None:

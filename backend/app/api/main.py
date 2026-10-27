@@ -790,6 +790,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     app.state.auth = auth_service
     register_secret_provider(auth_service.scrub_values)
+    if auth_service.enabled:
+        # Fail closed: no route outside the session guard may exist.
+        from app.auth.guard import check_route_coverage
+
+        check_route_coverage(app)
 
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
@@ -1331,7 +1336,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Stock Trading Agent", version="0.2.0", lifespan=lifespan)
+    # With SA_AUTH=required the only open endpoints are /healthz and the
+    # sign-in calls — the API docs are switched off entirely so no doc
+    # route ships reachable without a session.
+    docs_off = get_config().env.sa_auth == "required"
+    app = FastAPI(
+        title="Stock Trading Agent",
+        version="0.2.0",
+        lifespan=lifespan,
+        openapi_url=None if docs_off else "/openapi.json",
+        docs_url=None if docs_off else "/docs",
+        redoc_url=None if docs_off else "/redoc",
+    )
 
     import secrets as _secrets_mod
 

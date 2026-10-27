@@ -35,12 +35,7 @@ def check_auth_guard(config: AppConfig) -> None:
     touched. With the default local setup (loopback, ``SA_AUTH`` unset)
     nothing changes.
     """
-    mode = config.env.sa_auth.strip().lower()
-    if mode not in (AUTH_OFF, AUTH_REQUIRED):
-        raise RuntimeError(
-            f"Refusing to start: unknown SA_AUTH {config.env.sa_auth!r} "
-            "(expected 'off' or 'required')"
-        )
+    mode = config.env.sa_auth
     host = config.env.sa_host.strip()
     if mode == AUTH_OFF and host not in _LOOPBACK_HOSTS:
         raise RuntimeError(
@@ -82,3 +77,44 @@ def host_is_loopback(host: str) -> bool:
         return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+# The exact set of endpoints open without a session when SA_AUTH=required:
+# /healthz for Caddy and uptime probes, plus the sign-in calls themselves.
+# Everything else — /api/health included — needs a session.
+OPEN_PATHS = frozenset(
+    {
+        "/healthz",
+        "/api/auth/sign-in",
+        "/api/auth/code",
+        "/api/auth/status",
+    }
+)
+
+# Prefixes the session middleware guards.
+_GUARDED_PREFIXES = ("/api", "/ws")
+
+
+def check_route_coverage(app: object) -> None:
+    """Refuse to start when a route exists that no session check covers.
+
+    Runs in the lifespan when ``SA_AUTH=required``: walks the FastAPI
+    route table and fails closed if any route is neither in OPEN_PATHS
+    nor under a guarded prefix — a route added outside /api would
+    otherwise ship reachable without sign-in.
+    """
+    for route in getattr(app, "routes", []):
+        path = getattr(route, "path", "")
+        if not path or path in OPEN_PATHS:
+            continue
+        # Mounts (static files) and docs/redoc never carry API data.
+        if getattr(route, "methods", None) is None and getattr(
+            route, "routes", None
+        ) is not None:
+            continue
+        if not path.startswith(_GUARDED_PREFIXES):
+            raise RuntimeError(
+                f"Refusing to start with SA_AUTH=required: route {path} "
+                "is not behind the session check. Move it under /api, add "
+                "it to the guarded prefixes, or list it in OPEN_PATHS."
+            )

@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,6 +40,7 @@ from app.auth.passwords import (
     otpauth_uri,
     verify_password,
     verify_totp,
+    verify_totp_step,
 )
 from app.config import AppConfig
 from app.data.cache import _naive_utc
@@ -50,11 +52,18 @@ from app.notifications.service import Notifier, NullNotifier
 logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "sa_session"
+# Over HTTPS the session cookie is __Host-sa_session (Secure, Path=/,
+# no Domain); the API picks the name per request.
+SESSION_COOKIE_SECURE = "__Host-sa_session"
 CSRF_COOKIE = "sa_csrf"
 CSRF_HEADER = "x-csrf-token"
+# The between-steps sign-in ticket, bound to the browser by cookie.
+PENDING_COOKIE = "sa_pending"
 
-# How long the between-steps pending token lives.
+# How long the between-steps pending token lives; it dies after this or
+# PENDING_MAX_ATTEMPTS wrong codes, whichever comes first.
 PENDING_TTL = timedelta(minutes=10)
+PENDING_MAX_ATTEMPTS = 3
 # A busy GUI makes many calls a minute; last_seen updates are throttled.
 LAST_SEEN_WRITE_SECONDS = 60
 
@@ -304,6 +313,7 @@ class AuthService:
             "remember": remember,
             "ip": ip,
             "ua": user_agent,
+            "attempts": 0,
         }
         return token
 
@@ -315,7 +325,11 @@ class AuthService:
         key = hash_token(pending_token)
         ticket = self._pending.get(key)
         now = self._now()
-        if ticket is None or ticket["expires"] < now:  # type: ignore[operator]
+        if (
+            ticket is None
+            or ticket["expires"] < now  # type: ignore[operator]
+            or ticket["ip"] != ip  # the ticket is bound to its browser
+        ):
             self._drop_pending(key)
             raise AuthError(401, "invalid_credentials", _WRONG)
         with self._factory() as session:
@@ -324,7 +338,11 @@ class AuthService:
             if user is None:
                 raise AuthError(503, "unavailable", "Sign-in is not set up.")
             secret = self._totp_secret(user)
-            ok = verify_totp(secret, code, now)
+            # A TOTP step can be used once: codes at or below the last
+            # used step are refused (replay protection per spec).
+            ok, matched_step = verify_totp_step(secret, code, now)
+            if ok and matched_step <= (user.last_totp_step or -1):
+                ok = False
             if not ok:
                 # Recovery codes are single-use: remove the hash when spent.
                 hashed = hash_token(normalise_recovery_code(code))
@@ -333,8 +351,17 @@ class AuthService:
                     hashes.remove(hashed)
                     user.recovery_code_hashes = hashes
                     ok = True
+                    matched_step = -1
             if not ok:
+                # A wrong code counts toward the lockout like a wrong
+                # password; the ticket dies after 3 misses.
+                attempts = cast(int, ticket["attempts"]) + 1
+                ticket["attempts"] = attempts
+                if attempts >= PENDING_MAX_ATTEMPTS:
+                    self._drop_pending(key)
                 raise self._failed(session, ip)
+            if matched_step >= 0:
+                user.last_totp_step = matched_step
             self._record_attempt(session, ip, "ok")
             remember = bool(ticket["remember"])
             days = int(self._config.get("auth", "remember_days", default=30))
@@ -494,7 +521,9 @@ class AuthService:
     # ------------------------------------------------------------------
     # changing credentials (each caller gates on a fresh confirm)
 
-    def change_password(self, current: str, new: str) -> None:
+    def change_password(self, token: str, current: str, new: str) -> None:
+        """Change the password; every OTHER session signs out — this
+        device keeps working (spec, Settings → Access)."""
         user_error = AuthError(401, "invalid_credentials", _WRONG)
         minimum = int(self._config.get("auth", "min_password_length", default=14))
         if len(new) < minimum:
@@ -507,8 +536,11 @@ class AuthService:
                 raise user_error
             user.password_hash = hash_password(new)
             user.password_changed_at = _naive_utc(self._now())
-            # Sign-in material changed: every other device signs out.
-            session.execute(delete(AuthSession))
+            session.execute(
+                delete(AuthSession).where(
+                    AuthSession.token_hash != hash_token(token)
+                )
+            )
             session.commit()
 
     def reset_totp(self) -> dict[str, object]:

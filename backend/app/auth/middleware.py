@@ -28,21 +28,16 @@ from urllib.parse import urlparse
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.auth.guard import auth_required
+from app.auth.guard import OPEN_PATHS, auth_required
 from app.auth.service import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from app.config import AppConfig, get_config
 
 logger = logging.getLogger(__name__)
 
-_OPEN_PATHS = frozenset(
-    {
-        "/healthz",
-        "/api/health",
-        "/api/auth/sign-in",
-        "/api/auth/code",
-        "/api/auth/status",
-    }
-)
+# The only open endpoints when SA_AUTH=required; shared with the startup
+# route-table walk so the two can never disagree (review: /api/health is
+# NOT open — Caddy and uptime checks use /healthz).
+_OPEN_PATHS = OPEN_PATHS
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -113,7 +108,8 @@ class AuthMiddleware:
         # app.state is populated by the lifespan; during the brief window
         # before it, treat everything as not signed in.
         cookies = _cookies(scope)
-        token = cookies.get(SESSION_COOKIE)
+        # __Host-sa_session over HTTPS, sa_session on loopback.
+        token = cookies.get("__Host-sa_session") or cookies.get(SESSION_COOKIE)
         row, reason = (
             auth.authenticate(token)
             if auth is not None

@@ -30,6 +30,12 @@ def upgrade() -> None:
         sa.Column("totp_secret_encrypted", sa.Text(), nullable=False),
         sa.Column("recovery_code_hashes", sa.JSON(), nullable=False),
         sa.Column("password_changed_at", sa.DateTime(), nullable=False),
+        sa.Column(
+            "last_totp_step",
+            sa.BigInteger(),
+            nullable=False,
+            server_default="-1",
+        ),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("username", name="uq_users_username"),
     )
