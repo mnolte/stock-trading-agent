@@ -649,9 +649,10 @@ design PNGs (DecisionV2). List remaining design differences.
 
 ```
 PR 22 (Insights). Measures only: nothing on this screen changes trading.
-It doesn't depend on PR 16–21, but uses PR 19 (after-exit data) and PR 21
-(stop and target basis) when they are merged; leave those parts empty
-otherwise. Pull the latest spec and design packages, then read:
+Start after PR 26 (day-trade rule retired) is merged, because the
+execution numbers assume same-day exits are allowed. It uses PR 19
+(after-exit data) and PR 21 (stop and target basis) when they are
+merged; leave those parts empty otherwise and say so in the PR. Pull the latest spec and design packages, then read:
 1. docs/CHANGES.md, entry 2026-10-26 "Insights (PR 22)" (spec) and
    "Insights" (design)
 2. docs/SPEC.md → "Insights" (whole section), Strategies and shadows
@@ -673,8 +674,9 @@ Build PR 22 only, in this order (one commit per step):
      30+ and 2 sigma vs the rest; early signal at 10–29; hidden under
      10 and counted), and rule rows (15:46);
    - calibration per 0.1 bucket (target before stop);
-   - execution (fill rate, slippage in bps, deferred-exit cost, earnings
-     exits, dividends);
+   - execution (fill rate, slippage in bps, agent exits on the entry day
+     with their average R, earnings exits, dividends); exit reasons
+     include stop_breached (PR 27) as its own group;
    - skips scored with the rules-only geometry (missed, avoided, neither,
      baseline R).
    Unit-test every number against hand calculations on a fixture run.
@@ -710,22 +712,32 @@ Tests:
 - The rules-only strategy shows no calibration or skips.
 - No network in tests.
 
+The app is now called Stock Trading Agent in the GUI (see CHANGES
+2026-10-27); use that name on the new screen.
+
 Use the PR template, screenshots in docs/screenshots/pr-22/ next to the
 design PNGs (Insights, Insights-390). List remaining design differences.
+Don't restart the running app between 14:30 and 21:00 Amsterdam this week
+(15:30–22:00 from 2 November); say in the PR when you merged.
 ```
 
-## PR 23 — Sign-in and access
+## PR 23 — Sign-in and access (after PR 28)
 
 ```
 PR 23 (Sign-in and access). Built and tested locally; nothing is deployed
-in this PR. It doesn't depend on PR 16–22. Pull the latest spec and design
-packages, then read:
-1. docs/CHANGES.md, entry 2026-10-26 "VPS deployment (PR 23 and 24)"
-   (spec) and "Sign-in and server" (design)
+in this PR (that is PR 24). Merge after PR 28 (security hardening):
+rebase onto it, and onto PR 22 if that merged first, so there is a single
+Alembic head (point down_revision at the latest merged revision). Pull the
+latest spec and design packages, then read:
+1. docs/CHANGES.md, entries 2026-10-26 "VPS deployment (PR 23 and 24)"
+   and "Error pages and API errors (PR 25)", and 2026-10-27 "Security
+   hardening (PR 28)" (spec), "Sign-in and server"
+   (design), and 2026-10-27 "Name: Stock Trading Agent"
 2. docs/SPEC.md → "VPS deployment": Sign-in, Secrets on the server,
-   Moving from local to the VPS (instance id), Restarts; Data model
-   (users, sessions, sign_in_attempts); Notifications (new rows); API
-   keys; Build plan item 23
+   Moving from local to the VPS (instance id), Restarts; "Error pages
+   and API errors" (the error shape and the 401/403/429 rows only); Data
+   model (users, sessions, sign_in_attempts); Notifications (new rows);
+   API keys; Build plan item 23
 3. AGENTS.md → hard rule 10 (rewritten); backend/config.example.yaml →
    auth; .env.example (SA_AUTH, SA_PUBLIC_URL, SA_TRUSTED_PROXY,
    SA_INSTANCE_ID)
@@ -733,10 +745,21 @@ packages, then read:
    States.dc.html (Access and server; Confirm it is you) and the sidebar
    Sign out, with their screenshots
 
+Before step 1, check what PR 27 already built and say it in the PR:
+app/broker/client_id.py already puts SA_INSTANCE_ID into every client
+order id (sa-<instance>-<kind>-<rest>). Reuse it; don't add a second
+format. Step 5 below is only the parts that don't exist yet.
+
 Build PR 23 only, in this order (one commit per step):
-1. Startup guard: SA_AUTH (off | required). Refuse to start with
-   SA_AUTH=off when SA_HOST isn't 127.0.0.1 or ::1, with a clear
-   message. Trust X-Forwarded-For only from SA_TRUSTED_PROXY.
+1. Startup guard: SA_AUTH (off | required), default off, parsed once in
+   EnvSettings as an enum (strip, lower case) and used everywhere. With
+   required, walk the route table at startup and refuse to start if any
+   route except /healthz and sign-in lacks the session dependency; guard
+   and sessions merge together. Refuse to start
+   with SA_AUTH=off when SA_HOST isn't 127.0.0.1 or ::1, with a clear
+   message. Trust X-Forwarded-For only from SA_TRUSTED_PROXY. With the
+   default local setup (loopback, SA_AUTH unset) the app must start and
+   behave exactly as today.
 2. Tables and CLI: users, sessions, sign_in_attempts (new Alembic
    revision; attempts pruned after 90 days); make create-user creates or
    resets the single account (password at least 14 characters, Argon2id
@@ -754,41 +777,63 @@ Build PR 23 only, in this order (one commit per step):
    token on writes; WebSocket Origin check. "Confirm it is you"
    (password or code, valid auth.confirm_minutes) on: Stop & flatten,
    Resume after the kill switch, Reset paper account, Start new run,
-   Promote strategy, replacing a key, and changing the password,
-   authenticator or recovery codes.
-5. Instance id: SA_INSTANCE_ID in every client order id; reconciliation
-   treats an open order or fill with another instance id as a critical
-   mismatch (kill switch on, banner, notification). Existing orders
-   without an id are left as they are.
+   Promote strategy, replacing a key, changing the password,
+   authenticator or recovery codes, a settings save that loosens a risk
+   limit, and changing the SMTP server, To address or heartbeat URL
+   (tightening never asks). PR 28's request gate stays in front of all
+   of this.
+   Errors use the PR 25 JSON shape already, so PR 25 only generalises it:
+   401 not_signed_in / session_expired, 403 confirm_required / forbidden,
+   429 rate_limited / locked_out with Retry-After. No HTML, no traceback.
+5. Instance id: reconciliation treats an open order or fill whose client
+   id carries another instance id as a critical mismatch (kill switch on,
+   banner, notification). Orders without an sa- id (manual or from before
+   the format) are left as they are, as are this instance's own ids with
+   any kind (entry, stop, target, exit, breach).
 6. Notifications: New sign-in, Failed sign-ins (lockout), Another instance
    (critical).
-7. Frontend: the sign-in screen (three states), a session-expired redirect
-   that returns to the same page, the Confirm-it-is-you dialog wired to
-   those actions, Settings → Access (devices, password change,
-   authenticator and recovery codes, idle setting), and Sign out in the
-   sidebar. With SA_AUTH=off, Access shows "Sign-in off (local only)" and
-   none of the sign-in UI appears.
+7. Frontend: the sign-in screen (three states, "Stock Trading Agent"), a
+   session-expired redirect that returns to the same page, the
+   Confirm-it-is-you dialog wired to those actions (it repeats the
+   request once after confirming), Settings → Access (devices, password
+   change, authenticator and recovery codes, idle setting), and Sign out
+   in the sidebar. With SA_AUTH=off, Access shows "Sign-in off (local
+   only)" and none of the sign-in UI appears.
 
 Tests:
 - The route-table walk: every route except /healthz and sign-in returns
-  401 without a session; the WebSocket closes without a session or with a
-  foreign Origin.
+  401 with the JSON error shape without a session; the WebSocket closes
+  without a session or with a foreign Origin.
 - Wrong password and wrong code give the same message; lockout after 5
-  failures; the global limit.
+  failures; the global limit; Retry-After is set.
 - Idle and absolute expiry with the injected clock.
 - A recovery code works once only.
-- A risky action without a fresh confirmation returns 403; with one it
-  works, and stops working after 5 minutes.
+- A risky action without a fresh confirmation returns 403
+  confirm_required; with one it works, and stops working after 5
+  minutes.
 - CSRF: a write without the token is refused.
-- Startup refusal with SA_AUTH=off on 0.0.0.0.
-- An order with another instance id turns the kill switch on.
+- Loosening a risk limit needs a fresh confirmation; tightening doesn't.
+- " Required " behaves as required; a route without the session
+  dependency stops startup with SA_AUTH=required.
+- Startup refusal with SA_AUTH=off on 0.0.0.0; normal start with
+  SA_AUTH unset on 127.0.0.1.
+- An order with another instance id turns the kill switch on; this
+  instance's breach and exit orders don't; an order without an sa- id
+  doesn't.
+- Scheduled jobs (cycles, daily screen, readiness and insights snapshots)
+  run without any session.
 - Passwords, TOTP secrets, codes and session tokens never appear in logs
-  (the PR 20 scrubber, or a test if PR 20 isn't merged).
+  (add their patterns to the PR 20 scrubber and test it).
 - No network in tests.
 
 Use the PR template, screenshots in docs/screenshots/pr-23/ next to the
 design PNGs (Login, Login-390, Settings, States). List remaining design
 differences.
+
+Merging and restarting: the migration applies on the next start. Restart
+only outside 14:30–21:00 Amsterdam this week (15:30–22:00 from 2
+November). Leave SA_AUTH unset locally after merging; switching it on is
+part of PR 24. Say in the PR when you restarted.
 ```
 
 ## PR 24 — VPS deployment
@@ -1012,4 +1057,160 @@ docs/README.md and follow AGENTS.md. Build only this step. Use the PR
 template, save screenshots for any UI in docs/screenshots/pr-<n>/ (never in
 design/), show them in the PR next to the matching design reference PNG, and
 ask before guessing.
+```
+
+## PR 28 — Security hardening (before PR 23 is merged)
+
+```
+PR 28 (Security hardening). Thanks for the audit: every finding is
+accepted, plus a few additions. Measures and guards only: no trading
+change, no risk-limit change, no migration.
+
+Order of work:
+- Commit the in-progress PR 23 work to its own branch now and leave it
+  unmerged.
+- Build PR 28 from main and merge it first: finding 1 is live today while
+  the app runs on 127.0.0.1.
+- Then rebase PR 23 on it and add the PR 23 items at the end of this
+  prompt.
+If PR 22 is still open, PR 28 doesn't touch its files; merge whichever is
+ready first.
+
+Pull the latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-27 "Security hardening (PR 28)" (spec)
+   and "Security hardening" (design)
+2. docs/SPEC.md → "Security hardening" (whole section); "Error pages and
+   API errors" (the new rows in the table); "VPS deployment" → Sign-in
+   (Fails closed, Confirming risky actions) and How it runs; Build plan
+   item 28
+3. AGENTS.md → hard rule 9 (extended) and new rules 18–20;
+   backend/config.example.yaml → security
+4. design/screens/Settings.dc.html (SMTP note, Access → risky actions)
+
+Build PR 28 only, in this order (one commit per step):
+1. Request gate (audit 1, 8, 9): one middleware for every /api route and
+   the WebSocket upgrade:
+   - Host allowlist (loopback with SA_PORT, the SA_PUBLIC_URL host,
+     security.allowed_hosts, the Vite dev address in make dev only)
+     → 400 bad_host;
+   - on POST/PUT/PATCH/DELETE: a foreign Origin, or Sec-Fetch-Site other
+     than same-origin/none → 403 origin_refused; no headers at all
+     passes;
+   - write bodies must be application/json (415), except the CSV import
+     (multipart);
+   - body cap while streaming (413 too_large): max_body_kb, max_upload_kb
+     for the import;
+   - the app's own headers: CSP, nosniff, X-Frame-Options,
+     Referrer-Policy, COOP, no-store on /api; the CSP is relaxed only
+     under make dev;
+   - bundle IBM Plex in the frontend and remove Google Fonts.
+   All errors use the PR 25 JSON shape. Check the Vite proxy settings so
+   make dev still works.
+2. One bind source (audit 11): python -m app.serve reads SA_HOST/SA_PORT
+   and calls uvicorn.run; remove every --host/--port from the Makefile and
+   scripts; log the bound address at startup; a test greps the repo for
+   --host/--port in run commands.
+3. Scrubber (audit 3): scrub the exception message and the formatted
+   traceback at format time in JsonFormatter and the console formatter
+   (and so the log index); add the URL and header token patterns from the
+   spec. Test with a fake key in an exception's args, in a URL inside an
+   exception message, and in an Authorization header string; check the
+   file, console and index output.
+4. Prompts (audit 4): version regex, resolve-inside check,
+   backend/prompts/manifest.json with the SHA-256 of decision.v1.md and
+   decision.v2.md (and any other prompt file), and load_prompt refuses a
+   mismatch. Settings and strategy validation use the same function and
+   return 422. Apply the same name check to run, replay and backtest
+   folder names. A test fails when a listed prompt's hash changes.
+5. Bounded inputs (audit 5, 12): a shared helper for limit (1–200),
+   window (1–100) and typed ids; 422 on non-numeric values;
+   GET /api/notifications clamped too.
+   - Exports are streamed and capped at security.export_max_rows, with a
+     closing line saying so.
+   - The FTS search is quoted as a phrase; an FTS syntax error gets 422.
+   - strategy:abc gets 422.
+   - Add a test that walks every GET route and sends -1, 0, 10^12 and
+     "abc" to each query parameter: no 500 anywhere.
+6. /api/logs/client (audit 6): rate-limit per client_ip(), a bounded
+   table of senders (security.client_error_senders, oldest dropped),
+   message at most 2 KB and stack at most 8 KB, control characters and
+   CR/LF stripped from single-line fields, source=frontend on the line.
+   Fix the precedence quirk on the tab line.
+7. Stored credentials (audit 7):
+   - SMTP: a request that changes the host, port or username without a
+     password gets 422 password_required, and no connection is made.
+   - SMTP: port must be 465, 587 or 2525; connect timeout 10 s; the 422
+     on a failed test gives a category only, never the server's text.
+   - The frontend makes the password field required once host, port or
+     username changes, as in the design note.
+   - ops.heartbeat_url and the backup endpoint must be https:// and must
+     not resolve to a loopback or private address (validate on save).
+   - Check that replacing Alpaca keys with a different paper account's
+     keys requires Start new run. Add a test; implement it if missing.
+8. Files (audit 10, 12):
+   - os.umask(0o077) first thing at startup;
+   - heal the modes under SA_DATA_DIR (dir 0700, files 0600) with one
+     INFO line;
+   - mode=ro for run databases opened only for reading (_alembic_version
+     and friends);
+   - run.lock created with O_CREAT|O_EXCL, keeping today's stale-lock
+     handling.
+9. Codebase and CI:
+   - ruff S rules on, every ignore with a comment;
+   - pip-audit on uv.lock and pnpm audit --prod in CI on every PR and
+     weekly, failing on high/critical unless in
+     security/audit-allowlist.yml with a reason and expiry;
+   - gitleaks in CI and as a pre-commit hook;
+   - pnpm install --frozen-lockfile;
+   - Actions pinned to commit SHAs with permissions: contents: read by
+     default; Dependabot for github-actions;
+   - make security runs tests/security/ and both audits;
+   - docs/SECURITY.md: one page with the threat model, the layers and
+     what isn't covered.
+
+Tests (tests/security/, all without network):
+- text/plain cross-origin POST to /api/kill-switch → 403 and nothing
+  happens; a bodiless cross-origin POST to /api/pause → 403; the same
+  requests from the app's own origin work.
+- Host: evil.example → 400 (DNS rebinding); the WebSocket with a foreign
+  Origin or Host is refused.
+- An oversized body → 413; a form-encoded write → 415.
+- The response headers are present on HTML and /api responses.
+- The scrubber cases from step 3.
+- ../../README in a prompt version → 422; a tampered prompt file is
+  refused at load.
+- The GET-route parameter walk from step 5.
+- /api/logs/client: rotating tab ids doesn't bypass the limit; the
+  senders table stays at its cap; newlines don't create extra log lines.
+- SMTP with a fake SMTP server: a changed host without a password →
+  422, and the fake server sees no connection; with a password it
+  connects and logs in with that password.
+- Data files are 0600 after startup; two simultaneous RunLock.acquire
+  calls → exactly one wins.
+- The GUI e2e suite still passes (it goes through the gate).
+
+Use the PR template. Screenshots: Settings (SMTP card with the password
+field required after a host change). List remaining design differences.
+Answer audit items you chose not to change as questions in the PR.
+
+Then for PR 23 (on its branch, after rebasing onto PR 28):
+- Parse SA_AUTH once in EnvSettings as an enum (strip, lower case) and
+  use it everywhere; " Required " must behave as required.
+- With SA_AUTH=required, walk the route table at startup and refuse to
+  start if any route except /healthz and sign-in lacks the session
+  dependency. Guard and sessions merge together, never apart.
+- Add "Confirm it is you" to: a settings save that loosens a risk limit
+  (a higher risk per trade, position size or exposure, a higher daily
+  loss limit, a kill-switch threshold raised or turned off), and changing
+  the SMTP server, the To address or the heartbeat URL. Tightening never
+  asks. Test both directions.
+- Once sessions exist, /api/logs/client needs a session like every other
+  route.
+
+Merging and restarting: PR 28 has no migration but needs a restart to
+take effect. Restart only outside 14:30–21:00 Amsterdam this week
+(15:30–22:00 from 2 November). Afterwards check the GUI loads and a
+harmless write works from it (Pause and Resume while the market is
+closed). Never test with Stop & flatten. Say in the PR when you
+restarted.
 ```

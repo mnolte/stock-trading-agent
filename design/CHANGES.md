@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-27 — Security hardening
+
+- `Settings.dc.html`, Notifications → Email (SMTP): the note says the stored password is only sent to the server it was saved for, and that changing the host, port or username asks for the password again (the field is then required).
+- `Settings.dc.html`, Access → "Confirm before risky actions": adds loosening a risk limit and changing the SMTP server, the To address or the heartbeat URL; tightening a limit never asks.
+- No new screens. The request gate's refusals (`bad_host`, `origin_refused`) never show in normal use and use the existing error toast.
+
 ## 2026-10-27 — Name: Stock Trading Agent
 
 - All screens: the sidebar brand, the page titles, Sign in and the Caddy error page say "Stock Trading Agent". The sidebar brand is 15 px and may wrap to two lines; the "SA" mark is unchanged.

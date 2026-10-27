@@ -38,7 +38,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 6. **No network in tests.** Every external service sits behind an interface with a fake. Sockets are blocked in the test setup.
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
 8. **Prompts are immutable once used.** Never edit a prompt file (`decision.v1.md`, `decision.v2.md`, …) after it has made a decision; create the next version. Never move a level or pick another option in code to make a model's choice pass.
-9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys.
+9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys. The log scrubber covers exception messages and tracebacks in every handler, not only log messages.
 10. **Never open without sign-in.** Locally the backend binds to `127.0.0.1` with `SA_AUTH=off`. On any other address `SA_AUTH=required` is mandatory and the app refuses to start otherwise. Every route except `/healthz` and sign-in needs a session; a test walks the route table. Never publish the app port directly; only Caddy is public. One instance per Alpaca account: `SA_INSTANCE_ID` must differ per copy.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
@@ -47,6 +47,9 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 15. **No silent failures.** No bare `except:`, no `except Exception: pass`, no catch that neither logs nor re-raises; use `logger.exception` (or log at WARNING for an expected condition with its reason). Start background tasks only through `spawn()`. Every component logs its steps at DEBUG and milestones at INFO with the cycle or request id in context. Never log keys, prompts or model responses.
 16. **Clean shutdown.** Ctrl+C and SIGTERM must finish or interrupt work cleanly: never cut an order submission between sending and storing the answer, keep each unit of work in one transaction, and close the database and the log last.
 17. **No day-trade logic.** The pattern day trader rule is retired (FINRA, 4 June 2026). Never read `pattern_day_trader`, `daytrade_count` or `daytrading_buying_power`; size against `cash`, never `buying_power`.
+18. **Every request passes the request gate.** Host, Origin and `Sec-Fetch-Site` on writes, JSON-only write bodies and the body size cap apply to every `/api` route and the WebSocket; no route opts out, and sign-in comes on top of it, not instead. Start the server only through `python -m app.serve`; never pass `--host` or `--port` anywhere.
+19. **Request input never becomes a path or an unbounded query.** Whitelist names with a regex and check the resolved path lies inside its base folder; clamp every `limit` and window; cap every export; bad input gets 422, never 500. Strip control characters from client text before logging it.
+20. **Stored credentials go only where they were saved.** When the destination of a stored password or token changes (SMTP host, port or user; backup endpoint), require the credential again in the same request. Outbound URLs a user can set must be `https://` and must not point at a loopback or private address.
 
 ## Conventions
 

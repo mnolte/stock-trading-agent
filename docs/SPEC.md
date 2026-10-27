@@ -489,6 +489,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 26. **Day-trade rule retired.** Remove the same-day exit deferral, the day-trade guard and every read of `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power`; add the same-session re-entry rule; stop writing `day_trades`; update Positions (Today card), the dashboard risk card, the decision drawer gate, Settings notifications, States, Insights and shadows. Do it first in the queue, since live trading currently defers exits for no reason. *Done when:* a model exit on the entry day is carried out, a symbol stopped out today is refused a new entry until the next session (live and shadows), a test fails on any reference to the removed Alpaca fields, and no screen mentions day trades as a limit.
 27. **Protective stops hardened.** Confirm the position and orders at Alpaca before any protective order; a market sale (`stop_breached`) when the stored stop is at or above the market, replacing the one-cent clamp; the orphaned-stop repair (cancel the target, OCO exit order, stop alone as fallback); every sell capped at the confirmed quantity; broker-side `no_shorting` and 1× margin set and checked at startup; the missed daily screen run at startup. *Done when:* tests cover a breached stop (market sale, no stop placed), a stop leg missing while the target holds the shares (OCO placed, gap logged), a sell larger than the confirmed position (capped), a flat position (nothing sent), and a start after 08:10 without today's screen (screen runs, the first cycle waits or uses the previous list with a warning).
 
+28. **Security hardening.** From the 27 October audit: the request gate (Host, Origin and `Sec-Fetch-Site` on writes, JSON-only writes, body size, WebSocket checks) and the app's own security headers, with bundled fonts; one source for the bind address (`python -m app.serve`); exceptions and URL tokens scrubbed in every log handler; prompt names whitelisted, contained and hash-checked against `prompts/manifest.json`; clamped list parameters, capped exports and safe log search; frontend error reports limited per address and sanitised; stored SMTP password never sent to a changed server, outbound URLs https and public; `umask 077`, file modes, read-only run databases and an exclusive `run.lock`; ruff `S` rules, dependency audits, gitleaks, pinned Actions, `make security` and `docs/SECURITY.md`. Before PR 23 is merged; no migration and no trading change. *Done when:* a cross-site `text/plain` POST, a bodiless cross-site POST, a rebinding `Host` and a foreign-origin WebSocket are all refused while the GUI works normally; a fake key inside an exception never reaches any log; `../` in a prompt version gets 422; no GET route returns 500 for bad query values; a changed SMTP host without a password gets 422 and no connection is made with the stored password; files under the data folder are `0600`; and `make security` passes in CI.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1062,8 +1063,8 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
 **How it runs.** Docker Compose with two containers:
 - **`app`:**
   - The backend serves the built frontend, with one Uvicorn worker, because exactly one engine may run per database.
-  - It runs as a non-root user, with a read-only root filesystem and every writable path on the `/data` volume (database, `secret.key`, logs, log index, backups, bar store, replays).
-  - It listens only on the internal Docker network; its port is never published.
+  - It runs as a non-root user with `no-new-privileges` and all capabilities dropped, with a read-only root filesystem and every writable path on the `/data` volume (database, `secret.key`, logs, log index, backups, bar store, replays).
+  - It listens only on the internal Docker network; its port is never published. It starts with `python -m app.serve`, so `SA_HOST` and `SA_PORT` are the only source of the address (see Security hardening).
   - Health check: `GET /healthz`, which returns 200 and the version and nothing else.
   - `stop_grace_period: 90s`, longer than the 60-second graceful shutdown (see Logging, error handling and shutdown), so `docker stop` never cuts a cycle or an order submission.
   - Restart policy `unless-stopped`.
@@ -1099,7 +1100,9 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
   - Stop & flatten, and Resume after the kill switch;
   - Reset paper account, Start new run, Promote strategy;
   - replacing an API key;
-  - changing the password, the authenticator or recovery codes.
+  - changing the password, the authenticator or recovery codes;
+  - a settings save that loosens a risk limit, and changing the SMTP server, "To" address or heartbeat URL (see Security hardening).
+- **Fails closed.** `SA_AUTH` is parsed once as an enum; with `required`, the app refuses to start unless every route but `/healthz` and sign-in carries the session check. The guard and the session layer ship together.
 - **Notifications.** "New sign-in" (info, browser and email on), and "Failed sign-ins" (warning, email on) when a lockout starts.
 
 **Secrets on the server.**
@@ -1183,6 +1186,9 @@ Every failure the browser can see has a defined page or message, and none of the
 | 401 | `not_signed_in`, `session_expired` | Goes to sign-in and comes back to the same page afterwards |
 | 403 | `confirm_required` | Opens "Confirm it is you", then repeats the request once |
 | 403 | `forbidden` | Message; never retried |
+| 400 | `bad_host` | Never seen in normal use; the message names the expected address |
+| 403 | `origin_refused` | Never seen in normal use; message only |
+| 413, 415 | `too_large`, `unsupported_media_type` | Message in the card or dialog that sent it |
 | 404 | `not_found` | The record's not-found page (below) |
 | 409 | `conflict`, `settings_changed` | Says what changed and offers to reload; never overwrites |
 | 422 | `invalid` | Messages next to the fields |
@@ -1222,6 +1228,84 @@ Every failure the browser can see has a defined page or message, and none of the
 **Not covered.** Caddy's own failure or the server being off can't be shown by the server. The outside uptime check and heartbeat cover those (see VPS deployment → Monitoring).
 
 **GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written.
+
+## Security hardening
+
+From Devin's security audit of 27 October 2026. The audit found the code disciplined (encrypted write-only keys, paper-only clients, validated model output, locked dependencies), with one systemic hole: until sign-in exists, any web page Marc visits can send write requests to the app on 127.0.0.1. These rules close that hole for local use now, and stay in force behind sign-in on the VPS. Built as PR 28, before PR 23 is merged.
+
+**Request gate.** One middleware in front of every `/api` route and the WebSocket, with no exceptions (hard rule 18). It runs before sign-in, so it protects the local app with `SA_AUTH=off` and adds a second layer behind sign-in.
+- **Host.** The `Host` header must be `127.0.0.1`, `localhost` or `[::1]` with `SA_PORT`, or the host of `SA_PUBLIC_URL`, or a name in `security.allowed_hosts`; in `make dev` also the Vite dev server's address. Anything else gets 400 `bad_host`. This stops DNS rebinding, where a hostile site points its own name at 127.0.0.1.
+- **Origin on writes.** POST, PUT, PATCH and DELETE are refused with 403 `origin_refused` when:
+  - an `Origin` header is present and isn't the app's own origin (the `Host` origins above, plus the Vite dev origins in `make dev` only);
+  - or `Sec-Fetch-Site` is present and isn't `same-origin` or `none`.
+
+  A request without either header (curl, scripts) passes the gate. Browsers always send `Origin` on cross-site writes, so a web page can't.
+- **Content type.** A write with a body must be `application/json` (415 `unsupported_media_type`). The CSV import is the only multipart endpoint. This blocks the `text/plain` form trick even if a header check were missing.
+- **Size.** Request bodies are capped at `security.max_body_kb` (1 MB), uploads at `security.max_upload_kb` (5 MB): 413 `too_large`, checked while reading, not after.
+- **WebSocket.** The same `Host` and `Origin` checks apply to the upgrade request.
+- **Response headers from the app itself** (Caddy adds HSTS on the VPS):
+  - `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'`, relaxed for the Vite dev server only in `make dev`;
+  - `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, `Cross-Origin-Opener-Policy: same-origin`;
+  - `Cache-Control: no-store` on `/api`.
+- **Fonts.** IBM Plex is bundled with the frontend now (pulled forward from PR 24), so the CSP needs no outside hosts.
+
+**Sign-in fails closed (PR 23).**
+- `SA_AUTH` is read once, as an enum (`off` or `required`, case and spaces ignored), and every check uses that value.
+- With `SA_AUTH=required` the app checks at startup that every route except `/healthz` and sign-in carries the session dependency, the same walk as the test, and refuses to start otherwise.
+- The startup guard and the session layer ship in one PR; neither is merged alone.
+
+**One source for the address.** The app is started through `python -m app.serve`, which reads `SA_HOST` and `SA_PORT` and starts Uvicorn with them. No Makefile target, script or Compose file passes `--host` or `--port`; a test checks the repo for it. The address actually bound is logged at startup.
+
+**Secrets in errors.** The log scrubber (hard rule 9) applies to exceptions as well as messages:
+- the formatted traceback and the exception message are scrubbed at the moment they are written, in every handler (file, console, log index);
+- besides stored keys, it masks `token=`, `apikey=`, `api_key=`, `key=` and `secret=` values in URLs and `Authorization` headers;
+- tested with a fake key inside an exception's arguments and inside a URL in an exception message.
+
+**Paths from requests.** No file path is built from request input without a whitelist check (hard rule 19):
+- prompt versions must match `^[a-z0-9_]+\.v[0-9]+$`, and the resolved path must lie inside `backend/prompts/`;
+- `backend/prompts/manifest.json` holds the SHA-256 of every prompt file. `load_prompt` refuses a file whose hash doesn't match, and a test fails when a listed prompt changes (this enforces hard rule 8). A new prompt version adds its line;
+- the same check applies to run, replay and backtest folder names.
+
+**Bounded inputs.**
+- Every list endpoint clamps `limit` to 1–200 and the log context `window` to 1–100; a value that isn't a number gets 422, never 500.
+- Exports (logs, LLM calls, CSVs) are streamed and capped at `security.export_max_rows` (100,000) with a last line saying the cap was reached.
+- The log search is passed to FTS5 as a quoted phrase; a search the index can't parse gets 422.
+- `strategy:<id>` and other typed ids that don't parse get 422.
+- A test sends `-1`, `0`, a huge number and `abc` to every query parameter of every GET route and expects no 500.
+
+**Frontend error reports** (`POST /api/logs/client`):
+- rate-limited per client address (`client_ip()`), not per tab id; the table of recent senders holds at most 1,000 entries;
+- message capped at 2 KB and stack at 8 KB; control characters and line breaks are removed from single-line fields, and the log line is marked `source=frontend`.
+
+**Stored credentials go only where they were saved** (hard rule 20).
+- **SMTP.** When the host, port or username differs from the saved one, the request must include the password (422 `password_required`); the stored password is never sent to a new server. The port must be 465, 587 or 2525. A failed test returns a category (connection refused, timeout, TLS failed, sign-in refused) and never the server's own text. Connect timeout 10 seconds.
+- **Heartbeat and backup storage.** `ops.heartbeat_url` and the backup endpoint must be `https://` and must not resolve to a loopback or private address.
+- **Alpaca keys.** As already specced: keys for a different paper account require "Start new run". A test covers it.
+
+**More actions need "Confirm it is you"** (PR 23, when `SA_AUTH=required`):
+- a settings save that loosens a risk limit (a higher risk per trade, position size or exposure, a higher daily loss limit, or a kill-switch threshold raised or turned off);
+- changing the SMTP server, the "To" address or the heartbeat URL.
+
+Tightening a limit never asks.
+
+**Files on disk.**
+- The app sets `umask 077` at startup before creating anything.
+- `SA_DATA_DIR` is `0700`; the database, backups, run folders, logs and the log index are `0600`. Wrong modes found at startup are corrected, with one INFO line.
+- Run databases opened only for reading use `mode=ro`.
+- `run.lock` is created with `O_CREAT | O_EXCL`, so two starts can't both win.
+
+**Codebase and CI.**
+- ruff's security rules (`S`, flake8-bandit) are on; every ignore has a comment.
+- Dependency audit: `pip-audit` on `uv.lock` and `pnpm audit --prod` run in CI on every PR and weekly. High or critical fails the build unless listed in `security/audit-allowlist.yml` with a reason and an expiry date.
+- Secret scan: gitleaks in CI on every push and as a pre-commit hook.
+- `pnpm install --frozen-lockfile` in CI.
+- GitHub Actions are pinned to commit SHAs, with `permissions: contents: read` unless a job needs more; Dependabot also updates Actions.
+- `make security` runs the security tests and both audits.
+- `docs/SECURITY.md`: the threat model in one page (single user, paper only, local then VPS), what each layer protects, and what isn't covered.
+
+**Error codes.** New in the API error table (see Error pages and API errors): 400 `bad_host`, 403 `origin_refused`, 413 `too_large`, 415 `unsupported_media_type`, 422 `password_required`.
+
+**Not changed.** Trading behaviour, risk limits and the database schema; PR 28 has no migration.
 
 ## Out of scope and later versions
 
