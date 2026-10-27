@@ -1,6 +1,6 @@
 # Using the spec
 
-`SPEC.md` is the source of truth for what Stock Agent does. These rules say how to use it.
+`SPEC.md` is the source of truth for what Stock Trading Agent does. These rules say how to use it.
 
 ## Rules
 
@@ -40,6 +40,8 @@
 | 23 | Sign-in and access | VPS deployment (Sign-in, Restarts, instance id); Data model; AGENTS.md rule 10 | `Login`, `Settings` (Access), `States` (Access and server, Confirm it is you), sidebar Sign out |
 | 24 | VPS deployment | VPS deployment (How it runs, hardening, deploying, backups, monitoring) | `Settings` (Server), `States` (server banners) |
 | 25 | Error pages and API errors | Error pages and API errors; GUI table | `Errors` |
+| 26 | Day-trade rule retired | Alpaca integration → Day trades (rule retired); Risk; GUI; Notifications | `Positions` (Today card), `Main` (risk card), `Decision` (gate), `Settings` (notifications), `States`, `Insights` |
+| 27 | Protective stops hardened | Alpaca integration → Protective stops; Position checks; Larger universe → Daily screen | none |
 
 ## PR description template
 

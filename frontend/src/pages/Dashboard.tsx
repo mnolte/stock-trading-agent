@@ -581,11 +581,6 @@ function OpenPositionsMini({
                     {p.opened_today && (
                       <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}> · today</span>
                     )}
-                    {p.deferred_exit && (
-                      <span style={{ marginLeft: 'var(--sa-space-2)' }}>
-                        <Chip variant="warning">exit deferred</Chip>
-                      </span>
-                    )}
                   </td>
                   {[
                     String(p.qty),
@@ -976,7 +971,7 @@ export default function Dashboard() {
           }
         >
           <b>
-            Can&rsquo;t reach the Stock Agent backend
+            Can&rsquo;t reach the Stock Trading Agent backend
             {failSince ? ` since ${displayTime(failSince.toISOString())}` : ''}.
           </b>{' '}
           {lastOk
@@ -1190,7 +1185,10 @@ export default function Dashboard() {
         }}
       >
         <BriefingCard res={dashboardRes} />
-        <RiskBudgetCard res={budgetRes} />
+        <RiskBudgetCard
+          res={budgetRes}
+          reentryBlocked={positionsRes.data?.today.reentry_blocked ?? []}
+        />
       </div>
 
       {dashboard?.market_closed && (

@@ -73,12 +73,12 @@ test('risk budget card shows meters, facts and hover rules', async ({
     'Sectors',
     'Risk per trade',
     'Shock brake',
-    'Day trades',
+    'Re-entry',
   ]) {
     await expect(card.getByText(label, { exact: true })).toBeVisible();
   }
   await expect(card.getByText(/more trades?/)).toBeVisible();
-  await expect(card.getByText(/last 5 trading days/)).toBeVisible();
+  await expect(card.getByText('none today')).toBeVisible();
 
   // Every label explains its rule on hover.
   await expect(card.locator('span[title]')).toHaveCount(8);

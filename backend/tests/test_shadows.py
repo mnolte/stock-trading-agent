@@ -670,40 +670,9 @@ async def test_shadow_at_own_drawdown_stops_entering(sf: sessionmaker[Session]) 
     assert row.gates_result is not None and row.gates_result["blocked_by"] == "drawdown_kill"
 
 
-async def test_same_day_exit_is_deferred(sf: sessionmaker[Session]) -> None:
-    sid = _strategy(sf, "A")
-    _pending(
-        sf,
-        sid,
-        status="open",
-        entry=Decimal("100"),
-        opened_at=_naive(datetime(2026, 10, 15, 10, 0, tzinfo=NY_TZ)),
-        bars_through=_naive(CYCLE),
-    )
-    exit_reply = json.dumps(
-        {
-            "symbol": "MSFT",
-            "action": "exit",
-            "confidence": 0.7,
-            "stop_price": None,
-            "target_price": None,
-            "thesis": "t",
-            "invalidation": None,
-            "risks": [],
-            "news_used": [],
-        }
-    )
-    cycle_id = _seed(sf, [("MSFT", "hold", None, _snap("MSFT", context="held"))])
-    runner = _runner(
-        sf,
-        FakeClock(CYCLE + timedelta(minutes=1)),
-        clients={"A": FakeDecisionClient(responses={("MSFT", "held"): exit_reply})},
-    )
-    await runner.after_cycle(cycle_id)
-    assert _rows(sf, sid)["MSFT"].final_action == "deferred"
-    (sp,) = _positions(sf, sid)
-    assert sp.status == "open" and sp.deferred_exit is not None
-
+async def test_same_day_exit_fills_at_once(sf: sessionmaker[Session]) -> None:
+    """Shadow exits on the entry day fill like any other — the PDT
+    deferral is retired (docs/SPEC.md, Day trades)."""
 
 async def test_stop_and_flatten_closes_shadow_positions_at_next_open(
     sf: sessionmaker[Session],

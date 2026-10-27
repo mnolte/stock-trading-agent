@@ -3,7 +3,7 @@
 ## First message (PR 1)
 
 ```
-We're building Stock Agent, a paper-only trading agent for US stocks on Alpaca,
+We're building Stock Trading Agent, a paper-only trading agent for US stocks on Alpaca,
 from scratch in the empty repo stock-agent.
 
 Read these first, in this order:
@@ -941,6 +941,67 @@ Tests:
 
 Use the PR template, screenshots in docs/screenshots/pr-25/ next to the
 design PNGs (Errors, Errors-390). List remaining design differences.
+```
+
+## PR 26 — Day-trade rule retired (do first)
+
+```
+PR 26 (Day-trade rule retired). Do this first in the queue: live trading
+currently defers exits for a rule that no longer exists. FINRA replaced the
+pattern day trader rule on 4 June 2026 (Regulatory Notice 26-10); Alpaca
+applied it from that date and removed pattern_day_trader, daytrade_count
+and daytrading_buying_power from its API by 6 July 2026. Pull the latest
+spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-27 "Day-trade rule retired (PR 26)"
+   (spec) and "Day-trade rule retired" (design)
+2. docs/SPEC.md → Alpaca integration → "Day trades (rule retired)"; Risk
+   table (Re-entry); Kill switch; GUI table (Positions); Risk budget card;
+   Notifications; Strategies and shadows; Build plan item 26
+3. AGENTS.md hard rule 17; backend/config.example.yaml →
+   risk.reentry_same_session, notifications
+4. design/screens/Positions, Main, Decision, Settings, States and Insights
+   with their screenshots
+
+Before you start: tell me what the code does today with the old fields
+(does anything read daytrade_count or pattern_day_trader, and what
+happens now that they're gone?) and whether any exit is currently
+deferred. Don't change live behaviour mid-session (hard rule 14).
+
+Build PR 26 only, in this order (one commit per step):
+1. Remove: the same-day exit deferral (a model exit on the entry day is
+   carried out like any other); the day-trade guard gate and its
+   config, notification and banner; the deferred-exit field in the input
+   snapshot; the Stop & flatten day-trade warning; every read of the
+   three removed Alpaca fields. Exits deferred before this PR are not
+   replayed. A test fails on any reference to those fields.
+2. Add the re-entry gate: no new entry in a symbol the agent sold or that
+   was stopped out earlier in the same New York session
+   (risk.reentry_same_session: false), for live and shadows; shown as a
+   gate in the decision drawer and as "Re-entry" on the risk card.
+3. Cash only, made explicit: size against cash minus working entries,
+   never buying_power. Handle Alpaca pre-trade rejections as "Order
+   rejected by Alpaca".
+4. Storage: stop writing day_trades (keep the table; no edits to old
+   migrations).
+5. GUI per the design: the Positions "Today" card (entries, exits,
+   same-session round trips, symbols blocked from re-entry); the risk card
+   Re-entry fact; the decision drawer gate "Not traded today"; Settings
+   notifications without the day-trade rows; States without the day-trade
+   banner and warning; Insights "Agent exits on the entry day".
+
+Tests:
+- A model exit on the entry day sells at once.
+- A symbol stopped out at 10:46 New York is refused a new entry at 12:46
+  and allowed at the next session's first cycle (live and shadow).
+- Sizing ignores buying_power when it is larger than cash.
+- No reference to the removed fields (static check).
+- A pre-trade rejection raises the critical notification and leaves the
+  stop in place.
+- No network in tests.
+
+Use the PR template, screenshots in docs/screenshots/pr-26/ next to the
+design PNGs (Positions, Main, Decision, Settings, States, Insights). List
+remaining design differences.
 ```
 
 ## Each later PR

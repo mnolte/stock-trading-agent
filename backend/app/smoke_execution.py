@@ -55,6 +55,21 @@ class ReadOnlyBroker:
     async def get_positions(self) -> DataResult[list[BrokerPosition]]:
         return await self._inner.get_positions()
 
+    async def get_position(
+        self, symbol: str
+    ) -> DataResult[BrokerPosition | None]:
+        return await self._inner.get_position(symbol)
+
+    async def get_account_config(
+        self,
+    ) -> DataResult[dict[str, str | bool | None]]:
+        return await self._inner.get_account_config()
+
+    async def set_account_config(
+        self, **fields: object
+    ) -> DataResult[dict[str, str | bool | None]]:
+        return DataResult(data=None, error=BLOCKED, source="read-only")  # type: ignore[arg-type]
+
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         return await self._inner.get_open_orders()
 
@@ -83,6 +98,17 @@ class ReadOnlyBroker:
         *,
         symbol: str,
         qty: int,
+        stop_price: Decimal,
+        client_order_id: str,
+    ) -> DataResult[BrokerOrder]:
+        return DataResult(data=None, error=BLOCKED, source="read-only")  # type: ignore[arg-type]
+
+    async def submit_oco_exit(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        limit_price: Decimal,
         stop_price: Decimal,
         client_order_id: str,
     ) -> DataResult[BrokerOrder]:

@@ -52,7 +52,7 @@ class GateContext:
     peak_equity: Decimal
     open_positions: list[Position]
     working_entries: tuple[WorkingEntry, ...]
-    day_trades_5d: int
+    closed_today: bool  # agent sold or was stopped out this NY session
     losing_streak: int
     shock_brake_1h: bool  # SPY fell more than the 1h threshold
     shock_brake_session: bool  # SPY fell more than the session threshold
@@ -211,11 +211,12 @@ def evaluate_entry_gates(
         ),
     )
 
-    # PDT guard: N day trades in the last 5 trading days block entries.
-    pdt_max = int(config.get("risk", "pdt_max_day_trades", default=3))
-    if ctx.day_trades_5d >= pdt_max:
-        return block("pdt_guard", f"{ctx.day_trades_5d} day trades in 5 days ≥ {pdt_max}")
-    ok("pdt_guard", f"{ctx.day_trades_5d} day trades in 5 days")
+    # Re-entry: a symbol closed earlier this session is not bought again
+    # until the next session (risk.reentry_same_session: false).
+    if not config.get("risk", "reentry_same_session", default=False):
+        if ctx.closed_today:
+            return block("reentry", "sold earlier this session")
+        ok("reentry", "not traded today")
 
     # Drawdown kill: equity below peak by the configured pct turns the
     # kill switch on — the executor handles activation on this gate name.

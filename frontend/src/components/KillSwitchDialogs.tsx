@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
 import type { PositionRow } from '../types/api';
-import { displayTime, openedTodayNy } from '../format';
-import { Banner } from './Banner';
+import { displayTime } from '../format';
 import { DialogButton, Modal } from './Modal';
 
 /** Kill switch dialog from design/screens/States.dc.html: pick what to stop. */
@@ -88,23 +87,18 @@ function RadioCard({
   );
 }
 
-/** Stop & flatten confirmation: positions table + day-trade warning. */
+/** Stop & flatten confirmation: the positions that will be sold. */
 export function FlattenConfirmDialog({
   open,
   positions,
-  dayTrades,
-  dayTradesMax,
   onCancel,
   onConfirm,
 }: {
   open: boolean;
   positions: PositionRow[];
-  dayTrades: number;
-  dayTradesMax: number;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const todayPositions = positions.filter((p) => openedTodayNy(p.opened_at));
   return (
     <Modal
       open={open}
@@ -170,12 +164,6 @@ export function FlattenConfirmDialog({
           </tbody>
         </table>
       </div>
-      {todayPositions.map((p) => (
-        <Banner key={p.symbol} variant="warning">
-          {p.symbol} was bought today. Selling it now counts as a day trade (
-          {dayTrades + 1} of {dayTradesMax}).
-        </Banner>
-      ))}
       <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-muted)' }}>
         Outside market hours the sells are queued as market-on-open orders.
       </p>

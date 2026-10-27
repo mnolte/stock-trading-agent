@@ -2,6 +2,37 @@
 
 Newest first.
 
+## 2026-10-27 — Protective stops hardened (PR 27)
+
+- From Devin's live-data review: a protective stop was rejected because the stored stop was above the market; a stop leg was held invisibly under a filled parent while the target held all shares; and a sell stop for an already-exited position could have opened a short.
+- New "Protective stops" rules in Alpaca integration:
+  - confirm the position and orders at Alpaca before acting;
+  - a stop at or above the market becomes a market sale with reason `stop_breached`, replacing the one-cent clamp; this is the only sale a position check makes;
+  - an orphaned stop with the target holding the shares is repaired by cancelling the target and placing an OCO exit order, with the stop alone as fallback and the gap logged at CRITICAL;
+  - every sell is capped at the confirmed quantity, so the agent never goes short;
+  - broker-side `no_shorting` and 1× margin are set and checked at startup.
+- Larger universe: a daily screen missed while the app was down runs at startup; the first cycle uses the previous list with a warning and a dated banner if needed.
+- Accepted as fixed by Devin: held-leg recovery, the cycle error double-append, `active_until` on terminal trade updates, APScheduler executor logs at WARNING (job errors still at ERROR), and the old `quote_suspect` reason counted with `price_suspect`.
+- Build plan: PR 27.
+
+## 2026-10-27 — Name: Stock Trading Agent
+
+- The application is called **Stock Trading Agent** everywhere it is shown: GUI, page titles, email subjects (`[Stock Trading Agent · PAPER] …`), error pages and docs.
+- Technical names stay `stock-agent` (repo, database and log files, containers, zip names), so nothing has to be migrated.
+- Used prompts (`decision.v1.md`, `decision.v2.md`) keep the old name, because used prompts are never edited. The next prompt version uses the new one.
+- No behaviour change; it can ride along with any PR touching the GUI.
+
+## 2026-10-27 — Day-trade rule retired (PR 26)
+
+- FINRA replaced the pattern day trader rule and the $25,000 minimum with intraday margin standards on 4 June 2026 (Regulatory Notice 26-10). Alpaca applied them from that date and removed `pattern_day_trader`, `daytrade_count` and `daytrading_buying_power` from its API by 6 July 2026.
+- Removed:
+  - the same-day exit deferral (the agent may now sell a position the day it bought it);
+  - the day-trade guard and its notification;
+  - the day-trade counter and the Stop & flatten day-trade warning;
+  - deferred exits in the snapshot, the feed and Insights.
+- Added: no re-entry in a symbol closed earlier the same session (`risk.reentry_same_session: false`), as a brake on churning. Cash-only sizing against `cash`, never `buying_power`, is stated explicitly.
+- `day_trades` is no longer written and is kept for history. AGENTS.md: new hard rule 17. Config: `pdt_max_day_trades` and the `pdt_guard` notification removed. Build plan: PR 26, first in the queue.
+
 ## 2026-10-26 — Error pages and API errors (PR 25)
 
 - New "Error pages and API errors" section:

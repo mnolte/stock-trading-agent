@@ -21,7 +21,6 @@ from app.db.base import get_session_maker
 from app.db.models import (
     Approval,
     Cycle,
-    DayTrade,
     Decision,
     Earning,
     Event,
@@ -903,7 +902,6 @@ def _position_json(
         ),
         "origin": position.origin,
         "pending_ack": position.pending_ack,
-        "deferred_exit": position.deferred_exit,
         "opened_at": position.opened_at.replace(tzinfo=UTC).isoformat(),
         "closed_at": (
             position.closed_at.replace(tzinfo=UTC).isoformat()
@@ -1026,9 +1024,6 @@ async def positions(request: Request) -> dict[str, object]:
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today_ny = clock.now().astimezone(NY_TZ).date()
     market_data = getattr(request.app.state, "market_data", None)
-    sessions = (
-        market_data.recent_sessions(today_ny, 5) if market_data is not None else []
-    )
     marks: dict[str, Decimal | None] = {}
     last_prices: dict[str, Decimal | None] = {}
     broker = getattr(request.app.state, "broker", None)
@@ -1065,22 +1060,16 @@ async def positions(request: Request) -> dict[str, object]:
             for p in closed_today
             if p.closed_at and _ny_date(p.closed_at) == today_ny
         ]
-        day_rows: list[dict[str, object]] = []
-        day_trades = 0
-        if sessions:
-            for day in sessions:
-                count = session.execute(
-                    select(func.count(DayTrade.id)).where(
-                        DayTrade.date >= _naive_utc(day.open),
-                        DayTrade.date <= _naive_utc(day.close),
-                    )
-                ).scalar_one()
-                day_rows.append({"date": day.date.isoformat(), "count": count})
-                day_trades += int(count)
+        opened_today_rows = [
+            p for p in open_rows if _ny_date(p.opened_at) == today_ny
+        ]
+        round_trips = [
+            p
+            for p in closed_today
+            if p.opened_at and _ny_date(p.opened_at) == today_ny
+        ]
+        reentry_blocked = sorted({p.symbol for p in closed_today})
 
-    max_day_trades = int(
-        get_config().get("risk", "pdt_max_day_trades", default=3)
-    )
     max_positions = int(
         get_config().get("risk", "max_open_positions", default=4)
     )
@@ -1139,11 +1128,11 @@ async def positions(request: Request) -> dict[str, object]:
     return {
         "open": out_open,
         "closed_today": [_position_json(p) for p in closed_today],
-        "day_trades_5d": day_trades,
-        "day_trades": {
-            "days": day_rows,
-            "count": day_trades,
-            "max": max_day_trades,
+        "today": {
+            "entries": len(opened_today_rows) + len(round_trips),
+            "exits": len(closed_today),
+            "round_trips": len(round_trips),
+            "reentry_blocked": reentry_blocked,
         },
         "account": {
             "equity": _fmt_money(account.equity if account else None),
@@ -1278,9 +1267,10 @@ async def risk_budget_state(request: Request) -> dict[str, object]:
                 else None
             ),
         },
-        "day_trades": {
-            "count": budget.day_trades_5d,
-            "max": budget.day_trades_max,
+        "re_entry": {
+            "allowed": bool(
+                get_config().get("risk", "reentry_same_session", default=False)
+            ),
         },
         "positions": {
             "open": budget.open_count,
@@ -1355,6 +1345,8 @@ def banners(request: Request) -> dict[str, object]:
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
                         "universe_screen_failed",
+                        "universe_screen_pending",
+                        "broker_guard_unconfirmed",
                         "cycle_slow",
                     ]
                 ),
@@ -1472,6 +1464,40 @@ def banners(request: Request) -> dict[str, object]:
                             f"A decision cycle took {took} — over the "
                             f"{warn_text}-minute warning limit. Check "
                             "its cycle row for a slow data source."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "universe_screen_pending":
+                list_date = details.get("list_date") or "none"
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "universe_screen_pending",
+                        "level": "warning",
+                        "message": (
+                            "Today's universe screen was missed while the "
+                            "app was down and is running now. Until it "
+                            f"finishes, cycles trade the {list_date} list."
+                        ),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "broker_guard_unconfirmed":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "broker_guard_unconfirmed",
+                        "level": "warning",
+                        "message": (
+                            "The broker-side safety guard could not be "
+                            "confirmed (no_shorting, 1× margin) "
+                            f"({details.get('error', 'see details')}). "
+                            "Cash-only sizing and the sell cap still apply."
                         ),
                         "details": details,
                         "time": event.time.replace(tzinfo=UTC).isoformat(),
@@ -1753,47 +1779,21 @@ def banners(request: Request) -> dict[str, object]:
     # Day-trade guard and losing-streak info from the gate inputs.
     if state is not None and state.account is not None:
         config = get_config()
-        clock = getattr(request.app.state, "clock", None) or make_clock()
-        today_ny = clock.now().astimezone(NY_TZ).date()
-        market = getattr(request.app.state, "market_data", None)
-        sessions = (
-            market.recent_sessions(today_ny, 5) if market is not None else []
-        )
-        if sessions:
-            with get_session_maker()() as session:
-                day_trades = session.execute(
-                    select(func.count(DayTrade.id)).where(
-                        DayTrade.date >= _naive_utc(sessions[0].open)
-                    )
-                ).scalar_one()
-                closed_query = (
-                    select(Position)
-                    .where(
-                        Position.closed_at.is_not(None),
-                        Position.realized_pnl_raw.is_not(None),
-                    )
-                    .order_by(Position.closed_at.desc())
+        with get_session_maker()() as session:
+            closed_query = (
+                select(Position)
+                .where(
+                    Position.closed_at.is_not(None),
+                    Position.realized_pnl_raw.is_not(None),
                 )
-                run_started = getattr(state, "run_started_at", None)
-                if run_started is not None:
-                    closed_query = closed_query.where(
-                        Position.closed_at >= run_started
-                    )
-                closed = session.execute(closed_query).scalars().all()
-            max_dt = int(config.get("risk", "pdt_max_day_trades", default=3))
-            if day_trades >= max_dt:
-                items.append(
-                    {
-                        "id": None,
-                        "kind": "day_trade_guard",
-                        "level": "warning",
-                        "message": (
-                            f"{day_trades} day trades in the last 5 trading "
-                            "days. No new entries until the count drops."
-                        ),
-                        "actions": [],
-                    }
+                .order_by(Position.closed_at.desc())
+            )
+            run_started = getattr(state, "run_started_at", None)
+            if run_started is not None:
+                closed_query = closed_query.where(
+                    Position.closed_at >= run_started
                 )
+            closed = session.execute(closed_query).scalars().all()
             streak = 0
             for p in closed:
                 if (p.realized_pnl_raw or Decimal(0)) < 0:
@@ -2925,19 +2925,7 @@ def _latest_box(
                 _box_row("Position", "—"),
                 _box_row("Stop / target", "—"),
             ]
-        # An agent exit on a same-day-opened position waits for the next
-        # session (day-trade guard), as do exits already deferred.
-        opened = str(pos.get("opened_at") or "")
-        decided = str(snapshot.get("time_ny") or "")
-        same_day = bool(opened) and opened[:10] == decided[:10]
-        exit_from = (
-            "tomorrow"
-            if same_day
-            or decision.final_action == "deferred"
-            or pos.get("deferred_exit")
-            else "now"
-        )
-        rows.append(_box_row("Agent exit from", exit_from))
+        rows.append(_box_row("Agent exit", "now"))
         return rows[:3]
 
     # Candidate decisions: failed check first, then a pass, then the
@@ -3467,9 +3455,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
 
     # Decisions feed, grouped client-side by cycle. Each item carries its
     # cycle id, the cycle's number within the session, whether the decision
-    # changed something (entries, exits, stop moves, deferred exits,
-    # approvals — always shown, even in collapsed cycles) and whether a
-    # real model call happened.
+    # changed something (entries, exits, stop moves, approvals — always
+    # shown, even in collapsed cycles) and whether a real model call
+    # happened.
     cycle_order = {
         c.id: i
         for i, c in enumerate(
@@ -3649,6 +3637,8 @@ _NO_CALL_WHY = {
     "call_cap": "call cap reached — the model was not asked",
     "price_stale": "no fresh price — the model was not asked",
     "price_suspect": "price check failed — the model was not asked",
+    # Stored decisions from before the Oct-24 rename keep the old name.
+    "quote_suspect": "price check failed — the model was not asked",
     "model_error": "the model call failed",
     "no_options": "no option met the rules — the model was not asked",
     "reference_missing": "no usable reference price — the model was not asked",
@@ -3657,9 +3647,9 @@ _NO_CALL_WHY = {
 
 def _feed_change(decision: Decision) -> bool:
     """Changes always show as their own feed rows, even in collapsed cycles
-    (design/screens/Main.dc.html: entries, exits, stop moves, deferred
-    exits, pending approvals)."""
-    if decision.final_action in {"enter", "exit", "tighten_stop", "deferred"}:
+    (design/screens/Main.dc.html: entries, exits, stop moves, pending
+    approvals)."""
+    if decision.final_action in {"enter", "exit", "tighten_stop"}:
         return True
     return bool((decision.gates_result or {}).get("pending_approval"))
 
@@ -3680,8 +3670,6 @@ def _feed_reason(decision: Decision) -> str | None:
         return str(
             validation.get("error") or decision.no_call_reason
         ).replace("_", " ")
-    if decision.final_action == "deferred":
-        return "exit deferred (day-trade rule)"
     if decision.final_action == "blocked":
         gates = decision.gates_result or {}
         return f"blocked: {gates.get('blocked_by', 'gate')}"

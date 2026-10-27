@@ -1,4 +1,4 @@
-# Stock Agent configuration. Copy to config.yaml.
+# Stock Trading Agent configuration. Copy to config.yaml.
 # Every value here is a default from docs/SPEC.md. Change behaviour here, not in code.
 # Secrets never go in this file; they live in .env.
 
@@ -103,9 +103,9 @@ risk:
   losing_streak_risk_factor: 0.5
   shock_brake_1h_pct: 1.5
   shock_brake_session_pct: 2.5
+  reentry_same_session: false  # a symbol closed this session is not bought again today
   earnings_blackout_days: 3
   hold_through_earnings: false
-  pdt_max_day_trades: 3
   drawdown_kill_pct: 8
   adopted_stop_atr: 3                 # protective stop for a position found at Alpaca
   protective_stop_fallback_pct: 3     # when ATR is unavailable
@@ -152,12 +152,11 @@ notifications:
     order_rejected: [browser, email]
     daily_loss_limit: [browser, email]
     shock_brake: [browser]
-    pdt_guard: [browser]
     source_failing: [browser, email]
     position_checks_failing: [browser, email]
     model_failing: [browser]
     approval_waiting: [browser]
-    exit_deferred_or_earnings_exit: [browser]
+    earnings_exit_tomorrow: [browser]
     trade: []
     daily_briefing: [email]
     weekly_review: [email]

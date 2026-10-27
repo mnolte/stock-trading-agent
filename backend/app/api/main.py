@@ -270,6 +270,131 @@ async def run_scheduled_cycle(
             backtests.set_paused(False)
 
 
+async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -> bool:
+    """Set and verify the broker-side safety guardrails (docs/SPEC.md,
+    Protective stops): `no_shorting` and a 1× margin multiplier. A failed
+    or unverifiable check raises a warning banner — never a refused
+    startup; cash-only sizing and the sell cap still protect. A confirm
+    clears the banner left by an earlier unconfirmed check."""
+    from app.data.cache import _naive_utc
+    from app.db.models import Event
+    from app.engine.state import record_event
+
+    details: dict[str, object] = {}
+    try:
+        written = await broker.set_account_config(
+            no_shorting=True, max_margin_multiplier="1"
+        )
+        if written.error is not None or written.data is None:
+            details = {"error": f"set failed: {written.error}"}
+        else:
+            read = await broker.get_account_config()
+            cfg = read.data or {}
+            ok = (
+                read.error is None
+                and cfg.get("no_shorting") is True
+                and str(cfg.get("max_margin_multiplier")) in ("1", "1.0")
+            )
+            if not ok:
+                details = {"read_back": cfg, "error": read.error}
+    except Exception as exc:  # noqa: BLE001
+        details = {"error": str(exc)}
+    if details:
+        with session_factory() as session:
+            record_event(
+                session,
+                clock,
+                level="warning",
+                event_type="broker_guard_unconfirmed",
+                details=details,
+            )
+            session.commit()
+            logger.warning("broker guard unconfirmed: %s", details)
+        return False
+    with session_factory() as session:
+        stale = session.execute(
+            select(Event).where(
+                Event.event_type == "broker_guard_unconfirmed",
+                Event.acknowledged_at.is_(None),
+            )
+        ).scalars().all()
+        for event in stale:
+            event.acknowledged_at = _naive_utc(clock.now())
+        session.commit()
+    return True
+
+
+async def _catch_up_missed_screen(service: Any, event_id: int, session_factory: Any) -> None:
+    from zoneinfo import ZoneInfo
+
+    from app.data.cache import _naive_utc
+    from app.db.models import Event
+
+    await service.run_screen()
+    with session_factory() as session:
+        event = session.get(Event, event_id)
+        if event is not None:
+            event.acknowledged_at = _naive_utc(
+                datetime.now(ZoneInfo("UTC"))
+            )
+            session.commit()
+
+
+async def run_missed_screen_at_startup(
+    service: Any, clock: Clock, calendar: Any, session_factory: Any, bus: Any
+) -> None:
+    """The 08:10 screen missed while the app was down runs now (docs/
+    SPEC.md, Daily screen): a banner shows the stale list's date until
+    the screen finishes; the first cycles use the previous list."""
+    from sqlalchemy import func, select
+
+    from app.db.models import UniverseScreenRow
+    from app.engine.state import record_event
+
+    now = clock.now()
+    today = now.astimezone(NY_TZ).date()
+    if calendar.session_for(today) is None:
+        return
+    screen_hour, screen_minute = (
+        int(p) for p in service.screen_time_ny().split(":")[:2]
+    )
+    due = now.astimezone(NY_TZ).replace(
+        hour=screen_hour, minute=screen_minute, second=0, microsecond=0
+    )
+    if now.astimezone(NY_TZ) < due:
+        return
+    with session_factory() as session:
+        latest = session.execute(
+            select(func.max(UniverseScreenRow.session_date))
+        ).scalar_one()
+        if latest == today:
+            return
+        event = record_event(
+            session,
+            clock,
+            level="warning",
+            event_type="universe_screen_pending",
+            details={
+                "session_date": today.isoformat(),
+                "list_date": latest.isoformat() if latest else None,
+            },
+        )
+        session.commit()
+        event_id = event.id
+    logger.warning(
+        "missed universe screen for %s — running at startup; first "
+        "cycles use the %s list",
+        today,
+        latest or "no",
+    )
+    from app.spawn import spawn
+
+    spawn(
+        _catch_up_missed_screen(service, event_id, session_factory),
+        "missed-universe-screen",
+    )
+
+
 async def run_universe_screen(
     service: UniverseService, bus: UpdateBus | None = None
 ) -> None:
@@ -781,11 +906,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # cycles trade from that session on (docs/SPEC.md, Larger universe).
     # The simulated demo triggers it through POST /api/universe/screen.
     universe_service.ensure_pool_loaded()
+    if config.env.mode != "simulated":
+        # A screen missed while the app was down runs before the first
+        # cycle; a stale-list banner stays until it lands. (The
+        # simulated demo screens on demand via POST /api/universe/screen.)
+        await run_missed_screen_at_startup(
+            universe_service, clock, calendar_store, get_session_maker(), bus
+        )
 
     # Trade updates → ledger; then reconcile once so the database starts
     # as a mirror of the broker (adopted positions get their stop here).
     broker.subscribe_trade_updates(executor.on_trade_update)
     await broker.start_stream()
+    if config.env.mode != "simulated":
+        # Broker-side guardrails (no shorts, 1× margin) — set and
+        # verified; an unconfirmable value raises a warning banner,
+        # never a refusal. The simulated broker has no such config.
+        exec_state.broker_guard_confirmed = await ensure_broker_guard(
+            broker, clock, get_session_maker()
+        )
     await executor.reconcile()
     if exec_state.account is None:
         await executor.refresh_account()
@@ -1159,7 +1298,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Stock Agent", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Stock Trading Agent", version="0.2.0", lifespan=lifespan)
 
     import secrets as _secrets_mod
 

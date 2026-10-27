@@ -17,6 +17,12 @@ interface GatesResult {
   checks?: { name: string; passed: boolean; detail: string }[];
 }
 
+// Labels that differ from the humanised gate name
+// (design/screens/Decision.dc.html: "Not traded today — MSFT · pass").
+const GATE_LABELS: Record<string, string> = {
+  reentry: 'Not traded today',
+};
+
 /** Code checks then risk gates, each pass / fail / reduced. */
 export function gateRows(decision: DecisionDetail): GateRow[] {
   const rows: GateRow[] = [];
@@ -36,8 +42,11 @@ export function gateRows(decision: DecisionDetail): GateRow[] {
       (limitedBy.has(check.name) ||
         (check.name === 'losing_streak' && reducedRisk));
     rows.push({
-      name: check.name.replace(/_/g, ' '),
-      detail: check.detail ?? '',
+      name: GATE_LABELS[check.name] ?? check.name.replace(/_/g, ' '),
+      detail:
+        check.name === 'reentry' && check.passed
+          ? decision.symbol
+          : check.detail ?? '',
       state: !check.passed ? 'fail' : reduced ? 'reduced' : 'pass',
     });
   }

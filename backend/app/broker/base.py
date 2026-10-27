@@ -35,6 +35,22 @@ class Broker(Protocol):
         """All open positions at the broker."""
         ...
 
+    async def get_position(
+        self, symbol: str
+    ) -> DataResult[BrokerPosition | None]:
+        """One open position by symbol; ``data`` is None when flat."""
+        ...
+
+    async def get_account_config(self) -> DataResult[dict[str, str | bool | None]]:
+        """Account safety configuration (no_shorting, margin multiplier)."""
+        ...
+
+    async def set_account_config(
+        self, **fields: object
+    ) -> DataResult[dict[str, str | bool | None]]:
+        """Set account configuration fields; returns the effective values."""
+        ...
+
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         """All orders still live at the broker (legs included)."""
         ...
@@ -71,6 +87,18 @@ class Broker(Protocol):
         client_order_id: str,
     ) -> DataResult[BrokerOrder]:
         """Standalone gtc stop sell (protective stop for adopted positions)."""
+        ...
+
+    async def submit_oco_exit(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        limit_price: Decimal,
+        stop_price: Decimal,
+        client_order_id: str,
+    ) -> DataResult[BrokerOrder]:
+        """OCO exit order: take-profit limit + stop-loss leg, gtc."""
         ...
 
     async def submit_market_sell(

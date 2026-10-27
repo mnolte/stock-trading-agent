@@ -33,7 +33,6 @@ export function actionBadgeStyle(action: string): { bg: string; color: string } 
     case 'exit':
       return { bg: 'var(--sa-negative-bg)', color: 'var(--sa-negative-text)' };
     case 'skip':
-    case 'deferred':
       return { bg: 'var(--sa-warning-bg)', color: 'var(--sa-warning-text)' };
     case 'tighten_stop':
       return { bg: 'var(--sa-info-bg)', color: 'var(--sa-info)' };

@@ -300,7 +300,7 @@ def gate_context(
     Pause, the kill switch, the reconciliation block and the shock brake
     come from live (docs/SPEC.md, Virtual trading); everything else —
     equity, cash, open risk, positions, sectors, daily loss, losing streak,
-    drawdown and day trades — is the shadow's own.
+    drawdown and the same-session close — is the shadow's own.
     """
     today = ny_date(now)
     session_open = calendar.session_for(today)
@@ -314,14 +314,11 @@ def gate_context(
     last_equity = before_today[-1] if before_today else b.start_equity
     peak = max([b.start_equity, b.equity, *[e for _, e in eq_rows]])
 
-    first_day = _recent_session_start(calendar, today, 5)
-    day_trades = sum(
-        1
-        for p in b.closed
-        if p.opened_at is not None
+    closed_today = any(
+        p.symbol == symbol
         and p.closed_at is not None
-        and ny_date(p.opened_at) == ny_date(p.closed_at)
-        and ny_date(p.closed_at) >= first_day
+        and ny_date(p.closed_at) == today
+        for p in b.closed
     )
     streak = 0
     for p in sorted(b.closed, key=lambda p: p.closed_at or datetime.min, reverse=True):
@@ -354,7 +351,7 @@ def gate_context(
         peak_equity=peak,
         open_positions=open_positions,
         working_entries=working,
-        day_trades_5d=day_trades,
+        closed_today=closed_today,
         losing_streak=streak,
         shock_brake_1h=live.shock_brake_1h,
         shock_brake_session=live.shock_brake_session,

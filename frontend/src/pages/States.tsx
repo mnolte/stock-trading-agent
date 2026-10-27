@@ -25,7 +25,6 @@ const samplePositions: PositionRow[] = [
     target_price: '178.90',
     origin: 'agent',
     pending_ack: false,
-    deferred_exit: null,
     opened_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
     closed_at: null,
     realized_pnl_raw: null,
@@ -41,7 +40,6 @@ const samplePositions: PositionRow[] = [
     target_price: '430.00',
     origin: 'agent',
     pending_ack: false,
-    deferred_exit: null,
     opened_at: new Date(Date.now() - 26 * 3600 * 1000).toISOString(),
     closed_at: null,
     realized_pnl_raw: null,
@@ -280,9 +278,6 @@ export default function States() {
         <DemoBanner label="Daily loss limit" variant="warning">
           <b>Daily loss limit reached:</b> −2.0% this session. No new entries until tomorrow’s first cycle.
         </DemoBanner>
-        <DemoBanner label="Day-trade guard" variant="warning">
-          <b>3 day trades in the last 5 trading days.</b> No new entries until the count drops on 20 Oct.
-        </DemoBanner>
         <DemoBanner label="Losing streak" variant="info">
           <b>Risk per trade halved to 0.25%</b> after 3 losing trades in a row. Back to 0.5% after the next winning trade.
         </DemoBanner>
@@ -330,8 +325,6 @@ export default function States() {
       <FlattenConfirmDialog
         open={dialog === 'flatten'}
         positions={samplePositions}
-        dayTrades={1}
-        dayTradesMax={3}
         onCancel={() => setDialog(null)}
         onConfirm={() => setDialog(null)}
       />

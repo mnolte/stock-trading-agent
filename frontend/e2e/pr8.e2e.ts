@@ -30,7 +30,6 @@ test('states: error banners and dialogs gallery', async ({ page }, testInfo) => 
     'Market data missing',
     'Shock brake',
     'Daily loss limit',
-    'Day-trade guard',
     'Losing streak',
   ]) {
     await expect(page.getByText(label, { exact: true })).toBeVisible();

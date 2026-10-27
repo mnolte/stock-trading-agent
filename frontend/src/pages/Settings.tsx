@@ -997,7 +997,7 @@ function BrowserNotifyCard() {
         <span style={chip(status.tone)}>{status.text}</span>
       </div>
       <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
-        Works while Stock Agent is open in a browser tab. Also shown as a toast in the app.
+        Works while Stock Trading Agent is open in a browser tab. Also shown as a toast in the app.
         {perm === 'denied' && ' Blocked in the browser — allow notifications for this page in its site settings.'}
       </span>
       {perm === 'default' && (
@@ -1224,7 +1224,7 @@ function RecentNotifications() {
               {displayDayTime(item.time)}
             </span>
             <span style={{ color: 'var(--sa-text-2)' }}>
-              {item.subject.replace(/^\[Stock Agent[^\]]*\]\s*/, '')}
+              {item.subject.replace(/^\[Stock(?: Trading)? Agent[^\]]*\]\s*/, '')}
             </span>
             <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               {recentStatus(item)}

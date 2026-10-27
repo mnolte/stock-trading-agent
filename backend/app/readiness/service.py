@@ -59,7 +59,9 @@ NOT_YET = "not_yet"
 WAITING = "waiting"
 
 ERROR_LEVELS = ("critical", "error")
-BLOCKED_PRICE_REASONS = ("price_stale", "price_suspect")
+# "quote_suspect" is the pre-Oct-24 name of "price_suspect"; stored
+# decisions keep the old string and still count inside the window.
+BLOCKED_PRICE_REASONS = ("price_stale", "price_suspect", "quote_suspect")
 STOP_MISSING_TYPES = ("protective_stop", "protective_stop_failed")
 # Statuses that mark a scheduled cycle/check as finished one way or the
 # other; "running" and "interrupted" rows don't count either way.

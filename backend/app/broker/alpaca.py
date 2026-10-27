@@ -204,6 +204,71 @@ class AlpacaPaperBroker:
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=[], error=str(exc), source="alpaca")
 
+    async def get_position(
+        self, symbol: str
+    ) -> DataResult[BrokerPosition | None]:
+        try:
+            raw = await self.limiter.run_read(
+                self.trading.get_open_position, symbol
+            )
+            return DataResult(data=parse_position(raw), source="alpaca")
+        except Exception as exc:  # noqa: BLE001
+            # Alpaca answers a missing position with a 404 — that is a
+            # flat answer, not an error. Other failures stay errors.
+            text = str(exc)
+            if "404" in text or "position does not exist" in text.lower():
+                return DataResult(data=None, source="alpaca")
+            return DataResult(data=None, error=text, source="alpaca")
+
+    async def get_account_config(
+        self,
+    ) -> DataResult[dict[str, str | bool | None]]:
+        try:
+            raw = await self.limiter.run_read(
+                self.trading.get_account_configurations
+            )
+            item = _raw(raw)
+            return DataResult(
+                data={
+                    "no_shorting": bool(item.get("no_shorting")),
+                    "max_margin_multiplier": (
+                        str(item.get("max_margin_multiplier"))
+                        if item.get("max_margin_multiplier") is not None
+                        else None
+                    ),
+                },
+                source="alpaca",
+            )
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(data=None, error=str(exc), source="alpaca")  # type: ignore[arg-type]
+
+    async def set_account_config(
+        self, **fields: object
+    ) -> DataResult[dict[str, str | bool | None]]:
+        try:
+            current = _raw(
+                await self.limiter.run_read(
+                    self.trading.get_account_configurations
+                )
+            )
+            merged = dict(current)
+            merged.update(fields)
+            from alpaca.trading.models import AccountConfiguration
+
+            config = AccountConfiguration.model_validate(
+                {
+                    k: v
+                    for k, v in merged.items()
+                    if k in AccountConfiguration.model_fields
+                }
+            )
+            await self.limiter.run_write(
+                self.trading.set_account_configurations, config
+            )
+            return await self.get_account_config()
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(data=None, error=str(exc), source="alpaca")  # type: ignore[arg-type]
+
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         try:
             raw = await self.limiter.run_read(
@@ -300,6 +365,35 @@ class AlpacaPaperBroker:
             type="stop",
             time_in_force=TimeInForce.GTC,
             stop_price=float(stop_price),
+            client_order_id=client_order_id,
+        )
+        try:
+            raw = await self.limiter.run_write(self.trading.submit_order, request)
+            return DataResult(data=parse_order(raw), source="alpaca")
+        except Exception as exc:  # noqa: BLE001
+            return DataResult(
+                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+            )
+
+    async def submit_oco_exit(
+        self,
+        *,
+        symbol: str,
+        qty: int,
+        limit_price: Decimal,
+        stop_price: Decimal,
+        client_order_id: str,
+    ) -> DataResult[BrokerOrder]:
+        request = LimitOrderRequest(
+            symbol=symbol,
+            qty=qty,
+            side=OrderSide.SELL,
+            type="limit",
+            time_in_force=TimeInForce.GTC,
+            order_class=OrderClass.OCO,
+            limit_price=float(limit_price),
+            take_profit=TakeProfitRequest(limit_price=float(limit_price)),
+            stop_loss=StopLossRequest(stop_price=float(stop_price)),
             client_order_id=client_order_id,
         )
         try:

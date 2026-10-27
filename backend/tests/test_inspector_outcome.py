@@ -64,9 +64,9 @@ class TestWarningReasons:
             CallFacts(model_action="enter", final_action="blocked")
         ) == ("warning", ["changed_by_code"])
 
-    def test_deferred_exit_is_changed_by_code(self) -> None:
+    def test_gate_blocked_is_changed_by_code(self) -> None:
         assert classify(
-            CallFacts(model_action="exit", final_action="deferred")
+            CallFacts(model_action="exit", final_action="blocked")
         ) == ("warning", ["changed_by_code"])
 
     def test_gate_reduced_size_is_not_a_warning(self) -> None:

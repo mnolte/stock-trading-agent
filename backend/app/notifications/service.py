@@ -54,7 +54,7 @@ from app.secrets_service import SecretsStore, scrub
 
 logger = logging.getLogger(__name__)
 
-SUBJECT_PREFIX = "[Stock Agent · PAPER]"
+SUBJECT_PREFIX = "[Stock Trading Agent · PAPER]"
 
 CHANNELS = ("app", "browser", "email")
 
@@ -623,7 +623,7 @@ class NotificationService:
             to_addr=to_addr,
             subject=f"{SUBJECT_PREFIX} Test: SMTP settings saved",
             body=(
-                "These SMTP details were just saved in Stock Agent.\n\n"
+                "These SMTP details were just saved in Stock Trading Agent.\n\n"
                 f"Time: {self.clock.now():%Y-%m-%d %H:%M} UTC"
             ),
         )

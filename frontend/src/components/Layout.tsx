@@ -212,8 +212,6 @@ export function Layout() {
       <FlattenConfirmDialog
         open={dialog === 'flatten'}
         positions={positions?.open ?? []}
-        dayTrades={positions?.day_trades_5d ?? 0}
-        dayTradesMax={positions?.day_trades?.max ?? 3}
         onCancel={() => setDialog(null)}
         onConfirm={onFlattenConfirm}
       />

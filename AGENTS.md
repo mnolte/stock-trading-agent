@@ -46,6 +46,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 14. **No restarts during the session.** Don't restart, redeploy or migrate the running app between 09:30 and 16:00 New York time unless Marc asks for it or it's an emergency; say so in the PR if a change needs a restart.
 15. **No silent failures.** No bare `except:`, no `except Exception: pass`, no catch that neither logs nor re-raises; use `logger.exception` (or log at WARNING for an expected condition with its reason). Start background tasks only through `spawn()`. Every component logs its steps at DEBUG and milestones at INFO with the cycle or request id in context. Never log keys, prompts or model responses.
 16. **Clean shutdown.** Ctrl+C and SIGTERM must finish or interrupt work cleanly: never cut an order submission between sending and storing the answer, keep each unit of work in one transaction, and close the database and the log last.
+17. **No day-trade logic.** The pattern day trader rule is retired (FINRA, 4 June 2026). Never read `pattern_day_trader`, `daytrade_count` or `daytrading_buying_power`; size against `cash`, never `buying_power`.
 
 ## Conventions
 

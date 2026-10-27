@@ -37,8 +37,8 @@ def test_automatic_mode_starts() -> None:
     check_execution_mode(config)  # no raise
 
 
-def test_deferred_exit_is_included_in_next_snapshot() -> None:
-    """A deferred same-day exit shows up in the next session's snapshot."""
+def test_deferred_exit_field_gone() -> None:
+    """The deferred-exit snapshot field was removed with the PDT rule."""
     position = Position(
         symbol="MSFT",
         qty=4,
@@ -89,7 +89,7 @@ def test_deferred_exit_is_included_in_next_snapshot() -> None:
     )
     block = snapshot["position"]
     assert isinstance(block, dict)
-    assert block["deferred_exit"] == position.deferred_exit
+    assert "deferred_exit" not in block
 
 
 def test_kill_switch_api_flow(client: TestClient) -> None:
@@ -179,12 +179,11 @@ def test_positions_and_orders_endpoints(client: TestClient) -> None:
     assert {
         "open",
         "closed_today",
-        "day_trades_5d",
-        "day_trades",
+        "today",
         "account",
         "reconciliation",
     } <= set(positions)
-    assert positions["day_trades_5d"] == 0
+    assert positions["today"]["entries"] == 0
     orders = client.get("/api/orders").json()
     assert "orders" in orders
 
@@ -244,4 +243,57 @@ def test_flatten_sell_rejected_shows_critical_banner(client: TestClient) -> None
     item = next(b for b in banners if b["kind"] == "flatten_sell_rejected")
     assert item["level"] == "critical"
     assert "MSFT" in item["message"] and "stop" in item["message"]
+    assert item["actions"] == ["acknowledge"]
+
+
+def test_broker_guard_unconfirmed_shows_warning_banner(
+    client: TestClient,
+) -> None:
+    """An unconfirmed broker-side guard surfaces as a warning banner."""
+    from app.db.base import get_session_maker
+    from app.db.models import Event
+
+    with get_session_maker()() as session:
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 17, 0),
+                level="warning",
+                event_type="broker_guard_unconfirmed",
+                details={"error": "set failed: timeout"},
+            )
+        )
+        session.commit()
+
+    items = client.get("/api/banners").json()["items"]
+    item = next(b for b in items if b["kind"] == "broker_guard_unconfirmed")
+    assert item["level"] == "warning"
+    assert "safety guard" in item["message"]
+    assert item["actions"] == ["acknowledge"]
+
+
+def test_universe_screen_pending_shows_list_date_banner(
+    client: TestClient,
+) -> None:
+    """A missed screen running at startup banners with the stale date."""
+    from app.db.base import get_session_maker
+    from app.db.models import Event
+
+    with get_session_maker()() as session:
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 17, 0),
+                level="warning",
+                event_type="universe_screen_pending",
+                details={
+                    "session_date": "2026-10-15",
+                    "list_date": "2026-10-14",
+                },
+            )
+        )
+        session.commit()
+
+    items = client.get("/api/banners").json()["items"]
+    item = next(b for b in items if b["kind"] == "universe_screen_pending")
+    assert item["level"] == "warning"
+    assert "2026-10-14" in item["message"]
     assert item["actions"] == ["acknowledge"]

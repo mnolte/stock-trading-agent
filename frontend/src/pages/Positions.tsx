@@ -15,18 +15,10 @@ import { formatPrice } from '../components/watchlistFormat';
 import {
   displayDateTime,
   displayTime,
+  openedTodayNy,
   signed,
   signedUsd,
 } from '../format';
-
-/** "15 Oct" — day + month for the day-trade boxes (design/Positions). */
-function shortDay(isoDate: string): string {
-  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-}
 
 const mono: React.CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
@@ -47,9 +39,6 @@ function shortId(id: string | null): string {
 
 function statusChips(p: PositionRow): ReactNode {
   const chips: ReactNode[] = [];
-  if (p.deferred_exit) {
-    chips.push(<Chip key="deferred" variant="warning">exit deferred</Chip>);
-  }
   if (p.pending_ack) {
     chips.push(<Chip key="ack" variant="negative">needs acknowledgment</Chip>);
   }
@@ -132,8 +121,6 @@ function PositionCard({ p }: { p: PositionRow }) {
         {p.opened_today
           ? `opened today ${displayTime(p.opened_at)}`
           : `opened ${displayDateTime(p.opened_at)}`}
-        {p.opened_today &&
-          ' · agent exit waits until tomorrow (day-trade guard)'}
         {p.earnings_date && ` · next earnings ${p.earnings_date}`}
       </div>
       <div style={{ overflowX: 'auto' }}>
@@ -215,7 +202,16 @@ export default function Positions() {
   const positions = positionsRes.data;
   const open = positions?.open ?? [];
   const closedToday = positions?.closed_today ?? [];
-  const dayTrades = positions?.day_trades;
+  const today = positions?.today;
+  // Symbols behind the counts: entries are positions opened this session,
+  // open or already closed (design/screens/Positions.dc.html, "Today").
+  const entrySymbols = [
+    ...open.filter((p) => p.opened_today).map((p) => p.symbol),
+    ...closedToday
+      .filter((p) => openedTodayNy(p.opened_at))
+      .map((p) => p.symbol),
+  ];
+  const exitSymbols = closedToday.map((p) => p.symbol);
   const account = positions?.account;
   const recon = positions?.reconciliation;
   const recentOrders = ordersRes.data?.orders.slice(0, 8) ?? [];
@@ -277,42 +273,45 @@ export default function Positions() {
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)', alignItems: 'stretch' }}>
         <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column' }}>
-          <Card
-            label="Day trades"
-            right={`${dayTrades?.count ?? 0} of ${dayTrades?.max ?? 3}`}
-            busy={positionsRes.loading}
-            style={{ flex: 1 }}
-          >
-            <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              in the last {dayTrades?.days.length || 5} trading days
-            </div>
-            <div style={{ display: 'flex', gap: 'var(--sa-space-2)' }}>
-              {(dayTrades?.days ?? []).map((day) => (
-                <div
-                  key={day.date}
-                  title={`${day.date}: ${day.count} day trade${day.count === 1 ? '' : 's'}`}
-                  style={{
-                    width: '44px',
-                    height: '44px',
-                    borderRadius: 'var(--sa-radius-sm)',
-                    border: '1px solid var(--sa-border)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 1,
-                    color: day.count > 0 ? 'var(--sa-warning-text)' : 'var(--sa-text-muted)',
-                    background: day.count > 0 ? 'var(--sa-warning-bg)' : 'transparent',
-                  }}
-                >
-                  <span style={{ fontSize: 'var(--sa-text-xs)' }}>{shortDay(day.date)}</span>
-                  <span style={mono}>{day.count}</span>
-                </div>
-              ))}
+          <Card label="Today" busy={positionsRes.loading} style={{ flex: 1 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto',
+                gap: 'var(--sa-space-2) var(--sa-space-4)',
+                fontSize: 'var(--sa-text-md)',
+              }}
+            >
+              <span style={{ color: 'var(--sa-text-muted)' }}>Entries</span>
+              <span style={{ ...mono, textAlign: 'right' }}>
+                {today
+                  ? `${today.entries}${entrySymbols.length ? ` · ${entrySymbols.join(', ')}` : ''}`
+                  : '—'}
+              </span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>Exits</span>
+              <span style={{ ...mono, textAlign: 'right' }}>
+                {today
+                  ? `${today.exits}${exitSymbols.length ? ` · ${exitSymbols.join(', ')}` : ''}`
+                  : '—'}
+              </span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>
+                Bought and sold the same session
+              </span>
+              <span style={{ ...mono, textAlign: 'right' }}>
+                {today?.round_trips ?? '—'}
+              </span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>
+                Not to be bought again today
+              </span>
+              <span style={{ ...mono, textAlign: 'right' }}>
+                {today ? today.reentry_blocked.join(', ') || '—' : '—'}
+              </span>
             </div>
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
-              The agent never closes a position on the day it opened it. Only a
-              stop or target at Alpaca can, and that would count here.
+              There is no day-trade limit since 4 June 2026 (FINRA replaced the
+              pattern day trader rule). The agent may sell a position the day it
+              bought it. A symbol it closed today isn't bought again until the
+              next session.
             </div>
           </Card>
         </div>

@@ -1,6 +1,6 @@
-# Stock Agent — design
+# Stock Trading Agent — design
 
-How Stock Agent looks and what it says. It uses the same visual language as Trading Agent: dark "instrument panel" surfaces, IBM Plex Sans for text and IBM Plex Mono for every number.
+How Stock Trading Agent looks and what it says. It uses the same visual language as Trading Agent: dark "instrument panel" surfaces, IBM Plex Sans for text and IBM Plex Mono for every number.
 
 ## What decides what
 
@@ -31,7 +31,7 @@ How Stock Agent looks and what it says. It uses the same visual language as Trad
 | `Main.dc.html` | Dashboard: header, this-cycle line with cycle counter, summary tiles (positions, model calls today and since start link on), daily briefing and risk budget cards, chart with held-symbol buttons and Find symbol (no row of every symbol), price chart, latest decision, watchlist, open positions, today's decisions | PR 1 (header, sidebar), PR 3 (watchlist rules column), PR 6 (rest), PR 10 (risk budget card, cycle counter, briefing card, model call counter) |
 | `Decision.dc.html` | Decision detail drawer, 560 px, in Trading Agent's layout (gates, signal stack, reasoning, levels, outcome), opened from the dashboard, positions and inspector | PR 4 (model part), PR 6 |
 | `DecisionV2.dc.html` | Decision drawer for a decision.v2 decision (here shadow C): action with option and confidence, entry/stop/target/R-R tiles, Options offered (A–E, chosen one highlighted, stop and target basis, ATR distance, levels in the way), Levels list with the price line and used ids highlighted, reasoning with levels used, explanation check, gates. A v1 decision keeps `Decision.dc.html` | PR 21 |
-| `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, day trades, account, order history | PR 5 (data), PR 6 |
+| `Positions.dc.html` | Positions & orders: reconciliation status, positions with their bracket legs, today (entries, exits, same-session round trips), account, order history | PR 5 (data), PR 6 |
 | `Performance.dc.html` | Performance: summary, equity vs SPY with USD/EUR switch, by regime, by symbol, winners and tails (small-sample banner, R distribution, tail tiles, after the exit with per-trade table), decisions and outcomes, closed trades | PR 7, tails in PR 19 |
 | `Inspector.dc.html` | LLM inspector: every call since the start. Filters (period presets and from/to, outcome, source, more filters behind a button on phone), filtered-calls summary with a stacked bar per session, call list grouped per session (sticky headers, outcome chips with reasons, Load more), details with outcome block, metadata, Error block for failed calls, prompt and raw response. `Inspector-error.png` shows a timeout; `Inspector-390.png` phone width | PR 4, rebuilt in PR 18 |
 | `Universe.dc.html` | Universe (v0.2): mode banner, counts, today's screen as a funnel, how the screen works, pool table with filters, search, rank, dollar volume, return vs SPY, status, add, CSV import and remove | PR 11 |
@@ -90,7 +90,7 @@ These apply to every screen. Inline styles can't express hover or focus, so the 
 - **Numbers:** the frontend formats numbers from numeric API values, so every negative uses the minus sign (−, U+2212). The backend never sends formatted strings.
 - **Copy that names a setting** (for example "3 trading days") reads the value from settings; it is never hard-coded.
 - **Latest request wins:** when a selection changes quickly (symbol, filter, run), only the newest response is shown; older ones are cancelled or ignored.
-- **Page title:** the browser tab shows the state, for example "● Market open · Stock Agent", "⏸ Paused · Stock Agent", "⛔ Kill switch · Stock Agent".
+- **Page title:** the browser tab shows the state, for example "● Market open · Stock Trading Agent", "⏸ Paused · Stock Trading Agent", "⛔ Kill switch · Stock Trading Agent".
 
 ## Phone width
 
@@ -100,7 +100,7 @@ These apply to every screen. Inline styles can't express hover or focus, so the 
 
 Both questions from the first handoff are now settled in `docs/SPEC.md` (supervised approvals; Stop & flatten never refuses, it warns). Kept for reference:
 
-1. **Stop & flatten on a position bought today** counts as a day trade. The dialog warns about it. Should it also refuse when that would be the 4th day trade?
+1. **Stop & flatten on a position bought today** counted as a day trade. No longer relevant: the pattern day trader rule was retired on 4 June 2026 and the warning was removed (PR 26).
 
 ## Screenshot check in every UI PR
 

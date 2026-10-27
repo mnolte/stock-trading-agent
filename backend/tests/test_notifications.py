@@ -125,7 +125,7 @@ async def test_subject_format(
     mailer: FakeMailer,
     session_factory: SessionFactory,
 ) -> None:
-    """[Stock Agent · PAPER] <event label>: <one line>, same in the email."""
+    """[Stock Trading Agent · PAPER] <event label>: <one line>, same in the email."""
     await _configure_smtp(service, secrets)
     mailer.sent.clear()
     service.notify("kill_switch", "drawdown -8.1% from peak")
@@ -135,7 +135,7 @@ async def test_subject_format(
         row.subject
         == f"{SUBJECT_PREFIX} Kill switch turned on: drawdown -8.1% from peak"
     )
-    assert row.subject.startswith("[Stock Agent · PAPER] ")
+    assert row.subject.startswith("[Stock Trading Agent · PAPER] ")
     (sent,) = mailer.sent
     assert sent.subject == row.subject
 

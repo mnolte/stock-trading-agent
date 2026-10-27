@@ -66,8 +66,10 @@ export function shockBrakeText(b: RiskBudgetResponse): string {
   return `${sb.on ? 'on' : 'off'}${moves.length ? ` · SPY ${moves.join(', ')}` : ''}`;
 }
 
-export function dayTradesText(b: RiskBudgetResponse): string {
-  return `${b.day_trades.count} of ${b.day_trades.max} · last 5 trading days`;
+/** Re-entry row: "none today", the blocked symbols, or the setting state. */
+export function reEntryText(b: RiskBudgetResponse, blocked: string[]): string {
+  if (b.re_entry.allowed) return 'allowed by settings';
+  return blocked.length ? blocked.join(' · ') : 'none today';
 }
 
 // Hover explanations, one per label, copied from the design. Values that
@@ -98,6 +100,6 @@ export const budgetHints = {
   shockBrake: (limit1h: string, limitSession: string): string =>
     `No new entries this session when SPY drops ${trimDecimal(limit1h)}% ` +
     `in a 1h bar or ${trimDecimal(limitSession)}% since the open.`,
-  dayTrades: (max: number): string =>
-    `Pattern day trading guard. At ${max}, no new entries until the count drops.`,
+  reEntry:
+    'A symbol sold or stopped out today is not bought again until the next session.',
 };
