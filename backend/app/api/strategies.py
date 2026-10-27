@@ -147,6 +147,7 @@ def strategies(request: Request) -> dict[str, Any]:
             "target_r": config.get("shadows", "rules_only", "target_r", default=2.0),
         },
         "options": {
+            "cycles": list(config.get("schedule", "cycles", default=[]) or []),
             "models": priced_models(config),
             "prompts": _prompt_versions(),
             "live": {

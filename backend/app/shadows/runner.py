@@ -51,7 +51,7 @@ from app.decide.snapshot import UNAVAILABLE, _position_block
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
-from app.market.clock import Clock, SessionClock
+from app.market.clock import NY_TZ, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, next_earnings
 from app.risk.gates import evaluate_entry_gates, resolve_sectors
@@ -525,6 +525,7 @@ class ShadowRunner:
                 open_entry_order=d.symbol in pending_symbols,
                 is_last_cycle=last_cycle,
                 config=cfg,
+                cycle_time=scheduled.astimezone(NY_TZ).strftime("%H:%M"),
             )
             (passing if rules.status == STATUS_PASS else failing).append((d, rules))
         passing.sort(key=lambda pair: _rank_key(pair[0]))

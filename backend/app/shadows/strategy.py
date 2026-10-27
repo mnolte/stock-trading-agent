@@ -68,6 +68,9 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
             if value is not None:
                 tree.setdefault(section, {})[key] = value
     for name, value in (strategy.overrides or {}).items():
+        if name == "entry_cycles" and isinstance(value, list) and value:
+            tree.setdefault("rules", {})["entry_cycles"] = value
+            continue
         target = OVERRIDE_KEYS.get(name)
         if target is not None and value is not None:
             tree.setdefault(target[0], {})[target[1]] = value
@@ -95,6 +98,16 @@ def differences(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
     same: list[dict[str, str]] = []
     if strategy.kind == "rules_only":
         differs.append({"key": "kind", "label": "Kind", "live": "llm", "shadow": "rules only"})
+    allowed = (strategy.overrides or {}).get("entry_cycles")
+    if isinstance(allowed, list) and allowed:
+        differs.append(
+            {
+                "key": "rules.entry_cycles",
+                "label": "Entry cycles",
+                "live": "all cycles",
+                "shadow": ", ".join(str(c) for c in allowed),
+            }
+        )
     keys = dict(OVERRIDE_KEYS)
     if strategy.kind == "llm":
         keys = {**MODEL_KEYS, **keys}
@@ -195,12 +208,34 @@ def validate_new_strategy(
     else:
         cleaned.update(prompt_version=None, model=None, temperature=None)
 
-    overrides: dict[str, float] = {}
+    overrides: dict[str, Any] = {}
     raw = body.get("overrides") or {}
     if not isinstance(raw, dict):
         errors.append("Overrides: expected an object")
         raw = {}
+    known_cycles = set(config.get("schedule", "cycles", default=[]) or [])
     for item, value in raw.items():
+        if str(item) == "entry_cycles":
+            # The cycles (New York "HH:MM") the strategy may enter in;
+            # every name must be a configured cycle.
+            if value is None or value == "":
+                continue
+            if not isinstance(value, list) or not all(
+                isinstance(c, str) for c in value
+            ):
+                errors.append("Entry cycles: a list of cycle times")
+                continue
+            bad = [c for c in value if c not in known_cycles]
+            if bad:
+                errors.append(
+                    f"Entry cycles: not scheduled cycles: {', '.join(bad)}"
+                )
+                continue
+            if not value:
+                errors.append("Entry cycles: at least one cycle")
+                continue
+            overrides["entry_cycles"] = sorted(set(value))
+            continue
         target = OVERRIDE_KEYS.get(str(item))
         if target is None:
             # Risk gates, sizing, the day-trade rule and earnings handling
