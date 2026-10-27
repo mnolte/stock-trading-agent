@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.market.clock import NY_TZ
 
@@ -650,6 +651,8 @@ def _slices(
     trades: Sequence[InsightsTrade],
     skip_dims: Sequence[dict[str, Any]],
     *,
+    session_date: date | None,
+    display_tz: str,
     min_trades: int,
     early_trades: int,
     finding_sigma: Decimal,
@@ -692,6 +695,21 @@ def _slices(
                     value, []
                 ).append(skip)
 
+    ams = ZoneInfo(display_tz)
+
+    def _sub(dim_key: str, cycle: str) -> str | None:
+        """Amsterdam display time for an entry-cycle slice label."""
+        if dim_key != "entry_cycle" or session_date is None:
+            return None
+        try:
+            hh, mm = (int(p) for p in cycle.split(":"))
+        except ValueError:
+            return None
+        local = datetime.combine(
+            session_date, datetime.min.time(), tzinfo=NY_TZ
+        ).replace(hour=hh, minute=mm)
+        return f"{local.astimezone(ams):%H:%M} Amsterdam"
+
     findings: list[dict[str, Any]] = []
     out_dims: dict[str, Any] = {}
     for key, label in DIMENSIONS:
@@ -731,6 +749,7 @@ def _slices(
                 rows.append(
                     {
                         "slice": value,
+                        "sub": _sub(key, value),
                         "trades": 0,
                         "status": "rule",
                         "rule": rules_rows[value],
@@ -789,6 +808,7 @@ def _slices(
             )
             row: dict[str, Any] = {
                 "slice": value,
+                "sub": _sub(key, value),
                 "trades": len(members),
                 "won": won,
                 "win_rate_pct": (
@@ -870,7 +890,8 @@ def _score_skip(
     ATR below, target ``target_r`` R. The stop is already checked on the
     fill bar; the target counts from the next bar, and a bar touching
     both counts as a stop — the shadow fill rules applied to stored bars.
-    Returns (outcome, r) with outcome missed | avoided | neither.
+    Returns (outcome, r) with outcome missed | avoided | neither |
+    unfilled (the limit was never touched inside the entry window).
     """
     if skip.price is None or skip.atr_1h is None or skip.atr_1h <= 0:
         return "neither", None
@@ -887,7 +908,7 @@ def _score_skip(
             filled_at = i
             break
     if filled_at is None:
-        return "neither", None
+        return "unfilled", None
     bar = bars[filled_at]
     if bar.low <= stop:  # the stop is already checked on the fill bar
         return "avoided", Decimal(-1)
@@ -915,6 +936,7 @@ def _skipped_setups(
     """Score every model skip; also returns each skip's outcome for the
     per-slice skip columns."""
     scored = {"missed": 0, "avoided": 0, "neither": 0}
+    not_filled = 0
     rs: list[Decimal] = []
     outcomes: list[str | None] = []
     dates_sorted = sorted(session_dates)
@@ -953,7 +975,10 @@ def _skipped_setups(
             entry_offset_pct=entry_offset_pct,
             fill_minutes=fill_minutes,
         )
-        scored[outcome] += 1
+        if outcome == "unfilled":
+            not_filled += 1
+        else:
+            scored[outcome] += 1
         if r is not None:
             rs.append(r)
         outcomes.append(outcome)
@@ -961,6 +986,7 @@ def _skipped_setups(
     return {
         "total": len(skips),
         "scored": total,
+        "not_filled": not_filled,
         "missed": scored["missed"],
         "avoided": scored["avoided"],
         "neither": scored["neither"],
@@ -1184,6 +1210,8 @@ def compute_insights(
     dividends_usd: Decimal,
     dividend_positions: int,
     open_positions: int,
+    session_date: date | None = None,
+    display_tz: str = "Europe/Amsterdam",
     strategy_kind: str = "llm",
     cycles: Sequence[str] = ("10:46", "11:46", "12:46", "13:46", "14:46", "15:46"),
     last_cycle_no_entries: bool = True,
@@ -1309,6 +1337,8 @@ def compute_insights(
     slices, findings = _slices(
         list(trades),
         skip_dims,
+        session_date=session_date,
+        display_tz=display_tz,
         min_trades=min_trades,
         early_trades=early_trades,
         finding_sigma=Decimal(str(finding_sigma)),

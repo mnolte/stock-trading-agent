@@ -1136,6 +1136,8 @@ def compute_snapshot(
         dividend_positions=inputs["dividend_positions"],
         open_positions=inputs["open_positions"],
         strategy_kind=inputs["kind"],
+        session_date=session_date,
+        display_tz=str(config.get("app", "timezone", default="Europe/Amsterdam")),
         cycles=list(
             config.get("schedule", "cycles", default=[])
         ),

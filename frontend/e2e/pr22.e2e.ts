@@ -47,19 +47,19 @@ const SNAP = {
     ],
     skipped: {
       total: 1400, scored: 1396, missed: 210, avoided: 392, neither: 794,
-      missed_pct: '15.00', avoided_pct: '28.00', neither_pct: '57.00', baseline_r: '-0.18',
+      missed_pct: '15.00', avoided_pct: '28.00', neither_pct: '57.00', baseline_r: '-0.18', not_filled: 62,
     },
     slices: {
       entry_cycle: {
         label: 'Entry cycle',
         hidden: 4,
         rows: [
-          { slice: '10:46', trades: 40, win_rate_pct: '65.00', avg_r: '0.62', lo: '0.30', hi: '0.94', total_r: '24.80', skips: 480, skips_missed_pct: '12.00', status: 'finding' },
+          { slice: '10:46', sub: '16:46 Amsterdam', trades: 40, win_rate_pct: '65.00', avg_r: '0.62', lo: '0.30', hi: '0.94', total_r: '24.80', skips: 480, skips_missed_pct: '12.00', status: 'finding' },
           { slice: '11:46', trades: 30, win_rate_pct: '53.33', avg_r: '0.20', lo: '-0.10', hi: '0.50', total_r: '6.00', skips: 320, skips_missed_pct: '16.00', status: 'counted' },
           { slice: '12:46', trades: 16, win_rate_pct: '50.00', avg_r: '0.05', lo: '-0.40', hi: '0.50', total_r: '0.80', skips: 240, skips_missed_pct: '14.00', status: 'early' },
           { slice: '13:46', trades: 12, win_rate_pct: '41.67', avg_r: '-0.10', lo: '-0.60', hi: '0.40', total_r: '-1.20', skips: 180, skips_missed_pct: '18.00', status: 'early' },
           { slice: '14:46', trades: 10, win_rate_pct: '40.00', avg_r: '0.02', lo: '-0.70', hi: '0.74', total_r: '0.20', skips: 120, skips_missed_pct: '13.00', status: 'early' },
-          { slice: '15:46', trades: 0, status: 'rule', rule: 'No entries in the last cycle of a session (rule). Held positions are still reviewed.' },
+          { slice: '15:46', sub: '21:46 Amsterdam', trades: 0, status: 'rule', rule: 'No entries in the last cycle of a session (rule). Held positions are still reviewed.' },
         ],
       },
       weekday: { label: 'Weekday', hidden: 0, rows: [] },
@@ -115,8 +115,20 @@ function shot(project: string): string {
 }
 
 test('insights: headline, findings, funnel and slices', async ({ page }, testInfo) => {
-  await page.route('**/api/insights**', (route) =>
+  await page.route('**/api/insights?**', (route) =>
     route.fulfill({ contentType: 'application/json', json: SNAP }),
+  );
+  await page.route('**/api/insights/trades**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      json: {
+        slice: '10:46', dimension: 'entry_cycle',
+        trades: [
+          { id: 7, symbol: 'NVDA', qty: 12, entry: '181.20', opened_at: '2026-12-11T15:46:00', closed_at: '2026-12-14T20:00:00', exit_reason: 'target', pnl: '412.30', r: '1.90', decision_id: 1042 },
+          { id: 8, symbol: 'AAPL', qty: 20, entry: '212.05', opened_at: '2026-12-15T15:46:00', closed_at: '2026-12-15T21:10:00', exit_reason: 'stop', pnl: '-168.40', r: '-1.05', decision_id: 1077 },
+        ],
+      },
+    }),
   );
   await page.goto('/insights');
   await expect(page.getByRole('heading', { name: 'Insights' })).toBeVisible({ timeout: 60_000 });
@@ -128,8 +140,17 @@ test('insights: headline, findings, funnel and slices', async ({ page }, testInf
   await expect(page.getByRole('heading', { name: 'Where trades come from' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Skipped setups' })).toBeVisible();
   await expect(page.getByText('No entries in the last cycle')).toBeVisible();
+  await expect(page.getByText('16:46 Amsterdam').first()).toBeVisible();
+  await expect(page.getByText('Not filled — the limit was never touched:')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Calibration' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Execution' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Overnight' })).toBeVisible();
+
+  // Show the trades loads the slice's trade list from the API.
+  await page.getByRole('button', { name: 'Show the trades' }).first().click();
+  await expect(page.getByRole('cell', { name: 'NVDA' })).toBeVisible();
+  await expect(page.getByRole('cell', { name: '+1.90R' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'decision' }).first()).toBeVisible();
+
   await page.screenshot({ path: shot(testInfo.project.name), fullPage: true });
 });

@@ -10,6 +10,7 @@ the trades behind one slice row.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -37,6 +38,17 @@ def _strategy(session: Any, raw: str | None) -> int | None:
     if row is None:
         raise HTTPException(status_code=404, detail="strategy not found")
     return sid
+
+
+def _position_r(p: Position) -> str | None:
+    """Adjusted P&L in R of the trade's initial risk."""
+    stop = p.initial_stop
+    if stop is None:
+        return None
+    risk = (p.avg_entry_price - stop) * p.qty
+    if risk <= 0 or p.realized_pnl_adjusted is None:
+        return None
+    return str((p.realized_pnl_adjusted / risk).quantize(Decimal("0.01")))
 
 
 def _strategy_list(session: Any) -> list[dict[str, Any]]:
@@ -117,6 +129,11 @@ def insight_trades(
                         "closed_at": p.closed_at.isoformat() if p.closed_at else None,
                         "exit_reason": p.exit_reason,
                         "pnl": str(p.realized_pnl_raw) if p.realized_pnl_raw is not None else None,
+                        "adjusted_pnl": str(p.realized_pnl_adjusted)
+                        if p.realized_pnl_adjusted is not None
+                        else None,
+                        "r": _position_r(p),
+                        "decision_id": p.entry_decision_id,
                     }
                 )
         else:
@@ -134,6 +151,7 @@ def insight_trades(
                         "exit_reason": sp.exit_reason,
                         "pnl": str(sp.pnl) if sp.pnl is not None else None,
                         "r": str(sp.r) if sp.r is not None else None,
+                        "decision_id": sp.entry_decision_id,
                     }
                 )
         return {"trades": trades, "slice": slice, "dimension": dimension}

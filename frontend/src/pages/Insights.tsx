@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { get } from '../api/client';
 import { useApiResource } from '../api/useResource';
@@ -27,6 +27,7 @@ interface Finding {
 
 interface SliceRow {
   slice: string;
+  sub?: string | null;
   trades?: number;
   win_rate_pct?: string | null;
   avg_r?: string | null;
@@ -57,7 +58,7 @@ interface Snapshot {
   skipped: {
     total: number; scored?: number; missed?: number; avoided?: number; neither?: number;
     missed_pct?: string | null; avoided_pct?: string | null; neither_pct?: string | null;
-    baseline_r?: string | null; na?: string;
+    baseline_r?: string | null; not_filled?: number; na?: string;
   };
   slices: Record<string, { label: string; rows: SliceRow[]; hidden: number }>;
   calibration: {
@@ -86,6 +87,26 @@ interface InsightsResponse {
   period: string;
   empty: boolean;
   snapshot: Snapshot | null;
+}
+
+interface InsightTrade {
+  id: number;
+  symbol: string;
+  qty: number;
+  entry: string | null;
+  opened_at: string | null;
+  closed_at: string | null;
+  exit_reason: string | null;
+  pnl: string | null;
+  r: string | null;
+  decision_id: number | null;
+}
+
+interface InsightTradesResponse {
+  trades: InsightTrade[];
+  slice: string;
+  dimension: string;
+  empty?: boolean;
 }
 
 const PERIODS: [string, string][] = [
@@ -151,11 +172,25 @@ export default function Insights() {
   const [strategy, setStrategy] = useState('live');
   const [period, setPeriod] = useState('run');
   const [dimension, setDimension] = useState('entry_cycle');
+  const [tradeSlice, setTradeSlice] = useState<string | null>(null);
   const navigate = useNavigate();
   const res = useApiResource<InsightsResponse>(
     () => get<InsightsResponse>(`/api/insights?strategy=${strategy}&period=${period}`),
     [strategy, period],
   );
+  const tradesRes = useApiResource<InsightTradesResponse>(
+    () =>
+      get<InsightTradesResponse>(
+        `/api/insights/trades?strategy=${strategy}&period=${period}&dimension=${dimension}&slice=${encodeURIComponent(tradeSlice ?? '')}`,
+      ),
+    [strategy, period, dimension, tradeSlice],
+    tradeSlice !== null,
+  );
+  const showTrades = (dim: string, slice: string) => {
+    setDimension(dim);
+    setTradeSlice(slice);
+  };
+  const strategyKind = res.data?.strategies.find((s) => s.id === strategy)?.kind;
   const snap = res.data?.snapshot ?? null;
   const dim = snap?.slices?.[dimension];
   const beforeData = snap != null && snap.trades < 10;
@@ -248,7 +283,7 @@ export default function Insights() {
                   {SHADOWABLE[f.dimension] && f.status === 'finding' && (
                     <button type="button" onClick={() => navigate(`/strategies?new_shadow=1&exclude_cycle=${encodeURIComponent(f.slice)}`)}>Test in a shadow</button>
                   )}
-                  <button type="button" onClick={() => setDimension(f.dimension)}>Show the trades</button>
+                  <button type="button" onClick={() => showTrades(f.dimension, f.slice)}>Show the trades</button>
                 </div>
               </div>
             ))}
@@ -282,9 +317,10 @@ export default function Insights() {
               ) : (
                 <>
                   <div style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-stat)' }}>{snap.skipped.total} skips</div>
-                  <div style={{ color: 'var(--sa-text-muted)' }}>
-                    missed {fmtPct(snap.skipped.missed_pct)} · avoided {fmtPct(snap.skipped.avoided_pct)} · neither {fmtPct(snap.skipped.neither_pct)}
-                  </div>
+                  <div>Would have reached the target first — missed <strong>{fmtPct(snap.skipped.missed_pct)}</strong></div>
+                  <div>Would have hit the stop first — avoided <strong>{fmtPct(snap.skipped.avoided_pct)}</strong></div>
+                  <div>Neither within the horizon: <strong>{fmtPct(snap.skipped.neither_pct)}</strong></div>
+                  <div style={{ color: 'var(--sa-text-muted)' }}>Not filled — the limit was never touched: <strong>{snap.skipped.not_filled ?? 0}</strong></div>
                   <div style={{ color: 'var(--sa-text-muted)' }}>Taking every skip with the rules-only geometry would have averaged {fmtR(snap.skipped.baseline_r ?? null)}.</div>
                 </>
               )}
@@ -324,7 +360,14 @@ export default function Insights() {
                   <tbody>
                     {dim.rows.map((r) => (
                       <tr key={r.slice} style={{ borderTop: '1px solid var(--sa-border)', opacity: r.status === 'early' ? 0.6 : 1 }}>
-                        <td style={{ padding: '6px 8px' }}>{r.slice}</td>
+                        <td style={{ padding: '6px 8px' }}>
+                          {r.status !== 'rule' ? (
+                            <button type="button" onClick={() => showTrades(dimension, r.slice)} style={{ color: 'var(--sa-text)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' }}>{r.slice}</button>
+                          ) : (
+                            r.slice
+                          )}
+                          {r.sub && <span style={{ display: 'block', color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>{r.sub}</span>}
+                        </td>
                         {r.status === 'rule' ? (
                           <td colSpan={7} style={{ padding: '6px 8px', color: 'var(--sa-text-muted)' }}>{r.rule}</td>
                         ) : (
@@ -343,13 +386,58 @@ export default function Insights() {
                   </tbody>
                 </table>
                 {dim.hidden > 0 && <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>+ {dim.hidden} trades in slices under 10</div>}
+                {tradeSlice !== null && (
+                  <div aria-label={`Trades in ${tradeSlice}`} style={{ borderTop: '1px solid var(--sa-border)', paddingTop: 'var(--sa-space-2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                      <strong>Trades in {tradeSlice}</strong>
+                      <button type="button" onClick={() => setTradeSlice(null)} style={{ fontSize: 'var(--sa-text-sm)' }}>Close</button>
+                    </div>
+                    {tradesRes.loading && <div style={{ color: 'var(--sa-text-muted)' }}>Loading…</div>}
+                    {tradesRes.failure && <div role="alert">{tradesRes.failure.message}</div>}
+                    {tradesRes.data && tradesRes.data.trades.length === 0 && !tradesRes.loading && (
+                      <div style={{ color: 'var(--sa-text-muted)' }}>No trades in this slice.</div>
+                    )}
+                    {tradesRes.data && tradesRes.data.trades.length > 0 && (
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
+                        <thead><tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
+                          <th style={{ padding: '4px 8px' }}>Closed</th>
+                          <th style={{ padding: '4px 8px' }}>Symbol</th>
+                          <th style={{ padding: '4px 8px' }}>Qty</th>
+                          <th style={{ padding: '4px 8px' }}>R</th>
+                          <th style={{ padding: '4px 8px' }}>P&L</th>
+                          <th style={{ padding: '4px 8px' }}>Exit</th>
+                          <th style={{ padding: '4px 8px' }}></th>
+                        </tr></thead>
+                        <tbody>
+                          {tradesRes.data.trades.map((t) => (
+                            <tr key={t.id} style={{ borderTop: '1px solid var(--sa-border)' }}>
+                              <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.closed_at ? t.closed_at.slice(0, 10) : '—'}</td>
+                              <td style={{ padding: '4px 8px' }}>{t.symbol}</td>
+                              <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.qty}</td>
+                              <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{fmtR(t.r)}</td>
+                              <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{fmtUsd(t.pnl)}</td>
+                              <td style={{ padding: '4px 8px' }}>{t.exit_reason ?? '—'}</td>
+                              <td style={{ padding: '4px 8px' }}>
+                                {strategy === 'live' && t.decision_id != null ? (
+                                  <Link to={`/decisions/${t.decision_id}`}>decision</Link>
+                                ) : (
+                                  t.decision_id != null ? <span style={{ color: 'var(--sa-text-muted)' }}>decision #{t.decision_id}</span> : null
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </Card>
 
           {/* calibration */}
           {snap.calibration.buckets && (
-            <Card label="Calibration" right={snap.calibration.weighted_gap_pts != null ? <span style={{ color: 'var(--sa-text-muted)' }}>weighted gap {snap.calibration.weighted_gap_pts} pts</span> : undefined}>
+            <Card label="Calibration" right={snap.calibration.weighted_gap_pts != null ? <span style={{ color: 'var(--sa-text-muted)' }}>weighted gap {snap.calibration.weighted_gap_pts} pts · target before stop</span> : undefined}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
                 <thead><tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
                   <th style={{ padding: '6px 8px' }}>Confidence</th><th style={{ padding: '6px 8px' }}>Stated</th><th style={{ padding: '6px 8px' }}>Reached target first</th><th style={{ padding: '6px 8px' }}>n</th>
@@ -371,7 +459,7 @@ export default function Insights() {
 
           {/* execution + overnight */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--sa-space-3)' }}>
-            <Card label="Execution">
+            <Card label="Execution" right={strategy !== 'live' ? <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>virtual fills{strategyKind === 'rules_only' ? ' · rules only' : ''}</span> : undefined}>
               <div>Entry fill rate: <strong>{fmtPct(snap.execution.fill_rate)}</strong> ({snap.execution.filled} of {snap.execution.placed}){snap.execution.worst_cycle && ` · worst ${snap.execution.worst_cycle.cycle}`}</div>
               <div>Entry slippage: <strong>{snap.execution.entry_slippage_bps ?? '—'} bps</strong></div>
               <div>Exit slippage: <strong>{snap.execution.exit_slippage_bps ?? '—'} bps</strong>{snap.execution.exit_slippage_splits.length > 0 && ` (${snap.execution.exit_slippage_splits.map((s) => `${s.reason} ${s.bps ?? '—'}`).join(' · ')})`}</div>

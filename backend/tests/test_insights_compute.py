@@ -6,6 +6,7 @@ the spec's "done when" asks exactly that.
 
 from __future__ import annotations
 
+import random
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -481,7 +482,7 @@ def test_skip_scored_missed_avoided_neither() -> None:
     assert sk["baseline_r"] == "0.42"
 
 
-def test_skip_unfilled_is_neither() -> None:
+def test_skip_unfilled_counts_separately() -> None:
     mon = date(2027, 1, 4)
     at = datetime(2027, 1, 4, 15, 0, tzinfo=UTC_)
     bars = [
@@ -491,7 +492,10 @@ def test_skip_unfilled_is_neither() -> None:
         [], [], [_skip(1, "X", at, mon)], [],
         **base_kwargs(bars_5m_for=lambda s, a, b: bars)
     )
-    assert out["skipped"]["neither"] == 1
+    # The limit was never touched: not missed/avoided/neither but its
+    # own "not filled" count (PR 22 review).
+    assert out["skipped"]["not_filled"] == 1
+    assert out["skipped"]["neither"] == 0
 
 
 # ----------------------------------------------------------------------
@@ -554,3 +558,42 @@ def test_before_data_under_10_trades() -> None:
     )
 
 
+
+
+def test_random_noise_produces_at_most_chance_findings() -> None:
+    """Fixed-seed random R across all 16 dimensions: nothing real to
+    find, so only chance findings may appear (spec's done-when)."""
+    rng = random.Random(22)
+    sectors = ["Energy", "Technology", "Financials"]
+    cycles = ["10:46", "11:46", "12:46", "13:46", "14:46"]
+    trades = [
+        trade(
+            i,
+            pnl=str(round(rng.gauss(0.0, 1.0) * 10, 2)),
+            symbol=["AAA", "BBB", "CCC", "DDD"][i % 4],
+            sector=sectors[i % 3],
+            cycle=cycles[i % 5],
+            weekday=i % 5,
+            regime=["Up · normal vol", "Down · normal vol"][i % 2],
+            dte=[5, 15, 30, None][i % 4],
+            gap=str([-2.0, 0.0, 2.0][i % 3]),
+            vwap=["99", "101"][i % 2],
+            ema20=str(95 + i % 15),
+            rs_spy=str(-5 + i % 11),
+            spy_day=str([-1.0, 0.0, 1.0][i % 3]),
+            atr_pct=str(i % 100),
+            conf=str(D("0.5") + D(i % 4) / D(10)),
+            stop_basis=["swing low", "2 ATR"][i % 2],
+            target_basis=["resistance", "2R"][i % 2],
+            held=[1, 2, 5][i % 3],
+            prompt=["decision.v1", "decision.v2"][i % 2],
+            model=["gpt-4o-mini", "gpt-4.1-mini"][i % 2],
+        )
+        for i in range(150)
+    ]
+    out = compute_insights(trades, [], [], [], **base_kwargs())
+    # 150 draws of N(0,1)R: a 2-sigma hit on a 30+ sample happens ~5% of
+    # the time per slice — a handful of false positives is possible but
+    # the run must not find structure in noise.
+    assert len([f for f in out["findings"] if f["status"] == "finding"]) <= 4
+    assert len(out["findings"]) <= 6
