@@ -2381,7 +2381,10 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
         promote_raw
     ).isdigit() else None
-    if promote_id is not None:
+    # Promote, and loosening any risk limit, need "Confirm it is you";
+    # tightening a limit never asks (design, Settings → Access).
+    loosens = _settings_loosen_risk(cleaned, base)
+    if promote_id is not None or loosens:
         from app.auth.api import require_confirmed
 
         require_confirmed(request)
@@ -2416,6 +2419,25 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
+
+
+def _settings_loosen_risk(
+    submitted: dict[str, object], base: dict[str, object]
+) -> bool:
+    """True when a numeric risk limit goes up — loosening asks for a
+    fresh confirmation; tightening never does (design, Access)."""
+    new_risk = submitted.get("risk")
+    if not isinstance(new_risk, dict):
+        return False
+    old_risk = _nested_get(base, "risk") or {}
+    for key, value in new_risk.items():
+        old = old_risk.get(key) if isinstance(old_risk, dict) else None
+        try:
+            if value is not None and old is not None and float(value) > float(old):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -2471,6 +2493,18 @@ async def save_smtp(
         errors.append("SMTP port must be 1–65535")
     if errors:
         raise HTTPException(status_code=422, detail=errors)
+    # Changing where the stored password is sent (host, port, username)
+    # or where alerts go (To) needs "Confirm it is you" (design, Access).
+    from app.auth.api import require_confirmed
+
+    current = service.smtp_status()
+    if (
+        current.get("host") != host
+        or current.get("port") != port
+        or current.get("username") != username
+        or current.get("to_addr") != to_addr
+    ) and current.get("configured"):
+        require_confirmed(request)
     result = await service.save_smtp(
         host=host,
         port=port,
