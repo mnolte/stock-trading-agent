@@ -260,7 +260,10 @@ def validate_new_strategy(
 
     def eff(item: str) -> float:
         section, key = OVERRIDE_KEYS[item]
-        return overrides.get(item, _num(config.get(section, key, default=0)))
+        value = overrides.get(item)
+        if isinstance(value, bool | int | float | str):
+            return _num(value)
+        return _num(config.get(section, key, default=0))
 
     if eff("rsi_min") >= eff("rsi_max"):
         errors.append("RSI from must be below RSI to")

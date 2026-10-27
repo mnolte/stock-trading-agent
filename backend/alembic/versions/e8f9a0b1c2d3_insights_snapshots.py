@@ -12,7 +12,6 @@ with headline numbers, funnel, findings, slices and calibration.
 from __future__ import annotations
 
 import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "e8f9a0b1c2d3"

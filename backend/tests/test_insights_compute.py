@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 from app.insights.compute import (
     Bar5m,
@@ -109,8 +110,8 @@ def trade(
     )
 
 
-def base_kwargs(**over):
-    kw: dict = {
+def base_kwargs(**over: Any) -> dict[str, Any]:
+    kw: dict[str, Any] = {
         "equity_daily": [],
         "spy_daily": [],
         "daily_bars_for": lambda symbol: [],
@@ -126,8 +127,17 @@ def base_kwargs(**over):
     return kw
 
 
-def dec(i: int, action: str, *, reason=None, model_action=None,
-        checks=(), gate=None, filled=None, ctx="candidate") -> InsightsDecision:
+def dec(
+    i: int,
+    action: str,
+    *,
+    reason: str | None = None,
+    model_action: str | None = None,
+    checks: tuple[str, ...] = (),
+    gate: str | None = None,
+    filled: bool | None = None,
+    ctx: str = "candidate",
+) -> InsightsDecision:
     return InsightsDecision(
         id=i, context=ctx, final_action=action, no_call_reason=reason,
         model_action=model_action, code_checks_failed=tuple(checks),
@@ -290,9 +300,11 @@ def test_funnel_counts_and_losses() -> None:
     losses = {item["label"]: item["count"] for item in steps["proposed"]["losses"]}
     assert losses == {"model skipped": 10, "invalid output": 2, "call failed": 4}
     assert steps["code_checks"]["count"] == 3
-    assert {item["label"]: item["count"] for item in steps["code_checks"]["losses"]} == {"Stop distance": 1}
+    cc = {item["label"]: item["count"] for item in steps["code_checks"]["losses"]}
+    assert cc == {"Stop distance": 1}
     assert steps["risk_gates"]["count"] == 2
-    assert {item["label"]: item["count"] for item in steps["risk_gates"]["losses"]} == {"sector cap": 1}
+    rg_ = {item["label"]: item["count"] for item in steps["risk_gates"]["losses"]}
+    assert rg_ == {"sector cap": 1}
     assert steps["filled"]["count"] == 1
     assert steps["closed"]["count"] == 1
 
@@ -301,7 +313,7 @@ def test_funnel_counts_and_losses() -> None:
 # slices and findings
 
 
-def _bulk(start: int, n: int, r_pnl: str, **kw) -> list[InsightsTrade]:
+def _bulk(start: int, n: int, r_pnl: str, **kw: Any) -> list[InsightsTrade]:
     return [trade(start + i, pnl=r_pnl, **kw) for i in range(n)]
 
 
@@ -366,7 +378,7 @@ def test_noise_finds_no_findings() -> None:
             rs_spy=str(i % 10),
             spy_day=["-1", "0", "1"][i % 3],
             atr_pct=str(i % 100),
-            conf=str(50 + (i % 5)) / 100 if False else D("0.5") + D(i % 5) / D(10),
+            conf=str(D("0.5") + D(i % 5) / D(10)),
             held=[1, 2, 5][i % 3],
             prompt=["decision.v1", "decision.v2"][i % 2],
             model=["gpt-4o-mini", "gpt-4.1-mini"][i % 2],

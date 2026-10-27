@@ -954,3 +954,62 @@ async def test_paused_shadow_keeps_its_slot_and_manages_positions(
     with sf() as session, pytest.raises(StrategyError) as exc:
         validate_new_strategy({"name": "D", "kind": "rules_only"}, AppConfig(), session)
     assert any("slots" in e for e in exc.value.errors)
+
+
+async def test_entry_cycles_override_blocks_entries_in_excluded_cycles(
+    sf: sessionmaker[Session],
+) -> None:
+    """PR 22: entry_cycles limits the cycles a shadow may enter in — an
+    excluded cycle fails the rules before any model call."""
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    sid = _strategy(sf, "C · No 10:46", overrides={"entry_cycles": ["11:46"]})  # type: ignore[dict-item]
+    runner = _runner(
+        sf,
+        FakeClock(CYCLE + timedelta(minutes=1)),
+        clients={"C · No 10:46": FakeDecisionClient(enter_symbols={"MSFT"})},
+    )
+    await runner.after_cycle(cycle_id)
+    row = _rows(sf, sid)["MSFT"]
+    # The 10:46 cycle is not in the override: the rules fail, no call,
+    # no model cost and no shadow order.
+    assert row.final_action == "no_call"
+    assert row.no_call_reason == "rules"
+    assert (row.rules_result or {}).get("checks", [{}])[-1]["name"] == "entry cycle"
+    assert _positions(sf, sid) == []
+
+
+async def test_entry_cycles_override_allows_listed_cycle(
+    sf: sessionmaker[Session],
+) -> None:
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    sid = _strategy(sf, "C · 10:46 only", overrides={"entry_cycles": ["10:46"]})  # type: ignore[dict-item]
+    runner = _runner(
+        sf,
+        FakeClock(CYCLE + timedelta(minutes=1)),
+        clients={"C · 10:46 only": FakeDecisionClient(enter_symbols={"MSFT"})},
+    )
+    await runner.after_cycle(cycle_id)
+    assert _rows(sf, sid)["MSFT"].final_action == "enter"
+
+
+def test_validate_entry_cycles_rejects_unscheduled_and_empty(
+    sf: sessionmaker[Session],
+) -> None:
+    with sf() as session:
+        ok = validate_new_strategy(
+            {"name": "x", "kind": "llm", "overrides": {"entry_cycles": ["11:46"]}},
+            AppConfig(),
+            session,
+        )
+        assert ok["overrides"] == {"entry_cycles": ["11:46"]}
+        for bad in (["09:00"], [], "10:46"):
+            try:
+                validate_new_strategy(
+                    {"name": "x", "kind": "llm", "overrides": {"entry_cycles": bad}},
+                    AppConfig(),
+                    session,
+                )
+            except StrategyError as e:
+                assert "Entry cycles" in " ".join(e.errors)
+            else:
+                raise AssertionError(f"expected StrategyError for {bad!r}")
