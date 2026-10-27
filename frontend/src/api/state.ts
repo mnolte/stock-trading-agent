@@ -356,6 +356,10 @@ export function postDismissEvent(
   return post<{ dismissed: boolean }>(`/api/events/${id}/dismiss`, { note });
 }
 
+export function postDismissUncleanRun(): Promise<{ dismissed: boolean }> {
+  return post<{ dismissed: boolean }>('/api/banners/unclean-run/dismiss', {});
+}
+
 // --- LLM call history (PR 18) --------------------------------------------
 
 /** Filter dimensions the list, summary and CSV export share. */

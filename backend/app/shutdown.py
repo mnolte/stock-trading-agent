@@ -67,6 +67,9 @@ def _boot_id() -> str:
 class LockCheck:
     status: str  # "free" | "live" | "stale"
     pid: int = 0
+    # Last heartbeat (or start) time from the lock file — when the dead
+    # run was last seen, for the unclean-run banner (design: States).
+    last_seen: float = 0.0
 
 
 class RunLock:
@@ -85,30 +88,36 @@ class RunLock:
             pid = int(data.get("pid", 0))
         except (OSError, TypeError, ValueError):
             return LockCheck("stale")
+        # When the lock was written/touched last — heartbeat wins over the
+        # start time. Non-numeric values read as 0, which is also what the
+        # freshness check below wants (an unreadable heartbeat is stale).
+        try:
+            last_seen = max(
+                float(data.get("heartbeat_at") or 0),
+                float(data.get("started_at") or 0),
+            )
+        except (TypeError, ValueError):
+            last_seen = 0.0
         boot_id = data.get("boot_id")
         if boot_id is not None and boot_id != _boot_id():
-            return LockCheck("stale", pid)
+            return LockCheck("stale", pid, last_seen)
         if pid == os.getpid():
-            return LockCheck("live", pid)
+            return LockCheck("live", pid, last_seen)
         if not _pid_alive(pid):
-            return LockCheck("stale", pid)
+            return LockCheck("stale", pid, last_seen)
         # A live pid is the holder only while the lock is fresh. Pids get
         # recycled, so an old lock can name a pid that now belongs to an
         # unrelated process; more than a few missed heartbeats reads as
         # an unclean stop, not a running agent.
         try:
-            last_beat = max(
-                float(data.get("heartbeat_at") or 0),
-                float(data.get("started_at") or 0),
-            )
             interval = float(
                 data.get("heartbeat_seconds") or _HEARTBEAT_SECONDS_DEFAULT
             )
         except (TypeError, ValueError):
-            return LockCheck("stale", pid)
-        if time.time() - last_beat <= interval * _HEARTBEAT_MISS_LIMIT:
-            return LockCheck("live", pid)
-        return LockCheck("stale", pid)
+            return LockCheck("stale", pid, last_seen)
+        if time.time() - last_seen <= interval * _HEARTBEAT_MISS_LIMIT:
+            return LockCheck("live", pid, last_seen)
+        return LockCheck("stale", pid, last_seen)
 
     def acquire(self, heartbeat_seconds: int = 30) -> None:
         """Write the lock; refuse startup while a live pid holds it."""

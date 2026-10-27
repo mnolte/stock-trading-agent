@@ -1318,18 +1318,51 @@ def banners(request: Request) -> dict[str, object]:
         )
     if getattr(request.app.state, "unclean_previous_run", False):
         integrity = getattr(request.app.state, "unclean_quick_check", "?")
+        report = getattr(request.app.state, "unclean_reconcile", None)
+        if report is None:
+            reconcile_text = "not run"
+        elif not report.ok:
+            reconcile_text = "failed"
+        elif report.mismatches:
+            count = len(report.mismatches)
+            reconcile_text = f"{count} difference{'s' if count != 1 else ''}"
+        else:
+            reconcile_text = "no differences"
+        interrupted = int(
+            getattr(request.app.state, "unclean_interrupted", 0) or 0
+        )
+        stopped = getattr(request.app.state, "unclean_stopped_at", None)
+        when = ""
+        if isinstance(stopped, datetime):
+            app_tz = ZoneInfo(
+                str(
+                    get_config().get(
+                        "app", "timezone", default="Europe/Amsterdam"
+                    )
+                )
+            )
+            local = stopped.astimezone(app_tz)
+            when = f" ({local.day} {local.strftime('%b %H:%M')})"
         items.append(
             {
-                "id": "unclean-run",
+                "id": None,
                 "kind": "unclean_run",
                 "level": "warning",
                 "message": (
-                    "The last run did not shut down cleanly — data was "
-                    f"checked on startup (quick_check: {integrity})."
+                    f"The previous run did not shut down cleanly{when}. "
+                    f"Database integrity check {integrity} · "
+                    f"reconciliation with Alpaca: {reconcile_text} · "
+                    f"{interrupted} "
+                    f"cycle{'s' if interrupted != 1 else ''} marked "
+                    "interrupted."
                 ),
-                "details": {"quick_check": integrity},
+                "details": {
+                    "quick_check": integrity,
+                    "reconciliation": reconcile_text,
+                    "interrupted": interrupted,
+                },
                 "time": "",
-                "actions": [],
+                "actions": ["open_logs", "dismiss"],
             }
         )
     with get_session_maker()() as session:
@@ -1827,6 +1860,17 @@ def banners(request: Request) -> dict[str, object]:
                     }
                 )
     return {"items": items}
+
+
+@router.post("/banners/unclean-run/dismiss")
+def dismiss_unclean_run(request: Request) -> dict[str, object]:
+    """One-click Dismiss on the unclean-run banner (design: States): it
+    hides for the rest of this run and returns on the next unclean stop.
+    """
+    request.app.state.unclean_previous_run = False
+    logger.debug("unclean-run banner dismissed")
+    _notify(request, "banners")
+    return {"dismissed": True}
 
 
 def event_symbol(details: dict[str, object]) -> str:

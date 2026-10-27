@@ -62,7 +62,7 @@ from app.engine.state import (
 )
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarProvider, CalendarStore
-from app.market.clock import NY_TZ, Clock, make_clock
+from app.market.clock import NY_TZ, UTC, Clock, make_clock
 from app.notifications.service import NotificationService, Notifier
 from app.reviews.client import make_review_client
 from app.reviews.service import ReviewService
@@ -705,6 +705,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.unclean_previous_run = True
         app.state.unclean_quick_check = integrity
+        app.state.unclean_stopped_at = (
+            datetime.fromtimestamp(lock_state.last_seen, UTC)
+            if lock_state.last_seen
+            else None
+        )
     run_lock.acquire(
         int(config.get("logging", "heartbeat_seconds", default=30))
     )
@@ -932,7 +937,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         exec_state.broker_guard_confirmed = await ensure_broker_guard(
             broker, clock, get_session_maker()
         )
-    await executor.reconcile()
+    report = await executor.reconcile()
+    if getattr(app.state, "unclean_previous_run", False):
+        # The unclean-run banner reports this pass (design: States).
+        app.state.unclean_reconcile = report
     if exec_state.account is None:
         await executor.refresh_account()
     ensure_run_row(broker, clock, config)
@@ -951,6 +959,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         recovered = recover_interrupted_cycles(session, exec_state, clock)
         if recovered:
             session.commit()
+        if getattr(app.state, "unclean_previous_run", False):
+            app.state.unclean_interrupted = recovered
         # Paused at startup (docs/SPEC.md, Risk management): the state was
         # set by load_execution_state; log it like every other state change.
         record_event(

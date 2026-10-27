@@ -7,6 +7,7 @@ import {
   postAcknowledgeEvent,
   postAcknowledgePosition,
   postDismissEvent,
+  postDismissUncleanRun,
   postPauseResume,
 } from '../api/state';
 import type { BannerItem } from '../types/api';
@@ -88,6 +89,19 @@ export function BannerStrip({
       .finally(() => setPending(false));
   };
 
+  // The unclean-run banner has no event row: one click hides it for the
+  // rest of this run (design: States).
+  const dismissUnclean = () => {
+    setPending(true);
+    postDismissUncleanRun()
+      .then(() => {
+        refresh();
+        onChanged?.();
+      })
+      .catch(console.error)
+      .finally(() => setPending(false));
+  };
+
   // Errors linked to a decision, order or fill resolve by dismissal with a
   // note, or by themselves after the quiet period (docs/SPEC.md, Readiness).
   const dismiss = () => {
@@ -133,18 +147,25 @@ export function BannerStrip({
         if (item.actions.includes('connections')) {
           actions.push({ label: 'Connections', onClick: () => navigate('/settings') });
         }
+        if (item.actions.includes('open_logs')) {
+          actions.push({ label: 'Open logs', onClick: () => navigate('/logs') });
+        }
         if (item.actions.includes('acknowledge')) {
           actions.push({ label: 'Acknowledge', onClick: () => acknowledge(item) });
         }
-        if (item.actions.includes('dismiss') && item.id != null) {
-          actions.push({
-            label: 'Dismiss…',
-            onClick: () => {
-              setDismissNote('');
-              setDismissError(null);
-              setDismissItem(item);
-            },
-          });
+        if (item.actions.includes('dismiss')) {
+          if (item.id != null) {
+            actions.push({
+              label: 'Dismiss…',
+              onClick: () => {
+                setDismissNote('');
+                setDismissError(null);
+                setDismissItem(item);
+              },
+            });
+          } else if (item.kind === 'unclean_run') {
+            actions.push({ label: 'Dismiss', onClick: dismissUnclean });
+          }
         }
         return (
           <Banner
