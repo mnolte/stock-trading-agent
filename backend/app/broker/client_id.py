@@ -50,3 +50,21 @@ def order_kind(client_order_id: str | None) -> str | None:
         if index < len(parts) and parts[index] in KINDS:
             return parts[index]
     return None
+
+
+def order_instance(client_order_id: str | None) -> str | None:
+    """The instance segment of an ``sa-<instance>-<kind>-…`` id, or None.
+
+    ``sa-<kind>-…`` (pre-instance format) has no instance; an id that is
+    not an agent id at all returns None too.
+    """
+    if not client_order_id:
+        return None
+    parts = client_order_id.split("-")
+    if len(parts) < 3 or parts[0] != "sa":
+        return None
+    if parts[1] in KINDS:
+        return None  # pre-instance shape: sa-<kind>-<rest>
+    if parts[2] in KINDS:
+        return parts[1]
+    return None

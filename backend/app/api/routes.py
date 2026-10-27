@@ -1387,6 +1387,7 @@ def banners(request: Request) -> dict[str, object]:
                         "universe_screen_pending",
                         "broker_guard_unconfirmed",
                         "cycle_slow",
+                        "another_instance",
                     ]
                 ),
             )
@@ -1395,7 +1396,19 @@ def banners(request: Request) -> dict[str, object]:
         ).scalars().all()
         for event in unacked:
             details = event.details or {}
-            if event.event_type == "reconciliation":
+            if event.event_type == "another_instance":
+                items.append(
+                    {
+                        "id": event.id,
+                        "kind": "another_instance",
+                        "level": "critical",
+                        "message": str(details.get("message") or "Another instance is trading this Alpaca account"),
+                        "details": details,
+                        "time": event.time.replace(tzinfo=UTC).isoformat(),
+                        "actions": ["acknowledge"],
+                    }
+                )
+            elif event.event_type == "reconciliation":
                 kind = str(details.get("kind", "mismatch"))
                 if kind == "adopted_position":
                     message = (

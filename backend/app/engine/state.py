@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Event types whose unacknowledged rows block new entries.
-BLOCKING_EVENT_TYPES = ("reconciliation",)
+BLOCKING_EVENT_TYPES = ("reconciliation", "another_instance")
 
 # The notification service registers here at startup; every recorded
 # event is offered to it after the row is written
