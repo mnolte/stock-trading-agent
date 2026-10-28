@@ -166,18 +166,18 @@ for h in strict-transport-security permissions-policy content-security-policy \
     [[ "$n" == "1" ]] && ok "header $h once" || fail "header $h seen $n times"
 done
 check "app CSP wins on the GUI" "frame-ancestors 'none'" \
-    sh -c "grep -i '^content-security-policy:' <<<\"$hdrs\""
+    grep -i '^content-security-policy:' <<<"$hdrs"
 check "app XFO value" "deny" \
-    sh -c "grep -i '^x-frame-options: deny' <<<\"$hdrs\""
+    grep -i '^x-frame-options: deny' <<<"$hdrs"
 check "app nosniff value" "nosniff" \
-    sh -c "grep -i '^x-content-type-options: nosniff' <<<\"$hdrs\""
+    grep -i '^x-content-type-options: nosniff' <<<"$hdrs"
 check "app Referrer-Policy value" "same-origin" \
-    sh -c "grep -i '^referrer-policy: same-origin' <<<\"$hdrs\""
+    grep -i '^referrer-policy: same-origin' <<<"$hdrs"
 check "app COOP value" "same-origin" \
-    sh -c "grep -i '^cross-origin-opener-policy: same-origin' <<<\"$hdrs\""
+    grep -i '^cross-origin-opener-policy: same-origin' <<<"$hdrs"
 api_hdrs="$(curl -fsSkD - -o /dev/null "$BASE/api/auth/status" | tr -d '\r')"
 check "no-store on /api" "no-store" \
-    sh -c "grep -i '^cache-control:.*no-store' <<<\"$api_hdrs\""
+    grep -i '^cache-control:.*no-store' <<<"$api_hdrs"
 
 # --- a CSP sent by the app wins (Caddy's ?-default must not duplicate it) ---
 log "fake upstream behind the same header block"
