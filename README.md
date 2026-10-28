@@ -47,8 +47,37 @@ Logs are in `data/logs/` (daily files, 30 days). The database is backed up daily
 | Where | What |
 | --- | --- |
 | `.env` | Mode and paths: `MODE` (`paper` or `simulated`), `SA_HOST`, `SA_PORT`, `SA_DATA_DIR`, `SA_DB_PATH` |
+| `.env` | Sign-in and origin: `SA_AUTH` (`off` on loopback, `required` elsewhere), `SA_PUBLIC_URL`, `SA_TRUSTED_PROXY`, `SA_INSTANCE_ID`, `SA_SIM_NOW` (fixed clock for simulated mode) |
 | Settings → API keys | Alpaca paper key ID and secret, OpenAI, Finnhub. Stored encrypted in the database with `data/secret.key`; back that file up separately. |
 | `backend/config.yaml` | Everything else: universe, cycle times, rules, risk limits, model, slippage assumption. Settings changed in the GUI are saved as new versions. |
+
+`backend/config.yaml` is the whole tuning surface; every key and its
+default is commented in `backend/config.example.yaml`. Blocks:
+
+| Block | What it controls |
+| --- | --- |
+| `universe.*` | Watched symbols, sectors, screen pool and ranking |
+| `app.timezone` | Display timezone |
+| `schedule.*` | Cycle times, position checks, calendar and history loading |
+| `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
+| `rules.*` | Pre-filter thresholds (RSI, moving averages) |
+| `regime.*` | Volatility bands that block entries |
+| `decision.*` | Model, temperature, prompt, confidence, levels and call limits |
+| `risk.*` | Position sizing, portfolio and daily loss limits |
+| `performance.*` | Slippage and cost assumptions for measured results |
+| `reviews.*` | Weekly review, briefing and verdict models, times and caps |
+| `notifications.*` | Email alerts, heartbeat and quiet hours |
+| `models.*` | The priced model table — the only models that may be picked |
+| `shadows.*` | Shadow strategies and their monthly cost cap |
+| `backtest.*` | Backtest ranges, cache and estimate limits |
+| `readiness.*` | What counts as ready and the checks behind it |
+| `insights.*` | Insights snapshots and their schedule |
+| `inspector.*` | LLM call inspector limits |
+| `logging.*` | Log levels, retention and client-error rate limit |
+| `security.*` | Host allowlist, body caps, export and sender caps |
+| `auth.*` | Sign-in session lengths and lockout policy |
+| `ops.*` | Backups, restore checks and heartbeat |
+| `storage.*` | SQLite busy timeout and file locations |
 
 ## Project layout
 
