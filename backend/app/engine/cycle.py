@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
-from app.data.cache import _naive_utc
+from app.data.cache import _aware_utc, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
@@ -717,7 +717,7 @@ class CycleRunner:
                             entry=position.avg_entry_price,
                             current_stop=position.current_stop_price,
                             initial_stop=position.initial_stop,
-                            opened_at=position.opened_at,
+                            opened_at=_aware_utc(position.opened_at),
                         )
                         if context == "held" and position is not None
                         else None

@@ -212,6 +212,22 @@ class TestBuildStopOptions:
         )
         assert options == []
 
+    def test_naive_opened_at(self) -> None:
+        """Position.opened_at from SQLite is naive UTC — comparing it with
+        aware bar ends must not raise (live cycle regression)."""
+        bars = wave_bars(self.day, 10, base=100.0)
+        options = build_stop_options(
+            bars_1h=bars,
+            entry=Decimal("100"),
+            opened_at=bars[0].start.replace(tzinfo=None),
+            current_stop=Decimal("90"),
+            initial_stop=Decimal("95"),
+            reference=Decimal("102"),
+            atr_1h=Decimal("1"),
+            cfg=CFG,
+        )
+        assert any("trail" in o.basis for o in options)
+
     def test_locks_profit_false_below_entry(self) -> None:
         bars = wave_bars(self.day, 10, base=100.0)
         options = build_stop_options(

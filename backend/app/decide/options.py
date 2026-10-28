@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -335,6 +335,8 @@ def build_stop_options(
     ``tighten_min_atr_below_price`` × ATR below ``reference`` (the tighten
     rule: lowest of market price, plausible bid and bar close)."""
     margin = cfg.tighten_min_atr_below_price * atr_1h
+    if opened_at is not None and opened_at.tzinfo is None:
+        opened_at = opened_at.replace(tzinfo=UTC)
     initial_risk = (
         entry - initial_stop
         if initial_stop is not None and entry is not None and entry > initial_stop
