@@ -174,10 +174,13 @@ jobs:
         with:
           enable-cache: true
       - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+        with:
+          package_json_file: frontend/package.json
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "20"
           cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
       - name: dependency audits (pip-audit + pnpm audit --prod)
         run: ./security/run-audits.sh

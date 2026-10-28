@@ -101,7 +101,12 @@ def test_strategies_payload_and_promote_disabled_under_20(client: TestClient) ->
     assert shadow["differences"]["differs"][0]["label"] == "Model"
     assert data["slots"] == {"used": 1, "max": 3}
     assert data["cost"]["cap_usd"] == "5"
-    assert data["options"]["models"] == ["gpt-4.1-mini", "gpt-4o-mini"]
+    assert data["options"]["models"] == [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "gpt-4.1-mini",
+        "gpt-4o-mini",
+    ]
 
     promotion = client.get(f"/api/strategies/{sid}/promotion").json()
     assert promotion["allowed"] is False
