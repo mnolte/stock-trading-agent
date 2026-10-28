@@ -41,8 +41,12 @@ test('a render error on one screen leaves the shell working', async ({
   await expect(
     page.getByRole('heading', { name: 'Something went wrong on this page' }),
   ).toBeVisible();
-  // The sidebar stays — other screens keep working.
-  await expect(page.getByRole('link', { name: 'Positions' })).toBeVisible();
+  // The shell stays — sidebar nav on desktop, the menu button on mobile.
+  await expect(
+    page
+      .getByRole('link', { name: 'Positions' })
+      .or(page.getByRole('button', { name: 'Menu' })),
+  ).toBeVisible();
   // The report may or may not land in simulated mode; either way the
   // Copy button exists (error id when the report returned one).
   await expect(
@@ -54,7 +58,11 @@ test('a render error on one screen leaves the shell working', async ({
 test('first load with the API down shows the retry page', async ({
   page,
 }) => {
-  await page.route('**/api/**', (route) => route.abort());
+  // Match only API calls — /src/api/*.ts modules must still load.
+  await page.route(
+    (url) => url.pathname.startsWith('/api/'),
+    (route) => route.abort(),
+  );
   await page.goto('/');
   await expect(
     page.getByRole('heading', { name: "The app isn't answering" }),
