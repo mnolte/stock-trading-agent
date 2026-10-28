@@ -18,7 +18,10 @@ import app.config as config_module  # noqa: E402
 
 
 def _compose() -> dict[str, Any]:
-    return yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    loaded: dict[str, Any] = yaml.safe_load(
+        (ROOT / "docker-compose.yml").read_text()
+    )
+    return loaded
 
 
 def test_app_container_is_hardened() -> None:
@@ -102,7 +105,9 @@ def _seed_user() -> str:
 
 @pytest.fixture
 def auth_env(monkeypatch: pytest.MonkeyPatch) -> Any:
-    def make(*, trusted: str = "", public_url: str = "http://localhost:8000"):
+    def make(
+        *, trusted: str = "", public_url: str = "http://localhost:8000"
+    ) -> Any:
         monkeypatch.setenv("SA_AUTH", "required")
         monkeypatch.setenv("SA_TRUSTED_PROXY", trusted)
         monkeypatch.setenv("SA_PUBLIC_URL", public_url)

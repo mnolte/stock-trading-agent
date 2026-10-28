@@ -58,7 +58,7 @@ def test_clean_running_resumes() -> None:
         ({"broker_guard_confirmed": False}, "the broker guard is unconfirmed"),
     ],
 )
-def test_each_check_blocks_resume(kw: dict, missing: str) -> None:
+def test_each_check_blocks_resume(kw: dict[str, object], missing: str) -> None:
     base = {
         "was_running": True,
         "clean_shutdown": True,

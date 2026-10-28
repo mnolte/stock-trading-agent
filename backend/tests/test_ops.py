@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 import json
-import shutil
 import stat
-import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-
 from app.config import get_config
 from app.market.clock import FakeClock
+from app.ops import offsite
 from app.ops.service import OpsService
 from app.ops.urls import UrlRejected, validate_public_https_url
-from app.ops import offsite
-from datetime import UTC, datetime
 
 NOW = datetime(2026, 10, 28, 12, tzinfo=UTC)
 
@@ -100,7 +96,12 @@ def test_heartbeat_called_once_per_unit(tmp_path: Path) -> None:
     import asyncio
 
     calls: list[str] = []
-    ops = _ops(tmp_path, pinger=lambda url: calls.append(url) or _true())
+
+    async def pinger(url: str) -> bool:
+        calls.append(url)
+        return True
+
+    ops = _ops(tmp_path, pinger=pinger)
     get_config()._active.setdefault("ops", {})["heartbeat_url"] = "https://hc-ping.com/x"
 
     async def run() -> None:
@@ -116,7 +117,12 @@ def test_heartbeat_not_called_without_url(tmp_path: Path) -> None:
     import asyncio
 
     calls: list[str] = []
-    ops = _ops(tmp_path, pinger=lambda url: calls.append(url))
+
+    async def pinger(url: str) -> bool:
+        calls.append(url)
+        return True
+
+    ops = _ops(tmp_path, pinger=pinger)
     get_config()._active.setdefault("ops", {})["heartbeat_url"] = ""
     assert not asyncio.run(ops.ping_heartbeat())
     assert calls == []
