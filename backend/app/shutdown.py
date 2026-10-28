@@ -136,13 +136,18 @@ class RunLock:
             self._create(heartbeat_seconds)
         except FileExistsError:
             # Lost the create race: the other process owns the file now.
-            # Re-check — a live holder refuses us; a still-unreadable or
-            # stale lock keeps today's stale handling (overwrite).
-            check = self.check()
-            if check.status == "live":
-                raise SystemExit(
-                    f"another stock agent is already running (pid {check.pid})"
-                ) from None
+            # It may be mid-write (empty/unreadable for a few ms), so
+            # re-check briefly before falling back to the stale path —
+            # a live holder always refuses us, keeping exactly one winner.
+            for _ in range(50):
+                check = self.check()
+                if check.status == "live":
+                    raise SystemExit(
+                        f"another stock agent is already running (pid {check.pid})"
+                    ) from None
+                if check.status != "stale":
+                    break
+                time.sleep(0.01)
             self._write(heartbeat_seconds)
 
     def _create(self, heartbeat_seconds: int) -> None:

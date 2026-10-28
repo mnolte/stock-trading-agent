@@ -46,16 +46,29 @@ _SAFE_FETCH_SITES = frozenset({"same-origin", "none"})
 _UPLOAD_PATH = "/api/universe/import"
 
 
-def _dev_server(config: AppConfig) -> bool:
-    """True when a Vite server may sit in front of the app.
+def _vite_dev_port() -> int:
+    """The one extra loopback port the gate accepts under ``make dev``
+    (``SA_RELOAD=1``) — the Vite dev server's configured address.
+    ``SA_DEV_PORT`` overrides the default 5173; a dev run can point at
+    the paper account, so no other port gets a pass."""
+    try:
+        return int(os.environ.get("SA_DEV_PORT", "5173"))
+    except ValueError:
+        return 5173
 
-    ``make dev``/``make run-frontend`` serve the GUI from Vite on
-    127.0.0.1:5173 (``SA_RELOAD=1`` marks those backend runs); the
-    simulated demo and the e2e stack proxy it the same way on a free
-    port. The Vite proxy forwards the browser's own Host and Origin, so
-    loopback names on any port count as the app's own address here.
-    """
-    return os.environ.get("SA_RELOAD") == "1" or config.env.mode == "simulated"
+
+def _loopback_port_ok(port: int | None, config: AppConfig) -> bool:
+    """Beyond loopback:SA_PORT, only the configured Vite dev address is
+    ours — and only under make dev. ``MODE=simulated`` (demo, e2e) runs
+    Vite preview on a free port and has no real account behind it, so
+    any loopback port counts there."""
+    if port is None or port == config.env.sa_port:
+        return True
+    if config.env.mode == "simulated":
+        return True
+    if os.environ.get("SA_RELOAD") == "1":
+        return port == _vite_dev_port()
+    return False
 
 
 def _split_host(header: str) -> tuple[str, int | None]:
@@ -96,7 +109,7 @@ def host_allowed(host_header: str, config: AppConfig) -> bool:
     if not name:
         return False
     if name in _LOOPBACK_NAMES:
-        return port is None or port == config.env.sa_port or _dev_server(config)
+        return _loopback_port_ok(port, config)
     return name in _extra_hostnames(config)
 
 
@@ -295,8 +308,13 @@ def _security_headers(config: AppConfig) -> list[tuple[bytes, bytes]]:
     server only under ``make dev``.
     """
     dev = os.environ.get("SA_RELOAD") == "1"
+    csp = (
+        _CSP_DEV.replace("5173", str(_vite_dev_port()))
+        if dev
+        else _CSP_STRICT
+    )
     return [
-        (b"content-security-policy", (_CSP_DEV if dev else _CSP_STRICT).encode()),
+        (b"content-security-policy", csp.encode()),
         (b"x-content-type-options", b"nosniff"),
         (b"x-frame-options", b"DENY"),
         (b"referrer-policy", b"same-origin"),
