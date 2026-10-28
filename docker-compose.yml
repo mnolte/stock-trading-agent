@@ -35,7 +35,9 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 2g
+    # Measured peak under a backtest + live check in the container:
+    # ~160 MiB → 512m leaves >3x headroom.
+    mem_limit: 512m
     networks:
       - internal
     volumes:

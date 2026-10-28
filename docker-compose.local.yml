@@ -6,6 +6,9 @@
 services:
   app:
     environment:
+      # The laptop/CI test stack runs against the fakes — no Alpaca keys
+      # needed and shutdown is deterministic (no broker calls to drain).
+      MODE: simulated
       SA_PUBLIC_URL: https://localhost
   caddy:
     environment:
