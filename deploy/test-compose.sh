@@ -21,6 +21,13 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 DOCKER="${SA_DOCKER:-docker}"
+# The production compose file refuses to start without SA_PUBLIC_URL /
+# SA_DOMAIN — the local override supplies the values, the variables are
+# only needed because compose interpolates the base file first.
+export SA_PUBLIC_URL="${SA_PUBLIC_URL:-https://localhost}"
+export SA_DOMAIN="${SA_DOMAIN:-localhost}"
+export SA_VERSION="${SA_VERSION:-test}"
+export SA_DEPLOYED_AT="${SA_DEPLOYED_AT:-}"
 COMPOSE=(env COMPOSE_PROJECT_NAME=stock-agent "$DOCKER" compose
     -f docker-compose.yml -f docker-compose.local.yml)
 BASE=https://localhost:8443

@@ -29,7 +29,7 @@ RUN uv export --frozen --no-dev --no-emit-project --format requirements-txt \
 
 ######################## test image (CI) ########################
 FROM deps AS test
-RUN uv export --frozen --no-emit-project --format requirements-txt \
+RUN uv export --frozen --no-emit-project --extra dev --format requirements-txt \
         -o /tmp/requirements-dev.txt \
     && uv pip install --python /opt/venv/bin/python --no-cache \
         -r /tmp/requirements-dev.txt
