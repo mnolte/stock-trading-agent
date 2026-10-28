@@ -61,14 +61,12 @@ for _ in $(seq 1 90); do
 done
 
 # Peak-memory sampling runs alongside the whole test.
-"$DOCKER" stats --no-stream --format '{{.Container}} {{.MemUsage}}' \
-    stock-agent-app > /tmp/sa-stats.txt
+: > /tmp/sa-mem-samples.txt
 (
-    peak=0
     while true; do
-        m=$("$DOCKER" stats --no-stream --format '{{.MemUsage}}' stock-agent-app 2>/dev/null \
-            | sed 's/MiB.*//;s/GiB.*//;s/KiB.*//;s/B.*//;s/ //g' || true)
-        echo "$m" >> /tmp/sa-mem-samples.txt
+        "$DOCKER" stats --no-stream --format '{{.MemUsage}}' stock-agent-app 2>/dev/null \
+            | awk '{u=$2;v=$1; gsub(/[^0-9.]/,"",v); if(u=="GiB")v=v*1024; print v}' \
+            >> /tmp/sa-mem-samples.txt || true
         sleep 2
     done
 ) & STATS_PID=$!
@@ -78,8 +76,12 @@ check "app runs as non-root" "stockagent" \
     "${COMPOSE[@]}" exec -T app id -un
 check "read-only root filesystem" "true" \
     "${COMPOSE[@]}" exec -T app sh -c 'touch /x 2>/dev/null && echo wrote || echo true'
-check "no capabilities" "CapEff: 0000000000000000" \
-    "${COMPOSE[@]}" exec -T app sh -c 'grep CapEff /proc/self/status'
+capeff="$("${COMPOSE[@]}" exec -T app grep CapEff /proc/self/status || true)"
+if grep -qE "CapEff:[[:space:]]*0+$" <<<"$capeff"; then
+    ok "no capabilities"
+else
+    fail "capabilities: $capeff"
+fi
 
 # --- healthz says only the version ----------------------------------------
 body="$(curl -fsSk "$BASE/healthz")"
@@ -142,21 +144,14 @@ session="$(grep -io '__Host-sa_session=[^;]*' <<<"$cookie_line" | head -1)"
 
 # --- X-Forwarded-Proto spoofing is ignored ---------------------------------
 # The client claims http; Caddy rewrites XFP with the real scheme
-# (https), so the cookie must still be Secure.
-pending2="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/sign-in" \
+# (https), so the pending-ticket cookie must still be Secure.
+pending2_line="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/sign-in" \
     -H 'Content-Type: application/json' -H 'X-Forwarded-Proto: http' \
     -d '{"password":"compose test password 1!"}' \
-    | grep -io 'sa_pending=[^;]*' | head -1)"
-CODE="$("${COMPOSE[@]}" exec -T app python -c "
-from app.auth.passwords import totp_code
-from datetime import UTC, datetime
-print(totp_code('$SECRET', datetime.now(UTC)))")"
-cookie2="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/code" \
-    -H 'Content-Type: application/json' -H "Cookie: $pending2" \
-    -d "{\"code\":\"$CODE\"}" | grep -i '__Host-sa_session' || true)"
-grep -qi "Secure" <<<"$cookie2" \
+    | grep -i 'sa_pending' || true)"
+grep -qi "Secure" <<<"$pending2_line" \
     && ok "spoofed X-Forwarded-Proto ignored (cookie still Secure)" \
-    || fail "spoofed XFP changed the cookie: $cookie2"
+    || fail "spoofed XFP changed the cookie: $pending2_line"
 
 # --- GUI loads on the public Host; another Host gets nothing ----------------
 check "GUI loads" "Stock Trading Agent" \
@@ -188,25 +183,28 @@ class H(BaseHTTPRequestHandler):
     def log_message(self,*a): pass
 HTTPServer(('0.0.0.0',8000),H).serve_forever()
 " >/dev/null
-# Same header directives as the app site — extract them from the real
-# Caddyfile so the test tracks it, then add a fakeapp site.
+# Same header directives as the app site — extracted from the real
+# Caddyfile so the test tracks it — on a second site with the internal
+# CA; port 8445 stays inside the internal network, probed from the
+# caddy container itself.
 "${COMPOSE[@]}" exec -T caddy sh -c '
     cp /etc/caddy/Caddyfile /tmp/Caddyfile
     awk "/header {/,/^[[:space:]]*}/" /etc/caddy/Caddyfile > /tmp/hdr
     {
         echo "localhost:8445 {"
+        echo "    tls internal"
         echo "    reverse_proxy stock-agent-fakeapp:8000"
         cat /tmp/hdr
         echo "}"
     } >> /tmp/Caddyfile
-    caddy fmt --overwrite /tmp/Caddyfile >/dev/null 2>&1 || true
-    caddy reload --config /tmp/Caddyfile
+    caddy reload --config /tmp/Caddyfile >/dev/null 2>&1
 ' >/dev/null 2>&1 || true
-sleep 2
-fake_hdrs="$(curl -fsSkD - -o /dev/null "https://localhost:8445/" | tr -d '\r' || true)"
-n_csp="$(grep -ci "^content-security-policy:" <<<"$fake_hdrs")"
-app_csp="$(grep -i "^content-security-policy:" <<<"$fake_hdrs" | head -1 | cut -d: -f2-)"
-if [[ "$n_csp" == "1" ]] && grep -q "default-src 'none'" <<<"$app_csp"; then
+sleep 3
+fake_hdrs="$("${COMPOSE[@]}" exec -T caddy sh -c \
+    "wget -q --no-check-certificate -S -O /dev/null https://localhost:8445/ 2>&1" || true)"
+n_csp="$(grep -ci "Content-Security-Policy:" <<<"$fake_hdrs")"
+app_csp="$(grep -i "Content-Security-Policy:" <<<"$fake_hdrs" | head -1 | cut -d: -f2-)"
+if [[ "$n_csp" == "1" ]] && grep -q "default-src .none." <<<"$app_csp"; then
     ok "app-sent CSP wins ($app_csp)"
 else
     fail "app CSP: count=$n_csp value=$app_csp"
