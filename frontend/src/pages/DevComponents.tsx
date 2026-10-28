@@ -15,6 +15,11 @@ import { Toggle } from '../components/Toggle';
 
 export default function DevComponents() {
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Test hook: ?crash throws on render so the screen boundary can be
+  // exercised (Playwright).
+  if (new URLSearchParams(window.location.search).has('crash')) {
+    throw new Error('e2e render crash');
+  }
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>

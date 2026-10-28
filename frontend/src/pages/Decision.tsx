@@ -3,6 +3,8 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import type { Location } from 'react-router-dom';
 
 import { getBacktestDecision, getDecision, postVerdict } from '../api/state';
+import { ApiError } from '../api/client';
+import { RecordNotFound } from '../components/errorPages';
 import { Chip } from '../components/Chip';
 import { displayDayTime, nyTime } from '../format';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption } from '../types/api';
@@ -981,9 +983,27 @@ export default function Decision() {
     if (!id) return;
     fetchDecision(Number(id))
       .then(setDecision)
-      .catch(() => setError('Decision not found.'));
+      .catch((e: unknown) =>
+        setError(
+          e instanceof ApiError && e.status === 404 ? 'not_found' : 'error',
+        ),
+      );
   }, [id, fetchDecision]);
 
+  if (error === 'not_found') {
+    // The record's not-found page (design: Errors → Not found · a record),
+    // inside the drawer — the page behind it keeps working.
+    return (
+      <DrawerShell label="Decision detail" onClose={close}>
+        <RecordNotFound
+          what={`Decision ${id} doesn't exist`}
+          why="Decisions are never deleted within a run."
+          searchTo="/inspector"
+          searchLabel="Search the LLM inspector"
+        />
+      </DrawerShell>
+    );
+  }
   if (error) {
     return (
       <DrawerShell label="Decision detail" onClose={close}>
@@ -993,7 +1013,7 @@ export default function Decision() {
             color: 'var(--sa-text-muted)',
           }}
         >
-          {error}{' '}
+          The decision could not be loaded.{' '}
           <Link to="/" style={{ color: 'var(--sa-accent)' }}>
             Back to the dashboard
           </Link>

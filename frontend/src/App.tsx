@@ -1,9 +1,12 @@
 import { Suspense, lazy } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
 
 import { LiveUpdatesProvider } from './api/live';
+import { useAuthStatus } from './api/auth';
 import { Layout } from './components/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { RouteNotFound } from './components/errorPages';
 
 const Backtest = lazy(() => import('./pages/Backtest'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -32,6 +35,9 @@ function PageFallback() {
 
 function AppRoutes() {
   const location = useLocation();
+  // Unknown routes show the 404 page when signed in — and go to sign-in
+  // when not, so nothing is revealed (spec → Not found, a page).
+  const authStatus = useAuthStatus();
   const background = (
     location.state as { backgroundLocation?: Location } | null
   )?.backgroundLocation;
@@ -57,7 +63,16 @@ function AppRoutes() {
             <Route path="states" element={<States />} />
             <Route path="logs" element={<Logs />} />
             <Route path="dev/components" element={<DevComponents />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route
+              path="*"
+              element={
+                <RouteNotFound
+                  signedIn={
+                    !authStatus?.required || Boolean(authStatus?.signed_in)
+                  }
+                />
+              }
+            />
           </Route>
         </Routes>
       </Suspense>
@@ -66,7 +81,14 @@ function AppRoutes() {
           Its own boundary keeps the page behind it from falling back. */}
       <Suspense fallback={null}>
         <Routes>
-          <Route path="/decisions/:id" element={<Decision />} />
+          <Route
+            path="/decisions/:id"
+            element={
+              <ErrorBoundary>
+                <Decision />
+              </ErrorBoundary>
+            }
+          />
         </Routes>
       </Suspense>
     </>

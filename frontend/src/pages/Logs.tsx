@@ -397,7 +397,7 @@ export default function Logs() {
   const [period, setPeriod] = useState('7 days');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(params.get('search') ?? '');
   const [loggerFilter, setLoggerFilter] = useState('');
   const [symbolFilter, setSymbolFilter] = useState(params.get('symbol') ?? '');
   const [cycleFilter, setCycleFilter] = useState(params.get('cycle') ?? '');

@@ -22,6 +22,10 @@ import { Sidebar } from './Sidebar';
 import { ConfirmYouDialog } from './ConfirmYouDialog';
 import { registerConfirmHandler, useAuthStatus } from '../api/auth';
 import type { ConfirmRequest } from '../api/auth';
+import { useBackendStatus } from '../api/backend';
+import { ErrorBoundary } from './ErrorBoundary';
+import ApiErrorToasts from './ApiErrorToasts';
+import { AppNotAnswering, BackendDownBanner, OfflineBanner } from './errorPages';
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
 
@@ -37,6 +41,7 @@ export function Layout() {
   const narrow = useMediaQuery('(max-width: 820px)');
   const location = useLocation();
   const authStatus = useAuthStatus();
+  const backend = useBackendStatus();
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
   // Not signed in while auth is required → the sign-in page; a session-
@@ -81,6 +86,14 @@ export function Layout() {
   useEffect(() => {
     refreshHeader();
   }, [refreshHeader]);
+
+  // The backend came back after an outage — refetch the header and the
+  // banner strip; pages refetch their own resources on the same change.
+  const wasDown = useRef(false);
+  useEffect(() => {
+    if (wasDown.current && !backend.down) refreshAll();
+    wasDown.current = backend.down;
+  }, [backend.down, refreshAll]);
   const [prevPath, setPrevPath] = useState(location.pathname);
   if (location.pathname !== prevPath) {
     setPrevPath(location.pathname);
@@ -227,10 +240,21 @@ export function Layout() {
             onResumeRequest={() => setDialog('resume')}
             onChanged={refreshAll}
           />
-          <Outlet />
+          {backend.offline && <OfflineBanner />}
+          {backend.down && backend.everUp && backend.since && (
+            <BackendDownBanner since={backend.since} />
+          )}
+          {backend.down && !backend.everUp ? (
+            <AppNotAnswering />
+          ) : (
+            <ErrorBoundary key={location.pathname}>
+              <Outlet />
+            </ErrorBoundary>
+          )}
         </main>
       </div>
       <NotificationToasts />
+      <ApiErrorToasts />
 
       <KillSwitchDialog
         open={dialog === 'menu'}

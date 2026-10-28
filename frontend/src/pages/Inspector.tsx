@@ -15,6 +15,7 @@ import { useApiResource } from '../api/useResource';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { Card } from '../components/Card';
 import { CardBody, FetchError, SkeletonLines } from '../components/cardState';
+import { RecordNotFound } from '../components/errorPages';
 import {
   actionColor,
   contextLabel,
@@ -1216,6 +1217,13 @@ export default function Inspector() {
                 response.
               </div>
             </Card>
+          ) : detail.failure?.status === 404 ? (
+            <RecordNotFound
+              what={`Model call ${filters.call} doesn't exist`}
+              why="Calls are never deleted within a run."
+              searchTo="/inspector"
+              searchLabel="Search the LLM inspector"
+            />
           ) : (
             <CardBody
               res={detail}
