@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution
+.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution readme-screens
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -88,6 +88,17 @@ test-e2e:
 	else \
 	  echo "skip playwright (needs browsers: cd frontend && pnpm exec playwright install chromium)"; \
 	fi
+
+readme-screens: ## README screenshots → docs/images/readme/ (simulated, seeded fixtures)
+	mkdir -p docs/images/readme
+	$(FE) exec playwright test --config=playwright.readme.config.ts --reporter=line
+	@for f in docs/images/readme/*.png; do \
+	  sz=$$(stat -c%s "$$f"); \
+	  [ $$sz -gt 409600 ] && echo "optimising $$f ($$sz bytes)" && \
+	    convert "$$f" -strip -define png:compression-level=9 "$${f%.png}.opt.png" && \
+	    [ $$(stat -c%s "$${f%.png}.opt.png") -lt $$sz ] && mv "$${f%.png}.opt.png" "$$f" || rm -f "$${f%.png}.opt.png"; \
+	  true; \
+	done
 
 smoke-data:
 	cd backend && ../$(PYTHON) -m app.smoke_data
