@@ -113,7 +113,8 @@ run "${COMPOSE[@]}" pull app || { env_set SA_VERSION "$PREVIOUS_TAG"; maintenanc
 
 # 3. migrations in a one-off container (no deps, never the running app)
 log "migrations"
-if run "${COMPOSE[@]}" run --rm --no-deps -T app python -m alembic upgrade head; then
+if run "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint python \
+        app -m alembic upgrade head; then
     MIGRATION_RAN=1
 else
     env_set SA_VERSION "$PREVIOUS_TAG"

@@ -44,8 +44,8 @@ done
 # absolute path is accepted — never a path built from request input.
 if [[ "$SNAPSHOT" == "offsite" ]]; then
     log "restoring the latest offsite snapshot into a temp folder"
-    run "${COMPOSE[@]}" run --rm --no-deps -T \
-        -e SA_OFFSITE_RESTORE=1 app python -m app.ops.offsite_restore \
+    run "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint python \
+        -e SA_OFFSITE_RESTORE=1 app -m app.ops.offsite_restore \
         || die "offsite restore failed — see the app log"
     SOURCE="/data/restore/latest/stock-agent.db"
 elif [[ "$SNAPSHOT" =~ ^stock-agent\.db\.[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
@@ -79,7 +79,7 @@ fi
 
 maintenance_on
 log "integrity check on $SOURCE"
-run "${COMPOSE[@]}" run --rm --no-deps -T app python -c "$check" "$SOURCE" \
+run "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint python app -c "$check" "$SOURCE" \
     || { maintenance_off; die "integrity_check failed — not restoring"; }
 
 log "stopping app"
@@ -94,7 +94,7 @@ mv -f /data/stock-agent.db.new /data/stock-agent.db
 rm -f /data/stock-agent.db-wal /data/stock-agent.db-shm
 SH
 )
-run "${COMPOSE[@]}" run --rm --no-deps -T app sh -c "$restore_cmd" -- "$SOURCE" \
+run "${COMPOSE[@]}" run --rm --no-deps -T --entrypoint sh app -c "$restore_cmd" -- "$SOURCE" \
     || { maintenance_off; die "copy failed — the previous database is untouched (stock-agent.db.new)"; }
 
 log "starting app"

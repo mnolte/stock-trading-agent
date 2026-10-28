@@ -236,7 +236,7 @@ start=$(date +%s)
 "${COMPOSE[@]}" stop app >/dev/null
 elapsed=$(( $(date +%s) - start ))
 (( elapsed < 90 )) && ok "stop took ${elapsed}s (<90s)" || fail "stop took ${elapsed}s"
-integ="$("${COMPOSE[@]}" run --rm --no-deps -T app python -c \
+integ="$("${COMPOSE[@]}" run --rm --no-deps -T --entrypoint python app -c \
     "import sqlite3;print(sqlite3.connect('/data/stock-agent.db').execute('PRAGMA integrity_check').fetchone()[0])" 2>/dev/null | tail -1)"
 [[ "$integ" == "ok" ]] && ok "integrity_check ok after stop" || fail "integrity_check: $integ"
 "${COMPOSE[@]}" up -d app >/dev/null
