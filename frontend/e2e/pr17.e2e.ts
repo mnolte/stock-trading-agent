@@ -552,7 +552,9 @@ test('backend down: page banner, Retry now, recovery without reload', async ({
       .getByText(/Can’t reach the Stock Trading Agent backend/)
       .first(),
   ).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText(/Retrying every 15 seconds/)).toBeVisible();
+  await expect(
+    page.getByText(/Retrying every 15 seconds/).first(),
+  ).toBeVisible();
   // The banner's Retry now — the page can hold a card-level retry too.
   const retryNow = page.getByRole('button', { name: 'Retry now' }).first();
   await expect(retryNow).toBeVisible();
