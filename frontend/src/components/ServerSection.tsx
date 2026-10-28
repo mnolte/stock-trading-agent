@@ -341,8 +341,8 @@ export function ServerSection() {
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, padding: '14px 0 18px' }}>
         <Button onClick={backupNow} disabled={busy}>Back up now</Button>
-        <Button variant="secondary" onClick={downloadBackup}>Download latest backup</Button>
-        <Button variant="secondary" onClick={() => setCredsOpen((v) => !v)}>Backup credentials…</Button>
+        <Button  onClick={downloadBackup}>Download latest backup</Button>
+        <Button  onClick={() => setCredsOpen((v) => !v)}>Backup credentials…</Button>
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', alignSelf: 'center' }}>
           Read-only otherwise: deploys, rollbacks and restores are done on the server with the scripts in docs/DEPLOY.md.
         </span>
