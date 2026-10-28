@@ -8,6 +8,8 @@ exactly once with the app's value lives in deploy/test-compose.sh.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 _EXPECTED = {
@@ -18,7 +20,7 @@ _EXPECTED = {
 }
 
 
-def _check(response, *, api: bool) -> None:
+def _check(response: Any, *, api: bool) -> None:
     for name, value in _EXPECTED.items():
         assert response.headers[name] == value, name
     csp = response.headers["content-security-policy"]

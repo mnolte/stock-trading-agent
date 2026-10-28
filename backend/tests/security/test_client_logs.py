@@ -4,6 +4,7 @@ sanitised fields."""
 from __future__ import annotations
 
 import app.api.routes as routes
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -16,7 +17,7 @@ def test_rate_limit_is_per_address_not_tab(client: TestClient) -> None:
     assert r.json()["rate_limited"] is True
 
 
-def test_senders_table_bounded(client: TestClient, monkeypatch) -> None:
+def test_senders_table_bounded(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     routes._client_error_times.clear()
     for i in range(5):
         routes._client_error_times[f"10.0.0.{i}"] = [0.0]
@@ -30,7 +31,9 @@ def test_senders_table_bounded(client: TestClient, monkeypatch) -> None:
     assert len(routes._client_error_times) <= 1000
 
 
-def test_fields_capped_and_single_lined(client: TestClient, caplog) -> None:
+def test_fields_capped_and_single_lined(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
     routes._client_error_times.clear()
     import logging
 
@@ -46,5 +49,5 @@ def test_fields_capped_and_single_lined(client: TestClient, caplog) -> None:
     record = caplog.records[-1]
     message = record.getMessage()
     assert "FAKE-LINE" not in message.split("\n")[0]
-    assert record.context.get("source") == "frontend"
-    assert "\n" not in record.context["url"]
+    assert record.__dict__["context"].get("source") == "frontend"
+    assert "\n" not in record.__dict__["context"]["url"]

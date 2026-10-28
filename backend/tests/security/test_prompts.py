@@ -20,6 +20,7 @@ from app.decide.prompt import (
     is_safe_name,
     load_prompt,
 )
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +80,7 @@ def test_unlisted_prompt_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         load_prompt("decision.v9")
 
 
-def test_settings_prompt_version_is_422(client) -> None:
+def test_settings_prompt_version_is_422(client: TestClient) -> None:
     """The API answer for a bad version is 422, never a path read or 500."""
     r = client.post(
         "/api/settings",

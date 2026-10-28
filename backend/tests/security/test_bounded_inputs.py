@@ -7,13 +7,15 @@ quoted as a phrase, exports capped at ``security.export_max_rows``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 _PARAMS = ("limit", "window", "after_id", "cursor", "line_id")
 _VALUES = ("-1", "0", "1000000000000", "abc")
 
 
-def _get_routes(app) -> list[str]:
+def _get_routes(app: Any) -> list[str]:
     """All GET /api paths — this FastAPI version keeps included routers
     lazy (``_IncludedRouter``), so expand them via ``original_router``."""
     paths = []
