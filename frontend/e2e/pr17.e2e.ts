@@ -545,8 +545,12 @@ test('backend down: page banner, Retry now, recovery without reload', async ({
   // Force one API call — waiting on a poll is timing-dependent in CI.
   await page.evaluate(() => fetch('/api/header').catch(() => undefined));
 
+  // The Dashboard card carries its own backend banner — the global one
+  // renders first (in Layout, before the routed content).
   await expect(
-    page.getByText(/Can’t reach the Stock Trading Agent backend/),
+    page
+      .getByText(/Can’t reach the Stock Trading Agent backend/)
+      .first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/Retrying every 15 seconds/)).toBeVisible();
   // The banner's Retry now — the page can hold a card-level retry too.
