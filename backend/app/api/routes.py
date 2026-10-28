@@ -6,12 +6,14 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.api.strategies import check_promotion, finish_promotion
 from app.broker.models import OPEN_ORDER_STATUSES
@@ -2431,7 +2433,13 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     # Promote, and loosening any risk limit, need "Confirm it is you";
     # tightening a limit never asks (design, Settings → Access).
     loosens = _settings_loosen_risk(cleaned, base)
-    if promote_id is not None or loosens:
+    # Changing the heartbeat URL is a confirm action too (design, Access).
+    new_hb = (cleaned.get("ops") or {}).get("heartbeat_url")
+    hb_changed = (
+        new_hb is not None
+        and new_hb != _nested_get(base, "ops", "heartbeat_url")
+    )
+    if promote_id is not None or loosens or hb_changed:
         from app.auth.api import require_confirmed
 
         require_confirmed(request)
@@ -4605,3 +4613,145 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
         )
         session.commit()
     return {"ok": True, "review": review}
+
+
+# ----------------------------------------------------------------------
+# Settings → Server (docs/SPEC.md → VPS deployment → Monitoring). The
+# section exists only when sign-in is required (the VPS); every row is
+# read-only except the two backup actions.
+
+
+def _ops(request: Request) -> Any:
+    return getattr(request.app.state, "ops", None)
+
+
+@router.get("/server")
+def server_status(request: Request) -> dict[str, object]:
+    """Everything the Server section shows, from live state + the
+    persisted check results."""
+    config = get_config()
+    if config.env.sa_auth != "required":
+        raise HTTPException(status_code=404, detail="not on a VPS")
+    ops = _ops(request)
+    status = ops.status if ops is not None else {}
+    state = getattr(request.app.state, "exec_state", None)
+    started = getattr(request.app.state, "run_lock", None)
+    started_at = None
+    if started is not None and started.path.exists():
+        try:
+            import json as _json
+
+            started_at = _json.loads(started.path.read_text()).get("started_at")
+        except (OSError, ValueError):
+            started_at = None
+    import os
+
+    db = Path(config.env.sa_db_path)
+    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    return {
+        "version": request.app.version,
+        "image_tag": os.environ.get("SA_VERSION", ""),
+        "deployed_at": os.environ.get("SA_DEPLOYED_AT", ""),
+        "public_url": config.env.sa_public_url,
+        "instance_id": config.env.sa_instance_id,
+        "started_at": started_at,
+        "restart_resumed": getattr(request.app.state, "restart_resumed", None),
+        "paused": bool(getattr(state, "paused", False)),
+        "disk": status.get("disk"),
+        "clock": status.get("clock"),
+        "cert": status.get("cert"),
+        "backups": status.get("backups"),
+        "host": ops.host_status() if ops is not None else {},
+        "heartbeat": {
+            "url": (ops.heartbeat_url() if ops is not None else ""),
+            "last_ping": getattr(ops, "last_heartbeat_at", None),
+            "configured": bool(ops and ops.heartbeat_url()),
+        },
+        "latest_backup": backups[-1].name if backups else None,
+    }
+
+
+@router.post("/server/backup-now")
+async def server_backup_now(request: Request) -> dict[str, object]:
+    """Run the daily database copy now (same path as the 03:00 job)."""
+    from app.db.backup import create_backup
+
+    if get_config().env.sa_auth != "required":
+        raise HTTPException(status_code=404, detail="not on a VPS")
+    try:
+        await run_in_threadpool(create_backup, _clock(request))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=[f"backup failed: {exc}"]) from exc
+    return {"ok": True}
+
+
+@router.get("/server/backup-download")
+def server_backup_download(request: Request) -> Response:
+    """The newest local backup as a file download — behind 'Confirm it
+    is you' like the other server actions."""
+    from fastapi.responses import FileResponse
+
+    from app.auth.api import require_confirmed
+
+    if get_config().env.sa_auth != "required":
+        raise HTTPException(status_code=404, detail="not on a VPS")
+    require_confirmed(request)
+    db = Path(get_config().env.sa_db_path)
+    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    if not backups:
+        raise HTTPException(status_code=404, detail="no backup yet")
+    return FileResponse(
+        backups[-1], filename=backups[-1].name, media_type="application/octet-stream"
+    )
+
+
+@router.post("/server/backup-credentials")
+async def server_backup_credentials(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Store the offsite backup password + storage credentials in the
+    encrypted secrets table. The endpoint is validated https and public."""
+    if get_config().env.sa_auth != "required":
+        raise HTTPException(status_code=404, detail="not on a VPS")
+    secrets = _secrets(request)
+    if secrets is None:
+        raise HTTPException(status_code=503, detail="secrets unavailable")
+    import json
+
+    from app.ops.urls import UrlRejected, validate_public_https_url
+
+    endpoint = str(body.get("endpoint") or "").strip()
+    bucket = str(body.get("bucket") or "").strip()
+    access_key_id = str(body.get("access_key_id") or "").strip()
+    secret_access_key = str(body.get("secret_access_key") or "").strip()
+    password = str(body.get("password") or "")
+    errors: list[str] = []
+    try:
+        endpoint = validate_public_https_url(endpoint)
+    except UrlRejected as exc:
+        errors.append(f"endpoint: {exc}")
+    for name, value in (
+        ("bucket", bucket),
+        ("access_key_id", access_key_id),
+        ("secret_access_key", secret_access_key),
+    ):
+        if not value:
+            errors.append(f"{name} is required")
+    if not password:
+        errors.append("backup password is required")
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    secrets.save(
+        "backup_credentials",
+        json.dumps(
+            {
+                "endpoint": endpoint,
+                "bucket": bucket,
+                "access_key_id": access_key_id,
+                "secret_access_key": secret_access_key,
+            }
+        ),
+    )
+    secrets.save("backup_password", password)
+    _notify(request, "settings")
+    return {"ok": True}

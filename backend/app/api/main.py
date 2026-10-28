@@ -274,6 +274,7 @@ async def run_scheduled_cycle(
     clock: Clock,
     cycle_time: str,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
     """Scheduler entry point: run the decision cycle due at ``cycle_time`` today."""
     today = clock.now().astimezone(NY_TZ).date()
@@ -286,6 +287,8 @@ async def run_scheduled_cycle(
     finally:
         if backtests is not None:
             backtests.set_paused(False)
+        if ops is not None:
+            await ping_heartbeat(ops)
 
 
 async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -> bool:
@@ -431,6 +434,7 @@ async def run_scheduled_check(
     checker: PositionChecker,
     bus: UpdateBus | None = None,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
     """Scheduler entry point for the 15-minute position check."""
     if backtests is not None:
@@ -440,8 +444,30 @@ async def run_scheduled_check(
     finally:
         if backtests is not None:
             backtests.set_paused(False)
+        if ops is not None:
+            await ping_heartbeat(ops)
     if bus is not None:
         bus.publish("positions", "orders", "banners", "header", "performance")
+
+
+async def ping_heartbeat(ops: Any) -> None:
+    """The dead-man's-switch ping after a cycle or position check."""
+    try:
+        await ops.ping_heartbeat()
+    except Exception:  # noqa: BLE001
+        logger.exception("heartbeat ping failed")
+
+
+async def run_server_checks(ops: Any) -> None:
+    """Hourly: disk, clock, certificate, backup freshness (SPEC → VPS
+    deployment → Monitoring)."""
+    try:
+        ops.check_disk()
+        await ops.check_clock()
+        ops.check_cert()
+        ops.check_backups()
+    except Exception:  # noqa: BLE001
+        logger.exception("server checks failed")
 
 
 async def run_weekly_review(service: ReviewService) -> None:
@@ -603,7 +629,9 @@ def schedule_cycle_jobs(
     config: AppConfig,
     clock: Clock,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
+    _ops = ops
     """(Re)build the cron jobs for the configured cycle times.
 
     Called at startup and again when promoted settings change the cycle
@@ -620,7 +648,7 @@ def schedule_cycle_jobs(
         scheduler.add_job(
             run_scheduled_cycle,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[runner, clock, str(cycle_at), backtests],
+            args=[runner, clock, str(cycle_at), backtests, _ops],
             id=f"cycle-{cycle_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,
@@ -1138,6 +1166,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.notification_service = notification_service
     app.state.shadow_runner = shadow_runner
 
+    # PR 24 ops: heartbeat pings after cycles/checks, hourly server
+    # checks, offsite backups + the monthly restore test.
+    from app.ops.service import OpsService
+
+    ops_service = OpsService(
+        config,
+        clock,
+        notifier=notification_service,
+        secrets=secrets_store,
+        broker=broker,
+    )
+    app.state.ops = ops_service
+
     # Backtesting (PR 14): one child process at a time; rows left "queued"
     # or "running" by a crash are marked interrupted at startup.
     backtest_manager = BacktestManager(config, clock)
@@ -1212,7 +1253,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # cycles may run late by at most misfire_grace_seconds, and several
     # misses coalesce into one run — never into a queue of catch-ups.
     schedule_cycle_jobs(
-        scheduler, cycle_runner, config, clock, backtest_manager
+        scheduler, cycle_runner, config, clock, backtest_manager, ops_service
+    )
+    # Server checks hourly (clock offset needs it); heartbeat is pinged
+    # by the cycle/check wrappers themselves.
+    scheduler.add_job(
+        run_server_checks,
+        IntervalTrigger(hours=1),
+        args=[ops_service],
+        id="server-checks",
+        coalesce=True,
+    )
+    # Offsite backup after the 03:00 local copy; monthly restore test on
+    # the configured day. Both no-op without stored credentials.
+    offsite_at = str(config.get("ops", "offsite_backup", "time", default="03:05"))
+    offsite_hour, offsite_min = (int(p) for p in offsite_at.split(":")[:2])
+    scheduler.add_job(
+        ops_service.run_offsite_backup,
+        CronTrigger(hour=offsite_hour, minute=offsite_min, timezone=app_tz),
+        id="offsite-backup",
+        coalesce=True,
+    )
+    restore_day = int(
+        config.get("ops", "offsite_backup", "restore_test_day", default=1)
+    )
+    scheduler.add_job(
+        ops_service.run_restore_test,
+        CronTrigger(day=restore_day, hour=4, minute=10, timezone=app_tz),
+        id="restore-test",
+        coalesce=True,
     )
     misfire_grace = int(
         config.get("schedule", "misfire_grace_seconds", default=120)
@@ -1222,7 +1291,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         scheduler.add_job(
             run_scheduled_check,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[position_checker, bus, backtest_manager],
+            args=[position_checker, bus, backtest_manager, ops_service],
             id=f"position-check-{check_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,

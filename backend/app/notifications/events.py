@@ -198,6 +198,34 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "warnings",
         WARNING,
     ),
+    EventDef(
+        "backup_failed",
+        "Backup or restore test failed",
+        "Local copy, offsite upload or the monthly check",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "disk_space",
+        "Disk space",
+        "Data volume 80% full (90% is critical)",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "cert_expiring",
+        "HTTPS certificate expiring",
+        "Expires within 14 days",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "clock_offset",
+        "Clock out of sync",
+        "Offset over 1 second; cycles depend on the exact time",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}

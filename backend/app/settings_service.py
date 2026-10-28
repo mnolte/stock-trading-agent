@@ -84,6 +84,9 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "auth": {
         "idle_hours": ("int", 1, 168),
     },
+    "ops": {
+        "heartbeat_url": ("url_or_empty", None, None),
+    },
     "notifications": {
         "repeat_limit_minutes": ("int", 0, 1440),
         "quiet_hours": ("quiet_hours", None, None),
@@ -169,6 +172,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("notifications", "quiet_hours.end"): "Quiet hours to",
     ("notifications", "events"): "Notification channels",
     ("auth", "idle_hours"): "Sign out after inactivity",
+    ("ops", "heartbeat_url"): "Heartbeat URL",
     ("readiness", "min_closed_trades"): "Readiness closed trades",
     ("readiness", "min_sessions"): "Readiness paper sessions",
     ("readiness", "max_drawdown_pct"): "Readiness max drawdown",
@@ -345,6 +349,17 @@ async def validate_settings(
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":
                     out[key] = _clean_notify_events(value)
+                elif kind == "url_or_empty":
+                    text = str(value).strip()
+                    if text:
+                        from app.ops.urls import UrlRejected, validate_public_https_url
+
+                        try:
+                            out[key] = validate_public_https_url(text)
+                        except UrlRejected as exc:
+                            raise SettingsError([f"{label}: {exc}"]) from None
+                    else:
+                        out[key] = ""
                 elif kind == "int":
                     num = _clean_number(value, minimum, maximum, label)
                     if num != int(num):

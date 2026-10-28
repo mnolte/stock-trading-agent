@@ -32,6 +32,7 @@ import type {
 } from '../types/api';
 import { Banner } from '../components/Banner';
 import { AccessSection } from '../components/AccessSection';
+import { ServerSection } from '../components/ServerSection';
 import { useAuthStatus } from '../api/auth';
 import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
@@ -281,6 +282,7 @@ const SECTIONS = [
   { id: 'ready', label: 'Readiness' },
   { id: 'schedule', label: 'Schedule' },
   { id: 'access', label: 'Access' },
+  { id: 'server', label: 'Server' },
   { id: 'history', label: 'History' },
   { id: 'danger', label: 'Paper account' },
 ] as const;
@@ -302,6 +304,8 @@ const SEARCH_TEXT: Record<string, string> = {
     'readiness thresholds closed trades paper sessions drawdown average r profit factor proposals calibration cycles price checks live trading',
   schedule: 'schedule cycles new york amsterdam bar used entries position checks times',
   history: 'history version reason change settings log',
+  server:
+    'server vps version address certificate clock disk updates backups local offsite restore test heartbeat instance download back up now credentials',
   danger: 'paper account reset new run start over balance',
 };
 
@@ -2580,6 +2584,16 @@ export default function Settings() {
             )}
             {authStatus && <AccessSection auth={authStatus} />}
           </Section>
+
+          {authStatus?.required && (
+            <Section
+              id="server"
+              title="Server"
+              blurb="Health of the server, its backups and outside monitoring. Shown when the app runs on a VPS."
+            >
+              <ServerSection />
+            </Section>
+          )}
 
           <Section
             id="history"
