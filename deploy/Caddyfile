@@ -3,12 +3,16 @@
 # {$SA_DOMAIN}; everything else is refused by not having a site block.
 
 {$SA_DOMAIN} {
+	# The site root only anchors the `file` matcher's path join — every
+	# file_server carries its own root.
+	root * /
+
 	# Maintenance flag (PR 25): deploy.sh and restore.sh touch
 	# /flags/updating before stopping the app and remove it after the
-	# health check. While it exists every request but /healthz
-	# answers 503 — the "Updating" page, or updating JSON under /api —
-	# handled by handle_errors below. /healthz stays reachable so the
-	# scripts and the uptime check still see the app.
+	# health check. While it exists every request but /healthz answers
+	# 503 — the "Updating" page, or updating JSON under /api — from
+	# handle_errors below. /healthz stays proxied so the scripts and
+	# the uptime check still see the app.
 	@updating {
 		file /flags/updating
 		not path /healthz
@@ -41,30 +45,27 @@
 	}
 
 	# App down (502/504) or updating (503, the flag's error above):
-	# HTML for pages, the shared JSON shape for /api; the original
-	# status code is kept (docs/SPEC.md → Served by Caddy).
+	# the shared JSON shape under /api, the matching static page
+	# otherwise. `handle` blocks are mutually exclusive, so the /api
+	# responds can never lose their path to a rewrite (directives
+	# inside handle_errors run at their global order, not written
+	# order — rewrites execute before responds).
 	handle_errors {
-		@api503 {
-			path /api/*
-			expression {err.status_code} == 503
-		}
-		respond @api503 `{"error":{"code":"updating","message":"A new version is being installed."}}` 503
-
-		@api504 {
-			path /api/*
-			expression {err.status_code} == 504
-		}
-		respond @api504 `{"error":{"code":"app_unavailable","message":"The app isn't answering."}}` 504
-
 		@api path /api/*
-		respond @api `{"error":{"code":"app_unavailable","message":"The app isn't answering."}}` 502
-
-		@is503 expression {err.status_code} == 503
-		header @is503 Retry-After 15
-		rewrite @is503 /503.html
-		rewrite * /502.html
-		file_server {
-			root /errors
+		handle @api {
+			@is503 expression `{err.status_code} == 503`
+			header @is503 Retry-After 15
+			respond @is503 `{"error":{"code":"updating","message":"A new version is being installed."}}` 503
+			respond `{"error":{"code":"app_unavailable","message":"The app isn't answering."}}` {err.status_code}
+		}
+		handle {
+			@is503 expression `{err.status_code} == 503`
+			header @is503 Retry-After 15
+			rewrite @is503 /503.html
+			rewrite * /502.html
+			file_server {
+				root /errors
+			}
 		}
 	}
 }

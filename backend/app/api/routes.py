@@ -4791,12 +4791,20 @@ async def server_backup_credentials(
             or str(stored.get("bucket") or "") != bucket
         )
         if moved and not (password and access_key_id and secret_access_key):
-            raise HTTPException(
-                status_code=422,
-                detail=[
-                    "password_required: the storage endpoint or bucket "
-                    "changed — enter the backup password and both storage "
-                    "keys again"
+            from app.errors import ApiError, ErrorCode
+
+            raise ApiError(
+                422,
+                ErrorCode.PASSWORD_REQUIRED,
+                fields=[
+                    {
+                        "name": "backup_credentials",
+                        "message": (
+                            "the storage endpoint or bucket changed — "
+                            "enter the backup password and both storage "
+                            "keys again"
+                        ),
+                    }
                 ],
             )
 

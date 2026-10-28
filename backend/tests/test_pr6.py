@@ -1267,7 +1267,7 @@ def test_settings_get_and_save_flow(client: TestClient) -> None:
         json={"settings": {"execution": {"mode": "copilot"}}},
     )
     assert bad.status_code == 422
-    assert "automatic or supervised" in str(bad.json()["detail"])
+    assert "automatic or supervised" in bad.text
 
     # A good save creates a pending version; active is untouched.
     saved = client.post(

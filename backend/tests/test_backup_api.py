@@ -168,7 +168,7 @@ def test_credentials_destination_change_needs_all_secrets(
         headers={"X-CSRF-Token": vps_app.cookies.get("sa_csrf") or ""},
     )
     assert r.status_code == 422
-    assert "password_required" in json.dumps(r.json()["detail"])
+    assert r.json()["error"]["code"] == "password_required"
     # nothing was saved over the old credentials
     with get_session_maker()() as session:
         row = session.execute(

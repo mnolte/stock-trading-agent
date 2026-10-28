@@ -175,14 +175,26 @@ def _field(name: object, message: object) -> dict[str, str]:
     return {"name": str(name or ""), "message": str(message)}
 
 
-def fields_from_detail(detail: object) -> list[dict[str, str]] | None:
-    """Endpoint-authored detail lists become ``fields``.
+def fields_from_detail(
+    detail: object, status_code: int
+) -> list[dict[str, str]] | None:
+    """Endpoint-authored detail payloads become ``fields``.
 
-    Only deliberate response payloads qualify — validation-style dicts
-    (``path``/``loc``/``name`` + ``message``/``msg``) and plain strings.
-    Anything else is dropped: arbitrary exception text never reaches the
-    body (hard rule 9).
+    A detail string that isn't itself a registered code is deliberate
+    response text the raise site wrote ("close all positions and orders
+    first") — it keeps reaching the user as a field message while the
+    top-level message stays the registry sentence. Lists carry through
+    the same way. Anything else, and every 5xx, is dropped: arbitrary
+    exception text never reaches the body (hard rule 9).
     """
+    if status_code >= 500:
+        return None
+    if isinstance(detail, str):
+        try:
+            ErrorCode(detail)
+            return None  # the detail IS the code — already the message
+        except ValueError:
+            return [_field("", detail)]
     if not isinstance(detail, list):
         return None
     fields: list[dict[str, str]] = []
@@ -261,11 +273,7 @@ def install_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
         code = code_for_http(exc)
-        fields = (
-            fields_from_detail(exc.detail)
-            if exc.status_code == 422
-            else None
-        )
+        fields = fields_from_detail(exc.detail, exc.status_code)
         return JSONResponse(
             status_code=exc.status_code,
             content=error_body(code, fields=fields),

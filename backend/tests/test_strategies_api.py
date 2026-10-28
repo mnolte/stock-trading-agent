@@ -76,18 +76,18 @@ def test_synthetic_quote_entry_count_is_for_filled_positions_in_current_run(
 def test_new_shadow_validation(client: TestClient) -> None:
     bad = client.post("/api/strategies", json={"name": "X", "kind": "llm", "model": "gpt-9"})
     assert bad.status_code == 422
-    assert any("no price" in e for e in bad.json()["detail"])
+    assert "no price" in bad.text
     gate = client.post(
         "/api/strategies",
         json={"name": "X", "kind": "rules_only", "overrides": {"risk_per_trade_pct": 2}},
     )
     assert gate.status_code == 422
-    assert any("not overridable" in e for e in gate.json()["detail"])
+    assert "not overridable" in gate.text
     for i in range(3):
         _new(client, name=f"S{i}")
     full = client.post("/api/strategies", json={"name": "S4", "kind": "rules_only"})
     assert full.status_code == 422
-    assert any("slots" in e for e in full.json()["detail"])
+    assert "slots" in full.text
 
 
 def test_strategies_payload_and_promote_disabled_under_20(client: TestClient) -> None:

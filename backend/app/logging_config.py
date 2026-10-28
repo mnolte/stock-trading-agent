@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from app.config import get_config
@@ -287,7 +287,7 @@ class _QueueHandler(logging.handlers.QueueHandler):
     spec's ``exception`` object and the log index fills its columns."""
 
     def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
-        prepared = super().prepare(record)
+        prepared = cast(logging.LogRecord, super().prepare(record))
         prepared.exc_info = record.exc_info
         prepared.exc_text = record.exc_text
         return prepared

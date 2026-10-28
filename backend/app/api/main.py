@@ -746,6 +746,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.filemodes import apply_umask
 
     apply_umask()
+    # /api answers 503 starting_up until the startup reconciliation
+    # finishes (docs/SPEC.md → Error pages and API errors).
+    app.state.ready = False
     pipeline = setup_logging()
     from app.spawn import install_global_hooks
 
@@ -1525,6 +1528,9 @@ def create_app() -> FastAPI:
         docs_url=None if docs_off else "/docs",
         redoc_url=None if docs_off else "/redoc",
     )
+    # Apps that never run the lifespan (raw TestClient use) answer as
+    # ready; the lifespan clears this while startup work runs.
+    app.state.ready = True
 
     import secrets as _secrets_mod
 

@@ -592,7 +592,14 @@ export default function Reviews() {
   // not-found page (docs/SPEC.md → Not found, a record).
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedParam = searchParams.get('review');
-  const selectedId = selectedParam === null ? null : Number(selectedParam);
+  // The newest review auto-opens; an explicit ?review=<id> always wins —
+  // even when it isn't in the list, where its detail fetch answers the
+  // record's not-found page. The param is never written by the list
+  // refresh, so a stale response can't resurrect an old selection.
+  const selectedId =
+    selectedParam !== null
+      ? Number(selectedParam)
+      : (items[0]?.id ?? null);
   const selectReview = useCallback(
     (id: number | null) => {
       setSearchParams(
@@ -619,27 +626,12 @@ export default function Reviews() {
         setNextDue(r.next_weekly_due);
         setSchedule(r.schedule);
         setError(null);
-        setSearchParams(
-          (prev) => {
-            // An explicit ?review= id stays even when it isn't in the
-            // list — its detail fetch answers the record's not-found
-            // page, never a silent fallback. Only pick the first item
-            // when no id is present at all.
-            if (prev.has('review')) return prev;
-            const next = new URLSearchParams(prev);
-            const fallback = r.items[0]?.id;
-            if (fallback === undefined) next.delete('review');
-            else next.set('review', String(fallback));
-            return next;
-          },
-          { replace: true },
-        );
       })
       .catch(() => setError('Reviews could not be loaded.'));
     getVerdicts('draft')
       .then((r) => setVerdicts(r.items))
       .catch(() => setVerdicts([]));
-  }, [kind, setSearchParams]);
+  }, [kind]);
 
   const [prevKind, setPrevKind] = useState(kind);
   if (kind !== prevKind) {
@@ -789,7 +781,10 @@ export default function Reviews() {
                 role="tab"
                 aria-selected={option === tab}
                 tabIndex={option === tab ? 0 : -1}
-                onClick={() => setTab(option)}
+                onClick={() => {
+                  setTab(option);
+                  selectReview(null);
+                }}
                 style={{
                   height: '32px',
                   padding: '0 var(--sa-space-4)',
