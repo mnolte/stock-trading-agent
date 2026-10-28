@@ -17,7 +17,7 @@ def _resolves_public(host: str, resolver: object = None) -> bool:
     resolve = resolver or socket.getaddrinfo
     try:
         infos = resolve(host, None)  # type: ignore[operator]
-    except OSError:
+    except Exception:  # noqa: BLE001 — a failed lookup is never "public"
         return False
     for info in infos:
         raw = info[4][0] if isinstance(info, tuple) else str(info)

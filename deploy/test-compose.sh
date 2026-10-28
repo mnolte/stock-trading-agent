@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 # Stock Trading Agent — the through-Caddy stack test (CI only; needs
 # docker). Boots the local stack on https://localhost (Caddy internal
-# CA) and checks the PR 24 guarantees end to end.
+# CA) and checks the PR 24 guarantees end to end:
+#
+#   * app runs non-root, read-only root, no capabilities
+#   * /healthz says only the version
+#   * every /api route answers 401 without a session (incl. writes)
+#   * sign-in over HTTPS sets __Host-sa_session with Secure, HttpOnly,
+#     SameSite=Strict, Path=/
+#   * a spoofed X-Forwarded-Proto is ignored (Caddy overwrites it)
+#   * the public Host serves the GUI; a foreign Host is not served
+#   * every spec header appears exactly once; an app-sent CSP wins
+#     (verified against a fake upstream behind the same header block)
+#   * docker stop finishes inside the grace period, integrity_check ok
+#   * peak container memory is printed for the compose memory limit
 #
 #   deploy/test-compose.sh          run the checks
 #   deploy/test-compose.sh --down   stop and remove the stack
@@ -25,6 +37,7 @@ check() { # check <name> <expected-substring> <command...>
 
 if [[ "${1:-}" == "--down" ]]; then
     "${COMPOSE[@]}" down -v --remove-orphans
+    "$DOCKER" rm -f stock-agent-fakeapp 2>/dev/null || true
     exit 0
 fi
 
@@ -40,6 +53,19 @@ for _ in $(seq 1 90); do
     sleep 2
 done
 
+# Peak-memory sampling runs alongside the whole test.
+"$DOCKER" stats --no-stream --format '{{.Container}} {{.MemUsage}}' \
+    stock-agent-app > /tmp/sa-stats.txt
+(
+    peak=0
+    while true; do
+        m=$("$DOCKER" stats --no-stream --format '{{.MemUsage}}' stock-agent-app 2>/dev/null \
+            | sed 's/MiB.*//;s/GiB.*//;s/KiB.*//;s/B.*//;s/ //g' || true)
+        echo "$m" >> /tmp/sa-mem-samples.txt
+        sleep 2
+    done
+) & STATS_PID=$!
+
 # --- the container itself ------------------------------------------------
 check "app runs as non-root" "stockagent" \
     "${COMPOSE[@]}" exec -T app id -un
@@ -54,33 +80,33 @@ body="$(curl -fsSk "$BASE/healthz")"
     && ok "/healthz version only" || fail "/healthz leaks more than version: $body"
 
 # --- session guard through Caddy -------------------------------------------
-code="$(curl -sk -o /dev/null -w '%{http_code}' "$BASE/api/health")"
-[[ "$code" == "401" ]] && ok "/api/health needs a session" || fail "/api/health answered $code"
-for route in /api/header /api/positions /api/settings; do
+for route in /api/health /api/header /api/positions /api/settings /api/banners; do
     code="$(curl -sk -o /dev/null -w '%{http_code}' "$BASE$route")"
     [[ "$code" == "401" ]] && ok "$route 401" || fail "$route answered $code"
 done
+# an unauthenticated write is refused too
+code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$BASE/api/settings" \
+    -H 'Content-Type: application/json' -d '{}')"
+[[ "$code" == "401" ]] && ok "POST /api/settings 401 without session" \
+    || fail "unauth write answered $code"
 
 # --- sign-in through Caddy: __Host- cookie, Secure -------------------------
 "${COMPOSE[@]}" exec -T app python - <<'PY'
-from datetime import UTC, datetime
 from app.auth.create_user import create_or_reset_user
 from app.config import AppConfig
 from app.db.base import get_session_maker
 from app.market.clock import RealClock
 
 with get_session_maker()() as session:
-    _u, secret, codes = create_or_reset_user(
+    create_or_reset_user(
         session, AppConfig(), RealClock(),
         username="marc", password="compose test password 1!",
     )
-print(secret)
 PY
 SECRET="$("${COMPOSE[@]}" exec -T app python -c "
 from app.db.base import get_session_maker
 from app.db.models import User
 from sqlalchemy import select
-import base64
 from app.secrets_service import _load_or_create_key
 from app.config import get_config
 from pathlib import Path
@@ -100,6 +126,7 @@ pending="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/sign-in" \
 cookie_line="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/code" \
     -H 'Content-Type: application/json' -H "Cookie: $pending" \
     -d "{\"code\":\"$CODE\"}" | grep -i '__Host-sa_session' || true)"
+[[ -n "$cookie_line" ]] || fail "no __Host-sa_session cookie set"
 for attr in "Secure" "HttpOnly" "SameSite=Strict" "Path=/"; do
     grep -qi "$attr" <<<"$cookie_line" \
         && ok "session cookie $attr" || fail "session cookie missing $attr: $cookie_line"
@@ -107,12 +134,22 @@ done
 session="$(grep -io '__Host-sa_session=[^;]*' <<<"$cookie_line" | head -1)"
 
 # --- X-Forwarded-Proto spoofing is ignored ---------------------------------
-# (the peer is not SA_TRUSTED_PROXY, so a fake XFP must not upgrade to https)
-code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$BASE/api/auth/sign-in" \
+# The client claims http; Caddy rewrites XFP with the real scheme
+# (https), so the cookie must still be Secure.
+pending2="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/sign-in" \
     -H 'Content-Type: application/json' -H 'X-Forwarded-Proto: http' \
-    --resolve "attacker.test:8443:127.0.0.1" \
-    -d '{"password":"x"}' 2>/dev/null || true)"
-ok "X-Forwarded-Proto spoof did not crash sign-in ($code)"
+    -d '{"password":"compose test password 1!"}' \
+    | grep -io 'sa_pending=[^;]*' | head -1)"
+CODE="$("${COMPOSE[@]}" exec -T app python -c "
+from app.auth.passwords import totp_code
+from datetime import UTC, datetime
+print(totp_code('$SECRET', datetime.now(UTC)))")"
+cookie2="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/code" \
+    -H 'Content-Type: application/json' -H "Cookie: $pending2" \
+    -d "{\"code\":\"$CODE\"}" | grep -i '__Host-sa_session' || true)"
+grep -qi "Secure" <<<"$cookie2" \
+    && ok "spoofed X-Forwarded-Proto ignored (cookie still Secure)" \
+    || fail "spoofed XFP changed the cookie: $cookie2"
 
 # --- GUI loads on the public Host; another Host gets nothing ----------------
 check "GUI loads" "Stock Trading Agent" \
@@ -128,16 +165,64 @@ for h in strict-transport-security permissions-policy content-security-policy \
     [[ "$n" == "1" ]] && ok "header $h once" || fail "header $h seen $n times"
 done
 
-# --- Caddy keeps an app-sent CSP --------------------------------------------
-"${COMPOSE[@]}" exec -T caddy sh -c \
-    'printf "localhost:8444 {\n\trespond / 200 {\n\t\theader Content-Security-Policy \"default-src none\"\n\t\tbody \"ok\"\n\t\tclose\n\t}\n}\n" > /etc/caddy/Caddyfile.test' 2>/dev/null || true
-# Simpler: ask a fake upstream is overkill; verify the ? prefix survived
-# formatting — the header directive only fills absent fields.
-check "CSP sent as default-only" "default-src 'self'" \
-    curl -fsSkD - -o /dev/null "$BASE/"
+# --- a CSP sent by the app wins (Caddy's ?-default must not duplicate it) ---
+log "fake upstream behind the same header block"
+"$DOCKER" run -d --name stock-agent-fakeapp --rm \
+    --network stock-agent_internal \
+    python:3.12-slim python -c "
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body=b'ok'
+        self.send_response(200)
+        self.send_header('Content-Security-Policy', \"default-src 'none'\")
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers(); self.wfile.write(body)
+    def log_message(self,*a): pass
+HTTPServer(('0.0.0.0',8000),H).serve_forever()
+" >/dev/null
+# Same header directives as the app site — extract them from the real
+# Caddyfile so the test tracks it, then add a fakeapp site.
+"${COMPOSE[@]}" exec -T caddy sh -c '
+    cp /etc/caddy/Caddyfile /tmp/Caddyfile
+    awk "/header {/,/^[[:space:]]*}/" /etc/caddy/Caddyfile > /tmp/hdr
+    {
+        echo "localhost:8445 {"
+        echo "    reverse_proxy stock-agent-fakeapp:8000"
+        cat /tmp/hdr
+        echo "}"
+    } >> /tmp/Caddyfile
+    caddy fmt --overwrite /tmp/Caddyfile >/dev/null 2>&1 || true
+    caddy reload --config /tmp/Caddyfile
+' >/dev/null 2>&1 || true
+sleep 2
+fake_hdrs="$(curl -fsSkD - -o /dev/null "https://localhost:8445/" | tr -d '\r' || true)"
+n_csp="$(grep -ci "^content-security-policy:" <<<"$fake_hdrs")"
+app_csp="$(grep -i "^content-security-policy:" <<<"$fake_hdrs" | head -1 | cut -d: -f2-)"
+if [[ "$n_csp" == "1" ]] && grep -q "default-src 'none'" <<<"$app_csp"; then
+    ok "app-sent CSP wins ($app_csp)"
+else
+    fail "app CSP: count=$n_csp value=$app_csp"
+fi
+"$DOCKER" rm -f stock-agent-fakeapp >/dev/null 2>&1 || true
+# put the original Caddyfile back
+"${COMPOSE[@]}" restart caddy >/dev/null 2>&1 || true
+
+# --- peak memory under a backtest + a live check ----------------------------
+log "measuring container memory under load"
+# a backtest via the API with the session we have
+curl -fsSk -X POST "$BASE/api/backtests" -H "Cookie: $session" \
+    -H 'Content-Type: application/json' \
+    -H "X-CSRF-Token: $(curl -fsSk -c - -o /dev/null "$BASE/api/auth/status" | grep sa_csrf | awk '{print $NF}')" \
+    -d '{"symbols":["AAPL"],"days":5}' >/dev/null 2>&1 || true
+sleep 8
+peak="$(sort -rn /tmp/sa-mem-samples.txt 2>/dev/null | head -1)"
+log "peak app memory sampled: ${peak:-?} MiB (set mem_limit ≥ 130% of peak)"
+kill "$STATS_PID" 2>/dev/null || true
 
 # --- graceful stop inside the grace period -----------------------------------
 log "docker stop during a cycle must finish gracefully"
+"${COMPOSE[@]}" up -d app >/dev/null
 start=$(date +%s)
 "${COMPOSE[@]}" stop app >/dev/null
 elapsed=$(( $(date +%s) - start ))

@@ -182,20 +182,33 @@ class OpsService:
                     remote = datetime.fromisoformat(
                         str(stamp).replace("Z", "+00:00")
                     )
+                    # subtract half the round-trip: the timestamp is one-way stale
                     offset_ms = abs(
                         (remote - self._clock.now()).total_seconds() * 1000
-                        - rtt * 500
+                        - (rtt * 1000) / 2
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("clock check failed: %s", exc)
-        level = "ok" if offset_ms is not None and offset_ms / 1000 <= max_off else "unknown"
-        if offset_ms is not None and offset_ms / 1000 > max_off:
+        # Half the round-trip is the one-way error budget on the broker
+        # timestamp; warn only after 3 consecutive checks over the
+        # threshold so one skewed response does not page Marc.
+        strikes = int(self._status.get("clock_strikes", 0))
+        over = offset_ms is not None and offset_ms / 1000 > max_off
+        strikes = strikes + 1 if over else 0
+        self._status["clock_strikes"] = strikes
+        level = "ok" if offset_ms is not None and not over else "unknown"
+        if over and strikes >= 3 and offset_ms is not None:
             level = "warning"
             self._notify(
                 "clock_offset",
-                f"clock is off by {offset_ms / 1000:.2f}s — cycles depend on the exact time",
+                f"clock off by {offset_ms / 1000:.2f}s for {strikes} checks — "
+                "cycles depend on the exact time",
             )
-        result = {"offset_ms": offset_ms, "level": level}
+        result = {
+            "offset_ms": offset_ms,
+            "level": level,
+            "strikes": strikes,
+        }
         self._set("clock", result)
         return result
 
@@ -290,27 +303,45 @@ class OpsService:
         except (OSError, ValueError):
             return {}
 
+    def record_startup_reconcile(self, ok: bool, mismatches: int) -> None:
+        """Persist the startup reconciliation outcome so deploy.sh can
+        read it back read-only via ``python -m app.ops.reconcile_check``."""
+        self._set(
+            "startup_reconcile",
+            {
+                "ok": ok,
+                "mismatches": mismatches,
+                "at": self._clock.now().isoformat(),
+            },
+        )
+
     # ------------------------------------------------------------------
     # offsite jobs
 
-    async def run_offsite_backup(self) -> None:
+    def run_offsite_backup_sync(self) -> None:
+        """The restic upload — sync so the 03:00 job can chain it."""
         from app.ops.offsite import offsite_backup
 
         if self._secrets is None:
             return
         try:
-            await asyncio.to_thread(offsite_backup, self._config, self._secrets)
+            offsite_backup(self._config, self._secrets)
         except Exception as exc:  # noqa: BLE001
             logger.exception("offsite backup failed")
-            self._notify("backup_failed", f"offsite backup failed ({exc})")
             self._set(
                 "offsite_backup",
                 {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
             )
-            return
+            raise  # the caller records the backup_failed event + alert
         self._set(
             "offsite_backup", {"at": self._clock.now().isoformat(), "ok": True}
         )
+
+    async def run_offsite_backup(self) -> None:
+        try:
+            await asyncio.to_thread(self.run_offsite_backup_sync)
+        except Exception as exc:  # noqa: BLE001
+            self._notify("backup_failed", f"offsite backup failed ({exc})")
 
     async def run_restore_test(self) -> bool:
         """Monthly: restore the newest offsite snapshot into a temp folder

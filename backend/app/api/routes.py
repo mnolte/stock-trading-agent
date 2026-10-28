@@ -4700,9 +4700,50 @@ def server_backup_download(request: Request) -> Response:
     backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
     if not backups:
         raise HTTPException(status_code=404, detail="no backup yet")
+    latest = backups[-1]
+    # The database only — secret.key is never part of a download.
+    # Every download is an event and an info-level email (spec).
+    from app.engine.state import record_event
+
+    with get_session_maker()() as session:
+        record_event(
+            session,
+            _clock(request),
+            level="info",
+            event_type="backup_downloaded",
+            details={"file": latest.name},
+        )
+        session.commit()
     return FileResponse(
-        backups[-1], filename=backups[-1].name, media_type="application/octet-stream"
+        latest, filename=latest.name, media_type="application/octet-stream"
     )
+
+
+@router.get("/server/backup-credentials")
+def server_backup_credentials_status(request: Request) -> dict[str, object]:
+    """Write-only like the API keys: reads return only the endpoint,
+    the bucket and the last 4 of the key id — never the secrets."""
+    if get_config().env.sa_auth != "required":
+        raise HTTPException(status_code=404, detail="not on a VPS")
+    secrets = _secrets(request)
+    if secrets is None:
+        raise HTTPException(status_code=503, detail="secrets unavailable")
+    import json
+
+    raw = secrets.get("backup_credentials")
+    if not raw or not secrets.get("backup_password"):
+        return {"configured": False}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {"configured": False}
+    key_id = str(data.get("access_key_id") or "")
+    return {
+        "configured": True,
+        "endpoint": data.get("endpoint"),
+        "bucket": data.get("bucket"),
+        "key_id_last4": key_id[-4:] if key_id else None,
+    }
 
 
 @router.post("/server/backup-credentials")
@@ -4710,9 +4751,15 @@ async def server_backup_credentials(
     request: Request, body: dict[str, object]
 ) -> dict[str, object]:
     """Store the offsite backup password + storage credentials in the
-    encrypted secrets table. The endpoint is validated https and public."""
+    encrypted secrets table — behind "Confirm it is you". The endpoint
+    is validated https and public; when the destination (endpoint or
+    bucket) changes, every credential must be sent again in the same
+    request (docs/SPEC.md → Stored credentials)."""
     if get_config().env.sa_auth != "required":
         raise HTTPException(status_code=404, detail="not on a VPS")
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
     secrets = _secrets(request)
     if secrets is None:
         raise HTTPException(status_code=503, detail="secrets unavailable")
@@ -4725,6 +4772,29 @@ async def server_backup_credentials(
     access_key_id = str(body.get("access_key_id") or "").strip()
     secret_access_key = str(body.get("secret_access_key") or "").strip()
     password = str(body.get("password") or "")
+
+    # Destination change? Then all three credentials must come along in
+    # the same request — stored secrets never travel to a new endpoint.
+    stored_raw = secrets.get("backup_credentials")
+    if stored_raw:
+        try:
+            stored = json.loads(stored_raw)
+        except ValueError:
+            stored = {}
+        moved = (
+            str(stored.get("endpoint") or "") != endpoint
+            or str(stored.get("bucket") or "") != bucket
+        )
+        if moved and not (password and access_key_id and secret_access_key):
+            raise HTTPException(
+                status_code=422,
+                detail=[
+                    "password_required: the storage endpoint or bucket "
+                    "changed — enter the backup password and both storage "
+                    "keys again"
+                ],
+            )
+
     errors: list[str] = []
     try:
         endpoint = validate_public_https_url(endpoint)

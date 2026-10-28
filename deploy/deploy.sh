@@ -67,17 +67,11 @@ healthz_ok() {
         >/dev/null 2>&1
 }
 
-# After app.started the log must show no CRITICAL line and no startup
-# reconciliation mismatch (recorded events carry level + event_type).
+# Clean startup reconciliation: the app records the outcome into
+# server-status.json at boot; this read-only command exits 0 on clean.
 startup_clean() {
-    local since="$1" lines
-    lines="$(run "${COMPOSE[@]}" exec -T app sh -c 'tail -n 300 /data/logs/stock-agent.log' 2>/dev/null || true)"
-    grep -q '"event": "app.started"' <<<"$lines" || return 1
-    local after
-    after="$(sed -n '/"event": "app.started"/,$p' <<<"$lines")"
-    if grep -qE '"level": "CRITICAL"' <<<"$after"; then return 1; fi
-    if grep -qE '"event_type": "reconciliation"' <<<"$after"; then return 1; fi
-    return 0
+    run "${COMPOSE[@]}" exec -T app python -m app.ops.reconcile_check \
+        >/dev/null 2>&1
 }
 
 TAG="${1:-}"; [[ "$TAG" == "--help" || "$TAG" == "-h" ]] && usage 0

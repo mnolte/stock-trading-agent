@@ -63,11 +63,16 @@ sudo -u stockagent editor /srv/stock-agent/.env
 ## First deploy
 
 Tag a release locally and push it; CI builds, tests and pushes the
-image to the private registry. On the server, log the `stockagent` user
-into the registry once:
+image to the private registry (`ghcr.io/mnolte/stock-agent`, a private
+package — set its visibility once under the package settings).
+
+On the server, log the `stockagent` user into the registry once with a
+separate read-only token — create a GitHub PAT with just
+`read:packages`, then:
 
 ```bash
-docker login ghcr.io
+# the token goes to the docker credential store, never into the repo or .env
+echo "<read-only-token>" | docker login ghcr.io -u <github-username> --password-stdin
 ```
 
 Then deploy the tag — the script refuses inside 09:30–16:00 New York:

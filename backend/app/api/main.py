@@ -200,14 +200,19 @@ def run_readiness_tick(
         logger.exception("readiness tick failed")
 
 
-def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
-    """Daily job (app timezone): copy the database and prune old data.
+def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = None) -> None:
+    """Daily job (app timezone): copy the database, prune old data, then
+    chain the offsite upload.
 
     After the copy succeeds, cached 5-minute bars older than
     ``bars_5m_keep_sessions`` sessions are pruned (docs/SPEC.md, Cycles at
     scale). A failed copy is logged and recorded as an event so a missed
     backup is not silent; if the event write also fails, the job exception
     is left for the scheduler log.
+
+    The offsite restic upload runs only after a successful local copy —
+    a failed local backup skips it (and warns), never the other way
+    around (docs/SPEC.md → VPS deployment → Backups).
     """
     try:
         create_backup()
@@ -226,7 +231,8 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
             )
             session.commit()
         # No copy on disk — nothing older than the keep window is pruned
-        # until a backup has safely run.
+        # until a backup has safely run, and the offsite upload stays
+        # chained to a successful copy.
         return
     try:
         pruned = market_data.prune_5m_bars(clock.now())
@@ -234,6 +240,25 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
             logger.info("pruned %d cached 5m bars past the keep window", pruned)
     except Exception:  # noqa: BLE001
         logger.exception("5m bar pruning failed")
+    if ops is not None and bool(
+        get_config().get("ops", "offsite_backup", "enabled", default=False)
+    ):
+        try:
+            ops.run_offsite_backup_sync()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("offsite backup failed")
+            from app.db.base import get_session_maker
+            from app.engine.state import record_event
+
+            with get_session_maker()() as session:
+                record_event(
+                    session,
+                    clock,
+                    level="warning",
+                    event_type="backup_failed",
+                    details={"error": f"offsite: {exc}"},
+                )
+                session.commit()
 
 
 async def run_after_close_jobs(
@@ -1178,6 +1203,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         broker=broker,
     )
     app.state.ops = ops_service
+    # Persist the startup reconciliation so deploy.sh reads it back
+    # read-only (docker compose exec app python -m app.ops.reconcile_check).
+    if report is not None:
+        ops_service.record_startup_reconcile(
+            bool(report.ok and not report.mismatches), len(report.mismatches)
+        )
 
     # Backtesting (PR 14): one child process at a time; rows left "queued"
     # or "running" by a crash are marked interrupted at startup.
@@ -1245,7 +1276,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         run_daily_backup,
         CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
-        args=[clock, market_data],
+        args=[clock, market_data, ops_service],
         id="daily-db-backup",
     )
     # Run the decision cycle at every configured cycle time; the runner
@@ -1264,16 +1295,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="server-checks",
         coalesce=True,
     )
-    # Offsite backup after the 03:00 local copy; monthly restore test on
-    # the configured day. Both no-op without stored credentials.
-    offsite_at = str(config.get("ops", "offsite_backup", "time", default="03:05"))
-    offsite_hour, offsite_min = (int(p) for p in offsite_at.split(":")[:2])
-    scheduler.add_job(
-        ops_service.run_offsite_backup,
-        CronTrigger(hour=offsite_hour, minute=offsite_min, timezone=app_tz),
-        id="offsite-backup",
-        coalesce=True,
-    )
+    # The offsite upload is chained to the daily local copy above — not a
+    # separate cron (a failed local copy skips it). The monthly restore
+    # test keeps its own schedule.
     restore_day = int(
         config.get("ops", "offsite_backup", "restore_test_day", default=1)
     )

@@ -206,6 +206,13 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         WARNING,
     ),
     EventDef(
+        "backup_downloaded",
+        "Backup downloaded",
+        "Someone downloaded the latest backup",
+        "warnings",
+        INFO,
+    ),
+    EventDef(
         "disk_space",
         "Disk space",
         "Data volume 80% full (90% is critical)",
@@ -254,6 +261,7 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "another_instance": "another_instance",
     "restart_resumed": "restarted_resumed",
     "restart_paused": "restarted_paused",
+    "backup_downloaded": "backup_downloaded",
 }
 
 
@@ -387,6 +395,8 @@ def format_recorded(
         if isinstance(reasons, list) and reasons:
             line = "stayed paused: " + "; ".join(str(r) for r in reasons)
         return key, line, "/logs"
+    if event_type == "backup_downloaded":
+        return key, "downloaded the latest backup", "/settings"
     if event_type == "review_fallback":
         line = (
             f"{details.get('kind', 'review')} {details.get('ref', '')}"
