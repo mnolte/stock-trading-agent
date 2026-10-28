@@ -146,7 +146,14 @@ def test_malformed_json_body_is_400_not_500(client: TestClient) -> None:
     log_path = (
         Path(os.environ["SA_DATA_DIR"]) / "logs" / "stock-agent.log"
     )
-    resp = client.post("/api/auth/sign-in", content="not json")
+    # Content-Type json so the request gate lets it through; the JSON
+    # itself is malformed → 400 bad_request (the gate's 415 covers a
+    # non-JSON content type).
+    resp = client.post(
+        "/api/auth/sign-in",
+        content="not json",
+        headers={"Content-Type": "application/json"},
+    )
     assert resp.status_code == 400
     error = _shape(resp)
     assert error["code"] == "bad_request"
