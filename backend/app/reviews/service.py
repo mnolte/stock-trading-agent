@@ -466,12 +466,21 @@ class ReviewService:
             cost=token_cost(
                 response,
                 self.config,
-                model=str(self.config.get("reviews", "model", default="")),
+                model=self._model_for(kind),
             ),
             response=response,
             sent_at=sent_at,
             prompt_hash=prompt.sha256,
         )
+
+    def _model_for(self, kind: str) -> str:
+        """The model configured for this review task — ``reviews.models``
+        is one per task; a legacy scalar ``reviews.model`` is honoured
+        for one release (docs/SPEC.md → Model providers)."""
+        models = self.config.get("reviews", "models", default=None)
+        if isinstance(models, dict) and kind in models:
+            return str(models[kind])
+        return str(self.config.get("reviews", "model", default=""))
 
     def _record_call(
         self,

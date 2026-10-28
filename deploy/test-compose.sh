@@ -167,7 +167,7 @@ for h in strict-transport-security permissions-policy content-security-policy \
 done
 check "app CSP wins on the GUI" "frame-ancestors 'none'" \
     grep -i '^content-security-policy:' <<<"$hdrs"
-check "app XFO value" "deny" \
+check "app XFO value" "DENY" \
     grep -i '^x-frame-options: deny' <<<"$hdrs"
 check "app nosniff value" "nosniff" \
     grep -i '^x-content-type-options: nosniff' <<<"$hdrs"
