@@ -16,11 +16,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app.api.main import create_app
 from app.errors import MESSAGES, ErrorCode
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # A fake key in the shape the scrubber masks (sk-…): a response or a log
 # line may never carry it, inside a traceback or an exception message.
@@ -110,7 +109,9 @@ def test_500_has_error_id_and_no_secret(boom_client: TestClient) -> None:
     assert "/etc/secret/path" not in resp.text
 
 
-def test_500_log_line_scrubs_the_secret(boom_client: TestClient) -> None:
+def test_500_log_line_scrubs_the_secret(
+    boom_client: TestClient, capfd: pytest.CaptureFixture[str]
+) -> None:
     resp = boom_client.get("/api/_test_boom")
     error_id = resp.json()["error"]["error_id"]
     # The same error_id is on the ERROR log line; the fake key inside the
@@ -130,6 +131,42 @@ def test_500_log_line_scrubs_the_secret(boom_client: TestClient) -> None:
     assert line["error_id"] == error_id
     assert "exception" in line
     assert FAKE_KEY not in text
+    # The console handler scrubs the same way — the key is nowhere on
+    # stderr either.
+    captured = capfd.readouterr()
+    assert error_id not in captured.err or FAKE_KEY not in captured.err
+    assert FAKE_KEY not in captured.err
+
+
+def test_malformed_json_body_is_400_not_500(client: TestClient) -> None:
+    """A body the app can't parse is a client mistake: 400 bad_request,
+    no error_id, and logged at WARNING — an unreviewed ERROR would hold
+    Readiness at "not yet" for nothing (PR 25 review)."""
+    log_path = (
+        Path(os.environ["SA_DATA_DIR"]) / "logs" / "stock-agent.log"
+    )
+    resp = client.post("/api/auth/sign-in", content="not json")
+    assert resp.status_code == 400
+    error = _shape(resp)
+    assert error["code"] == "bad_request"
+    assert "error_id" not in error
+    text = ""
+    for _ in range(50):
+        if log_path.exists() and "unreadable JSON body" in log_path.read_text():
+            text = log_path.read_text()
+            break
+        time.sleep(0.1)
+    lines = [
+        json.loads(raw) for raw in text.splitlines() if raw.strip()
+    ]
+    warnings = [
+        line for line in lines if "unreadable JSON body" in line["message"]
+    ]
+    assert warnings and warnings[-1]["level"] == "WARNING"
+    assert not any(
+        line["level"] == "ERROR" and "sign-in" in line["message"]
+        for line in lines
+    )
 
 
 def test_shutting_down_and_starting_up(client: TestClient) -> None:

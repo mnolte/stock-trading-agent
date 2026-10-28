@@ -34,6 +34,19 @@ test('a missing decision id shows the record not-found page', async ({
   await page.screenshot({ path: `${shots}/record-not-found.png` });
 });
 
+test('a missing review id shows the record not-found page', async ({
+  page,
+}) => {
+  await page.goto('/reviews?review=999999');
+  await expect(
+    page.getByRole('heading', { name: "Review 999999 doesn't exist" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: 'Search the LLM inspector' }),
+  ).toBeVisible();
+  await page.screenshot({ path: `${shots}/review-not-found.png` });
+});
+
 test('a render error on one screen leaves the shell working', async ({
   page,
 }) => {

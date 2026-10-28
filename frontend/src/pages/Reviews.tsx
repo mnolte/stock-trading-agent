@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
 import { useLiveUpdates } from '../api/liveContext';
+import { ApiError } from '../api/client';
+import { RecordNotFound } from '../components/errorPages';
 import {
   getReview,
   getReviews,
@@ -585,8 +587,28 @@ export default function Reviews() {
   const [items, setItems] = useState<ReviewListItem[]>([]);
   const [nextDue, setNextDue] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // The selection lives in the URL (?review=<id>) so a review is a
+  // deep-linked record: an id that doesn't exist gets its own
+  // not-found page (docs/SPEC.md → Not found, a record).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedParam = searchParams.get('review');
+  const selectedId = selectedParam === null ? null : Number(selectedParam);
+  const selectReview = useCallback(
+    (id: number | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id === null) next.delete('review');
+          else next.set('review', String(id));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const [detail, setDetail] = useState<ReviewDetail | null>(null);
+  const [missingId, setMissingId] = useState<number | null>(null);
   const [verdicts, setVerdicts] = useState<VerdictItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -597,22 +619,33 @@ export default function Reviews() {
         setNextDue(r.next_weekly_due);
         setSchedule(r.schedule);
         setError(null);
-        setSelectedId((cur) =>
-          cur !== null && r.items.some((i) => i.id === cur)
-            ? cur
-            : (r.items[0]?.id ?? null),
+        setSearchParams(
+          (prev) => {
+            // An explicit ?review= id stays even when it isn't in the
+            // list — its detail fetch answers the record's not-found
+            // page, never a silent fallback. Only pick the first item
+            // when no id is present at all.
+            if (prev.has('review')) return prev;
+            const next = new URLSearchParams(prev);
+            const fallback = r.items[0]?.id;
+            if (fallback === undefined) next.delete('review');
+            else next.set('review', String(fallback));
+            return next;
+          },
+          { replace: true },
         );
       })
       .catch(() => setError('Reviews could not be loaded.'));
     getVerdicts('draft')
       .then((r) => setVerdicts(r.items))
       .catch(() => setVerdicts([]));
-  }, [kind]);
+  }, [kind, setSearchParams]);
 
   const [prevKind, setPrevKind] = useState(kind);
   if (kind !== prevKind) {
     setPrevKind(kind);
-    setSelectedId(null);
+    setDetail(null);
+    setMissingId(null);
   }
   useEffect(() => {
     refresh();
@@ -622,13 +655,20 @@ export default function Reviews() {
   const [prevSelectedId, setPrevSelectedId] = useState(selectedId);
   if (selectedId !== prevSelectedId) {
     setPrevSelectedId(selectedId);
-    if (selectedId === null) setDetail(null);
+    setDetail(null);
+    setMissingId(null);
   }
   useEffect(() => {
     if (selectedId === null) return;
     getReview(selectedId)
       .then(setDetail)
-      .catch(() => setDetail(null));
+      .catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 404) {
+          setMissingId(selectedId);
+        } else {
+          setDetail(null);
+        }
+      });
   }, [selectedId]);
 
   const resolve = useCallback(
@@ -789,7 +829,7 @@ export default function Reviews() {
             <button
               key={item.id}
               type="button"
-              onClick={() => setSelectedId(item.id)}
+              onClick={() => selectReview(item.id)}
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -877,7 +917,14 @@ export default function Reviews() {
             gap: 'var(--sa-space-5)',
           }}
         >
-          {detail ? (
+          {missingId !== null && selectedId === missingId ? (
+            <RecordNotFound
+              what={`Review ${missingId} doesn't exist`}
+              why="Reviews are never deleted within a run."
+              searchTo="/inspector"
+              searchLabel="Search the LLM inspector"
+            />
+          ) : detail ? (
             detail.kind === 'weekly' ? (
               <WeeklyView review={detail} />
             ) : (

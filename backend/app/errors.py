@@ -21,6 +21,7 @@ the status's default code) or let a specific detail string name a code:
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets as _secrets
 from enum import StrEnum
@@ -280,6 +281,23 @@ def install_exception_handlers(app: FastAPI) -> None:
             content=error_body(
                 ErrorCode.INVALID, fields=fields_from_validation(exc)
             ),
+        )
+
+    @app.exception_handler(json.JSONDecodeError)
+    async def bad_json(
+        request: Request, exc: json.JSONDecodeError
+    ) -> JSONResponse:
+        # A client mistake, not a server fault — 400 bad_request, logged
+        # at WARNING so it never lands in the Readiness "unreviewed
+        # errors" bucket (PR 25 review).
+        logger.warning(
+            "unreadable JSON body on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+        )
+        return JSONResponse(
+            status_code=400, content=error_body(ErrorCode.BAD_REQUEST)
         )
 
     @app.exception_handler(Exception)
