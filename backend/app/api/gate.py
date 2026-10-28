@@ -265,3 +265,68 @@ class RequestGateMiddleware:
                 return
 
         await self.app(scope, receive, send)
+
+
+_CSP_STRICT = (
+    "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+    "object-src 'none'; form-action 'self'"
+)
+
+# Under `make dev` the Vite dev server serves modules, its HMR socket and
+# the react-refresh inline preamble — allow exactly those origins.
+_CSP_DEV = (
+    "default-src 'self' http://127.0.0.1:5173 http://localhost:5173; "
+    "script-src 'self' 'unsafe-inline' http://127.0.0.1:5173 "
+    "http://localhost:5173; "
+    "style-src 'self' 'unsafe-inline' http://127.0.0.1:5173 "
+    "http://localhost:5173; "
+    "connect-src 'self' http://127.0.0.1:5173 http://localhost:5173 "
+    "ws://127.0.0.1:5173 ws://localhost:5173; "
+    "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; "
+    "form-action 'self'"
+)
+
+
+def _security_headers(config: AppConfig) -> list[tuple[bytes, bytes]]:
+    """The app's own security headers (docs/SPEC.md → Request gate).
+
+    Caddy sets the same names only as defaults (``header ?Name``), so
+    these values win on the VPS; the strict CSP relaxes for the Vite dev
+    server only under ``make dev``.
+    """
+    dev = os.environ.get("SA_RELOAD") == "1"
+    return [
+        (b"content-security-policy", (_CSP_DEV if dev else _CSP_STRICT).encode()),
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"DENY"),
+        (b"referrer-policy", b"same-origin"),
+        (b"cross-origin-opener-policy", b"same-origin"),
+    ]
+
+
+class SecurityHeadersMiddleware:
+    """Adds the app's security headers to every HTTP response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = _security_headers(get_config())
+        api = str(scope.get("path", "")).startswith("/api")
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                existing = {k for k, _v in message.get("headers") or []}
+                extra = list(headers)
+                if api and b"cache-control" not in existing:
+                    extra.append((b"cache-control", b"no-store"))
+                message = {
+                    **message,
+                    "headers": [*message.get("headers", []), *extra],
+                }
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)

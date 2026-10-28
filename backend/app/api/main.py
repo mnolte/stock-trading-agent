@@ -1600,11 +1600,14 @@ def create_app() -> FastAPI:
     from app.auth.middleware import AuthMiddleware
 
     app.add_middleware(AuthMiddleware)
-    from app.api.gate import RequestGateMiddleware
+    from app.api.gate import RequestGateMiddleware, SecurityHeadersMiddleware
 
     # The request gate is the outermost user middleware: it runs in
     # front of sign-in, so it also guards SA_AUTH=off (hard rule 18).
+    # The app's own security headers wrap it, so gate refusals carry
+    # them too (Caddy's ?-defaults defer to these on the VPS).
     app.add_middleware(RequestGateMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
