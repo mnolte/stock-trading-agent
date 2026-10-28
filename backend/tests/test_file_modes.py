@@ -29,11 +29,13 @@ def test_data_dir_and_files_modes(tmp_path: Path) -> None:
     backup.write_text("x")
     log = data / "logs" / "stock-agent.log"
     log.write_text("x")
-    # Loose modes that startup must correct.
+    # Loose modes that startup must correct — set explicitly so the
+    # count does not depend on the umask other tests left behind.
     data.chmod(0o755)
     db.chmod(0o644)
     backup.chmod(0o600)
     (data / "backups").chmod(0o750)
+    (data / "logs").chmod(0o755)
     log.chmod(0o640)
 
     corrected = enforce_file_modes(data)
