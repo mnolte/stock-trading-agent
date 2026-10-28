@@ -100,6 +100,8 @@ code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$BASE/api/settings" \
     || fail "unauth write answered $code"
 
 # --- sign-in through Caddy: __Host- cookie, Secure -------------------------
+# A recovery code works for /code in every mode — unlike a TOTP it does
+# not depend on the app clock (simulated mode does not use wall time).
 seed_out="$("${COMPOSE[@]}" exec -T app python - <<'PY'
 from app.auth.create_user import create_or_reset_user
 from app.config import AppConfig
@@ -107,30 +109,16 @@ from app.db.base import get_session_maker
 from app.market.clock import RealClock
 
 with get_session_maker()() as session:
-    create_or_reset_user(
+    _u, _secret, codes = create_or_reset_user(
         session, AppConfig(), RealClock(),
         username="marc", password="compose test password 1!",
     )
-print("seeded")
+print(codes[0])
 PY
 )"
-log "seed: $seed_out"
-SECRET="$("${COMPOSE[@]}" exec -T app python -c "
-from app.db.base import get_session_maker
-from app.db.models import User
-from sqlalchemy import select
-from app.secrets_service import _load_or_create_key
-from app.config import get_config
-from pathlib import Path
-with get_session_maker()() as s:
-    u = s.execute(select(User)).scalars().first()
-f = _load_or_create_key(Path(get_config().env.sa_data_dir) / 'secret.key')
-print(f.decrypt(u.totp_secret_encrypted.encode()).decode())
-")"
-CODE="$("${COMPOSE[@]}" exec -T app python -c "
-from app.auth.passwords import totp_code
-from datetime import UTC, datetime
-print(totp_code('$SECRET', datetime.now(UTC)))")"
+CODE="$(tail -1 <<<"$seed_out" | tr -d '[:space:]')"
+log "seeded; got a one-time recovery code"
+# no TOTP needed — the recovery code above feeds /code directly
 sign_in_out="$(curl -sk -D /tmp/sa-h1.txt -o /tmp/sa-b1.txt -w '%{http_code}' \
     -X POST "$BASE/api/auth/sign-in" \
     -H 'Content-Type: application/json' \
