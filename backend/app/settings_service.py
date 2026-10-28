@@ -405,8 +405,9 @@ async def validate_settings(
         errors.append("Stop distance from must be below stop distance to")
     # A model without a price can't be selected (docs/SPEC.md, Cost).
     model = str(decision.get("model", ""))
-    if model and model_price(merged.get("model_prices"), model) is None:
-        errors.append(f"Model {model!r} has no price in model_prices")
+    price_table = merged.get("models") or merged.get("model_prices")
+    if model and model_price(price_table, model) is None:
+        errors.append(f"Model {model!r} has no price in models")
     prompt = str(decision.get("prompt", ""))
     if prompt:
         try:

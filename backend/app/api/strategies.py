@@ -201,9 +201,9 @@ def _set_status(request: Request, strategy_id: int, status: str) -> dict[str, An
             raise HTTPException(status_code=409, detail=["an archived shadow can't change"])
         if status == "active" and strategy.status == "paused" and strategy.kind == "llm":
             # A resumed LLM shadow must still have a priced model.
-            from app.decide.client import model_price
+            from app.decide.client import model_price, prices_for
 
-            if model_price(config.get("model_prices", default={}), str(strategy.model)) is None:
+            if model_price(prices_for(config), str(strategy.model)) is None:
                 raise HTTPException(
                     status_code=422, detail=[f"Model {strategy.model!r} has no price"]
                 )

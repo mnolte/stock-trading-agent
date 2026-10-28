@@ -83,17 +83,31 @@ def model_price(
         return None
 
 
+def prices_for(config: AppConfig) -> dict[str, Any]:
+    """The effective ``{model: {input, output, ...}}`` table.
+
+    The ``models`` block is the price source (docs/SPEC.md → Model
+    providers); a legacy ``model_prices`` block is still honoured for
+    one release.
+    """
+    models = config.get("models", default=None)
+    if isinstance(models, dict) and models:
+        return models
+    legacy = config.get("model_prices", default=None)
+    return dict(legacy) if isinstance(legacy, dict) else {}
+
+
 def priced_models(config: AppConfig) -> list[str]:
     """Every model with a complete price — the only ones that may be picked."""
-    prices = config.get("model_prices", default={}) or {}
+    prices = prices_for(config)
     return sorted(m for m in prices if model_price(prices, m) is not None)
 
 
 def require_price(config: AppConfig, model: str, what: str) -> None:
     """Raise when ``model`` (used for ``what``) has no price."""
-    if model_price(config.get("model_prices", default={}), model) is None:
+    if model_price(prices_for(config), model) is None:
         raise UnpricedModelError(
-            f"{what} model {model!r} has no price in model_prices"
+            f"{what} model {model!r} has no price in models"
         )
 
 
@@ -120,9 +134,7 @@ def token_cost(
     """
     if response.tokens_in is None or response.tokens_out is None:
         return None
-    price = model_price(
-        config.get("model_prices", default={}), model or response.model
-    )
+    price = model_price(prices_for(config), model or response.model)
     if price is None:
         return None
     in_price, out_price = price

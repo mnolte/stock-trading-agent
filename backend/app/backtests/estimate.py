@@ -30,7 +30,7 @@ from app.db.models import (
     ShadowDecision,
     Strategy,
 )
-from app.decide.client import model_price
+from app.decide.client import model_price, prices_for
 from app.decide.llm_cache import cache_hit_count
 from app.decide.prompt import cached_prompt
 from app.market.calendar import CalendarProvider
@@ -295,7 +295,7 @@ def estimate(
                 )
             hits = min(hits, calls)
             avg_tokens = _avg_tokens(session, model, temperature, prompt_hash)
-            price = model_price(config.get("model_prices", default={}), model)
+            price = model_price(prices_for(config), model)
             cost: Decimal | None = None
             if avg_tokens is not None and price is not None:
                 in_p, out_p = price
