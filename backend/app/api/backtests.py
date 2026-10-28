@@ -29,7 +29,7 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
-from app.decide.prompt import load_prompt
+from app.decide.prompt import PromptError, load_prompt
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock, make_clock
 
@@ -430,6 +430,12 @@ def _migrate_strategy_db_if_behind(path: Path) -> None:
 
 
 def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Session]:
+    # The slug names a database file — whitelist it like every other
+    # request-derived folder name (hard rule 19) before it hits a path.
+    from app.decide.prompt import is_safe_name
+
+    if not is_safe_name(slug):
+        raise HTTPException(422, "invalid strategy slug")
     with get_session_maker()() as session:
         row = session.get(Backtest, run_id)
         if row is None:
@@ -565,7 +571,7 @@ def run_decision_detail(
     stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
-    except OSError:
+    except (OSError, PromptError):
         prompt_text = None
     return {
         "id": decision.id,

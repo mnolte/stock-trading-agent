@@ -15,7 +15,7 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import priced_models
-from app.decide.prompt import PROMPTS_DIR, load_prompt
+from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import Clock, make_clock
@@ -94,7 +94,7 @@ def _prompt_versions() -> list[str]:
     for path in sorted(PROMPTS_DIR.glob("decision.*.md")):
         try:
             load_prompt(path.stem)
-        except OSError:
+        except (OSError, PromptError):
             continue
         out.append(path.stem)
     return out

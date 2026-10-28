@@ -18,7 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.decide.client import model_price, prices_for, require_price
-from app.decide.prompt import load_prompt
+from app.decide.prompt import PromptError, load_prompt
 from app.settings_service import EDITABLE, LABELS
 
 if TYPE_CHECKING:
@@ -190,7 +190,7 @@ def validate_new_strategy(
         prompt = str(body.get("prompt_version") or config.get("decision", "prompt"))
         try:
             load_prompt(prompt)
-        except OSError:
+        except (OSError, PromptError):
             errors.append(f"Prompt version {prompt!r} does not exist")
         model = str(body.get("model") or config.get("decision", "model"))
         if model_price(prices_for(config), model) is None:

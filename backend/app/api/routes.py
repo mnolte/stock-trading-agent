@@ -38,7 +38,7 @@ from app.db.models import (
     Verdict,
 )
 from app.decide.client import priced_models
-from app.decide.prompt import PROMPTS_DIR, load_prompt
+from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
@@ -574,7 +574,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
-    except OSError:
+    except (OSError, PromptError):
         prompt_text = None
     next_due = None
     verdict_due = None
@@ -2226,7 +2226,7 @@ def _prompt_options() -> list[dict[str, str]]:
         version = path.stem
         try:
             prompt = load_prompt(version)
-        except OSError:
+        except (OSError, PromptError):
             continue
         out.append({"version": version, "hash": prompt.short_hash})
     return out

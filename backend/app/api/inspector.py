@@ -45,7 +45,7 @@ from app.db.models import (
     Strategy,
     Verdict,
 )
-from app.decide.prompt import cached_prompt
+from app.decide.prompt import PromptError, cached_prompt
 
 router = APIRouter()
 
@@ -451,7 +451,7 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
         if call.prompt_version:
             try:
                 prompt = cached_prompt(call.prompt_version)
-            except (FileNotFoundError, KeyError, OSError):
+            except (FileNotFoundError, KeyError, OSError, PromptError):
                 prompt = None
             if prompt is not None and (
                 call.prompt_hash is None or prompt.sha256 == call.prompt_hash

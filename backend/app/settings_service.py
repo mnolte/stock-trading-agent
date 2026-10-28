@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.data.cache import _naive_utc
 from app.decide.client import model_price
-from app.decide.prompt import load_prompt
+from app.decide.prompt import PromptError, load_prompt
 from app.market.clock import NY_TZ, SessionClock
 from app.notifications.events import EVENT_DEFS, EVENTS
 
@@ -412,7 +412,7 @@ async def validate_settings(
     if prompt:
         try:
             load_prompt(prompt)
-        except OSError:
+        except (OSError, PromptError):
             errors.append(f"Prompt version {prompt!r} does not exist")
     if errors:
         raise SettingsError(errors)
