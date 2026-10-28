@@ -43,6 +43,8 @@
 | 26 | Day-trade rule retired | Alpaca integration → Day trades (rule retired); Risk; GUI; Notifications | `Positions` (Today card), `Main` (risk card), `Decision` (gate), `Settings` (notifications), `States`, `Insights` |
 | 27 | Protective stops hardened | Alpaca integration → Protective stops; Position checks; Larger universe → Daily screen | none |
 | 28 | Security hardening | Security hardening; Error pages and API errors (new codes); VPS deployment (Sign-in → Fails closed); AGENTS.md rules 9, 18–20 | `Settings` (SMTP note, Access → risky actions) |
+| 29 | Model providers | Model providers; Decision layer (model output); API keys; LLM call history; Backtesting (model calls); Reviews (model and cost); AGENTS.md rule 21 | `Settings` (API keys, Decisions, Reviews), `Inspector` (model filter), `Logs` (component filter) |
+| 30 | Decision v3 | Decision v3; Decision v2 (options, replay); Strategies and shadows; `backend/prompts/decision.v3.md` | `DecisionV3` |
 
 ## PR description template
 

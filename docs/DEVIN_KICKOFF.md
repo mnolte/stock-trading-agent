@@ -843,13 +843,14 @@ PR 24 (VPS deployment). Start after PR 23 (sign-in) is merged; it also
 uses PR 20 (graceful shutdown) and PR 27 (broker guard); check both are
 in main and say so in the PR if not. It does not wait for PR 28 (security
 hardening): a few pieces are shared with PR 28, and whichever of the two
-is merged first builds them (see below). Don't provision, deploy to or touch any real server in this
-PR: everything is scripts, files and tests, run locally or in CI. I run
-the scripts on the server myself. Pull the latest spec and design
-packages, then read:
+is merged first builds them (see below). Don't provision, deploy to or
+touch any real server in this PR: everything is scripts, files and tests,
+run locally or in CI. I run the scripts on the server myself. Pull the
+latest spec and design packages, then read:
 1. docs/CHANGES.md, entries 2026-10-26 "VPS deployment (PR 23 and 24)",
-   2026-10-27 "Security hardening (PR 28)", "Protective stops hardened
-   (PR 27)" and "Name: Stock Trading Agent"
+   2026-10-27 "Sign-in details (PR 23 review)", "Security hardening
+   (PR 28)", "Protective stops hardened (PR 27)" and "Name: Stock Trading
+   Agent"
 2. docs/SPEC.md → "VPS deployment" (whole section); "Security hardening"
    (request gate, headers, one bind source, files on disk, stored
    credentials); Logging, error handling and shutdown (grace period,
@@ -860,8 +861,11 @@ packages, then read:
 4. design/screens/Settings.dc.html (Server section) and States.dc.html
    (Access and server), with their screenshots
 
-From PR 23, reuse: sign-in, SA_AUTH, SA_TRUSTED_PROXY and SA_INSTANCE_ID
-in client order ids (PR 27's client_id.py).
+From PR 23, reuse: sign-in, SA_AUTH (with its startup route check),
+SA_TRUSTED_PROXY, the __Host-sa_session cookie over HTTPS and
+SA_INSTANCE_ID in client order ids (PR 27's client_id.py). /healthz is
+the only open health endpoint; /api/health needs a session since the
+PR 23 review, so nothing outside the app may use it.
 
 Shared with PR 28. Check main first: if PR 28 is merged, reuse its
 version; if not, build it here as the spec describes, so PR 28 only has
@@ -889,7 +893,14 @@ Build PR 24 only, in this order (one commit per step):
      address on the internal network, SA_INSTANCE_ID=sa-vps-1. .env holds
      no secrets;
    - caddy: 80 and 443, automatic HTTPS for SA_PUBLIC_URL's host,
-     reverse proxy to app with the original Host and X-Forwarded-For;
+     reverse proxy to app with the original Host, X-Forwarded-For and
+     X-Forwarded-Proto;
+   - HTTPS behind the proxy: the app talks plain HTTP to Caddy, so it
+     takes "is this HTTPS" from X-Forwarded-Proto, trusted only from
+     SA_TRUSTED_PROXY (or from an https SA_PUBLIC_URL). Cookies must then
+     be Secure and named __Host-sa_session; check that sign-in works
+     through Caddy and that no cookie is ever sent without Secure on the
+     VPS;
    - caddy headers: HSTS and Permissions-Policy always; CSP,
      X-Frame-Options, X-Content-Type-Options, Referrer-Policy and COOP as
      defaults only (Caddy's "header ?Name value" form), with the values
@@ -953,7 +964,8 @@ Build PR 24 only, in this order (one commit per step):
    - provision; first deploy; make create-user;
    - entering keys;
    - running make broker-guard against the paper account;
-   - setting up offsite storage and the heartbeat service;
+   - setting up offsite storage, the heartbeat service and the outside
+     uptime check (on /healthz);
    - moving the local database and secret.key: stop locally first with
      Ctrl+C after the close, set SA_INSTANCE_ID per copy, and never start
      the local copy against the same account again;
@@ -967,7 +979,11 @@ Build PR 24 only, in this order (one commit per step):
 Tests:
 - The container runs as non-root with a read-only root and no
   capabilities.
-- /healthz says nothing beyond the version.
+- /healthz says nothing beyond the version; through Caddy without a
+  session, /api/health and every other /api route get 401.
+- Signing in through Caddy over HTTPS sets __Host-sa_session with Secure,
+  HttpOnly, SameSite=Strict and Path=/; X-Forwarded-Proto from anything
+  but SA_TRUSTED_PROXY is ignored.
 - Through Caddy with the public Host, the GUI loads and a write works;
   with another Host, Caddy doesn't serve the app.
 - Through Caddy every header from the spec is present exactly once;
@@ -997,20 +1013,34 @@ make run and SA_AUTH unset. If a local restart is needed, do it outside
 the PR when.
 ```
 
-## PR 25 — Error pages and API errors
+## PR 25 — Error pages and API errors (after PR 23)
 
 ```
-PR 25 (Error pages and API errors). Independent of PR 16–22. The Caddy
-part needs PR 24; if PR 24 isn't merged yet, commit the static pages in
-deploy/errors/ and leave the wiring to PR 24 (say so in the PR). Pull the
-latest spec and design packages, then read:
-1. docs/CHANGES.md, entry 2026-10-26 "Error pages and API errors (PR 25)"
-   (spec) and "Error pages" (design)
-2. docs/SPEC.md → "Error pages and API errors" (whole section),
-   Interaction and states (backend banner), Logging, error handling and
-   shutdown (error_id, POST /api/logs/client), Build plan item 25
+PR 25 (Error pages and API errors). Start after PR 23 (sign-in) is
+merged. The Caddy part needs PR 24: if PR 24 isn't merged yet, commit the
+static pages in deploy/errors/ and leave the wiring to PR 24 (say so in
+the PR). Doesn't wait for PR 28. Pull the latest spec and design
+packages, then read:
+1. docs/CHANGES.md, entries 2026-10-26 "Error pages and API errors
+   (PR 25)" (spec) and "Error pages" (design); 2026-10-27 "Sign-in
+   details (PR 23 review)", "Security hardening (PR 28)" (the new error
+   codes only) and "Name: Stock Trading Agent"
+2. docs/SPEC.md → "Error pages and API errors" (whole section, including
+   the new rows), Interaction and states (backend banner), Logging, error
+   handling and shutdown (error_id, POST /api/logs/client, shutting
+   down), VPS deployment → Sign-in, Build plan item 25
 3. design/screens/Errors.dc.html with Errors.png and Errors-390.png;
    copy the texts as written
+
+What already exists; reuse, don't rebuild:
+- PR 23 already answers 401 not_signed_in / session_expired, 403
+  confirm_required / forbidden and 429 rate_limited / locked_out in the
+  JSON shape, and the frontend already handles 401 and confirm_required;
+- PR 20 already returns error_id on 500 and has POST /api/logs/client;
+- PR 24 left a marked hook in deploy.sh for the maintenance flag (if
+  merged).
+Move these onto the shared handler and registry below without changing
+how they behave.
 
 Build PR 25 only, in this order (one commit per step):
 1. Backend:
@@ -1018,49 +1048,78 @@ Build PR 25 only, in this order (one commit per step):
      error_id?, fields?}} for every /api error: HTTPException,
      validation, and unhandled (500 with error_id, logged with the
      traceback);
-   - a code registry (an enum) so codes are stable;
+   - the message is always a fixed sentence from the registry, never
+     the exception's own text (exceptions can carry keys or paths;
+     hard rule 9);
+   - a code registry (an enum) so codes are stable; include PR 28's
+     bad_host, origin_refused, too_large, unsupported_media_type and
+     password_required now, so PR 28 only raises them;
    - every non-/api GET path serves the frontend; unknown /api paths
-     return 404 JSON.
+     return 404 JSON;
+   - 503 shutting_down while the graceful shutdown runs, and
+     starting_up before startup reconciliation finishes.
 2. Frontend API client: one place that maps status to behaviour per the
    spec's table:
    - 401: sign-in, then back to the same page;
    - 403 confirm_required: the dialog, then retry once;
    - 409: a reload offer;
+   - 413/415: the message in the card or dialog that sent it;
    - 422: field messages;
    - 429: Retry-After;
    - 500: a toast with error_id and Open in Logs;
    - 503: the backend banner.
-3. Pages: not found for routes and for records (each record screen
-   handles 404 with its own title and search link); an error boundary
-   around every screen (reporting to /api/logs/client and showing the
-   returned error_id); the first-load "The app isn't answering" page with
-   a 15 s retry; the offline banner.
-4. Static pages: deploy/errors/502.html and 503.html, self-contained
-   (inline CSS and SVG, system fonts, no external requests, a small
-   reload script). They show no version, host, commands or data. Also
-   JSON bodies for /api during an outage (app_unavailable, updating).
-5. Caddy and scripts (if PR 24 is merged): handle_errors for 502/503/504
-   by path (HTML for pages, JSON for /api); a maintenance flag file that
-   deploy.sh and restore.sh set before stopping the app and clear after
-   the health check (also cleared on rollback), with Retry-After: 15.
+3. Pages:
+   - not found for routes and for records: each record screen handles
+     404 with its own title and search link. When not signed in, an
+     unknown route goes to sign-in instead, so nothing is revealed;
+   - an error boundary around every screen: it reports to
+     /api/logs/client and shows the returned error_id. If the report
+     fails (not signed in, app down), show "Copy details" without an id;
+   - the first-load "The app isn't answering" page with a 15 s retry;
+   - the offline banner.
+4. Static pages:
+   - deploy/errors/502.html and 503.html, self-contained: inline CSS and
+     SVG, system fonts, no external requests, a small reload script;
+   - they say "Stock Trading Agent" and show no version, host, commands
+     or data;
+   - JSON bodies for /api during an outage (app_unavailable, updating).
+5. Caddy and scripts (if PR 24 is merged):
+   - handle_errors for 502/503/504 by path: HTML for pages, JSON for
+     /api;
+   - the maintenance flag file: deploy.sh and restore.sh set it before
+     stopping the app and clear it after the health check (also cleared
+     on rollback), using PR 24's hook; Retry-After: 15;
+   - /healthz stays outside the maintenance answer, so the scripts can
+     still check the app.
 
 Tests:
 - A route walk: force each error path (404, 422, 500 via a test-only
   failing route) and assert the JSON shape with no traceback, path or
-  HTML.
+  HTML. Make the failing route raise an exception whose text holds a
+  fake key, and assert the key appears in neither the response nor the
+  log.
+- PR 23's existing auth error tests still pass unchanged.
 - Frontend unit tests for every status mapping.
-- Playwright: an unknown route shows the 404 page; a missing decision id
-  shows the record page; a forced render error on one screen leaves the
-  sidebar and other screens working and shows an error id; the first load
-  with the API down shows the retry page; going offline shows the
-  banner.
-- Static pages pass a check for no external URLs.
+- Playwright:
+  - an unknown route shows the 404 page when signed in, and sign-in when
+    not;
+  - a missing decision id shows the record page;
+  - a forced render error on one screen leaves the sidebar and other
+    screens working and shows an error id;
+  - the first load with the API down shows the retry page;
+  - going offline shows the banner.
+- Static pages pass a check for no external URLs and contain no version
+  string.
 - With the compose stack and the app stopped (CI), / returns the 502 page
   and /api/x returns JSON; with the flag set, 503 with Retry-After.
 - No network in unit tests.
 
 Use the PR template, screenshots in docs/screenshots/pr-25/ next to the
 design PNGs (Errors, Errors-390). List remaining design differences.
+
+Merging and restarting: no migration. Restart only outside 14:30–21:00
+Amsterdam this week (15:30–22:00 from 2 November), and say in the PR
+when you restarted.
 ```
 
 ## PR 26 — Day-trade rule retired (do first)
@@ -1134,123 +1193,124 @@ design/), show them in the PR next to the matching design reference PNG, and
 ask before guessing.
 ```
 
-## PR 28 — Security hardening (before PR 23 is merged)
+## PR 28 — Security hardening (after PR 25)
 
 ```
-PR 28 (Security hardening). Thanks for the audit: every finding is
-accepted, plus a few additions. Measures and guards only: no trading
-change, no risk-limit change, no migration.
+PR 28 (Security hardening). From your audit of 27 October. Guards only:
+no trading change, no risk-limit change, no migration. Start after PR 25
+(error pages) is merged; PR 23 and PR 24 are already in main.
 
-Order of work:
-- Commit the in-progress PR 23 work to its own branch now and leave it
-  unmerged.
-- Build PR 28 from main and merge it first: finding 1 is live today while
-  the app runs on 127.0.0.1.
-- Then rebase PR 23 on it and add the PR 23 items at the end of this
-  prompt.
-If PR 22 is still open, PR 28 doesn't touch its files; merge whichever is
-ready first.
+A lot of the audit is already done by later PRs; reuse it, don't rebuild
+it, and list in the PR which audit items you found already closed:
+- PR 23: SA_AUTH parsed once and failing closed, CSRF on writes, the
+  WebSocket Origin check behind sign-in, "Confirm it is you" for loosening
+  a risk limit and for SMTP/To/heartbeat changes;
+- PR 24: bundled fonts, python -m app.serve as the only start path (with
+  the --host/--port grep test), umask 077 and file modes, https/public
+  checks for the heartbeat URL and backup endpoint, write-only backup
+  credentials;
+- PR 25: the error registry with bad_host, origin_refused, too_large,
+  unsupported_media_type and password_required; exception messages and
+  tracebacks scrubbed in the file handler, log index and console;
+  malformed JSON as 400.
 
 Pull the latest spec and design packages, then read:
 1. docs/CHANGES.md, entry 2026-10-27 "Security hardening (PR 28)" (spec)
    and "Security hardening" (design)
 2. docs/SPEC.md → "Security hardening" (whole section); "Error pages and
-   API errors" (the new rows in the table); "VPS deployment" → Sign-in
-   (Fails closed, Confirming risky actions) and How it runs; Build plan
-   item 28
-3. AGENTS.md → hard rule 9 (extended) and new rules 18–20;
-   backend/config.example.yaml → security
-4. design/screens/Settings.dc.html (SMTP note, Access → risky actions)
+   API errors" (the new rows); Build plan item 28
+3. AGENTS.md → hard rule 9 and rules 18–20; backend/config.example.yaml
+   → security
+4. design/screens/Settings.dc.html (SMTP note)
 
 Build PR 28 only, in this order (one commit per step):
 1. Request gate (audit 1, 8, 9): one middleware for every /api route and
-   the WebSocket upgrade:
-   - Host allowlist (loopback with SA_PORT, the SA_PUBLIC_URL host,
-     security.allowed_hosts, the Vite dev address in make dev only)
-     → 400 bad_host;
+   the WebSocket upgrade, in front of sign-in, also with SA_AUTH=off:
+   - Host allowlist: loopback with SA_PORT, the SA_PUBLIC_URL host,
+     security.allowed_hosts, the Vite dev address in make dev only;
+     anything else → 400 bad_host;
    - on POST/PUT/PATCH/DELETE: a foreign Origin, or Sec-Fetch-Site other
-     than same-origin/none → 403 origin_refused; no headers at all
-     passes;
+     than same-origin/none → 403 origin_refused; no headers at all passes;
    - write bodies must be application/json (415), except the CSV import
      (multipart);
-   - body cap while streaming (413 too_large): max_body_kb, max_upload_kb
-     for the import;
-   - the app's own headers: CSP, nosniff, X-Frame-Options,
-     Referrer-Policy, COOP, no-store on /api; the CSP is relaxed only
-     under make dev;
-   - bundle IBM Plex in the frontend and remove Google Fonts.
-   All errors use the PR 25 JSON shape. Check the Vite proxy settings so
-   make dev still works.
-2. One bind source (audit 11): python -m app.serve reads SA_HOST/SA_PORT
-   and calls uvicorn.run; remove every --host/--port from the Makefile and
-   scripts; log the bound address at startup; a test greps the repo for
-   --host/--port in run commands.
-3. Scrubber (audit 3): scrub the exception message and the formatted
-   traceback at format time in JsonFormatter and the console formatter
-   (and so the log index); add the URL and header token patterns from the
-   spec. Test with a fake key in an exception's args, in a URL inside an
-   exception message, and in an Authorization header string; check the
+   - body cap while streaming (413 too_large): max_body_kb, and
+     max_upload_kb for the import;
+   - /healthz passes the gate with Host localhost:SA_PORT, so the compose
+     healthcheck and deploy.sh keep working;
+   - check the Vite proxy settings so make dev still works.
+2. The app's own headers: CSP, nosniff, X-Frame-Options, Referrer-Policy,
+   COOP, and no-store on /api. The CSP is relaxed only under make dev.
+   Caddy already sets these only as defaults, so the app's values win;
+   extend deploy/test-compose.sh to prove each header still appears
+   exactly once and carries the app's value.
+3. Scrubber (audit 3, rest): add the URL and header token patterns from
+   the spec (token=, apikey=, api_key=, key=, secret=, Authorization).
+   Test with a fake key in an exception's args, in a URL inside an
+   exception message, and in an Authorization header string, across the
    file, console and index output.
-4. Prompts (audit 4): version regex, resolve-inside check,
-   backend/prompts/manifest.json with the SHA-256 of decision.v1.md and
-   decision.v2.md (and any other prompt file), and load_prompt refuses a
-   mismatch. Settings and strategy validation use the same function and
-   return 422. Apply the same name check to run, replay and backtest
-   folder names. A test fails when a listed prompt's hash changes.
-5. Bounded inputs (audit 5, 12): a shared helper for limit (1–200),
-   window (1–100) and typed ids; 422 on non-numeric values;
-   GET /api/notifications clamped too.
-   - Exports are streamed and capped at security.export_max_rows, with a
-     closing line saying so.
-   - The FTS search is quoted as a phrase; an FTS syntax error gets 422.
-   - strategy:abc gets 422.
-   - Add a test that walks every GET route and sends -1, 0, 10^12 and
-     "abc" to each query parameter: no 500 anywhere.
-6. /api/logs/client (audit 6): rate-limit per client_ip(), a bounded
-   table of senders (security.client_error_senders, oldest dropped),
-   message at most 2 KB and stack at most 8 KB, control characters and
-   CR/LF stripped from single-line fields, source=frontend on the line.
-   Fix the precedence quirk on the tab line.
+4. Prompts (audit 4):
+   - version regex and a resolve-inside check for backend/prompts/;
+   - backend/prompts/manifest.json with the SHA-256 of every prompt file;
+     load_prompt refuses a mismatch;
+   - settings and strategy validation use the same function and answer
+     422;
+   - the same name check for run, replay and backtest folder names;
+   - a test fails when a listed prompt's hash changes.
+5. Bounded inputs (audit 5, 12):
+   - a shared helper for limit (1–200), window (1–100) and typed ids, 422
+     on non-numeric values; GET /api/notifications clamped too;
+   - exports streamed and capped at security.export_max_rows, with a
+     closing line saying so;
+   - the FTS search quoted as a phrase; an FTS syntax error gets 422;
+   - strategy:abc gets 422;
+   - a test that walks every GET route and sends -1, 0, 10^12 and "abc"
+     to each query parameter: no 500 anywhere.
+6. /api/logs/client (audit 6):
+   - rate-limited per client_ip(), with a bounded table of senders
+     (security.client_error_senders, oldest dropped);
+   - message at most 2 KB and stack at most 8 KB;
+   - control characters and CR/LF stripped from single-line fields, and
+     source=frontend on the line;
+   - fix the precedence quirk on the tab line.
 7. Stored credentials (audit 7):
    - SMTP: a request that changes the host, port or username without a
-     password gets 422 password_required, and no connection is made.
-   - SMTP: port must be 465, 587 or 2525; connect timeout 10 s; the 422
-     on a failed test gives a category only, never the server's text.
-   - The frontend makes the password field required once host, port or
-     username changes, as in the design note.
-   - ops.heartbeat_url and the backup endpoint must be https:// and must
-     not resolve to a loopback or private address (validate on save).
-   - Check that replacing Alpaca keys with a different paper account's
-     keys requires Start new run. Add a test; implement it if missing.
-8. Files (audit 10, 12):
-   - os.umask(0o077) first thing at startup;
-   - heal the modes under SA_DATA_DIR (dir 0700, files 0600) with one
-     INFO line;
-   - mode=ro for run databases opened only for reading (_alembic_version
-     and friends);
-   - run.lock created with O_CREAT|O_EXCL, keeping today's stale-lock
-     handling.
+     password gets 422 password_required, and no connection is made;
+   - SMTP: port must be 465, 587 or 2525; connect timeout 10 s; a failed
+     test gives a category only, never the server's text;
+   - the frontend makes the password field required once the host, port
+     or username changes, as in the design note;
+   - check that replacing Alpaca keys with a different paper account's
+     keys requires Start new run; add a test, and implement it if
+     missing.
+8. Files (audit 12): mode=ro for run databases opened only for reading
+   (_alembic_version and friends); run.lock created with
+   O_CREAT|O_EXCL, keeping today's stale-lock handling.
 9. Codebase and CI:
    - ruff S rules on, every ignore with a comment;
    - pip-audit on uv.lock and pnpm audit --prod in CI on every PR and
-     weekly, failing on high/critical unless in
+     weekly, failing on high/critical unless listed in
      security/audit-allowlist.yml with a reason and expiry;
    - gitleaks in CI and as a pre-commit hook;
    - pnpm install --frozen-lockfile;
-   - Actions pinned to commit SHAs with permissions: contents: read by
-     default; Dependabot for github-actions;
-   - make security runs tests/security/ and both audits;
+   - pin every Action by commit SHA (PR 24 did only the new ones), with
+     permissions: contents: read by default; Dependabot for
+     github-actions;
+   - make security runs tests/security/ and both audits; add make security
+     to the image test stage in CI;
    - docs/SECURITY.md: one page with the threat model, the layers and
      what isn't covered.
 
 Tests (tests/security/, all without network):
-- text/plain cross-origin POST to /api/kill-switch → 403 and nothing
-  happens; a bodiless cross-origin POST to /api/pause → 403; the same
-  requests from the app's own origin work.
+- With SA_AUTH=off: a text/plain cross-origin POST to /api/kill-switch
+  → 403 and nothing happens; a bodiless cross-origin POST to /api/pause
+  → 403; the same requests from the app's own origin work.
 - Host: evil.example → 400 (DNS rebinding); the WebSocket with a foreign
-  Origin or Host is refused.
+  Origin or Host is refused, also with SA_AUTH=off.
 - An oversized body → 413; a form-encoded write → 415.
-- The response headers are present on HTML and /api responses.
+- With SA_AUTH=required, the gate runs before sign-in: a foreign Origin
+  gets 403 origin_refused even with a valid session.
+- The headers are present on HTML and /api responses; compose-test
+  confirms they appear once each through Caddy.
 - The scrubber cases from step 3.
 - ../../README in a prompt version → 422; a tampered prompt file is
   refused at load.
@@ -1260,32 +1320,402 @@ Tests (tests/security/, all without network):
 - SMTP with a fake SMTP server: a changed host without a password →
   422, and the fake server sees no connection; with a password it
   connects and logs in with that password.
-- Data files are 0600 after startup; two simultaneous RunLock.acquire
-  calls → exactly one wins.
-- The GUI e2e suite still passes (it goes through the gate).
+- Two simultaneous RunLock.acquire calls → exactly one wins.
+- The GUI e2e suites, with sign-in on and off, still pass through the
+  gate.
 
 Use the PR template. Screenshots: Settings (SMTP card with the password
 field required after a host change). List remaining design differences.
-Answer audit items you chose not to change as questions in the PR.
+Answer audit items you chose not to change as questions in the PR, and
+post the compose-test CI result.
 
-Then for PR 23 (on its branch, after rebasing onto PR 28):
-- Parse SA_AUTH once in EnvSettings as an enum (strip, lower case) and
-  use it everywhere; " Required " must behave as required.
-- With SA_AUTH=required, walk the route table at startup and refuse to
-  start if any route except /healthz and sign-in lacks the session
-  dependency. Guard and sessions merge together, never apart.
-- Add "Confirm it is you" to: a settings save that loosens a risk limit
-  (a higher risk per trade, position size or exposure, a higher daily
-  loss limit, a kill-switch threshold raised or turned off), and changing
-  the SMTP server, the To address or the heartbeat URL. Tightening never
-  asks. Test both directions.
-- Once sessions exist, /api/logs/client needs a session like every other
-  route.
-
-Merging and restarting: PR 28 has no migration but needs a restart to
-take effect. Restart only outside 14:30–21:00 Amsterdam this week
+Merging and restarting: no migration, but the local app needs a restart
+to pick up the gate. Restart only outside 14:30–21:00 Amsterdam this week
 (15:30–22:00 from 2 November). Afterwards check the GUI loads and a
 harmless write works from it (Pause and Resume while the market is
 closed). Never test with Stop & flatten. Say in the PR when you
-restarted.
+restarted. Once this is merged, the go-live checklist in docs/DEPLOY.md
+is unblocked.
+```
+
+## Docs — README rewrite (any time)
+
+```
+Docs PR: rewrite the root README.md. Documentation only: no change to
+code behaviour, config defaults, the spec or the design. The current
+README is from v0.1 (10 fixed symbols, decision.v1 only, no sign-in) and
+is out of date.
+
+Sources of truth, in this order:
+- docs/SPEC.md and docs/CHANGES.md for behaviour;
+- design/DESIGN.md and design/screens for names and labels;
+- AGENTS.md for the rules contributors follow;
+- .env.example, backend/config.example.yaml, the Makefile, docs/DEPLOY.md
+  and the code for exact names, defaults and commands.
+
+Every statement in the README must be traceable to one of these. Don't
+invent features, numbers, commands or claims, and don't add marketing
+language. Use the GUI labels exactly as the design writes them
+(Settings → API keys, Stop & flatten, Confirm it is you, …). Where the
+code in main and the spec disagree, don't pick one: leave the line out
+and list it as a question in the PR. Features that are specced but not
+yet in main go only in the Roadmap section, worded as in the spec's
+build plan.
+
+Structure (in this order):
+1. Title "Stock Trading Agent", a one-line description, a short "Paper
+   only" notice (from the spec: Alpaca paper account only, no real-money
+   orders, a personal experiment and not financial advice), and one hero
+   screenshot (the dashboard). Add a CI status badge for the existing
+   workflow; no other badges.
+2. Table of contents.
+3. Description:
+   - what it does: the universe and daily liquidity screen, the decision
+     cycles (times in New York, with Amsterdam alongside), rules
+     pre-filter, the model choosing between code-built options, risk
+     gates, bracket orders with broker-side stops, position checks,
+     outcome tracking, the SPY benchmark;
+   - strategies and shadows, backtests and replays, reviews, insights,
+     readiness;
+   - a "Safety model" subsection: paper only, every position has a stop
+     at Alpaca, the model never overrides code, no shorting and 1×
+     margin set at the broker, the kill switch, sign-in when not on
+     127.0.0.1;
+   - one Mermaid diagram of a single cycle (data → rules → model → risk
+     gates → order → stop at Alpaca), using the spec's step names.
+4. Screenshots: a gallery (see "Screenshots" below), each with a
+   one-line caption saying what the screen is for.
+5. Requirements: Python, Node and pnpm versions as pinned in the repo
+   (pyproject, .nvmrc/package.json engines, uv); an Alpaca paper account
+   with API keys; an OpenAI key; a Finnhub key (free plan); Docker and
+   Docker Compose only for the VPS. Name versions exactly as the repo
+   pins them.
+6. Installation:
+   - local: clone, copy .env.example and backend/config.example.yaml,
+     make install, make run; the app starts paused; enter the keys in
+     Settings → API keys (each is tested before saving); check the
+     PAPER badge; reset the paper account to $10,000 in the Alpaca
+     dashboard before the first run; press Resume;
+   - simulated mode without keys (MODE=simulated);
+   - development with make dev;
+   - production on a VPS: a short summary and a link to docs/DEPLOY.md
+     (don't copy the runbook).
+7. Configuration:
+   - Environment variables: one table with variable, default, allowed
+     values, what it does, and when to change it. Cover every variable
+     the app or the deploy files read (.env.example,
+     docker-compose*.yml, deploy/*.sh, the settings class in the code).
+     Build the list from the code, not from memory; a variable in the
+     code but missing from .env.example (or the reverse) is a question
+     in the PR.
+   - backend/config.yaml: every key in config.example.yaml, grouped by
+     top-level block, one collapsible <details> section per block. Each
+     row gives the key (full dotted path), default, unit, what it does,
+     and whether it can be changed in Settings or only in the file.
+     Take the meaning from the spec section that defines it, and link
+     that section.
+   - Settings and API keys: what is stored where (encrypted keys and
+     data/secret.key, settings versions), and that keys never go in
+     .env.
+8. Usage basics: the daily rhythm in Amsterdam time, explaining the
+   weeks when Europe and the US change clocks on different dates; where
+   to look (Dashboard, Positions, LLM inspector, Logs, Readiness);
+   Pause, Resume and Stop & flatten in one or two sentences each.
+9. Commands: the make targets that exist (install, run, dev, test, lint,
+   security if present, logs-reindex, create-user, broker-guard,
+   replay, …), one line each, generated from the Makefile.
+10. Project layout: the top-level folders and what's in each.
+11. Contributing:
+    - how work is done: spec first (docs/SPEC.md, docs/CHANGES.md), one
+      build step per PR, the PR template, screenshots next to the design
+      PNGs, design differences listed;
+    - a short summary of the hard rules in AGENTS.md, linking it as the
+      full list. Include at least: paper only, no network in tests,
+      migrations and used prompts immutable, never kill processes by
+      name, no restarts during the session, no silent failures, secrets
+      never logged;
+    - before opening a PR: make lint, make test (and make security if
+      present) must pass;
+    - reporting a security problem: link docs/SECURITY.md if it exists;
+      otherwise say to contact the maintainer privately and not to open
+      a public issue.
+12. Roadmap and status: merged build-plan steps versus open ones,
+    taken from the spec's build plan and git history; no dates or
+    promises.
+13. License: only if a LICENSE file exists. If not, write no license
+    section and ask in the PR.
+14. Disclaimer: the paper-only, not-financial-advice text from the
+    spec.
+
+Screenshots:
+- Capture them from the real app, not from the design files, in
+  MODE=simulated with seeded fixture data, so no real account number,
+  key, email address, IP address or position appears. Check every image
+  for these before committing.
+- Add a repeatable script (make readme-screens, Playwright) that starts
+  the app in simulated mode and writes the images to
+  docs/images/readme/.
+- Screens: Dashboard (hero), Decision drawer (decision.v2 options),
+  Positions, Performance, Insights, Readiness, LLM inspector, Settings,
+  Sign in, and the dashboard at phone width (390 px).
+- Desktop at 1440 px wide, cropped to the useful part. Each PNG under
+  400 KB (optimise it), with alt text naming the screen.
+- Where a screen in main differs visibly from the design, mention it in
+  the PR.
+
+Quality bar:
+- Plain English, short sentences, consistent terms with the spec.
+- Every relative link and image path must resolve: add a test or script
+  that checks the links in README.md.
+- Add tests/test_readme.py: it fails when a key in
+  backend/config.example.yaml or a variable in the settings class is
+  missing from README.md, so the README can't fall behind the config.
+- Renders cleanly on GitHub (check the Mermaid block and the <details>
+  sections in the PR preview).
+
+PR: use the PR template. Put the README preview screenshots and the list
+of questions (code vs spec differences, missing variables, license) in
+the description. Nothing needs a restart.
+```
+
+## PR 29 — Model providers: OpenAI and Anthropic (after PR 25)
+
+```
+PR 29 (Model providers: OpenAI and Anthropic). OpenAI and Anthropic
+(Claude) models can each be chosen for live decisions, the weekly review,
+the daily briefing, verdicts, shadows, replays and backtests. The OpenAI
+key and the Anthropic key are each optional; at least one is required.
+The default live model stays gpt-4o-mini, and nothing in this PR changes
+prompts, the output schema, the option builder or any risk gate. Start from the
+latest main after PR 25 is merged; it doesn't depend on PR 28. Pull the
+latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-28 "Model providers: OpenAI and
+   Anthropic (PR 29)" (spec) and "Model providers (OpenAI and
+   Anthropic)" (design)
+2. docs/SPEC.md → "Model providers: OpenAI and Anthropic" (whole
+   section); Decision layer (model output); API keys; LLM call history
+   (outcomes, stored fields); Backtesting (model calls); Reviews (model
+   and cost); Build plan item 29
+3. AGENTS.md → hard rules 6, 7, 8, 9 and the new rule 21;
+   backend/config.example.yaml → models, decision, reviews
+4. design/screens/Settings.dc.html (API keys, Decisions, Reviews),
+   Inspector.dc.html (model filter), Logs.dc.html (component filter),
+   with their screenshots
+5. The Anthropic structured outputs documentation:
+   https://platform.claude.com/docs/build-with-claude/structured-outputs
+   (output_config.format, the schema features that aren't supported,
+   stop reasons)
+
+Build PR 29 only, in this order (one commit per step):
+1. Model list:
+   - load the models block (provider, input, output, cutoff, effort,
+     timeout_seconds) and validate it at startup;
+   - read model_prices and backtest.model_cutoffs for one release with
+     a WARNING when models is missing;
+   - reviews.model becomes reviews.models.weekly / .briefing /
+     .verdict; read the old reviews.model for one release (as all
+     three) with a WARNING;
+   - every place that names a model (decision.model, reviews.models.*,
+     strategies, backtests, replays) must refer to an entry, otherwise
+     startup or the save fails with a clear message;
+   - add decision.max_output_tokens.
+2. One model client interface in app/llm/ (request: prompt, snapshot,
+   JSON schema, model; result: parsed JSON, input and output tokens,
+   latency, provider request id, or a typed error: timeout, api_error,
+   invalid_output, refusal):
+   - move today's OpenAI code behind it unchanged, as the OpenAI
+     adapter in app/llm/providers/;
+   - keep a fake adapter for tests;
+   - decision, review, shadow, replay and backtest code call only the
+     interface. A test fails if openai or anthropic is imported
+     anywhere outside app/llm/providers/ (hard rule 21).
+3. Anthropic adapter (official anthropic SDK, Messages API):
+   - the prompt file as system, the snapshot as the user message;
+   - output_config.format with type json_schema;
+   - a schema transform that removes the keywords Anthropic doesn't
+     accept from the copy that is sent (numeric minimum/maximum,
+     string and array lengths, additionalProperties other than false);
+     Pydantic still validates the answer against the full schema;
+   - no temperature/top_p/top_k; send the model's effort;
+     max_tokens from decision.max_output_tokens; the per-model timeout;
+   - map stop reasons: refusal → refusal; max_tokens → invalid_output
+     with reason truncated; HTTP 529/5xx and connection errors →
+     api_error with status and error type; one try, no retry;
+   - store only the final text, never thinking.
+4. Keys (SPEC → Model providers → Keys):
+   - OpenAI and Anthropic keys in Settings → API keys, each optional,
+     at least one required: write-only, encrypted, tested with one
+     list-models call before saving, one-time import from .env
+     (OPENAI_API_KEY, ANTHROPIC_API_KEY); add sk-ant- to the log
+     scrubber patterns;
+   - Resume needs at least one model key and a passing key for every
+     provider used by live decisions and the three review tasks; the
+     banner names what's missing ("Live decisions use gpt-4o-mini: add
+     the OpenAI key or choose a Claude model");
+   - saving a setting that picks a model whose provider has no passing
+     key is refused with a message;
+   - a new Remove action for each model key, behind "Confirm it is you":
+     refused while live decisions or a review task use that provider;
+     shadows on it pause and say why;
+   - a shadow whose provider key is missing or failing is skipped for
+     that cycle with a WARNING and never delays live;
+   - a backtest with a strategy whose provider has no working key is
+     refused before it starts.
+   Check every place that assumes an OpenAI key exists today (startup
+   checks, Resume, the key banner, reviews, cost estimates) and list
+   them in the PR.
+5. Recording (new Alembic revision on the current head):
+   - add llm_calls.provider and provider_request_id, and copy the
+     existing OpenAI request ids into the new column; the old column
+     stays;
+   - the answer cache key gets provider and effort;
+   - replays and backtests with a Claude model show "not repeatable:
+     the model has no temperature 0".
+6. Backtests: the cutoff check reads the model's cutoff from models.
+   For the current Claude 5.5 models (cutoff June 2026), the earliest
+   start is 1 July 2026; the form says so.
+7. Frontend per the design:
+   - Settings → API keys: the "Model keys" line, then the OpenAI and
+     Anthropic rows, each optional, each saying what uses it, each with
+     Test, Replace and Remove;
+   - Settings → Decisions: the model picker shows "id · provider";
+     models whose provider has no passing key are disabled with "needs
+     the … key"; temperature marked "OpenAI models only";
+   - Settings → Reviews: three pickers (weekly review, daily briefing,
+     verdicts);
+   - the new-shadow dialog, the backtest form and make replay --model
+     use the same list;
+   - LLM inspector: the model filter and the provider in the call
+     detail and error block;
+   - Logs: the model.anthropic component.
+
+Tests (no network; fakes only):
+- The schema transform: the decision.v1 and decision.v2 schemas, once
+  sent, contain no unsupported keyword; an answer with confidence 1.5 or
+  an option id that wasn't offered is still rejected by Pydantic and
+  becomes skip.
+- Anthropic adapter with recorded fixture responses: success, refusal,
+  max_tokens, 529, timeout. Each gives the documented outcome in
+  llm_calls, and no temperature is ever sent.
+- A shadow on claude-haiku-5-5 runs next to live in a simulated session
+  with the fake adapter; live's cycle timing is unchanged; without the
+  key the shadow is skipped with a warning.
+- Key combinations: only an OpenAI key (everything on OpenAI models)
+  and only an Anthropic key (live and all three review tasks on Claude
+  models) both run a simulated session and the review jobs; no model key
+  blocks Resume; a review task on a provider without a key blocks
+  Resume; a shadow without its provider's key doesn't.
+- Saving a model whose provider has no passing key is refused; removing
+  a key in use is refused; removing an unused key pauses the shadows on
+  it.
+- Each review task (weekly, briefing, verdict) calls the model chosen
+  for it.
+- A backtest with a Claude model starting before 1 July 2026 is
+  refused.
+- Config: an unknown model in decision.model fails at startup; the old
+  model_prices/model_cutoffs keys still load with a warning.
+- The migration fills provider and provider_request_id for existing
+  rows.
+- Costs use the prices from models for both providers.
+- A fake sk-ant- key never reaches any log.
+
+Use the PR template, screenshots in docs/screenshots/pr-29/ next to the
+design PNGs (Settings, Inspector, Logs). List remaining design
+differences.
+
+Don't add a real Anthropic key or make real calls; I'll add the key and
+choose the models myself after merging. Merging and restarting: the
+migration applies on the next start. Restart only outside 14:30–21:00
+Amsterdam this week (15:30–22:00 from 2 November), and say in the PR
+when you restarted.
+```
+
+## PR 30 — Decision v3: checks by code, room and break-even
+
+```
+PR 30 (Decision v3: checks by code, room and break-even). A new prompt
+version and snapshot for v3 strategies only. Live's prompt, decision.v1
+and decision.v2 (prompts, snapshots, options) and every risk gate stay
+exactly as they are. Start from the latest main; it builds on PR 21
+(decision.v2) and works with or without PR 29 (Anthropic). Pull the
+latest spec and design packages, then read:
+1. docs/CHANGES.md, entry 2026-10-28 "Decision v3 (PR 30)" (spec) and
+   "Decision v3 drawer" (design)
+2. docs/SPEC.md → "Decision v3: checks by code, room and break-even"
+   (whole section); "Decision v2: code-built options" (levels, options,
+   code checks, replay, storage); Build plan item 30
+3. backend/prompts/decision.v3.md (new; copy it into the repo as is, and
+   add its SHA-256 to prompts/manifest.json if PR 28 is merged)
+4. backend/config.example.yaml → decision.v3
+5. design/screens/DecisionV3.dc.html with DecisionV3.png
+
+Build PR 30 only, in this order (one commit per step):
+1. Snapshot v3 builder, separate from v2's, selected by the strategy's
+   prompt version:
+   - rounding (prices and levels to cents, ATR to 4 decimals,
+     distances, percentages and ratios to 2);
+   - no duplicates; bid and ask only when plausible, otherwise null;
+   - checks: trend_1h, trend_daily, regime_trend, regime_volatility,
+     room_atr, room_level, earnings, news_status, with the exact rules
+     from the spec;
+   - distance_atr on levels and on each level in the way;
+   - breakeven_confidence per option;
+   - constraints with min_room_atr, min_confidence and min_edge.
+   The provenance the v3 snapshot doesn't send (stop_reference_price,
+   quote timestamps, feed, fetch time) is still stored on the decision.
+2. Option builder version 2 (v3 strategies only): the room filter with
+   decision.v3.min_room_atr and room_level_kinds, overridable per
+   strategy. When nothing is left: no_call, no_options with a room
+   reason naming the level, its kind and its distance.
+3. The v3 output schema (fields in the spec's order; data_flags as an
+   enum list). Store conflicts where v2 stores risks.
+4. Code checks: the confidence gate (edge_too_small); data flags (enter
+   with a flag becomes skip with reason data_flag; every flag is logged
+   at WARNING and recorded as an event); room checked again at order
+   time from the final limit (Fresh quote gate, reason room); the
+   explanation check against the rounded snapshot.
+5. v3 in strategies, the new-shadow dialog, backtests and make replay
+   (PROMPT=decision.v3; v3 snapshots derived from stored v2 inputs, no
+   refetch), with the report additions from the spec.
+6. Frontend: the v3 drawer per the design (checks block, options with
+   distances and break-even, conflicts before the reasoning, data flags,
+   the two new gates, the room reason for no_options); no_options · room
+   in the dashboard card and the feed.
+
+Tests:
+- The SBUX snapshot of 28 Oct 2026 10:46 (fixture: the stored v2 input)
+  gives no_options under v3 with reason "room: L7 1h swing high 0.31 ATR
+  above the limit (min 1.0)"; no model call is made.
+- A fixture with room gets options carrying distance_atr and
+  breakeven_confidence; trend labels match the rules for up, down and
+  mixed cases (including SBUX's daily: close > SMA 50 < SMA 200 is
+  mixed).
+- VWAP and the prior close above the price don't count for room.
+- A strategy override of min_room_atr 0.5 keeps an option that 1.0
+  removes.
+- Confidence 0.40 on a 2R option (break-even 0.33 + 0.10 = 0.43, min
+  0.55) becomes skip with edge_too_small; 0.60 passes.
+- An enter with data_flags ["earnings_date_conflict"] becomes skip with
+  reason data_flag, logs a WARNING and records an event; a held
+  decision with a flag keeps its action but still logs and records.
+- Order-time room recheck: a fresh limit that leaves 0.9 ATR fails the
+  Fresh quote gate with reason room.
+- v1 and v2 snapshots, options and replay output are byte-for-byte
+  unchanged on the existing fixtures.
+- The explanation check passes on rounded numbers and fails on an
+  unrounded one that isn't in the snapshot.
+- A v3 shadow runs next to live in a simulated session; live's timing is
+  unchanged.
+- No network in tests.
+
+After merging, run make replay PROMPT=decision.v3 on the current run's
+snapshots with gpt-4o-mini (and claude-haiku-5-5 if PR 29 is merged and
+I've added the key), stay under the replay cost cap, and post the report
+in the PR. Don't start the v3 shadow yourself; I'll do that.
+
+Use the PR template, screenshots in docs/screenshots/pr-30/ next to the
+design PNG (DecisionV3). List remaining design differences. No
+migration, but a restart is needed to load the new prompt: only outside
+14:30–21:00 Amsterdam this week (15:30–22:00 from 2 November); say in
+the PR when you restarted.
 ```

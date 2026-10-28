@@ -50,6 +50,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 18. **Every request passes the request gate.** Host, Origin and `Sec-Fetch-Site` on writes, JSON-only write bodies and the body size cap apply to every `/api` route and the WebSocket; no route opts out, and sign-in comes on top of it, not instead. Start the server only through `python -m app.serve`; never pass `--host` or `--port` anywhere.
 19. **Request input never becomes a path or an unbounded query.** Whitelist names with a regex and check the resolved path lies inside its base folder; clamp every `limit` and window; cap every export; bad input gets 422, never 500. Strip control characters from client text before logging it.
 20. **Stored credentials go only where they were saved.** When the destination of a stored password or token changes (SMTP host, port or user; backup endpoint), require the credential again in the same request. Outbound URLs a user can set must be `https://` and must not point at a loopback or private address.
+21. **One model client.** Engine code calls models only through the model client interface; OpenAI and Anthropic SDKs are imported only in their adapters under `app/llm/providers/`. Never branch on the provider in decision, risk or review logic, and never relax a check for one provider. Every model comes from the `models` list in config.
 
 ## Conventions
 

@@ -4,7 +4,7 @@
 
 ## Overview and goals
 
-Stock Trading Agent v0.1 is a standalone, paper-only agent that trades a fixed list of liquid US stocks and ETFs through Alpaca's paper account, with an OpenAI model as its decision layer. It is a new application built from scratch, not a fork of Trading Agent. It reuses Trading Agent's visual design and proven ideas (rules pre-filter, risk gates, outcome tracking, kill switch), adapted to stock markets.
+Stock Trading Agent v0.1 is a standalone, paper-only agent that trades a fixed list of liquid US stocks and ETFs through Alpaca's paper account, with an OpenAI or Anthropic model as its decision layer (OpenAI `gpt-4o-mini` live by default; see Model providers). It is a new application built from scratch, not a fork of Trading Agent. It reuses Trading Agent's visual design and proven ideas (rules pre-filter, risk gates, outcome tracking, kill switch), adapted to stock markets.
 
 **Currency.** Stock Trading Agent trades in US dollars (USD). The Alpaca account, cash, orders, prices, P&L, risk limits and every stored money value are in USD. Euro amounts in the GUI are for display only, converted with the ECB daily rate, and never used in trading decisions or risk checks.
 
@@ -52,7 +52,7 @@ One Python backend process runs the scheduler, the agent and the API; a React ap
 | Backend | Python 3.12, FastAPI, Uvicorn |
 | Scheduler | APScheduler, timezone-aware (`America/New_York`) |
 | Broker + data | `alpaca-py` SDK (trading, market data, news) |
-| LLM | OpenAI Python SDK, structured JSON output |
+| LLM | OpenAI and Anthropic Python SDKs behind one model client, structured JSON output (see Model providers) |
 | Storage | SQLite via SQLAlchemy 2.x, Alembic migrations |
 | Indicators | pandas + own implementations (no TA-Lib dependency) |
 | Frontend | React + TypeScript + Vite; Lightweight Charts for price charts |
@@ -230,7 +230,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 
 All thresholds live in `config.yaml`.
 
-**Model output.** Strict JSON through OpenAI structured outputs (a strict JSON schema), validated again with Pydantic. Allowed actions depend on context: for a candidate `enter` or `skip`; for a held position `hold`, `tighten_stop` or `exit`.
+**Model output.** Strict JSON through the provider's structured outputs (a strict JSON schema; see Model providers for Anthropic), validated again with Pydantic. Allowed actions depend on context: for a candidate `enter` or `skip`; for a held position `hold`, `tighten_stop` or `exit`.
 
 ```json
 {
@@ -355,13 +355,13 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 ## API keys
 
-API keys are entered in Settings, not in `.env`. There are four: Alpaca key ID and secret (paper), OpenAI, and Finnhub. `.env` keeps only `MODE`, `SA_HOST`, `SA_PORT`, `SA_DATA_DIR` and `SA_DB_PATH`.
+API keys are entered in Settings, not in `.env`. There are Alpaca key ID and secret (paper) and Finnhub, plus at least one model key: OpenAI, Anthropic, or both (see Model providers). `.env` keeps only `MODE`, `SA_HOST`, `SA_PORT`, `SA_DATA_DIR` and `SA_DB_PATH`.
 
 - **Storage.** Keys are encrypted with Fernet (`cryptography`) and stored in the `secrets` table. The encryption key is `SA_DATA_DIR/secret.key`, created at first start with file mode 600; it is never stored in the database, so a database backup alone does not reveal the keys. If `secret.key` is lost, the keys must be entered again.
 - **Never shown again.** The API only accepts keys (write-only). Reads return the name, the last 4 characters, saved at, last tested at and the test result; never the key. Keys are never logged, never in error messages, the LLM inspector, events or settings versions; log output is scrubbed for every stored key as a second line of defence.
-- **Test before save.** A new key is saved only after one test call passes: Alpaca `GET account` on the paper endpoint (must report a paper account), OpenAI list models, Finnhub one earnings-calendar request. The old key keeps working until the new one passes. "Test" re-runs the check without changing anything. Every save and test is an event (key name, last 4 characters, result), never the key.
+- **Test before save.** A new key is saved only after one test call passes: Alpaca `GET account` on the paper endpoint (must report a paper account), OpenAI list models, Anthropic list models, Finnhub one earnings-calendar request. The old key keeps working until the new one passes. "Test" re-runs the check without changing anything. Every save and test is an event (key name, last 4 characters, result), never the key.
 - **Replacing Alpaca keys** is only allowed while the agent is paused or the kill switch is on, with no open positions or orders. If the new keys belong to a different paper account, the change requires "Start new run".
-- **Missing or failing keys.** The app always starts (paused, as usual) and shows a banner naming the missing or failing key with a link to Settings. Resume stays disabled until the Alpaca, OpenAI and Finnhub keys are all set and passing. Simulated mode needs no keys.
+- **Missing or failing keys.** The app always starts (paused, as usual) and shows a banner naming the missing or failing key with a link to Settings. Resume stays disabled until the Alpaca and Finnhub keys are set and passing, at least one model key is set, and every provider used by live decisions, the weekly review, the daily briefing and verdicts has a passing key. Simulated mode needs no keys.
 - **Moving from `.env`.** At startup, a key found in the environment with nothing stored under that name is imported once, tested, and stored; a banner then says "Keys imported from .env — remove them from .env". After that, keys in the environment are ignored with a warning in the log.
 - Locally, settings, keys and the kill switch have no sign-in, so the backend stays bound to `127.0.0.1`. On any other address sign-in is required and the app refuses to start without it (hard rule 10; see VPS deployment).
 
@@ -490,6 +490,8 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 27. **Protective stops hardened.** Confirm the position and orders at Alpaca before any protective order; a market sale (`stop_breached`) when the stored stop is at or above the market, replacing the one-cent clamp; the orphaned-stop repair (cancel the target, OCO exit order, stop alone as fallback); every sell capped at the confirmed quantity; broker-side `no_shorting` and 1× margin set and checked at startup; the missed daily screen run at startup. *Done when:* tests cover a breached stop (market sale, no stop placed), a stop leg missing while the target holds the shares (OCO placed, gap logged), a sell larger than the confirmed position (capped), a flat position (nothing sent), and a start after 08:10 without today's screen (screen runs, the first cycle waits or uses the previous list with a warning).
 
 28. **Security hardening.** From the 27 October audit: the request gate (Host, Origin and `Sec-Fetch-Site` on writes, JSON-only writes, body size, WebSocket checks) and the app's own security headers, with bundled fonts; one source for the bind address (`python -m app.serve`); exceptions and URL tokens scrubbed in every log handler; prompt names whitelisted, contained and hash-checked against `prompts/manifest.json`; clamped list parameters, capped exports and safe log search; frontend error reports limited per address and sanitised; stored SMTP password never sent to a changed server, outbound URLs https and public; `umask 077`, file modes, read-only run databases and an exclusive `run.lock`; ruff `S` rules, dependency audits, gitleaks, pinned Actions, `make security` and `docs/SECURITY.md`. Before PR 23 is merged; no migration and no trading change. *Done when:* a cross-site `text/plain` POST, a bodiless cross-site POST, a rebinding `Host` and a foreign-origin WebSocket are all refused while the GUI works normally; a fake key inside an exception never reaches any log; `../` in a prompt version gets 422; no GET route returns 500 for bad query values; a changed SMTP host without a password gets 422 and no connection is made with the stored password; files under the data folder are `0600`; and `make security` passes in CI.
+29. **Model providers.** One model client interface with an OpenAI and an Anthropic adapter (and fakes); the `models` list in config (provider, prices, cutoff, effort) replacing `model_prices` and `backtest.model_cutoffs`; Anthropic structured outputs with unsupported schema keywords removed from the sent copy only; no temperature for Claude models, effort instead; stop reasons and errors mapped to the existing outcomes; OpenAI and Anthropic keys, each optional with at least one required, and Remove; `provider` and `provider_request_id` in `llm_calls`; model pickers from the list for live decisions, the weekly review, the daily briefing and verdicts in Settings, the shadow dialog, backtests and replays, with models that need a missing key disabled; LLM inspector and Logs filters. The default live model stays `gpt-4o-mini`. *Done when:* the app runs with only an Anthropic key (live and all review tasks on Claude models) and with only an OpenAI key, Resume is blocked with no model key or when a used provider has none, a shadow on a Claude model runs next to live in simulated mode with the fake adapter, every answer goes through the same Pydantic checks, a Claude refusal or truncated answer becomes skip, no unsupported schema keyword is sent, a missing provider key skips that shadow without delaying live, and a backtest with a Claude model before its cutoff is refused.
+30. **Decision v3.** Snapshot v3 for v3 strategies (rounded numbers, no duplicate fields, plausible-only bid and ask, `checks` with trend labels, room and earnings, `distance_atr` on levels and levels in the way, `breakeven_confidence` per option); the room filter in option builder version 2 (`decision.v3.min_room_atr`, strategy-overridable, `no_options` with a room reason); `prompts/decision.v3.md` with conflicts and thesis before the action and the new `data_flags`; code checks for confidence against break-even (`edge_too_small`), data flags (`data_flag`, WARNING and event) and room at order time; `make replay PROMPT=decision.v3` with its report additions; v3 in strategies, shadows, backtests and replays; the v3 decision drawer. v1 and v2 are untouched. *Done when:* the SBUX snapshot of 28 October gives `no_options` with a room reason under v3; a fixture with room gets options with break-even and distances; an entry with confidence below break-even + 0.10 becomes skip; an enter with a data flag becomes skip and logs an event; v2 snapshots and replays are byte-for-byte unchanged; and a v3 shadow runs next to live in simulated mode.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -502,7 +504,7 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 
 **Number check.** Every number in the model's text must match a fact it was given (after rounding). Status facts (open positions, earnings today and tomorrow, active banners) are written by code as a fixed line, not by the model, and the model's text may not call a known-empty fact "unavailable". If one doesn't, or there is no OpenAI key, the call fails or the review cost cap is reached, the app shows a plain template built from the facts instead, labelled with the reason (for example "Plain review: number check failed"). The failure is logged.
 
-**Model and cost.** Same model as decisions (gpt-4o-mini), temperature 0.2, with versioned prompts (`weekly.v1`, `briefing.v1`, `verdict.v1`) that are never edited once used. Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions. Their cost also comes from `model_prices` and counts only toward the review cap.
+**Model and cost.** Each review task has its own model, OpenAI or Anthropic, from the `models` list: `reviews.models.weekly`, `reviews.models.briefing` and `reviews.models.verdict` (default gpt-4o-mini each). Temperature 0.2 for OpenAI models, with versioned prompts (`weekly.v1`, `briefing.v1`, `verdict.v1`) that are never edited once used. Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions. Their cost also comes from the `models` list and counts only toward the review cap.
 
 **Missed runs.** Unlike cycles, a review or briefing missed while the app was down is written at the next start, labelled with its original date. A briefing older than its trading day is skipped.
 
@@ -566,7 +568,7 @@ A backtest replays strategies over past sessions with the same code that trades 
 
 **Fills.** Bracket orders are simulated on 5-min bars: an entry fills when a bar trades at or through the limit before the entry timeout; stops and targets are checked on every bar; when both are touched in the same bar the stop counts. Slippage per side applies (0.05% by default, editable per run). Commission is zero, as at Alpaca.
 
-**Model calls.** An `llm` strategy can only be backtested from the day after its model's knowledge cutoff (from `backtest.model_cutoffs`); an earlier start is refused before the run begins, because the model may already know what happened. Answers are cached by model, temperature, prompt version and hash, and input snapshot hash, so a rerun on the same inputs costs nothing and gives the same result. Live and shadows only write to the cache and never read from it, so a live decision is always a fresh model call; a backtest decision answered from the cache is marked `cached`. Before a run starts the screen shows the number of sessions, bars to download, estimated model calls, estimated cache hits and estimated cost, plus the cost at the 10-call cap. Calls per LLM strategy = sessions × cycles × that strategy's average real calls per cycle in the current run (a shadow uses its own average once it has at least 20 cycles, otherwise live's; with no history the 10-call cap); rules-only is 0. Cache hits = `llm_cache` rows with the same model, temperature and prompt hash whose cycle time falls in the period, labelled "≈". Cost = (calls − cache hits) × the strategy's average tokens per call × `model_prices`. Run is disabled when the expected cost is above what is left of the monthly cap; when only the cost at the cap is above it, a warning says the run may stop early. Backtests have their own monthly cap ($20); a run that reaches it stops cleanly and keeps its results so far.
+**Model calls.** An `llm` strategy can only be backtested from the day after its model's knowledge cutoff (the model's `cutoff` in `models`); an earlier start is refused before the run begins, because the model may already know what happened. Answers are cached by provider, model, temperature (or effort for Claude models), prompt version and hash, and input snapshot hash, so a rerun on the same inputs costs nothing and gives the same result. Live and shadows only write to the cache and never read from it, so a live decision is always a fresh model call; a backtest decision answered from the cache is marked `cached`. Before a run starts the screen shows the number of sessions, bars to download, estimated model calls, estimated cache hits and estimated cost, plus the cost at the 10-call cap. Calls per LLM strategy = sessions × cycles × that strategy's average real calls per cycle in the current run (a shadow uses its own average once it has at least 20 cycles, otherwise live's; with no history the 10-call cap); rules-only is 0. Cache hits = `llm_cache` rows with the same model, temperature and prompt hash whose cycle time falls in the period, labelled "≈". Cost = (calls − cache hits) × the strategy's average tokens per call × the model's prices in `models`. Run is disabled when the expected cost is above what is left of the monthly cap; when only the cost at the cap is above it, a warning says the run may stop early. Backtests have their own monthly cap ($20); a run that reaches it stops cleanly and keeps its results so far.
 
 **Runs.** A run has a period (at most 3 years), the universe (fixed list, or the screened pool applied day by day with only the data available that day, flagged for survivorship bias because the pool is today's list), the strategies to compare (live settings, any shadow, rules only), starting equity and slippage.
 
@@ -624,7 +626,7 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 
 The LLM inspector shows every model call ever made, not just today's, and can filter them by date, outcome (success, warning, error), source and a few more fields. Built as PR 18, after PR 17.
 
-**What counts as a call.** One request actually sent to OpenAI by live decisions, shadows or reviews. Nothing that wasn't sent appears: rules no_calls, the call cap, `price_stale` or `price_suspect`, a missing key, a reached cost cap, missed shadow calls. Those stay visible as decisions or review labels. Backtest calls stay in their run's database and are shown on the Backtest screen.
+**What counts as a call.** One request actually sent to OpenAI or Anthropic by live decisions, shadows or reviews. Nothing that wasn't sent appears: rules no_calls, the call cap, `price_stale` or `price_suspect`, a missing key, a reached cost cap, missed shadow calls. Those stay visible as decisions or review labels. Backtest calls stay in their run's database and are shown on the Backtest screen.
 
 **Outcome.** Set once, when the call and its linked row are stored, and never recomputed. Later events (an approval expiring, an order not filling) don't change it. An error outranks warnings; a call can have several warning reasons.
 
@@ -632,14 +634,14 @@ The LLM inspector shows every model call ever made, not just today's, and can fi
 | --- | --- | --- |
 | Success | A valid response used as the model chose; for reviews, the number check passed | — |
 | Warning | A valid response, but something needs a look | `changed_by_code` (the final action differs from the model's: a code check or risk gate), `input_incomplete` (an input field was `"unavailable"` or the symbol's headlines were `truncated` or `failed`), `number_check_failed` (review text failed the number check; the plain template was used), `slow` (latency above `inspector.slow_call_seconds`, 15), `unsupported_claim` (decision.v2: the explanation check failed) |
-| Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and OpenAI error code stored), `invalid_output` (unparseable, fails the schema or Pydantic, or picks an option that wasn't offered; counts as skip or hold), `refusal` (the structured-output refusal field is set) |
+| Error | No usable response | `timeout` (30 s, not retried), `api_error` (HTTP error or connection failure; status and the provider's error code stored), `invalid_output` (unparseable, fails the schema or Pydantic, or picks an option that wasn't offered; counts as skip or hold), `refusal` (OpenAI's refusal field is set, or Anthropic's stop reason is `refusal`) |
 
 A size reduced by a gate is not a warning; the model's action was kept.
 
 **Storage.** A new `llm_calls` table, one row per call:
 - What and where: sent at, New York session date, source (live, shadow, review), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
 - How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
-- Result: outcome, reasons JSON, error type, HTTP status, error message, OpenAI request id, raw response text.
+- Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text.
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
 - The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
 - Indexes: (session date, sent at), (outcome, sent at), (source, sent at), (symbol, sent at).
@@ -685,7 +687,7 @@ Pages of `inspector.page_size` (50) use a keyset cursor on (sent at, id), with "
 - **Call data:** source, model and temperature, prompt version, tokens, cost and latency.
 - **Links and copy:** a link to the decision, shadow strategy or review, and Copy link.
 - **Prompt and response:** the prompt (system, then user), then the raw response.
-- **Errors:** instead of the raw response, an Error block with the type, HTTP status, OpenAI's message and the request id.
+- **Errors:** instead of the raw response, an Error block with the type, HTTP status, the provider's message and the request id.
 
 **Export CSV.** The metadata of the filtered calls: time, source, strategy, symbol, action, outcome, reasons, model, prompt, tokens, cost and latency. No prompts or responses.
 
@@ -789,7 +791,7 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
   2. Wait up to `storage.shutdown_grace_seconds` (60) for running work to finish. A cycle finishes the symbol it is on. Order submission, from sending to storing Alpaca's answer, is shielded and is never cut off halfway.
   3. Work still running after the grace period is cancelled. Its cycle is stored as `interrupted` (reason shutdown), and any order whose answer didn't arrive is left to reconciliation at the next start (hard rule 3), with a CRITICAL line naming it.
   4. A running backtest child gets its cancel flag. After 10 s it is stopped by its PID and marked `interrupted`.
-  5. Pending emails get up to 5 s. WebSocket clients and the Alpaca, OpenAI and data clients are closed.
+  5. Pending emails get up to 5 s. WebSocket clients and the Alpaca, model (OpenAI and Anthropic) and data clients are closed.
   6. Database: every session is committed or rolled back, then a WAL checkpoint (TRUNCATE) runs and the engine is disposed.
   7. The log listener is flushed and closed last. The final line is "Shutdown complete in n s".
 - **Second Ctrl+C.** A second Ctrl+C logs a WARNING and skips the wait in step 2. Steps 6 and 7 always run.
@@ -1149,6 +1151,9 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
 - **Restore test.** Monthly, the latest offsite copy is restored to a temporary folder and checked with `PRAGMA integrity_check`.
 - **Failures.** A failed backup or restore test is a warning notification.
 - **Manual.** "Back up now" and "Download latest backup" are in Settings → Server. Restoring is done on the server with `deploy/restore.sh` and is described in `docs/DEPLOY.md`.
+- **Download.** Asks "Confirm it is you". The file is the database only, never `secret.key`, so a downloaded copy can't decrypt the keys. Every download is an event and an email ("Backup downloaded", info, email on).
+- **Order.** The offsite upload starts when the local backup has finished, not at a fixed time, so it never copies a half-written file.
+- **Backup credentials.** Write-only like the API keys and saved behind "Confirm it is you"; changing the endpoint needs the credentials again in the same request (hard rule 20).
 
 **Monitoring (PR 24).**
 - **Heartbeat.** After every cycle and position check the app pings `ops.heartbeat_url`, an outside dead-man's-switch service. If the pings stop, that service emails Marc. It is the only alert that still works when the server itself is down.
@@ -1307,6 +1312,151 @@ Tightening a limit never asks.
 **Error codes.** New in the API error table (see Error pages and API errors): 400 `bad_host`, 403 `origin_refused`, 413 `too_large`, 415 `unsupported_media_type`, 422 `password_required`.
 
 **Not changed.** Trading behaviour, risk limits and the database schema; PR 28 has no migration.
+
+## Model providers: OpenAI and Anthropic
+
+Decisions (live and shadows), the weekly review, the daily briefing, verdicts, replays and backtests can each use an OpenAI model or an Anthropic (Claude) model, chosen per task. Nothing else changes: the same prompts, the same input snapshot, the same output schema, and the same checks in code. The model only ever picks; code still validates every answer and every rule (hard rule 7). Built as PR 29.
+
+**Why.** Marc can run the agent with an OpenAI key, an Anthropic key or both, and compare models on the same inputs.
+
+**Choosing models.**
+- **Live decisions:** `decision.model`, changed in Settings → Decisions like any setting (a new settings version with a reason) or through Promote strategy. The default is `gpt-4o-mini`. Settings recommends trying a new model in a shadow first, but doesn't require it.
+- **Reviews:** one model each for the weekly review, the daily briefing and verdicts, in Settings → Reviews.
+- **Shadows, backtests, replays:** per strategy or run, from the same list.
+- **Pickers** show every model in the list as "id · provider". A model whose provider has no passing key is shown but can't be chosen ("needs the OpenAI key" or "needs the Anthropic key").
+
+**Model list.** The `models` block in config is the only place that names models. Each entry has:
+- `provider`: `openai` or `anthropic`;
+- prices in USD per million tokens (`input`, `output`), the only price source;
+- `cutoff`: the model's reliable knowledge cutoff, used by the backtest lookahead check;
+- for Anthropic models, `effort` (`low`, `medium` or `high`; default `low`);
+- optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model.
+
+Settings, the shadow dialog, backtests and replays only offer models from this list. `model_prices` and `backtest.model_cutoffs` are folded into it, and `reviews.model` becomes `reviews.models` (one per task); the old keys are read for one release with a warning.
+
+**One interface.** Engine code talks to one model client interface: send a prompt, a snapshot and a JSON schema; get back parsed JSON, token counts, latency, a request id or a typed error. Each provider has one adapter behind it, and a fake for tests. Provider SDKs are imported only in the adapters (hard rule 21). Decision code never branches on the provider.
+
+**OpenAI adapter.** As today: the OpenAI Python SDK with strict structured outputs and `decision.temperature` (0) or `reviews.temperature` (0.2, for every review task on an OpenAI model).
+
+**Anthropic adapter.**
+- The official `anthropic` Python SDK and the Messages API. The prompt file is the system prompt; the snapshot is the user message, as for OpenAI.
+- **Structured output.** JSON outputs through `output_config.format` with type `json_schema`. Anthropic doesn't accept some schema keywords (numeric `minimum`/`maximum`, string lengths, array lengths over 1, `additionalProperties` other than `false`). The adapter removes those from the copy it sends; Pydantic still enforces all of them on the answer, so the rules are identical for both providers. A test proves no unsupported keyword is ever sent.
+- **Sampling.** No `temperature`, `top_p` or `top_k` is sent; current Claude models reject them. The model's `effort` from the list is sent instead. Settings shows the temperature as "OpenAI models only".
+- **Thinking.** Claude models may think before answering; that is allowed, billed as output tokens and counted in the cost. Only the final answer is stored, never the thinking.
+- **Stop reasons.** `refusal` becomes the `refusal` error and `max_tokens` becomes `invalid_output` with reason `truncated`; both count as skip or hold like any invalid answer. `max_tokens` per call is `decision.max_output_tokens` (2,048).
+- **Errors and retries.** The same rules as OpenAI: one try, no retry. HTTP 529 (overloaded) and 5xx are `api_error` with the status and Anthropic's error type stored.
+
+**Answers and determinism.** Without a temperature, a Claude model can answer the same input differently. So:
+- the answer cache key uses provider, model, effort (or temperature), prompt hash and snapshot hash;
+- replays and backtests with a Claude model say "not repeatable: the model has no temperature 0" next to the result.
+
+**Keys.** Two model keys in Settings → API keys: OpenAI and Anthropic. Each is optional on its own; at least one is required.
+- Both are write-only and encrypted like the others, tested with one list-models call before saving, and scrubbed from logs (patterns `sk-` and `sk-ant-`). Each can be imported once from `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`), as today.
+- **Resume** needs at least one model key, plus a passing key for every provider used by live decisions and the three review tasks. The banner names what's missing, for example "Live decisions use gpt-4o-mini: add the OpenAI key or choose a Claude model".
+- **Saving a setting** that picks a model whose provider has no passing key is refused with a message.
+- **Removing a model key** (new "Remove" action, behind "Confirm it is you") is refused while live decisions or a review task use that provider; shadows on it pause and say why.
+- **A shadow** whose provider key is missing or failing is skipped for that cycle with a warning; live is never held up.
+- **A backtest** with a strategy whose provider has no working key is refused before it starts.
+- **A failing key during the session** (for example revoked) behaves as today: calls fail as `api_error`, the "Data source or API key failing" notification fires, and decisions on that provider count as skip or hold.
+
+**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list. Prompt caching is not used in this version.
+
+**Backtests.** The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
+
+**What is recorded.** `llm_calls` gets `provider` and `provider_request_id` (new Alembic revision); the existing OpenAI request id column stays for older rows and is copied into the new column by the migration. Decisions, reviews and strategy versions already store the model; the provider is derived from the model list.
+
+**GUI.**
+- Settings → API keys: the OpenAI and Anthropic rows, each marked optional with the line "At least one of OpenAI and Anthropic is required", each saying what uses it, each with Test, Replace and Remove.
+- Settings → Decisions: the model picker lists the model list as "id · provider", with models that need a missing key disabled; temperature marked "OpenAI models only".
+- Settings → Reviews: three model pickers (weekly review, daily briefing, verdicts).
+- The new-shadow dialog, the backtest form and `make replay --model` use the same model list.
+- LLM inspector: the model filter lists every model; the call detail shows the provider, and an error block shows the provider's message and request id.
+- Logs: component `model.anthropic` next to `model.openai`.
+
+**Not changed.** Prompts (used prompts stay immutable and work for both providers), the output schema, the option builder, risk gates and Readiness criteria. The default live model stays `gpt-4o-mini`.
+
+## Decision v3: checks by code, room and break-even
+
+A review of a decision.v2 answer (SBUX, 28 October 2026, gpt-4.1-mini) showed five weak spots:
+- **Buying into resistance.** Three levels sat 0.3–0.7 × ATR above the entry. Every option had to pass them first, yet the model called the nearest target "a clear path", because v2's rule compares options with each other, not with the room above the entry.
+- **Trend not defined.** It called the daily trend "up" while the daily 50-day average was below the 200-day average. The prompt never defines the trend.
+- **Confidence without a reference.** It gave 0.65 for a 2R target, where break-even is 0.33 and a random entry reaches 2R roughly a third of the time.
+- **Decision before reasoning.** `action` and `confidence` come before `thesis` in the output, so the explanation is written after the choice and included a reason that wasn't in the input.
+- **Messy input.** Prices with 14 decimals, the same price in four fields, an implausible bid shown as if usable, and fields the prompt doesn't explain (`rank`, `quote`, `stop_reference_price`).
+
+Decision v3 fixes these with more work in code and a new prompt, `prompts/decision.v3.md`. The risk rules don't change: no threshold is lowered. Built as PR 30; it reaches live only through replay, a shadow and Marc's decision, as v2 did.
+
+**Snapshot v3** (only for decision.v3 strategies; v1 and v2 snapshots stay exactly as they are, so their replays stay comparable):
+- **Rounded:** prices and levels to cents, ATR to 4 decimals, distances, percentages and ratios to 2.
+- **No duplicates:** `price` and `price_time` once; `signal_bar` with its time and close once. `stop_reference_price`, quote timestamps, the feed and fetch times stay in the stored provenance and are not sent.
+- **Quote:** `bid` and `ask` only when plausible, otherwise null, plus `plausible` and `spread_unknown`.
+- **`checks`**, worked out by code and given as facts:
+  - `trend_1h`: `up` when the last 1h close > EMA 20 > EMA 50; `down` when close < EMA 20 < EMA 50; otherwise `mixed`;
+  - `trend_daily`: `up` when the last daily close > SMA 50 > SMA 200; `down` when close < SMA 50 < SMA 200; otherwise `mixed`;
+  - `regime_trend` and `regime_volatility` (as `regime` today);
+  - `room_atr` and `room_level`: the distance from the entry limit to the first level in the way, in ATR(1h), counting only the kinds in `decision.v3.room_level_kinds`;
+  - `earnings`: days to earnings, the date and the time of day;
+  - `news_status`.
+- **Levels:** each also gets `distance_atr`, its signed distance from the entry limit in ATR (positive above).
+- **Options:** `levels_in_way` lists each level with its `distance_atr`. Each option also gets `breakeven_confidence` = 1 ÷ (1 + rr).
+- **Constraints** gain `min_room_atr`, `min_confidence` (the strategy's `min_confidence_enter`) and `min_edge`.
+- **`rank`** stays and is explained in the prompt: the symbol's place in the daily liquidity screen (1 = most liquid), not a reason to enter.
+
+**Room filter** (option builder version 2, for v3 strategies only).
+- **Rule.** An entry option is removed when the first level in its way, of the kinds in `decision.v3.room_level_kinds`, is less than `decision.v3.min_room_atr` (1.0) × ATR above the entry limit.
+- **Which levels count.** Swing highs, swing lows above the price (old support that is now overhead), the session high, and the prior session high and low above the price. VWAP and the prior close are shown but don't count: they are soft levels that price crosses all day.
+- **Nothing left.** When every option is removed, no model call is made. The decision is `no_call` with reason `no_options` and a room reason, for example "room: L7 1h swing high 0.31 ATR above the limit (min 1.0)".
+- **Overrides.** Strategies can override `min_room_atr`, so a shadow can test 0.5 or 1.5.
+
+**Prompt v3**, changes against v2:
+- **Reason before deciding.** The output starts with `conflicts`, then `thesis`, then `action`, `option_id` and `confidence`.
+- **Trend:** enter only when `trend_1h` is up and `regime_trend` is up. With `trend_daily` mixed, enter only when everything else agrees and confidence is well above break-even; with it down, never.
+- **High volatility:** with `regime_volatility` high, every check must agree; prefer the nearer target.
+- **Confidence starts at `breakeven_confidence`** and moves up only for concrete reasons in the input. 0.6 or more needs every check to agree and a clear path to the target.
+- **News:** `news_used` lists only headlines that changed the judgement; it stays empty otherwise.
+- **Data flags:** a new `data_flags` field (`earnings_date_conflict`, `price_conflict`, `stale_or_missing_data`). For example a headline announcing results within the blackout while `checks.earnings` says otherwise. With a data flag, skip a candidate.
+- **No reasons outside the input:** never justify a stop or target with something the snapshot doesn't contain.
+- **Field guide:** every snapshot field is explained, including `checks`, `quote.plausible`, `spread_unknown` and `rank`.
+- **Name:** the prompt calls the app Stock Trading Agent.
+
+**Output schema v3**, all fields required, in this order: `symbol`, `conflicts` (up to 5 short phrases), `data_flags` (enum list, may be empty), `thesis`, `action`, `option_id`, `confidence`, `levels_used`, `news_used`. `conflicts` takes the place of v2's `risks` in storage and in the drawer. The schema keeps the same strictness. Under PR 29 its range checks are stripped from the copy sent to Anthropic and enforced by Pydantic.
+
+**Code checks under v3** (in addition to v2's):
+- **Confidence gate:** enter needs confidence ≥ max(`decision.min_confidence_enter`, `breakeven_confidence` + `decision.v3.min_edge` (0.10)). Below it the decision is skip with reason `edge_too_small`.
+- **Data flags:** a candidate answer with `enter` and any data flag becomes skip with reason `data_flag`. Every data flag, in any context, is logged at WARNING and recorded as an event ("Model flagged a data conflict: SBUX earnings_date_conflict"), so data bugs surface quickly.
+- **Room at order time:** checked again from the final limit. If the fresh limit leaves less than `min_room_atr`, the entry fails the Fresh quote gate with reason `room`.
+- **Explanation check:** as v2, against the rounded v3 snapshot.
+
+**Replay.** `make replay PROMPT=decision.v3` builds v3 snapshots from the stored v2 inputs (levels, indicators, options, earnings and headlines), with no refetch. The report adds:
+- options and snapshots removed by the room filter, and which v2 or live entries they would have blocked, with those entries' outcomes;
+- skips by `edge_too_small` and `data_flag`;
+- confidence against break-even, and calibration per 0.1 confidence bucket against first-touch outcomes where known;
+- the most frequent conflicts, and every data flag with its snapshot;
+- v2 against v3 on the same snapshots: enter rate, agreement, and R of the chosen options.
+
+It can run with any model in the list (PR 29), so v3 can be compared on OpenAI and Claude models at once.
+
+**Path to live. Nothing switches automatically.**
+1. Replay v3 on every replayable candidate snapshot of the current run.
+2. Run a shadow "D · decision.v3" for at least 10 sessions and at least 20 v3 entry proposals, next to C (v2), live and rules-only. Free a shadow slot first if all 3 are used.
+3. Marc decides with the Strategies comparison, Insights and the replay report. Promotion to live only with "Start new run".
+
+**Storage.**
+- `options_version` is `2` for v3 options.
+- The snapshot stores `checks` and the room reason.
+- `no_options` reasons include `room`, and skip reasons include `edge_too_small` and `data_flag`.
+- No schema migration: these live in the existing JSON columns and reason lists.
+
+**GUI.** The decision drawer for a v3 decision (`design/screens/DecisionV3.dc.html`):
+- **Checks by code:** the checks block;
+- **Options offered:** levels in the way with their ATR distance, and a Break-even column;
+- **Agent reasoning:** conflicts before the reasoning, data flags after it;
+- **Safety gates:** the room and confidence-versus-break-even gates;
+- the room reason when there were no options.
+
+The dashboard's latest-decision card and the feed show `no_options · room` like other no_call reasons.
+
+**Not changed.** The v1 and v2 prompts, snapshots and options; live's prompt; every risk gate and threshold; the rules pre-filter; rules-only.
 
 ## Out of scope and later versions
 

@@ -66,8 +66,8 @@ regime:
   block_entries_in: [down_high]
 
 decision:
-  model: gpt-4o-mini
-  temperature: 0
+  model: gpt-4o-mini            # live decisions; any entry in models, OpenAI or Anthropic
+  temperature: 0                # OpenAI models only; Claude models use the effort in models
   prompt: decision.v1
   min_confidence_enter: 0.55
   stop_atr_min: 1.5
@@ -76,6 +76,7 @@ decision:
   tighten_min_atr_below_price: 0.25   # new stop must sit this far below bid/last/bar close
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
+  max_output_tokens: 2048       # per call; Claude thinking counts toward it (PR 29)
   options:                      # PR 21, decision.v2 option builder (strategies' check overrides apply)
     swing_strength: 2           # bars on each side for a swing high or low
     swing_lookback_bars_1h: 60
@@ -88,6 +89,10 @@ decision:
     max_stops: 3
     max_options: 6
     held_trail_atr: 2.0         # T option: highest 1h close since entry minus this x ATR
+  v3:                           # PR 30, decision.v3 strategies only
+    min_room_atr: 1.0           # first level in the way at least this x ATR(1h) above the entry limit; strategy-overridable
+    room_level_kinds: [swing_high, swing_low, session_high, prior_session_high, prior_session_low]   # vwap and prior close don't count
+    min_edge: 0.10              # enter needs confidence >= max(min_confidence_enter, breakeven + min_edge)
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 
@@ -129,8 +134,11 @@ reviews:
   briefing_enabled: true
   briefing_time_ny: "09:00"       # trading days only
   verdict_after_sessions: 5
-  model: gpt-4o-mini
-  temperature: 0.2
+  models:                       # PR 29; any entry in models, OpenAI or Anthropic, per task
+    weekly: gpt-4o-mini
+    briefing: gpt-4o-mini
+    verdict: gpt-4o-mini
+  temperature: 0.2              # OpenAI models only
   prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
@@ -162,9 +170,12 @@ notifications:
     weekly_review: [email]
     verdicts_waiting: []
 
-model_prices:                   # USD per million tokens per model; the only price source (check current OpenAI prices)
-  gpt-4o-mini: {input: 0.15, output: 0.60}
-  gpt-4.1-mini: {input: 0.40, output: 1.60}
+models:                         # PR 29; the only list of models. Prices in USD per million tokens: check the providers' current prices
+  gpt-4o-mini:       {provider: openai,    input: 0.15, output: 0.60,  cutoff: "2023-10-31"}
+  gpt-4.1-mini:      {provider: openai,    input: 0.40, output: 1.60,  cutoff: "2024-06-01"}
+  claude-haiku-5-5:  {provider: anthropic, input: 0.10, output: 0.50,  cutoff: "2026-06-30", effort: low}   # Anthropic lists Haiku "from" this price: check
+  claude-sonnet-5-5: {provider: anthropic, input: 2.00, output: 10.00, cutoff: "2026-06-30", effort: low}
+# model_prices, backtest.model_cutoffs and reviews.model (before PR 29) are read for one release with a warning
 
 shadows:                        # v0.2, PR 13
   max_active: 3
@@ -182,9 +193,6 @@ backtest:                         # v0.2, PR 14
   bar_store: data/backtests/bars.db   # never pruned automatically; not in the 03:00 backup
   cancel_grace_seconds: 60        # then the app stops the child by PID
   process_nice: 10
-  model_cutoffs:                  # LLM strategies only from the day after
-    gpt-4o-mini: "2023-10-31"
-    gpt-4.1-mini: "2024-06-01"
 
 readiness:                      # PR 16; evidence from the current run, adjusted P&L
   min_closed_trades: 100

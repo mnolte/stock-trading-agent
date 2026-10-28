@@ -2,6 +2,25 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-28 — Decision v3 drawer
+
+- New `DecisionV3.dc.html` (PR 30), the decision.v3 version of the drawer:
+  - **Checks by code** block: trend 1h, trend daily, market regime, room to the first level in the way, earnings, news; each a value with the rule behind it;
+  - **Options offered** adds each level in the way with its distance above the limit in ATR, and a Break-even column (1 ÷ (1 + R/R));
+  - the model's **conflicts** are shown before the reasoning, and **data flags** after it (none, or a red chip such as "Data flag: earnings date conflict");
+  - two new gates: room to the first level ≥ 1.0 ATR, and confidence ≥ max(0.55, break-even + 0.10);
+  - a note shows how a `no_options` room reason looks when code removes every option.
+- `DecisionV2.dc.html` is unchanged and still used for v2 decisions.
+
+## 2026-10-28 — Model providers (OpenAI and Anthropic)
+
+- `Settings.dc.html`, API keys: a "Model keys" line (at least one of OpenAI and Anthropic is required), then "OpenAI (optional)" and the new "Anthropic (optional)" rows, each saying what uses it, with Test, Replace and Remove.
+- `Settings.dc.html`, Decisions: the model picker lists models as "id · provider" (models whose key is missing can't be chosen); the temperature row says "OpenAI models only". Reviews: three pickers, "Weekly review model", "Daily briefing model" and "Verdict model".
+- `Settings.dc.html`, Notifications: "Data source or API key failing" names Anthropic too.
+- `Inspector.dc.html`: the model filter lists every model with its provider.
+- `Logs.dc.html`: component filter adds `model.anthropic`.
+- The new-shadow dialog and the backtest form use the same "id · provider" model list (no new screen).
+
 ## 2026-10-27 — Signed-in devices
 
 - `Settings.dc.html`, Access → Signed-in devices: the masked address only, without a location; the app does no location lookup.

@@ -2,102 +2,34 @@
 
 Newest first.
 
-## 2026-10-28 — Earnings calendar fetch fix
+## 2026-10-28 — Decision v3 (PR 30)
 
-- Finnhub caps `/calendar/earnings` at 1500 rows and silently keeps the
-  tail of a too-wide window. The daily fetch (`today − 30 → today + 90
-  days`) therefore lost every report in the near weeks: stored
-  next-earnings jumped to the following quarter and the earnings
-  blackout did not fire (live entered SBUX one session before its
-  29 Oct report). `FinnhubEarningsSource` now fetches the range in
-  7-day chunks and splits any chunk that comes back at the cap in half
-  until it fits; a single day that still hits the cap logs a WARNING.
-  No spec change — this restores the specified blackout and exit.
-- The market calendar now loads `today + 120 days` (was `+30`) so the
-  forward horizon covers the 90-day earnings lookahead; otherwise
-  `trading_days_until` saturates at the horizon and reports ~21
-  trading days for any far-out report.
+- From a review of a decision.v2 answer (SBUX, 28 October): the model bought into three levels 0.3–0.7 ATR above the entry, called a mixed daily trend "up", gave 0.65 confidence for a 2R target, and wrote its reasoning after the decision.
+- New "Decision v3" section and `prompts/decision.v3.md`:
+  - snapshot v3 (v3 strategies only): rounded numbers, no duplicates, plausible-only bid and ask, `checks` (trend 1h and daily labels worked out by code, regime, room to the first level, earnings, news status), `distance_atr` on levels, `breakeven_confidence` per option;
+  - room filter: options whose first level in the way is under 1.0 × ATR above the entry are removed (`decision.v3.min_room_atr`, strategy-overridable); with none left, `no_options` with a room reason and no model call;
+  - prompt: conflicts and thesis before the action, defined trend rules, confidence starting at break-even, data flags, every field explained, the new name;
+  - code checks: confidence ≥ max(0.55, break-even + 0.10) (`edge_too_small`), an enter with a data flag becomes skip (`data_flag`, WARNING and event), room checked again at order time;
+  - replay report additions and the path to live (replay, shadow D, Marc decides, Start new run).
+- v1 and v2 prompts, snapshots and options don't change. No migration. Config: `decision.v3`. Build plan: PR 30.
 
-## 2026-10-28 — Error pages and API errors (PR 25)
+## 2026-10-28 — Model providers: OpenAI and Anthropic (PR 29)
 
-- Every `/api` error answers `{"error": {"code", "message", "error_id"?,
-  "fields"?}}` from one handler set: HTTPException, validation and
-  unhandled errors. The message is always the registry sentence for the
-  code (an enum in `app/errors.py`), never the exception's own text;
-  the registry already carries PR 28's `bad_host`, `origin_refused`,
-  `too_large`, `unsupported_media_type` and `password_required`. Unknown
-  `/api` paths get 404 JSON; writes get 503 `shutting_down` during the
-  graceful shutdown and `/api` gets 503 `starting_up` until the startup
-  reconciliation finishes (`/healthz` stays open).
-- `POST /api/logs/client` returns the `error_id` it logged. Error log
-  lines now carry the structured `exception` (type, message, traceback)
-  through the log queue, scrubbed like every other text.
-- The frontend client maps status to behaviour in one place (401 →
-  sign-in and back, `confirm_required` → one retry after the dialog,
-  409 → reload offer, 422 → field messages, 429 → Retry-After wording,
-  500 → toast with the error id and Open in Logs, 503 → banner). Route
-  and record not-found pages, a boundary per screen, the first-load
-  "The app isn't answering" page, the backend banner and the offline
-  banner follow the design texts.
-- `deploy/errors/502.html` and `503.html` are the self-contained Caddy
-  pages; Caddy answers `app_unavailable`/`updating` JSON under `/api`,
-  `Retry-After: 15` on maintenance, and leaves `/healthz` to the app.
+- Decisions, shadows, reviews, replays and backtests can use an Anthropic (Claude) model as well as an OpenAI model, through one model client interface with an adapter per provider. Same prompts, snapshot, schema and checks in code.
+- New `models` list in config (provider, prices, knowledge cutoff, effort for Claude models); it replaces `model_prices` and `backtest.model_cutoffs`, which are read for one release with a warning. New `decision.max_output_tokens` (2,048).
+- Anthropic adapter: JSON outputs via `output_config.format`; schema keywords Anthropic doesn't accept are removed from the sent copy only, Pydantic still enforces them; no temperature (Claude models use `effort`); refusal and truncated answers count as skip or hold; one try, no retry.
+- Answers from Claude models aren't repeatable at temperature 0, so the answer cache key includes provider and effort, and replays and backtests say so.
+- Model keys: OpenAI and Anthropic are each optional; at least one is required. Resume needs a passing key for every provider used by live decisions and the review tasks; a model key can be removed when nothing live uses it; a shadow without its provider's key is skipped, never delaying live.
+- Models are chosen per task: live decisions (`decision.model`), weekly review, daily briefing and verdicts (`reviews.models.*`, replacing `reviews.model`), plus shadows, backtests and replays. Pickers disable models whose provider has no passing key.
+- `llm_calls`: `provider` and `provider_request_id`.
+- The default live model stays `gpt-4o-mini`; the live model can be changed in Settings or through Promote strategy.
+- AGENTS.md: new hard rule 21. Build plan: PR 29.
 
-## 2026-10-28 — VPS deployment (PR 24 review)
+## 2026-10-28 — Backups (PR 24 review)
 
-- The compose stack test (`deploy/test-compose.sh`) now runs in CI on every
-  pull request (job `compose-test` in `.github/workflows/image.yml`; the
-  image push requires it) and covers the whole checklist: non-root,
-  read-only root, no capabilities, `/healthz` version only, 401 on every
-  `/api` read and write without a session, `__Host-sa_session` with
-  `Secure`/`HttpOnly`/`SameSite=Strict`/`Path=/` after HTTPS sign-in,
-  a spoofed `X-Forwarded-Proto` ignored, a foreign `Host` not served,
-  every spec header exactly once, and an app-sent CSP winning over
-  Caddy's `?`-defaults (probed via a fake upstream on a second internal
-  site). It samples app memory the whole run; measured peak **~170 MiB**
-  during a backtest plus live check, so `mem_limit` is `512m` (>3× headroom).
-  Sign-in inside the test uses a one-time recovery code, clock-independent.
-- Double-boot lifespan tests: a clean stop + running resumes; an unclean
-  stop, kill switch, reconciliation difference or unconfirmed broker
-  guard stays paused — banner kind and notification asserted each time.
-- Backup download sends the database file only — `secret.key` is never
-  in the archive — and records a `backup_downloaded` event plus the
-  info-level "Backup downloaded" notification.
-- Backup credentials are write-only like the API keys: reads return the
-  endpoint, bucket and the last 4 of the key id only; saving is behind
-  "Confirm it is you"; an endpoint or bucket change without all three
-  credentials in the same request gets `422 password_required` and no
-  connection is attempted; values are scrubbed from logs.
-- The offsite upload is chained to the end of the 03:00 local backup —
-  a failed local backup skips it and warns — instead of a fixed 03:05 job.
-- `deploy.sh` reads the startup reconciliation state read-only via
-  `docker compose exec app python -m app.ops.reconcile_check` (exit code)
-  instead of grepping logs. Clock offset subtracts half the round-trip
-  and warns only after 3 consecutive hourly checks over 1 s.
-- `docker compose run` one-off containers (migrations, integrity checks,
-  restores) pass `--entrypoint` so they run the intended command rather
-  than the image's `app.serve` entrypoint.
-- `docker-compose.local.yml` runs `MODE=simulated` — the laptop/CI test
-  stack needs no Alpaca keys and stops deterministically.
-- DEPLOY.md documents the private GHCR package and the read-only
-  (`read:packages`) pull token on the server (`docker login`).
-
-## 2026-10-28 — VPS deployment (PR 24)
-
-- Container + Compose: multi-stage Dockerfile (non-root `stockagent`, read-only root, `/data` the only writable path, `TZ=Europe/Amsterdam`, restic for offsite backups); the app container is internal-only with `cap_drop: ALL`, `no-new-privileges`, a 64 MB `/tmp` tmpfs, `stop_grace_period 90s` and a memory limit. Caddy is the only public entry (80/443), terminates TLS for `SA_PUBLIC_URL`'s host, forwards Host/X-Forwarded-For/X-Forwarded-Proto, always sets HSTS + Permissions-Policy and sets CSP/XFO/nosniff/Referrer-Policy/COOP only as defaults so PR 28's app headers win later.
-- The app takes "is this HTTPS" from `X-Forwarded-Proto` only when the peer is `SA_TRUSTED_PROXY` or `SA_PUBLIC_URL` is https — so `__Host-sa_session` is Secure behind Caddy and a spoofed header changes nothing.
-- Shared with PR 28 (built here first): `python -m app.serve` as the only start path reading `SA_HOST`/`SA_PORT` (Makefile and Playwright now use it too); `umask 077` at startup with `SA_DATA_DIR` 0700 / files 0600 corrected at startup; IBM Plex bundled via `@fontsource` (no Google Fonts). `/healthz` returns the version only.
-- Restarts: `ops.resume_after_clean_restart` (`auto` = on when `SA_AUTH=required`) resumes on its own only when it was running before, the previous shutdown was clean, the kill switch is off, reconciliation is clean and the broker guard confirmed — with a banner and notification either way (`restart_resumed`/`restart_paused`).
-- `deploy/`: `provision.sh` (SSH keys only, no root login, ufw 22/80/443, fail2ban, unattended security updates with reboots only in the Sunday 05:00 Amsterdam window, chrony, Docker), `deploy.sh <tag>` (New York market-hours guard via `TZ=America/New_York`, pre-deploy backup, one-off migrations, health check + clean reconciliation, automatic rollback within 2 minutes, marked hooks for PR 25's maintenance flag) and `restore.sh` (local or `offsite` snapshot, integrity_check, mode 0600). CI builds + pushes a versioned image per tag and runs the tests inside the image.
-- Backups: restic to S3-compatible storage after the 03:00 local copy (30 daily + 12 weekly, includes `secret.key`); the backup password and storage credentials live in the secrets table, the endpoint is validated https and non-private; a monthly restore test runs `integrity_check` on the latest snapshot. Settings → Server gains "Back up now", "Download latest backup" (behind "Confirm it is you") and "Backup credentials…".
-- Monitoring: a heartbeat ping after every cycle and position check (`ops.heartbeat_url`, validated https+public, saving it asks "Confirm it is you"); hourly checks for clock offset, disk use (80/90%), certificate expiry (14 days), backup age and restore-test staleness — notifications as `backup_failed`, `disk_space`, `cert_expiring`, `clock_offset`.
-- Settings → Server (SA_AUTH=required only): read-only rows for version/address/running/clock/disk/updates/backups/restore test/heartbeat/instance plus the backup actions, per the design.
-- `docs/DEPLOY.md` is the standalone runbook (provision → first deploy → keys → broker guard → offsite → heartbeat → moving the local database → deploy/rollback → restore → password rotation), with the go-live checklist at the top and an explicit list of what could not be verified without a real server.
-
-## 2026-10-27 — Snapshot backfill no longer blocks the scheduler
-
-- Run synchronous readiness and Insights snapshot work in the thread pool, in the same order as before. Backfilling missed sessions no longer blocks the API event loop or delays the backtest scheduler tick. WebSocket updates stay on the event loop; failures remain logged and later jobs still run.
-- Regression tests cover event-loop responsiveness, update delivery and failures in either snapshot stage. The log-expansion browser test checks that its seed was accepted and filters to errors so DEBUG traffic cannot push it out of the newest 200 rows. No trading rules, thresholds or spec changes.
+- The backup download is the database only, never `secret.key`; every download is an event and an email.
+- The offsite upload starts when the local backup has finished.
+- Backup credentials are write-only, saved behind "Confirm it is you", and needed again when the endpoint changes.
 
 ## 2026-10-27 — Sign-in details (PR 23 review)
 

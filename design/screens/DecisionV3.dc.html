@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Trading Agent — Decision detail (decision.v3)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0B0E13}
+a{color:#F2B94B}a:hover{color:#FFD58A}
+:focus-visible{outline:2px solid #F2B94B;outline-offset:2px;border-radius:6px}.sa-row{cursor:pointer}.sa-row:hover{background:#1C222C}button:not([disabled]):hover{filter:brightness(1.15)}.sa-tile{text-decoration:none;color:inherit}.sa-tile:hover{border-color:#2E3643 !important;background:#171C24 !important}@keyframes sa-pulse{0%{opacity:.45}50%{opacity:.9}100%{opacity:.45}}.sa-skel{animation:sa-pulse 1.4s ease-in-out infinite}@media (prefers-reduced-motion: reduce){.sa-skel{animation:none}}
+</style>
+</helmet>
+<div style="width: 560px; min-height: 1000px; box-sizing: border-box; background: #0F131A; border-left: 1px solid #232A35; color: #E7EAEE; font-family: 'IBM Plex Sans', system-ui, sans-serif; font-size: 14px; display: flex; flex-direction: column">
+  <div style="padding: 20px 24px 16px; border-bottom: 1px solid #232A35; display: flex; justify-content: space-between; gap: 12px">
+    <div style="display: flex; flex-direction: column; gap: 6px; min-width: 0">
+      <div title="New York 10:46" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Thu 15 Oct · 16:46 cycle · shadow D · claude-haiku-5-5 · decision.v3</div>
+      <h1 style="margin: 0; font-size: 20px; font-weight: 600">MSFT decision</h1>
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">market up · normal vol</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #13202F; color: #7FB8FF; border: 1px solid #24405F">shadow · no real order</span><span style="font-size: 12px; color: #98A2AF">same snapshot as live</span></div>
+    </div>
+    <a href="Strategies.dc.html" aria-label="Close" title="Close" style="width: 44px; height: 44px; flex: 0 0 44px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid #2E3643; color: #98A2AF; text-decoration: none"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 18px"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg></a>
+  </div>
+
+  <div style="padding: 4px 24px 24px; display: flex; flex-direction: column">
+    <div style="display: flex; align-items: center; gap: 16px; margin-top: 20px">
+      <div style="min-width: 88px; height: 56px; padding: 0 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 18px; background: #123A27; color: #3DD68C">ENTER</div>
+      <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 15px">Option D · 4 sh @ 418.40 limit <span style="color: #98A2AF; font-size: 12px">virtual</span></div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: #98A2AF"><span title="The model's estimate that price reaches the target before the stop" style="text-decoration: underline dotted; text-underline-offset: 3px; cursor: help">confidence</span>
+          <div style="flex: 1; height: 6px; background: #232A35; border-radius: 3px; overflow: hidden"><div style="width: 61%; height: 6px; background: #3DD68C"></div></div>
+          <span style="font-family: 'IBM Plex Mono', monospace; color: #E7EAEE">0.61</span></div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 18px">
+      <div style="padding: 10px 12px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0"><span style="font-size: 12px; color: #98A2AF">Entry limit</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #E7EAEE; white-space: nowrap">418.40</span></div><div style="padding: 10px 12px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0"><span style="font-size: 12px; color: #98A2AF">Stop · invalidation</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #FF8A8F; white-space: nowrap">409.64</span></div><div style="padding: 10px 12px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0"><span style="font-size: 12px; color: #98A2AF">Target</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #3DD68C; white-space: nowrap">435.92</span></div><div style="padding: 10px 12px; border: 1px solid #232A35; border-radius: 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0"><span style="font-size: 12px; color: #98A2AF">R/R · break-even</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; color: #C9CFD6; white-space: nowrap">2.00 · 0.33</span></div>
+    </div>
+
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 22px 0 8px"><h3 style="margin: 0; font-size: 12px; font-weight: 600; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.08em">Checks by code</h3><span style="font-size: 12px; color: #98A2AF">facts the model was given</span></div>
+    <div style="border: 1px solid #232A35; border-radius: 8px; overflow: hidden"><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">Trend 1h</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">up</span> <span style="font-size: 12px; color: #98A2AF">price 418.19 > EMA 20 > EMA 50</span></span>
+</div><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">Trend daily</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">up</span> <span style="font-size: 12px; color: #98A2AF">close > SMA 50 > SMA 200</span></span>
+</div><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">Market regime</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">up · normal volatility</span> <span style="font-size: 12px; color: #98A2AF">SPY above its 50-day average</span></span>
+</div><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">Room to first level</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #123A27; color: #3DD68C; border: 1px solid #1E5A3E">1.35 ATR · L3</span> <span style="font-size: 12px; color: #98A2AF">at least 1.0 ATR</span></span>
+</div><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">Earnings</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">9 trading days · 27 Oct after close</span> <span style="font-size: 12px; color: #98A2AF">outside the 3-day blackout</span></span>
+</div><div style="display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 8px 12px; border-top: 1px solid #232A35; font-size: 13px">
+  <span style="color: #98A2AF">News</span>
+  <span style="min-width: 0"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">2 headlines · complete</span></span>
+</div></div><div style="font-size: 12px; color: #98A2AF; margin-top: 8px; line-height: 1.5">Worked out by code and given to the model as facts. "Mixed" means the averages disagree; the prompt says to skip on a mixed daily trend unless everything else is strong.</div>
+
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 22px 0 8px"><h3 style="margin: 0; font-size: 12px; font-weight: 600; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.08em">Options offered</h3><span style="font-size: 12px; color: #98A2AF">5 built by code · model chose D</span></div>
+    <div role="table" aria-label="Options offered" style="border: 1px solid #232A35; border-radius: 8px; padding-top: 8px; overflow: hidden"><div role="row" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; padding: 0 10px 6px; font-size: 12px; color: #98A2AF; border-bottom: 1px solid #232A35"><span role="columnheader"></span><span role="columnheader">Stop</span><span role="columnheader">Target · levels in the way (ATR above the limit)</span><span role="columnheader" style="text-align: right">R/R</span><span role="columnheader" style="text-align: right" title="Confidence at which the trade breaks even: 1 ÷ (1 + R/R)">Break-even</span></div><div role="row" aria-selected="false" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; ">
+  <span role="cell"><span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; border: 1px solid #2E3643; color: #C9CFD6">A</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">411.90</span><br><span style="font-size: 12px; color: #98A2AF">2.0 × ATR · 2.00 ATR</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">431.59</span><br><span style="font-size: 12px; color: #98A2AF">below L1 · October high · in the way L3 1.35 · L2 1.83</span></span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right">2.03</span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right; color: #C9CFD6">0.33</span>
+</div><div role="row" aria-selected="false" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; ">
+  <span role="cell"><span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; border: 1px solid #2E3643; color: #C9CFD6">B</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">411.90</span><br><span style="font-size: 12px; color: #98A2AF">2.0 × ATR · 2.00 ATR</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">437.90</span><br><span style="font-size: 12px; color: #98A2AF">3R · in the way L3 1.35 · L2 1.83 · L1 4.29</span></span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right">3.00</span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right; color: #C9CFD6">0.25</span>
+</div><div role="row" aria-selected="false" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; ">
+  <span role="cell"><span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; border: 1px solid #2E3643; color: #C9CFD6">C</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">409.64</span><br><span style="font-size: 12px; color: #98A2AF">below L8 · 1h swing low · 2.73 ATR</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">431.59</span><br><span style="font-size: 12px; color: #98A2AF">below L1 · October high · in the way L3 1.35 · L2 1.83</span></span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right">1.51</span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right; color: #C9CFD6">0.40</span>
+</div><div role="row" aria-selected="true" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; background: #211C10; box-shadow: inset 3px 0 0 #F2B94B;">
+  <span role="cell"><span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; background: #F2B94B; color: #0B0E13">D</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">409.64</span><br><span style="font-size: 12px; color: #98A2AF">below L8 · 1h swing low · 2.73 ATR</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">435.92</span><br><span style="font-size: 12px; color: #98A2AF">2R · in the way L3 1.35 · L2 1.83 · L1 4.29</span></span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right">2.00</span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right; color: #C9CFD6">0.33</span>
+</div><div role="row" aria-selected="false" style="display: grid; grid-template-columns: 34px 1.1fr 1.4fr 48px 54px; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid #232A35; font-size: 13px; ">
+  <span role="cell"><span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; border: 1px solid #2E3643; color: #C9CFD6">E</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #FF8A8F">409.64</span><br><span style="font-size: 12px; color: #98A2AF">below L8 · 1h swing low · 2.73 ATR</span></span>
+  <span role="cell" style="min-width: 0"><span style="font-family: 'IBM Plex Mono', monospace; color: #3DD68C">444.68</span><br><span style="font-size: 12px; color: #98A2AF">3R · in the way L3 1.35 · L2 1.83 · L1 4.29</span></span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right">3.00</span>
+  <span role="cell" style="font-family: 'IBM Plex Mono', monospace; text-align: right; color: #C9CFD6">0.25</span>
+</div></div><div style="font-size: 12px; color: #98A2AF; margin-top: 8px; line-height: 1.5">Built by code from the levels below. Every option meets stop 1.5–4 × ATR from 418.10 (lowest of price, ask and bar close) and R/R ≥ 1.5 from the 418.40 limit. Room: the first level in the way (L3) is 1.35 ATR above the limit, at least the 1.0 ATR required, so no option was removed. Break-even is the confidence at which the trade breaks even.</div>
+
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 22px 0 8px"><h3 style="margin: 0; font-size: 12px; font-weight: 600; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.08em">Levels</h3><span style="font-size: 12px; color: #98A2AF">from 1h and daily bars to 10:30 NY</span></div>
+    <div style="border: 1px solid #232A35; border-radius: 8px; overflow: hidden"><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #F2B94B; font-weight: 600">L1</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">431.90</span>
+  <span style="min-width: 0; color: #C9CFD6">swing high <span style="color: #98A2AF">· daily · 7 Oct</span> <span style="font-size: 12px; color: #98A2AF">· October high</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF; font-weight: 400">L2</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">424.10</span>
+  <span style="min-width: 0; color: #C9CFD6">session high <span style="color: #98A2AF">· today so far</span> <span style="font-size: 12px; color: #98A2AF">· 1.83 ATR above the limit</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #F2B94B; font-weight: 600">L3</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">422.60</span>
+  <span style="min-width: 0; color: #C9CFD6">prior session high <span style="color: #98A2AF">· 14 Oct</span> <span style="font-size: 12px; color: #98A2AF">· first level in the way · 1.35 ATR</span></span>
+</div><div style="display: flex; align-items: center; gap: 8px; padding: 4px 10px; font-size: 12px; color: #F2B94B"><span style="flex: 1; height: 1px; background: #4A3A16"></span><span style="font-family: 'IBM Plex Mono', monospace">price 418.19 · limit 418.40</span><span style="flex: 1; height: 1px; background: #4A3A16"></span></div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #F2B94B; font-weight: 600">L4</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">417.40</span>
+  <span style="min-width: 0; color: #C9CFD6">VWAP <span style="color: #98A2AF">· session</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF; font-weight: 400">L5</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">416.80</span>
+  <span style="min-width: 0; color: #C9CFD6">prior session close <span style="color: #98A2AF">· 14 Oct</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF; font-weight: 400">L6</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">415.20</span>
+  <span style="min-width: 0; color: #C9CFD6">prior session low <span style="color: #98A2AF">· 14 Oct</span> <span style="font-size: 12px; color: #98A2AF">· too close for a stop · 1.04 ATR</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF; font-weight: 400">L7</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">414.60</span>
+  <span style="min-width: 0; color: #C9CFD6">swing low <span style="color: #98A2AF">· 1h · 14 Oct 12:30</span> <span style="font-size: 12px; color: #98A2AF">· too close for a stop · 1.23 ATR</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #F2B94B; font-weight: 600">L8</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">409.95</span>
+  <span style="min-width: 0; color: #C9CFD6">swing low <span style="color: #98A2AF">· 1h · 13 Oct 14:30</span> <span style="font-size: 12px; color: #98A2AF">· stop 409.64 · 2.73 ATR</span></span>
+</div><div style="display: grid; grid-template-columns: 34px 64px minmax(0, 1fr); gap: 8px; padding: 7px 10px; font-size: 13px; border-top: 1px solid #232A35">
+  <span style="font-family: 'IBM Plex Mono', monospace; color: #98A2AF; font-weight: 400">L9</span>
+  <span style="font-family: 'IBM Plex Mono', monospace">403.80</span>
+  <span style="min-width: 0; color: #C9CFD6">swing low <span style="color: #98A2AF">· daily · 9 Oct</span> <span style="font-size: 12px; color: #98A2AF">· too far for a stop · 4.71 ATR</span></span>
+</div></div><div style="font-size: 12px; color: #98A2AF; margin-top: 8px">Highlighted ids are the ones the model used. Swings need 2 bars on each side, so the newest 2 bars are never a swing.</div>
+
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 22px 0 8px"><h3 style="margin: 0; font-size: 12px; font-weight: 600; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.08em">Agent reasoning</h3><span style="font-size: 12px; color: #98A2AF">conflicts first, then the decision</span></div>
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">Conflict: RSI 63 near the top of its range</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #3A2A0E; color: #FFD58A; border: 1px solid #6B4E17">Conflict: October high L1 before the 2R target</span></div>
+    <div style="padding: 14px 16px; border: 1px solid #232A35; border-radius: 8px; background: #12161D; line-height: 1.6; color: #C9CFD6">Both trends and the market agree, and the first hurdle (L3) is far enough away. The pullback to the 1h EMA 20 held above VWAP (L4). The stop goes under the 13 Oct swing low (L8); the October high (L1) is the main risk on the way to the 2R target.</div>
+    <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px"><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; white-space: nowrap; background: #211C10; color: #F2B94B; border: 1px solid #4A3A16">Levels used: L1 · L3 · L4 · L8</span><span style="display: inline-flex; align-items: center; height: 24px; padding: 0 8px; border-radius: 6px; font-size: 12px; white-space: nowrap; background: #1C222C; color: #C9CFD6; border: 1px solid #2E3643">No data flags</span></div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 1px solid #1E5A3E; background: #123A27; border-radius: 8px; font-size: 13px; color: #3DD68C"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: 0 0 16px"><polyline points="5 12 10 17 19 7"></polyline></svg><span>Explanation check passed: every level id exists and no number is outside the input.</span></div>
+    <div style="margin-top: 10px; padding: 10px 12px; border: 1px dashed #2E3643; border-radius: 8px; font-size: 12px; color: #98A2AF; line-height: 1.5"><b style="color: #C9CFD6; font-weight: 600">When code removes every option</b>, no model call is made and the drawer shows the reason instead, for example: <span style="font-family: 'IBM Plex Mono', monospace; color: #C9CFD6">no_options · room: L7 1h swing high 0.31 ATR above the limit (min 1.0)</span>. <b style="color: #C9CFD6; font-weight: 600">When the model flags a data conflict</b>, a red chip such as "Data flag: earnings date conflict" appears here and an event is logged.</div>
+
+    <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 22px 0 8px"><h3 style="margin: 0; font-size: 12px; font-weight: 600; color: #98A2AF; text-transform: uppercase; letter-spacing: 0.08em">Safety gates</h3><span style="font-size: 12px; color: #98A2AF">option, code checks, then risk gates</span></div>
+    <div style="border: 1px solid #232A35; border-radius: 8px; overflow: hidden"><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px;  font-size: 13px"><span>Option D offered</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">valid choice · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Stop 1.5–4 × ATR (1h)</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">8.46 = 2.73 × ATR · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Reward / risk ≥ 1.5</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">2.00 · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Room to first level ≥ 1.0 ATR</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">L3 · 1.35 · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Confidence ≥ max(0.55, break-even + 0.10)</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">0.61 ≥ max(0.55, 0.43) · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Explanation check</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">L1, L3, L4, L8 exist · no unsupported numbers · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Risk per trade ≤ 0.5%</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">$35.04 = 0.34% · pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Max position 20%</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #F2B94B; text-align: right">5 → 4 sh · 16.4% · reduced</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Other risk gates</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #3DD68C; text-align: right">9 of 9 pass</span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid #232A35; font-size: 13px"><span>Fresh quote at order time</span><span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #C9CFD6; text-align: right">virtual fill · shadow</span></div></div>
+    <div style="font-size: 12px; color: #98A2AF; margin-top: 8px; line-height: 1.5">Shadow C (decision.v2) on the same snapshot: ENTER option D, without the room and break-even checks. At order time the chosen stop and target stay fixed; if the fresh price breaks the stop distance or R/R, the entry fails the Fresh quote gate. Code never picks another option.</div>
+  </div>
+
+  <div style="flex: 1"></div>
+  <div style="padding: 16px 24px 20px; border-top: 1px solid #232A35; display: flex; flex-direction: column; gap: 12px">
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #98A2AF">Shadow D · virtual entry at the 16:46 cycle · filled 4 @ 418.40 on the 16:50 bar</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+      <a href="Strategies.dc.html" style="height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; text-decoration: none; font-weight: 500">Open strategy D</a>
+      <a href="Inspector.dc.html" style="height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid #2E3643; background: #171C24; color: #E7EAEE; text-decoration: none; font-weight: 500">Open model call</a>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview": {"width": 560, "height": 1000}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
