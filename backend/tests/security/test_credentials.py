@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import smtplib
 import threading
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Literal, cast
 
 import pytest
+from app.notifications.mail import SmtpConfig, SmtpMailer, SmtpMessage
+from app.notifications.service import NotificationService
 from app.secrets_service import KeyTestResult
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 SMTP_BODY = {
@@ -22,27 +28,29 @@ SMTP_BODY = {
 class _FakeSmtp:
     """Stands in for smtplib.SMTP — no network, records everything."""
 
-    calls: list[tuple] = []
+    calls: list[tuple[object, ...]] = []
 
-    def __init__(self, host: str, port: int, timeout: float | None = None):
+    def __init__(
+        self, host: str, port: int, timeout: float | None = None
+    ) -> None:
         _FakeSmtp.calls.append(("connect", host, port, timeout))
 
-    def __enter__(self):
+    def __enter__(self) -> _FakeSmtp:
         return self
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> Literal[False]:
         return False
 
-    def ehlo(self):
+    def ehlo(self) -> None:
         _FakeSmtp.calls.append(("ehlo",))
 
-    def starttls(self):
+    def starttls(self) -> None:
         _FakeSmtp.calls.append(("starttls",))
 
-    def login(self, user: str, password: str):
+    def login(self, user: str, password: str) -> None:
         _FakeSmtp.calls.append(("login", user, password))
 
-    def send_message(self, msg):
+    def send_message(self, msg: object) -> None:
         _FakeSmtp.calls.append(("send",))
 
 
@@ -51,14 +59,15 @@ class _RecMailer:
     destination included."""
 
     def __init__(self) -> None:
-        self.configs = []
+        self.configs: list[SmtpConfig] = []
 
-    def send(self, config, message) -> None:
+    def send(self, config: SmtpConfig, message: SmtpMessage) -> None:
         self.configs.append(config)
 
 
-def _smtp_service(client: TestClient):
-    svc = client.app.state.notification_service
+def _smtp_service(client: TestClient) -> NotificationService:
+    app = cast(FastAPI, client.app)
+    svc = cast(NotificationService | None, app.state.notification_service)
     assert svc is not None
     return svc
 
@@ -72,7 +81,7 @@ def _smtp_configured(client: TestClient) -> _RecMailer:
 
 
 def test_changed_host_without_password_is_422_and_no_connection(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
 ) -> None:
     mailer = _smtp_configured(client)
     mailer.configs.clear()
@@ -88,7 +97,7 @@ def test_changed_host_without_password_is_422_and_no_connection(
 
 
 def test_changed_host_with_password_logs_in_with_it(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
 ) -> None:
     mailer = _smtp_configured(client)
     mailer.configs.clear()
@@ -106,17 +115,21 @@ def test_changed_host_with_password_logs_in_with_it(
     assert config.username == "user@saved.example"
 
 
-def test_smtp_mailer_connects_and_logs_in(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_smtp_mailer_connects_and_logs_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """SmtpMailer.send does ehlo → STARTTLS → login with the configured
     credentials on a 10 s timeout (spec: fake SMTP server sees it)."""
     monkeypatch.setattr(smtplib, "SMTP", _FakeSmtp)
     _FakeSmtp.calls.clear()
-    from app.notifications.mail import SmtpConfig, SmtpMailer, SmtpMessage
-
     SmtpMailer().send(
         SmtpConfig(
-            host="mail.example", port=587, username="u@x",
-            password="p4ss", from_addr="a@b.c", to_addr="d@e.f",
+            host="mail.example",
+            port=587,
+            username="u@x",
+            password="p4ss",
+            from_addr="a@b.c",
+            to_addr="d@e.f",
         ),
         SmtpMessage(to_addr="d@e.f", subject="t", body="b"),
     )
@@ -131,13 +144,11 @@ def test_smtp_mailer_connects_and_logs_in(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_different_paper_account_requires_new_run(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
 ) -> None:
     """Keys testing to a different account save but arm the kill switch —
     Start new run is the only way out."""
-    from types import SimpleNamespace
-
-    state = client.app.state
+    state = cast(FastAPI, client.app).state
     state.account = SimpleNamespace(account_number="PA3K0000001")
     state.key_testers.results["alpaca"] = KeyTestResult(
         ok=True, account="PA-OTHER-999", detail="Account PA9…999"
@@ -154,7 +165,7 @@ def test_different_paper_account_requires_new_run(
 # run.lock: exactly one starter wins
 
 
-def test_two_simultaneous_acquires_exactly_one_wins(tmp_path) -> None:
+def test_two_simultaneous_acquires_exactly_one_wins(tmp_path: Path) -> None:
     from app.shutdown import RunLock
 
     lock_path = tmp_path / "data" / "run.lock"
@@ -175,7 +186,7 @@ def test_two_simultaneous_acquires_exactly_one_wins(tmp_path) -> None:
     assert sorted(outcome.values()) == ["refused", "won"]
 
 
-def test_lock_holder_blocks_a_second_process(tmp_path) -> None:
+def test_lock_holder_blocks_a_second_process(tmp_path: Path) -> None:
     """A fresh lock written by the test pid refuses the next starter."""
     from app.shutdown import RunLock
 
