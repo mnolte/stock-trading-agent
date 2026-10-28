@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Updating — Stock Trading Agent</title>
+<!-- Self-contained static page (docs/SPEC.md → Error pages and API
+     errors): system fonts, inline CSS and SVG, no external requests, no
+     version, host, commands or data. The script only auto-reloads. -->
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0B0E13;color:#E7EAEE;font-family:system-ui,-apple-system,sans-serif;font-size:14px;padding:32px;box-sizing:border-box}
+  .card{max-width:460px;display:flex;flex-direction:column;gap:14px}
+  .brand{display:flex;align-items:center;gap:10px}
+  .mark{width:32px;height:32px;border-radius:7px;background:#F2B94B;color:#0B0E13;display:flex;align-items:center;justify-content:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;font-size:12px}
+  .name{font-weight:600}
+  .status{margin-left:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#98A2AF}
+  .title{display:flex;align-items:center;gap:10px;color:#7FB8FF}
+  h2{margin:0;font-size:20px;font-weight:600;color:#E7EAEE}
+  p{margin:0;font-size:14px;color:#C9CFD6;line-height:1.55}
+  .note{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border:1px solid #232A35;border-radius:8px;background:#12161D;font-size:13px;color:#C9CFD6;line-height:1.5}
+  .note svg{flex:0 0 16px;color:#3DD68C;margin-top:2px}
+  .small{margin:0;font-size:12px;color:#98A2AF;line-height:1.5}
+  .row{display:flex;gap:10px;align-items:center}
+  a.button{height:40px;padding:0 16px;display:inline-flex;align-items:center;border-radius:8px;background:#F2B94B;color:#0B0E13;font-weight:600;text-decoration:none}
+  .hint{font-size:12px;color:#98A2AF}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="brand"><span class="mark">SA</span><span class="name">Stock Trading Agent</span><span class="status">503 · updating</span></div>
+  <div class="title"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5z"/></svg><h2>Updating</h2></div>
+  <p>A new version is being installed. This takes about a minute; deploys happen only outside US trading hours.</p>
+  <div class="note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><polyline points="9 12 11 14 15 10"/></svg><span>Open positions keep their stops and targets at Alpaca, whatever this page shows.</span></div>
+  <p class="small">If the new version doesn't start, the previous one comes back by itself.</p>
+  <div class="row"><a class="button" href=".">Try again</a><span class="hint">reloads by itself every 15 s</span></div>
+</div>
+<script>setTimeout(function(){location.reload()},15000)</script>
+</body>
+</html>

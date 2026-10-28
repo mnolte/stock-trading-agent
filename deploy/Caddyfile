@@ -3,6 +3,20 @@
 # {$SA_DOMAIN}; everything else is refused by not having a site block.
 
 {$SA_DOMAIN} {
+	# Maintenance flag (PR 25): deploy.sh and restore.sh touch
+	# /flags/updating before stopping the app and remove it after the
+	# health check. While it exists every request but /healthz
+	# answers 503 — the "Updating" page, or updating JSON under /api —
+	# handled by handle_errors below. /healthz stays reachable so the
+	# scripts and the uptime check still see the app.
+	@updating {
+		file /flags/updating
+		not path /healthz
+	}
+	handle @updating {
+		error 503
+	}
+
 	reverse_proxy app:8000 {
 		# The app sees the public Host (its Host check), the real client
 		# address (trusted only because the peer is SA_TRUSTED_PROXY)
@@ -24,5 +38,33 @@
 		?X-Content-Type-Options "nosniff"
 		?Referrer-Policy "same-origin"
 		?Cross-Origin-Opener-Policy "same-origin"
+	}
+
+	# App down (502/504) or updating (503, the flag's error above):
+	# HTML for pages, the shared JSON shape for /api; the original
+	# status code is kept (docs/SPEC.md → Served by Caddy).
+	handle_errors {
+		@api503 {
+			path /api/*
+			expression {err.status_code} == 503
+		}
+		respond @api503 `{"error":{"code":"updating","message":"A new version is being installed."}}` 503
+
+		@api504 {
+			path /api/*
+			expression {err.status_code} == 504
+		}
+		respond @api504 `{"error":{"code":"app_unavailable","message":"The app isn't answering."}}` 504
+
+		@api path /api/*
+		respond @api `{"error":{"code":"app_unavailable","message":"The app isn't answering."}}` 502
+
+		@is503 expression {err.status_code} == 503
+		header @is503 Retry-After 15
+		rewrite @is503 /503.html
+		rewrite * /502.html
+		file_server {
+			root /errors
+		}
 	}
 }

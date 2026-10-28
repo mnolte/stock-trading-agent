@@ -78,6 +78,7 @@ services:
         ipv4_address: 172.30.4.10
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/errors:/errors:ro
       - caddy_data:/data
       - caddy_config:/config
       - flags:/flags
