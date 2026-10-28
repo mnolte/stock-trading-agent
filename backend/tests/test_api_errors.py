@@ -166,3 +166,25 @@ def test_registry_is_complete() -> None:
         "password_required",
     ):
         assert code in MESSAGES
+
+
+def test_static_pages_are_self_contained(repo_root: Path) -> None:
+    """deploy/errors/*.html: no external requests, no version, no host —
+    anyone can see these without signing in (spec → Served by Caddy)."""
+    import re
+
+    errors_dir = repo_root / "deploy" / "errors"
+    pages = sorted(errors_dir.glob("*.html"))
+    assert {p.name for p in pages} == {"502.html", "503.html"}
+    for page in pages:
+        text = page.read_text()
+        assert "Stock Trading Agent" in text
+        # No external URLs or asset references at all.
+        assert not re.search(r'(?:src|href)\s*=\s*["\'](?:https?:)?//', text)
+        assert "http://" not in text and "https://" not in text
+        assert "fonts.googleapis" not in text
+        # No version, host or command leakage.
+        for leaked in ("0.2.0", "localhost", "deploy.sh", "127.0.0.1"):
+            assert leaked not in text, f"{leaked} in {page.name}"
+        # The positions note is on every static page (spec).
+        assert "stops and targets at Alpaca" in text
