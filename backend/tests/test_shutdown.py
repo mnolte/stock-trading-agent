@@ -216,7 +216,7 @@ def test_writes_refused_while_shutting_down(client: TestClient) -> None:
         assert client.get("/api/health").status_code == 200
         resp = client.post("/api/keys/openai", json={"value": "sk-x"})
         assert resp.status_code == 503
-        assert resp.json()["detail"] == "shutting down"
+        assert resp.json()["error"]["code"] == "shutting_down"
     finally:
         manager.shutting_down.clear()
 

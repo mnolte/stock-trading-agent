@@ -90,12 +90,18 @@ def _record_to_row(record: logging.LogRecord) -> dict[str, Any] | None:
     context = getattr(record, "context", {}) or {}
     exc_type = exc_msg = tb = None
     if record.exc_info:
+        # Scrub like the file handler does — an exception's text can
+        # carry keys or paths (hard rule 9).
+        from app.logging_config import _all_secrets, _scrub_text
+
         t, e, _ = record.exc_info
         exc_type = getattr(t, "__name__", str(t))
-        exc_msg = str(e) if e is not None else ""
+        exc_msg = _scrub_text(str(e) if e is not None else "", _all_secrets())
         import traceback as _tb
 
-        tb = "".join(_tb.format_exception(*record.exc_info))
+        tb = _scrub_text(
+            "".join(_tb.format_exception(*record.exc_info)), _all_secrets()
+        )
     elif record.exc_text:
         tb = record.exc_text
     from datetime import datetime

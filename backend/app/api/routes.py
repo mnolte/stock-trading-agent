@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import sqlite3
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
@@ -4371,7 +4372,7 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
     this hook exists for tests and the simulated demo.
     """
     if get_config().env.mode != "simulated":
-        raise HTTPException(status_code=403, detail="simulated mode only")
+        raise HTTPException(status_code=403, detail="simulated_only")
     result = await _universe(request).run_screen()
     _notify(request, "universe", "banners", "header")
     return result
@@ -4398,6 +4399,10 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
     if len(bucket) >= limit:
         return {"logged": False, "rate_limited": True}
     bucket.append(now)
+    # The id the boundary shows — the client's own when it sent one, else
+    # minted here; it is on the log line and echoed back (spec →
+    # Something went wrong).
+    error_id = str(body.get("error_id") or "") or f"e-{secrets.token_hex(3)}"
     logging.getLogger("frontend").error(
         "%s (%s:%s:%s)\n%s",
         body.get("message", "frontend error"),
@@ -4408,10 +4413,10 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
         extra={
             "event": "frontend.error",
             "context": {"url": str(body.get("url", "")), "tab_id": tab},
-            "error_id": str(body.get("error_id") or "") or None,
+            "error_id": error_id,
         },
     )
-    return {"logged": True}
+    return {"logged": True, "error_id": error_id}
 
 
 # ---------------------------------------------------------------------------
