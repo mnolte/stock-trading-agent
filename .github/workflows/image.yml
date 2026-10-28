@@ -1,0 +1,67 @@
+name: Image
+
+# PR 24: build a versioned image for every tag, run the tests in the
+# image and push it to the private registry (ghcr.io).
+on:
+  push:
+    tags: ["v*"]
+  pull_request: # image test + compose test on every PR; push only on tags
+
+permissions:
+  contents: read
+
+jobs:
+  test-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build test image and run the suite inside it
+        run: |
+          docker build --target test -t stock-agent-test:${{ github.ref_name }} .
+          docker run --rm stock-agent-test:${{ github.ref_name }}
+
+  compose-test:
+    # The through-Caddy stack test — in CI only, never in unit tests.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Run the full stack through Caddy
+        run: deploy/test-compose.sh
+      - name: Show compose logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.local.yml logs --no-color || true
+
+  push-image:
+    needs: [test-image, compose-test]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write # push the image — the only job that needs it
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/stock-agent
+          tags: |
+            type=raw,value={{tag}}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: runtime
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

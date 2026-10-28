@@ -39,7 +39,7 @@ from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
 from app.db.backup import create_backup
 from app.db.base import check_schema_matches_models, get_session_maker
-from app.db.models import Strategy
+from app.db.models import Event, Strategy
 from app.decide.client import (
     DecisionClient,
     FakeDecisionClient,
@@ -200,14 +200,19 @@ def run_readiness_tick(
         logger.exception("readiness tick failed")
 
 
-def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
-    """Daily job (app timezone): copy the database and prune old data.
+def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = None) -> None:
+    """Daily job (app timezone): copy the database, prune old data, then
+    chain the offsite upload.
 
     After the copy succeeds, cached 5-minute bars older than
     ``bars_5m_keep_sessions`` sessions are pruned (docs/SPEC.md, Cycles at
     scale). A failed copy is logged and recorded as an event so a missed
     backup is not silent; if the event write also fails, the job exception
     is left for the scheduler log.
+
+    The offsite restic upload runs only after a successful local copy —
+    a failed local backup skips it (and warns), never the other way
+    around (docs/SPEC.md → VPS deployment → Backups).
     """
     try:
         create_backup()
@@ -226,7 +231,8 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
             )
             session.commit()
         # No copy on disk — nothing older than the keep window is pruned
-        # until a backup has safely run.
+        # until a backup has safely run, and the offsite upload stays
+        # chained to a successful copy.
         return
     try:
         pruned = market_data.prune_5m_bars(clock.now())
@@ -234,6 +240,25 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService) -> None:
             logger.info("pruned %d cached 5m bars past the keep window", pruned)
     except Exception:  # noqa: BLE001
         logger.exception("5m bar pruning failed")
+    if ops is not None and bool(
+        get_config().get("ops", "offsite_backup", "enabled", default=False)
+    ):
+        try:
+            ops.run_offsite_backup_sync()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("offsite backup failed")
+            from app.db.base import get_session_maker
+            from app.engine.state import record_event
+
+            with get_session_maker()() as session:
+                record_event(
+                    session,
+                    clock,
+                    level="warning",
+                    event_type="backup_failed",
+                    details={"error": f"offsite: {exc}"},
+                )
+                session.commit()
 
 
 async def run_after_close_jobs(
@@ -274,6 +299,7 @@ async def run_scheduled_cycle(
     clock: Clock,
     cycle_time: str,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
     """Scheduler entry point: run the decision cycle due at ``cycle_time`` today."""
     today = clock.now().astimezone(NY_TZ).date()
@@ -286,6 +312,8 @@ async def run_scheduled_cycle(
     finally:
         if backtests is not None:
             backtests.set_paused(False)
+        if ops is not None:
+            await ping_heartbeat(ops)
 
 
 async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -> bool:
@@ -431,6 +459,7 @@ async def run_scheduled_check(
     checker: PositionChecker,
     bus: UpdateBus | None = None,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
     """Scheduler entry point for the 15-minute position check."""
     if backtests is not None:
@@ -440,8 +469,30 @@ async def run_scheduled_check(
     finally:
         if backtests is not None:
             backtests.set_paused(False)
+        if ops is not None:
+            await ping_heartbeat(ops)
     if bus is not None:
         bus.publish("positions", "orders", "banners", "header", "performance")
+
+
+async def ping_heartbeat(ops: Any) -> None:
+    """The dead-man's-switch ping after a cycle or position check."""
+    try:
+        await ops.ping_heartbeat()
+    except Exception:  # noqa: BLE001
+        logger.exception("heartbeat ping failed")
+
+
+async def run_server_checks(ops: Any) -> None:
+    """Hourly: disk, clock, certificate, backup freshness (SPEC → VPS
+    deployment → Monitoring)."""
+    try:
+        ops.check_disk()
+        await ops.check_clock()
+        ops.check_cert()
+        ops.check_backups()
+    except Exception:  # noqa: BLE001
+        logger.exception("server checks failed")
 
 
 async def run_weekly_review(service: ReviewService) -> None:
@@ -603,7 +654,9 @@ def schedule_cycle_jobs(
     config: AppConfig,
     clock: Clock,
     backtests: Any = None,
+    ops: Any = None,
 ) -> None:
+    _ops = ops
     """(Re)build the cron jobs for the configured cycle times.
 
     Called at startup and again when promoted settings change the cycle
@@ -620,7 +673,7 @@ def schedule_cycle_jobs(
         scheduler.add_job(
             run_scheduled_cycle,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[runner, clock, str(cycle_at), backtests],
+            args=[runner, clock, str(cycle_at), backtests, _ops],
             id=f"cycle-{cycle_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,
@@ -688,6 +741,11 @@ async def retry_calendar_load(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    # umask 077 before anything creates a file — app.serve sets it too,
+    # but the `make dev`/`make run` uvicorn paths come straight here.
+    from app.filemodes import apply_umask
+
+    apply_umask()
     pipeline = setup_logging()
     from app.spawn import install_global_hooks
 
@@ -733,6 +791,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.run_lock = run_lock
 
     Path(config.env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
+    # Files on disk (docs/SPEC.md, Security hardening): SA_DATA_DIR 0700,
+    # its files 0600; wrong modes are corrected with one INFO line.
+    from app.filemodes import enforce_file_modes
+
+    corrected_modes = enforce_file_modes(Path(config.env.sa_data_dir))
+    if corrected_modes:
+        logger.info(
+            "corrected file modes on %d path(s) under %s",
+            corrected_modes,
+            config.env.sa_data_dir,
+        )
     run_migrations()
     # alembic's fileConfig closes every handler (env.py can't skip it —
     # CLI runs need it): re-attach the queue to the root logger.
@@ -993,6 +1062,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             session.commit()
         if getattr(app.state, "unclean_previous_run", False):
             app.state.unclean_interrupted = recovered
+        # Was trading running before this start? The last pause event
+        # decides (on=False = entries were live) — needed by the
+        # resume-after-clean-restart check below.
+        last_pause = session.execute(
+            select(Event)
+            .where(Event.event_type == "pause")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        was_running = bool(
+            last_pause is not None
+            and (last_pause.details or {}).get("on") is False
+        )
         # Paused at startup (docs/SPEC.md, Risk management): the state was
         # set by load_execution_state; log it like every other state change.
         record_event(
@@ -1039,6 +1121,47 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
         session.commit()
 
+    # Resume after a clean planned restart (docs/SPEC.md → VPS deployment
+    # → Restarts). Only where sign-in is required (the VPS): the local
+    # app always starts paused. A previous run existed when the events
+    # log holds a pause row from before this boot.
+    from app.restart import decide_restart, resume_after_clean_restart_enabled
+
+    had_previous_run = last_pause is not None
+    if resume_after_clean_restart_enabled(config) and had_previous_run:
+        decision = decide_restart(
+            was_running=was_running,
+            clean_shutdown=not getattr(
+                app.state, "unclean_previous_run", False
+            ),
+            kill_switch_on=exec_state.kill_switch_on,
+            reconcile=report,
+            broker_guard_confirmed=exec_state.broker_guard_confirmed,
+        )
+        with get_session_maker()() as session:
+            if decision.resume:
+                exec_state.paused = False
+                exec_state.paused_at_startup = False
+                exec_state.paused_since = None
+                record_event(
+                    session,
+                    clock,
+                    level="info",
+                    event_type="restart_resumed",
+                    details={},
+                )
+            else:
+                record_event(
+                    session,
+                    clock,
+                    level="warning",
+                    event_type="restart_paused",
+                    details={"reasons": decision.reasons},
+                )
+            session.commit()
+        app.state.restart_resumed = decision.resume
+        bus.publish("banners", "header")
+
     # A review missed while the app was down is written now with its
     # original date; a briefing older than its trading day is skipped.
     try:
@@ -1067,6 +1190,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.update_bus = bus
     app.state.notification_service = notification_service
     app.state.shadow_runner = shadow_runner
+
+    # PR 24 ops: heartbeat pings after cycles/checks, hourly server
+    # checks, offsite backups + the monthly restore test.
+    from app.ops.service import OpsService
+
+    ops_service = OpsService(
+        config,
+        clock,
+        notifier=notification_service,
+        secrets=secrets_store,
+        broker=broker,
+    )
+    app.state.ops = ops_service
+    # Persist the startup reconciliation so deploy.sh reads it back
+    # read-only (docker compose exec app python -m app.ops.reconcile_check).
+    if report is not None:
+        ops_service.record_startup_reconcile(
+            bool(report.ok and not report.mismatches), len(report.mismatches)
+        )
 
     # Backtesting (PR 14): one child process at a time; rows left "queued"
     # or "running" by a crash are marked interrupted at startup.
@@ -1134,7 +1276,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         run_daily_backup,
         CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
-        args=[clock, market_data],
+        args=[clock, market_data, ops_service],
         id="daily-db-backup",
     )
     # Run the decision cycle at every configured cycle time; the runner
@@ -1142,7 +1284,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # cycles may run late by at most misfire_grace_seconds, and several
     # misses coalesce into one run — never into a queue of catch-ups.
     schedule_cycle_jobs(
-        scheduler, cycle_runner, config, clock, backtest_manager
+        scheduler, cycle_runner, config, clock, backtest_manager, ops_service
+    )
+    # Server checks hourly (clock offset needs it); heartbeat is pinged
+    # by the cycle/check wrappers themselves.
+    scheduler.add_job(
+        run_server_checks,
+        IntervalTrigger(hours=1),
+        args=[ops_service],
+        id="server-checks",
+        coalesce=True,
+    )
+    # The offsite upload is chained to the daily local copy above — not a
+    # separate cron (a failed local copy skips it). The monthly restore
+    # test keeps its own schedule.
+    restore_day = int(
+        config.get("ops", "offsite_backup", "restore_test_day", default=1)
+    )
+    scheduler.add_job(
+        ops_service.run_restore_test,
+        CronTrigger(day=restore_day, hour=4, minute=10, timezone=app_tz),
+        id="restore-test",
+        coalesce=True,
     )
     misfire_grace = int(
         config.get("schedule", "misfire_grace_seconds", default=120)
@@ -1152,7 +1315,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         scheduler.add_job(
             run_scheduled_check,
             CronTrigger(hour=hour, minute=minute, timezone=NY_TZ),
-            args=[position_checker, bus, backtest_manager],
+            args=[position_checker, bus, backtest_manager, ops_service],
             id=f"position-check-{check_at}",
             misfire_grace_time=misfire_grace,
             coalesce=True,
@@ -1429,7 +1592,7 @@ def create_app() -> FastAPI:
     def healthz() -> dict[str, str]:
         """The one open probe: Caddy's health check and the uptime monitor
         (docs/SPEC.md, VPS deployment). Version only — nothing else."""
-        return {"status": "ok", "version": app.version}
+        return {"version": app.version}
 
     from app.auth.api import error_response
     from app.auth.api import router as auth_router

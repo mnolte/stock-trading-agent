@@ -1,0 +1,28 @@
+# Stock Trading Agent — the only public entry point (docs/SPEC.md →
+# VPS deployment). Automatic HTTPS and HTTP→HTTPS redirect for
+# {$SA_DOMAIN}; everything else is refused by not having a site block.
+
+{$SA_DOMAIN} {
+	reverse_proxy app:8000 {
+		# The app sees the public Host (its Host check), the real client
+		# address (trusted only because the peer is SA_TRUSTED_PROXY)
+		# and the outer scheme for the Secure cookie decision.
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	header {
+		# Always set by Caddy — the app never sends these two.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Permissions-Policy "accelerometer=(), autoplay=(), camera=(), display-capture=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=()"
+
+		# Defaults only (`?`): these apply until PR 28 ships the app's
+		# own headers — the app's then win, with no duplicates.
+		?Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'"
+		?X-Frame-Options "DENY"
+		?X-Content-Type-Options "nosniff"
+		?Referrer-Policy "same-origin"
+		?Cross-Origin-Opener-Policy "same-origin"
+	}
+}

@@ -1,0 +1,18 @@
+# The same stack on a laptop for testing (docs/DEPLOY.md):
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+# Caddy answers https://localhost with its internal CA — trust it once
+# with `docker exec stock-agent-caddy caddy trust` or by importing
+# caddy_data's pki/authorities/local/root.crt into the browser/OS.
+services:
+  app:
+    environment:
+      # The laptop/CI test stack runs against the fakes — no Alpaca keys
+      # needed and shutdown is deterministic (no broker calls to drain).
+      MODE: simulated
+      SA_PUBLIC_URL: https://localhost
+  caddy:
+    environment:
+      SA_DOMAIN: localhost
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"

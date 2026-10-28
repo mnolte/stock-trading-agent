@@ -65,3 +65,21 @@ def create_backup(clock: Clock | None = None) -> None:
             continue  # Not a dated backup of this database.
         if backup_date < cutoff:
             backup.unlink()
+
+
+def main() -> None:
+    """``python -m app.db.backup`` — used by deploy.sh for the pre-deploy
+    backup; prints the new backup's path."""
+    create_backup()
+    cfg = get_config()
+    db_path = Path(cfg.env.sa_db_path)
+    backup_dir = db_path.parent / "backups"
+    latest = max(
+        backup_dir.glob(f"{db_path.name}.*"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    print(latest)
+
+
+if __name__ == "__main__":
+    main()

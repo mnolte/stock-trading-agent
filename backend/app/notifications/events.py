@@ -184,6 +184,55 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "warnings",
         WARNING,
     ),
+    EventDef(
+        "restarted_resumed",
+        "Restarted and resumed",
+        "Clean planned restart on the server; every check passed",
+        "warnings",
+        INFO,
+    ),
+    EventDef(
+        "restarted_paused",
+        "Restarted paused",
+        "New entries stay paused until you press Resume",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "backup_failed",
+        "Backup or restore test failed",
+        "Local copy, offsite upload or the monthly check",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "backup_downloaded",
+        "Backup downloaded",
+        "Someone downloaded the latest backup",
+        "warnings",
+        INFO,
+    ),
+    EventDef(
+        "disk_space",
+        "Disk space",
+        "Data volume 80% full (90% is critical)",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "cert_expiring",
+        "HTTPS certificate expiring",
+        "Expires within 14 days",
+        "warnings",
+        WARNING,
+    ),
+    EventDef(
+        "clock_offset",
+        "Clock out of sync",
+        "Offset over 1 second; cycles depend on the exact time",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}
@@ -210,6 +259,9 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "api_key": "source_failing",
     "review_fallback": "model_failing",
     "another_instance": "another_instance",
+    "restart_resumed": "restarted_resumed",
+    "restart_paused": "restarted_paused",
+    "backup_downloaded": "backup_downloaded",
 }
 
 
@@ -335,6 +387,16 @@ def format_recorded(
             or f"order carries instance id {details.get('foreign_instance')}"
         )
         return key, line, "/settings"
+    if event_type == "restart_resumed":
+        return key, "resumed after a clean restart", "/"
+    if event_type == "restart_paused":
+        reasons = details.get("reasons")
+        line = "stayed paused"
+        if isinstance(reasons, list) and reasons:
+            line = "stayed paused: " + "; ".join(str(r) for r in reasons)
+        return key, line, "/logs"
+    if event_type == "backup_downloaded":
+        return key, "downloaded the latest backup", "/settings"
     if event_type == "review_fallback":
         line = (
             f"{details.get('kind', 'review')} {details.get('ref', '')}"
