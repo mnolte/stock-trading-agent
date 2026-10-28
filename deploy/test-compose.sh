@@ -224,6 +224,14 @@ kill "$STATS_PID" 2>/dev/null || true
 # --- graceful stop inside the grace period -----------------------------------
 log "docker stop during a cycle must finish gracefully"
 "${COMPOSE[@]}" up -d app >/dev/null
+# Wait for a real boot first: stopping mid-startup measures startup
+# time, not the graceful stop the spec cares about.
+for _ in $(seq 1 60); do
+    state="$("$DOCKER" inspect -f '{{.State.Health.Status}}' stock-agent-app 2>/dev/null || true)"
+    [[ "$state" == "healthy" ]] && break
+    sleep 2
+done
+log "app health: ${state:-unknown} — stopping now"
 start=$(date +%s)
 "${COMPOSE[@]}" stop app >/dev/null
 elapsed=$(( $(date +%s) - start ))
