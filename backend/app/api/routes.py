@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -4381,38 +4382,68 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Frontend error reporting (docs/SPEC.md, Error handling)
 
+# Recent senders for the per-address rate limit — bounded at
+# ``security.client_error_senders``, oldest dropped (insertion-ordered).
 _client_error_times: dict[str, list[float]] = {}
+
+_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_LINE_BREAKS = re.compile(r"[\r\n]+")
+
+
+def _one_line(value: object, cap: int) -> str:
+    """Single-line fields lose control characters and CR/LF — a reported
+    message can never fake extra log lines (docs/SPEC.md → audit 6)."""
+    return _LINE_BREAKS.sub(" ", _CTRL_CHARS.sub("", str(value or "")))[:cap]
+
+
+def _multi_line(value: object, cap: int) -> str:
+    """The stack keeps its line breaks; other control characters go."""
+    return _CTRL_CHARS.sub("", str(value or ""))[:cap]
 
 
 @router.post("/logs/client")
 def log_client_error(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Frontend errors: window.onerror, unhandledrejection and the React
     error boundary post here, at most ``logging.client_errors_per_minute``
-    per tab. Logged at ERROR with logger ``frontend``."""
+    per client address. Message ≤ 2 KB, stack ≤ 8 KB; logged at ERROR
+    with logger ``frontend`` and ``source=frontend``."""
     import time
 
-    limit = int(get_config().get("logging", "client_errors_per_minute", default=10))
-    tab = str(body.get("tab_id") or request.client.host if request.client else "?")
+    from app.auth.guard import client_ip
+
+    config = get_config()
+    limit = int(config.get("logging", "client_errors_per_minute", default=10))
+    sender = client_ip(request, config)
     now = time.monotonic()
-    bucket = [t for t in _client_error_times.get(tab, []) if now - t < 60]
-    _client_error_times[tab] = bucket
+    bucket = [t for t in _client_error_times.get(sender, []) if now - t < 60]
+    max_senders = int(
+        config.get("security", "client_error_senders", default=1000)
+    )
     if len(bucket) >= limit:
+        _client_error_times[sender] = bucket
         return {"logged": False, "rate_limited": True}
     bucket.append(now)
+    _client_error_times[sender] = bucket
+    while len(_client_error_times) > max_senders:
+        _client_error_times.pop(next(iter(_client_error_times)))
     # The id the boundary shows — the client's own when it sent one, else
     # minted here; it is on the log line and echoed back (spec →
     # Something went wrong).
-    error_id = str(body.get("error_id") or "") or f"e-{secrets.token_hex(3)}"
+    error_id = _one_line(body.get("error_id"), 32) or f"e-{secrets.token_hex(3)}"
     logging.getLogger("frontend").error(
         "%s (%s:%s:%s)\n%s",
-        body.get("message", "frontend error"),
-        body.get("source", ""),
-        body.get("lineno", ""),
-        body.get("colno", ""),
-        body.get("stack", ""),
+        _one_line(body.get("message") or "frontend error", 2048),
+        _one_line(body.get("source"), 512),
+        _one_line(body.get("lineno"), 12),
+        _one_line(body.get("colno"), 12),
+        _multi_line(body.get("stack"), 8192),
         extra={
             "event": "frontend.error",
-            "context": {"url": str(body.get("url", "")), "tab_id": tab},
+            "context": {
+                "url": _one_line(body.get("url"), 1024),
+                "tab_id": _one_line(body.get("tab_id"), 64),
+                "source": "frontend",
+            },
             "error_id": error_id,
         },
     )
