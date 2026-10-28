@@ -21,6 +21,14 @@ export function newErrorId(): string {
   return `e-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+function csrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)sa_csrf=([^;]*)/);
+  return match ? match[1] : null;
+}
+
+/** Post a frontend error to /api/logs/client and resolve to the error id
+ * the server logged — null when the report couldn't be sent (not signed
+ * in, app down). The boundary shows that id; spec → Something went wrong. */
 export function reportError(report: {
   message: string;
   source?: string;
@@ -28,10 +36,13 @@ export function reportError(report: {
   colno?: number;
   stack?: string;
   error_id?: string;
-}): void {
-  fetch(`${API_BASE}/api/logs/client`, {
+}): Promise<string | null> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = csrfToken();
+  if (token) headers['X-CSRF-Token'] = token;
+  return fetch(`${API_BASE}/api/logs/client`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({
       ...report,
       url: window.location.href,
@@ -40,8 +51,15 @@ export function reportError(report: {
     // keepalive: the preloadError handler reloads right after reporting —
     // without it the navigation aborts the request before it is sent.
     keepalive: true,
-    // A reporting failure must never surface to the user.
-  }).catch(() => undefined);
+  })
+    .then(async (response) => {
+      if (!response.ok) return null;
+      const body = (await response.json().catch(() => ({}))) as {
+        error_id?: string;
+      };
+      return body.error_id ?? report.error_id ?? null;
+    })
+    .catch(() => null);
 }
 
 export function installErrorHooks(): void {
