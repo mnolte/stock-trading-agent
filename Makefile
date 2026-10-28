@@ -108,3 +108,8 @@ smoke-decision:
 
 smoke-execution:
 	cd backend && ../$(PYTHON) -m app.smoke_execution
+
+.PHONY: security
+security: ## security tests + dependency audits (pip-audit, pnpm audit --prod)
+	cd backend && ../.venv/bin/pytest tests/security -q
+	./security/run-audits.sh

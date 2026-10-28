@@ -1097,6 +1097,15 @@ function SmtpCard({
     </label>
   );
 
+  // The stored password is only ever sent to the server it was saved
+  // for: once host, port or username differs it is required again.
+  const destinationChanged = Boolean(smtp?.configured) && (
+    form.host.trim() !== (smtp?.host ?? '') ||
+    Number(form.port) !== (smtp?.port ?? 587) ||
+    form.username.trim() !== (smtp?.username ?? '')
+  );
+  const passwordRequired = destinationChanged && !form.password;
+
   const status = !smtp?.configured
     ? { tone: 'neutral' as const, text: 'not set up' }
     : smtp.test_result === 'ok' && smtp.tested_at
@@ -1159,10 +1168,16 @@ function SmtpCard({
           </span>
         </label>
         {field('smtp-user', 'Username', form.username, (v) => setForm((f) => ({ ...f, username: v })))}
-        {field('smtp-pass', 'Password (encrypted)', form.password, (v) => setForm((f) => ({ ...f, password: v })), {
-          type: 'password',
-          placeholder: smtp?.password_set ? '••••••••' : undefined,
-        })}
+        {field(
+          'smtp-pass',
+          destinationChanged ? 'Password (required — server changed)' : 'Password (encrypted)',
+          form.password,
+          (v) => setForm((f) => ({ ...f, password: v })),
+          {
+            type: 'password',
+            placeholder: smtp?.password_set ? '••••••••' : undefined,
+          },
+        )}
         {field('smtp-from', 'From', form.from_addr, (v) => setForm((f) => ({ ...f, from_addr: v })), { type: 'email' })}
         {field('smtp-to', 'To', form.to_addr, (v) => setForm((f) => ({ ...f, to_addr: v })), { type: 'email' })}
       </div>
@@ -1185,7 +1200,8 @@ function SmtpCard({
         <Button
           variant="ghost"
           onClick={save}
-          disabled={busy !== null || !form.host.trim() || !form.to_addr.trim()}
+          disabled={busy !== null || !form.host.trim() || !form.to_addr.trim() || passwordRequired}
+          title={passwordRequired ? 'The server changed — enter the password again' : undefined}
           style={{ height: 36, padding: '0 16px' }}
         >
           {busy === 'save' ? 'Testing…' : 'Test and save'}

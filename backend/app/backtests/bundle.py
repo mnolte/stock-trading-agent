@@ -150,7 +150,7 @@ def build_bundle(
     if kind == "rules_only":
         decide = RulesOnlyDecisionService(config, session_factory=sf)
     else:
-        assert decision_client is not None
+        assert decision_client is not None  # noqa: S101 - decision client invariant
         decide = DecisionService(
             decision_client,
             config,

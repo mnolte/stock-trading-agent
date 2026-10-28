@@ -112,7 +112,7 @@ def strategies(request: Request) -> dict[str, Any]:
             if row["id"] is None or run is None:
                 continue
             strategy = session.get(Strategy, row["id"])
-            assert strategy is not None
+            assert strategy is not None  # noqa: S101 - invariant from the row just fetched
             row["short"] = short_name(strategy.name)
             row["disagreements"] = disagreements(session, strategy, run, short=row["short"])
         spend = runner.monthly_spend(session) if runner is not None else Decimal(0)

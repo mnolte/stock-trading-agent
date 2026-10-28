@@ -326,7 +326,7 @@ class CycleRunner:
                     )
                     session.rollback()
                     stored = session.get(Cycle, report.cycle_id)
-                    assert stored is not None
+                    assert stored is not None  # noqa: S101 - internal invariant
                     cycle = stored
 
                 # Post-decision outcomes and the equity snapshot are part of
@@ -349,7 +349,7 @@ class CycleRunner:
                         logger.exception("cycle %s outcomes failed", report.cycle_id)
                         session.rollback()
                         stored = session.get(Cycle, report.cycle_id)
-                        assert stored is not None
+                        assert stored is not None  # noqa: S101 - internal invariant
                         cycle = stored
 
                 cycle.status = report.status

@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Generator
 from pathlib import Path
 
-import pytest
-from collections.abc import Generator
-
 import app.decide.prompt as prompt_mod
+import pytest
 from app.decide.prompt import (
     PROMPTS_DIR,
     PromptError,

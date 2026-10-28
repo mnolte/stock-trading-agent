@@ -24,7 +24,7 @@ from app.backtests.estimate import (
     estimate,
 )
 from app.backtests.manager import BacktestManager, store_usage
-from app.backtests.store import run_dir_for, session_maker_for
+from app.backtests.store import run_dir_for
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
@@ -401,7 +401,7 @@ _MIGRATE_LOCK = threading.Lock()
 
 def _alembic_version(path: Path) -> str | None:
     row = (
-        sqlite3.connect(path)
+        sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         .execute("SELECT version_num FROM alembic_version")
         .fetchone()
     )
@@ -452,7 +452,9 @@ def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Sessi
     if not path.exists():
         raise HTTPException(404, "strategy database not found")
     _migrate_strategy_db_if_behind(path)
-    return session_maker_for(path, get_config())
+    from app.backtests.store import read_session_maker_for
+
+    return read_session_maker_for(path, get_config())
 
 
 @router.get("/backtests/{run_id}/strategies/{slug}/trades")

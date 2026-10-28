@@ -58,7 +58,7 @@ def _bars_for_session(
 ) -> list[Bar5m]:
     """Generate deterministic 5-minute bars for one session."""
     seed = f"{symbol}:{day.isoformat()}"
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - deterministic fake data, not crypto
     base = float(_BASE_PRICES.get(symbol, Decimal("100")))
 
     bars: list[Bar5m] = []
@@ -225,7 +225,7 @@ class FakeQuoteSource:
         now = self._clock.now() if self._clock else datetime(2026, 10, 15, 13, 30, tzinfo=UTC)
         for symbol in symbols:
             base = float(_BASE_PRICES.get(symbol, Decimal("100")))
-            last = base * (1 + random.Random(symbol).uniform(-0.005, 0.005))
+            last = base * (1 + random.Random(symbol).uniform(-0.005, 0.005))  # noqa: S311 - deterministic fake data, not crypto
             spread = last * 0.0002
             quotes[symbol] = Quote(
                 symbol=symbol,

@@ -2546,8 +2546,8 @@ async def save_smtp(
         port = int(str(body.get("port") or 587))
     except ValueError:
         port = 0
-    if not 1 <= port <= 65535:
-        errors.append("SMTP port must be 1–65535")
+    if port not in (465, 587, 2525):
+        errors.append("SMTP port must be 465, 587 or 2525")
     if errors:
         raise HTTPException(status_code=422, detail=errors)
     # Changing where the stored password is sent (host, port, username)
@@ -2555,13 +2555,31 @@ async def save_smtp(
     from app.auth.api import require_confirmed
 
     current = service.smtp_status()
-    if (
+    destination_changed = bool(current.get("configured")) and (
         current.get("host") != host
         or current.get("port") != port
         or current.get("username") != username
-        or current.get("to_addr") != to_addr
+    )
+    if (
+        destination_changed or current.get("to_addr") != to_addr
     ) and current.get("configured"):
         require_confirmed(request)
+    # The stored password never travels to a new server: a changed host,
+    # port or username needs the password again in the same request —
+    # before any connection is made (hard rule 20).
+    if destination_changed and not password:
+        from app.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            422,
+            ErrorCode.PASSWORD_REQUIRED,
+            fields=[
+                {
+                    "name": "password",
+                    "message": "the server changed — enter the password again",
+                }
+            ],
+        )
     result = await service.save_smtp(
         host=host,
         port=port,
@@ -4549,7 +4567,7 @@ def api_logs(request: Request) -> dict[str, object]:
         limit = _int_param(request, "limit", 100, 1, 200)
         try:
             rows = conn.execute(
-                f"SELECT {_COLS} FROM log_lines {where} "
+                f"SELECT {_COLS} FROM log_lines {where} "  # noqa: S608 - whitelisted column list, params bound
                 f"ORDER BY id DESC LIMIT {limit + 1}",
                 args,
             ).fetchall()
@@ -4623,7 +4641,7 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     window = _int_param(request, "window", 20, 1, 100)
     with conn:
         rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "
+            f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "  # noqa: S608 - whitelisted column list, params bound
             "ORDER BY id",
             (line_id - window, line_id + window),
         ).fetchall()
@@ -4652,7 +4670,7 @@ def api_logs_export(request: Request) -> Response:
     def gen() -> Any:
         try:
             rows = conn.execute(
-                f"SELECT {_COLS} FROM log_lines {where} ORDER BY id LIMIT {cap + 1}",
+                f"SELECT {_COLS} FROM log_lines {where} ORDER BY id LIMIT {cap + 1}",  # noqa: S608 - whitelisted column list, params bound
                 args,
             )
             count = 0

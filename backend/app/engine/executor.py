@@ -741,7 +741,7 @@ class Executor:
                 session.commit()
                 self._notify({"approvals", "decisions"})
                 return {"ok": False, "error": fail}
-            assert quote is not None and limit is not None
+            assert quote is not None and limit is not None  # noqa: S101 - internal invariant
             ctx = self._gate_context(
                 session,
                 account,
@@ -791,7 +791,7 @@ class Executor:
                     await self.activate_kill_switch(reason="drawdown kill gate", automatic=True)
                 self._notify({"approvals", "decisions"})
                 return {"ok": False, "error": fail}
-            assert result.sizing is not None
+            assert result.sizing is not None  # noqa: S101 - internal invariant
             qty = result.sizing.shares
 
             self._orders_this_cycle += 1
@@ -954,7 +954,7 @@ class Executor:
                 )
         if checks:
             return {"ok": False, "failed": checks}
-        assert equity is not None
+        assert equity is not None  # noqa: S101 - internal invariant
         spy_close = self._latest_spy_close()
         with self._session_factory() as session:
             run = Run(
@@ -2264,7 +2264,7 @@ class Executor:
                 )
             session.flush()
             return
-        assert result.sizing is not None
+        assert result.sizing is not None  # noqa: S101 - internal invariant
         qty = result.sizing.shares
 
         # Spread and entry limit from the decision-time IEX quote; the
@@ -2369,7 +2369,7 @@ class Executor:
             decision.final_action = "blocked"
             session.flush()
             return
-        assert fresh_limit is not None and fresh_quote is not None
+        assert fresh_limit is not None and fresh_quote is not None  # noqa: S101 - internal invariant
         ctx = self._gate_context(
             session, account, decision.symbol, item.snapshot.days_to_earnings, earnings_known,
         )

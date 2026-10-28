@@ -14,7 +14,6 @@ import sys
 from zoneinfo import ZoneInfo
 
 import pytest
-
 from app.log_index import _record_to_row
 from app.logging_config import (
     JsonFormatter,
@@ -31,8 +30,8 @@ def _record(message: str, exc: BaseException | None) -> logging.LogRecord:
     if exc is not None:
         try:
             raise exc
-        except BaseException:
-            exc_info = sys.exc_info()
+        except Exception:  # noqa: BLE001 - intentionally catching the test raise
+            exc_info = sys.exc_info()  # noqa: BLE001 - re-raising the test exception
     return logging.LogRecord(
         "app.test", logging.ERROR, __file__, 1, message, (), exc_info
     )

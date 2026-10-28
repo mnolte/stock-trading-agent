@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 UTC = UTC
 
-PASS = "pass"
+PASS = "pass"  # noqa: S105 - literal placeholder constant, not a secret
 NOT_YET = "not_yet"
 WAITING = "waiting"
 
@@ -238,7 +238,7 @@ def _criterion(
     estimate_date: str | None = None,
 ) -> dict[str, Any]:
     key_, group, label, default_target, default_hint = _META_BY_KEY[key]
-    assert key_ == key
+    assert key_ == key  # noqa: S101 - internal invariant
     return {
         "key": key,
         "group": group,

@@ -98,8 +98,8 @@ def _all_secrets() -> list[str]:
     for provider in _secret_providers:
         try:
             values.extend(provider())
-        except Exception:  # noqa: BLE001 - scrubbing must never break logging
-            continue
+        except Exception:  # noqa: BLE001,S112 - a broken provider must not break logging
+            continue  # noqa: S112 - a broken provider must not break logging
     return values
 
 
@@ -279,7 +279,7 @@ class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
         keep = rotated[-self._max_files:] if self._max_files else []
         for path in rotated:
             if path in keep and path.stat().st_mtime >= cutoff:
-                continue
+                continue  # noqa: S112 - a broken provider must not break logging
             path.unlink(missing_ok=True)
 
 

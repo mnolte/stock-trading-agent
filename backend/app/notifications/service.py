@@ -351,7 +351,7 @@ class NotificationService:
         self._worker = spawn(self._run_worker(), "notifications-worker")
 
     async def _run_worker(self) -> None:
-        assert self._wake is not None
+        assert self._wake is not None  # noqa: S101 - internal invariant
         while True:
             await self._wake.wait()
             self._wake.clear()
@@ -630,9 +630,16 @@ class NotificationService:
         try:
             await asyncio.to_thread(self._mailer.send, config, message)
         except Exception as exc:  # noqa: BLE001
-            detail = scrub(str(exc), self._scrub_values() + [password or ""])
-            self._record_smtp_test(False, detail)
-            return {"ok": False, "error": detail}
+            # A failed test answers with a category only — never the
+            # server's own text (docs/SPEC.md → Stored credentials).
+            category = smtp_error_category(exc)
+            self._record_smtp_test(False, category)
+            logger.warning(
+                "SMTP test send failed (%s): %s",
+                category,
+                scrub(str(exc), self._scrub_values() + [password or ""]),
+            )
+            return {"ok": False, "error": category}
         now = _naive_utc(self.clock.now())
         with self._session_factory() as session:
             row = session.execute(
@@ -803,3 +810,19 @@ class NotificationService:
                 self._email_failures = failures
         except Exception:  # noqa: BLE001
             logger.exception("could not hydrate notification state")
+
+
+def smtp_error_category(exc: Exception) -> str:
+    """The spec's four buckets for a failed SMTP test — a category only,
+    never the server's own text (docs/SPEC.md → Stored credentials)."""
+    import smtplib
+    import socket
+    import ssl
+
+    if isinstance(exc, smtplib.SMTPAuthenticationError | smtplib.SMTPNotSupportedError):
+        return "sign-in refused"
+    if isinstance(exc, ssl.SSLError):
+        return "TLS failed"
+    if isinstance(exc, TimeoutError | socket.timeout | smtplib.SMTPServerDisconnected):
+        return "timeout"
+    return "connection refused"

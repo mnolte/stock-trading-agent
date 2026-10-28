@@ -3,9 +3,8 @@ sanitised fields."""
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
 import app.api.routes as routes
+from fastapi.testclient import TestClient
 
 
 def test_rate_limit_is_per_address_not_tab(client: TestClient) -> None:

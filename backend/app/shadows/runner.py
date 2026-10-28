@@ -556,7 +556,7 @@ class ShadowRunner:
             rules: RulesResult | None,
             v2: V2Build | None = None,
         ) -> ShadowDecision:
-            assert deadline is None or deadline > self.clock.now()
+            assert deadline is None or deadline > self.clock.now()  # noqa: S101 - shadow runner invariant
             state["calls"] = int(state["calls"]) + 1
             sr.calls += 1
             prompt = cached_prompt(str(strategy.prompt_version))
@@ -834,7 +834,7 @@ class ShadowRunner:
                 session.add(row)
                 sr.decisions += 1
                 continue
-            assert quote is not None
+            assert quote is not None  # noqa: S101 - shadow runner invariant
             price = quote.last
             snap["price"] = float(price)
             snap["quote"] = provenance

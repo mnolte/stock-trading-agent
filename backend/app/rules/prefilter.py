@@ -17,7 +17,7 @@ from app.signals.snapshot import IndicatorSnapshot
 if TYPE_CHECKING:
     from app.config import AppConfig
 
-STATUS_PASS = "pass"
+STATUS_PASS = "pass"  # noqa: S105 - a status literal, not a password
 STATUS_FAIL = "fail"
 STATUS_HELD = "held"
 

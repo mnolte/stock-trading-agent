@@ -152,7 +152,7 @@ class OutcomeWorker:
 
     def _session_n_after(self, day: date, n: int) -> CalendarDay | None:
         """The nth trading session strictly after ``day``."""
-        assert self.calendar is not None
+        assert self.calendar is not None  # noqa: S101 - internal invariant
         session = None
         cursor = day
         for _ in range(n):
@@ -218,12 +218,12 @@ class OutcomeWorker:
 
     def _price_at(self, symbol: str, target: datetime) -> Bar5m | None:
         """Last 5-minute bar closed at or before ``target`` (aware UTC)."""
-        assert self.market_data is not None
+        assert self.market_data is not None  # noqa: S101 - internal invariant
         bars = self.market_data.get_5m_bars(symbol, target - _PRICE_WINDOW, target)
         if not bars:
             return None
         sessions: dict[date, CalendarDay] = {}
-        assert self.calendar is not None
+        assert self.calendar is not None  # noqa: S101 - internal invariant
         for bar in bars:
             day = bar.start.astimezone(NY_TZ).date()
             if day not in sessions:
@@ -288,7 +288,7 @@ class OutcomeWorker:
         self, session: Session, position: Position, now: datetime
     ) -> bool:
         """Track the best/worst bar extremes while the trade was open."""
-        assert self.market_data is not None
+        assert self.market_data is not None  # noqa: S101 - internal invariant
         opened = _aware_utc(position.opened_at)
         closed = _aware_utc(position.closed_at) if position.closed_at else None
         end = min(closed, now) if closed else now
@@ -358,7 +358,7 @@ class OutcomeWorker:
 
     def _spy_price(self, now: datetime) -> Decimal | None:
         """Latest SPY price: last closed 5m bar, else the last daily close."""
-        assert self.market_data is not None
+        assert self.market_data is not None  # noqa: S101 - internal invariant
         benchmark = str(
             self.config.get("performance", "benchmark", default="SPY")
         )
