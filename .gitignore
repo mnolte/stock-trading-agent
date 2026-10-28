@@ -28,6 +28,7 @@ docs/screenshots/e2e/
 # Local config / data
 backend/config.yaml
 data/run.lock
+data/server-status.json
 *.db
 *.db-shm
 *.db-wal
