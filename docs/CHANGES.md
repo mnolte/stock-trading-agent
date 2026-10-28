@@ -2,6 +2,45 @@
 
 Newest first.
 
+## 2026-10-28 — VPS deployment (PR 24 review)
+
+- The compose stack test (`deploy/test-compose.sh`) now runs in CI on every
+  pull request (job `compose-test` in `.github/workflows/image.yml`; the
+  image push requires it) and covers the whole checklist: non-root,
+  read-only root, no capabilities, `/healthz` version only, 401 on every
+  `/api` read and write without a session, `__Host-sa_session` with
+  `Secure`/`HttpOnly`/`SameSite=Strict`/`Path=/` after HTTPS sign-in,
+  a spoofed `X-Forwarded-Proto` ignored, a foreign `Host` not served,
+  every spec header exactly once, and an app-sent CSP winning over
+  Caddy's `?`-defaults (probed via a fake upstream on a second internal
+  site). It samples app memory the whole run; measured peak **~170 MiB**
+  during a backtest plus live check, so `mem_limit` is `512m` (>3× headroom).
+  Sign-in inside the test uses a one-time recovery code, clock-independent.
+- Double-boot lifespan tests: a clean stop + running resumes; an unclean
+  stop, kill switch, reconciliation difference or unconfirmed broker
+  guard stays paused — banner kind and notification asserted each time.
+- Backup download sends the database file only — `secret.key` is never
+  in the archive — and records a `backup_downloaded` event plus the
+  info-level "Backup downloaded" notification.
+- Backup credentials are write-only like the API keys: reads return the
+  endpoint, bucket and the last 4 of the key id only; saving is behind
+  "Confirm it is you"; an endpoint or bucket change without all three
+  credentials in the same request gets `422 password_required` and no
+  connection is attempted; values are scrubbed from logs.
+- The offsite upload is chained to the end of the 03:00 local backup —
+  a failed local backup skips it and warns — instead of a fixed 03:05 job.
+- `deploy.sh` reads the startup reconciliation state read-only via
+  `docker compose exec app python -m app.ops.reconcile_check` (exit code)
+  instead of grepping logs. Clock offset subtracts half the round-trip
+  and warns only after 3 consecutive hourly checks over 1 s.
+- `docker compose run` one-off containers (migrations, integrity checks,
+  restores) pass `--entrypoint` so they run the intended command rather
+  than the image's `app.serve` entrypoint.
+- `docker-compose.local.yml` runs `MODE=simulated` — the laptop/CI test
+  stack needs no Alpaca keys and stops deterministically.
+- DEPLOY.md documents the private GHCR package and the read-only
+  (`read:packages`) pull token on the server (`docker login`).
+
 ## 2026-10-28 — VPS deployment (PR 24)
 
 - Container + Compose: multi-stage Dockerfile (non-root `stockagent`, read-only root, `/data` the only writable path, `TZ=Europe/Amsterdam`, restic for offsite backups); the app container is internal-only with `cap_drop: ALL`, `no-new-privileges`, a 64 MB `/tmp` tmpfs, `stop_grace_period 90s` and a memory limit. Caddy is the only public entry (80/443), terminates TLS for `SA_PUBLIC_URL`'s host, forwards Host/X-Forwarded-For/X-Forwarded-Proto, always sets HSTS + Permissions-Policy and sets CSP/XFO/nosniff/Referrer-Policy/COOP only as defaults so PR 28's app headers win later.
