@@ -100,7 +100,7 @@ code="$(curl -sk -o /dev/null -w '%{http_code}' -X POST "$BASE/api/settings" \
     || fail "unauth write answered $code"
 
 # --- sign-in through Caddy: __Host- cookie, Secure -------------------------
-"${COMPOSE[@]}" exec -T app python - <<'PY'
+seed_out="$("${COMPOSE[@]}" exec -T app python - <<'PY'
 from app.auth.create_user import create_or_reset_user
 from app.config import AppConfig
 from app.db.base import get_session_maker
@@ -111,7 +111,10 @@ with get_session_maker()() as session:
         session, AppConfig(), RealClock(),
         username="marc", password="compose test password 1!",
     )
+print("seeded")
 PY
+)"
+log "seed: $seed_out"
 SECRET="$("${COMPOSE[@]}" exec -T app python -c "
 from app.db.base import get_session_maker
 from app.db.models import User
@@ -128,13 +131,18 @@ CODE="$("${COMPOSE[@]}" exec -T app python -c "
 from app.auth.passwords import totp_code
 from datetime import UTC, datetime
 print(totp_code('$SECRET', datetime.now(UTC)))")"
-pending="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/sign-in" \
+sign_in_out="$(curl -sk -D /tmp/sa-h1.txt -o /tmp/sa-b1.txt -w '%{http_code}' \
+    -X POST "$BASE/api/auth/sign-in" \
     -H 'Content-Type: application/json' \
-    -d '{"password":"compose test password 1!"}' \
-    | grep -io 'sa_pending=[^;]*' | head -1)"
-cookie_line="$(curl -fsSk -D - -o /dev/null -X POST "$BASE/api/auth/code" \
+    -d '{"password":"compose test password 1!"}')"
+log "sign-in: $sign_in_out $(cat /tmp/sa-b1.txt 2>/dev/null | head -c 200)"
+pending="$(grep -io 'sa_pending=[^;]*' /tmp/sa-h1.txt | head -1)"
+code_out="$(curl -sk -D /tmp/sa-h2.txt -o /tmp/sa-b2.txt -w '%{http_code}' \
+    -X POST "$BASE/api/auth/code" \
     -H 'Content-Type: application/json' -H "Cookie: $pending" \
-    -d "{\"code\":\"$CODE\"}" | grep -i '__Host-sa_session' || true)"
+    -d "{\"code\":\"$CODE\"}")"
+log "code: $code_out $(cat /tmp/sa-b2.txt 2>/dev/null | head -c 200)"
+cookie_line="$(grep -i '__Host-sa_session' /tmp/sa-h2.txt || true)"
 [[ -n "$cookie_line" ]] || fail "no __Host-sa_session cookie set"
 for attr in "Secure" "HttpOnly" "SameSite=Strict" "Path=/"; do
     grep -qi "$attr" <<<"$cookie_line" \
