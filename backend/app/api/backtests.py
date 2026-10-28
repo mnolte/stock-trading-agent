@@ -100,7 +100,13 @@ def _resolve_strategies(
                 )
             )
         elif ref.startswith("strategy:"):
-            strategy = session.get(Strategy, int(ref.split(":", 1)[1]))
+            try:
+                strategy_id = int(ref.split(":", 1)[1])
+            except ValueError:
+                raise HTTPException(
+                    422, f"strategy ref {ref!r} is not strategy:<id>"
+                ) from None
+            strategy = session.get(Strategy, strategy_id)
             if strategy is None or strategy.status == "archived":
                 raise HTTPException(404, f"strategy {ref} not found")
             specs.append(
@@ -673,15 +679,22 @@ def export_csv(
     request: Request, run_id: int, slug: str, kind: str = "trades"
 ) -> StreamingResponse:
     sf = _strategy_sf(request, run_id, slug)
+    cap = int(
+        get_config().get("security", "export_max_rows", default=100000)
+    )
     buf = io.StringIO()
     writer = csv.writer(buf)
+    capped = False
     with sf() as session:
         if kind == "decisions":
             rows = session.execute(
                 select(Decision, Cycle.scheduled_time)
                 .join(Cycle, Decision.cycle_id == Cycle.id)
                 .order_by(Cycle.scheduled_time, Decision.id)
+                .limit(cap + 1)
             ).all()
+            capped = len(rows) > cap
+            rows = rows[:cap]
             writer.writerow(
                 ["cycle_time", "symbol", "context", "final_action", "no_call_reason",
                  "model", "tokens", "cost", "cached"]
@@ -697,14 +710,21 @@ def export_csv(
                 ["symbol", "qty", "entry", "opened_at", "closed_at",
                  "exit_reason", "pnl_raw", "pnl_adjusted"]
             )
-            for p in session.execute(
-                select(Position).order_by(Position.opened_at)
-            ).scalars():
+            for i, p in enumerate(
+                session.execute(
+                    select(Position).order_by(Position.opened_at).limit(cap + 1)
+                ).scalars()
+            ):
+                if i >= cap:
+                    capped = True
+                    break
                 writer.writerow(
                     [p.symbol, p.qty, p.avg_entry_price, _iso(p.opened_at),
                      _iso(p.closed_at), p.exit_reason, p.realized_pnl_raw,
                      p.realized_pnl_adjusted]
                 )
+    if capped:
+        writer.writerow([f"# export capped at {cap} rows"])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),

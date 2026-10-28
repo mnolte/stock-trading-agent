@@ -2509,7 +2509,7 @@ def notifications(
     service = _notifications(request)
     if service is None:
         return {"items": [], "latest_id": after_id}
-    return service.recent(after_id=after_id, limit=limit)
+    return service.recent(after_id=after_id, limit=min(max(limit, 1), 200))
 
 
 @router.post("/notifications/test")
@@ -4451,6 +4451,26 @@ _COLS = ("id,ts,level,logger,event,message,context,cycle,symbol,process,pid,"
          "error_id,exception_type,exception_message,traceback,fingerprint")
 
 
+def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> int:
+    """The shared numeric-parameter rule (docs/SPEC.md → Bounded inputs):
+    a number is clamped to [lo, hi]; anything else is 422, never 500."""
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail=f"{name} must be a number"
+        ) from None
+    return min(max(value, lo), hi)
+
+
+def _fts_phrase(search: str) -> str:
+    """The log search goes to FTS5 as a quoted phrase — never syntax."""
+    return '"' + search.replace('"', '""') + '"'
+
+
 def _log_where(
     params: Mapping[str, str],
 ) -> tuple[str, list[object]]:
@@ -4475,10 +4495,15 @@ def _log_where(
         where.append(
             "id IN (SELECT rowid FROM log_lines_fts WHERE message MATCH ?)"
         )
-        args.append(str(params["search"]).replace('"', '""'))
+        args.append(_fts_phrase(str(params["search"])))
     if params.get("cursor"):
+        try:
+            args.append(int(str(params["cursor"])))
+        except ValueError:
+            raise HTTPException(
+                status_code=422, detail="cursor must be a number"
+            ) from None
         where.append("id < ?")
-        args.append(int(str(params["cursor"])))
     return ("WHERE " + " AND ".join(where)) if where else "", args
 
 
@@ -4490,12 +4515,18 @@ def api_logs(request: Request) -> dict[str, object]:
         return {"lines": [], "next_cursor": None, "index_available": False}
     with conn:
         where, args = _log_where(request.query_params)
-        limit = min(int(str(request.query_params.get("limit") or 100)), 200)
-        rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines {where} "
-            f"ORDER BY id DESC LIMIT {limit + 1}",
-            args,
-        ).fetchall()
+        limit = _int_param(request, "limit", 100, 1, 200)
+        try:
+            rows = conn.execute(
+                f"SELECT {_COLS} FROM log_lines {where} "
+                f"ORDER BY id DESC LIMIT {limit + 1}",
+                args,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # An FTS expression the index can't parse is a 422, never 500.
+            raise HTTPException(
+                status_code=422, detail="search is not a valid query"
+            ) from None
     lines = [_log_row(r) for r in rows[:limit]]
     return {
         "lines": lines,
@@ -4558,7 +4589,7 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    window = min(int(str(request.query_params.get("window") or 20)), 100)
+    window = _int_param(request, "window", 20, 1, 100)
     with conn:
         rows = conn.execute(
             f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "
@@ -4570,20 +4601,42 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
 
 @router.get("/logs/export.jsonl")
 def api_logs_export(request: Request) -> Response:
-    """Download the filtered lines as JSONL (same filters as /api/logs)."""
+    """Download the filtered lines as JSONL (same filters as /api/logs).
+
+    Streamed and capped at ``security.export_max_rows``; the closing
+    line says when the cap was reached (docs/SPEC.md → Bounded inputs).
+    """
     import json
+
+    from fastapi.responses import StreamingResponse
 
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    with conn:
-        where, args = _log_where(request.query_params)
-        rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines {where} ORDER BY id", args
-        ).fetchall()
-    body = "\n".join(json.dumps(_log_row(r), default=str) for r in rows)
-    return Response(
-        content=body,
+    cap = int(
+        get_config().get("security", "export_max_rows", default=100000)
+    )
+    where, args = _log_where(request.query_params)
+
+    def gen() -> Any:
+        try:
+            rows = conn.execute(
+                f"SELECT {_COLS} FROM log_lines {where} ORDER BY id LIMIT {cap + 1}",
+                args,
+            )
+            count = 0
+            for row in rows:
+                if count >= cap:
+                    break
+                count += 1
+                yield json.dumps(_log_row(row), default=str) + "\n"
+            if count >= cap and rows.fetchone() is not None:
+                yield json.dumps({"note": f"export capped at {cap} rows"}) + "\n"
+        finally:
+            conn.close()
+
+    return StreamingResponse(
+        gen(),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": 'attachment; filename="logs.jsonl"'},
     )
