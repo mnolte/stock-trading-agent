@@ -17,7 +17,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.finnhub import FinnhubEarningsSource
+from app.data.finnhub import CHUNK_DAYS, FinnhubEarningsSource
 from app.data.models import (
     Bar5m,
     CorporateActionEvent,
@@ -318,10 +318,10 @@ async def test_refresh_earnings_upserts_and_prunes(
         assert session.execute(select(EarningRow)).scalars().all() == []
 
 
-async def test_finnhub_earnings_one_call_for_whole_calendar() -> None:
-    """The whole calendar is fetched in one call and filtered to the
-    universe locally — a per-symbol burst overruns the free-tier rate
-    limit and the fetch comes back 429."""
+async def test_finnhub_earnings_chunked_calls_for_whole_calendar() -> None:
+    """The calendar is fetched in bounded chunks, always without a symbol,
+    and filtered to the universe locally — a per-symbol burst overruns
+    the free-tier rate limit and the fetch comes back 429."""
     calls: list[tuple[str, str, str | None]] = []
 
     class StubClient:
@@ -342,10 +342,75 @@ async def test_finnhub_earnings_one_call_for_whole_calendar() -> None:
         ["AAPL"], date(2026, 10, 1), date(2026, 10, 31)
     )
     assert result.error is None
-    assert calls == [("2026-10-01", "2026-10-31", None)]
-    assert [e.symbol for e in result.data] == ["AAPL"]
+    # A 31-day window is fetched in 7-day chunks, never per symbol.
+    assert len(calls) > 1
+    assert all(symbol is None for _, _, symbol in calls)
+    assert all(
+        (date.fromisoformat(to) - date.fromisoformat(frm)).days < CHUNK_DAYS
+        for frm, to, _ in calls
+    )
+    assert calls[0][0] == "2026-10-01" and calls[-1][1] == "2026-10-31"
+    aapl = [e for e in result.data if e.symbol == "AAPL"]
+    assert aapl
+    assert {e.symbol for e in result.data} == {"AAPL"}
+    assert aapl[0].time_of_day == "after_close"
+    assert aapl[0].hour_raw == "amc"
+
+
+async def test_finnhub_earnings_paginates_past_the_row_cap() -> None:
+    """Regression (2026-10-28): Finnhub returns at most 1500 rows and
+    silently keeps the tail of a wider window — a 120-day fetch dropped
+    every report before mid-November, so SBUX's 10-29 report never
+    reached the table and the earnings blackout did not fire. The source
+    must fetch in chunks small enough that nothing is truncated."""
+    all_rows = [
+        {"symbol": "SBUX", "date": "2026-10-29", "hour": "amc"},
+        # Fill the window with enough rows that the wide call truncates
+        # and some chunks still have to be split.
+        *[
+            {"symbol": f"X{i:05d}", "date": "2026-11-20", "hour": "amc"}
+            for i in range(1400)
+        ],
+        *[
+            {"symbol": f"Y{i:05d}", "date": "2026-11-21", "hour": "bmo"}
+            for i in range(1600)
+        ],
+    ]
+    calls: list[tuple[str, str]] = []
+
+    class StubClient:
+        def earnings_calendar(
+            self, _from: str, to: str, symbol: str | None
+        ) -> dict[str, object]:
+            calls.append((_from, to))
+            sel = [r for r in all_rows if _from <= str(r["date"]) <= to]
+            # Finnhub's real behaviour: a capped answer keeps the tail.
+            return {"earningsCalendar": sel[-1500:]}
+
+    source = FinnhubEarningsSource("test-key")
+    source._client = StubClient()
+    result = await source.fetch_earnings(
+        ["SBUX"], date(2026, 9, 28), date(2027, 1, 26)
+    )
+    assert result.error is None
+    # The old single-call fetch kept only the last 1500 rows of the
+    # window; SBUX on 10-29 must now arrive via a small enough chunk.
+    assert [e.symbol for e in result.data] == ["SBUX"]
+    assert result.data[0].date == date(2026, 10, 29)
     assert result.data[0].time_of_day == "after_close"
-    assert result.data[0].hour_raw == "amc"
+    assert len(calls) > 1
+
+
+def test_calendar_load_range_covers_the_earnings_lookahead() -> None:
+    """The earnings refresh looks 90 days ahead; the loaded calendar must
+    reach at least that far, or trading_days_until saturates at the
+    horizon and reports a short distance for a far report (the SBUX
+    "21 days" misread on 2026-10-28)."""
+    from app.api.main import calendar_load_range
+
+    today = date(2026, 10, 28)
+    _, end = calendar_load_range(AppConfig(), today)
+    assert end >= today + timedelta(days=90)
 
 
 async def test_refresh_earnings_dedupes_double_listed_report(

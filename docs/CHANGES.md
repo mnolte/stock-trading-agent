@@ -2,6 +2,22 @@
 
 Newest first.
 
+## 2026-10-28 — Earnings calendar fetch fix
+
+- Finnhub caps `/calendar/earnings` at 1500 rows and silently keeps the
+  tail of a too-wide window. The daily fetch (`today − 30 → today + 90
+  days`) therefore lost every report in the near weeks: stored
+  next-earnings jumped to the following quarter and the earnings
+  blackout did not fire (live entered SBUX one session before its
+  29 Oct report). `FinnhubEarningsSource` now fetches the range in
+  7-day chunks and splits any chunk that comes back at the cap in half
+  until it fits; a single day that still hits the cap logs a WARNING.
+  No spec change — this restores the specified blackout and exit.
+- The market calendar now loads `today + 120 days` (was `+30`) so the
+  forward horizon covers the 90-day earnings lookahead; otherwise
+  `trading_days_until` saturates at the horizon and reports ~21
+  trading days for any far-out report.
+
 ## 2026-10-28 — Error pages and API errors (PR 25)
 
 - Every `/api` error answers `{"error": {"code", "message", "error_id"?,

@@ -126,7 +126,11 @@ def calendar_load_range(config: AppConfig, today: date) -> tuple[date, date]:
         config.get("schedule", "daily_history_sessions", default=260)
     )
     lookback = max(history_sessions, daily_sessions) * 2
-    return today - timedelta(days=lookback), today + timedelta(days=30)
+    # The forward range must cover the earnings lookahead (today + 90
+    # days): sessions beyond the loaded horizon read as non-trading days,
+    # so trading_days_until would saturate instead of giving the real
+    # distance to a stored report.
+    return today - timedelta(days=lookback), today + timedelta(days=120)
 
 
 async def refresh_calendar_and_daily_data(
