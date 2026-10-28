@@ -198,11 +198,11 @@ def test_insights_endpoint_normal_and_empty(client: TestClient) -> None:
 def test_insights_endpoint_unknown_strategy(client: TestClient) -> None:
     missing = client.get("/api/insights?strategy=99999")
     assert missing.status_code == 404
-    assert "detail" in missing.json()
+    assert missing.json()["error"]["code"] == "not_found"
 
     bad_period = client.get("/api/insights?period=week")
     assert bad_period.status_code == 422
-    assert isinstance(bad_period.json()["detail"], list)
+    assert isinstance(bad_period.json()["error"]["fields"], list)
 
 
 def test_insights_trades_endpoint(client: TestClient) -> None:

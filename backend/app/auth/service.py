@@ -77,12 +77,16 @@ class AuthError(Exception):
         code: str,
         message: str,
         retry_after: int | None = None,
+        fields: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
         self.message = message
         self.retry_after = retry_after
+        # 422 answers may carry per-field messages; the top-level
+        # ``message`` is the registry sentence for the code (PR 25).
+        self.fields = fields
 
 
 # The generic failure line — identical for a wrong password and a wrong
@@ -528,7 +532,15 @@ class AuthService:
         minimum = int(self._config.get("auth", "min_password_length", default=14))
         if len(new) < minimum:
             raise AuthError(
-                422, "invalid", f"Password must be at least {minimum} characters."
+                422,
+                "invalid",
+                f"Password must be at least {minimum} characters.",
+                fields=[
+                    {
+                        "name": "new_password",
+                        "message": f"Password must be at least {minimum} characters.",
+                    }
+                ],
             )
         with self._factory() as session:
             user = self._user(session)

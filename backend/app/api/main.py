@@ -746,6 +746,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from app.filemodes import apply_umask
 
     apply_umask()
+    # /api answers 503 starting_up until the startup reconciliation
+    # finishes (docs/SPEC.md → Error pages and API errors).
+    app.state.ready = False
     pipeline = setup_logging()
     from app.spawn import install_global_hooks
 
@@ -1039,6 +1042,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             broker, clock, get_session_maker()
         )
     report = await executor.reconcile()
+    # /api answers starting_up until the startup reconciliation finishes
+    # (docs/SPEC.md → Error pages and API errors).
+    app.state.ready = True
     if getattr(app.state, "unclean_previous_run", False):
         # The unclean-run banner reports this pass (design: States).
         app.state.unclean_reconcile = report
@@ -1522,6 +1528,9 @@ def create_app() -> FastAPI:
         docs_url=None if docs_off else "/docs",
         redoc_url=None if docs_off else "/redoc",
     )
+    # Apps that never run the lifespan (raw TestClient use) answer as
+    # ready; the lifespan clears this while startup work runs.
+    app.state.ready = True
 
     import secrets as _secrets_mod
 
@@ -1534,6 +1543,8 @@ def create_app() -> FastAPI:
     async def request_id_middleware(request: Request, call_next: Any) -> Any:
         """One request id per call: X-Request-Id back, ``request`` context
         on every log line written while it runs."""
+        from app.errors import ErrorCode, error_body
+
         rid = f"r-{_secrets_mod.token_hex(4)}"
         manager = getattr(request.app.state, "shutdown", None)
         if (
@@ -1541,8 +1552,23 @@ def create_app() -> FastAPI:
             and manager.shutting_down.is_set()
             and request.method not in ("GET", "HEAD", "OPTIONS")
         ):
+            # Writes refuse while the graceful shutdown runs; reads keep
+            # working (docs/SPEC.md, Graceful shutdown).
             return JSONResponse(
-                status_code=503, content={"detail": "shutting down"}
+                status_code=503,
+                content=error_body(ErrorCode.SHUTTING_DOWN),
+                headers={"X-Request-Id": rid},
+            )
+        if (
+            request.url.path.startswith("/api/")
+            and not getattr(request.app.state, "ready", False)
+        ):
+            # Before the startup reconciliation finishes every /api
+            # answer is 503 starting_up; /healthz stays open (spec).
+            return JSONResponse(
+                status_code=503,
+                content=error_body(ErrorCode.STARTING_UP),
+                headers={"X-Request-Id": rid},
             )
         import time as _time
 
@@ -1559,23 +1585,6 @@ def create_app() -> FastAPI:
             extra={"event": "api.request"},
         )
         return response
-
-    @app.exception_handler(Exception)
-    async def unhandled_api_error(request: Request, exc: Exception) -> Any:
-        """500 with an error_id; the same id is on the log line (spec)."""
-        error_id = f"e-{_secrets_mod.token_hex(3)}"
-        logger.error(
-            "unhandled API error on %s %s: %s",
-            request.method,
-            request.url.path,
-            exc,
-            exc_info=exc,
-            extra={"error_id": error_id},
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "internal error", "error_id": error_id},
-        )
 
     app.add_middleware(
         CORSMiddleware,
@@ -1594,13 +1603,11 @@ def create_app() -> FastAPI:
         (docs/SPEC.md, VPS deployment). Version only — nothing else."""
         return {"version": app.version}
 
-    from app.auth.api import error_response
-    from app.auth.api import router as auth_router
-    from app.auth.service import AuthError
+    from app.errors import install_exception_handlers
 
-    @app.exception_handler(AuthError)
-    async def auth_error_handler(request: Request, exc: AuthError) -> Any:
-        return error_response(exc)
+    install_exception_handlers(app)
+
+    from app.auth.api import router as auth_router
 
     app.include_router(auth_router, prefix="/api")
     app.include_router(api_router, prefix="/api")
@@ -1625,6 +1632,10 @@ class SpaStaticFiles(StaticFiles):
     """
 
     async def get_response(self, path: str, scope: Scope) -> Response:
+        # Unknown /api paths get the JSON error shape, never the SPA
+        # fallback (docs/SPEC.md → Error pages and API errors).
+        if path == "api" or path.startswith("api/"):
+            raise StarletteHTTPException(status_code=404)
         try:
             response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:

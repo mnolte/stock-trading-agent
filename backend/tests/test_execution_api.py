@@ -171,7 +171,7 @@ def test_approve_unknown_id_reports_not_pending_while_paused(
     assert client.get("/api/header").json()["paused"] is True
     response = client.post("/api/approvals/99999/approve")
     assert response.status_code == 422
-    assert response.json()["detail"] == "approval is not pending"
+    assert response.json()["error"]["fields"][0]["message"] == "approval is not pending"
 
 
 def test_positions_and_orders_endpoints(client: TestClient) -> None:

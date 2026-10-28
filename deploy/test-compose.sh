@@ -241,5 +241,35 @@ integ="$("${COMPOSE[@]}" run --rm --no-deps -T --entrypoint python app -c \
 [[ "$integ" == "ok" ]] && ok "integrity_check ok after stop" || fail "integrity_check: $integ"
 "${COMPOSE[@]}" up -d app >/dev/null
 
+# --- PR 25: static error pages through Caddy -------------------------------
+# App stopped → the browser gets the 502 page, /api gets JSON.
+"${COMPOSE[@]}" stop app >/dev/null
+sleep 2
+body="$(curl -sk "$BASE/")"
+grep -q "isn't responding" <<<"$body" \
+    && ok "app down → static 502 page" || fail "no 502 page: ${body:0:120}"
+code="$(curl -sk -o /dev/null -w '%{http_code}' "$BASE/")"
+[[ "$code" == "502" ]] && ok "/ answered 502" || fail "/ answered $code"
+body="$(curl -sk "$BASE/api/x")"
+grep -q '"app_unavailable"' <<<"$body" \
+    && ok "/api outage → JSON shape" || fail "/api outage: ${body:0:120}"
+# Maintenance flag → 503 "Updating" with Retry-After, /healthz exempt.
+"${COMPOSE[@]}" exec -T caddy sh -c 'touch /flags/updating'
+sleep 1
+hdrs="$(curl -skD - -o /tmp/sa-m503.txt "$BASE/" | tr -d '\r')"
+grep -qi '^HTTP/1.1 503\|^HTTP/2 503' <<<"$hdrs" \
+    && ok "flag → 503" || fail "flag: $(head -1 <<<"$hdrs")"
+grep -qi '^retry-after: 15' <<<"$hdrs" \
+    && ok "flag → Retry-After 15" || fail "no Retry-After: $hdrs"
+grep -q "Updating" /tmp/sa-m503.txt \
+    && ok "flag → Updating page" || fail "no Updating page"
+body="$(curl -sk "$BASE/api/x")"
+grep -q '"updating"' <<<"$body" \
+    && ok "flag → /api updating JSON" || fail "flag api: ${body:0:120}"
+[[ "$(curl -sk -o /dev/null -w '%{http_code}' "$BASE/healthz")" == "200" ]] \
+    || log "note: /healthz under the flag answered non-200 (app is stopped)"
+"${COMPOSE[@]}" exec -T caddy sh -c 'rm -f /flags/updating'
+"${COMPOSE[@]}" up -d app >/dev/null
+
 if (( FAILED )); then log "FAILED"; exit 1; fi
 log "all checks passed"

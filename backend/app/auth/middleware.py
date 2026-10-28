@@ -60,14 +60,15 @@ def _header(scope: Scope, name: bytes) -> str:
     return ""
 
 
-def _error_body(code: str, message: str) -> bytes:
-    return json.dumps({"error": {"code": code, "message": message}}).encode()
+def _error_body(code: str) -> bytes:
+    # The shared shape; the sentence comes from the code registry (PR 25).
+    from app.errors import error_body
+
+    return json.dumps(error_body(code)).encode()
 
 
-async def _send_error(
-    send: Send, status: int, code: str, message: str
-) -> None:
-    body = _error_body(code, message)
+async def _send_error(send: Send, status: int, code: str) -> None:
+    body = _error_body(code)
     await send(
         {
             "type": "http.response.start",
@@ -116,15 +117,10 @@ class AuthMiddleware:
             else (None, "not_signed_in")
         )
         if row is None:
-            message = (
-                "Your session expired — sign in again."
-                if reason == "session_expired"
-                else "Sign in to continue."
-            )
             if scope["type"] == "websocket":
                 await _close_ws(send, reason)
                 return
-            await _send_error(send, 401, reason, message)
+            await _send_error(send, 401, reason)
             return
 
         if scope["type"] == "websocket":
@@ -140,12 +136,7 @@ class AuthMiddleware:
             presented = _header(scope, CSRF_HEADER.encode())
             expected = cookies.get(CSRF_COOKIE, "")
             if not expected or presented != expected:
-                await _send_error(
-                    send,
-                    403,
-                    "forbidden",
-                    "Missing or wrong CSRF token — reload the page.",
-                )
+                await _send_error(send, 403, "forbidden")
                 return
         scope["state"] = {**scope.get("state", {}), "session": row}
         await self.app(scope, receive, send)

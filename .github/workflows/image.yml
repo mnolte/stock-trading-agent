@@ -32,6 +32,9 @@ jobs:
         run: deploy/test-compose.sh
       - name: Show compose logs on failure
         if: failure()
+        env:
+          SA_PUBLIC_URL: https://localhost
+          SA_DOMAIN: localhost
         run: docker compose -f docker-compose.yml -f docker-compose.local.yml logs --no-color || true
 
   push-image:

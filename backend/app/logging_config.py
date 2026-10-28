@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from app.config import get_config
@@ -206,10 +206,17 @@ class JsonFormatter(logging.Formatter):
             line["error_id"] = getattr(record, "error_id", None)
         if record.exc_info:
             exc_type, exc, _tb = record.exc_info
+            # Scrub exception text and traceback as they are written —
+            # an exception's message can carry a key or a path (hard
+            # rule 9; the filter only sees record.msg/exc_text).
             line["exception"] = {
                 "type": getattr(exc_type, "__name__", str(exc_type)),
-                "message": str(exc) if exc is not None else "",
-                "traceback": self.formatException(record.exc_info),
+                "message": _scrub_text(
+                    str(exc) if exc is not None else "", _all_secrets()
+                ),
+                "traceback": _scrub_text(
+                    self.formatException(record.exc_info), _all_secrets()
+                ),
             }
         elif record.exc_text:
             line["exception"] = {"type": None, "message": "", "traceback": record.exc_text}
@@ -272,6 +279,20 @@ class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
             path.unlink(missing_ok=True)
 
 
+class _QueueHandler(logging.handlers.QueueHandler):
+    """Same-process queue: ``prepare`` flattens exceptions into the
+    message text (kept — the console format wants that) and clears
+    ``exc_info``/``exc_text`` for pickleability. Nothing on this queue is
+    pickled, so keep the structured data: the file handler writes the
+    spec's ``exception`` object and the log index fills its columns."""
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        prepared = cast(logging.LogRecord, super().prepare(record))
+        prepared.exc_info = record.exc_info
+        prepared.exc_text = record.exc_text
+        return prepared
+
+
 class LogPipeline:
     """The queue + listener + handlers; ``stop`` flushes and closes last."""
 
@@ -316,7 +337,7 @@ class LogPipeline:
         else:
             self.console_handler = None
 
-        self._queue_handler = logging.handlers.QueueHandler(self.queue)
+        self._queue_handler = _QueueHandler(self.queue)
         self.listener = logging.handlers.QueueListener(
             self.queue, *handlers, respect_handler_level=True
         )

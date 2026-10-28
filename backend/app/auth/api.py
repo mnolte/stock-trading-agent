@@ -33,11 +33,15 @@ router = APIRouter(prefix="/auth")
 
 
 def error_response(exc: AuthError) -> Response:
+    """The shared shape via the code registry (docs/SPEC.md → API errors):
+    the message is the registry sentence for the code, Retry-After on 429."""
     from fastapi.responses import JSONResponse
+
+    from app.errors import error_body
 
     response = JSONResponse(
         status_code=exc.status,
-        content={"error": {"code": exc.code, "message": exc.message}},
+        content=error_body(exc.code, fields=getattr(exc, "fields", None)),
     )
     if exc.retry_after is not None:
         response.headers["Retry-After"] = str(exc.retry_after)

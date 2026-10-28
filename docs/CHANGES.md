@@ -2,6 +2,31 @@
 
 Newest first.
 
+## 2026-10-28 — Error pages and API errors (PR 25)
+
+- Every `/api` error answers `{"error": {"code", "message", "error_id"?,
+  "fields"?}}` from one handler set: HTTPException, validation and
+  unhandled errors. The message is always the registry sentence for the
+  code (an enum in `app/errors.py`), never the exception's own text;
+  the registry already carries PR 28's `bad_host`, `origin_refused`,
+  `too_large`, `unsupported_media_type` and `password_required`. Unknown
+  `/api` paths get 404 JSON; writes get 503 `shutting_down` during the
+  graceful shutdown and `/api` gets 503 `starting_up` until the startup
+  reconciliation finishes (`/healthz` stays open).
+- `POST /api/logs/client` returns the `error_id` it logged. Error log
+  lines now carry the structured `exception` (type, message, traceback)
+  through the log queue, scrubbed like every other text.
+- The frontend client maps status to behaviour in one place (401 →
+  sign-in and back, `confirm_required` → one retry after the dialog,
+  409 → reload offer, 422 → field messages, 429 → Retry-After wording,
+  500 → toast with the error id and Open in Logs, 503 → banner). Route
+  and record not-found pages, a boundary per screen, the first-load
+  "The app isn't answering" page, the backend banner and the offline
+  banner follow the design texts.
+- `deploy/errors/502.html` and `503.html` are the self-contained Caddy
+  pages; Caddy answers `app_unavailable`/`updating` JSON under `/api`,
+  `Retry-After: 15` on maintenance, and leaves `/healthz` to the app.
+
 ## 2026-10-28 — VPS deployment (PR 24 review)
 
 - The compose stack test (`deploy/test-compose.sh`) now runs in CI on every

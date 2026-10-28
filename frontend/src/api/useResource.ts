@@ -9,6 +9,8 @@ export interface FetchFailure {
   at: Date;
   message: string;
   unreachable: boolean;
+  /** HTTP status when the server answered (e.g. 404 for record pages). */
+  status?: number;
 }
 
 export interface Resource<T> {
@@ -58,6 +60,7 @@ export function useApiResource<T>(
           at: new Date(),
           message: errorMessages(e)[0] ?? 'request failed',
           unreachable: !(e instanceof ApiError),
+          status: e instanceof ApiError ? e.status : undefined,
         });
       });
   }, []);
