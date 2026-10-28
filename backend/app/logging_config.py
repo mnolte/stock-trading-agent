@@ -62,6 +62,10 @@ _KEY_PATTERNS = (
     re.compile(r"\b(PK|AK)[A-Z0-9]{14,}\b"),
     re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?\S+"),
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}"),
+    # URL credential parameters: token=, apikey=, api_key=, key=, secret=
+    # (docs/SPEC.md → Secrets in errors) — the name is kept, the value
+    # becomes [redacted].
+    re.compile(r"(?i)\b((?:token|api_?key|key|secret)=)[^\s&'\"]+"),
     re.compile(r"\bsa[tpc]_[A-Za-z0-9_\-]{12,}\b"),
     re.compile(r"\b[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}\b"),
 )
