@@ -29,7 +29,7 @@ export default defineConfig({
       // rm -f clears a leftover run.lock from the cached data dir (or a
       // killed local run) so the app neither refuses e2e startup on a
       // recycled pid nor raises the unclean-run banner.
-      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db SA_DATA_DIR=/tmp/stock-agent-e2e-data ${e2eAuth ? 'SA_AUTH=required' : ''} && rm -f "$SA_DATA_DIR/run.lock" && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/python -m tests.e2e_backtest_seed && ${e2eAuth ? '../.venv/bin/python -m tests.e2e_auth_seed && ' : ''}../.venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port ${apiPort}`,
+      command: `cd ../backend && export MODE=simulated SA_SIM_NOW=2026-10-15T17:00:00Z SA_DB_PATH=/tmp/stock-agent-e2e.db SA_DATA_DIR=/tmp/stock-agent-e2e-data ${e2eAuth ? 'SA_AUTH=required' : ''} && rm -f "$SA_DATA_DIR/run.lock" && ../.venv/bin/python -m tests.e2e_seed && ../.venv/bin/python -m tests.e2e_backtest_seed && ${e2eAuth ? '../.venv/bin/python -m tests.e2e_auth_seed && ' : ''}SA_HOST=127.0.0.1 SA_PORT=${apiPort} ../.venv/bin/python -m app.serve`,
       url: `http://127.0.0.1:${apiPort}/healthz`,
       reuseExistingServer: true,
       timeout: 120_000,

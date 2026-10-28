@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-10-28 — VPS deployment (PR 24)
+
+- Container + Compose: multi-stage Dockerfile (non-root `stockagent`, read-only root, `/data` the only writable path, `TZ=Europe/Amsterdam`, restic for offsite backups); the app container is internal-only with `cap_drop: ALL`, `no-new-privileges`, a 64 MB `/tmp` tmpfs, `stop_grace_period 90s` and a memory limit. Caddy is the only public entry (80/443), terminates TLS for `SA_PUBLIC_URL`'s host, forwards Host/X-Forwarded-For/X-Forwarded-Proto, always sets HSTS + Permissions-Policy and sets CSP/XFO/nosniff/Referrer-Policy/COOP only as defaults so PR 28's app headers win later.
+- The app takes "is this HTTPS" from `X-Forwarded-Proto` only when the peer is `SA_TRUSTED_PROXY` or `SA_PUBLIC_URL` is https — so `__Host-sa_session` is Secure behind Caddy and a spoofed header changes nothing.
+- Shared with PR 28 (built here first): `python -m app.serve` as the only start path reading `SA_HOST`/`SA_PORT` (Makefile and Playwright now use it too); `umask 077` at startup with `SA_DATA_DIR` 0700 / files 0600 corrected at startup; IBM Plex bundled via `@fontsource` (no Google Fonts). `/healthz` returns the version only.
+- Restarts: `ops.resume_after_clean_restart` (`auto` = on when `SA_AUTH=required`) resumes on its own only when it was running before, the previous shutdown was clean, the kill switch is off, reconciliation is clean and the broker guard confirmed — with a banner and notification either way (`restart_resumed`/`restart_paused`).
+- `deploy/`: `provision.sh` (SSH keys only, no root login, ufw 22/80/443, fail2ban, unattended security updates with reboots only in the Sunday 05:00 Amsterdam window, chrony, Docker), `deploy.sh <tag>` (New York market-hours guard via `TZ=America/New_York`, pre-deploy backup, one-off migrations, health check + clean reconciliation, automatic rollback within 2 minutes, marked hooks for PR 25's maintenance flag) and `restore.sh` (local or `offsite` snapshot, integrity_check, mode 0600). CI builds + pushes a versioned image per tag and runs the tests inside the image.
+- Backups: restic to S3-compatible storage after the 03:00 local copy (30 daily + 12 weekly, includes `secret.key`); the backup password and storage credentials live in the secrets table, the endpoint is validated https and non-private; a monthly restore test runs `integrity_check` on the latest snapshot. Settings → Server gains "Back up now", "Download latest backup" (behind "Confirm it is you") and "Backup credentials…".
+- Monitoring: a heartbeat ping after every cycle and position check (`ops.heartbeat_url`, validated https+public, saving it asks "Confirm it is you"); hourly checks for clock offset, disk use (80/90%), certificate expiry (14 days), backup age and restore-test staleness — notifications as `backup_failed`, `disk_space`, `cert_expiring`, `clock_offset`.
+- Settings → Server (SA_AUTH=required only): read-only rows for version/address/running/clock/disk/updates/backups/restore test/heartbeat/instance plus the backup actions, per the design.
+- `docs/DEPLOY.md` is the standalone runbook (provision → first deploy → keys → broker guard → offsite → heartbeat → moving the local database → deploy/rollback → restore → password rotation), with the go-live checklist at the top and an explicit list of what could not be verified without a real server.
+
 ## 2026-10-27 — Snapshot backfill no longer blocks the scheduler
 
 - Run synchronous readiness and Insights snapshot work in the thread pool, in the same order as before. Backfilling missed sessions no longer blocks the API event loop or delays the backtest scheduler tick. WebSocket updates stay on the event loop; failures remain logged and later jobs still run.
