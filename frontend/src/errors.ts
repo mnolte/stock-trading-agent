@@ -22,7 +22,10 @@ export function newErrorId(): string {
 }
 
 function csrfToken(): string | null {
-  const match = document.cookie.match(/(?:^|;\s*)sa_csrf=([^;]*)/);
+  const match =
+    typeof document !== 'undefined'
+      ? document.cookie.match(/(?:^|;\s*)sa_csrf=([^;]*)/)
+      : null;
   return match ? match[1] : null;
 }
 

@@ -542,6 +542,8 @@ test('backend down: page banner, Retry now, recovery without reload', async ({
     page.getByRole('heading', { name: /decisions|last session/ }),
   ).toBeVisible();
   await page.route(apiUrl, (route) => route.abort());
+  // Force one API call — waiting on a poll is timing-dependent in CI.
+  await page.evaluate(() => fetch('/api/header').catch(() => undefined));
 
   await expect(
     page.getByText(/Can’t reach the Stock Trading Agent backend/),
