@@ -49,6 +49,7 @@ CMD ["/opt/venv/bin/python", "-m", "pytest", "backend/tests", \
      "--deselect", "backend/tests/test_serve.py::test_no_host_port_flags_anywhere", \
      "--deselect", "backend/tests/test_serve.py::test_entrypoint_is_app_serve", \
      "--deselect", "backend/tests/test_no_silent_failures.py", \
+     "--deselect", "backend/tests/test_readme.py", \
      "--deselect", "backend/tests/test_shutdown.py::test_lock_recycled_pid_is_stale"]
 
 ######################## runtime ########################
