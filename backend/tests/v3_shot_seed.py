@@ -12,9 +12,10 @@ Usage (from backend/, pointing at the e2e db):
 from __future__ import annotations
 
 import json
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -29,7 +30,7 @@ from tests.test_decide_v3 import (
 
 
 def main() -> None:
-    from app.config import AppConfig, get_config
+    from app.config import get_config
     from app.db.base import get_session_maker
     from app.db.models import Cycle, Decision, Run
 
@@ -107,7 +108,11 @@ def main() -> None:
             "action": "enter",
             "option_id": chosen["id"],
             "confidence": 0.6,
-            "levels_used": [lv for lv in (chosen.get("stop_level"), chosen.get("target_level")) if lv],
+            "levels_used": [
+                lv
+                for lv in (chosen.get("stop_level"), chosen.get("target_level"))
+                if lv
+            ],
             "conflicts": ["October high L1 before the target"],
             "data_flags": [],
             "thesis": (
@@ -252,10 +257,12 @@ def main() -> None:
         )
 
 
-def _build_row(fixture: str, bars: str, context: str, held=None):
+def _build_row(
+    fixture: str, bars: str, context: str, held: Any = None
+) -> Any:
     """Return a builder: (overlay) -> (V3Build, snapshot-with-config)."""
     from app.config import AppConfig
-    from app.decide.v3 import HeldV3, build_v3_fields
+    from app.decide.v3 import build_v3_fields
 
     snap = _fixture(fixture)
     b1, daily, m5 = _load_bars(bars)
@@ -264,7 +271,7 @@ def _build_row(fixture: str, bars: str, context: str, held=None):
         str(daily[-1].date + timedelta(days=1)),
     )
 
-    def run(overlay=None):
+    def run(overlay: dict[str, Any] | None = None) -> Any:
         from app.shadows.runner import (
             indicators_from_snapshot,
             regime_from_snapshot,
@@ -294,7 +301,7 @@ def _build_row(fixture: str, bars: str, context: str, held=None):
     return run
 
 
-def _dec(value):
+def _dec(value: Any) -> Decimal | None:
     return Decimal(str(value)) if value is not None else None
 
 
