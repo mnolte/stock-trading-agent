@@ -3,7 +3,7 @@
 Kickoff for Devin. Start the session with: "Build docs/kickoffs/ops-alerts.md."
 
 ```text
-Small ops PR, after fix-stream-clock. From the live-data report of
+Small ops PR, after fix-live-2026-10-29. From the live-data report of
 29 Oct. Read on main: docs/CHANGES.md entry 2026-10-29 "Stream health,
 new alerts, library log levels"; docs/SPEC.md → Notifications (the "New
 error" row) and Logging, error handling and shutdown (third-party

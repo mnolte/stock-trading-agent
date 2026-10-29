@@ -74,6 +74,7 @@ decision:
   stop_atr_max: 4.0
   min_reward_risk: 1.5
   tighten_min_atr_below_price: 0.25   # new stop must sit this far below bid/last/bar close
+  breakeven_min_r: 1.0          # every prompt version: no tighten to break-even (locked R <= 0) below this R in profit
   max_calls_per_cycle: 10      # held positions first
   call_timeout_seconds: 30      # no retry; failure = no_call (model_error)
   max_output_tokens: 2048       # per call; Claude thinking counts toward it (PR 29)
