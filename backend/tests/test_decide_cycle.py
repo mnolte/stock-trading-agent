@@ -318,6 +318,130 @@ async def test_held_snapshot_uses_initial_risk_and_full_provenance(
     assert snapshot["last_bar_time"] is not None
 
 
+@pytest.mark.parametrize(
+    ("stop_basis", "expected"),
+    [
+        ("2 × ATR", "below 413.50: 2 × ATR stop"),
+        (
+            "0.1 ATR below L8 · 1h swing low 13 Oct 14:30",
+            "below 413.50: 0.1 ATR below L8 · 1h swing low 13 Oct 14:30 stop",
+        ),
+    ],
+)
+async def test_held_snapshot_v2_entry_fills_original_invalidation(
+    session_factory: sessionmaker[Session],
+    stop_basis: str,
+    expected: str,
+) -> None:
+    """decision.v2 has no invalidation field: the invalidation is the
+    chosen option's stop, written by code (docs/SPEC.md, Decision v2)."""
+    with session_factory() as session:
+        entry_cycle = Cycle(
+            kind="cycle",
+            scheduled_time=CYCLE_1246 - timedelta(days=1),
+            status="done",
+        )
+        session.add(entry_cycle)
+        session.flush()
+        entry = Decision(
+            cycle_id=entry_cycle.id,
+            symbol="MSFT",
+            context="candidate",
+            model_output={
+                "thesis": "Breakout above consolidation",
+                "option_id": "A",
+            },
+            final_action="enter",
+            prompt_version="decision.v2",
+            prompt_hash="a" * 64,
+            model="fake",
+            options={
+                "options": [
+                    {"id": "A", "stop": 413.5, "stop_basis": stop_basis},
+                ]
+            },
+            chosen_option="A",
+        )
+        session.add(entry)
+        session.flush()
+        session.add(
+            Position(
+                symbol="MSFT",
+                qty=4,
+                avg_entry_price=Decimal("415"),
+                initial_stop=Decimal("413.50"),
+                current_stop_price=Decimal("413.50"),
+                target_price=Decimal("430"),
+                opened_at=CYCLE_1246 - timedelta(days=1),
+                entry_decision_id=entry.id,
+            )
+        )
+        session.commit()
+
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "held"), held={"MSFT"}),
+        universe=["MSFT"],
+    )
+    await runner.run(CYCLE_1246)
+
+    decision = max(_decisions(session_factory), key=lambda row: row.id)
+    assert decision.input_snapshot is not None
+    position = cast(dict[str, object], decision.input_snapshot["position"])
+    assert position["original_thesis"] == "Breakout above consolidation"
+    assert position["original_invalidation"] == expected
+
+
+async def test_held_snapshot_v2_entry_without_stored_basis_stays_unavailable(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session:
+        entry_cycle = Cycle(
+            kind="cycle",
+            scheduled_time=CYCLE_1246 - timedelta(days=1),
+            status="done",
+        )
+        session.add(entry_cycle)
+        session.flush()
+        entry = Decision(
+            cycle_id=entry_cycle.id,
+            symbol="MSFT",
+            context="candidate",
+            model_output={"thesis": "Breakout above consolidation"},
+            final_action="enter",
+            prompt_version="decision.v2",
+            prompt_hash="a" * 64,
+            model="fake",
+        )
+        session.add(entry)
+        session.flush()
+        session.add(
+            Position(
+                symbol="MSFT",
+                qty=4,
+                avg_entry_price=Decimal("415"),
+                initial_stop=Decimal("413.50"),
+                current_stop_price=Decimal("413.50"),
+                target_price=Decimal("430"),
+                opened_at=CYCLE_1246 - timedelta(days=1),
+                entry_decision_id=entry.id,
+            )
+        )
+        session.commit()
+
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "held"), held={"MSFT"}),
+        universe=["MSFT"],
+    )
+    await runner.run(CYCLE_1246)
+
+    decision = max(_decisions(session_factory), key=lambda row: row.id)
+    assert decision.input_snapshot is not None
+    position = cast(dict[str, object], decision.input_snapshot["position"])
+    assert position["original_invalidation"] == "unavailable"
+
+
 async def test_cycle_invalid_output_becomes_skip_and_keeps_raw(
     session_factory: sessionmaker[Session],
 ) -> None:

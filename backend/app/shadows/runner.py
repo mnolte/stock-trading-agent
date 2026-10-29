@@ -47,7 +47,7 @@ from app.decide.service import (
     rules_result_json,
     validation_result_json,
 )
-from app.decide.snapshot import UNAVAILABLE, _position_block
+from app.decide.snapshot import UNAVAILABLE, _position_block, entry_invalidation
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
@@ -723,7 +723,9 @@ class ShadowRunner:
             if position_json is not None and entry is not None:
                 reasoning = entry.model_output or {}
                 position_json["original_thesis"] = reasoning.get("thesis", UNAVAILABLE)
-                position_json["original_invalidation"] = reasoning.get("invalidation", UNAVAILABLE)
+                position_json["original_invalidation"] = entry_invalidation(
+                    sp.initial_stop, entry
+                )
             quote, synthetic, price_failure = self._market_quote(
                 d.symbol, snap_json, scheduled
             )

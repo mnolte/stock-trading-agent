@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-29 — Held snapshots: original invalidation filled for decision.v2
+
+- The position block's `original_invalidation` was `"unavailable"` for every decision.v2 entry: the v2 model output has no `invalidation` field — the invalidation is the chosen stop, written by code (Decision v2 → Model output). It is now built from the stored entry: `below <initial stop>: <chosen option's stop_basis> stop`, for example "below 101.74: 2 × ATR stop". The shadow runner fills it the same way. Entries whose stored decision has no `invalidation` and no chosen-option basis keep `"unavailable"`. No migration.
+
 ## 2026-10-29 — Exit fills and reconciliation (PR 31)
 
 - From the SBUX and HD stop-outs on 28 October: the trade-updates stream recorded the fills, but only reconciliation closed the position rows, so every routine stop or target exit showed up as a CRITICAL "closed at broker" mismatch. At the same time, that path recorded no event and set no acknowledgment, unlike every other mismatch.
