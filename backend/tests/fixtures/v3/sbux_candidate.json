@@ -1,0 +1,262 @@
+{
+ "symbol": "SBUX",
+ "context": "candidate",
+ "time_ny": "2026-10-28T10:46:00-04:00",
+ "rank": 21,
+ "price": 103.14,
+ "quote": {
+  "last": "103.14",
+  "trade_timestamp": "2026-10-28T14:46:09.638253+00:00",
+  "bid": "100.38",
+  "ask": "103.15",
+  "quote_timestamp": "2026-10-28T14:46:19.136703+00:00",
+  "plausible": false,
+  "spread_unknown": true,
+  "feed": "iex",
+  "fetched_at": "2026-10-28T14:46:19.942545+00:00",
+  "last_bar_time": "2026-10-28T14:30:00+00:00",
+  "signal_bar_time": "2026-10-28T10:30:00-04:00"
+ },
+ "last_bar_close": "103.11000000",
+ "last_bar_time": "2026-10-28T14:30:00+00:00",
+ "signal_bar_time": "2026-10-28T10:30:00-04:00",
+ "regime": {
+  "trend": "up",
+  "volatility": "high"
+ },
+ "indicators_1h": {
+  "ema20": 102.14,
+  "ema50": 100.45,
+  "rsi14": 65.0,
+  "atr14": 0.6865,
+  "vwap": 103.09,
+  "obv_trend": "up",
+  "rs_vs_spy_pct": 0.48
+ },
+ "indicators_daily": {
+  "sma50": 99.31,
+  "sma200": 99.64,
+  "atr_percentile": 15.0,
+  "gap_pct": 0.41,
+  "close": 102.68
+ },
+ "levels": [
+  {
+   "id": "L1",
+   "price": 110.51,
+   "kind": "swing_high",
+   "timeframe": "daily",
+   "time": "2026-08-13T00:00:00"
+  },
+  {
+   "id": "L2",
+   "price": 109.23,
+   "kind": "swing_high",
+   "timeframe": "daily",
+   "time": "2026-08-18T00:00:00"
+  },
+  {
+   "id": "L3",
+   "price": 108.74,
+   "kind": "swing_high",
+   "timeframe": "daily",
+   "time": "2026-08-27T00:00:00"
+  },
+  {
+   "id": "L4",
+   "price": 107.9,
+   "kind": "swing_high",
+   "timeframe": "daily",
+   "time": "2026-09-02T00:00:00"
+  },
+  {
+   "id": "L5",
+   "price": 103.67,
+   "kind": "swing_low",
+   "timeframe": "daily",
+   "time": "2026-08-07T00:00:00"
+  },
+  {
+   "id": "L6",
+   "price": 103.46,
+   "kind": "session_high",
+   "timeframe": "session",
+   "time": "2026-10-28T00:00:00"
+  },
+  {
+   "id": "L7",
+   "price": 103.4,
+   "kind": "swing_high",
+   "timeframe": "1h",
+   "time": "2026-10-26T09:30:00-04:00"
+  },
+  {
+   "id": "L8",
+   "price": 103.09491072926672,
+   "kind": "vwap",
+   "timeframe": "session",
+   "time": "2026-10-28T00:00:00"
+  },
+  {
+   "id": "L9",
+   "price": 102.965,
+   "kind": "swing_low",
+   "timeframe": "daily",
+   "time": "2026-08-20T00:00:00"
+  },
+  {
+   "id": "L10",
+   "price": 102.81,
+   "kind": "swing_high",
+   "timeframe": "1h",
+   "time": "2026-10-26T15:30:00-04:00"
+  },
+  {
+   "id": "L11",
+   "price": 102.71,
+   "kind": "prior_session_high",
+   "timeframe": "session",
+   "time": "2026-10-27T00:00:00"
+  },
+  {
+   "id": "L12",
+   "price": 102.68,
+   "kind": "prior_session_close",
+   "timeframe": "session",
+   "time": "2026-10-27T00:00:00"
+  },
+  {
+   "id": "L13",
+   "price": 102.5413,
+   "kind": "session_low",
+   "timeframe": "session",
+   "time": "2026-10-28T00:00:00"
+  },
+  {
+   "id": "L14",
+   "price": 102.2,
+   "kind": "swing_high",
+   "timeframe": "1h",
+   "time": "2026-10-23T09:30:00-04:00"
+  },
+  {
+   "id": "L15",
+   "price": 102.025,
+   "kind": "swing_high",
+   "timeframe": "1h",
+   "time": "2026-10-22T11:30:00-04:00"
+  }
+ ],
+ "position": null,
+ "days_to_earnings": 21,
+ "headlines": [
+  {
+   "id": "105939831",
+   "time": "2026-10-28T09:32:03-04:00",
+   "source": "fiscal.ai",
+   "title": "Starbucks Corporation Scheduled to Report Fourth Quarter 2026 Financial Results"
+  }
+ ],
+ "news_status": "complete",
+ "stop_reference_price": "103.11000000",
+ "constraints": {
+  "atr_1h": 0.6864643450910893,
+  "entry_limit": 103.19,
+  "stop_atr_min": 1.5,
+  "stop_atr_max": 4.0,
+  "min_reward_risk": 1.5
+ },
+ "options": [
+  {
+   "id": "A",
+   "stop": 101.73707130981782,
+   "stop_basis": "2 \u00d7 ATR",
+   "stop_atr": 2.0,
+   "stop_level": null,
+   "target": 106.09585738036436,
+   "target_basis": "2R",
+   "target_level": null,
+   "rr": 2.0,
+   "risk": 1.4529,
+   "levels_in_way": [
+    "L5",
+    "L6",
+    "L7"
+   ]
+  },
+  {
+   "id": "B",
+   "stop": 101.73707130981782,
+   "stop_basis": "2 \u00d7 ATR",
+   "stop_atr": 2.0,
+   "stop_level": null,
+   "target": 107.83135356549089,
+   "target_basis": "0.1 ATR below L4 \u00b7 daily swing high 2 Sep",
+   "target_level": "L4",
+   "rr": 3.19,
+   "risk": 1.4529,
+   "levels_in_way": [
+    "L5",
+    "L6",
+    "L7"
+   ]
+  },
+  {
+   "id": "C",
+   "stop": 101.73707130981782,
+   "stop_basis": "2 \u00d7 ATR",
+   "stop_atr": 2.0,
+   "stop_level": null,
+   "target": 108.67135356549089,
+   "target_basis": "0.1 ATR below L3 \u00b7 daily swing high 27 Aug",
+   "target_level": "L3",
+   "rr": 3.77,
+   "risk": 1.4529,
+   "levels_in_way": [
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ]
+  },
+  {
+   "id": "D",
+   "stop": 101.73707130981782,
+   "stop_basis": "2 \u00d7 ATR",
+   "stop_atr": 2.0,
+   "stop_level": null,
+   "target": 109.16135356549088,
+   "target_basis": "0.1 ATR below L2 \u00b7 daily swing high 18 Aug",
+   "target_level": "L2",
+   "rr": 4.11,
+   "risk": 1.4529,
+   "levels_in_way": [
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ]
+  },
+  {
+   "id": "E",
+   "stop": 101.73707130981782,
+   "stop_basis": "2 \u00d7 ATR",
+   "stop_atr": 2.0,
+   "stop_level": null,
+   "target": 110.44135356549089,
+   "target_basis": "0.1 ATR below L1 \u00b7 daily swing high 13 Aug",
+   "target_level": "L1",
+   "rr": 4.99,
+   "risk": 1.4529,
+   "levels_in_way": [
+    "L2",
+    "L3",
+    "L4",
+    "L5",
+    "L6",
+    "L7"
+   ]
+  }
+ ]
+}
