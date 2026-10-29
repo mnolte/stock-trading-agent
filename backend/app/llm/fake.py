@@ -34,6 +34,13 @@ def default_review_reply(system: str, user: str) -> str:
     )
 
 
+def _try_parse(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 class FakeModelClient:
     """Deterministic model for every task; never touches the network."""
 
@@ -181,7 +188,7 @@ class FakeModelClient:
                 tokens_in=tokens_in,
                 tokens_out=len(raw) // 4,
                 latency_ms=int((time.monotonic() - started) * 1000) or 1,
-                parsed=json.loads(raw),
+                parsed=_try_parse(raw),
                 provider=provider,
             )
         override = self.responses.get(
@@ -223,7 +230,7 @@ class FakeModelClient:
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=int((time.monotonic() - started) * 1000) or 1,
-            parsed=json.loads(raw),
+            parsed=_try_parse(raw),
             provider=provider,
         )
 
