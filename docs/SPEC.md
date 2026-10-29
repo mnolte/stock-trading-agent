@@ -159,6 +159,7 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 
 - Subscribe to Alpaca's trade-updates stream for fills, cancels and rejects.
 - **Exits close from the stream.** When a fill brings a position to zero (stop, target, OCO, agent exit, earnings exit, breach sale or Stop & flatten), the trade-updates handler closes the position row right away. It records the exit reason from the order's kind and the fill price, logs INFO and sends the normal "Position closed" notification. A routine stop or target exit is not a mismatch.
+- **Stream health.** "Connected" is not enough. Every trade update that can't be parsed is logged at ERROR with the raw message (keys scrubbed), counted, and marks the stream `degraded`. So does a fill found by reconciliation whose update never arrived within 2 minutes. `degraded` shows the backend banner ("Order updates delayed: positions are checked every 15 minutes"), sends the critical notification, and clears after 30 minutes without a new failure. The parser is tested on the exact wrapper shape the SDK delivers, recorded from a real paper message.
 - **Fills the stream missed** (the app was down or the stream dropped): when reconciliation finds a recorded position flat at Alpaca, it first looks up the symbol's filled orders at Alpaca since the position opened. If this instance's own exit orders explain the close, the row is closed with that reason and fill, marked `closed_while_offline`, and logged at WARNING. That is not a mismatch either.
 - At startup and at the start of every cycle, compare Alpaca positions and open orders with the database.
 - **Mismatches** are what the stream and Alpaca's order history can't explain: a position flat with no explaining fill, a quantity that differs, an unknown order, an order of another instance, or a position the agent never recorded. On any mismatch: record it as an event, log CRITICAL, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. Every mismatch path does all of these; none of them may just close a row silently. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
@@ -398,6 +399,9 @@ The agent tells Marc about what matters while he is away from the screen. Every 
 | Disk at 90% (VPS) | Critical | always | on |
 | Restarted and resumed (VPS) | Info | on | off |
 | Restarted paused after an unclean stop (VPS) | Warning | on | on |
+| Trade-updates stream degraded (an update that couldn't be parsed, or no update within 2 minutes of a fill seen by reconciliation) | Critical | always | on |
+| New error: an ERROR fingerprint seen for the first time this session | Warning | on | on |
+| Clock check failing (the check itself, not the offset) | Warning | on | on |
 
 **Rules.** Critical events always go to the browser and are never held back. Any other event with the same subject is sent at most once per 30 minutes (repeat limit). During quiet hours (23:00–08:00 Amsterdam) only critical events are sent; the rest are held and sent as one summary when quiet hours end. Sending runs in the background: a slow or failing channel never delays a cycle, a check or an order. Three failed emails in a row show a banner.
 
@@ -783,7 +787,7 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
   - a single `spawn()` helper for every background task, which logs a failed task at ERROR. Bare `asyncio.create_task` outside it fails a test.
   - the scheduler's job-error listener;
   - `logging.captureWarnings`;
-  - uvicorn's and the libraries' loggers routed to the same handlers.
+  - uvicorn's and the libraries' loggers routed to the same handlers, at WARNING and above for third-party loggers (websockets, uvicorn access, apscheduler, httpx) unless `logging.library_debug` is on, so their keep-alive chatter doesn't fill the file.
 - **API errors.** An unhandled API error returns 500 with an `error_id`; the same id is on the log line with the traceback.
 - **Frontend errors.** `window.onerror`, `unhandledrejection` and a React error boundary send the error to `POST /api/logs/client`, at most 10 per minute per tab. They are logged at ERROR with logger `frontend`. The error boundary shows "Something went wrong" with the `error_id` and a Reload button instead of a blank page.
 - **Logs and events.** The log is for diagnosis. Errors that need action still create `events` and notifications as specified; a log line never sends a notification by itself.

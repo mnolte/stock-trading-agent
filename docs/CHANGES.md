@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-10-29 — Stream health, new alerts, library log levels
+
+- From the live-data report of 29 October: every trade update since 28 October was lost (the stream wrapper wasn't unwrapped), while the stream still showed as connected; the clock check never ran; repeating errors were hidden by the 60-minute auto-resolve; and library DEBUG lines filled the log.
+- Alpaca integration → Reconciliation: **Stream health**. Unparseable updates, or fills that reconciliation finds without an update within 2 minutes, mark the stream `degraded` with a banner and a critical notification.
+- Notifications: "Trade-updates stream degraded" (critical), "New error" (the first time an ERROR fingerprint appears in a session), "Clock check failing".
+- Logging: third-party loggers at WARNING unless `logging.library_debug` is true.
+- Kickoffs: `fix-stream-clock.md` (urgent, before PR 31) and `ops-alerts.md`. PR 31 now starts after the stream fix. The quote analysis also covers `price_stale`.
+
 ## 2026-10-29 — Correction: ACN stop level, entry thesis ids
 
 - Correction to the ACN finding: the entry thesis was right. At entry the stop's level (the 20 Oct 12:30 1h swing low, 238.22) was L13; a cycle later a new level shifted the ids and it was L14. The held decision copied "L13" from the entry thesis.

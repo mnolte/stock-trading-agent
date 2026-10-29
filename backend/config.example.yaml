@@ -235,6 +235,7 @@ logging:                        # PR 20, Logging, error handling and shutdown
   max_file_mb: 50               # rotate and gzip
   max_files: 20
   keep_days: 30                 # files and the log index
+  library_debug: false          # third-party loggers at WARNING unless true
   index: data/logs/logs.db      # separate SQLite file; not in the 03:00 backup
   page_size: 100                # Logs screen; API allows up to 200
   client_errors_per_minute: 10  # frontend errors per tab
