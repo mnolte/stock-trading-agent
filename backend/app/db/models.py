@@ -566,6 +566,12 @@ class LlmCall(Base):
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)  # scrubbed
     request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # PR 29: the call's provider and its request id (the legacy
+    # request_id column keeps the same value for older tooling).
+    provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    provider_request_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
@@ -842,7 +848,9 @@ class LLMCache(Base):
     __tablename__ = "llm_cache"
     __table_args__ = (
         UniqueConstraint(
+            "provider",
             "model",
+            "effort",
             "temperature",
             "prompt_hash",
             "input_hash",
@@ -851,7 +859,13 @@ class LLMCache(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # PR 29: provider and effort join the key — a Claude model's answer
+    # is not repeatable at a temperature, so effort is what varies.
+    provider: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="openai"
+    )
     model: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    effort: Mapped[str | None] = mapped_column(String(16), nullable=True)
     temperature: Mapped[float] = mapped_column(nullable=False)
     prompt_version: Mapped[str] = mapped_column(String(16), nullable=False)
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -163,9 +163,9 @@ class DecisionService:
 
     def reload(self) -> None:
         """Pick up promoted settings: new prompt version and/or model."""
-        from app.decide.client import make_decision_client
+        from app.llm.clients import make_model_clients
 
-        self.client = make_decision_client(self.config, api_key=self.api_key)
+        self.client = make_model_clients(self.config)
         version = str(self.config.get("decision", "prompt", default="decision.v1"))
         self._prompt = cached_prompt(version)
         self._spec = prompt_spec(version)
@@ -196,14 +196,23 @@ class DecisionService:
         response: ModelResponse | None = None
         sent_at = None
         from_cache = False
+        _model = str(self.config.get("decision", "model", default=""))
+        from app.llm.models import model_effort, model_provider
+
+        _provider = model_provider(self.config, _model)
+        _effort = (
+            model_effort(self.config, _model) if _provider == "anthropic" else None
+        )
         if self._cache is not None and self._cache_reads:
             hit = self._cache.lookup(
-                model=str(self.config.get("decision", "model", default="")),
+                model=_model,
                 temperature=float(
                     self.config.get("decision", "temperature", default=0.2)
                 ),
                 prompt_hash=self._prompt.sha256,
                 user=user,
+                provider=_provider,
+                effort=_effort,
             )
             if hit is not None:
                 response = ModelResponse(
@@ -224,8 +233,15 @@ class DecisionService:
                 f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
                 symbol=symbol,
             )
+            model = str(self.config.get("decision", "model", default=""))
             response = await self.client.complete(
-                system=self._prompt.text, user=user, schema=self._spec.json_schema
+                system=self._prompt.text,
+                user=user,
+                schema=self._spec.json_schema,
+                model=model,
+                temperature=float(
+                    self.config.get("decision", "temperature", default=0)
+                ),
             )
             ev(
                 logger,
@@ -248,12 +264,12 @@ class DecisionService:
             ):
                 cycle = session.get(Cycle, cycle_id)
                 self._cache.store(
-                    model=str(
-                        self.config.get("decision", "model", default="")
-                    ),
+                    model=_model,
                     temperature=float(
                         self.config.get("decision", "temperature", default=0.2)
                     ),
+                    provider=_provider,
+                    effort=_effort,
                     prompt_version=self._prompt.version,
                     prompt_hash=self._prompt.sha256,
                     user=user,

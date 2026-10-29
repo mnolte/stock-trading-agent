@@ -730,26 +730,66 @@ def _key_testers(request: Request) -> KeyTesters:
 
 def _keys_issue(request: Request) -> str | None:
     """Short text for the missing/failing-key state; None when all pass or
-    in simulated mode (which needs no keys)."""
-    if get_config().env.mode == "simulated":
+    in simulated mode (which needs no keys).
+
+    Resume needs Alpaca and Finnhub passing, at least one model key,
+    and a passing key for every provider live decisions and the three
+    review tasks use (docs/SPEC.md → Model providers, Keys)."""
+    config = get_config()
+    if config.env.mode == "simulated":
         return None
     store = _secrets(request)
-    missing = store.missing_groups() if store is not None else list(GROUP_ORDER)
-    if not missing:
-        return None
+    if store is None:
+        return "no keys saved"
+    from app.llm.models import (
+        REVIEW_TASKS,
+        model_provider,
+        provider_label,
+        review_model,
+    )
+
     parts: list[str] = []
-    for group in missing:
-        status = (
-            store.group_status(group)["status"] if store is not None else "missing"
-        )
+    for group in ("alpaca", "finnhub"):
+        status = store.group_status(group)["status"]
         label = GROUP_LABELS[group]
         if status == "missing":
             parts.append(f"no {label} saved")
         elif status == "failing":
             parts.append(f"{label} failing the test")
-        else:
+        elif status != "ok":
             parts.append(f"{label} saved but untested")
-    return " · ".join(parts)
+    model_keys = [
+        provider for provider in ("openai", "anthropic")
+        if store.group_status(provider)["status"] == "ok"
+    ]
+    if not model_keys:
+        parts.append("add an OpenAI or Anthropic key")
+    uses = {
+        "live decisions": (
+            str(config.get("decision", "model", default="")),
+            model_provider(
+                config, str(config.get("decision", "model", default=""))
+            ),
+        )
+    }
+    task_labels = {
+        "weekly": "the weekly review",
+        "briefing": "the daily briefing",
+        "verdict": "verdicts",
+    }
+    for task in REVIEW_TASKS:
+        model = review_model(config, task)
+        uses[task_labels[task]] = (model, model_provider(config, model))
+    needed: dict[str, list[str]] = {}
+    for what, (model, provider) in uses.items():
+        if not store.provider_ok(provider):
+            needed.setdefault(provider, []).append(
+                f"{what.capitalize()} use{'s' if what == 'live decisions' else 's'} "
+                f"{model}: add the {provider_label(provider)} key or choose another model"
+            )
+    for provider in sorted(needed):
+        parts.extend(needed[provider])
+    return " · ".join(parts) if parts else None
 
 
 @router.post("/kill-switch")
@@ -785,7 +825,7 @@ async def pause_resume(request: Request) -> dict[str, object]:
     if issue is not None:
         raise HTTPException(
             status_code=422,
-            detail=f"Resume needs all three keys set and passing ({issue}).",
+            detail=f"Resume needs the keys set and passing ({issue}).",
         )
     try:
         await executor.resume_from_pause()
@@ -808,7 +848,7 @@ async def kill_switch_resume(
     if issue is not None:
         raise HTTPException(
             status_code=422,
-            detail=f"Resume needs all three keys set and passing ({issue}).",
+            detail=f"Resume needs the keys set and passing ({issue}).",
         )
     reason = str(body.get("reason") or "")
     try:
@@ -2447,6 +2487,14 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
             base,
             broker=broker,
             held_symbols=_held_symbols(),
+            provider_ready=(
+                None
+                if config.env.mode == "simulated"
+                else (
+                    lambda provider: (_secrets(request).provider_ok(provider)
+                                      if _secrets(request) is not None else False)
+                )
+            ),
         )
     except SettingsError as exc:
         raise HTTPException(status_code=422, detail=exc.errors) from exc
@@ -2626,6 +2674,46 @@ async def save_smtp(
     return {"ok": True, "smtp": service.smtp_status()}
 
 
+def _model_key_hint(request: Request, provider: str) -> str:
+    """The "Used by …" line for a model key row: what currently uses the
+    provider (live decisions, review tasks, active shadows)."""
+    from app.db.models import Strategy
+    from app.llm.models import REVIEW_TASKS, model_provider, review_model
+
+    config = get_config()
+    uses: list[str] = []
+    live = str(config.get("decision", "model", default=""))
+    if model_provider(config, live) == provider:
+        uses.append("live decisions")
+    labels = {"weekly": "the weekly review", "briefing": "the daily briefing",
+              "verdict": "verdicts"}
+    tasks = [
+        labels[t] for t in REVIEW_TASKS
+        if model_provider(config, review_model(config, t)) == provider
+    ]
+    if tasks:
+        uses.append(" and ".join([", ".join(tasks[:-1]), tasks[-1]])
+                  if len(tasks) > 1 else tasks[0])
+    with get_session_maker()() as session:
+        strategies = session.execute(
+            select(Strategy.name, Strategy.model).where(
+                Strategy.status == "active",
+                Strategy.kind == "llm",
+            )
+        ).all()
+    shadows = [
+        name
+        for name, model in strategies
+        if model is not None
+        and model_provider(config, str(model)) == provider
+    ]
+    if shadows:
+        uses.append(
+            "shadow" + ("s " if len(shadows) > 1 else " ") + ", ".join(shadows)
+        )
+    return "Used by " + ", ".join(uses) if uses else "Not in use right now"
+
+
 def _open_items() -> int:
     """Open positions plus open orders — the Alpaca-replace guard count."""
     with get_session_maker()() as session:
@@ -2656,7 +2744,8 @@ _KEY_ROW_INFO: dict[str, dict[str, str]] = {
         "label": "Alpaca paper keys",
         "hint": "Orders, positions, market data and news",
     },
-    "openai": {"label": "OpenAI", "hint": "Trading decisions and reviews"},
+    "openai": {"label": "OpenAI (optional)", "hint": ""},
+    "anthropic": {"label": "Anthropic (optional)", "hint": ""},
     "finnhub": {"label": "Finnhub", "hint": "Earnings calendar (free plan)"},
 }
 
@@ -2684,7 +2773,14 @@ def api_keys(request: Request) -> dict[str, object]:
             "tested_at": None,
             "error": None,
         }
-        rows.append({**_KEY_ROW_INFO[group], **status})
+        rows.append(
+            {
+                **_KEY_ROW_INFO[group],
+                **status,
+                "hint": _KEY_ROW_INFO[group]["hint"]
+                or _model_key_hint(request, group),
+            }
+        )
     return {
         "keys": rows,
         "set_count": sum(1 for row in rows if row["set"]),
@@ -2695,6 +2791,10 @@ def api_keys(request: Request) -> dict[str, object]:
         "replace_hint": (
             "Replacing needs the agent paused with no open positions or "
             f"orders ({open_items} open). Only paper keys are accepted."
+        ),
+        "model_keys_note": (
+            "At least one of OpenAI and Anthropic is required; add both "
+            "to choose from every model."
         ),
         "env_keys": bool(store is not None and store.env_present),
         "mode": get_config().env.mode,
@@ -2732,32 +2832,27 @@ async def _apply_keys(request: Request, changed: set[str]) -> None:
         update_key = getattr(sources.earnings, "update_key", None)
         if callable(update_key):
             update_key(store.get("finnhub") or MISSING_KEY)
-    if "openai" in changed and config.env.mode != "simulated":
-        key = store.get("openai")
-        if key:
-            from app.reviews.client import OpenAIReviewClient
-
-            runner = getattr(request.app.state, "cycle_runner", None)
-            decide = getattr(runner, "decide", None)
-            if decide is not None:
-                decide.api_key = key
-                update_key = getattr(decide.client, "update_key", None)
+    model_changed = changed & {"openai", "anthropic"}
+    if model_changed and config.env.mode != "simulated":
+        clients = getattr(request.app.state, "model_clients", None)
+        for provider in model_changed:
+            key = store.get(provider)
+            if key:
+                update_key = getattr(clients, "update_key", None)
                 if callable(update_key):
-                    update_key(key)
-                else:
-                    decide.reload()
-            service = getattr(request.app.state, "review_service", None)
-            review_client = getattr(service, "client", None)
-            if service is not None:
-                update_key = getattr(review_client, "update_key", None)
-                if callable(update_key):
-                    update_key(key)
-                else:
-                    service.client = OpenAIReviewClient(config, api_key=key)
-            # Shadow clients are rebuilt lazily with the new stored key.
-            shadows = getattr(request.app.state, "shadow_runner", None)
-            if shadows is not None:
-                shadows.reset_clients()
+                    update_key(provider, key)
+            else:
+                drop = getattr(clients, "drop", None)
+                if callable(drop):
+                    drop(provider)
+        runner = getattr(request.app.state, "cycle_runner", None)
+        decide = getattr(runner, "decide", None)
+        if decide is not None:
+            decide.reload()
+        # Shadow clients are rebuilt lazily with the new stored key.
+        shadows = getattr(request.app.state, "shadow_runner", None)
+        if shadows is not None:
+            shadows.reset_clients()
 
 
 @router.post("/keys/{group}")
@@ -2850,7 +2945,11 @@ async def save_api_key(
     if not value:
         raise HTTPException(status_code=422, detail="a key is required")
     result = await (
-        testers.openai(value) if group == "openai" else testers.finnhub(value)
+        testers.openai(value)
+        if group == "openai"
+        else testers.anthropic(value)
+        if group == "anthropic"
+        else testers.finnhub(value)
     )
     if not result.ok:
         clean = scrub(result.error or "", [value])
@@ -2861,6 +2960,91 @@ async def save_api_key(
     await _apply_keys(request, {group})
     _notify(request, "banners", "header", "settings")
     return {"ok": True, "key": store.group_status(group)}
+
+
+@router.post("/keys/{group}/remove")
+def remove_api_key(request: Request, group: str) -> dict[str, object]:
+    """Remove a stored model key (behind "Confirm it is you").
+
+    Refused while live decisions or a review task use that provider;
+    active shadows on it pause and say why (docs/SPEC.md → Model
+    providers, Keys)."""
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
+    store = _secrets(request)
+    if store is None:
+        raise HTTPException(status_code=503, detail="key store unavailable")
+    if group not in ("openai", "anthropic"):
+        raise HTTPException(status_code=404, detail="unknown key")
+    if store.get(group) is None:
+        raise HTTPException(
+            status_code=422, detail=f"no {GROUP_LABELS[group]} saved"
+        )
+    from app.llm.models import (
+        REVIEW_TASKS,
+        model_provider,
+        provider_label,
+        review_model,
+    )
+
+    config = get_config()
+    label = provider_label(group)
+    live = str(config.get("decision", "model", default=""))
+    if model_provider(config, live) == group:
+        raise HTTPException(
+            status_code=422,
+            detail=f"live decisions use {live}: pick another model first",
+        )
+    task_names = {"weekly": "the weekly review",
+                  "briefing": "the daily briefing", "verdict": "verdicts"}
+    for task in REVIEW_TASKS:
+        model = review_model(config, task)
+        if model_provider(config, model) == group:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{task_names[task]} use{'s' if task != 'verdict' else ''} "
+                f"{model}: pick another model first",
+            )
+    from app.db.models import Strategy
+
+    paused: list[str] = []
+    with get_session_maker()() as session:
+        rows = session.execute(
+            select(Strategy).where(
+                Strategy.status == "active", Strategy.kind == "llm"
+            )
+        ).scalars().all()
+        for strategy in rows:
+            if model_provider(config, str(strategy.model)) == group:
+                strategy.status = "paused"
+                paused.append(strategy.name)
+        if paused:
+            session.commit()
+    store.remove(group)
+    store.record_event(
+        group,
+        "removed",
+        True,
+        (
+            f"{label} key removed"
+            + (
+                f"; paused shadow{'s' if len(paused) > 1 else ''} "
+                + ", ".join(paused)
+                if paused
+                else ""
+            )
+        ),
+    )
+    clients = getattr(request.app.state, "model_clients", None)
+    drop = getattr(clients, "drop", None)
+    if callable(drop):
+        drop(group)
+    shadows = getattr(request.app.state, "shadow_runner", None)
+    if shadows is not None:
+        shadows.reset_clients()
+    _notify(request, "banners", "header", "settings", "strategies")
+    return {"ok": True, "paused_shadows": paused}
 
 
 @router.post("/keys/{group}/test")

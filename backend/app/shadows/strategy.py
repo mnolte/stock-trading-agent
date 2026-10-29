@@ -233,7 +233,10 @@ def slots_used(session: Session) -> int:
 
 
 def validate_new_strategy(
-    body: dict[str, Any], config: AppConfig, session: Session
+    body: dict[str, Any],
+    config: AppConfig,
+    session: Session,
+    provider_ready: Any = None,
 ) -> dict[str, Any]:
     """Check a New shadow request; returns the cleaned column values."""
     errors: list[str] = []
@@ -262,6 +265,14 @@ def validate_new_strategy(
         model = str(body.get("model") or config.get("decision", "model"))
         if model_price(prices_for(config), model) is None:
             errors.append(f"Model {model!r} has no price in models")
+        elif provider_ready is not None:
+            from app.llm.models import model_provider, provider_label
+
+            provider = model_provider(config, model)
+            if not provider_ready(provider):
+                errors.append(
+                    f"Model {model!r} needs the {provider_label(provider)} key"
+                )
         try:
             temperature = _num(
                 body.get("temperature", config.get("decision", "temperature", default=0))

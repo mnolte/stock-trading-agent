@@ -257,6 +257,30 @@ async def create_run(request: Request, body: RunRequest) -> dict[str, Any]:
     est, specs = await _estimate(request, body)
     manager = _manager(request)
     name = body.name or f"{body.start.isoformat()} – {body.end.isoformat()}"
+    if get_config().env.mode != "simulated":
+        from app.llm.models import model_provider, provider_label
+
+        store = getattr(request.app.state, "secrets_store", None)
+        for spec in specs:
+            if spec.kind != "llm" or not spec.model:
+                continue
+            provider = model_provider(get_config(), spec.model)
+            if store is None or not store.provider_ok(provider):
+                row = manager.refuse(
+                    name=name,
+                    start=body.start,
+                    end=body.end,
+                    universe_mode=body.universe_mode,
+                    strategies=_specs_json(specs),
+                    starting_equity=body.starting_equity,
+                    slippage_pct=body.slippage_pct,
+                    reason=(
+                        f"{spec.name} uses {spec.model} — "
+                        f"the {provider_label(provider)} key is missing or failing"
+                    ),
+                )
+                return {"id": row.id, "status": "refused",
+                        "reason": row.refuse_reason}
     if est.disabled_reason is not None:
         row = manager.refuse(
             name=name,

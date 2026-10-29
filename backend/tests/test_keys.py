@@ -243,13 +243,13 @@ def test_resume_disabled_until_all_keys_pass() -> None:
     client, executor = _paper_client()
     refused = client.post("/api/pause/resume")
     assert refused.status_code == 422
-    assert "all three keys" in refused.text
+    assert "add an OpenAI or Anthropic key" in refused.text
     assert not executor.resumed
 
     # A kill-switch resume is gated the same way.
     ks = client.post("/api/kill-switch/resume", json={"reason": "back"})
     assert ks.status_code == 422
-    assert "all three keys" in ks.text
+    assert "add an OpenAI or Anthropic key" in ks.text
 
     # The banner links to Settings and the paused banner carries the
     # blocked flag; the header exposes it for the Resume button.

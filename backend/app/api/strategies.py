@@ -175,8 +175,22 @@ def create_strategy(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     """New shadow: validated, then active from the next live cycle."""
     config = get_config()
     with get_session_maker()() as session:
+        store = getattr(request.app.state, "secrets_store", None)
         try:
-            cleaned = validate_new_strategy(body, config, session)
+            cleaned = validate_new_strategy(
+                body,
+                config,
+                session,
+                provider_ready=(
+                    None
+                    if config.env.mode == "simulated"
+                    else (
+                        lambda provider: store.provider_ok(provider)
+                        if store is not None
+                        else False
+                    )
+                ),
+            )
         except StrategyError as exc:
             raise HTTPException(status_code=422, detail=exc.errors) from exc
         strategy = Strategy(

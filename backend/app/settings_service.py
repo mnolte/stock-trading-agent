@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data.cache import _naive_utc
-from app.decide.client import model_price
 from app.decide.prompt import PromptError, load_prompt
 from app.market.clock import NY_TZ, SessionClock
 from app.notifications.events import EVENT_DEFS, EVENTS
@@ -76,6 +75,7 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "reviews": {
         "briefing_enabled": ("bool", None, None),
         "monthly_cost_cap_usd": ("number", 0, 100),
+        "models": ("review_models", None, None),
     },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
@@ -164,6 +164,9 @@ LABELS: dict[tuple[str, str], str] = {
     ("risk", "max_orders_per_cycle"): "Max orders per cycle",
     ("performance", "slippage_pct_per_side"): "Assumed slippage",
     ("reviews", "briefing_enabled"): "Daily briefing",
+    ("reviews", "models.weekly"): "Weekly review model",
+    ("reviews", "models.briefing"): "Daily briefing model",
+    ("reviews", "models.verdict"): "Verdict model",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("notifications", "repeat_limit_minutes"): "Repeat limit",
@@ -281,12 +284,28 @@ def _clean_notify_events(value: object) -> dict[str, list[str]]:
     return out
 
 
+class _MergedConfig:
+    """``config.get`` over a plain merged settings tree."""
+
+    def __init__(self, tree: dict[str, Any]) -> None:
+        self._tree = tree
+
+    def get(self, *keys: str, default: Any = None) -> Any:
+        node: Any = self._tree
+        for key in keys:
+            if not isinstance(node, dict) or key not in node:
+                return default
+            node = node[key]
+        return node
+
+
 async def validate_settings(
     submitted: dict[str, Any],
     active: dict[str, Any],
     *,
     broker: Broker,
     held_symbols: set[str],
+    provider_ready: Any = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate a GUI save; returns (validated subset, human-readable changes).
 
@@ -345,7 +364,30 @@ async def validate_settings(
                     out[key] = text
                 elif kind == "cycles":
                     out[key] = _clean_cycle_list(value)
-                elif kind == "quiet_hours":
+                elif kind == "review_models":
+                    if not isinstance(value, dict):
+                        raise SettingsError(
+                            ["Review models: expected weekly/briefing/verdict"]
+                        )
+                    from app.llm.models import REVIEW_TASKS, known_model
+
+                    task_labels = {
+                        "weekly": "Weekly review model",
+                        "briefing": "Daily briefing model",
+                        "verdict": "Verdict model",
+                    }
+                    out[key] = {}
+                    for task, model_name in value.items():
+                        if task not in REVIEW_TASKS:
+                            raise SettingsError(
+                                [f"reviews.models.{task}: unknown review task"]
+                            )
+                        text = str(model_name).strip()
+                        if not text:
+                            raise SettingsError(
+                                [f"{task_labels[task]}: must not be empty"]
+                            )
+                        out[key][task] = text
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":
                     out[key] = _clean_notify_events(value)
@@ -404,10 +446,19 @@ async def validate_settings(
     if float(decision.get("stop_atr_min", 0)) >= float(decision.get("stop_atr_max", 0)):
         errors.append("Stop distance from must be below stop distance to")
     # A model without a price can't be selected (docs/SPEC.md, Cost).
+    from app.llm.models import REVIEW_TASKS, known_model
+
     model = str(decision.get("model", ""))
-    price_table = merged.get("models") or merged.get("model_prices")
-    if model and model_price(price_table, model) is None:
-        errors.append(f"Model {model!r} has no price in models")
+    if model and not known_model(_MergedConfig(merged), model):
+        errors.append(f"Model {model!r} is not in the models list")
+    reviews = merged.get("reviews", {})
+    for task in REVIEW_TASKS:
+        rmodel = str((reviews.get("models") or {}).get(task, ""))
+        if rmodel and not known_model(_MergedConfig(merged), rmodel):
+            errors.append(
+                f"{LABELS.get(('reviews', f'models.{task}'))}: "
+                f"{rmodel!r} is not in the models list"
+            )
     prompt = str(decision.get("prompt", ""))
     if prompt:
         try:
@@ -416,6 +467,30 @@ async def validate_settings(
             errors.append(f"Prompt version {prompt!r} does not exist")
     if errors:
         raise SettingsError(errors)
+    # A model whose provider has no passing key can't be picked
+    # (docs/SPEC.md → Model providers, Keys). Simulated mode needs none.
+    if provider_ready is not None:
+        from app.llm.models import model_provider, provider_label
+
+        picked = [
+            ("Model", str(decision.get("model", ""))),
+            *(
+                (
+                    LABELS.get(("reviews", f"models.{task}"), task),
+                    str((reviews.get("models") or {}).get(task, "")),
+                )
+                for task in REVIEW_TASKS
+            ),
+        ]
+        bad = [
+            f"{label} {model!r} needs the "
+            f"{provider_label(model_provider(_MergedConfig(merged), model))} key"
+            for label, model in picked
+            if model
+            and not provider_ready(model_provider(_MergedConfig(merged), model))
+        ]
+        if bad:
+            raise SettingsError(bad)
     return cleaned, changes
 
 

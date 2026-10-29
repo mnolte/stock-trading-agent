@@ -68,8 +68,7 @@ def classify(facts: CallFacts) -> tuple[str, list[str]]:
     errors = [
         reason
         for reason in ERROR_REASONS
-        if (reason == "timeout" and facts.error_type == "timeout")
-        or (reason == "api_error" and facts.error_type == "api_error")
+        if facts.error_type == reason
         or (reason == "invalid_output" and facts.output_invalid)
         or (reason == "refusal" and facts.refused)
     ]
