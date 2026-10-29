@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -38,7 +39,7 @@ from app.db.models import (
     Verdict,
 )
 from app.decide.client import priced_models
-from app.decide.prompt import PROMPTS_DIR, load_prompt
+from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
@@ -574,7 +575,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
-    except OSError:
+    except (OSError, PromptError):
         prompt_text = None
     next_due = None
     verdict_due = None
@@ -786,7 +787,10 @@ async def pause_resume(request: Request) -> dict[str, object]:
             status_code=422,
             detail=f"Resume needs all three keys set and passing ({issue}).",
         )
-    await executor.resume_from_pause()
+    try:
+        await executor.resume_from_pause()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"paused": False}
 
 
@@ -2226,7 +2230,7 @@ def _prompt_options() -> list[dict[str, str]]:
         version = path.stem
         try:
             prompt = load_prompt(version)
-        except OSError:
+        except (OSError, PromptError):
             continue
         out.append({"version": version, "hash": prompt.short_hash})
     return out
@@ -2509,7 +2513,7 @@ def notifications(
     service = _notifications(request)
     if service is None:
         return {"items": [], "latest_id": after_id}
-    return service.recent(after_id=after_id, limit=limit)
+    return service.recent(after_id=after_id, limit=min(max(limit, 1), 200))
 
 
 @router.post("/notifications/test")
@@ -2545,8 +2549,8 @@ async def save_smtp(
         port = int(str(body.get("port") or 587))
     except ValueError:
         port = 0
-    if not 1 <= port <= 65535:
-        errors.append("SMTP port must be 1–65535")
+    if port not in (465, 587, 2525):
+        errors.append("SMTP port must be 465, 587 or 2525")
     if errors:
         raise HTTPException(status_code=422, detail=errors)
     # Changing where the stored password is sent (host, port, username)
@@ -2554,13 +2558,31 @@ async def save_smtp(
     from app.auth.api import require_confirmed
 
     current = service.smtp_status()
-    if (
+    destination_changed = bool(current.get("configured")) and (
         current.get("host") != host
         or current.get("port") != port
         or current.get("username") != username
-        or current.get("to_addr") != to_addr
+    )
+    if (
+        destination_changed or current.get("to_addr") != to_addr
     ) and current.get("configured"):
         require_confirmed(request)
+    # The stored password never travels to a new server: a changed host,
+    # port or username needs the password again in the same request —
+    # before any connection is made (hard rule 20).
+    if destination_changed and not password:
+        from app.errors import ApiError, ErrorCode
+
+        raise ApiError(
+            422,
+            ErrorCode.PASSWORD_REQUIRED,
+            fields=[
+                {
+                    "name": "password",
+                    "message": "the server changed — enter the password again",
+                }
+            ],
+        )
     result = await service.save_smtp(
         host=host,
         port=port,
@@ -2788,6 +2810,7 @@ async def save_api_key(
                     "start a new run"
                 ),
                 automatic=True,
+                new_run_required=True,
             )
         _notify(request, "banners", "header", "settings")
         return {
@@ -4381,38 +4404,68 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
 # ---------------------------------------------------------------------------
 # Frontend error reporting (docs/SPEC.md, Error handling)
 
+# Recent senders for the per-address rate limit — bounded at
+# ``security.client_error_senders``, oldest dropped (insertion-ordered).
 _client_error_times: dict[str, list[float]] = {}
+
+_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_LINE_BREAKS = re.compile(r"[\r\n]+")
+
+
+def _one_line(value: object, cap: int) -> str:
+    """Single-line fields lose control characters and CR/LF — a reported
+    message can never fake extra log lines (docs/SPEC.md → audit 6)."""
+    return _LINE_BREAKS.sub(" ", _CTRL_CHARS.sub("", str(value or "")))[:cap]
+
+
+def _multi_line(value: object, cap: int) -> str:
+    """The stack keeps its line breaks; other control characters go."""
+    return _CTRL_CHARS.sub("", str(value or ""))[:cap]
 
 
 @router.post("/logs/client")
 def log_client_error(request: Request, body: dict[str, object]) -> dict[str, object]:
     """Frontend errors: window.onerror, unhandledrejection and the React
     error boundary post here, at most ``logging.client_errors_per_minute``
-    per tab. Logged at ERROR with logger ``frontend``."""
+    per client address. Message ≤ 2 KB, stack ≤ 8 KB; logged at ERROR
+    with logger ``frontend`` and ``source=frontend``."""
     import time
 
-    limit = int(get_config().get("logging", "client_errors_per_minute", default=10))
-    tab = str(body.get("tab_id") or request.client.host if request.client else "?")
+    from app.auth.guard import client_ip
+
+    config = get_config()
+    limit = int(config.get("logging", "client_errors_per_minute", default=10))
+    sender = client_ip(request, config)
     now = time.monotonic()
-    bucket = [t for t in _client_error_times.get(tab, []) if now - t < 60]
-    _client_error_times[tab] = bucket
+    bucket = [t for t in _client_error_times.get(sender, []) if now - t < 60]
+    max_senders = int(
+        config.get("security", "client_error_senders", default=1000)
+    )
     if len(bucket) >= limit:
+        _client_error_times[sender] = bucket
         return {"logged": False, "rate_limited": True}
     bucket.append(now)
+    _client_error_times[sender] = bucket
+    while len(_client_error_times) > max_senders:
+        _client_error_times.pop(next(iter(_client_error_times)))
     # The id the boundary shows — the client's own when it sent one, else
     # minted here; it is on the log line and echoed back (spec →
     # Something went wrong).
-    error_id = str(body.get("error_id") or "") or f"e-{secrets.token_hex(3)}"
+    error_id = _one_line(body.get("error_id"), 32) or f"e-{secrets.token_hex(3)}"
     logging.getLogger("frontend").error(
         "%s (%s:%s:%s)\n%s",
-        body.get("message", "frontend error"),
-        body.get("source", ""),
-        body.get("lineno", ""),
-        body.get("colno", ""),
-        body.get("stack", ""),
+        _one_line(body.get("message") or "frontend error", 2048),
+        _one_line(body.get("source"), 512),
+        _one_line(body.get("lineno"), 12),
+        _one_line(body.get("colno"), 12),
+        _multi_line(body.get("stack"), 8192),
         extra={
             "event": "frontend.error",
-            "context": {"url": str(body.get("url", "")), "tab_id": tab},
+            "context": {
+                "url": _one_line(body.get("url"), 1024),
+                "tab_id": _one_line(body.get("tab_id"), 64),
+                "source": "frontend",
+            },
             "error_id": error_id,
         },
     )
@@ -4451,6 +4504,26 @@ _COLS = ("id,ts,level,logger,event,message,context,cycle,symbol,process,pid,"
          "error_id,exception_type,exception_message,traceback,fingerprint")
 
 
+def _int_param(request: Request, name: str, default: int, lo: int, hi: int) -> int:
+    """The shared numeric-parameter rule (docs/SPEC.md → Bounded inputs):
+    a number is clamped to [lo, hi]; anything else is 422, never 500."""
+    raw = request.query_params.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail=f"{name} must be a number"
+        ) from None
+    return min(max(value, lo), hi)
+
+
+def _fts_phrase(search: str) -> str:
+    """The log search goes to FTS5 as a quoted phrase — never syntax."""
+    return '"' + search.replace('"', '""') + '"'
+
+
 def _log_where(
     params: Mapping[str, str],
 ) -> tuple[str, list[object]]:
@@ -4475,27 +4548,38 @@ def _log_where(
         where.append(
             "id IN (SELECT rowid FROM log_lines_fts WHERE message MATCH ?)"
         )
-        args.append(str(params["search"]).replace('"', '""'))
+        args.append(_fts_phrase(str(params["search"])))
     if params.get("cursor"):
+        try:
+            args.append(int(str(params["cursor"])))
+        except ValueError:
+            raise HTTPException(
+                status_code=422, detail="cursor must be a number"
+            ) from None
         where.append("id < ?")
-        args.append(int(str(params["cursor"])))
     return ("WHERE " + " AND ".join(where)) if where else "", args
 
 
 @router.get("/logs")
 def api_logs(request: Request) -> dict[str, object]:
     """Newest-first keyset paging (cursor = last id), limit ≤ 200."""
+    where, args = _log_where(request.query_params)
+    limit = _int_param(request, "limit", 100, 1, 200)
     conn = _log_db(request)
     if conn is None:
         return {"lines": [], "next_cursor": None, "index_available": False}
     with conn:
-        where, args = _log_where(request.query_params)
-        limit = min(int(str(request.query_params.get("limit") or 100)), 200)
-        rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines {where} "
-            f"ORDER BY id DESC LIMIT {limit + 1}",
-            args,
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                f"SELECT {_COLS} FROM log_lines {where} "  # noqa: S608 - whitelisted column list, params bound
+                f"ORDER BY id DESC LIMIT {limit + 1}",
+                args,
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # An FTS expression the index can't parse is a 422, never 500.
+            raise HTTPException(
+                status_code=422, detail="search is not a valid query"
+            ) from None
     lines = [_log_row(r) for r in rows[:limit]]
     return {
         "lines": lines,
@@ -4555,13 +4639,13 @@ def api_logs_summary(request: Request) -> dict[str, object]:
 @router.get("/logs/{line_id}/around")
 def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     """The line plus `window` lines before/after by index order."""
+    window = _int_param(request, "window", 20, 1, 100)
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    window = min(int(str(request.query_params.get("window") or 20)), 100)
     with conn:
         rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "
+            f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "  # noqa: S608 - whitelisted column list, params bound
             "ORDER BY id",
             (line_id - window, line_id + window),
         ).fetchall()
@@ -4570,20 +4654,42 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
 
 @router.get("/logs/export.jsonl")
 def api_logs_export(request: Request) -> Response:
-    """Download the filtered lines as JSONL (same filters as /api/logs)."""
+    """Download the filtered lines as JSONL (same filters as /api/logs).
+
+    Streamed and capped at ``security.export_max_rows``; the closing
+    line says when the cap was reached (docs/SPEC.md → Bounded inputs).
+    """
     import json
+
+    from fastapi.responses import StreamingResponse
 
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    with conn:
-        where, args = _log_where(request.query_params)
-        rows = conn.execute(
-            f"SELECT {_COLS} FROM log_lines {where} ORDER BY id", args
-        ).fetchall()
-    body = "\n".join(json.dumps(_log_row(r), default=str) for r in rows)
-    return Response(
-        content=body,
+    cap = int(
+        get_config().get("security", "export_max_rows", default=100000)
+    )
+    where, args = _log_where(request.query_params)
+
+    def gen() -> Any:
+        try:
+            rows = conn.execute(
+                f"SELECT {_COLS} FROM log_lines {where} ORDER BY id LIMIT {cap + 1}",  # noqa: S608 - whitelisted column list, params bound
+                args,
+            )
+            count = 0
+            for row in rows:
+                if count >= cap:
+                    break
+                count += 1
+                yield json.dumps(_log_row(row), default=str) + "\n"
+            if count >= cap and rows.fetchone() is not None:
+                yield json.dumps({"note": f"export capped at {cap} rows"}) + "\n"
+        finally:
+            conn.close()
+
+    return StreamingResponse(
+        gen(),
         media_type="application/x-ndjson",
         headers={"Content-Disposition": 'attachment; filename="logs.jsonl"'},
     )

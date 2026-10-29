@@ -45,7 +45,7 @@ from app.db.models import (
     Strategy,
     Verdict,
 )
-from app.decide.prompt import cached_prompt
+from app.decide.prompt import PromptError, cached_prompt
 
 router = APIRouter()
 
@@ -194,7 +194,13 @@ def _decode_cursor(raw: str) -> tuple[datetime, int]:
 
 @router.get("/llm-calls/export.csv")
 def export_calls(request: Request) -> StreamingResponse:
-    """Metadata of the filtered calls — never prompts or responses."""
+    """Metadata of the filtered calls — never prompts or responses.
+
+    Capped at ``security.export_max_rows`` with a closing row saying so
+    (docs/SPEC.md → Bounded inputs)."""
+    from app.config import get_config
+
+    cap = int(get_config().get("security", "export_max_rows", default=100000))
     conds = _conditions(_query_params(request))
     with get_session_maker()() as session:
         names = _strategy_names(session)
@@ -202,7 +208,10 @@ def export_calls(request: Request) -> StreamingResponse:
             select(LlmCall)
             .where(*conds)
             .order_by(desc(LlmCall.sent_at), desc(LlmCall.id))
+            .limit(cap + 1)
         ).scalars().all()
+    capped = len(rows) > cap
+    rows = rows[:cap]
 
     def gen() -> Iterator[str]:
         buf = io.StringIO()
@@ -246,6 +255,9 @@ def export_calls(request: Request) -> StreamingResponse:
             yield buf.getvalue()
             buf.seek(0)
             buf.truncate()
+        if capped:
+            writer.writerow([f"# export capped at {cap} rows"])
+            yield buf.getvalue()
 
     return StreamingResponse(
         gen(), media_type="text/csv",
@@ -451,7 +463,7 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
         if call.prompt_version:
             try:
                 prompt = cached_prompt(call.prompt_version)
-            except (FileNotFoundError, KeyError, OSError):
+            except (FileNotFoundError, KeyError, OSError, PromptError):
                 prompt = None
             if prompt is not None and (
                 call.prompt_hash is None or prompt.sha256 == call.prompt_hash

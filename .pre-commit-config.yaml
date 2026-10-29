@@ -1,0 +1,7 @@
+# gitleaks secret scan before every commit (docs/SPEC.md → Security
+# hardening); the same scan runs in CI on every push.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks

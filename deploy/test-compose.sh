@@ -155,13 +155,29 @@ check "GUI loads" "Stock Trading Agent" \
 code="$(curl -sk -o /dev/null -w '%{http_code}' --resolve "evil.example:8443:127.0.0.1" "https://evil.example:8443/" || true)"
 [[ "$code" != "200" ]] && ok "foreign Host not served ($code)" || fail "evil.example got a 200"
 
-# --- headers: exactly once each --------------------------------------------
+# --- headers: exactly once each, carrying the app's value ------------------
+# PR 28: the app sends its own CSP/nosniff/XFO/Referrer-Policy/COOP and
+# Caddy's ?-defaults must defer to them — each appears exactly once with
+# the app's value. HSTS and Permissions-Policy are Caddy's own.
 hdrs="$(curl -fsSkD - -o /dev/null "$BASE/" | tr -d '\r')"
 for h in strict-transport-security permissions-policy content-security-policy \
          x-frame-options x-content-type-options referrer-policy cross-origin-opener-policy; do
     n="$(grep -ci "^$h:" <<<"$hdrs")"
     [[ "$n" == "1" ]] && ok "header $h once" || fail "header $h seen $n times"
 done
+check "app CSP wins on the GUI" "frame-ancestors 'none'" \
+    grep -i '^content-security-policy:' <<<"$hdrs"
+check "app XFO value" "DENY" \
+    grep -i '^x-frame-options: deny' <<<"$hdrs"
+check "app nosniff value" "nosniff" \
+    grep -i '^x-content-type-options: nosniff' <<<"$hdrs"
+check "app Referrer-Policy value" "same-origin" \
+    grep -i '^referrer-policy: same-origin' <<<"$hdrs"
+check "app COOP value" "same-origin" \
+    grep -i '^cross-origin-opener-policy: same-origin' <<<"$hdrs"
+api_hdrs="$(curl -fsSkD - -o /dev/null "$BASE/api/auth/status" | tr -d '\r')"
+check "no-store on /api" "no-store" \
+    grep -i '^cache-control:.*no-store' <<<"$api_hdrs"
 
 # --- a CSP sent by the app wins (Caddy's ?-default must not duplicate it) ---
 log "fake upstream behind the same header block"

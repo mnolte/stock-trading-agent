@@ -99,6 +99,19 @@ def session_maker_for(path: Path, config: AppConfig) -> sessionmaker[Session]:
     return sessionmaker(bind=engine_for(path, config))
 
 
+def read_session_maker_for(path: Path, config: AppConfig) -> sessionmaker[Session]:
+    """A read-only session factory for run databases opened only for
+    reading (docs/SPEC.md → Files on disk) — mode=ro, no WAL pragma."""
+    timeout = float(
+        config.get("storage", "sqlite_busy_timeout_seconds", default=30)
+    )
+    engine = create_engine(
+        f"sqlite:///file:{path}?mode=ro&uri=true",
+        connect_args={"check_same_thread": False, "timeout": timeout},
+    )
+    return sessionmaker(bind=engine)
+
+
 def make_bar_store(path: Path, config: AppConfig) -> BarCache:
     """The shared bar store: the live ``bars_5m``/``bars_1d`` schema on its
     own file, so reads reuse ``BarCache`` unchanged."""

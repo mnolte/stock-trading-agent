@@ -1,0 +1,8 @@
+# Dependency-audit exceptions (docs/SPEC.md → Security hardening).
+# A high/critical advisory fails CI unless listed here with a reason
+# and an expiry date. Keep empty unless a finding truly cannot be fixed.
+allowlist: []
+# - id: GHSA-xxxx-yyyy-zzzz   # advisory id from pip-audit / pnpm audit
+#   package: some-package
+#   reason: why it cannot be fixed now
+#   expires: 2026-12-31

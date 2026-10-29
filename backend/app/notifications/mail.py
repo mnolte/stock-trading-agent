@@ -19,7 +19,7 @@ from app.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
-CONNECT_TIMEOUT = 15  # seconds; also caps the greeting/STARTTLS/login
+CONNECT_TIMEOUT = 10  # seconds; also caps the greeting/STARTTLS/login
 
 
 @dataclass(frozen=True)

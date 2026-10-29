@@ -132,10 +132,35 @@ class RunLock:
                 f"another stock agent is already running (pid {check.pid})"
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._write(heartbeat_seconds)
+        try:
+            self._create(heartbeat_seconds)
+        except FileExistsError:
+            # Lost the create race: the other process owns the file now.
+            # It may be mid-write (empty/unreadable for a few ms), so
+            # re-check briefly before falling back to the stale path —
+            # a live holder always refuses us, keeping exactly one winner.
+            for _ in range(50):
+                check = self.check()
+                if check.status == "live":
+                    raise SystemExit(
+                        f"another stock agent is already running (pid {check.pid})"
+                    ) from None
+                if check.status != "stale":
+                    break
+                time.sleep(0.01)
+            self._write(heartbeat_seconds)
+
+    def _create(self, heartbeat_seconds: int) -> None:
+        """O_CREAT|O_EXCL: two simultaneous starts can't both win."""
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(self._payload(heartbeat_seconds))
 
     def _write(self, heartbeat_seconds: int) -> None:
-        self.path.write_text(
+        self.path.write_text(self._payload(heartbeat_seconds))
+
+    def _payload(self, heartbeat_seconds: int) -> str:
+        return (
             json.dumps(
                 {
                     "pid": os.getpid(),

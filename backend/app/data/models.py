@@ -108,7 +108,7 @@ class Quote:
             value is None or not value.is_finite() or value <= 0 for value in required
         ):
             return None
-        assert bar_close is not None
+        assert bar_close is not None  # noqa: S101 - internal invariant
         values = [self.last, bar_close]
         if self.quote_plausible(max_deviation_pct):
             values.append(self.ask if entry else self.bid)

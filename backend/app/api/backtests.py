@@ -24,12 +24,12 @@ from app.backtests.estimate import (
     estimate,
 )
 from app.backtests.manager import BacktestManager, store_usage
-from app.backtests.store import run_dir_for, session_maker_for
+from app.backtests.store import run_dir_for
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
-from app.decide.prompt import load_prompt
+from app.decide.prompt import PromptError, load_prompt
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock, make_clock
 
@@ -100,7 +100,13 @@ def _resolve_strategies(
                 )
             )
         elif ref.startswith("strategy:"):
-            strategy = session.get(Strategy, int(ref.split(":", 1)[1]))
+            try:
+                strategy_id = int(ref.split(":", 1)[1])
+            except ValueError:
+                raise HTTPException(
+                    422, f"strategy ref {ref!r} is not strategy:<id>"
+                ) from None
+            strategy = session.get(Strategy, strategy_id)
             if strategy is None or strategy.status == "archived":
                 raise HTTPException(404, f"strategy {ref} not found")
             specs.append(
@@ -395,7 +401,7 @@ _MIGRATE_LOCK = threading.Lock()
 
 def _alembic_version(path: Path) -> str | None:
     row = (
-        sqlite3.connect(path)
+        sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         .execute("SELECT version_num FROM alembic_version")
         .fetchone()
     )
@@ -430,6 +436,12 @@ def _migrate_strategy_db_if_behind(path: Path) -> None:
 
 
 def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Session]:
+    # The slug names a database file — whitelist it like every other
+    # request-derived folder name (hard rule 19) before it hits a path.
+    from app.decide.prompt import is_safe_name
+
+    if not is_safe_name(slug):
+        raise HTTPException(422, "invalid strategy slug")
     with get_session_maker()() as session:
         row = session.get(Backtest, run_id)
         if row is None:
@@ -440,7 +452,9 @@ def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Sessi
     if not path.exists():
         raise HTTPException(404, "strategy database not found")
     _migrate_strategy_db_if_behind(path)
-    return session_maker_for(path, get_config())
+    from app.backtests.store import read_session_maker_for
+
+    return read_session_maker_for(path, get_config())
 
 
 @router.get("/backtests/{run_id}/strategies/{slug}/trades")
@@ -565,7 +579,7 @@ def run_decision_detail(
     stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
     try:
         prompt_text = load_prompt(decision.prompt_version).text
-    except OSError:
+    except (OSError, PromptError):
         prompt_text = None
     return {
         "id": decision.id,
@@ -667,15 +681,22 @@ def export_csv(
     request: Request, run_id: int, slug: str, kind: str = "trades"
 ) -> StreamingResponse:
     sf = _strategy_sf(request, run_id, slug)
+    cap = int(
+        get_config().get("security", "export_max_rows", default=100000)
+    )
     buf = io.StringIO()
     writer = csv.writer(buf)
+    capped = False
     with sf() as session:
         if kind == "decisions":
             rows = session.execute(
                 select(Decision, Cycle.scheduled_time)
                 .join(Cycle, Decision.cycle_id == Cycle.id)
                 .order_by(Cycle.scheduled_time, Decision.id)
+                .limit(cap + 1)
             ).all()
+            capped = len(rows) > cap
+            rows = rows[:cap]
             writer.writerow(
                 ["cycle_time", "symbol", "context", "final_action", "no_call_reason",
                  "model", "tokens", "cost", "cached"]
@@ -691,14 +712,21 @@ def export_csv(
                 ["symbol", "qty", "entry", "opened_at", "closed_at",
                  "exit_reason", "pnl_raw", "pnl_adjusted"]
             )
-            for p in session.execute(
-                select(Position).order_by(Position.opened_at)
-            ).scalars():
+            for i, p in enumerate(
+                session.execute(
+                    select(Position).order_by(Position.opened_at).limit(cap + 1)
+                ).scalars()
+            ):
+                if i >= cap:
+                    capped = True
+                    break
                 writer.writerow(
                     [p.symbol, p.qty, p.avg_entry_price, _iso(p.opened_at),
                      _iso(p.closed_at), p.exit_reason, p.realized_pnl_raw,
                      p.realized_pnl_adjusted]
                 )
+    if capped:
+        writer.writerow([f"# export capped at {cap} rows"])
     buf.seek(0)
     return StreamingResponse(
         iter([buf.getvalue()]),

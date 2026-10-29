@@ -84,14 +84,20 @@ def test_price_change_never_rewrites_stored_cost() -> None:
     affects later calls."""
     config = AppConfig()
     stored = token_cost(_response(), config)
-    config._active["model_prices"]["gpt-4o-mini"] = {"input": 1.0, "output": 1.0}
+    config._active["models"]["gpt-4o-mini"]["input"] = 1.0
+    config._active["models"]["gpt-4o-mini"]["output"] = 1.0
     assert stored == Decimal("0.0006")
     assert token_cost(_response(), config) == Decimal("0.0025")
 
 
 def test_priced_models_and_require_price() -> None:
     config = AppConfig()
-    assert priced_models(config) == ["gpt-4.1-mini", "gpt-4o-mini"]
+    assert priced_models(config) == [
+        "claude-haiku-5-5",
+        "claude-sonnet-5-5",
+        "gpt-4.1-mini",
+        "gpt-4o-mini",
+    ]
     require_price(config, "gpt-4o-mini", "Live")
     with pytest.raises(UnpricedModelError, match="gpt-9"):
         require_price(config, "gpt-9", "Live")

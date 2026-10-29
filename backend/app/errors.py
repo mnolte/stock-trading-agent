@@ -61,7 +61,7 @@ class ErrorCode(StrEnum):
     UNSUPPORTED_MEDIA_TYPE = "unsupported_media_type"
     # 422
     INVALID = "invalid"
-    PASSWORD_REQUIRED = "password_required"  # PR 28.
+    PASSWORD_REQUIRED = "password_required"  # PR 28.  # noqa: S105 - error code name, not a password
     # 429
     RATE_LIMITED = "rate_limited"
     LOCKED_OUT = "locked_out"
@@ -113,7 +113,7 @@ MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.SHUTTING_DOWN: "The app is shutting down.",
 }
 
-assert set(MESSAGES) == set(ErrorCode), "every code needs one fixed sentence"
+assert set(MESSAGES) == set(ErrorCode), "every code needs one fixed sentence"  # noqa: S101 - registry completeness invariant
 
 # A plain HTTPException's code when the detail doesn't name one.
 STATUS_DEFAULT: dict[int, ErrorCode] = {

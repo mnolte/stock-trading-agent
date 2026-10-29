@@ -9,11 +9,42 @@ has been used: a change means a new file (``decision.v2.md``).
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+
+# Whitelisted shapes (hard rule 19): a prompt version is always
+# ``<name>.v<n>``; run/replay/backtest folder names get the looser
+# safe-name check below. Anything else never becomes a path.
+PROMPT_NAME_RE = re.compile(r"^[a-z0-9_]+\.v[0-9]+$")
+FOLDER_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+class PromptError(ValueError):
+    """A prompt name or file fails the whitelist/containment/hash rules."""
+
+
+def is_safe_name(name: str) -> bool:
+    """Folder names from requests (run, replay, backtest slugs) never
+    carry separators or dots that could climb out of their base dir."""
+    return FOLDER_NAME_RE.fullmatch(name) is not None
+
+
+@lru_cache(maxsize=1)
+def _manifest() -> dict[str, str]:
+    """``prompts/manifest.json``: the SHA-256 of every prompt file. A new
+    prompt version adds its line; a listed file that changes fails the
+    manifest test (hard rule 8 — prompts are immutable once used)."""
+    path = PROMPTS_DIR / "manifest.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): str(v) for k, v in data.items()}
 
 
 @dataclass(frozen=True)
@@ -52,10 +83,26 @@ class Prompt:
 
 
 def load_prompt(version: str) -> Prompt:
-    """Load ``prompts/<version>.md`` and hash its exact contents."""
-    path = PROMPTS_DIR / f"{version}.md"
+    """Load ``prompts/<version>.md`` and hash its exact contents.
+
+    The name must match the whitelist and resolve inside ``prompts/``,
+    and the file must be listed in the manifest with a matching SHA-256 —
+    a tampered or unlisted prompt is refused (``PromptError``).
+    """
+    if not PROMPT_NAME_RE.fullmatch(version):
+        raise PromptError(f"invalid prompt version {version!r}")
+    base = PROMPTS_DIR.resolve()
+    path = (base / f"{version}.md").resolve()
+    if path.parent != base:
+        raise PromptError(f"prompt version {version!r} escapes prompts/")
+    expected = _manifest().get(f"{version}.md")
+    if expected is None:
+        raise PromptError(f"prompt {version!r} is not in the manifest")
     text = path.read_text(encoding="utf-8")
-    return Prompt(version=version, text=text, sha256=hashlib.sha256(text.encode()).hexdigest())
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    if sha != expected:
+        raise PromptError(f"prompt {version!r} does not match its manifest hash")
+    return Prompt(version=version, text=text, sha256=sha)
 
 
 @lru_cache(maxsize=8)

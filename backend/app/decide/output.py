@@ -555,7 +555,7 @@ def validate_model_output_v2(
                 error=f"invalid option_id {output.option_id!r}",
                 note="Invalid output — option id was not offered",
             )
-        assert chosen is not None
+        assert chosen is not None  # noqa: S101 - internal invariant
         stop = _decimal_or_none(chosen.get("stop"))
         target = _decimal_or_none(chosen.get("target"))
         limit = _decimal_or_none(

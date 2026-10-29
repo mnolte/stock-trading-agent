@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.decide.client import model_price, require_price
-from app.decide.prompt import load_prompt
+from app.decide.client import model_price, prices_for, require_price
+from app.decide.prompt import PromptError, load_prompt
 from app.settings_service import EDITABLE, LABELS
 
 if TYPE_CHECKING:
@@ -190,11 +190,11 @@ def validate_new_strategy(
         prompt = str(body.get("prompt_version") or config.get("decision", "prompt"))
         try:
             load_prompt(prompt)
-        except OSError:
+        except (OSError, PromptError):
             errors.append(f"Prompt version {prompt!r} does not exist")
         model = str(body.get("model") or config.get("decision", "model"))
-        if model_price(config.get("model_prices", default={}), model) is None:
-            errors.append(f"Model {model!r} has no price in model_prices")
+        if model_price(prices_for(config), model) is None:
+            errors.append(f"Model {model!r} has no price in models")
         try:
             temperature = _num(
                 body.get("temperature", config.get("decision", "temperature", default=0))
@@ -280,7 +280,16 @@ def check_model_prices(config: AppConfig, session: Session) -> None:
     from app.db.models import Strategy
 
     require_price(config, str(config.get("decision", "model", default="")), "Live")
-    require_price(config, str(config.get("reviews", "model", default="")), "Reviews")
+    # ``reviews.models`` is one model per task (docs/SPEC.md → Model
+    # providers); a legacy scalar ``reviews.model`` is still honoured.
+    review_models = config.get("reviews", "models", default=None)
+    if isinstance(review_models, dict) and review_models:
+        for task, model in review_models.items():
+            require_price(config, str(model), f"Reviews ({task})")
+    else:
+        require_price(
+            config, str(config.get("reviews", "model", default="")), "Reviews"
+        )
     for strategy in session.execute(
         select(Strategy).where(Strategy.status == "active", Strategy.kind == "llm")
     ).scalars():

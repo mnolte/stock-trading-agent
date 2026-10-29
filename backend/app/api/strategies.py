@@ -15,7 +15,7 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import priced_models
-from app.decide.prompt import PROMPTS_DIR, load_prompt
+from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.performance import compute_performance
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import Clock, make_clock
@@ -94,7 +94,7 @@ def _prompt_versions() -> list[str]:
     for path in sorted(PROMPTS_DIR.glob("decision.*.md")):
         try:
             load_prompt(path.stem)
-        except OSError:
+        except (OSError, PromptError):
             continue
         out.append(path.stem)
     return out
@@ -112,7 +112,7 @@ def strategies(request: Request) -> dict[str, Any]:
             if row["id"] is None or run is None:
                 continue
             strategy = session.get(Strategy, row["id"])
-            assert strategy is not None
+            assert strategy is not None  # noqa: S101 - invariant from the row just fetched
             row["short"] = short_name(strategy.name)
             row["disagreements"] = disagreements(session, strategy, run, short=row["short"])
         spend = runner.monthly_spend(session) if runner is not None else Decimal(0)
@@ -201,9 +201,9 @@ def _set_status(request: Request, strategy_id: int, status: str) -> dict[str, An
             raise HTTPException(status_code=409, detail=["an archived shadow can't change"])
         if status == "active" and strategy.status == "paused" and strategy.kind == "llm":
             # A resumed LLM shadow must still have a priced model.
-            from app.decide.client import model_price
+            from app.decide.client import model_price, prices_for
 
-            if model_price(config.get("model_prices", default={}), str(strategy.model)) is None:
+            if model_price(prices_for(config), str(strategy.model)) is None:
                 raise HTTPException(
                     status_code=422, detail=[f"Model {strategy.model!r} has no price"]
                 )

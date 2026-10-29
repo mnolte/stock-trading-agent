@@ -30,7 +30,7 @@ from app.db.models import (
     ShadowDecision,
     Strategy,
 )
-from app.decide.client import model_price
+from app.decide.client import model_price, prices_for
 from app.decide.llm_cache import cache_hit_count
 from app.decide.prompt import cached_prompt
 from app.market.calendar import CalendarProvider
@@ -295,7 +295,7 @@ def estimate(
                 )
             hits = min(hits, calls)
             avg_tokens = _avg_tokens(session, model, temperature, prompt_hash)
-            price = model_price(config.get("model_prices", default={}), model)
+            price = model_price(prices_for(config), model)
             cost: Decimal | None = None
             if avg_tokens is not None and price is not None:
                 in_p, out_p = price
@@ -355,7 +355,15 @@ def estimate(
 
 
 def _model_cutoff(config: AppConfig, model: str) -> date | None:
-    raw = (config.get("backtest", "model_cutoffs", default={}) or {}).get(model)
+    """The model's knowledge cutoff — lives on its ``models`` entry;
+    the legacy ``backtest.model_cutoffs`` block is honoured for one
+    release (docs/SPEC.md → Model providers)."""
+    entry = (config.get("models", default={}) or {}).get(model)
+    raw = entry.get("cutoff") if isinstance(entry, dict) else None
+    if raw is None:
+        raw = (config.get("backtest", "model_cutoffs", default={}) or {}).get(
+            model
+        )
     if raw is None:
         return None
     return date.fromisoformat(str(raw))

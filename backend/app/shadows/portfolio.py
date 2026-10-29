@@ -65,7 +65,7 @@ def slippage_pct(config: AppConfig) -> Decimal:
 
 def entry_cost(sp: ShadowPosition, slip: Decimal) -> Decimal:
     """Per-share cost of a filled entry, slippage included."""
-    assert sp.entry is not None
+    assert sp.entry is not None  # noqa: S101 - shadow position invariant
     return sp.entry * (1 + slip / 100)
 
 
@@ -107,7 +107,7 @@ def _dividends_for(session: Session, sp: ShadowPosition, closed_at: datetime) ->
         .scalars()
         .all()
     )
-    assert sp.opened_at is not None
+    assert sp.opened_at is not None  # noqa: S101 - shadow position invariant
     return _dividends(actions, sp.symbol, ny_date(sp.opened_at), ny_date(closed_at), sp.qty)
 
 
@@ -159,7 +159,7 @@ def replay_bars(
                     sp.exit_reason = "not_filled"
                     events.append(FillEvent(sp.id, sp.symbol, "not_filled", None, bar.start))
                     break
-                assert sp.limit_price is not None
+                assert sp.limit_price is not None  # noqa: S101 - shadow position invariant
                 sp.bars_through = _naive_utc(bar.start)
                 if bar.low <= sp.limit_price:
                     sp.status = "open"

@@ -97,8 +97,8 @@ def _run(
     it never contains the password or keys (restic only reads env)."""
     if shutil.which("restic") is None:
         raise OffsiteError("restic is not installed")
-    proc = subprocess.run(
-        ["restic", *args],
+    proc = subprocess.run(  # noqa: S603 - fixed restic argv, no untrusted input
+        ["restic", *args],  # noqa: S607 - restic resolved from PATH by design
         env=_restic_env(creds),
         capture_output=True,
         timeout=timeout,
