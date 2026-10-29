@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-29 — Correction: ACN stop level, entry thesis ids
+
+- Correction to the ACN finding: the entry thesis was right. At entry the stop's level (the 20 Oct 12:30 1h swing low, 238.22) was L13; a cycle later a new level shifted the ids and it was L14. The held decision copied "L13" from the entry thesis.
+- Decision v3: level ids in `entry_thesis` are rewritten to this cycle's ids, or to the level's kind, time and price when it's no longer listed, before the thesis is sent. The stored thesis is unchanged. The claim check already catches the stale id.
+
 ## 2026-10-29 — Kickoffs tidied
 
 - `docs/kickoffs/pr-30.md`: reads both PR 30 change log entries, and states the label and changelog rules.
@@ -11,7 +16,7 @@ Newest first.
 
 - From a review of a held ACN decision (28 October 15:46, decision.v2, gpt-4.1-mini):
   - confidence 0.65 where no edge gives 0.36;
-  - the stop attributed to L13 while it sat below L14, at entry and again when held;
+  - the held decision called the stop's level L13, the id it had at entry, while ids had shifted and it was now L14;
   - weak momentum read as "supporting continuation";
   - two levels at one price.
 - Decision v3 gains:

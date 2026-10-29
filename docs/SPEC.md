@@ -1441,7 +1441,7 @@ Decision v3 fixes these with more work in code and a new prompt, `prompts/decisi
 - `original_invalidation` was `"unavailable"`;
 - the model didn't know the code would sell the position the next day before earnings.
 
-A third review (ACN held, 28 October 15:46) added: 0.65 confidence for a target 3.4 × ATR away against a stop 1.9 × ATR away, where no edge gives 0.36; a stop attributed to the wrong level at entry and again when held; falling relative strength and OBV called "supporting continuation"; and two levels listed at the same price.
+A third review (ACN held, 28 October 15:46) added: 0.65 confidence for a target 3.4 × ATR away against a stop 1.9 × ATR away, where no edge gives 0.36; a held decision that still called the stop's level L13, the id it had at entry, while level ids had shifted and that level was now L14; falling relative strength and OBV called "supporting continuation"; and two levels listed at the same price.
 
 v2 stays as it is; for v3 strategies:
 - **Stop options (option builder version 2):**
@@ -1456,7 +1456,8 @@ v2 stays as it is; for v3 strategies:
   - `invalidation` is always filled by code: the initial stop with its basis, naming the level by kind, time and price rather than by id, because ids are renumbered every cycle. For example "below 237.91: 0.1 ATR below the 20 Oct 12:30 1h swing low (238.22)" or "below 101.74: 2 × ATR stop";
   - `stop_level`: the id of that level in this cycle's `levels` when it is still listed (matched by kind, time and price), otherwise null;
   - `neutral_probability`: the chance of reaching the target before the stop with no edge at all, from the distances to the market price: stop distance ÷ (stop distance + target distance);
-  - `entry_thesis` replaces `original_thesis`, and the prompt treats it as what was believed at entry, not as a fact.
+  - `entry_thesis` replaces `original_thesis`, and the prompt treats it as what was believed at entry, not as a fact;
+  - level ids in `entry_thesis` are rewritten before it is sent, because ids are renumbered every cycle. An id becomes this cycle's id of the same level (matched by kind, timeframe, time and price), or "the 20 Oct 12:30 1h swing low (238.22)" when that level is no longer listed. The stored entry thesis keeps its original text.
 - **Scheduled exit:** when code will sell the position anyway (today: the earnings exit when holding through earnings is off), `position.scheduled_exit` says why and when, for example "earnings exit Thu 29 Oct 15:46 NY". `hold` is then the default, and the coming earnings aren't listed as a conflict.
 - **Confidence for held decisions** starts at `position.neutral_probability` and moves only for concrete reasons in the input, as entries start at break-even. It is defined per action:
   - `hold`: target before the current stop;
@@ -1465,7 +1466,7 @@ v2 stays as it is; for v3 strategies:
   - Held confidence is stored but not gated, and it's kept out of the entry calibration on Readiness and Insights.
 - **Claim checks** (warning `unsupported_claim`, like a failed explanation check; the decision stands):
   - a thesis that says the stop "locks in" profit while the chosen stop's `locked_r` is 0 or less;
-  - a sentence that mentions the stop (or the target) together with a level id other than the stop's (or target's) own level. The ACN entry of 28 October said its stop was "just below L13", while it was 0.1 ATR below L14, and the held decisions repeated it.
+  - a sentence that mentions the stop (or the target) together with a level id other than the stop's (or target's) own level. At the ACN entry of 28 October the stop's level was L13; by 15:46 a new level had shifted the ids and it was L14, yet the held decision still said "L13", copied from the entry thesis.
 - **Code describes the stop and target.** The model's thesis explains *why*. The stop's and target's basis come from code and are shown next to the thesis in the drawer, the feed and the stored decision. The prompt tells the model not to describe where the stop or target sits.
 
 **Replay.** `make replay PROMPT=decision.v3` builds v3 snapshots from the stored v2 inputs (levels, indicators, options, earnings and headlines), with no refetch. The report adds:
