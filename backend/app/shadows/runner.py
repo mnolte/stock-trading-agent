@@ -825,6 +825,11 @@ class ShadowRunner:
                         ),
                         stop_basis=stop_basis_info(entry),
                         earnings=earnings.get(d.symbol),
+                        entry_levels=tuple(
+                            (entry.levels or {}).get("levels") or ()
+                        )
+                        if entry is not None
+                        else (),
                     ),
                     calendar=self.calendar,
                     config=cfg,

@@ -29,6 +29,7 @@ from app.decide.v3 import (
     build_stop_options_v3,
     build_v3_fields,
     merge_levels,
+    rewrite_thesis_ids,
     room_check,
     room_recheck_failure,
     scheduled_exit_text,
@@ -611,6 +612,52 @@ def _acn_held() -> HeldV3:
         opened_at=datetime.fromisoformat(pos["opened_at"]),
         entry_thesis=entry["thesis"],
         stop_basis=info,
+        entry_levels=tuple(entry["levels"]["levels"]),
+    )
+
+
+def test_entry_thesis_ids_rewritten() -> None:
+    """Ids in entry_thesis become this cycle's ids; the stored thesis
+    keeps its text (docs/SPEC.md, Decision v3 — Position context)."""
+    _, v, _ = _build(
+        "acn_held.json",
+        "acn_held_bars.json",
+        context="held",
+        held=_acn_held(),
+    )
+    sent = v3_send_snapshot(v.fields)["position"]["entry_thesis"]
+    # The stored thesis says L13 (the id at entry); this cycle's id of
+    # the same 20 Oct 12:30 1h swing low at 238.22 is L14.
+    assert "L13" in (_acn_held().entry_thesis or "")
+    assert "L14" in sent
+    assert "L13" not in sent
+
+
+def test_entry_thesis_missing_level_described() -> None:
+    """A level no longer listed becomes 'the <time> <tf> <kind> (<price>)'."""
+    held = HeldV3(
+        entry=Decimal("100"),
+        qty=1,
+        initial_stop=Decimal("98"),
+        current_stop=Decimal("99"),
+        target=Decimal("110"),
+        opened_at=datetime(2026, 10, 28, 10, 47, tzinfo=UTC),
+        entry_thesis="stop just below L99, the old swing low",
+        stop_basis=StopBasisInfo(basis="2 × ATR"),
+        entry_levels=(
+            {
+                "id": "L99",
+                "price": 238.22,
+                "kind": "swing_low",
+                "timeframe": "1h",
+                "time": "2026-10-20T12:30:00",
+            },
+        ),
+    )
+    rewritten = rewrite_thesis_ids(held.entry_thesis, held.entry_levels, [])
+    assert rewritten == (
+        "stop just below the 20 Oct 12:30 1h swing low (238.22), "
+        "the old swing low"
     )
 
 
@@ -675,3 +722,151 @@ def test_v2_builder_output_unchanged() -> None:
     assert [lv["id"] for lv in build.fields["levels"]] == [
         lv["id"] for lv in snap["levels"]
     ]
+
+
+# replay report sections (docs/SPEC.md, Decision v3 → Replay)
+
+
+def _row(detail: dict[str, Any], **kw: Any) -> Any:
+    from app.replay import ReplayRow
+
+    row = ReplayRow(
+        cycle_id=1,
+        symbol="SBUX",
+        context="candidate",
+        at=datetime(2026, 10, 28, 14, 46, tzinfo=UTC),
+        decision_id=1,
+        v1_action="enter",
+        model_action=None,
+        final_action="no_call",
+        option_id=None,
+        option_basis={},
+        valid=False,
+        explanation_passed=None,
+        explanation_detail=None,
+        score=None,
+        cost=None,
+        error=None,
+        detail=detail,
+    )
+    for k, v in kw.items():
+        setattr(row, k, v)
+    return row
+
+
+def test_replay_report_v3_sections() -> None:
+    """Every v3 report section exists with its counts (SPEC: the report
+    additions judge v3 — each lists its base)."""
+    from app.replay import Score, _v3_report_lines
+
+    _, room_build, _ = _build(
+        "sbux_candidate.json", "sbux_candidate_bars.json", context="candidate"
+    )
+    room_detail = {
+        "room_removed": room_build.options_column["removed"],
+        "room_reason": room_build.reason,
+        "reason": None,
+        "confidence": None,
+        "conflicts": [],
+        "data_flags": [],
+        "chosen": None,
+        "dropped_stop_options": [],
+        "neutral_probability": None,
+        "claims": None,
+        "held_stop": None,
+        "stored_first_touch": "target",
+    }
+    room_row = _row(
+        room_detail, error=f"no_options: {room_build.reason}"
+    )
+    _, held_build, _ = _build(
+        "sbux_held.json", "sbux_held_bars.json", context="held", held=_sbux_held()
+    )
+    held_detail = {
+        "room_removed": [],
+        "room_reason": None,
+        "reason": None,
+        "confidence": 0.55,
+        "conflicts": ["daily trend mixed"],
+        "data_flags": [],
+        "chosen": None,
+        "dropped_stop_options": held_build.options_column[
+            "dropped_stop_options"
+        ],
+        "neutral_probability": 0.48,
+        "claims": {"passed": False, "bad_ids": ["L13"], "bad_numbers": []},
+        "held_stop": {
+            "stop": 103.05,
+            "locked_r": -0.07,
+            "stopped_out_in_5": False,
+            "r_given_up": 0.1,
+        },
+        "stored_first_touch": None,
+    }
+    held_row = _row(
+        held_detail,
+        context="held",
+        final_action="tighten_stop",
+        model_action="tighten_stop",
+        valid=True,
+        v1_action="tighten_stop",
+    )
+    enter_detail = {
+        "room_removed": [],
+        "room_reason": None,
+        "reason": None,
+        "confidence": 0.6,
+        "conflicts": ["L7 blocks the way"],
+        "data_flags": [],
+        "chosen": {"id": "E", "rr": 4.99, "breakeven_confidence": 0.17},
+        "dropped_stop_options": [],
+        "neutral_probability": None,
+        "claims": None,
+        "held_stop": None,
+        "stored_first_touch": None,
+    }
+    enter_row = _row(
+        enter_detail,
+        final_action="enter",
+        model_action="enter",
+        valid=True,
+        option_id="E",
+        score=Score(touched="target", r_multiple=Decimal("4.9"), sessions=2),
+    )
+    skip_row = _row(
+        {
+            **enter_detail,
+            "confidence": 0.4,
+            "chosen": None,
+            "reason": "edge_too_small",
+        },
+        final_action="skip",
+        model_action="enter",
+        valid=False,
+        v1_action="skip",
+    )
+    lines = _v3_report_lines([room_row, held_row, enter_row, skip_row])
+    text = "\n".join(lines)
+    assert "## decision.v3" in text
+    # room filter with the blocked entry and its outcome
+    assert "room filter: 1 snapshots" in text
+    assert "would have blocked 1 stored entry" in text
+    assert "target 1" in text
+    # code skips
+    assert "edge_too_small 1" in text
+    # confidence vs break-even + calibration bucket
+    assert "confidence ≥ break-even: 1 of 1 entered" in text
+    assert "0.6–0.7" in text
+    # conflicts + data flags
+    assert "daily trend mixed — 1" in text
+    assert "data flags: 0" in text
+    # v2 vs v3
+    assert "v2/live entered 2 of 3 candidates" in text
+    assert "v3 entered 1" in text
+    assert "agreement: 2 of 2 calls" in text
+    # held
+    assert "tighten_stop 1" in text
+    assert "stop options dropped:" in text
+    assert "stopped out within 5 sessions: 0" in text
+    assert "held confidence vs neutral_probability: 1 pairs" in text
+    assert "claim-check failures by kind: L13 — 1" in text

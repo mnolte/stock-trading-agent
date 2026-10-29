@@ -10,6 +10,7 @@ the model. v1 and v2 inputs are untouched.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -656,6 +657,9 @@ class HeldV3:
     entry_thesis: str | None
     stop_basis: StopBasisInfo | None
     earnings: tuple[date, str] | None = None  # (date, time_of_day)
+    # The entry decision's stored levels, so entry_thesis ids can be
+    # rewritten to this cycle's ids (docs/SPEC.md, Decision v3).
+    entry_levels: tuple[dict[str, Any], ...] = ()
 
 
 def stop_basis_info(decision: Any) -> StopBasisInfo | None:
@@ -729,6 +733,13 @@ def held_v3(
         entry_thesis=thesis,
         stop_basis=stop_basis_info(entry_decision),
         earnings=earnings,
+        entry_levels=tuple(
+            lv
+            for lv in ((entry_decision.levels or {}).get("levels") or ())
+            if isinstance(lv, dict)
+        )
+        if entry_decision is not None
+        else (),
     )
 
 
@@ -776,6 +787,54 @@ def stop_level_match(
             continue
         return level.id
     return None
+
+
+def rewrite_thesis_ids(
+    thesis: str | None,
+    stored_levels: Sequence[dict[str, Any]],
+    levels: Sequence[Level],
+) -> str | None:
+    """Rewrite level ids in the stored entry thesis to this cycle's ids
+    (ids are renumbered every cycle). A level that is no longer listed
+    becomes its description — "the 20 Oct 12:30 1h swing low (238.22)"
+    (docs/SPEC.md, Decision v3 — Position context). The stored thesis
+    keeps its original text; only the sent copy is rewritten."""
+    if not thesis:
+        return thesis
+    by_id = {
+        str(lv.get("id")): lv
+        for lv in stored_levels
+        if isinstance(lv, dict) and lv.get("id")
+    }
+
+    def _replace(match: re.Match[str]) -> str:
+        stored = by_id.get(match.group(0))
+        if stored is None:
+            return match.group(0)
+        try:
+            when = (
+                datetime.fromisoformat(str(stored["time"]))
+                if stored.get("time")
+                else None
+            )
+        except ValueError:
+            when = None
+        info = StopBasisInfo(
+            basis="",
+            level_kind=str(stored.get("kind")),
+            level_timeframe=str(stored.get("timeframe") or ""),
+            level_time=when,
+            level_price=_dec_or_none(stored.get("price")),
+        )
+        new_id = stop_level_match(info, levels)
+        if new_id is not None:
+            return new_id
+        price = (
+            f" ({info.level_price:.2f})" if info.level_price is not None else ""
+        )
+        return f"{_fmt_level_ref(info.level_kind or '', info.level_timeframe or '', when)}{price}"
+
+    return re.sub(r"\bL\d+\b", _replace, thesis)
 
 
 def scheduled_exit_text(
@@ -884,7 +943,10 @@ def position_block_v3(
             if held.opened_at is not None
             else None
         ),
-        "entry_thesis": held.entry_thesis or UNAVAILABLE,
+        "entry_thesis": (
+            rewrite_thesis_ids(held.entry_thesis, held.entry_levels, levels)
+            or UNAVAILABLE
+        ),
         "invalidation": invalidation_v3(held.initial_stop, held.stop_basis),
         "stop_level": stop_level_match(held.stop_basis, levels),
         "r_now": _r2(r_now),
