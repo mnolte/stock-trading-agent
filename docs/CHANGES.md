@@ -2,6 +2,22 @@
 
 Newest first.
 
+## 2026-10-29 — Decision v3: held confidence, stop claims, momentum, merged levels (PR 30)
+
+- From a review of a held ACN decision (28 October 15:46, decision.v2, gpt-4.1-mini):
+  - confidence 0.65 where no edge gives 0.36;
+  - the stop attributed to L13 while it sat below L14, at entry and again when held;
+  - weak momentum read as "supporting continuation";
+  - two levels at one price.
+- Decision v3 gains:
+  - `checks.momentum` (relative strength against SPY and OBV);
+  - levels within 0.05 × ATR merged into one id with `kinds` (`decision.v3.level_merge_atr`);
+  - for held positions, `position.neutral_probability` as the starting point for confidence, `position.stop_level`, and an invalidation that names the level by kind, time and price;
+  - the stop and target basis written by code, not by the model;
+  - a claim check for a stop or target attributed to the wrong level.
+- `prompts/decision.v3.md` updated to match. It has not been used yet, so it can still change.
+- The `input_incomplete` warning on that call came from `original_invalidation` being `"unavailable"`, fixed on 29 October.
+
 ## 2026-10-29 — Process: spec pull requests and kickoff files
 
 - Spec and design changes now arrive as pull requests from Claude on a `spec/…` branch with the `spec change` label, instead of files copied in by hand.

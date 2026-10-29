@@ -1399,8 +1399,10 @@ Decision v3 fixes these with more work in code and a new prompt, `prompts/decisi
   - `regime_trend` and `regime_volatility` (as `regime` today);
   - `room_atr` and `room_level`: the distance from the entry limit to the first level in the way, in ATR(1h), counting only the kinds in `decision.v3.room_level_kinds`;
   - `earnings`: days to earnings, the date and the time of day;
-  - `news_status`.
+  - `news_status`;
+  - `momentum`: `strong` when `rs_vs_spy_pct` is above 0 and `obv_trend` is up; `weak` when `rs_vs_spy_pct` is below 0 and `obv_trend` is down; otherwise `mixed`.
 - **Levels:** each also gets `distance_atr`, its signed distance from the entry limit in ATR (positive above).
+- **Levels at the same price are merged.** Levels within `decision.v3.level_merge_atr` (0.05) × ATR of each other become one id. It keeps the highest-ranked kind and lists every kind in `kinds`, for example a 1h swing high and the session high at 246.79 (ACN, 28 October). A level that is several kinds at once is the stronger level, and the list carries less noise.
 - **Options:** `levels_in_way` lists each level with its `distance_atr`. Each option also gets `breakeven_confidence` = 1 ÷ (1 + rr).
 - **Constraints** gain `min_room_atr`, `min_confidence` (the strategy's `min_confidence_enter`) and `min_edge`.
 - **`rank`** stays and is explained in the prompt: the symbol's place in the daily liquidity screen (1 = most liquid), not a reason to enter.
@@ -1420,6 +1422,8 @@ Decision v3 fixes these with more work in code and a new prompt, `prompts/decisi
 - **Data flags:** a new `data_flags` field (`earnings_date_conflict`, `price_conflict`, `stale_or_missing_data`). For example a headline announcing results within the blackout while `checks.earnings` says otherwise. With a data flag, skip a candidate.
 - **No reasons outside the input:** never justify a stop or target with something the snapshot doesn't contain.
 - **Field guide:** every snapshot field is explained, including `checks`, `quote.plausible`, `spread_unknown` and `rank`.
+- **Momentum:** `checks.momentum` `weak` is a conflict: for a candidate it argues for skip; for a held position it supports `exit` only together with other evidence.
+- **Stop and target basis:** the thesis doesn't describe where the stop or target sits; code adds that.
 - **Name:** the prompt calls the app Stock Trading Agent.
 
 **Output schema v3**, all fields required, in this order: `symbol`, `conflicts` (up to 5 short phrases), `data_flags` (enum list, may be empty), `thesis`, `action`, `option_id`, `confidence`, `levels_used`, `news_used`. `conflicts` takes the place of v2's `risks` in storage and in the drawer. The schema keeps the same strictness. Under PR 29 its range checks are stripped from the copy sent to Anthropic and enforced by Pydantic.
@@ -1437,6 +1441,8 @@ Decision v3 fixes these with more work in code and a new prompt, `prompts/decisi
 - `original_invalidation` was `"unavailable"`;
 - the model didn't know the code would sell the position the next day before earnings.
 
+A third review (ACN held, 28 October 15:46) added: 0.65 confidence for a target 3.4 × ATR away against a stop 1.9 × ATR away, where no edge gives 0.36; a stop attributed to the wrong level at entry and again when held; falling relative strength and OBV called "supporting continuation"; and two levels listed at the same price.
+
 v2 stays as it is; for v3 strategies:
 - **Stop options (option builder version 2):**
   - `locks_profit` is true only for a stop above the entry;
@@ -1447,15 +1453,20 @@ v2 stays as it is; for v3 strategies:
   - These thresholds are strategy-overridable, so a shadow can test them. Dropped options are listed with their reason in the drawer ("break-even from +1.0R; now +0.49R").
 - **Position context:**
   - `position` gains `r_now`, `stop_distance_atr`, `target_distance_atr` and `levels_to_target` (the levels between the price and the target, each with `distance_atr`);
-  - `invalidation` is always filled by code: the initial stop with its basis, for example "below 101.74: 2 × ATR stop";
+  - `invalidation` is always filled by code: the initial stop with its basis, naming the level by kind, time and price rather than by id, because ids are renumbered every cycle. For example "below 237.91: 0.1 ATR below the 20 Oct 12:30 1h swing low (238.22)" or "below 101.74: 2 × ATR stop";
+  - `stop_level`: the id of that level in this cycle's `levels` when it is still listed (matched by kind, time and price), otherwise null;
+  - `neutral_probability`: the chance of reaching the target before the stop with no edge at all, from the distances to the market price: stop distance ÷ (stop distance + target distance);
   - `entry_thesis` replaces `original_thesis`, and the prompt treats it as what was believed at entry, not as a fact.
 - **Scheduled exit:** when code will sell the position anyway (today: the earnings exit when holding through earnings is off), `position.scheduled_exit` says why and when, for example "earnings exit Thu 29 Oct 15:46 NY". `hold` is then the default, and the coming earnings aren't listed as a conflict.
-- **Confidence for held decisions** is defined per action:
+- **Confidence for held decisions** starts at `position.neutral_probability` and moves only for concrete reasons in the input, as entries start at break-even. It is defined per action:
   - `hold`: target before the current stop;
   - `tighten_stop`: target before the new stop;
   - `exit`: target before the current stop, as if held (a low number supports the exit).
   - Held confidence is stored but not gated, and it's kept out of the entry calibration on Readiness and Insights.
-- **Claim check:** a thesis that says the stop "locks in" profit while the chosen stop's `locked_r` is 0 or less gets the warning `unsupported_claim`, like a failed explanation check.
+- **Claim checks** (warning `unsupported_claim`, like a failed explanation check; the decision stands):
+  - a thesis that says the stop "locks in" profit while the chosen stop's `locked_r` is 0 or less;
+  - a sentence that mentions the stop (or the target) together with a level id other than the stop's (or target's) own level. The ACN entry of 28 October said its stop was "just below L13", while it was 0.1 ATR below L14, and the held decisions repeated it.
+- **Code describes the stop and target.** The model's thesis explains *why*. The stop's and target's basis come from code and are shown next to the thesis in the drawer, the feed and the stored decision. The prompt tells the model not to describe where the stop or target sits.
 
 **Replay.** `make replay PROMPT=decision.v3` builds v3 snapshots from the stored v2 inputs (levels, indicators, options, earnings and headlines), with no refetch. The report adds:
 - options and snapshots removed by the room filter, and which v2 or live entries they would have blocked, with those entries' outcomes;
@@ -1464,6 +1475,7 @@ v2 stays as it is; for v3 strategies:
 - the most frequent conflicts, and every data flag with its snapshot;
 - v2 against v3 on the same snapshots: enter rate, agreement, and R of the chosen options.
 - held decisions: actions per context, stop options dropped per reason, and what the chosen stops did afterwards (stopped out within 5 sessions, and R given up against holding the old stop).
+- held confidence against `neutral_probability`, and the claim-check failures by kind.
 
 It can run with any model in the list (PR 29), so v3 can be compared on OpenAI and Claude models at once.
 

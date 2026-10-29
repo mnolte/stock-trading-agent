@@ -22,9 +22,11 @@ Fill the output in order. First list what speaks against the trade in `conflicts
   - With `checks.trend_daily` `mixed`, enter only when everything else agrees and your confidence is well above break-even.
   - With `checks.trend_daily` `down`, never enter.
 - **Volatility.** With `checks.regime_volatility` `high`, every check must agree. Prefer the option with the nearer target.
+- **Momentum.** `checks.momentum` `weak` (falling relative strength against SPY and falling OBV) is a conflict. List it, and skip unless everything else is strong.
 - **Room.** Every offered option already has at least the minimum room (`constraints.min_room_atr`) up to the first level in its way. More room is better: a level 1.1 ATR above the entry is still a hurdle.
 - **Levels in the way.** Each option lists the levels in its way with their distance in ATR. A target behind several strong levels (daily swing highs, the session high) is less likely to be reached than its `rr` suggests.
-- **Stops.** Prefer a stop below a real level (a swing low) over a plain ATR stop when both are offered, unless that level is about to be broken. Don't describe a stop as "below a swing low" unless its `stop_basis` says so.
+- **Stops.** Prefer a stop below a real level (a swing low) over a plain ATR stop when both are offered, unless that level is about to be broken.
+- **Don't describe where the stop or target sits.** Code shows each option's `stop_basis` and `target_basis` next to your thesis. Your thesis explains why; never name a level as the stop's or target's level yourself.
 - **When in doubt, skip.** Missing a trade costs nothing; a bad trade costs money.
 
 ## Confidence
@@ -34,6 +36,8 @@ Fill the output in order. First list what speaks against the trade in `conflicts
 - `enter`: the chosen option's target before its stop;
 - `hold` or `exit`: the position's target before its current stop (for `exit`, a low number is the reason to leave);
 - `tighten_stop`: the position's target before the new stop.
+
+For held positions, start from `position.neutral_probability`: the chance of reaching the target first with no edge at all, from the distances to the stop and the target. Move from there only for concrete reasons in the input.
 
 For entries:
 
@@ -46,7 +50,8 @@ For entries:
 
 - `hold` is the default. A position is supposed to have room to move between its stop and its target.
 - `position.entry_thesis` is what was believed at entry, not a fact. Check it against today's `checks`.
-- `exit` only when the reason for the trade no longer holds: the entry thesis is contradicted by the current checks, or `position.invalidation` has as good as happened.
+- `exit` only when the reason for the trade no longer holds: the entry thesis is contradicted by the current checks, or `position.invalidation` has as good as happened. `checks.momentum` `weak` supports an exit only together with other evidence.
+- The entry thesis can be wrong about facts too. The stop's real basis is `position.invalidation` (and `position.stop_level` when that level is still listed).
 - `tighten_stop` only when a stop option protects a gain the trade has earned or sits under a new level that matters. Each stop option shows `locked_r` (the R kept if that stop is hit; 0 is break-even, below 0 is still a loss) and `distance_atr` (how far below the price). A stop close to the price is easily hit by normal moves.
 - Only say a stop "locks in profit" when its `locks_profit` is true, and then use its `locked_r`, never `position.r_now`.
 - `position.levels_to_target` lists the levels between the price and the target, with their distance in ATR.
@@ -92,11 +97,11 @@ The user message holds a JSON snapshot:
 - `price` (the market price, the last trade) and `price_time`.
 - `quote`: `bid` and `ask` only when plausible, otherwise null; `plausible`; `spread_unknown` (the small exchange's book was thin; not a reason to skip on its own).
 - `signal_bar`: time and close of the last completed 1-hour bar, the bar this decision is based on.
-- `checks`: `trend_1h`, `trend_daily` (`up`, `down` or `mixed`, worked out by code from the averages), `regime_trend`, `regime_volatility`, `room_atr` and `room_level` (room from the entry to the first level in the way), `earnings` (days, date, time of day), `news_status`.
+- `checks`: `trend_1h`, `trend_daily` (`up`, `down` or `mixed`, worked out by code from the averages), `regime_trend`, `regime_volatility`, `room_atr` and `room_level` (room from the entry to the first level in the way), `earnings` (days, date, time of day), `news_status`, `momentum` (`strong`, `weak` or `mixed`, from relative strength against SPY and OBV).
 - `regime`, `indicators_1h`, `indicators_daily`: the numbers behind the checks.
-- `levels`: each with `id`, `price`, `kind` (swing_low, swing_high, prior_session_high, prior_session_low, prior_session_close, session_high, session_low, vwap), `timeframe`, `time` and `distance_atr` from the entry limit (positive above).
+- `levels`: each with `id`, `price`, `kind` (swing_low, swing_high, prior_session_high, prior_session_low, prior_session_close, session_high, session_low, vwap), `kinds` when several levels at the same price were merged into one (a stronger level), `timeframe`, `time` and `distance_atr` from the entry limit (positive above).
 - `constraints`: `atr_1h`, `entry_limit`, the allowed stop range, `min_rr`, `min_room_atr`, `min_confidence`, `min_edge`.
 - `options` (candidates): `id`, `stop`, `stop_basis`, `stop_atr`, `target`, `target_basis`, `rr`, `breakeven_confidence`, and `levels_in_way` with each level's `distance_atr`.
 - `stop_options` (held): `id`, `stop`, `basis`, `locks_profit` (true only above the entry), `locked_r`, `distance_atr`. Options that would barely move the stop, break-even before +1R and stops too close to the price are not offered.
-- `position` (held): entry, quantity, initial stop, current stop, target, opened at, `entry_thesis`, `invalidation`, `r_now`, `stop_distance_atr`, `target_distance_atr`, `levels_to_target`, and `scheduled_exit` when code will sell it anyway.
+- `position` (held): entry, quantity, initial stop, current stop, target, opened at, `entry_thesis`, `invalidation` (the stop's basis, written by code), `stop_level`, `r_now`, `stop_distance_atr`, `target_distance_atr`, `neutral_probability`, `levels_to_target`, and `scheduled_exit` when code will sell it anyway.
 - `headlines`: id, time, source and title.
