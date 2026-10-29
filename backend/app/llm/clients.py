@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from app.llm.base import ModelClient, ModelResponse
 from app.llm.fake import FakeModelClient
@@ -114,7 +114,7 @@ def secrets_key_for(secrets: Any) -> KeyFor:
         name = PROVIDER_KEY.get(provider)
         if secrets is None or name is None:
             return None
-        return secrets.get(name)
+        return cast("str | None", secrets.get(name))
 
     return get
 

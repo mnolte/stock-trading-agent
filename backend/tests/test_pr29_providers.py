@@ -136,7 +136,7 @@ class _StubRawResponse:
         self._exc = exc
         self.headers = {"request-id": "req_stub_1"}
 
-    def parse(self) -> Any:
+    async def parse(self) -> Any:
         if self._exc is not None:
             raise self._exc
         return self._message

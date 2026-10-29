@@ -18,12 +18,17 @@ from __future__ import annotations
 import logging
 from datetime import date
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from app.config import AppConfig
+
+class ConfigLike(Protocol):
+    """Anything ``config.get(*keys, default=...)`` — AppConfig or the
+    plain merged-tree wrapper the settings validator builds."""
+
+    def get(self, *keys: str, default: Any = None) -> Any: ...
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +46,7 @@ class UnknownModelError(ValueError):
     """A task named a model that has no entry in ``models``."""
 
 
-def _legacy_table(config: AppConfig) -> dict[str, dict[str, Any]]:
+def _legacy_table(config: ConfigLike) -> dict[str, dict[str, Any]]:
     """Effective model table when ``models`` is absent (one release)."""
     global _legacy_warned
     prices = config.get("model_prices", default=None)
@@ -65,7 +70,7 @@ def _legacy_table(config: AppConfig) -> dict[str, dict[str, Any]]:
     return table
 
 
-def models_table(config: AppConfig) -> dict[str, dict[str, Any]]:
+def models_table(config: ConfigLike) -> dict[str, dict[str, Any]]:
     """The effective ``{model: {provider, input, output, …}}`` table."""
     models = config.get("models", default=None)
     if isinstance(models, dict) and models:
@@ -73,15 +78,15 @@ def models_table(config: AppConfig) -> dict[str, dict[str, Any]]:
     return _legacy_table(config)
 
 
-def model_entry(config: AppConfig, model: str) -> dict[str, Any] | None:
+def model_entry(config: ConfigLike, model: str) -> dict[str, Any] | None:
     return models_table(config).get(model)
 
 
-def known_model(config: AppConfig, model: str) -> bool:
+def known_model(config: ConfigLike, model: str) -> bool:
     return model_entry(config, model) is not None
 
 
-def model_provider(config: AppConfig, model: str) -> str:
+def model_provider(config: ConfigLike, model: str) -> str:
     """``openai`` or ``anthropic``; legacy entries read as OpenAI."""
     entry = model_entry(config, model) or {}
     provider = entry.get("provider")
@@ -92,14 +97,14 @@ def provider_label(provider: str) -> str:
     return PROVIDER_LABELS.get(provider, provider)
 
 
-def model_effort(config: AppConfig, model: str) -> str:
+def model_effort(config: ConfigLike, model: str) -> str:
     """The Anthropic sampling effort; ``low`` when the entry says nothing."""
     entry = model_entry(config, model) or {}
     effort = str(entry.get("effort") or "low")
     return effort if effort in EFFORTS else "low"
 
 
-def model_timeout_seconds(config: AppConfig, model: str) -> float:
+def model_timeout_seconds(config: ConfigLike, model: str) -> float:
     """The per-model ``timeout_seconds`` else the shared call timeout."""
     entry = model_entry(config, model) or {}
     raw = entry.get("timeout_seconds")
@@ -108,7 +113,7 @@ def model_timeout_seconds(config: AppConfig, model: str) -> float:
     return float(config.get("decision", "call_timeout_seconds", default=30))
 
 
-def model_cutoff(config: AppConfig, model: str) -> date | None:
+def model_cutoff(config: ConfigLike, model: str) -> date | None:
     """The model's reliable knowledge cutoff, for the backtest check."""
     entry = model_entry(config, model) or {}
     raw = entry.get("cutoff")
@@ -120,7 +125,7 @@ def model_cutoff(config: AppConfig, model: str) -> date | None:
         return None
 
 
-def review_model(config: AppConfig, kind: str) -> str:
+def review_model(config: ConfigLike, kind: str) -> str:
     """The model configured for one review task — ``reviews.models`` is
     one per task; a legacy scalar ``reviews.model`` is honoured for one
     release (docs/SPEC.md → Model providers)."""
@@ -130,7 +135,7 @@ def review_model(config: AppConfig, kind: str) -> str:
     return str(config.get("reviews", "model", default="gpt-4o-mini"))
 
 
-def named_models(config: AppConfig, session: Session | None = None) -> list[tuple[str, str]]:
+def named_models(config: ConfigLike, session: Session | None = None) -> list[tuple[str, str]]:
     """Every (what, model) the app is configured to call — live decisions,
     the three review tasks and every non-archived llm strategy."""
     out: list[tuple[str, str]] = [
@@ -157,7 +162,7 @@ def named_models(config: AppConfig, session: Session | None = None) -> list[tupl
     return out
 
 
-def check_models(config: AppConfig, session: Session | None = None) -> None:
+def check_models(config: ConfigLike, session: Session | None = None) -> None:
     """Validate the ``models`` block and every name that refers to it.
 
     Raises :class:`UnknownModelError`/`ValueError` with a clear message;
@@ -191,7 +196,7 @@ def check_models(config: AppConfig, session: Session | None = None) -> None:
             )
 
 
-def check_models_at_startup(config: AppConfig, session: Session) -> None:
+def check_models_at_startup(config: ConfigLike, session: Session) -> None:
     """Refuse to start when a configured model is unknown or misconfigured."""
     check_models(config, session)
 
@@ -213,18 +218,18 @@ class UnpricedModelError(RuntimeError):
     """A model is configured for use but has no entry in ``models``."""
 
 
-def prices_for(config: AppConfig) -> dict[str, Any]:
+def prices_for(config: ConfigLike) -> dict[str, Any]:
     """The effective ``{model: {input, output, …}}`` table (price source)."""
     return models_table(config)
 
 
-def priced_models(config: AppConfig) -> list[str]:
+def priced_models(config: ConfigLike) -> list[str]:
     """Every model with a complete price — the only ones that may be picked."""
     prices = models_table(config)
     return sorted(m for m in prices if model_price(prices, m) is not None)
 
 
-def require_price(config: AppConfig, model: str, what: str) -> None:
+def require_price(config: ConfigLike, model: str, what: str) -> None:
     """Raise when ``model`` (used for ``what``) has no price."""
     if model_price(models_table(config), model) is None:
         raise UnpricedModelError(f"{what} model {model!r} has no price in models")

@@ -23,13 +23,15 @@ import copy
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from app.decide.output import DECISION_JSON_SCHEMA
 from app.llm.base import ModelResponse
 from app.llm.models import model_effort, model_timeout_seconds
 
 if TYPE_CHECKING:
+    from anthropic.types import OutputConfigParam
+
     from app.config import AppConfig
 
 logger = logging.getLogger("model.anthropic")
@@ -76,13 +78,14 @@ def anthropic_safe_schema(schema: dict[str, Any]) -> dict[str, Any]:
             return [walk(v) for v in node]
         return node
 
-    return walk(copy.deepcopy(schema))
+    return cast(dict[str, Any], walk(copy.deepcopy(schema)))
 
 
 def _inner_schema(schema: dict[str, Any] | None) -> dict[str, Any]:
     """The JSON schema inside a strict-outputs envelope."""
     if schema is None:
-        return dict(DECISION_JSON_SCHEMA["schema"])  # type: ignore[arg-type]
+        inner_default = DECISION_JSON_SCHEMA["schema"]
+        return dict(inner_default) if isinstance(inner_default, dict) else {}
     inner = schema.get("schema")
     return inner if isinstance(inner, dict) else schema
 
@@ -155,17 +158,20 @@ class AnthropicAdapter:
                 max_tokens=max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": user}],
-                output_config={
-                    "effort": effort,
-                    "format": {
-                        "type": "json_schema",
-                        "schema": anthropic_safe_schema(_inner_schema(schema)),
+                output_config=cast(
+                    "OutputConfigParam",
+                    {
+                        "effort": effort,
+                        "format": {
+                            "type": "json_schema",
+                            "schema": anthropic_safe_schema(_inner_schema(schema)),
+                        },
                     },
-                },
+                ),
                 timeout=timeout,
             )
             request_id = response.headers.get("request-id")
-            message = response.parse()
+            message = await response.parse()
         except Exception as exc:  # noqa: BLE001
             return ModelResponse(
                 raw=None,

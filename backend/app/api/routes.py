@@ -2257,7 +2257,7 @@ def _settings_form(config: object) -> dict[str, object]:
                 "reviews", "monthly_cost_cap_usd", default=2
             ),
             "models": {
-                task: review_model(config, task)
+                task: review_model(cast("AppConfig", config), task)
                 for task in REVIEW_TASKS
             },
         },
@@ -2488,6 +2488,7 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     active = config.effective()
     base = config.pending() or active
     try:
+        secrets_store = _secrets(request)
         cleaned, changes = await validate_settings(
             submitted,
             base,
@@ -2497,8 +2498,8 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
                 None
                 if config.env.mode == "simulated"
                 else (
-                    lambda provider: (_secrets(request).provider_ok(provider)
-                                      if _secrets(request) is not None else False)
+                    lambda provider: secrets_store is not None
+                    and secrets_store.provider_ok(provider)
                 )
             ),
         )

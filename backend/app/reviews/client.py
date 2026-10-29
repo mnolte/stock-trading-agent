@@ -11,10 +11,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from app.llm.base import ModelClient, ModelResponse  # noqa: F401
-from app.llm.clients import ProviderClients  # noqa: F401
-from app.llm.fake import FakeHandler, FakeModelClient, default_review_reply  # noqa: F401
-from app.llm.providers.openai import OpenAIAdapter  # noqa: F401
+from app.llm.base import ModelClient as ModelClient  # noqa: F401
+from app.llm.base import ModelResponse as ModelResponse  # noqa: F401
+from app.llm.clients import ProviderClients as ProviderClients  # noqa: F401
+from app.llm.fake import FakeHandler as FakeHandler  # noqa: F401
+from app.llm.fake import FakeModelClient as FakeModelClient  # noqa: F401
+from app.llm.fake import default_review_reply as default_review_reply  # noqa: F401
+from app.llm.providers.openai import OpenAIAdapter as OpenAIAdapter  # noqa: F401
 
 if TYPE_CHECKING:
     from app.config import AppConfig
