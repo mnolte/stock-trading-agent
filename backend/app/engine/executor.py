@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -625,6 +625,7 @@ class Executor:
         stop: Decimal,
         target: Decimal,
         atr_1h: Decimal | None,
+        room_levels: list[dict[str, Any]] | None = None,
     ) -> tuple[Quote | None, Decimal | None, str | None]:
         """The "Fresh quote" gate right before an entry order is sent.
 
@@ -691,6 +692,17 @@ class Executor:
         minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
         if market_risk.atr_multiple is None or market_risk.atr_multiple < minimum:
             return quote, None, "stop_market_distance"
+        # decision.v3: room is checked again from the final limit — a
+        # fresh limit that leaves less than min_room_atr fails the Fresh
+        # quote gate with reason ``room`` (docs/SPEC.md, Decision v3).
+        if room_levels is not None and atr_1h is not None and atr_1h > 0:
+            from app.decide.v3 import room_recheck_failure, v3_config
+
+            room_fail = room_recheck_failure(
+                room_levels, limit, atr_1h, v3_config(self.config)
+            )
+            if room_fail is not None:
+                return quote, None, room_fail
         return quote, limit, None
 
     async def approve(self, approval_id: int) -> dict[str, object]:
@@ -741,6 +753,17 @@ class Executor:
                 stop=approval.stop_price,
                 target=approval.target_price,
                 atr_1h=self._atr_1h(approval.symbol),
+                **(
+                    {
+                        "room_levels": cast(
+                            "list[dict[str, Any]] | None",
+                            (decision.levels or {}).get("levels"),
+                        )
+                    }
+                    if decision is not None
+                    and decision.prompt_version == "decision.v3"
+                    else {}
+                ),
             )
             if fail is not None:
                 self._resolve_approval(approval, "rejected", fail)
@@ -2363,6 +2386,16 @@ class Executor:
             stop=Decimal(str(stop)),
             target=Decimal(str(target)),
             atr_1h=item.snapshot.atr_1h,
+            **(
+                {
+                    "room_levels": cast(
+                        "list[dict[str, Any]] | None",
+                        (decision.levels or {}).get("levels"),
+                    )
+                }
+                if decision.prompt_version == "decision.v3"
+                else {}
+            ),
         )
         if fresh_fail is not None:
             failed = replace(

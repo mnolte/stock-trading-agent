@@ -3413,6 +3413,8 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         if d.final_action == "no_call":
             if d.no_call_reason in (None, "rules"):
                 why = rules.get("reason") or "failed the pre-filter"
+            elif d.prompt_version == "decision.v3" and validation.get("error"):
+                why = f"{d.no_call_reason} · {validation['error']}"
             else:
                 why = validation.get("error") or _NO_CALL_WHY.get(
                     d.no_call_reason,
@@ -3863,8 +3865,13 @@ def _feed_reason(decision: Decision) -> str | None:
     if decision.final_action == "no_call":
         if decision.no_call_reason in (None, "rules"):
             return "pre-filter"
+        detail = str(validation.get("error") or "").strip()
+        if decision.prompt_version == "decision.v3" and detail:
+            # v3: "no_options · room: L7 1h swing high 0.31 ATR above
+            # the limit (min 1.0)" (docs/SPEC.md, Decision v3).
+            return f"{decision.no_call_reason} · {detail}"
         return str(
-            validation.get("error") or decision.no_call_reason
+            detail or decision.no_call_reason
         ).replace("_", " ")
     if decision.final_action == "blocked":
         gates = decision.gates_result or {}
@@ -3884,6 +3891,9 @@ def _feed_reason(decision: Decision) -> str | None:
         return note or None
     thesis = output.get("thesis")
     if isinstance(thesis, str) and thesis:
+        written = validation.get("code_written")
+        if decision.prompt_version == "decision.v3" and isinstance(written, str) and written:
+            return f"{thesis} — {written}"
         return thesis
     conf = output.get("confidence")
     return f"confidence {conf}" if conf is not None else None
