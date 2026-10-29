@@ -15,6 +15,7 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.
 - Every behaviour change updates `docs/SPEC.md` (only when asked to) and adds an entry to `docs/CHANGES.md`.
+- If your PR touches a file listed in `.github/spec-paths.txt`, add the label `spec change` and say in the PR which spec files changed and why. Never commit spec or design files that belong to another PR.
 - End every PR with: what was built, what was tested, what was not tested, deviations from the spec, design differences.
 
 ## Commands
@@ -34,7 +35,7 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 2. **Every position has a broker-side stop.** Entries are bracket orders. A position found without a stop gets a protective stop immediately, then an alert.
 3. **Never resend an order automatically.** After a timeout or error on an order call, reconciliation decides what happened.
 4. **Exact money.** Use `Decimal` for prices, quantities and money in the backend. Whole shares only.
-5. **Time is injected.** No `datetime.now()` in engine code; use the clock object. Schedule in `America/New_York` with `zoneinfo`; never hard-code a UTC or Amsterdam offset.
+5. **Time is injected.** No `datetime.now()` in engine code; use the clock object. Every datetime is timezone-aware; ruff's `DTZ` rules are on. Schedule in `America/New_York` with `zoneinfo`; never hard-code a UTC or Amsterdam offset.
 6. **No network in tests.** Every external service sits behind an interface with a fake. Sockets are blocked in the test setup.
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
 8. **Prompts are immutable once used.** Never edit a prompt file (`decision.v1.md`, `decision.v2.md`, …) after it has made a decision; create the next version. Never move a level or pick another option in code to make a model's choice pass.

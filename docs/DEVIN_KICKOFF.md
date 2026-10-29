@@ -1506,6 +1506,10 @@ latest spec and design packages, then read:
    (output_config.format, the schema features that aren't supported,
    stop reasons)
 
+PR 28 already added part of step 1 to fix a boot failure on main:
+prices_for() and the one-release fallback for model_prices and
+reviews.model. Reuse and extend them; don't build a second version.
+
 Build PR 29 only, in this order (one commit per step):
 1. Model list:
    - load the models block (provider, input, output, cutoff, effort,
@@ -1642,12 +1646,14 @@ latest spec and design packages, then read:
 1. docs/CHANGES.md, entry 2026-10-28 "Decision v3 (PR 30)" (spec) and
    "Decision v3 drawer" (design)
 2. docs/SPEC.md → "Decision v3: checks by code, room and break-even"
-   (whole section); "Decision v2: code-built options" (levels, options,
+   (whole section, including "Held positions in v3"); "Decision v2:
+   code-built options" (levels, options, stop options,
    code checks, replay, storage); Build plan item 30
 3. backend/prompts/decision.v3.md (new; copy it into the repo as is, and
    add its SHA-256 to prompts/manifest.json if PR 28 is merged)
 4. backend/config.example.yaml → decision.v3
-5. design/screens/DecisionV3.dc.html with DecisionV3.png
+5. design/screens/DecisionV3.dc.html and DecisionV3Held.dc.html with
+   their PNGs
 
 Build PR 30 only, in this order (one commit per step):
 1. Snapshot v3 builder, separate from v2's, selected by the strategy's
@@ -1674,13 +1680,30 @@ Build PR 30 only, in this order (one commit per step):
    at WARNING and recorded as an event); room checked again at order
    time from the final limit (Fresh quote gate, reason room); the
    explanation check against the rounded snapshot.
-5. v3 in strategies, the new-shadow dialog, backtests and make replay
+5. Held positions in v3 (option builder version 2 and snapshot v3):
+   - stop options: locks_profit only above the entry; locked_r
+     (replacing r_at_stop) and distance_atr; drop moves under
+     decision.v3.min_stop_move_atr; break-even only from
+     decision.v3.breakeven_min_r; trail and swing-low options at least
+     decision.v3.held_stop_min_atr below the price; all three
+     strategy-overridable; store dropped options with their reasons;
+   - position: r_now, stop_distance_atr, target_distance_atr,
+     levels_to_target, invalidation filled by code, entry_thesis,
+     scheduled_exit when the earnings exit will sell it;
+   - held confidence stored per action, not gated, and kept out of the
+     entry calibration on Readiness and Insights;
+   - the lock-in claim check (unsupported_claim when the thesis says the
+     stop locks in profit and the chosen stop's locked_r ≤ 0).
+6. v3 in strategies, the new-shadow dialog, backtests and make replay
    (PROMPT=decision.v3; v3 snapshots derived from stored v2 inputs, no
-   refetch), with the report additions from the spec.
-6. Frontend: the v3 drawer per the design (checks block, options with
-   distances and break-even, conflicts before the reasoning, data flags,
-   the two new gates, the room reason for no_options); no_options · room
-   in the dashboard card and the feed.
+   refetch), with the report additions from the spec (including the
+   held section).
+7. Frontend: the v3 drawers per the design. DecisionV3 (entries): the
+   checks block, options with distances and break-even, conflicts before
+   the reasoning, data flags, the two new gates and the room reason for
+   no_options. DecisionV3Held: the position facts, scheduled exit, stop
+   options with locked R and distance, and the options not offered with
+   their reason. no_options · room in the dashboard card and the feed.
 
 Tests:
 - The SBUX snapshot of 28 Oct 2026 10:46 (fixture: the stored v2 input)
@@ -1704,6 +1727,16 @@ Tests:
   unchanged on the existing fixtures.
 - The explanation check passes on rounded numbers and fails on an
   unrounded one that isn't in the snapshot.
+- The SBUX held snapshot of 28 Oct 14:46 (fixture: the stored v2 input)
+  under v3: T1 dropped (moves 0.05 ATR), T2 dropped (+0.49R < 1.0R), T3
+  offered with locked_r −0.07 and distance_atr 1.21; scheduled_exit is
+  the earnings exit on 29 Oct 15:46 NY; invalidation is filled.
+- locks_profit is false for a stop exactly at the entry and true just
+  above it.
+- A thesis "locks in the current 0.49 R profit" with a chosen stop at
+  locked_r 0 gets unsupported_claim.
+- Held confidence never blocks an action and doesn't appear in the
+  entry calibration.
 - A v3 shadow runs next to live in a simulated session; live's timing is
   unchanged.
 - No network in tests.
@@ -1714,8 +1747,246 @@ I've added the key), stay under the replay cost cap, and post the report
 in the PR. Don't start the v3 shadow yourself; I'll do that.
 
 Use the PR template, screenshots in docs/screenshots/pr-30/ next to the
-design PNG (DecisionV3). List remaining design differences. No
+design PNGs (DecisionV3, DecisionV3Held). List remaining design differences. No
 migration, but a restart is needed to load the new prompt: only outside
 14:30–21:00 Amsterdam this week (15:30–22:00 from 2 November); say in
 the PR when you restarted.
+```
+
+## Fix — original_invalidation filled for held positions (before PR 30)
+
+```
+Small bug fix, before PR 30: held decisions get "original_invalidation":
+"unavailable".
+
+Example: SBUX held, decision at 28 Oct 2026 14:46 NY (decision.v2,
+gpt-4.1-mini). The snapshot's position block has original_invalidation
+"unavailable", while SPEC → Decision v2 → Model output says the
+invalidation is the chosen stop, written by code. Without it the model
+can't judge an exit.
+
+1. Find where the position block gets original_invalidation and why it
+   is "unavailable" for v2 entries (and check v1 entries too).
+2. Fill it from what was stored at entry: the initial stop and its basis
+   (for v2 the chosen option's stop_basis), for example "below 101.74:
+   2 × ATR stop". Don't change the v2 prompt and don't add other fields
+   to the v2 snapshot; only the value of this existing field changes.
+3. For positions already open, fill it from the stored entry decision; if
+   that really isn't available, keep "unavailable" and say which
+   positions in the PR.
+4. Tests: a v2 entry with an ATR stop and one with a level stop both give
+   a filled invalidation in the next held snapshot; a v1 entry still
+   works.
+
+No migration expected. Restart only outside 14:30–21:00 Amsterdam this
+week; say in the PR when you restarted. Note that SBUX should be sold by
+the earnings exit at 15:46 NY on Thu 29 Oct; don't restart around that
+cycle.
+```
+
+## CI — spec change label
+
+````
+CI: require the "spec change" label on pull requests that change spec
+files. Small, CI only: no app code changes. Pull the latest spec package
+and read docs/README.md rule 8, AGENTS.md → How to work, and
+docs/CHANGES.md entry 2026-10-29 "Process: spec changes are labelled".
+
+Add these three files (adjust only the checkout pin):
+
+1. .github/spec-paths.txt
+
+# Files owned by the spec and design. A PR that changes any of them
+# needs the "spec change" label. Bash matching: * also crosses "/".
+docs/SPEC.md
+docs/README.md
+docs/DEVIN_KICKOFF.md
+docs/analysis/*
+AGENTS.md
+CLAUDE.md
+backend/prompts/*.md
+backend/config.example.yaml
+.env.example
+design/*
+.github/spec-paths.txt
+.github/scripts/check-spec-label.sh
+.github/workflows/spec-label.yml
+
+2. .github/workflows/spec-label.yml
+
+name: spec-label
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: spec-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  spec-label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@<same SHA pin as our other workflows>  # v4
+        with:
+          fetch-depth: 0
+      - name: Check spec label and changelogs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'spec change') }}
+        run: .github/scripts/check-spec-label.sh
+
+3. .github/scripts/check-spec-label.sh (executable)
+
+#!/usr/bin/env bash
+# Fails when a PR changes spec files without the "spec change" label,
+# or changes spec or design files without their changelog entry.
+set -euo pipefail
+
+mapfile -t patterns < <(grep -vE '^[[:space:]]*(#|$)' .github/spec-paths.txt)
+mapfile -t changed < <(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
+
+matches() {  # file, then patterns; [[ == ]] lets * cross "/"
+  local f=$1; shift
+  for p in "$@"; do [[ $f == $p ]] && return 0; done
+  return 1
+}
+changed_has() { printf '%s\n' "${changed[@]}" | grep -qxF "$1"; }
+
+spec_files=()
+for f in "${changed[@]}"; do
+  if matches "$f" "${patterns[@]}"; then spec_files+=("$f"); fi
+done
+
+{
+  echo "## Spec label check"
+  if ((${#spec_files[@]})); then
+    echo "Spec files changed:"
+    printf -- '- `%s`\n' "${spec_files[@]}"
+  else
+    echo "No spec files changed."
+  fi
+} >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+errors=0
+if ((${#spec_files[@]})) && [[ $HAS_LABEL != true ]]; then
+  echo "::error::This PR changes spec files but has no 'spec change' label: ${spec_files[*]}"
+  errors=1
+fi
+if ((${#spec_files[@]} == 0)) && [[ $HAS_LABEL == true ]]; then
+  echo "::warning::The 'spec change' label is set but no spec file changed. Remove the label."
+fi
+
+needs_spec_log=(docs/SPEC.md AGENTS.md 'backend/prompts/*.md' backend/config.example.yaml .env.example)
+needs_design_log=('design/screens/*' design/DESIGN.md design/tokens.css)
+for f in "${spec_files[@]}"; do
+  if matches "$f" "${needs_spec_log[@]}" && ! changed_has docs/CHANGES.md; then
+    echo "::error file=$f::Spec change without an entry in docs/CHANGES.md"
+    errors=1
+  fi
+  if matches "$f" "${needs_design_log[@]}" && ! changed_has design/CHANGES.md; then
+    echo "::error file=$f::Design change without an entry in design/CHANGES.md"
+    errors=1
+  fi
+done
+exit "$errors"
+
+Notes:
+- The label values come in through env, never interpolated into the
+  script, so a PR title or branch name can't inject anything.
+- labeled/unlabeled are triggers, so adding the label re-runs the check.
+- docs/CHANGES.md itself is not in the list: code PRs add entries for
+  behaviour changes (AGENTS.md), and that alone shouldn't need the label.
+
+Tests: tests/ci/test_spec_label.py (pytest, no network). Build a
+temporary git repo per case, copy the script and spec-paths.txt in, and
+run the script with BASE_SHA/HEAD_SHA/HAS_LABEL set:
+- only backend code changed, no label → pass;
+- docs/SPEC.md changed, no label → fail;
+- docs/SPEC.md and docs/CHANGES.md changed, label → pass;
+- docs/SPEC.md changed with label but no docs/CHANGES.md → fail;
+- design/screens/Main.dc.html with label but no design/CHANGES.md →
+  fail;
+- backend/prompts/decision.v3.md added with label and docs/CHANGES.md
+  → pass;
+- backend/config.example.yaml changed, no label → fail;
+- label set, no spec file changed → pass with the warning;
+- a file renamed out of design/ counts (the old path matches);
+- design/screens/sub/x.html matches design/* (star crosses "/").
+Run it in the existing backend test job.
+
+Then:
+- Add a "Spec files" line to the PR template: "Spec files changed: none
+  / list, and why".
+- In the PR, tell me the exact check name to mark as required.
+
+I'll create the label and make the check required myself. Use the PR
+template; no restart needed.
+````
+
+## PR 31 — Exit fills and reconciliation
+
+```
+PR 31 (Exit fills and reconciliation). Thanks for the SBUX/HD
+investigation. Your observation is right, and the root cause is one
+step earlier: a routine stop or target fill should never be a
+reconciliation mismatch. Start from the latest main; independent of PR
+29 and 30. Pull the latest spec, then read:
+1. docs/CHANGES.md, entry 2026-10-29 "Exit fills and reconciliation
+   (PR 31)"
+2. docs/SPEC.md → Alpaca integration → Reconciliation (the new "Exits
+   close from the stream", "Fills the stream missed" and "Mismatches"
+   bullets) and Protective stops; Build plan item 31
+3. AGENTS.md → hard rule 5 (timezone-aware datetimes)
+
+Build PR 31 only, in this order (one commit per step):
+1. Stream closes exits: when a trade update fills an order of this
+   instance (stop, target, OCO, exit, earnings exit, breach, Stop &
+   flatten) and the position's filled sell quantity reaches the
+   position quantity, close the position row in the same transaction as
+   the fill: exit reason from the order kind, exit price from the fill,
+   INFO log, the normal "Position closed" notification, no event. A
+   partial fill only updates the quantity.
+2. Reconciliation explains before it accuses: for a recorded position
+   that is flat at Alpaca, fetch the symbol's filled orders since the
+   position opened. If this instance's exit orders cover the quantity,
+   close the row with that reason and fill, closed_while_offline = true,
+   WARNING log, no banner. Otherwise it's a mismatch (step 3).
+3. One mismatch path: every mismatch kind (flat without an explaining
+   fill, quantity mismatch, unknown order, another instance, adopted
+   position) goes through one function that records the event, logs
+   CRITICAL, sets the banner and pending acknowledgment, and blocks new
+   entries until Marc acknowledges. Route _close_position's "closed at
+   broker" case through it and remove the silent path.
+4. Datetimes: turn on ruff's DTZ rules, fix every violation (aware UTC
+   or the injected clock), and add a regression test for the
+   build_stop_options naive/aware TypeError of 28 Oct (cycles 200, 204
+   and 208). Tell me in the PR whether that fix went through a PR with a
+   test, or was patched on the running app.
+
+Tests (no network; fake broker and stream):
+- A stop leg fill closes the position from the stream: exit reason
+  stop, fill price stored, notification sent, no reconciliation event,
+  and the next reconcile is clean.
+- A target fill and an OCO exit do the same with their own reasons.
+- A partial stop fill leaves the position open with the right
+  quantity.
+- The app is down while the stop fills; at start the reconcile finds
+  the fill in Alpaca's history and closes the row as
+  closed_while_offline, WARNING, no banner, entries not blocked.
+- A flat position with no explaining fill → CRITICAL, event recorded,
+  banner, entries blocked until acknowledged.
+- Every mismatch kind goes through the one mismatch function (one test
+  per kind).
+- The SBUX case of 28 Oct as a fixture: break-even stop at 103.15
+  filled → closed from the stream with reason stop, raw P&L 0.00.
+- make lint fails on a naive datetime.now() in engine code.
+
+No migration expected (if closed_while_offline needs a column, add a
+new Alembic revision and say so). Use the PR template. Restart only
+outside 14:30–21:00 Amsterdam this week (15:30–22:00 from 2 November),
+and not while a position is open if you can avoid it; say in the PR
+when you restarted.
 ```

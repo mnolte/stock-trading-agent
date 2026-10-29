@@ -10,6 +10,8 @@
 4. **One build step per PR.** Use the map below for which spec sections a step needs.
 5. **Prompts are versioned.** `backend/prompts/decision.v1.md` is never edited after use; a change is a new file.
 6. **Changes are logged.** Behaviour changes get a dated entry in `docs/CHANGES.md`, newest first.
+7. **The example config is the end state.** `backend/config.example.yaml` in the spec package can hold blocks for PRs that aren't built yet; they are marked with their PR number. Copy only the blocks for the PR you are building, and never leave main depending on config keys whose code isn't merged: the app must boot from `main` with its own example config at every commit.
+8. **Spec changes are labelled.** A pull request that touches a spec file (the list is in `.github/spec-paths.txt`: the spec, the agent rules, prompts, the example config and env, the design) carries the label `spec change`, and CI fails without it. Spec and design changes also need their changelog entry (`docs/CHANGES.md`, `design/CHANGES.md`). Copying a config block for the PR being built counts as a spec change too: it makes the config contract visible in review.
 
 ## Which sections each PR needs
 
@@ -45,6 +47,7 @@
 | 28 | Security hardening | Security hardening; Error pages and API errors (new codes); VPS deployment (Sign-in → Fails closed); AGENTS.md rules 9, 18–20 | `Settings` (SMTP note, Access → risky actions) |
 | 29 | Model providers | Model providers; Decision layer (model output); API keys; LLM call history; Backtesting (model calls); Reviews (model and cost); AGENTS.md rule 21 | `Settings` (API keys, Decisions, Reviews), `Inspector` (model filter), `Logs` (component filter) |
 | 30 | Decision v3 | Decision v3; Decision v2 (options, replay); Strategies and shadows; `backend/prompts/decision.v3.md` | `DecisionV3` |
+| 31 | Exit fills and reconciliation | Alpaca integration → Reconciliation, Protective stops; Notifications; AGENTS.md rule 5 | `States` (reconciliation mismatch banner, unchanged) |
 
 ## PR description template
 

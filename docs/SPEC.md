@@ -158,8 +158,10 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 **Reconciliation**
 
 - Subscribe to Alpaca's trade-updates stream for fills, cancels and rejects.
+- **Exits close from the stream.** When a fill brings a position to zero (stop, target, OCO, agent exit, earnings exit, breach sale or Stop & flatten), the trade-updates handler closes the position row right away. It records the exit reason from the order's kind and the fill price, logs INFO and sends the normal "Position closed" notification. A routine stop or target exit is not a mismatch.
+- **Fills the stream missed** (the app was down or the stream dropped): when reconciliation finds a recorded position flat at Alpaca, it first looks up the symbol's filled orders at Alpaca since the position opened. If this instance's own exit orders explain the close, the row is closed with that reason and fill, marked `closed_while_offline`, and logged at WARNING. That is not a mismatch either.
 - At startup and at the start of every cycle, compare Alpaca positions and open orders with the database.
-- On any mismatch: record it, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
+- **Mismatches** are what the stream and Alpaca's order history can't explain: a position flat with no explaining fill, a quantity that differs, an unknown order, an order of another instance, or a position the agent never recorded. On any mismatch: record it as an event, log CRITICAL, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. Every mismatch path does all of these; none of them may just close a row silently. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
 - A position without a live stop order is a critical error, repaired as described in **Protective stops** below, then alerted.
 
 **Protective stops** (decided 27 October after the WMT incidents)
@@ -491,7 +493,8 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 
 28. **Security hardening.** From the 27 October audit: the request gate (Host, Origin and `Sec-Fetch-Site` on writes, JSON-only writes, body size, WebSocket checks) and the app's own security headers, with bundled fonts; one source for the bind address (`python -m app.serve`); exceptions and URL tokens scrubbed in every log handler; prompt names whitelisted, contained and hash-checked against `prompts/manifest.json`; clamped list parameters, capped exports and safe log search; frontend error reports limited per address and sanitised; stored SMTP password never sent to a changed server, outbound URLs https and public; `umask 077`, file modes, read-only run databases and an exclusive `run.lock`; ruff `S` rules, dependency audits, gitleaks, pinned Actions, `make security` and `docs/SECURITY.md`. Before PR 23 is merged; no migration and no trading change. *Done when:* a cross-site `text/plain` POST, a bodiless cross-site POST, a rebinding `Host` and a foreign-origin WebSocket are all refused while the GUI works normally; a fake key inside an exception never reaches any log; `../` in a prompt version gets 422; no GET route returns 500 for bad query values; a changed SMTP host without a password gets 422 and no connection is made with the stored password; files under the data folder are `0600`; and `make security` passes in CI.
 29. **Model providers.** One model client interface with an OpenAI and an Anthropic adapter (and fakes); the `models` list in config (provider, prices, cutoff, effort) replacing `model_prices` and `backtest.model_cutoffs`; Anthropic structured outputs with unsupported schema keywords removed from the sent copy only; no temperature for Claude models, effort instead; stop reasons and errors mapped to the existing outcomes; OpenAI and Anthropic keys, each optional with at least one required, and Remove; `provider` and `provider_request_id` in `llm_calls`; model pickers from the list for live decisions, the weekly review, the daily briefing and verdicts in Settings, the shadow dialog, backtests and replays, with models that need a missing key disabled; LLM inspector and Logs filters. The default live model stays `gpt-4o-mini`. *Done when:* the app runs with only an Anthropic key (live and all review tasks on Claude models) and with only an OpenAI key, Resume is blocked with no model key or when a used provider has none, a shadow on a Claude model runs next to live in simulated mode with the fake adapter, every answer goes through the same Pydantic checks, a Claude refusal or truncated answer becomes skip, no unsupported schema keyword is sent, a missing provider key skips that shadow without delaying live, and a backtest with a Claude model before its cutoff is refused.
-30. **Decision v3.** Snapshot v3 for v3 strategies (rounded numbers, no duplicate fields, plausible-only bid and ask, `checks` with trend labels, room and earnings, `distance_atr` on levels and levels in the way, `breakeven_confidence` per option); the room filter in option builder version 2 (`decision.v3.min_room_atr`, strategy-overridable, `no_options` with a room reason); `prompts/decision.v3.md` with conflicts and thesis before the action and the new `data_flags`; code checks for confidence against break-even (`edge_too_small`), data flags (`data_flag`, WARNING and event) and room at order time; `make replay PROMPT=decision.v3` with its report additions; v3 in strategies, shadows, backtests and replays; the v3 decision drawer. v1 and v2 are untouched. *Done when:* the SBUX snapshot of 28 October gives `no_options` with a room reason under v3; a fixture with room gets options with break-even and distances; an entry with confidence below break-even + 0.10 becomes skip; an enter with a data flag becomes skip and logs an event; v2 snapshots and replays are byte-for-byte unchanged; and a v3 shadow runs next to live in simulated mode.
+30. **Decision v3.** Snapshot v3 for v3 strategies (rounded numbers, no duplicate fields, plausible-only bid and ask, `checks` with trend labels, room and earnings, `distance_atr` on levels and levels in the way, `breakeven_confidence` per option); the room filter in option builder version 2 (`decision.v3.min_room_atr`, strategy-overridable, `no_options` with a room reason); `prompts/decision.v3.md` with conflicts and thesis before the action and the new `data_flags`; code checks for confidence against break-even (`edge_too_small`), data flags (`data_flag`, WARNING and event) and room at order time; `make replay PROMPT=decision.v3` with its report additions; v3 in strategies, shadows, backtests and replays; held positions in v3 (stop options with `locked_r` and `distance_atr`, minimum stop move, break-even from +1R, minimum distance for trails, position context, filled invalidation, scheduled exit, held confidence per action, the lock-in claim check); the v3 decision drawers. v1 and v2 are untouched. *Done when:* the SBUX held snapshot of 28 October 14:46 offers only T3 under v3 (T1 dropped as too small a move, T2 as below +1R) and shows the earnings exit as scheduled; the SBUX snapshot of 28 October gives `no_options` with a room reason under v3; a fixture with room gets options with break-even and distances; an entry with confidence below break-even + 0.10 becomes skip; an enter with a data flag becomes skip and logs an event; v2 snapshots and replays are byte-for-byte unchanged; and a v3 shadow runs next to live in simulated mode.
+31. **Exit fills and reconciliation.** The trade-updates handler closes a position row when a fill brings it to zero, with the exit reason and fill; reconciliation explains a flat position from Alpaca's filled orders before calling it a mismatch (`closed_while_offline`); every real mismatch records an event, logs CRITICAL, shows a banner and blocks entries until acknowledged; ruff `DTZ` rules for timezone-aware datetimes. *Done when:* a stop fill closes its position from the stream with no reconciliation event; a stop that filled while the app was down closes at the next start as `closed_while_offline` without a banner; a flat position with no explaining fill gives a CRITICAL mismatch with a banner and blocked entries until acknowledged; and `make lint` fails on a naive `datetime`.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1427,12 +1430,40 @@ Decision v3 fixes these with more work in code and a new prompt, `prompts/decisi
 - **Room at order time:** checked again from the final limit. If the fresh limit leaves less than `min_room_atr`, the entry fails the Fresh quote gate with reason `room`.
 - **Explanation check:** as v2, against the rounded v3 snapshot.
 
+**Held positions in v3.** A second review (SBUX held, 28 October 14:46) showed the held side needs the same treatment:
+- the model said a break-even stop "locks in the current 0.49 R profit", where it locks in 0 R;
+- one stop option moved the stop by 3 cents;
+- break-even was offered at +0.49R, about 1 × ATR below the price, in a high-volatility regime;
+- `original_invalidation` was `"unavailable"`;
+- the model didn't know the code would sell the position the next day before earnings.
+
+v2 stays as it is; for v3 strategies:
+- **Stop options (option builder version 2):**
+  - `locks_profit` is true only for a stop above the entry;
+  - every stop option gets `locked_r` (R at that stop against the initial risk, replacing `r_at_stop`) and `distance_atr` (how far below the market price);
+  - a stop option that moves the stop less than `decision.v3.min_stop_move_atr` (0.25) × ATR is dropped;
+  - break-even (T2) is offered only once the position is at least `decision.v3.breakeven_min_r` (1.0) R in profit;
+  - trail and swing-low options are offered only at least `decision.v3.held_stop_min_atr` (1.0) × ATR below the market price.
+  - These thresholds are strategy-overridable, so a shadow can test them. Dropped options are listed with their reason in the drawer ("break-even from +1.0R; now +0.49R").
+- **Position context:**
+  - `position` gains `r_now`, `stop_distance_atr`, `target_distance_atr` and `levels_to_target` (the levels between the price and the target, each with `distance_atr`);
+  - `invalidation` is always filled by code: the initial stop with its basis, for example "below 101.74: 2 × ATR stop";
+  - `entry_thesis` replaces `original_thesis`, and the prompt treats it as what was believed at entry, not as a fact.
+- **Scheduled exit:** when code will sell the position anyway (today: the earnings exit when holding through earnings is off), `position.scheduled_exit` says why and when, for example "earnings exit Thu 29 Oct 15:46 NY". `hold` is then the default, and the coming earnings aren't listed as a conflict.
+- **Confidence for held decisions** is defined per action:
+  - `hold`: target before the current stop;
+  - `tighten_stop`: target before the new stop;
+  - `exit`: target before the current stop, as if held (a low number supports the exit).
+  - Held confidence is stored but not gated, and it's kept out of the entry calibration on Readiness and Insights.
+- **Claim check:** a thesis that says the stop "locks in" profit while the chosen stop's `locked_r` is 0 or less gets the warning `unsupported_claim`, like a failed explanation check.
+
 **Replay.** `make replay PROMPT=decision.v3` builds v3 snapshots from the stored v2 inputs (levels, indicators, options, earnings and headlines), with no refetch. The report adds:
 - options and snapshots removed by the room filter, and which v2 or live entries they would have blocked, with those entries' outcomes;
 - skips by `edge_too_small` and `data_flag`;
 - confidence against break-even, and calibration per 0.1 confidence bucket against first-touch outcomes where known;
 - the most frequent conflicts, and every data flag with its snapshot;
 - v2 against v3 on the same snapshots: enter rate, agreement, and R of the chosen options.
+- held decisions: actions per context, stop options dropped per reason, and what the chosen stops did afterwards (stopped out within 5 sessions, and R given up against holding the old stop).
 
 It can run with any model in the list (PR 29), so v3 can be compared on OpenAI and Claude models at once.
 
@@ -1445,6 +1476,7 @@ It can run with any model in the list (PR 29), so v3 can be compared on OpenAI a
 - `options_version` is `2` for v3 options.
 - The snapshot stores `checks` and the room reason.
 - `no_options` reasons include `room`, and skip reasons include `edge_too_small` and `data_flag`.
+- Dropped stop options are stored with their reasons next to the offered ones.
 - No schema migration: these live in the existing JSON columns and reason lists.
 
 **GUI.** The decision drawer for a v3 decision (`design/screens/DecisionV3.dc.html`):
@@ -1453,6 +1485,7 @@ It can run with any model in the list (PR 29), so v3 can be compared on OpenAI a
 - **Agent reasoning:** conflicts before the reasoning, data flags after it;
 - **Safety gates:** the room and confidence-versus-break-even gates;
 - the room reason when there were no options.
+- for a held decision (`design/screens/DecisionV3Held.dc.html`): the position with R now and its distances, the scheduled exit, the stop options with `locked_r` and distance, and the dropped options with their reason.
 
 The dashboard's latest-decision card and the feed show `no_options · room` like other no_call reasons.
 

@@ -2,6 +2,27 @@
 
 Newest first.
 
+## 2026-10-29 — Exit fills and reconciliation (PR 31)
+
+- From the SBUX and HD stop-outs on 28 October: the trade-updates stream recorded the fills, but only reconciliation closed the position rows, so every routine stop or target exit showed up as a CRITICAL "closed at broker" mismatch. At the same time, that path recorded no event and set no acknowledgment, unlike every other mismatch.
+- Alpaca integration → Reconciliation:
+  - exits close from the stream with their reason;
+  - fills missed while the app was down are explained from Alpaca's order history and closed as `closed_while_offline` (WARNING);
+  - real mismatches always record an event, log CRITICAL, show a banner and block entries until acknowledged.
+- AGENTS.md rule 5: every datetime is timezone-aware, with ruff `DTZ` on (after the naive/aware `TypeError` in the stop-option builder that failed three cycles and turned the kill switch on twice).
+- Build plan: PR 31.
+
+## 2026-10-29 — Process: spec changes are labelled
+
+- New CI job `spec-label`: a pull request that changes a spec file (listed in `.github/spec-paths.txt`) must carry the label `spec change`; spec and design changes also need their changelog entry. A label without spec files gives a warning only.
+- `docs/README.md` rule 8 and a line in AGENTS.md → How to work.
+- Prompted by PR 28, where the PR 30 spec commit ended up on a security branch unnoticed.
+
+## 2026-10-29 — Process: the example config is the end state
+
+- PR 28 found that `main` no longer booted: the spec package's `config.example.yaml` (with PR 29's `models` and `reviews.models`) had been copied in before PR 29's code existed. PR 28 added the one-release fallback (`prices_for()`, the `reviews.models` walk) to fix it.
+- `docs/README.md` gets rule 7: copy only the config blocks for the PR being built; `main` must boot from its own example config at every commit.
+
 ## 2026-10-28 — Decision v3 (PR 30)
 
 - From a review of a decision.v2 answer (SBUX, 28 October): the model bought into three levels 0.3–0.7 ATR above the entry, called a mixed daily trend "up", gave 0.65 confidence for a 2R target, and wrote its reasoning after the decision.
@@ -11,6 +32,7 @@ Newest first.
   - prompt: conflicts and thesis before the action, defined trend rules, confidence starting at break-even, data flags, every field explained, the new name;
   - code checks: confidence ≥ max(0.55, break-even + 0.10) (`edge_too_small`), an enter with a data flag becomes skip (`data_flag`, WARNING and event), room checked again at order time;
   - replay report additions and the path to live (replay, shadow D, Marc decides, Start new run).
+- Held positions in v3 (from a second review, SBUX held at 14:46): `locks_profit` only above the entry, plus `locked_r` and `distance_atr` per stop option; stop moves under 0.25 × ATR dropped; break-even only from +1.0R; trails and swing-low stops at least 1.0 × ATR below the price; `r_now`, distances and levels to the target; invalidation always filled by code; `entry_thesis` treated as belief, not fact; `scheduled_exit` (for example the earnings exit); confidence defined per held action and kept out of entry calibration; a claim check on "locks in profit".
 - v1 and v2 prompts, snapshots and options don't change. No migration. Config: `decision.v3`. Build plan: PR 30.
 
 ## 2026-10-28 — Model providers: OpenAI and Anthropic (PR 29)

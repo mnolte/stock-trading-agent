@@ -17,7 +17,7 @@ from typing import Any
 from sqlalchemy.orm import object_session
 
 from app.data.models import Bar1h, Bar5m, NewsItem, Quote
-from app.db.models import Decision, Position
+from app.db.models import Decision, Position, ShadowDecision
 from app.market.clock import NY_TZ, UTC
 from app.signals.regime import MarketRegime
 from app.signals.snapshot import IndicatorSnapshot
@@ -74,6 +74,44 @@ def swing_levels(bars_1h: list[Bar1h]) -> dict[str, list[float]] | str:
     }
 
 
+def _chosen_stop_basis(
+    decision: Decision | ShadowDecision | None,
+) -> str | None:
+    """The stop basis of the option a decision.v2 entry picked."""
+    if decision is None or decision.chosen_option is None:
+        return None
+    column = decision.options or {}
+    entries = column.get("options") if isinstance(column, dict) else None
+    if not isinstance(entries, list):
+        return None
+    for option in entries:
+        if isinstance(option, dict) and option.get("id") == decision.chosen_option:
+            basis = option.get("stop_basis")
+            return str(basis) if basis else None
+    return None
+
+
+def entry_invalidation(
+    initial_stop: Decimal | None,
+    decision: Decision | ShadowDecision | None,
+) -> str:
+    """The position's original invalidation, from the stored entry.
+
+    decision.v1 wrote ``invalidation`` itself. decision.v2 has no price
+    fields: the invalidation is the chosen option's stop, written by
+    code (docs/SPEC.md, Decision v2 — Model output), rebuilt here from
+    the stored option's ``stop_basis`` and the position's initial stop.
+    """
+    reasoning = (decision.model_output or {}) if decision is not None else {}
+    invalidation = reasoning.get("invalidation")
+    if isinstance(invalidation, str) and invalidation:
+        return invalidation
+    basis = _chosen_stop_basis(decision)
+    if basis is not None and initial_stop is not None:
+        return f"below {initial_stop:.2f}: {basis} stop"
+    return UNAVAILABLE
+
+
 def _position_block(
     position: Position | None, price: Decimal | None
 ) -> dict[str, Any] | None:
@@ -96,7 +134,9 @@ def _position_block(
         "entry": _num(position.avg_entry_price, 2),
         "initial_stop": _num(position.initial_stop, 2),
         "original_thesis": reasoning.get("thesis", UNAVAILABLE),
-        "original_invalidation": reasoning.get("invalidation", UNAVAILABLE),
+        "original_invalidation": entry_invalidation(
+            position.initial_stop, decision
+        ),
         "remaining_downside_usd": _num(downside, 2),
         "qty": position.qty,
         "stop": _num(position.current_stop_price, 2),

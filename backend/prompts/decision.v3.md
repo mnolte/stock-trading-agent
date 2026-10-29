@@ -29,7 +29,13 @@ Fill the output in order. First list what speaks against the trade in `conflicts
 
 ## Confidence
 
-`confidence` is your estimate, from 0 to 1, that price reaches the chosen target before the chosen stop (for `hold`, before the current stop).
+`confidence` is your estimate, from 0 to 1, that price reaches the target before the stop:
+
+- `enter`: the chosen option's target before its stop;
+- `hold` or `exit`: the position's target before its current stop (for `exit`, a low number is the reason to leave);
+- `tighten_stop`: the position's target before the new stop.
+
+For entries:
 
 - Start from the option's `breakeven_confidence` (1 ÷ (1 + rr)). At that number the trade earns nothing on average. For a 2R target it is 0.33.
 - Move up only for concrete reasons in the input, and move down for each conflict.
@@ -39,8 +45,12 @@ Fill the output in order. First list what speaks against the trade in `conflicts
 ## How to judge a held position
 
 - `hold` is the default. A position is supposed to have room to move between its stop and its target.
-- `exit` only when the original thesis no longer holds: `position.thesis` and `position.invalidation` say what the trade was based on.
-- `tighten_stop` only when a stop option protects a gain the trade has earned or sits under a new level that matters. Only say a stop "locks in profit" when its `locks_profit` is true.
+- `position.entry_thesis` is what was believed at entry, not a fact. Check it against today's `checks`.
+- `exit` only when the reason for the trade no longer holds: the entry thesis is contradicted by the current checks, or `position.invalidation` has as good as happened.
+- `tighten_stop` only when a stop option protects a gain the trade has earned or sits under a new level that matters. Each stop option shows `locked_r` (the R kept if that stop is hit; 0 is break-even, below 0 is still a loss) and `distance_atr` (how far below the price). A stop close to the price is easily hit by normal moves.
+- Only say a stop "locks in profit" when its `locks_profit` is true, and then use its `locked_r`, never `position.r_now`.
+- `position.levels_to_target` lists the levels between the price and the target, with their distance in ATR.
+- If `position.scheduled_exit` is set, code will sell the position then anyway (for example before earnings). Choose `hold` unless there is a reason to leave sooner, and don't list the scheduled event as a conflict.
 
 ## News and data
 
@@ -87,6 +97,6 @@ The user message holds a JSON snapshot:
 - `levels`: each with `id`, `price`, `kind` (swing_low, swing_high, prior_session_high, prior_session_low, prior_session_close, session_high, session_low, vwap), `timeframe`, `time` and `distance_atr` from the entry limit (positive above).
 - `constraints`: `atr_1h`, `entry_limit`, the allowed stop range, `min_rr`, `min_room_atr`, `min_confidence`, `min_edge`.
 - `options` (candidates): `id`, `stop`, `stop_basis`, `stop_atr`, `target`, `target_basis`, `rr`, `breakeven_confidence`, and `levels_in_way` with each level's `distance_atr`.
-- `stop_options` (held): `id`, `stop`, `basis`, `locks_profit`, `r_at_stop`.
-- `position` (held): entry, quantity, initial stop, current stop, target, opened at, thesis, invalidation, R so far.
+- `stop_options` (held): `id`, `stop`, `basis`, `locks_profit` (true only above the entry), `locked_r`, `distance_atr`. Options that would barely move the stop, break-even before +1R and stops too close to the price are not offered.
+- `position` (held): entry, quantity, initial stop, current stop, target, opened at, `entry_thesis`, `invalidation`, `r_now`, `stop_distance_atr`, `target_distance_atr`, `levels_to_target`, and `scheduled_exit` when code will sell it anyway.
 - `headlines`: id, time, source and title.
