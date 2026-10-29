@@ -4563,12 +4563,12 @@ def _log_where(
 @router.get("/logs")
 def api_logs(request: Request) -> dict[str, object]:
     """Newest-first keyset paging (cursor = last id), limit ≤ 200."""
+    where, args = _log_where(request.query_params)
+    limit = _int_param(request, "limit", 100, 1, 200)
     conn = _log_db(request)
     if conn is None:
         return {"lines": [], "next_cursor": None, "index_available": False}
     with conn:
-        where, args = _log_where(request.query_params)
-        limit = _int_param(request, "limit", 100, 1, 200)
         try:
             rows = conn.execute(
                 f"SELECT {_COLS} FROM log_lines {where} "  # noqa: S608 - whitelisted column list, params bound
@@ -4639,10 +4639,10 @@ def api_logs_summary(request: Request) -> dict[str, object]:
 @router.get("/logs/{line_id}/around")
 def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     """The line plus `window` lines before/after by index order."""
+    window = _int_param(request, "window", 20, 1, 100)
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    window = _int_param(request, "window", 20, 1, 100)
     with conn:
         rows = conn.execute(
             f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "  # noqa: S608 - whitelisted column list, params bound
