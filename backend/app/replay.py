@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -43,12 +44,14 @@ from app.config import AppConfig
 from app.data.cache import BarCache, _naive_utc
 from app.data.models import Bar5m, CalendarDay
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, Run
+from app.db.models import Cycle, Decision, Position, Run
 from app.decide.client import DecisionClient, ModelResponse, make_decision_client, token_cost
 from app.decide.output import (
+    ModelOutputV3,
     ValidationResult,
     validate_model_output,
     validate_model_output_v2,
+    validate_model_output_v3,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.v2inputs import (
@@ -57,8 +60,17 @@ from app.decide.v2inputs import (
     build_v2_fields,
     rebuild_bars,
 )
+from app.decide.v3 import (
+    HeldV3,
+    build_v3_fields,
+    stop_basis_info,
+    v3_send_snapshot,
+)
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
+from app.risk.earnings import next_earnings
+
+logger = logging.getLogger(__name__)
 
 CENT = Decimal("0.01")
 
@@ -424,18 +436,80 @@ async def replay(
 
         v2: V2Build | None = None
         offered: list[str] | None = None
+        held3: HeldV3 | None = None
+        earnings3: tuple[date, str] | None = None
+        if spec.is_v3:
+            with sf() as qsession:
+                earnings3 = next_earnings(
+                    qsession, [symbol], scheduled.replace(tzinfo=UTC)
+                ).get(symbol)
+                if decision.context == "held" and pos:
+                    prow = qsession.execute(
+                        select(Position)
+                        .where(
+                            Position.symbol == symbol,
+                            Position.opened_at <= _naive_utc(scheduled.replace(tzinfo=UTC)),
+                        )
+                        .order_by(Position.opened_at.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    entry_dec = (
+                        qsession.get(Decision, prow.entry_decision_id)
+                        if prow is not None and prow.entry_decision_id is not None
+                        else None
+                    )
+                    opened = pos.get("opened_at")
+                    thesis = pos.get("original_thesis")
+                    held3 = HeldV3(
+                        entry=_dec(pos.get("entry")),
+                        qty=int(pos["qty"]) if pos.get("qty") is not None else None,
+                        initial_stop=_dec(pos.get("initial_stop")),
+                        current_stop=_dec(pos.get("stop")),
+                        target=_dec(pos.get("target")),
+                        opened_at=(
+                            datetime.fromisoformat(str(opened))
+                            if opened else None
+                        ),
+                        entry_thesis=str(thesis) if thesis else None,
+                        stop_basis=stop_basis_info(entry_dec),
+                        earnings=earnings3,
+                    )
         if status != NOT_REPLAYABLE:
-            v2 = build_v2_fields(
-                context=decision.context,
-                bars_1h=bars_1h,
-                daily=daily,
-                today_5m=todays,
-                price=price,
-                reference=reference,
-                atr_1h=atr_1h,
-                config=config,
-                held=held,
-            )
+            if spec.is_v3:
+                from app.shadows.runner import (
+                    indicators_from_snapshot,
+                    regime_from_snapshot,
+                )
+
+                v2 = build_v3_fields(
+                    context=decision.context,
+                    base=snap,
+                    price=price,
+                    reference=reference,
+                    atr_1h=atr_1h,
+                    indicators=indicators_from_snapshot(symbol, snap),
+                    regime=regime_from_snapshot(snap, config),
+                    bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
+                    earnings=earnings3,
+                    held=held3,
+                    calendar=sessions_provider,
+                    config=config,
+                    cycle_time_ny=scheduled.replace(tzinfo=UTC),
+                )
+            else:
+                v2 = build_v2_fields(
+                    context=decision.context,
+                    bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
+                    price=price,
+                    reference=reference,
+                    atr_1h=atr_1h,
+                    config=config,
+                    held=held,
+                )
             snap.update(v2.fields)
             offered = [
                 str(o.get("id"))
@@ -462,14 +536,36 @@ async def replay(
         else:
             response = await client.complete(
                 system=prompt.text,
-                user=json.dumps(snap, indent=2),
+                user=json.dumps(
+                    v3_send_snapshot(snap) if spec.is_v3 else snap, indent=2
+                ),
                 schema=spec.json_schema,
             )
             cost = token_cost(response, config, model=use_model)
             if cost is not None:
                 total_cost += cost
-            if spec.uses_options:
-                validation: ValidationResult = validate_model_output_v2(
+            if spec.is_v3:
+                validation: ValidationResult = validate_model_output_v3(
+                    response.raw,
+                    symbol=symbol,
+                    context=decision.context,
+                    snapshot=snap,
+                    atr_1h=atr_1h,
+                    current_stop=(
+                        held3.current_stop if held3 is not None
+                        else held.current_stop if held else None
+                    ),
+                    call_error=response.error,
+                    config=config,
+                )
+                if isinstance(validation.output, ModelOutputV3):
+                    for flag in validation.output.data_flags:
+                        logger.warning(
+                            "model.data_flag %s: model flagged a data conflict (%s)",
+                            symbol, flag,
+                        )
+            elif spec.uses_options:
+                validation = validate_model_output_v2(
                     response.raw,
                     symbol=symbol,
                     context=decision.context,

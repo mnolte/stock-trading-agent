@@ -40,7 +40,13 @@ from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
-from app.decide.output import decision_trade_prices, validate_model_output, validate_model_output_v2
+from app.decide.output import (
+    ModelOutputV3,
+    decision_trade_prices,
+    validate_model_output,
+    validate_model_output_v2,
+    validate_model_output_v3,
+)
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.service import (
     model_output_json,
@@ -49,6 +55,8 @@ from app.decide.service import (
 )
 from app.decide.snapshot import UNAVAILABLE, _position_block, entry_invalidation
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
+from app.decide.v3 import HeldV3, build_v3_fields, stop_basis_info, v3_send_snapshot
+from app.engine.state import record_event
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
@@ -509,6 +517,11 @@ class ShadowRunner:
             for i, (symbol, snap) in enumerate(sorted(extra_snapshots.items()))
             if symbol in held and symbol not in seen
         ]
+        if prompt_spec(str(strategy.prompt_version)).is_v3:
+            # v3 checks.earnings needs every reviewed symbol's next report.
+            earnings = next_earnings(
+                session, [d.symbol for d in decisions], scheduled
+            )
         held_items: list[LiveInput] = []
         passing: list[tuple[LiveInput, RulesResult]] = []
         failing: list[tuple[LiveInput, RulesResult]] = []
@@ -566,12 +579,16 @@ class ShadowRunner:
             # Never hold a database write transaction across an await: live
             # jobs run on the same event loop and must always get the lock.
             session.commit()
+            sent = json.dumps(
+                v3_send_snapshot(snap_json) if spec.is_v3 else snap_json,
+                indent=2,
+            )
             started = monotonic()
             try:
                 response = await asyncio.wait_for(
                     self._client(strategy).complete(
                         system=prompt.text,
-                        user=json.dumps(snap_json, indent=2),
+                        user=sent,
                         schema=spec.json_schema,
                     ),
                     timeout=budget,
@@ -595,14 +612,25 @@ class ShadowRunner:
                     ),
                     prompt_version=prompt.version,
                     prompt_hash=prompt.sha256,
-                    user=json.dumps(snap_json, indent=2),
+                    user=sent,
                     cycle_time=scheduled,
                     response=response.raw,
                     tokens_in=response.tokens_in,
                     tokens_out=response.tokens_out,
                 )
             ind = indicators_from_snapshot(d.symbol, d.snapshot)
-            if spec.uses_options:
+            if spec.is_v3:
+                validation = validate_model_output_v3(
+                    response.raw,
+                    symbol=d.symbol,
+                    context=context,
+                    snapshot=snap_json,
+                    atr_1h=ind.atr_1h,
+                    current_stop=current_stop,
+                    call_error=response.error,
+                    config=cfg,
+                )
+            elif spec.uses_options:
                 validation = validate_model_output_v2(
                     response.raw,
                     symbol=d.symbol,
@@ -628,6 +656,25 @@ class ShadowRunner:
                     call_error=response.error,
                     config=cfg,
                 )
+            # v3 data flags: WARNING + event in every context
+            # (docs/SPEC.md, Decision v3 — Data flags).
+            if isinstance(validation.output, ModelOutputV3):
+                for flag in validation.output.data_flags:
+                    logger.warning(
+                        "model.data_flag %s: model flagged a data conflict (%s)",
+                        d.symbol, flag,
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="warning",
+                        event_type="data_flag",
+                        details={
+                            "symbol": d.symbol,
+                            "flag": flag,
+                            "message": f"Model flagged a data conflict: {d.symbol} {flag}",
+                        },
+                    )
             row = self._row(
                 strategy,
                 cycle,
@@ -652,9 +699,11 @@ class ShadowRunner:
                 else None
             )
             row.explanation_check = (
-                validation.explanation.to_json()
-                if validation.explanation is not None
-                else None
+                (validation.explanation.to_json()
+                 if validation.explanation is not None else {})
+                | ({"claims": validation.claims.to_json()}
+                   if validation.claims is not None else {})
+                or None
             )
             row.prompt_version = prompt.version
             row.prompt_hash = prompt.sha256
@@ -744,7 +793,45 @@ class ShadowRunner:
                     | {"synthetic": synthetic}
                 )
             v2_held: V2Build | None = None
-            if llm and prompt_spec(str(strategy.prompt_version)).uses_options:
+            is_v3 = prompt_spec(str(strategy.prompt_version)).is_v3
+            if llm and is_v3:
+                h_bars, h_daily, h_todays = rebuild_bars(
+                    d.symbol, scheduled, calendar=self.calendar,
+                    bars_reader=self._bars,
+                )
+                v2_held = build_v3_fields(
+                    context="held",
+                    base=snap_json,
+                    price=price,
+                    reference=reference,
+                    atr_1h=indicators_from_snapshot(d.symbol, snap_json).atr_1h,
+                    indicators=indicators_from_snapshot(d.symbol, snap_json),
+                    regime=regime_from_snapshot(snap_json, cfg),
+                    bars_1h=h_bars,
+                    daily=h_daily,
+                    today_5m=h_todays,
+                    earnings=earnings.get(d.symbol),
+                    held=HeldV3(
+                        entry=sp.entry,
+                        qty=sp.qty,
+                        initial_stop=sp.initial_stop,
+                        current_stop=sp.stop,
+                        target=sp.target,
+                        opened_at=aware(sp.opened_at) if sp.opened_at else None,
+                        entry_thesis=(
+                            (entry.model_output or {}).get("thesis")
+                            if entry is not None
+                            else None
+                        ),
+                        stop_basis=stop_basis_info(entry),
+                        earnings=earnings.get(d.symbol),
+                    ),
+                    calendar=self.calendar,
+                    config=cfg,
+                    cycle_time_ny=scheduled,
+                )
+                snap_json.update(v2_held.fields)
+            elif llm and prompt_spec(str(strategy.prompt_version)).uses_options:
                 h_bars, h_daily, h_todays = rebuild_bars(
                     d.symbol, scheduled, calendar=self.calendar,
                     bars_reader=self._bars,
@@ -876,16 +963,36 @@ class ShadowRunner:
                             d.symbol, scheduled, calendar=self.calendar,
                             bars_reader=self._bars,
                         )
-                        v2_cand = build_v2_fields(
-                            context="candidate",
-                            bars_1h=c_bars,
-                            daily=c_daily,
-                            today_5m=c_todays,
-                            price=price,
-                            reference=ref_v2,
-                            atr_1h=atr_v2,
-                            config=cfg,
-                        )
+                        if prompt_spec(str(strategy.prompt_version)).is_v3:
+                            v2_cand = build_v3_fields(
+                                context="candidate",
+                                base=snap_json,
+                                price=price,
+                                reference=ref_v2,
+                                atr_1h=atr_v2,
+                                indicators=indicators_from_snapshot(
+                                    d.symbol, snap_json
+                                ),
+                                regime=regime_from_snapshot(snap_json, cfg),
+                                bars_1h=c_bars,
+                                daily=c_daily,
+                                today_5m=c_todays,
+                                earnings=earnings.get(d.symbol),
+                                calendar=self.calendar,
+                                config=cfg,
+                                cycle_time_ny=scheduled,
+                            )
+                        else:
+                            v2_cand = build_v2_fields(
+                                context="candidate",
+                                bars_1h=c_bars,
+                                daily=c_daily,
+                                today_5m=c_todays,
+                                price=price,
+                                reference=ref_v2,
+                                atr_1h=atr_v2,
+                                config=cfg,
+                            )
                         snap_json.update(v2_cand.fields)
                     if v2_cand is not None and not v2_cand.fields["options"]:
                         row = self._row(
@@ -899,6 +1006,17 @@ class ShadowRunner:
                         row.options_version = v2_cand.options_column.get(
                             "options_version"
                         )
+                        if prompt_spec(str(strategy.prompt_version)).is_v3:
+                            # v3: the no_options reason (room, ...) is
+                            # stored with the row for the drawer and feed.
+                            row.validation_result = {
+                                "error": v2_cand.reason
+                                or "no option met the rules",
+                                "final_action": "no_call",
+                                "note": (
+                                    f"No call — {v2_cand.reason or 'no option met the rules'}"
+                                ),
+                            }
                         session.add(row)
                         session.flush()
                         sr.decisions += 1
