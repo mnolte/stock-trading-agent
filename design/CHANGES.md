@@ -10,6 +10,7 @@ Newest first. Each entry names the screens it touches.
   - the model's **conflicts** are shown before the reasoning, and **data flags** after it (none, or a red chip such as "Data flag: earnings date conflict");
   - two new gates: room to the first level ≥ 1.0 ATR, and confidence ≥ max(0.55, break-even + 0.10);
   - a note shows how a `no_options` room reason looks when code removes every option.
+- New `DecisionV3Held.dc.html`: the v3 drawer for a held position (position facts with distances and the scheduled exit, stop options with locked R and distance below the price, options not offered with their reason, the lock-in claim check).
 - `DecisionV2.dc.html` is unchanged and still used for v2 decisions.
 
 ## 2026-10-28 — Model providers (OpenAI and Anthropic)
