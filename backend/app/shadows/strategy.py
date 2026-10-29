@@ -45,6 +45,42 @@ MODEL_KEYS: dict[str, tuple[str, str]] = {
 }
 # Code checks only apply to model answers; rules_only ignores them.
 CHECK_KEYS = {"min_confidence_enter", "stop_atr_min", "stop_atr_max", "min_reward_risk"}
+# decision.v3 thresholds sit one level deeper than OVERRIDE_KEYS allows;
+# these map an override name to its full settings path (docs/SPEC.md,
+# Decision v3 — Strategy overrides).
+OVERRIDE_V3: dict[str, tuple[str, ...]] = {
+    "min_room_atr": ("decision", "v3", "min_room_atr"),
+    "room_level_kinds": ("decision", "v3", "room_level_kinds"),
+    "min_stop_move_atr": ("decision", "v3", "min_stop_move_atr"),
+    "breakeven_min_r": ("decision", "v3", "breakeven_min_r"),
+    "held_stop_min_atr": ("decision", "v3", "held_stop_min_atr"),
+}
+_V3_BOUNDS: dict[str, tuple[float, float]] = {
+    "min_room_atr": (0.0, 20.0),
+    "min_stop_move_atr": (0.0, 20.0),
+    "breakeven_min_r": (0.0, 5.0),
+    "held_stop_min_atr": (0.0, 20.0),
+}
+_LEVEL_KINDS = (
+    "swing_high", "swing_low", "session_high", "session_low",
+    "prior_session_high", "prior_session_low", "prior_session_close", "vwap",
+)
+
+
+def _tree_set(tree: dict[str, Any], path: tuple[str, ...], value: Any) -> None:
+    node = tree
+    for part in path[:-1]:
+        node = node.setdefault(part, {})
+    node[path[-1]] = value
+
+
+def _tree_get(tree: dict[str, Any], path: tuple[str, ...]) -> Any:
+    node: Any = tree
+    for part in path:
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
 
 
 class StrategyError(Exception):
@@ -74,6 +110,10 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
         target = OVERRIDE_KEYS.get(name)
         if target is not None and value is not None:
             tree.setdefault(target[0], {})[target[1]] = value
+            continue
+        path = OVERRIDE_V3.get(name)
+        if path is not None and value is not None:
+            _tree_set(tree, path, value)
     return tree
 
 
@@ -134,6 +174,20 @@ def differences(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
             same.append(row)
         else:
             differs.append(row)
+    if strategy.kind == "llm":
+        for name, path in OVERRIDE_V3.items():
+            if strategy.overrides is None or name not in (strategy.overrides or {}):
+                continue
+            live_value = config.get(*path)
+            shadow_value = _tree_get(shadow_tree, path)
+            differs.append(
+                {
+                    "key": ".".join(path),
+                    "label": LABELS.get((path[0], path[-1]), name),
+                    "live": _fmt(live_value),
+                    "shadow": _fmt(shadow_value),
+                }
+            )
     return {"differs": differs, "same": same}
 
 
@@ -143,9 +197,14 @@ def promotion_changes(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
     for row in differences(config, strategy)["differs"]:
         if row["key"] == "kind":
             continue
-        section, key = row["key"].split(".", 1)
-        value = overrides_tree(strategy)[section][key]
-        out.setdefault(section, {})[key] = value
+        parts = row["key"].split(".")
+        value = _tree_get(overrides_tree(strategy), tuple(parts))
+        if value is None:
+            continue
+        node = out.setdefault(parts[0], {})
+        for part in parts[1:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
     return out
 
 
@@ -238,9 +297,41 @@ def validate_new_strategy(
             continue
         target = OVERRIDE_KEYS.get(str(item))
         if target is None:
-            # Risk gates, sizing, the day-trade rule and earnings handling
-            # are never overridable.
-            errors.append(f"{item}: not overridable")
+            path = OVERRIDE_V3.get(str(item))
+            if path is None:
+                # Risk gates, sizing, the day-trade rule and earnings
+                # handling are never overridable.
+                errors.append(f"{item}: not overridable")
+                continue
+            if kind == "rules_only" or value is None or value == "":
+                continue
+            label = ".".join(path)
+            if item == "room_level_kinds":
+                if not isinstance(value, list) or not all(
+                    isinstance(k, str) for k in value
+                ):
+                    errors.append(f"{label}: a list of level kinds")
+                    continue
+                bad = [k for k in value if k not in _LEVEL_KINDS]
+                if not value or bad:
+                    errors.append(
+                        f"{label}: unknown or no level kinds ({', '.join(bad)})"
+                    )
+                    continue
+                overrides[str(item)] = list(dict.fromkeys(value))
+                continue
+            v3_low, v3_high = _V3_BOUNDS[item]
+            try:
+                num = _num(value)
+            except (ArithmeticError, ValueError):
+                errors.append(f"{label}: not a number")
+                continue
+            if num < v3_low or num > v3_high:
+                errors.append(
+                    f"{label}: must be from {v3_low:g} to {v3_high:g}"
+                )
+                continue
+            overrides[str(item)] = num
             continue
         if value is None or value == "":
             continue
