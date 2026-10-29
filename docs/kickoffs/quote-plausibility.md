@@ -30,10 +30,15 @@ Report in docs/analysis/2026-10-29-quote-plausibility.md:
 4. How many entries went ahead with spread_unknown, and their entry
    slippage in bps against the last trade, compared with entries that
    had a plausible quote.
-5. Optional, only if it needs no new data source: what the 1-minute bar
+5. price_stale: how many candidate checks were blocked as price_stale
+   or price_suspect per day and per symbol (29 Oct: 16 across 10
+   symbols, 4.9% against the 5% Readiness target), and how old the last
+   trade was when blocked. Is the 60-second freshness rule the main
+   cause on the free IEX feed?
+6. Optional, only if it needs no new data source: what the 1-minute bar
    range (high − low) at the decision time looked like, as a possible
    replacement measure.
-6. A short conclusion with numbers: is the spread gate effectively off,
+7. A short conclusion with numbers: is the spread gate effectively off,
    and which of these would you recommend: keep as is, drop the gate
    officially, or replace it with another measure. Don't implement any
    of them.
