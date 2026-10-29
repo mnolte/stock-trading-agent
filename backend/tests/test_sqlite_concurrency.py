@@ -106,7 +106,13 @@ class LockProbeClient:
         self.probes = 0
 
     async def complete(
-        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
     ) -> ModelResponse:
         conn = sqlite3.connect(self.db_path, timeout=0)
         try:
@@ -119,7 +125,10 @@ class LockProbeClient:
             self.probes += 1
         finally:
             conn.close()
-        return await self.inner.complete(system=system, user=user)
+        return await self.inner.complete(
+            system=system, user=user, schema=schema,
+            model=model, temperature=temperature,
+        )
 
 
 async def test_shadow_runner_holds_no_write_lock_while_awaiting_a_model() -> None:
