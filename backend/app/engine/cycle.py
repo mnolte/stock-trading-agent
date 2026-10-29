@@ -24,10 +24,11 @@ from app.data.factory import DataSources
 from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Position
+from app.db.models import Cycle, Decision, Position
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
+from app.decide.v3 import build_v3_fields, held_v3
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import record_event
@@ -702,7 +703,37 @@ class CycleRunner:
             snapshot_json["last_bar_close"] = str(bar.close) if bar else None
             snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
             v2: V2Build | None = None
-            if self.decide.spec.uses_options:
+            if self.decide.spec.is_v3:
+                entry_decision = (
+                    session.get(Decision, position.entry_decision_id)
+                    if context == "held"
+                    and position is not None
+                    and position.entry_decision_id is not None
+                    else None
+                )
+                v2 = build_v3_fields(
+                    context=context,
+                    base=snapshot_json,
+                    price=price if price is not None else item.price,
+                    reference=reference,
+                    atr_1h=item.snapshot.atr_1h,
+                    indicators=item.snapshot,
+                    regime=evaluation.regime,
+                    bars_1h=item.bars_1h,
+                    daily=item.daily,
+                    today_5m=item.today_5m,
+                    earnings=earnings.get(item.symbol),
+                    held=(
+                        held_v3(position, entry_decision, earnings.get(item.symbol))
+                        if context == "held" and position is not None
+                        else None
+                    ),
+                    calendar=self.calendar,
+                    config=self.config,
+                    cycle_time_ny=scheduled_ny,
+                )
+                snapshot_json.update(v2.fields)
+            elif self.decide.spec.uses_options:
                 v2 = build_v2_fields(
                     context=context,
                     bars_1h=item.bars_1h,

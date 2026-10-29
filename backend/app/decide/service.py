@@ -29,12 +29,16 @@ from app.decide.output import (
     NO_CALL_REASONS,
     ModelOutput,
     ModelOutputV2,
+    ModelOutputV3,
     ValidationResult,
     validate_model_output,
     validate_model_output_v2,
+    validate_model_output_v3,
 )
 from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
 from app.decide.v2inputs import V2Build
+from app.decide.v3 import v3_send_snapshot
+from app.engine.state import record_event
 from app.inspector.record import build_llm_call
 from app.logging_config import ev
 from app.market.clock import Clock, make_clock
@@ -69,7 +73,7 @@ def _options_column(v2: V2Build | None) -> dict[str, Any] | None:
 
 
 def model_output_json(
-    output: ModelOutput | ModelOutputV2
+    output: ModelOutput | ModelOutputV2 | ModelOutputV3
 ) -> dict[str, Any]:
     return cast(dict[str, Any], _jsonable(output.model_dump()))
 
@@ -94,6 +98,8 @@ def validation_result_json(result: ValidationResult) -> dict[str, Any]:
         "final_action": result.final_action,
         "changed_by_code": result.changed_by_code,
         "error": result.error,
+        "reason": result.reason,
+        "code_written": result.code_written,
         "note": result.note,
         "checks": [
             {
@@ -179,7 +185,14 @@ class DecisionService:
         v2: V2Build | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
-        user = json.dumps(snapshot_json, indent=2)
+        user = json.dumps(
+            (
+                v3_send_snapshot(snapshot_json)
+                if self._spec.is_v3
+                else snapshot_json
+            ),
+            indent=2,
+        )
         response: ModelResponse | None = None
         sent_at = None
         from_cache = False
@@ -251,7 +264,18 @@ class DecisionService:
                     tokens_in=response.tokens_in,
                     tokens_out=response.tokens_out,
                 )
-        if self._spec.uses_options:
+        if self._spec.is_v3:
+            validation = validate_model_output_v3(
+                response.raw,
+                symbol=symbol,
+                context=context,
+                snapshot=snapshot_json,
+                atr_1h=atr_1h,
+                current_stop=current_stop,
+                call_error=response.error,
+                config=self.config,
+            )
+        elif self._spec.uses_options:
             validation = validate_model_output_v2(
                 response.raw,
                 symbol=symbol,
@@ -275,6 +299,31 @@ class DecisionService:
                 current_stop=current_stop,
                 call_error=response.error,
                 config=self.config,
+            )
+        # v3 data flags: every flag is logged at WARNING and recorded as
+        # an event in every context, so data bugs surface quickly
+        # (docs/SPEC.md, Decision v3 — Data flags).
+        flags = (
+            list(validation.output.data_flags)
+            if isinstance(validation.output, ModelOutputV3)
+            else []
+        )
+        for flag in flags:
+            ev(
+                logger, logging.WARNING, "model.data_flag",
+                f"{symbol}: model flagged a data conflict ({flag})",
+                symbol=symbol,
+            )
+            record_event(
+                session,
+                self._clock,
+                level="warning",
+                event_type="data_flag",
+                details={
+                    "symbol": symbol,
+                    "flag": flag,
+                    "message": f"Model flagged a data conflict: {symbol} {flag}",
+                },
             )
         # A failed call (error or refusal) left no output to fall back
         # on; "no_call" says so.
@@ -397,9 +446,11 @@ class DecisionService:
                 else None
             ),
             explanation_check=(
-                validation.explanation.to_json()
-                if validation.explanation is not None
-                else None
+                (validation.explanation.to_json()
+                 if validation.explanation is not None else {})
+                | ({"claims": validation.claims.to_json()}
+                 if validation.claims is not None else {})
+                or None
             ),
             options_version=OPTIONS_VERSION if v2 is not None else None,
         )

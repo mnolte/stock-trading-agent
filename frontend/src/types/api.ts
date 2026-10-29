@@ -112,6 +112,9 @@ export interface ModelOutput {
    * stop_price/target_price are absent on v2 rows. */
   option_id?: string | null;
   levels_used?: string[];
+  /** decision.v3: conflicts replace risks; data_flags is an enum list. */
+  conflicts?: string[];
+  data_flags?: string[];
 }
 
 export interface CodeCheck {
@@ -127,6 +130,10 @@ export interface ValidationResult {
   final_action: string;
   changed_by_code: boolean;
   error: string | null;
+  /** decision.v3: the machine-readable code-skip reason. */
+  reason?: string | null;
+  /** decision.v3: the stop/target basis code writes next to the thesis. */
+  code_written?: string | null;
   note: string;
   checks: CodeCheck[];
 }
@@ -1703,6 +1710,10 @@ export interface V2Level {
   kind: string;
   timeframe: string;
   time: string | null;
+  /** decision.v3: every kind merged into this id. */
+  kinds?: string[];
+  /** decision.v3: signed distance from the entry limit (held: price). */
+  distance_atr?: number | null;
 }
 
 export interface V2Option {
@@ -1716,7 +1727,9 @@ export interface V2Option {
   target_level: string | null;
   rr: number;
   risk: number;
-  levels_in_way: string[];
+  levels_in_way: Array<string | { id: string; distance_atr: number | null }>;
+  /** decision.v3: confidence at which the trade breaks even, 1/(1+rr). */
+  breakeven_confidence?: number;
 }
 
 export interface V2StopOption {
@@ -1726,12 +1739,50 @@ export interface V2StopOption {
   locks_profit: boolean;
   r_at_stop: number | null;
   level: string | null;
+  /** decision.v3 fields (r_at_stop is replaced by locked_r). */
+  locked_r?: number | null;
+  distance_atr?: number | null;
+  offered?: boolean;
+  drop_reason?: string | null;
+}
+
+export interface V3Checks {
+  trend_1h?: string;
+  trend_daily?: string;
+  regime_trend?: string;
+  regime_volatility?: string;
+  room_atr?: number | null;
+  room_level?: string | null;
+  earnings?: { days?: number | string | null; date?: string | null; time_of_day?: string | null };
+  news_status?: string;
+  momentum?: string;
+}
+
+export interface V3Position {
+  entry?: number | null;
+  qty?: number | null;
+  initial_stop?: number | null;
+  stop?: number | null;
+  target?: number | null;
+  opened_at?: string | null;
+  entry_thesis?: string;
+  invalidation?: string;
+  stop_level?: string | null;
+  r_now?: number | null;
+  stop_distance_atr?: number | null;
+  target_distance_atr?: number | null;
+  neutral_probability?: number | null;
+  levels_to_target?: Array<{ id: string; distance_atr: number | null }>;
+  scheduled_exit?: string | null;
 }
 
 export interface V2OptionsColumn {
   options?: V2Option[];
   stop_options?: V2StopOption[];
+  /** decision.v3: stop options not offered, each with its drop reason. */
+  dropped_stop_options?: V2StopOption[];
   merged?: string[];
   level_notes?: Record<string, string>;
   options_version?: string;
+  removed?: Array<{ id: string; reason: string }>;
 }

@@ -346,3 +346,107 @@ async def test_v2_shadow_runs_a_full_session(sf: sessionmaker[Session]) -> None:
                 )
         # The fake answered skip everywhere it was asked.
         assert any(r.model_output for r in rows)
+
+
+async def test_v3_shadow_runs_beside_live(sf: sessionmaker[Session]) -> None:
+    """A decision.v3 shadow completes a simulated session next to live;
+    live's timing is unchanged (docs/SPEC.md, Decision v3)."""
+    clock = FakeClock(datetime(2026, 10, 15, 9, 0, tzinfo=NY_TZ))
+    config = AppConfig()
+    cal_src = FakeCalendarSource()
+    sources = DataSources(
+        bars=FakeBarSource(cal_src),
+        quotes=FakeQuoteSource(clock),
+        news=FakeNewsSource(),
+        earnings=FakeEarningsSource(),
+        fx=FakeFXSource(),
+        corporate_actions=FakeCorporateActionSource(),
+        calendar=cal_src,
+        alpaca=None,
+    )
+    calendar = CalendarStore(cal_src)
+    await calendar.load(DAY - timedelta(days=600), DAY + timedelta(days=30))
+    market_data = MarketDataService(sources, calendar, config, session_factory=sf)
+    await market_data.refresh_earnings(DAY - timedelta(days=30), DAY + timedelta(days=90))
+    await market_data.refresh_daily(DAY)
+    await market_data.refresh_history(DAY)
+    from app.signals.service import SignalService
+
+    signals = SignalService(market_data, calendar, config, clock, sf)
+    state = ExecutionState(clock=clock)
+    executor = Executor(
+        broker=FakeBroker(clock), market_data=market_data, signals=signals,
+        calendar=calendar, config=config, clock=clock, state=state,
+        session_factory=sf,
+    )
+    await executor.refresh_account()
+    live = CycleRunner(
+        market_data=market_data, signals=signals,
+        decide=DecisionService(FakeDecisionClient(), config, sf),
+        sources=sources, calendar=calendar, config=config, clock=clock,
+        executor=executor, session_factory=sf,
+    )
+    with sf() as session:
+        session.add(
+            Run(started_at=_naive_utc(clock.now()), starting_equity=state.account.equity)  # type: ignore[union-attr]
+        )
+        session.add(
+            Strategy(
+                name="D · Checks (decision.v3)", kind="llm",
+                prompt_version="decision.v3", model="gpt-4o-mini",
+                temperature=0.0, overrides=None, status="active",
+                created_at=_naive_utc(clock.now()),
+            )
+        )
+        session.commit()
+
+    shadows = ShadowRunner(
+        config=config, clock=clock, calendar=calendar,
+        client_factory=lambda s: FakeDecisionClient(enter_symbols=set()),
+        session_factory=sf,
+        live_state=lambda: LiveGateState(
+            kill_switch_on=state.kill_switch_on, paused=state.paused,
+            shock_brake_1h=state.shock_brake_1h,
+            shock_brake_session=state.shock_brake_session,
+        ),
+        bars=BarCache(sf).get,
+    )
+    handed_off: list[Any] = []
+    live.on_cycle_done = lambda r: handed_off.append(
+        shadows.after_cycle(r.cycle_id or 0, r.shadow_snapshots)
+    )
+    checker = PositionChecker(
+        executor=executor, state=state, config=config, clock=clock, session_factory=sf
+    )
+    checker.on_check_done = lambda: handed_off.append(shadows.after_check())
+
+    session_day = calendar.session_for(DAY)
+    assert session_day is not None
+    sc = SessionClock(clock, config, calendar)
+    cycles = sc.active_cycles(session_day)
+    for at in cycles:
+        clock.set(at)
+        report = await live.run(at)
+        assert report.status == "done", report.errors
+        for coro in handed_off:
+            await coro
+        handed_off.clear()
+
+    with sf() as session:
+        rows = list(
+            session.execute(
+                select(ShadowDecision).order_by(ShadowDecision.id)
+            ).scalars()
+        )
+        assert rows, "no shadow decisions"
+        assert all(r.prompt_version == "decision.v3" for r in rows)
+        for r in rows:
+            assert r.options_version in ("v3", None)
+            if r.final_action == "no_call" and r.no_call_reason:
+                assert r.no_call_reason in (
+                    "rules", "call_cap", "no_options", "model_error"
+                )
+        # The v3 builder ran on every passing candidate — under the fake's
+        # levels the room filter legitimately empties the option list, so
+        # no model call is a valid outcome (docs/SPEC.md, Decision v3).
+        assert any(r.options_version == "v3" for r in rows)

@@ -51,21 +51,37 @@ def _manifest() -> dict[str, str]:
 class PromptSpec:
     """What a prompt version means in code (docs/SPEC.md, Decision v2).
 
-    A strategy's prompt version picks the response schema and whether the
-    snapshot carries code-built levels and options.
+    A strategy's prompt version picks the response schema and which
+    snapshot/option builder runs — ``builder`` is ``v1`` (none), ``v2``
+    or ``v3``.
     """
 
     version: str
     json_schema: dict[str, object]  # OpenAI strict JSON schema
-    uses_options: bool = False  # decision.v2: code-built options
+    uses_options: bool = False  # decision.v2/v3: code-built options
+    builder: str = "v1"  # "v2" | "v3" snapshot builder
+
+    @property
+    def is_v3(self) -> bool:
+        return self.builder == "v3"
 
 
 def prompt_spec(version: str) -> PromptSpec:
     """The code contract for a prompt version; unknown versions get v1's."""
-    from app.decide.output import DECISION_JSON_SCHEMA, DECISION_V2_JSON_SCHEMA
+    from app.decide.output import (
+        DECISION_JSON_SCHEMA,
+        DECISION_V2_JSON_SCHEMA,
+        DECISION_V3_JSON_SCHEMA,
+    )
 
+    if version == "decision.v3":
+        return PromptSpec(
+            version, DECISION_V3_JSON_SCHEMA, uses_options=True, builder="v3"
+        )
     if version == "decision.v2":
-        return PromptSpec(version, DECISION_V2_JSON_SCHEMA, uses_options=True)
+        return PromptSpec(
+            version, DECISION_V2_JSON_SCHEMA, uses_options=True, builder="v2"
+        )
     return PromptSpec(version, DECISION_JSON_SCHEMA)
 
 
