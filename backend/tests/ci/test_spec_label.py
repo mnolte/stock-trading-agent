@@ -11,8 +11,18 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github" / "scripts" / "check-spec-label.sh"
+
+# The gate script lives outside the app tree: it is not shipped in the
+# production image, so these tests skip there (still run in CI's own
+# checkout and locally).
+pytestmark = pytest.mark.skipif(
+    not SCRIPT.exists() or shutil.which("git") is None,
+    reason="spec-label gate script or git not available in this environment",
+)
 
 
 def _git(repo: Path, *args: str) -> str:

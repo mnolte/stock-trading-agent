@@ -17,9 +17,12 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 
 ## When changing docs
 
+- Work on a `spec/<topic>` branch from the latest `main` and open a pull request with the label `spec change`. Never push to `main` and never merge; Marc does.
+- Never edit the root `README.md`; Devin owns it.
+- Write each new kickoff as `docs/kickoffs/pr-<n>.md`. `docs/DEVIN_KICKOFF.md` is the archive up to PR 28.
 - Spec changes go to `docs/SPEC.md` only when Marc asks, plus a dated entry in `docs/CHANGES.md`.
 - Design changes go to `design/screens/` and `design/screenshots/`, plus an entry in `design/CHANGES.md`.
-- Keep the defaults in `backend/config.example.yaml` in step with the spec.
+- Keep the defaults in `backend/config.example.yaml` in step with the spec, but `main` must boot from it at every commit (`docs/README.md` rule 7). A block whose code doesn't exist yet goes in the kickoff, unless the app is known to ignore it.
 
 ## Style
 

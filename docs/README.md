@@ -12,6 +12,7 @@
 6. **Changes are logged.** Behaviour changes get a dated entry in `docs/CHANGES.md`, newest first.
 7. **The example config is the end state.** `backend/config.example.yaml` in the spec package can hold blocks for PRs that aren't built yet; they are marked with their PR number. Copy only the blocks for the PR you are building, and never leave main depending on config keys whose code isn't merged: the app must boot from `main` with its own example config at every commit.
 8. **Spec changes are labelled.** A pull request that touches a spec file (the list is in `.github/spec-paths.txt`: the spec, the agent rules, prompts, the example config and env, the design) carries the label `spec change`, and CI fails without it. Spec and design changes also need their changelog entry (`docs/CHANGES.md`, `design/CHANGES.md`). Copying a config block for the PR being built counts as a spec change too: it makes the config contract visible in review.
+9. **Spec work arrives as pull requests.** Claude makes spec and design changes on a `spec/…` branch and opens a pull request with the `spec change` label; Marc reviews and merges it. Each build step's kickoff is a file in `docs/kickoffs/` (`pr-<n>.md`), so Devin is started with one line: "Build docs/kickoffs/pr-<n>.md." The root `README.md` is Devin's; spec PRs don't touch it.
 
 ## Which sections each PR needs
 

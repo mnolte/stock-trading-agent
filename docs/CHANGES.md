@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-10-29 — Process: spec pull requests and kickoff files
+
+- Spec and design changes now arrive as pull requests from Claude on a `spec/…` branch with the `spec change` label, instead of files copied in by hand.
+- Kickoffs live in `docs/kickoffs/pr-<n>.md` (PR 29, 30, 31 and the README rewrite moved there); `docs/DEVIN_KICKOFF.md` is the archive up to PR 28.
+- `docs/README.md` rule 9 and `CLAUDE.md` → When changing docs describe the flow. The root `README.md` stays Devin's.
+- Design: `DecisionV3Held.dc.html` and its screenshot added to `design/` (they were in the spec package but not yet in the repo).
+
 ## 2026-10-29 — Held snapshots: original invalidation filled for decision.v2
 
 - The position block's `original_invalidation` was `"unavailable"` for every decision.v2 entry: the v2 model output has no `invalidation` field — the invalidation is the chosen stop, written by code (Decision v2 → Model output). It is now built from the stored entry: `below <initial stop>: <chosen option's stop_basis> stop`, for example "below 101.74: 2 × ATR stop". The shadow runner fills it the same way. Entries whose stored decision has no `invalidation` and no chosen-option basis keep `"unavailable"`. No migration.
