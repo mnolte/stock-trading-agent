@@ -355,18 +355,12 @@ def estimate(
 
 
 def _model_cutoff(config: AppConfig, model: str) -> date | None:
-    """The model's knowledge cutoff — lives on its ``models`` entry;
-    the legacy ``backtest.model_cutoffs`` block is honoured for one
+    """The model's knowledge cutoff from its ``models`` entry; the
+    legacy ``backtest.model_cutoffs`` block is folded in for one
     release (docs/SPEC.md → Model providers)."""
-    entry = (config.get("models", default={}) or {}).get(model)
-    raw = entry.get("cutoff") if isinstance(entry, dict) else None
-    if raw is None:
-        raw = (config.get("backtest", "model_cutoffs", default={}) or {}).get(
-            model
-        )
-    if raw is None:
-        return None
-    return date.fromisoformat(str(raw))
+    from app.llm.models import model_cutoff
+
+    return model_cutoff(config, model)
 
 
 def _calendar_span(

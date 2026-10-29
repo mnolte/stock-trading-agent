@@ -522,13 +522,10 @@ class ReviewService:
         )
 
     def _model_for(self, kind: str) -> str:
-        """The model configured for this review task — ``reviews.models``
-        is one per task; a legacy scalar ``reviews.model`` is honoured
-        for one release (docs/SPEC.md → Model providers)."""
-        models = self.config.get("reviews", "models", default=None)
-        if isinstance(models, dict) and kind in models:
-            return str(models[kind])
-        return str(self.config.get("reviews", "model", default=""))
+        """The model configured for this review task."""
+        from app.llm.models import review_model
+
+        return review_model(self.config, kind)
 
     def _record_call(
         self,

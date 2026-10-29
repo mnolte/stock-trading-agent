@@ -61,6 +61,7 @@ from app.engine.state import (
     recover_interrupted_cycles,
     set_event_sink,
 )
+from app.llm.models import check_models
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarProvider, CalendarStore
 from app.market.clock import NY_TZ, UTC, Clock, make_clock
@@ -79,7 +80,6 @@ from app.secrets_service import (
 )
 from app.shadows.portfolio import LiveGateState
 from app.shadows.runner import ShadowRunner
-from app.shadows.strategy import check_model_prices
 from app.signals.service import SignalService
 from app.universe.service import UniverseService
 
@@ -633,15 +633,15 @@ def spawn_background(
     task.add_done_callback(tasks.discard)
 
 
-def check_model_prices_at_startup(config: AppConfig) -> None:
+def check_models_at_startup(config: AppConfig) -> None:
     """Refuse to start when the live, reviews or an active shadow's model
-    has no entry in model_prices (docs/SPEC.md, Strategies and shadows)."""
+    is unknown or misconfigured (docs/SPEC.md → Model providers)."""
     from app.db.base import get_session_maker
 
     with get_session_maker()() as session:
         try:
-            check_model_prices(config, session)
-        except UnpricedModelError as exc:
+            check_models(config, session)
+        except (ValueError, UnpricedModelError) as exc:
             raise RuntimeError(f"Refusing to start: {exc}") from exc
 
 
@@ -858,7 +858,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
     check_execution_mode(config)
-    check_model_prices_at_startup(config)
+    check_models_at_startup(config)
     check_prompt_versions_at_startup(config)
 
     clock = make_clock(config)

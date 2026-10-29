@@ -375,24 +375,11 @@ def validate_new_strategy(
 
 
 def check_model_prices(config: AppConfig, session: Session) -> None:
-    """Startup refuses an unpriced live, reviews or active shadow model."""
-    from app.db.models import Strategy
+    """Startup refuses an unknown or unpriced live, reviews or active
+    shadow model (docs/SPEC.md → Model providers, Model list)."""
+    from app.llm.models import check_models
 
-    require_price(config, str(config.get("decision", "model", default="")), "Live")
-    # ``reviews.models`` is one model per task (docs/SPEC.md → Model
-    # providers); a legacy scalar ``reviews.model`` is still honoured.
-    review_models = config.get("reviews", "models", default=None)
-    if isinstance(review_models, dict) and review_models:
-        for task, model in review_models.items():
-            require_price(config, str(model), f"Reviews ({task})")
-    else:
-        require_price(
-            config, str(config.get("reviews", "model", default="")), "Reviews"
-        )
-    for strategy in session.execute(
-        select(Strategy).where(Strategy.status == "active", Strategy.kind == "llm")
-    ).scalars():
-        require_price(config, str(strategy.model), f"Shadow {strategy.name!r}")
+    check_models(config, session)
 
 
 def strategy_start(strategy: Strategy, run_started_at: datetime) -> datetime:

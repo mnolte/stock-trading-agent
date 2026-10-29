@@ -30,6 +30,7 @@ from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
 from app.decide.prompt import PromptError, load_prompt
+from app.llm.models import model_cutoff
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock, make_clock
 
@@ -322,9 +323,14 @@ def list_runs(request: Request) -> dict[str, Any]:
             "rules_only": {"ref": "rules_only", "name": "Rules only"},
             "shadows": shadows,
             "priced_models": priced_models(get_config()),
-            "model_cutoffs": get_config().get(
-                "backtest", "model_cutoffs", default={}
-            ),
+            "model_cutoffs": {
+                name: cutoff.isoformat()
+                for name, cutoff in (
+                    (name, model_cutoff(get_config(), name))
+                    for name in priced_models(get_config())
+                )
+                if cutoff is not None
+            },
             "universe": {
                 "mode": get_config().get("universe", "mode", default="fixed"),
                 "fixed_count": len(

@@ -22,6 +22,13 @@ if TYPE_CHECKING:
 
 # Placeholder used when no OpenAI key is stored yet (same constant the
 # secrets store uses for unset keys).
+from app.llm.models import (  # noqa: F401 — one implementation in app.llm
+    UnpricedModelError,
+    model_price,
+    priced_models,
+    prices_for,
+    require_price,
+)
 from app.secrets_service import MISSING_KEY
 
 
@@ -61,54 +68,6 @@ class DecisionClient(Protocol):
     ) -> ModelResponse:
         """Complete one decision call; ``error`` is set on failure."""
         ...
-
-
-class UnpricedModelError(RuntimeError):
-    """A model is configured for use but has no entry in ``model_prices``."""
-
-
-def model_price(
-    prices: dict[str, Any] | None, model: str
-) -> tuple[Decimal, Decimal] | None:
-    """(input, output) USD per million tokens for ``model``, or None.
-
-    ``model_prices`` in config.yaml is the only price source (docs/SPEC.md,
-    Strategies and shadows — Cost)."""
-    entry = (prices or {}).get(model)
-    if not isinstance(entry, dict):
-        return None
-    try:
-        return Decimal(str(entry["input"])), Decimal(str(entry["output"]))
-    except (KeyError, ArithmeticError, ValueError):
-        return None
-
-
-def prices_for(config: AppConfig) -> dict[str, Any]:
-    """The effective ``{model: {input, output, ...}}`` table.
-
-    The ``models`` block is the price source (docs/SPEC.md → Model
-    providers); a legacy ``model_prices`` block is still honoured for
-    one release.
-    """
-    models = config.get("models", default=None)
-    if isinstance(models, dict) and models:
-        return models
-    legacy = config.get("model_prices", default=None)
-    return dict(legacy) if isinstance(legacy, dict) else {}
-
-
-def priced_models(config: AppConfig) -> list[str]:
-    """Every model with a complete price — the only ones that may be picked."""
-    prices = prices_for(config)
-    return sorted(m for m in prices if model_price(prices, m) is not None)
-
-
-def require_price(config: AppConfig, model: str, what: str) -> None:
-    """Raise when ``model`` (used for ``what``) has no price."""
-    if model_price(prices_for(config), model) is None:
-        raise UnpricedModelError(
-            f"{what} model {model!r} has no price in models"
-        )
 
 
 def _classify_error(exc: Exception) -> str:
