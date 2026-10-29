@@ -2,6 +2,11 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-29 — Decision v3: momentum, neutral probability, stop basis by code
+
+- `DecisionV3.dc.html`: a Momentum row in Checks by code; the stop and target basis shown as a line "Written by code" under the reasoning (the model's text no longer describes them); a Claim checks gate.
+- `DecisionV3Held.dc.html`: a Neutral probability row in the position block (the starting point for held confidence); the claim checks gate now covers named stop or target levels too.
+
 ## 2026-10-28 — Decision v3 drawer
 
 - New `DecisionV3.dc.html` (PR 30), the decision.v3 version of the drawer:

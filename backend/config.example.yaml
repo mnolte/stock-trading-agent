@@ -96,6 +96,7 @@ decision:
     min_stop_move_atr: 0.25     # held: drop stop options that move the stop less than this x ATR
     breakeven_min_r: 1.0        # held: break-even offered only from this R in profit
     held_stop_min_atr: 1.0      # held: trail and swing-low options at least this x ATR below the price
+    level_merge_atr: 0.05       # levels this close (x ATR) become one id listing every kind
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 
