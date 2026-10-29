@@ -347,7 +347,7 @@ class TestDetail:
         assert data["error"] == {
             "type": "api_error", "http_status": 503,
             "code": "server_error", "message": "upstream 503",
-            "request_id": "req_abc",
+            "request_id": "req_abc", "provider": None,
         }
         assert "No usable response" in data["result"]
 
