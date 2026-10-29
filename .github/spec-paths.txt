@@ -19,6 +19,7 @@
 docs/SPEC.md
 docs/README.md
 docs/DEVIN_KICKOFF.md
+docs/kickoffs/*
 docs/analysis/*
 
 # --- Agent rules ---
