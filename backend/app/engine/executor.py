@@ -305,13 +305,21 @@ class Executor:
     # kill switch
 
     async def activate_kill_switch(
-        self, *, reason: str, automatic: bool, flatten: bool = False
+        self,
+        *,
+        reason: str,
+        automatic: bool,
+        flatten: bool = False,
+        new_run_required: bool = False,
     ) -> None:
         """Turn the switch on and log it. ``flatten`` is stop & flatten."""
         self.state.kill_switch_on = True
         self.state.kill_switch_since = self.clock.now()
         self.state.kill_switch_reason = reason
         self.state.kill_switch_auto = automatic
+        self.state.new_run_required = (
+            self.state.new_run_required or new_run_required
+        )
         with self._session_factory() as session:
             record_event(
                 session,
@@ -323,6 +331,7 @@ class Executor:
                     "reason": reason,
                     "automatic": automatic,
                     "flatten": flatten,
+                    "new_run_required": new_run_required,
                 },
             )
             session.commit()
@@ -353,6 +362,8 @@ class Executor:
 
     async def resume_from_pause(self) -> None:
         """Resume entries after a pause: one click, no reason needed."""
+        if self.state.new_run_required:
+            raise ValueError("start a new run first")
         if not self.state.paused:
             return
         self.state.paused = False
@@ -371,6 +382,8 @@ class Executor:
 
     async def resume(self, reason: str) -> None:
         """Resume after a kill switch. The typed reason is stored."""
+        if self.state.new_run_required:
+            raise ValueError("start a new run first")
         if not reason.strip():
             raise ValueError("a reason is required to resume")
         self.state.kill_switch_on = False
@@ -980,6 +993,7 @@ class Executor:
         # Restart peak equity, losing streak and the daily loss baseline.
         self.state.peak_equity = equity
         self.state.daily_loss_hit = False
+        self.state.new_run_required = False
         self.state.run_started_at = _naive_utc(self.clock.now())
         self._notify({"header", "performance", "banners"})
         return {"ok": True, "run_id": run_id}

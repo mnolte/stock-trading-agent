@@ -159,6 +159,18 @@ def test_different_paper_account_requires_new_run(
     assert r.status_code == 200, r.text
     assert r.json()["account_changed"] is True
     assert client.get("/api/header").json()["kill_switch"] is True
+    # Acknowledging the kill switch is not enough: every resume path
+    # refuses until Start new run has completed.
+    r = client.post("/api/kill-switch/resume", json={"reason": "check"})
+    assert r.status_code == 422
+    assert "start a new run" in r.text
+    r = client.post("/api/pause/resume")
+    assert r.status_code == 422
+    assert "start a new run" in r.text
+    r = client.post("/api/runs")
+    assert r.status_code == 200, r.text
+    assert client.post("/api/kill-switch/resume", json={"reason": "done"}).status_code == 200
+    assert client.post("/api/pause/resume").status_code == 200
 
 
 # ---------------------------------------------------------------------

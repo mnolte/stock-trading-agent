@@ -40,19 +40,24 @@ def test_traversal_version_refused() -> None:
 
 
 def test_manifest_covers_every_prompt_file() -> None:
-    """A listed prompt whose file changed — or a new file with no line —
-    fails here first, before any load."""
+    """Every manifest entry exists and hashes to its line; a file on disk
+    with no entry (a version the code may not load yet, like a prompt a
+    later PR activates) is refused, never silently loaded."""
     manifest = json.loads((PROMPTS_DIR / "manifest.json").read_text())
     on_disk = {p.name for p in PROMPTS_DIR.glob("*.md")}
-    assert set(manifest) == on_disk
+    assert set(manifest) <= on_disk, "manifest lists a file that does not exist"
     for name, sha in manifest.items():
         actual = hashlib.sha256((PROMPTS_DIR / name).read_bytes()).hexdigest()
         assert actual == sha, f"{name} changed — prompts are immutable once used"
+    for name in on_disk - set(manifest):
+        with pytest.raises(PromptError):
+            load_prompt(name.removesuffix(".md"))
 
 
 def test_every_prompt_loads() -> None:
-    for path in PROMPTS_DIR.glob("*.md"):
-        assert load_prompt(path.stem).text
+    manifest = json.loads((PROMPTS_DIR / "manifest.json").read_text())
+    for name in manifest:
+        assert load_prompt(name.removesuffix(".md")).text
 
 
 def test_tampered_prompt_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

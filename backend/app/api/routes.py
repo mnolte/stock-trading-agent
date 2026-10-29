@@ -787,7 +787,10 @@ async def pause_resume(request: Request) -> dict[str, object]:
             status_code=422,
             detail=f"Resume needs all three keys set and passing ({issue}).",
         )
-    await executor.resume_from_pause()
+    try:
+        await executor.resume_from_pause()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"paused": False}
 
 
@@ -2807,6 +2810,7 @@ async def save_api_key(
                     "start a new run"
                 ),
                 automatic=True,
+                new_run_required=True,
             )
         _notify(request, "banners", "header", "settings")
         return {

@@ -55,6 +55,10 @@ class ExecutionState:
     kill_switch_since: datetime | None = None
     kill_switch_reason: str | None = None
     kill_switch_auto: bool = False
+    # Keys pointing at a different Alpaca account (docs/SPEC.md, API
+    # keys): resume stays refused until "Start new run" completes — the
+    # flag rides the kill_switch event and clears on the new Run row.
+    new_run_required: bool = False
     # New entries paused (docs/SPEC.md, Paused at startup). Separate from
     # the kill switch: positions keep being reviewed, stops stay active.
     paused: bool = False
@@ -323,6 +327,11 @@ def load_execution_state(
             details = last_kill.details or {}
             state.kill_switch_reason = str(details.get("reason", ""))
             state.kill_switch_auto = bool(details.get("automatic"))
+            # A new run started after the key-change kill switch already
+            # satisfied the requirement; an older run did not.
+            state.new_run_required = bool(details.get("new_run_required")) and (
+                run_start is None or run_start <= last_kill.time
+            )
     # Paused at startup (docs/SPEC.md, Risk management): every start comes
     # up with new entries paused, even when trading was running before.
     # Unlike the kill switch, pause is not rebuilt from the events log —
