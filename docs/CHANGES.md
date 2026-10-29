@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-29 — Kickoffs tidied
+
+- `docs/kickoffs/pr-30.md`: reads both PR 30 change log entries, and states the label and changelog rules.
+- `docs/kickoffs/docs-readme.md` removed: the README rewrite was merged in #46.
+
 ## 2026-10-29 — Decision v3: held confidence, stop claims, momentum, merged levels (PR 30)
 
 - From a review of a held ACN decision (28 October 15:46, decision.v2, gpt-4.1-mini):
