@@ -43,6 +43,7 @@ from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
+from app.llm.models import REVIEW_TASKS, review_model
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
     NY_TZ,
@@ -2255,6 +2256,10 @@ def _settings_form(config: object) -> dict[str, object]:
             "monthly_cost_cap_usd": get(
                 "reviews", "monthly_cost_cap_usd", default=2
             ),
+            "models": {
+                task: review_model(config, task)
+                for task in REVIEW_TASKS
+            },
         },
         "universe": {
             "mode": get("universe", "mode", default="fixed"),
@@ -2443,6 +2448,7 @@ def settings(request: Request) -> dict[str, object]:
         "prompt_options": _prompt_options(),
         # Only models with a price may be selected (docs/SPEC.md, Cost).
         "priced_models": priced_models(config),
+        "model_options": _model_options(request),
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
@@ -2549,6 +2555,32 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         "changes": changes,
         "effective_from": "next cycle",
     }
+
+
+def _model_options(request: Request) -> list[dict[str, object]]:
+    """Every pickable model with its provider and key status — the
+    pickers show ``id · provider`` and disable a model whose provider
+    has no passing key (docs/SPEC.md → Model providers)."""
+    from app.llm.models import model_provider
+
+    config = get_config()
+    store = _secrets(request)
+    simulated = config.env.mode == "simulated"
+    out = []
+    for model in priced_models(config):
+        provider = model_provider(config, model)
+        out.append(
+            {
+                "id": model,
+                "provider": provider,
+                "needs_key": (
+                    False
+                    if simulated
+                    else store is None or not store.provider_ok(provider)
+                ),
+            }
+        )
+    return out
 
 
 def _clock(request: Request) -> Clock:

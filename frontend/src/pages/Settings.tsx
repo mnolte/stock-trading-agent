@@ -1426,6 +1426,30 @@ export default function Settings() {
     setNotice(null);
   };
 
+  const patchReviewModel = (
+    task: 'weekly' | 'briefing' | 'verdict',
+    value: string,
+  ) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            reviews: {
+              ...f.reviews,
+              models: {
+                weekly: '',
+                briefing: '',
+                verdict: '',
+                ...f.reviews.models,
+                [task]: value,
+              },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
   const reset = (section: keyof SettingsForm, key: string) => {
     if (!data) return;
     patch(section, key, (data.settings[section] as Record<string, unknown>)[key]);
@@ -2315,7 +2339,7 @@ export default function Settings() {
             {row('decision.model', {
               id: 'model',
               label: 'Model',
-              help: 'Used for decisions and reviews.',
+              help: 'Used for live decisions.',
               children: (
                 <select
                   id="model"
@@ -2323,11 +2347,22 @@ export default function Settings() {
                   onChange={(e) => patch('decision', 'model', e.target.value)}
                   style={selectStyle}
                 >
-                  {[s.decision.model, ...(data.priced_models ?? [])]
+                  {[s.decision.model, ...(data.model_options ?? []).map((o) => o.id)]
                     .filter((v, i, a) => a.indexOf(v) === i)
-                    .map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
+                    .map((v) => {
+                      const opt = (data.model_options ?? []).find((o) => o.id === v);
+                      return (
+                        <option
+                          key={v}
+                          value={v}
+                          disabled={opt?.needs_key}
+                        >
+                          {opt
+                            ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                            : v}
+                        </option>
+                      );
+                    })}
                 </select>
               ),
             })}
@@ -2355,7 +2390,7 @@ export default function Settings() {
             {row('decision.temperature', {
               id: 'temp',
               label: 'Temperature',
-              help: 'Decisions use 0 so the same input gives the same answer.',
+              help: 'Decisions use 0 so the same input gives the same answer. OpenAI models only — Claude models use their effort setting instead.',
               children: (
                 <NumBox id="temp" value={s.decision.temperature} width={60} accent={'decision.temperature' in changed} invalid={!!fieldErrors['decision.temperature']} onChange={(v) => patch('decision', 'temperature', v)} />
               ),
@@ -2370,6 +2405,48 @@ export default function Settings() {
             })}
 
             <h3 style={subHead}>Reviews</h3>
+            {(['weekly', 'briefing', 'verdict'] as const).map((task) => {
+              const taskLabels = {
+                weekly: 'Weekly review model',
+                briefing: 'Daily briefing model',
+                verdict: 'Verdict model',
+              } as const;
+              return row(`reviews.models.${task}`, {
+                id: `rmodel-${task}`,
+                label: taskLabels[task],
+                help:
+                  task === 'weekly'
+                    ? 'Runs after the Friday close.'
+                    : task === 'briefing'
+                      ? 'The text of the daily briefing.'
+                      : 'Scores closed decisions.',
+                children: (
+                  <select
+                    id={`rmodel-${task}`}
+                    value={s.reviews.models?.[task] ?? ''}
+                    onChange={(e) => patchReviewModel(task, e.target.value)}
+                    style={selectStyle}
+                  >
+                    {[s.reviews.models?.[task] ?? '', ...(data.model_options ?? []).map((o) => o.id)]
+                      .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
+                      .map((v) => {
+                        const opt = (data.model_options ?? []).find((o) => o.id === v);
+                        return (
+                          <option
+                            key={v}
+                            value={v}
+                            disabled={opt?.needs_key}
+                          >
+                            {opt
+                              ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                              : v}
+                          </option>
+                        );
+                      })}
+                  </select>
+                ),
+              });
+            })}
             {row('reviews.briefing_enabled', {
               id: 'brief',
               label: 'Daily briefing',

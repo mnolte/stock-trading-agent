@@ -604,7 +604,7 @@ def make_shadow_client_factory(
 
     def factory(strategy: Strategy) -> ModelClient:
         if config.env.mode == "simulated":
-            return FakeModelClient()
+            return FakeModelClient(config=config)
         return model_clients
 
     return factory

@@ -47,6 +47,7 @@ class FakeModelClient:
         error: str | None = None,
         error_type: str | None = None,
         http_status: int | None = None,
+        config: Any = None,
     ) -> None:
         self.responses = responses or {}
         self.enter_symbols = enter_symbols or {"MSFT"}
@@ -55,6 +56,9 @@ class FakeModelClient:
         self.error_type = error_type
         self.http_status = http_status
         self.model = "fake-decision"
+        # When a config is given the fake reports the model's real
+        # provider (a simulated Claude shadow records "anthropic").
+        self._config = config
 
     # ------------------------------------------------------------------
     # decision answers
@@ -149,6 +153,11 @@ class FakeModelClient:
     ) -> ModelResponse:
         started = time.monotonic()
         use_model = model or self.model
+        provider = "fake"
+        if self._config is not None:
+            from app.llm.models import model_provider
+
+            provider = model_provider(self._config, use_model)
         snapshot = json.loads(user)
         if "facts" in snapshot and "symbol" not in snapshot:
             # A review payload {"kind", "facts"}.
@@ -162,6 +171,7 @@ class FakeModelClient:
                     error=self.error,
                     error_type=self.error_type,
                     http_status=self.http_status,
+                    provider=provider,
                 )
             raw = self.handler(system, user)
             tokens_in = len(system + user) // 4
@@ -172,6 +182,7 @@ class FakeModelClient:
                 tokens_out=len(raw) // 4,
                 latency_ms=int((time.monotonic() - started) * 1000) or 1,
                 parsed=json.loads(raw),
+                provider=provider,
             )
         override = self.responses.get(
             (snapshot["symbol"], snapshot["context"]), self.responses.get(snapshot["symbol"])
@@ -194,6 +205,7 @@ class FakeModelClient:
                 error_code=override.get("error_code"),
                 request_id=override.get("request_id"),
                 refused=refused,
+                provider=provider,
             )
         if isinstance(override, dict):
             override = str(override["raw"])
@@ -212,6 +224,7 @@ class FakeModelClient:
             tokens_out=tokens_out,
             latency_ms=int((time.monotonic() - started) * 1000) or 1,
             parsed=json.loads(raw),
+            provider=provider,
         )
 
 

@@ -30,7 +30,7 @@ from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
 from app.decide.prompt import PromptError, load_prompt
-from app.llm.models import model_cutoff
+from app.llm.models import model_cutoff, model_provider
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock, make_clock
 
@@ -244,6 +244,25 @@ def _universe_symbols(request: Request, mode: str) -> list[str]:
     return sorted(set(cfg.get("universe", "symbols", default=[]) or []) | {"SPY"})
 
 
+def _model_options(request: Request) -> list[dict[str, object]]:
+    config = get_config()
+    store = getattr(request.app.state, "secrets_store", None)
+    simulated = config.env.mode == "simulated"
+    return [
+        {
+            "id": model,
+            "provider": provider,
+            "needs_key": (
+                False
+                if simulated
+                else store is None or not store.provider_ok(provider)
+            ),
+        }
+        for model in priced_models(config)
+        for provider in (model_provider(config, model),)
+    ]
+
+
 @router.post("/backtests/estimate")
 async def estimate_run(request: Request, body: RunRequest) -> dict[str, Any]:
     est, _specs = await _estimate(request, body)
@@ -347,6 +366,7 @@ def list_runs(request: Request) -> dict[str, Any]:
             "rules_only": {"ref": "rules_only", "name": "Rules only"},
             "shadows": shadows,
             "priced_models": priced_models(get_config()),
+            "model_options": _model_options(request),
             "model_cutoffs": {
                 name: cutoff.isoformat()
                 for name, cutoff in (

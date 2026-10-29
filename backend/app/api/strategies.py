@@ -17,6 +17,7 @@ from app.db.models import Run, ShadowDecision, ShadowPosition, Strategy
 from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
 from app.engine.performance import compute_performance
+from app.llm.models import model_provider
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import Clock, make_clock
 from app.settings_service import EDITABLE, LABELS
@@ -100,6 +101,24 @@ def _prompt_versions() -> list[str]:
     return out
 
 
+def _model_options(request: Request, config: AppConfig) -> list[dict[str, object]]:
+    store = getattr(request.app.state, "secrets_store", None)
+    simulated = config.env.mode == "simulated"
+    return [
+        {
+            "id": model,
+            "provider": provider,
+            "needs_key": (
+                False
+                if simulated
+                else store is None or not store.provider_ok(provider)
+            ),
+        }
+        for model in priced_models(config)
+        for provider in (model_provider(config, model),)
+    ]
+
+
 @router.get("/strategies")
 def strategies(request: Request) -> dict[str, Any]:
     config = get_config()
@@ -149,6 +168,7 @@ def strategies(request: Request) -> dict[str, Any]:
         "options": {
             "cycles": list(config.get("schedule", "cycles", default=[]) or []),
             "models": priced_models(config),
+            "model_options": _model_options(request, config),
             "prompts": _prompt_versions(),
             "live": {
                 "prompt_version": config.get("decision", "prompt"),

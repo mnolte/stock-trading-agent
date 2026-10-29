@@ -218,11 +218,16 @@ function NewShadowDialog({
           <label style={label}>
             Model
             <select aria-label="Model" style={input} value={model} onChange={(e) => setModel(e.target.value)}>
-              {data.options.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {data.options.models.map((m) => {
+                const opt = (data.options.model_options ?? []).find((o) => o.id === m);
+                return (
+                  <option key={m} value={m} disabled={opt?.needs_key}>
+                    {opt
+                      ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                      : m}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <label style={label}>

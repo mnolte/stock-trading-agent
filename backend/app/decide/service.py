@@ -228,7 +228,8 @@ class DecisionService:
                 await self._before_call()
             sent_at = _naive_utc(self._clock.now())
             ev(
-                logger, logging.DEBUG, "model.call_sent",
+                logging.getLogger(f"model.{_provider}"), logging.DEBUG,
+                "model.call_sent",
                 f"{symbol}: model call sent "
                 f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
                 symbol=symbol,
@@ -244,7 +245,7 @@ class DecisionService:
                 ),
             )
             ev(
-                logger,
+                logging.getLogger(f"model.{_provider}"),
                 logging.DEBUG if response.error is None else logging.WARNING,
                 "model.call_returned" if response.error is None else "model.call_failed",
                 (

@@ -130,7 +130,7 @@ def make_model_clients(
     ordinary model errors until a key is saved in Settings.
     """
     if config.env.mode == "simulated":
-        return FakeModelClient()
+        return FakeModelClient(config=config)
     return ProviderClients(
         config, key_for=secrets_key_for(secrets), default_model=default_model
     )

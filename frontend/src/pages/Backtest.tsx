@@ -131,6 +131,7 @@ interface PickOption {
   name: string;
   sub: string;
   model?: string | null;
+  provider?: string;
 }
 
 function pickOptions(data: BacktestsResponse): PickOption[] {
@@ -138,8 +139,15 @@ function pickOptions(data: BacktestsResponse): PickOption[] {
     {
       ref: 'live',
       name: `Live settings`,
-      sub: `${data.available.live.prompt_version ?? '—'} · ${data.available.live.model ?? '—'}`,
+      sub: `${data.available.live.prompt_version ?? '—'} · ${data.available.live.model ?? '—'}${
+        (data.available.model_options ?? []).find((o) => o.id === data.available.live.model)?.provider
+          ? ` · ${(data.available.model_options ?? []).find((o) => o.id === data.available.live.model)?.provider}`
+          : ''
+      }`,
       model: data.available.live.model,
+      provider: (data.available.model_options ?? []).find(
+        (o) => o.id === data.available.live.model,
+      )?.provider,
     },
     { ref: 'rules_only', name: 'Rules only', sub: 'no model · free' },
   ];
@@ -150,8 +158,13 @@ function pickOptions(data: BacktestsResponse): PickOption[] {
       sub:
         s.kind === 'rules_only'
           ? 'no model · free'
-          : `${s.prompt_version ?? '—'} · ${s.model ?? '—'}`,
+          : `${s.prompt_version ?? '—'} · ${s.model ?? '—'}${
+              (data.available.model_options ?? []).find((o) => o.id === s.model)?.provider
+                ? ` · ${(data.available.model_options ?? []).find((o) => o.id === s.model)?.provider}`
+                : ''
+            }`,
       model: s.model,
+      provider: (data.available.model_options ?? []).find((o) => o.id === s.model)?.provider,
     });
   }
   return out;
