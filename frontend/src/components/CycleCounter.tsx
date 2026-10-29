@@ -20,15 +20,15 @@ function Segment({ segment }: { segment: CycleCounterSegment }) {
         borderRadius: '3px',
         boxSizing: 'border-box',
         background:
-          segment.status === 'next'
-            ? 'var(--sa-accent)'
-            : segment.status === 'done'
-              ? 'var(--sa-border-strong)'
+          segment.status === 'done'
+            ? 'var(--sa-neutral-chip)'
+            : segment.status === 'later'
+              ? 'var(--sa-border)'
               : 'transparent',
-        border:
-          segment.status === 'later'
-            ? '1px solid var(--sa-border-strong)'
-            : '1px solid transparent',
+        boxShadow:
+          segment.status === 'next'
+            ? 'inset 0 0 0 2px var(--sa-accent)'
+            : 'none',
       }}
     />
   );
