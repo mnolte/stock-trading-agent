@@ -733,7 +733,7 @@ export interface SettingsError {
 
 // ---- API keys (write-only; never a key value) -------------------------------
 
-export type KeyGroup = 'alpaca' | 'openai' | 'finnhub';
+export type KeyGroup = 'alpaca' | 'openai' | 'anthropic' | 'finnhub';
 export type KeyStatus = 'ok' | 'failing' | 'untested' | 'missing';
 
 export interface KeyRow {
@@ -750,6 +750,7 @@ export interface KeyRow {
 }
 
 export interface KeysResponse {
+  model_keys_note?: string;
   keys: KeyRow[];
   set_count: number;
   all_ready: boolean;

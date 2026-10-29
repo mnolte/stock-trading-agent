@@ -181,6 +181,10 @@ export function postKey(
   return post<SaveKeyResult>(`/api/keys/${group}`, body);
 }
 
+export function postKeyRemove(group: KeyGroup): Promise<{ ok: boolean; paused_shadows: string[] }> {
+  return post<{ ok: boolean; paused_shadows: string[] }>(`/api/keys/${group}/remove`, {});
+}
+
 export function postKeyTest(group: KeyGroup): Promise<TestKeyResult> {
   return post<TestKeyResult>(`/api/keys/${group}/test`, {});
 }

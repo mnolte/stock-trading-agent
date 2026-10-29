@@ -11,6 +11,7 @@ import {
   getStrategyPromotion,
   getUniverse,
   postKey,
+  postKeyRemove,
   postKeyTest,
   postNotificationTest,
   postPaperReset,
@@ -536,6 +537,7 @@ function useUnsavedGuard(active: boolean) {
 const KEY_FIELD_LABELS: Record<KeyGroup, string> = {
   alpaca: 'New Alpaca key id',
   openai: 'New OpenAI API key',
+  anthropic: 'New Anthropic API key',
   finnhub: 'New Finnhub API key',
 };
 
@@ -543,6 +545,8 @@ const KEY_FORM_NOTES: Record<KeyGroup, string> = {
   alpaca:
     'The keys are tested with a paper-account check before they are saved. The old keys keep working until the new ones pass. Only paper keys are accepted.',
   openai:
+    'The key is tested with a models list before it is saved. The old key keeps working until the new one passes.',
+  anthropic:
     'The key is tested with a models list before it is saved. The old key keeps working until the new one passes.',
   finnhub:
     'The key is tested with one earnings-calendar request before it is saved. The old key keeps working until the new one passes.',
@@ -583,6 +587,23 @@ function KeysSection({
     setValue('');
     setShowKey(false);
     setRowError({});
+  };
+
+  const removeKey = (group: KeyGroup) => {
+    setBusy(group);
+    setRowError((r) => ({ ...r, [group]: '' }));
+    postKeyRemove(group)
+      .then((res) => {
+        if (res.paused_shadows?.length) {
+          setTestNote((n) => ({
+            ...n,
+            [group]: `paused ${res.paused_shadows.join(', ')}`,
+          }));
+        }
+        onChanged();
+      })
+      .catch((e) => setRowError((r) => ({ ...r, [group]: errorMessages(e).join(' ') })))
+      .finally(() => setBusy(null));
   };
 
   const testStored = (group: KeyGroup) => {
@@ -664,7 +685,7 @@ function KeysSection({
     <Section
       id="keys"
       title="API keys and data"
-      right={`${keys.set_count} of 3 keys set`}
+      right={`${keys.set_count} of ${keys.keys.length} keys set`}
       blurb="Connections the agent needs. A missing or failing key keeps the agent paused and shows a banner."
     >
       <div
@@ -714,9 +735,16 @@ function KeysSection({
         </div>
       )}
 
+      {keys.model_keys_note && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '14px 0 0', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+          <b style={{ fontWeight: 600 }}>Model keys.</b>{' '}
+          {keys.model_keys_note}
+        </div>
+      )}
       {keys.keys.map((row) => {
         const status = keyStatusChip(row);
         const isAlpaca = row.name === 'alpaca';
+        const isModelKey = row.name === 'openai' || row.name === 'anthropic';
         const replaceDisabled = isAlpaca && !keys.replace_allowed;
         return (
           <div key={row.name} style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -755,6 +783,16 @@ function KeysSection({
                 {row.set && (
                   <Button variant="ghost" onClick={() => testStored(row.name)} disabled={busy !== null} style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}>
                     {busy === row.name ? 'Testing…' : 'Test'}
+                  </Button>
+                )}
+                {isModelKey && row.set && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => removeKey(row.name)}
+                    disabled={busy !== null}
+                    style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}
+                  >
+                    Remove
                   </Button>
                 )}
                 {isAlpaca ? (
