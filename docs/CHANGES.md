@@ -12,6 +12,23 @@ Newest first.
 - `docs/kickoffs/pr-30.md`: reads both PR 30 change log entries, and states the label and changelog rules.
 - `docs/kickoffs/docs-readme.md` removed: the README rewrite was merged in #46.
 
+## 2026-10-29 — Decision v3 implemented: checks by code, room and break-even (PR 30)
+
+- `decision.v3` is live for strategies that pick it: snapshot v3 (rounded,
+  de-duplicated, merged levels, `checks` worked out by code, every
+  distance in ATR, `breakeven_confidence` per option), option builder
+  version 2 (the room filter and the held stop-option drops), the v3
+  output schema (`conflicts`, `data_flags`), the confidence and data-flag
+  gates, the order-time room recheck, the held position facts and the
+  claim checks. decision.v1 and decision.v2 are unchanged, live still
+  runs decision.v1 and no shadow was started.
+- The new-shadow dialog offers `decision.v3`; `min_room_atr`,
+  `room_level_kinds`, `min_stop_move_atr`, `breakeven_min_r` and
+  `held_stop_min_atr` are overridable per strategy.
+- `make replay PROMPT=decision.v3` replays stored snapshots through the
+  v3 builder without refetching; the stored decision keeps the quote and
+  reference provenance the model is not shown.
+
 ## 2026-10-29 — Decision v3: held confidence, stop claims, momentum, merged levels (PR 30)
 
 - From a review of a held ACN decision (28 October 15:46, decision.v2, gpt-4.1-mini):

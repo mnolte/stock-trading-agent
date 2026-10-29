@@ -7,7 +7,7 @@ import { ApiError } from '../api/client';
 import { RecordNotFound } from '../components/errorPages';
 import { Chip } from '../components/Chip';
 import { displayDayTime, nyTime } from '../format';
-import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption } from '../types/api';
+import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
@@ -631,6 +631,481 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
           </Fragment>
         ))}
       </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// decision.v3: checks by code, room and break-even
+// (design/screens/DecisionV3.dc.html, DecisionV3Held.dc.html)
+
+function _v3Checks(decision: DecisionDetail): V3Checks | null {
+  const checks = decision.input_snapshot?.checks;
+  return checks && typeof checks === 'object' ? (checks as V3Checks) : null;
+}
+
+function _checkCard(
+  label: string,
+  value: string,
+  sub: string,
+  accent?: string,
+) {
+  return (
+    <div
+      key={label}
+      style={{
+        padding: '10px 12px',
+        border: '1px solid var(--sa-border)',
+        borderRadius: 'var(--sa-radius-md)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        minWidth: 0,
+      }}
+    >
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontFamily: MONO,
+          fontSize: 'var(--sa-text-md)',
+          color: accent ?? 'var(--sa-text)',
+        }}
+      >
+        {value}
+      </span>
+      <span
+        style={{
+          fontSize: 'var(--sa-text-sm)',
+          color: 'var(--sa-text-muted)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {sub}
+      </span>
+    </div>
+  );
+}
+
+function _trendAccent(value?: string): string | undefined {
+  if (value === 'up' || value === 'strong') return 'var(--sa-positive)';
+  if (value === 'down' || value === 'weak') return 'var(--sa-negative-text)';
+  if (value === 'mixed') return 'var(--sa-warning)';
+  return undefined;
+}
+
+function V3Checks({ decision }: { decision: DecisionDetail }) {
+  const checks = _v3Checks(decision);
+  if (checks === null) return null;
+  const earnings = checks.earnings ?? {};
+  const earningsText =
+    earnings.days === null || earnings.days === undefined
+      ? '—'
+      : `${earnings.days} trading day${earnings.days === 1 ? '' : 's'}${
+          earnings.date
+            ? ` · ${new Date(`${earnings.date}T12:00:00Z`).toLocaleDateString(
+                'en-GB',
+                { day: 'numeric', month: 'short', timeZone: 'UTC' },
+              )}${earnings.time_of_day ? ` ${String(earnings.time_of_day).replace('_', ' ')}` : ''}`
+            : ''
+        }`;
+  return (
+    <Section label="Checks by code" right="facts the model was given">
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+          gap: 'var(--sa-space-2)',
+        }}
+      >
+        {_checkCard('Trend 1h', checks.trend_1h ?? '—', 'price vs EMA 20 · EMA 50', _trendAccent(checks.trend_1h))}
+        {_checkCard('Trend daily', checks.trend_daily ?? '—', 'close vs SMA 50 · SMA 200', _trendAccent(checks.trend_daily))}
+        {_checkCard(
+          'Market regime',
+          `${checks.regime_trend ?? '—'} · ${checks.regime_volatility ?? '—'} vol`,
+          'SPY trend and volatility',
+        )}
+        {_checkCard(
+          'Room to first level',
+          checks.room_atr != null
+            ? `${Number(checks.room_atr).toFixed(2)} ATR${checks.room_level ? ` · ${checks.room_level}` : ''}`
+            : 'no level in the way',
+          'at least the minimum ATR above the limit',
+          checks.room_atr != null ? 'var(--sa-positive)' : 'var(--sa-text-muted)',
+        )}
+        {_checkCard(
+          'Momentum',
+          checks.momentum ?? '—',
+          'relative strength vs SPY · OBV',
+          _trendAccent(checks.momentum),
+        )}
+        {_checkCard('Earnings', earningsText, 'next report')}
+        {_checkCard('News', checks.news_status ?? '—', 'news status')}
+      </div>
+    </Section>
+  );
+}
+
+function _v3WayText(levels_in_way: V2Option['levels_in_way']): string {
+  return levels_in_way
+    .map((lv) =>
+      typeof lv === 'string'
+        ? lv
+        : `${lv.id} ${lv.distance_atr != null ? lv.distance_atr.toFixed(2) : '—'}`,
+    )
+    .join(' · ');
+}
+
+function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
+  const options = _v2Options(decision);
+  const chosen = decision.chosen_option;
+  return (
+    <Section
+      label="Options offered"
+      right={`${options.length} built by code${chosen ? ` · model chose ${chosen}` : ''}`}
+    >
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+        }}
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
+              {['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even'].map(
+                (h) => (
+                  <th
+                    key={h}
+                    style={{
+                      textAlign: 'left',
+                      padding: '8px 10px',
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-muted)',
+                      fontWeight: 500,
+                    }}
+                  >
+                    {h}
+                  </th>
+                ),
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {options.map((o) => (
+              <tr
+                key={o.id}
+                style={{
+                  borderBottom: '1px solid var(--sa-border)',
+                  background:
+                    o.id === chosen ? 'var(--sa-accent-bg, rgba(127,184,255,0.10))' : undefined,
+                }}
+              >
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontWeight: 600,
+                    color: o.id === chosen ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+                  }}
+                >
+                  {o.id}
+                </td>
+                <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
+                  <div style={{ fontFamily: MONO }}>{o.stop.toFixed(2)}</div>
+                  <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
+                    {o.stop_basis}
+                    {o.stop_atr != null ? ` · ${o.stop_atr.toFixed(2)} ATR` : ''}
+                  </div>
+                </td>
+                <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
+                  <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
+                  <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
+                    {o.target_basis}
+                    {o.levels_in_way.length > 0
+                      ? ` · in the way ${_v3WayText(o.levels_in_way)}`
+                      : ''}
+                  </div>
+                </td>
+                <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
+                  {o.rr.toFixed(2)}
+                </td>
+                <td
+                  style={{
+                    padding: '8px 10px',
+                    fontFamily: MONO,
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-2)',
+                  }}
+                >
+                  {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(decision.options?.removed ?? []).length > 0 &&
+        muted(
+          `Removed by the room filter: ${(decision.options?.removed ?? [])
+            .map((r) => `${r.id} — ${r.reason}`)
+            .join('; ')}`,
+        )}
+    </Section>
+  );
+}
+
+function _v3Position(decision: DecisionDetail): V3Position | null {
+  const pos = decision.input_snapshot?.position;
+  return pos && typeof pos === 'object' ? (pos as V3Position) : null;
+}
+
+function _factRow(label: string, value: string, sub?: string) {
+  return (
+    <div
+      key={label}
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: 'var(--sa-space-3)',
+        padding: '8px 12px',
+        fontSize: 'var(--sa-text-md)',
+        borderBottom: '1px solid var(--sa-border)',
+      }}
+    >
+      <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>
+      <span style={{ textAlign: 'right' }}>
+        <span style={{ fontFamily: MONO, color: 'var(--sa-text)' }}>{value}</span>
+        {sub && (
+          <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+            {' '}
+            {sub}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function V3PositionFacts({ decision }: { decision: DecisionDetail }) {
+  const pos = _v3Position(decision);
+  if (pos === null) return null;
+  const sd = pos.stop_distance_atr;
+  const td = pos.target_distance_atr;
+  return (
+    <Section label="Position" right="facts the model was given">
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+        }}
+      >
+        {_factRow(
+          'R now',
+          pos.r_now != null ? `${pos.r_now >= 0 ? '+' : ''}${pos.r_now.toFixed(2)}R` : '—',
+          pos.entry != null ? `entry ${pos.entry.toFixed(2)}` : undefined,
+        )}
+        {_factRow(
+          'Current stop',
+          pos.stop != null ? `${pos.stop.toFixed(2)}` : '—',
+          sd != null ? `· ${sd.toFixed(2)} ATR below` : undefined,
+        )}
+        {_factRow(
+          'Target',
+          pos.target != null ? `${pos.target.toFixed(2)}` : '—',
+          td != null ? `· ${td.toFixed(2)} ATR above` : undefined,
+        )}
+        {_factRow(
+          'Neutral probability',
+          pos.neutral_probability != null ? pos.neutral_probability.toFixed(2) : '—',
+          sd != null && td != null
+            ? `target before stop with no edge: ${sd.toFixed(2)} ÷ (${sd.toFixed(2)} + ${td.toFixed(2)})`
+            : undefined,
+        )}
+        {_factRow(
+          'Levels to target',
+          (pos.levels_to_target ?? [])
+            .map(
+              (lv) =>
+                `${lv.id}${lv.distance_atr != null ? ` · ${lv.distance_atr.toFixed(2)} ATR` : ''}`,
+            )
+            .join('  ') || '—',
+          `${(pos.levels_to_target ?? []).length} level${(pos.levels_to_target ?? []).length === 1 ? '' : 's'} between the price and the target`,
+        )}
+        {_factRow('Invalidation', pos.invalidation ?? 'unavailable', 'filled by code')}
+        {pos.stop_level &&
+          _factRow('Stop level', pos.stop_level, 'this cycle’s id of the stop’s level')}
+        {pos.scheduled_exit && _factRow('Scheduled exit', pos.scheduled_exit)}
+        {_factRow(
+          'Entry thesis',
+          pos.entry_thesis ?? 'unavailable',
+          'what was believed at entry, not a fact',
+        )}
+      </div>
+    </Section>
+  );
+}
+
+function V3StopOptions({ decision }: { decision: DecisionDetail }) {
+  const offered = _v2StopOptions(decision);
+  const dropped = decision.options?.dropped_stop_options ?? [];
+  if (offered.length === 0 && dropped.length === 0) return null;
+  const chosen = decision.chosen_option;
+  const rows = [...offered, ...dropped];
+  return (
+    <Section
+      label="Stop options"
+      right={`${offered.length} offered · ${dropped.length} not offered`}
+    >
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+        }}
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
+              {['', 'Stop · basis', 'Below price', 'Locked R'].map((h) => (
+                <th
+                  key={h}
+                  style={{
+                    textAlign: 'left',
+                    padding: '8px 10px',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((o) => {
+              const notOffered = o.offered === false;
+              return (
+                <tr
+                  key={o.id}
+                  style={{
+                    borderBottom: '1px solid var(--sa-border)',
+                    opacity: notOffered ? 0.6 : 1,
+                    background:
+                      o.id === chosen ? 'var(--sa-accent-bg, rgba(127,184,255,0.10))' : undefined,
+                  }}
+                >
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      fontFamily: MONO,
+                      fontWeight: 600,
+                      color: o.id === chosen ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+                    }}
+                  >
+                    {o.id}
+                  </td>
+                  <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
+                    <div style={{ fontFamily: MONO }}>{o.stop.toFixed(2)}</div>
+                    <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
+                      {o.basis}
+                      {notOffered && o.drop_reason ? ` · not offered: ${o.drop_reason}` : ''}
+                    </div>
+                  </td>
+                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
+                    {o.distance_atr != null ? o.distance_atr.toFixed(2) : '—'}
+                  </td>
+                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
+                    {o.locked_r != null ? `${o.locked_r.toFixed(2)}R` : '—'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {muted(
+        'Built by code. "Locks profit" only for a stop above the entry. Not offered: moves under the minimum ATR, break-even before the minimum R, and stops too close to the price.',
+      )}
+    </Section>
+  );
+}
+
+function V3Reasoning({ decision }: { decision: DecisionDetail }) {
+  const output = decision.model_output;
+  const validation = decision.validation_result;
+  const conflicts = output?.conflicts ?? [];
+  const flags = output?.data_flags ?? [];
+  const thesis = output?.thesis ?? '';
+  const news = output?.news_used ?? [];
+  const levelsUsed = output?.levels_used ?? [];
+  const written = validation?.code_written;
+  return (
+    <Section label="Agent reasoning" right="conflicts first, then the decision">
+      {conflicts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {conflicts.map((conflict) => (
+            <Chip key={conflict} variant="warning">
+              Conflict: {conflict}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {flags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {flags.map((flag) => (
+            <Chip key={flag} variant="negative">
+              Data flag: {flag.replace(/_/g, ' ')}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {thesis ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 'var(--sa-text-md)',
+            color: 'var(--sa-text-2)',
+            lineHeight: 1.55,
+          }}
+        >
+          {thesis}
+        </p>
+      ) : (
+        muted('No model reasoning recorded.')
+      )}
+      {written && (
+        <div
+          style={{
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+            fontFamily: MONO,
+          }}
+        >
+          Written by code: {written}
+        </div>
+      )}
+      {levelsUsed.length > 0 && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          Levels used:{' '}
+          <span style={{ color: 'var(--sa-text-2)' }}>{levelsUsed.join(' · ')}</span>
+          <span style={{ color: 'var(--sa-text-muted)' }}>
+            {' '}
+            · {flags.length === 0 ? 'No data flags' : `${flags.length} data flag${flags.length === 1 ? '' : 's'}`}
+          </span>
+        </div>
+      )}
+      {news.length > 0 && (
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          News used: <span style={{ color: 'var(--sa-text-2)' }}>{news.join(' · ')}</span>
+        </div>
+      )}
     </Section>
   );
 }
@@ -1275,17 +1750,35 @@ export default function Decision() {
             </div>
           </div>
 
-          <SafetyGates decision={decision} />
-          {decision.prompt_version === 'decision.v2' && (
+          {decision.prompt_version === 'decision.v3' ? (
             <>
-              <V2OptionsTable decision={decision} />
+              <V3Checks decision={decision} />
+              <V3PositionFacts decision={decision} />
+              {decision.context === 'candidate' ? (
+                <V3OptionsTable decision={decision} />
+              ) : (
+                <V3StopOptions decision={decision} />
+              )}
               <V2Levels decision={decision} />
+              <V3Reasoning decision={decision} />
+              <V2Explanation decision={decision} />
+              <SafetyGates decision={decision} />
             </>
-          )}
-          <SignalStack decision={decision} />
-          <Reasoning decision={decision} />
-          {decision.prompt_version === 'decision.v2' && (
-            <V2Explanation decision={decision} />
+          ) : (
+            <>
+              <SafetyGates decision={decision} />
+              {decision.prompt_version === 'decision.v2' && (
+                <>
+                  <V2OptionsTable decision={decision} />
+                  <V2Levels decision={decision} />
+                </>
+              )}
+              <SignalStack decision={decision} />
+              <Reasoning decision={decision} />
+              {decision.prompt_version === 'decision.v2' && (
+                <V2Explanation decision={decision} />
+              )}
+            </>
           )}
 
           {/* level tiles */}

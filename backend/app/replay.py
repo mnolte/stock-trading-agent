@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -43,12 +44,14 @@ from app.config import AppConfig
 from app.data.cache import BarCache, _naive_utc
 from app.data.models import Bar5m, CalendarDay
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, Run
+from app.db.models import Cycle, Decision, Outcome, Position, Run
 from app.decide.client import DecisionClient, ModelResponse, make_decision_client, token_cost
 from app.decide.output import (
+    ModelOutputV3,
     ValidationResult,
     validate_model_output,
     validate_model_output_v2,
+    validate_model_output_v3,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.v2inputs import (
@@ -57,8 +60,17 @@ from app.decide.v2inputs import (
     build_v2_fields,
     rebuild_bars,
 )
+from app.decide.v3 import (
+    HeldV3,
+    build_v3_fields,
+    stop_basis_info,
+    v3_send_snapshot,
+)
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
+from app.risk.earnings import next_earnings
+
+logger = logging.getLogger(__name__)
 
 CENT = Decimal("0.01")
 
@@ -188,6 +200,9 @@ class ReplayRow:
     error: str | None
     status: str = REPLAYED
     offered: list[str] | None = None
+    # decision.v3 details for the report additions (docs/SPEC.md,
+    # Decision v3 → Replay); None on v1/v2 rows.
+    detail: dict[str, Any] | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -424,18 +439,95 @@ async def replay(
 
         v2: V2Build | None = None
         offered: list[str] | None = None
+        held3: HeldV3 | None = None
+        earnings3: tuple[date, str] | None = None
+        stored_first_touch: str | None = None
+        if spec.is_v3:
+            with sf() as qsession:
+                earnings3 = next_earnings(
+                    qsession, [symbol], scheduled.replace(tzinfo=UTC)
+                ).get(symbol)
+                out_row = qsession.execute(
+                    select(Outcome).where(Outcome.decision_id == decision.id)
+                ).scalar_one_or_none()
+                stored_first_touch = (
+                    out_row.first_touch if out_row is not None else None
+                )
+                if decision.context == "held" and pos:
+                    prow = qsession.execute(
+                        select(Position)
+                        .where(
+                            Position.symbol == symbol,
+                            Position.opened_at <= _naive_utc(scheduled.replace(tzinfo=UTC)),
+                        )
+                        .order_by(Position.opened_at.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
+                    entry_dec = (
+                        qsession.get(Decision, prow.entry_decision_id)
+                        if prow is not None and prow.entry_decision_id is not None
+                        else None
+                    )
+                    opened = pos.get("opened_at")
+                    thesis = pos.get("original_thesis")
+                    held3 = HeldV3(
+                        entry=_dec(pos.get("entry")),
+                        qty=int(pos["qty"]) if pos.get("qty") is not None else None,
+                        initial_stop=_dec(pos.get("initial_stop")),
+                        current_stop=_dec(pos.get("stop")),
+                        target=_dec(pos.get("target")),
+                        opened_at=(
+                            datetime.fromisoformat(str(opened))
+                            if opened else None
+                        ),
+                        entry_thesis=str(thesis) if thesis else None,
+                        stop_basis=stop_basis_info(entry_dec),
+                        earnings=earnings3,
+                        entry_levels=tuple(
+                            cast(
+                                "list[dict[str, Any]]",
+                                (entry_dec.levels or {}).get("levels") or (),
+                            )
+                        )
+                        if entry_dec is not None
+                        else (),
+                    )
         if status != NOT_REPLAYABLE:
-            v2 = build_v2_fields(
-                context=decision.context,
-                bars_1h=bars_1h,
-                daily=daily,
-                today_5m=todays,
-                price=price,
-                reference=reference,
-                atr_1h=atr_1h,
-                config=config,
-                held=held,
-            )
+            if spec.is_v3:
+                from app.shadows.runner import (
+                    indicators_from_snapshot,
+                    regime_from_snapshot,
+                )
+
+                v2 = build_v3_fields(
+                    context=decision.context,
+                    base=snap,
+                    price=price,
+                    reference=reference,
+                    atr_1h=atr_1h,
+                    indicators=indicators_from_snapshot(symbol, snap),
+                    regime=regime_from_snapshot(snap, config),
+                    bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
+                    earnings=earnings3,
+                    held=held3,
+                    calendar=sessions_provider,
+                    config=config,
+                    cycle_time_ny=scheduled.replace(tzinfo=UTC),
+                )
+            else:
+                v2 = build_v2_fields(
+                    context=decision.context,
+                    bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
+                    price=price,
+                    reference=reference,
+                    atr_1h=atr_1h,
+                    config=config,
+                    held=held,
+                )
             snap.update(v2.fields)
             offered = [
                 str(o.get("id"))
@@ -462,14 +554,36 @@ async def replay(
         else:
             response = await client.complete(
                 system=prompt.text,
-                user=json.dumps(snap, indent=2),
+                user=json.dumps(
+                    v3_send_snapshot(snap) if spec.is_v3 else snap, indent=2
+                ),
                 schema=spec.json_schema,
             )
             cost = token_cost(response, config, model=use_model)
             if cost is not None:
                 total_cost += cost
-            if spec.uses_options:
-                validation: ValidationResult = validate_model_output_v2(
+            if spec.is_v3:
+                validation: ValidationResult = validate_model_output_v3(
+                    response.raw,
+                    symbol=symbol,
+                    context=decision.context,
+                    snapshot=snap,
+                    atr_1h=atr_1h,
+                    current_stop=(
+                        held3.current_stop if held3 is not None
+                        else held.current_stop if held else None
+                    ),
+                    call_error=response.error,
+                    config=config,
+                )
+                if isinstance(validation.output, ModelOutputV3):
+                    for flag in validation.output.data_flags:
+                        logger.warning(
+                            "model.data_flag %s: model flagged a data conflict (%s)",
+                            symbol, flag,
+                        )
+            elif spec.uses_options:
+                validation = validate_model_output_v2(
                     response.raw,
                     symbol=symbol,
                     context=decision.context,
@@ -532,6 +646,118 @@ async def replay(
                         target=target,
                         horizon_end=horizon_end,
                     )
+        # --- decision.v3 report details (docs/SPEC.md, Decision v3 →
+        # Replay): everything the v3 sections need, from the build and
+        # the validation, plus the stored decision's outcome.
+        detail: dict[str, Any] | None = None
+        if spec.is_v3 and v2 is not None:
+            v3_out = (
+                validation.output
+                if "validation" in dir()
+                and isinstance(validation.output, ModelOutputV3)
+                else None
+            )
+            chosen3 = (
+                validation.chosen_option if "validation" in dir() else None
+            )
+            held_stop: dict[str, Any] | None = None
+            if (
+                decision.context == "held"
+                and final_action == "tighten_stop"
+                and chosen3 is not None
+                and held3 is not None
+            ):
+                new_stop = _dec(chosen3.get("stop"))
+                if new_stop is not None:
+                    future = cache.get(
+                        symbol,
+                        scheduled.replace(tzinfo=UTC),
+                        scheduled.replace(tzinfo=UTC)
+                        + timedelta(days=horizon_days * 2 + 4),
+                    )
+                    sessions_seen: set[date] = set()
+                    hit = False
+                    for b in future:
+                        if b.start <= scheduled.replace(tzinfo=UTC):
+                            continue
+                        if len(sessions_seen) >= horizon_days:
+                            break
+                        sessions_seen.add(b.start.astimezone(NY_TZ).date())
+                        if b.low <= new_stop:
+                            hit = True
+                            break
+                    initial_risk = (
+                        held3.entry - held3.initial_stop
+                        if held3.entry is not None
+                        and held3.initial_stop is not None
+                        and held3.entry > held3.initial_stop
+                        else None
+                    )
+                    r_at_old = (
+                        (held3.current_stop - held3.entry) / initial_risk
+                        if initial_risk
+                        and held3.current_stop is not None
+                        and held3.entry is not None
+                        else None
+                    )
+                    locked = _dec(chosen3.get("locked_r"))
+                    held_stop = {
+                        "stop": float(new_stop),
+                        "locked_r": float(locked) if locked is not None else None,
+                        "stopped_out_in_5": hit,
+                        "r_given_up": (
+                            float(locked - r_at_old)
+                            if locked is not None and r_at_old is not None
+                            else None
+                        ),
+                    }
+            detail = {
+                "room_removed": v2.options_column.get("removed") or [],
+                "room_reason": v2.reason,
+                "reason": (
+                    validation.reason if "validation" in dir() else None
+                ),
+                "confidence": (
+                    float(v3_out.confidence) if v3_out is not None else None
+                ),
+                "conflicts": list(v3_out.conflicts) if v3_out is not None else [],
+                "data_flags": (
+                    list(v3_out.data_flags) if v3_out is not None else []
+                ),
+                "chosen": (
+                    {
+                        "id": chosen3.get("id"),
+                        "rr": (
+                            float(_dec(chosen3.get("rr")) or 0)
+                            if _dec(chosen3.get("rr")) is not None
+                            else None
+                        ),
+                        "breakeven_confidence": (
+                            float(_dec(chosen3.get("breakeven_confidence")) or 0)
+                            if _dec(chosen3.get("breakeven_confidence")) is not None
+                            else None
+                        ),
+                    }
+                    if chosen3 is not None
+                    else None
+                ),
+                "dropped_stop_options": (
+                    v2.options_column.get("dropped_stop_options") or []
+                ),
+                "neutral_probability": (
+                    (snap.get("position") or {}).get("neutral_probability")
+                    if decision.context == "held"
+                    else None
+                ),
+                "claims": (
+                    validation.claims.to_json()
+                    if "validation" in dir()
+                    and validation.claims is not None
+                    else None
+                ),
+                "held_stop": held_stop,
+                "stored_first_touch": stored_first_touch,
+            }
         rows.append(
             ReplayRow(
                 cycle_id=decision.cycle_id,
@@ -552,6 +778,7 @@ async def replay(
                 error=error,
                 status=status,
                 offered=offered,
+                detail=detail,
             )
         )
 
@@ -870,7 +1097,210 @@ def _report(
         *_entries_per_session(rules_entered),
         "",
     ]
+    if prompt == "decision.v3":
+        out += _v3_report_lines(rows)
     return "\n".join(out)
+
+
+def _det(row: ReplayRow) -> dict[str, Any]:
+    return row.detail or {}
+
+
+def _v3_report_lines(rows: list[ReplayRow]) -> list[str]:
+    """The decision.v3 report additions (docs/SPEC.md, Decision v3 →
+    Replay): room-filter removals with the entries they would have
+    blocked, code skips, confidence against break-even, conflicts and
+    data flags, v2-vs-v3, and the held section."""
+    lines: list[str] = ["## decision.v3", ""]
+    replayed = [r for r in rows if r.status != NOT_REPLAYABLE]
+    detailed = [r for r in replayed if r.detail is not None]
+
+    # --- room filter: snapshots/options removed, and which stored
+    # entries the filter would have blocked, with their outcomes.
+    room = [
+        r for r in detailed
+        if (r.error or "").startswith("no_options: room")
+        or any(
+            "room" in (x.get("reason") or "")
+            for x in _det(r)["room_removed"]
+        )
+    ]
+    blocked = [r for r in room if r.v1_action == "enter"]
+    touches = [_det(r)["stored_first_touch"] for r in blocked if _det(r)["stored_first_touch"]]
+    lines += [
+        f"- room filter: {len(room)} snapshots had options removed or"
+        f" were emptied ({sum(len(_det(r)['room_removed']) for r in room)} options removed)",
+        f"  - would have blocked {len(blocked)} stored entr{'y' if len(blocked) == 1 else 'ies'}"
+        + (
+            f" — outcomes: target {touches.count('target')},"
+            f" stop {touches.count('stop')},"
+            f" neither/unknown {len(blocked) - touches.count('target') - touches.count('stop')}"
+            if blocked
+            else ""
+        ),
+    ]
+
+    # --- skips by code: edge_too_small and data_flag.
+    skips: dict[str, int] = {}
+    for r in detailed:
+        reason = _det(r).get("reason")
+        if r.final_action == "skip" and reason:
+            skips[reason] = skips.get(reason, 0) + 1
+    lines.append(
+        "- skips by code: "
+        + (", ".join(f"{k} {n}" for k, n in sorted(skips.items())) or "none")
+    )
+
+    # --- confidence against breakeven_confidence, and calibration per
+    # 0.1 bucket against first-touch outcomes where known.
+    entered = [
+        r for r in detailed
+        if r.final_action == "enter"
+        and (_det(r).get("chosen") or {}).get("breakeven_confidence")
+        is not None
+    ]
+    over = [
+        r for r in entered
+        if _det(r)["confidence"] is not None
+        and _det(r)["confidence"] >= _det(r)["chosen"]["breakeven_confidence"]
+    ]
+    buckets: dict[str, list[ReplayRow]] = {}
+    for r in entered:
+        conf = _det(r).get("confidence")
+        if conf is None:
+            continue
+        key = f"{int(conf * 10) / 10:.1f}–{int(conf * 10) / 10 + 0.1:.1f}"
+        buckets.setdefault(key, []).append(r)
+    def _touches(group: list[ReplayRow], what: str) -> int:
+        return sum(
+            1
+            for x in group
+            if x.score is not None and x.score.touched == what
+        )
+
+    cal = []
+    for key in sorted(buckets):
+        group = buckets[key]
+        known = [x for x in group if x.score is not None]
+        cal.append(
+            f"{key}: {len(group)}"
+            + (
+                f" — target {_touches(known, 'target')},"
+                f" stop {_touches(known, 'stop')},"
+                f" neither {len(known) - _touches(known, 'target') - _touches(known, 'stop')}"
+                f" (of {len(known)} scored)"
+                if known
+                else " — unscored"
+            )
+        )
+    lines += [
+        f"- confidence ≥ break-even: {len(over)} of {len(entered)} entered",
+        "- calibration per 0.1: "
+        + ("; ".join(cal) or "—"),
+    ]
+
+    # --- conflicts and data flags.
+    conflicts: dict[str, int] = {}
+    for r in detailed:
+        for c in _det(r)["conflicts"]:
+            conflicts[c] = conflicts.get(c, 0) + 1
+    flags = [
+        (r.symbol, r.at.astimezone(UTC).strftime("%Y-%m-%d %H:%M"), f)
+        for r in detailed
+        for f in _det(r)["data_flags"]
+    ]
+    lines += [
+        "- most frequent conflicts: "
+        + (
+            "; ".join(
+                f"{c} — {n}"
+                for c, n in sorted(conflicts.items(), key=lambda kv: -kv[1])[:5]
+            )
+            or "none"
+        ),
+        f"- data flags: {len(flags)}"
+        + ("".join(f"; {s} {w} {f}" for s, w, f in flags[:10]) if flags else ""),
+    ]
+
+    # --- v2/live against v3 on the same snapshots.
+    candidates = [r for r in detailed if r.context == "candidate"]
+    v3_enter = [r for r in candidates if r.final_action == "enter"]
+    v2_enter = [r for r in candidates if r.v1_action == "enter"]
+    called = [r for r in candidates if r.model_action is not None]
+    same = [r for r in called if r.final_action == r.v1_action]
+    rs = [
+        r.score.r_multiple
+        for r in v3_enter
+        if r.score is not None and r.score.r_multiple is not None
+    ]
+    mean_r = _mean(rs)
+    lines += [
+        f"- v2/live entered {len(v2_enter)} of {len(candidates)}"
+        f" candidates · v3 entered {len(v3_enter)}"
+        + (
+            f" ({len(v3_enter) / len(candidates) * 100:.0f}%)"
+            if candidates
+            else ""
+        ),
+        f"- agreement: {len(same)} of {len(called)} calls"
+        + (f" ({len(same) / len(called) * 100:.0f}%)" if called else ""),
+        (
+            f"- mean R of chosen options: {float(mean_r):+.2f} (n={len(rs)})"
+            if mean_r is not None
+            else "- mean R of chosen options: —"
+        ),
+    ]
+
+    # --- held: actions, drops per reason, chosen-stop outcomes,
+    # confidence against neutral_probability, claim failures by kind.
+    held = [r for r in detailed if r.context == "held"]
+    held_actions: dict[str, int] = {}
+    for r in held:
+        held_actions[r.final_action] = held_actions.get(r.final_action, 0) + 1
+    drops: dict[str, int] = {}
+    for r in held:
+        for d in _det(r)["dropped_stop_options"]:
+            key = str(d.get("reason") or "?").split(" (")[0].split(";")[0]
+            drops[key] = drops.get(key, 0) + 1
+    stops = [_det(r)["held_stop"] for r in held if _det(r).get("held_stop")]
+    hits = sum(1 for s in stops if s.get("stopped_out_in_5"))
+    givens = [s["r_given_up"] for s in stops if s.get("r_given_up") is not None]
+    pairs = [
+        r for r in held
+        if _det(r).get("neutral_probability") is not None
+        and _det(r).get("confidence") is not None
+    ]
+    claims: dict[str, int] = {}
+    for r in held:
+        c = _det(r).get("claims")
+        if c and c.get("passed") is False:
+            key = ",".join(sorted(c.get("bad_ids") or [])) or "claim"
+            claims[key] = claims.get(key, 0) + 1
+    gaps = [
+        _det(r)["confidence"] - _det(r)["neutral_probability"]
+        for r in pairs
+    ]
+    gap_mean = (sum(gaps) / len(gaps)) if gaps else None
+    lines += [
+        "- held: "
+        + (", ".join(f"{a} {n}" for a, n in sorted(held_actions.items())) or "none"),
+        "- stop options dropped: "
+        + (", ".join(f"{k} — {n}" for k, n in sorted(drops.items())) or "none"),
+        f"- chosen stops: {len(stops)} tighten{'s' if len(stops) != 1 else ''}"
+        f" · stopped out within 5 sessions: {hits}"
+        + (
+            f" · mean R given up vs the old stop: {sum(givens) / len(givens):+.2f}"
+            if givens
+            else ""
+        ),
+        "- held confidence vs neutral_probability: "
+        f"{len(pairs)} pairs"
+        + (f" (mean gap {gap_mean:+.2f})" if gap_mean is not None else ""),
+        "- claim-check failures by kind: "
+        + (", ".join(f"{k} — {n}" for k, n in sorted(claims.items())) or "none"),
+        "",
+    ]
+    return lines
 
 
 def replay_spent_usd(data_dir: Path, since: datetime) -> Decimal:

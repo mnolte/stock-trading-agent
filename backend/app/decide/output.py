@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
@@ -136,6 +137,67 @@ class ModelOutputV2(BaseModel):
     news_used: list[str] = Field(default_factory=list)
 
 
+# decision.v3: conflicts and data flags before the decision fields
+# (docs/SPEC.md, Decision v3 — Output schema). ``conflicts`` takes the
+# place of v2's ``risks`` in storage and in the drawer.
+DATA_FLAGS = ("earnings_date_conflict", "price_conflict", "stale_or_missing_data")
+
+DECISION_V3_JSON_SCHEMA: dict[str, Any] = {
+    "name": "decision",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "symbol": {"type": "string"},
+            "conflicts": {"type": "array", "items": {"type": "string"}},
+            "data_flags": {
+                "type": "array",
+                "items": {"type": "string", "enum": list(DATA_FLAGS)},
+            },
+            "thesis": {"type": "string"},
+            "action": {
+                "type": "string",
+                "enum": ["enter", "skip", "hold", "tighten_stop", "exit"],
+            },
+            "option_id": {"type": ["string", "null"]},
+            "confidence": {"type": "number"},
+            "levels_used": {"type": "array", "items": {"type": "string"}},
+            "news_used": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "symbol",
+            "conflicts",
+            "data_flags",
+            "thesis",
+            "action",
+            "option_id",
+            "confidence",
+            "levels_used",
+            "news_used",
+        ],
+    },
+}
+
+
+class ModelOutputV3(BaseModel):
+    """The v3 decision JSON (docs/SPEC.md, Decision v3 — Output schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    conflicts: list[str] = Field(default_factory=list, max_length=5)
+    data_flags: list[
+        Literal["earnings_date_conflict", "price_conflict", "stale_or_missing_data"]
+    ] = Field(default_factory=list)
+    thesis: str = ""
+    action: Literal["enter", "skip", "hold", "tighten_stop", "exit"]
+    option_id: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    levels_used: list[str] = Field(default_factory=list)
+    news_used: list[str] = Field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class ExplanationCheck:
     """Result of the v2 explanation check (docs/SPEC.md, Decision v2).
@@ -180,6 +242,30 @@ def check_explanation(
     chosen: dict[str, Any] | None,
 ) -> ExplanationCheck:
     """Verify level ids and decimal claims against the given input."""
+    return _check_explanation(
+        [output.thesis, *output.risks], output.levels_used, snapshot, chosen
+    )
+
+
+def check_explanation_v3(
+    output: ModelOutputV3,
+    snapshot: dict[str, Any],
+    chosen: dict[str, Any] | None,
+) -> ExplanationCheck:
+    """The v3 explanation check: thesis and conflicts against the rounded
+    v3 snapshot (docs/SPEC.md, Decision v3 — Code checks)."""
+    return _check_explanation(
+        [output.thesis, *output.conflicts], output.levels_used, snapshot, chosen
+    )
+
+
+def _check_explanation(
+    text_parts: list[str],
+    levels_used: list[str],
+    snapshot: dict[str, Any],
+    chosen: dict[str, Any] | None,
+) -> ExplanationCheck:
+    """Verify level ids and decimal claims against the given input."""
     from app.reviews.numbercheck import fact_values
 
     levels = snapshot.get("levels") or []
@@ -188,8 +274,7 @@ def check_explanation(
         for lv in levels
         if isinstance(lv, dict) and lv.get("id") is not None
     }
-    text_parts = [output.thesis, *output.risks]
-    mentioned = set(output.levels_used)
+    mentioned = set(levels_used)
     for part in text_parts:
         mentioned.update(re.findall(r"\bL\d+\b", part))
     bad_ids = sorted(mentioned - known_ids)
@@ -223,16 +308,25 @@ class ValidationResult:
     """Outcome of parsing + code checks on one raw model response."""
 
     valid: bool  # parsed, allowed and well-formed for the action
-    output: ModelOutput | ModelOutputV2 | None
+    output: ModelOutput | ModelOutputV2 | ModelOutputV3 | None
     model_action: str | None  # action the model chose (None when unparseable)
     final_action: str  # action code allows: may differ from the model's
     checks: list[CodeCheck] = field(default_factory=list)
     error: str | None = None  # why the output was invalid
     note: str = ""  # one-line summary for the inspector banner
+    # decision.v3: why code changed an allowed action (edge_too_small,
+    # data_flag) — the machine-readable skip reason.
+    reason: str | None = None
     # decision.v2: the offered option the model picked (stored verbatim,
     # code never moves prices) and the explanation check result.
     chosen_option: dict[str, Any] | None = None
     explanation: ExplanationCheck | None = None
+    # decision.v3: claim checks (locks-in and stop/target level claims)
+    claims: ExplanationCheck | None = None
+    # decision.v3: the stop/target basis line code writes next to the
+    # thesis ("stop 409.64, 0.1 ATR below the 13 Oct 14:30 1h swing low
+    # (L8) · target 435.92, 2R").
+    code_written: str | None = None
 
     @property
     def changed_by_code(self) -> bool:
@@ -789,6 +883,456 @@ def validate_model_output_v2(
         checks=checks,
         note="Valid",
         explanation=explanation,
+    )
+
+
+_LOCKS_IN_RE = re.compile(r"\blocks?\s+in\b", re.IGNORECASE)
+_LEVEL_ID_RE = re.compile(r"\bL\d+\b")
+_SENTENCE_RE = re.compile(r"[^.!?\n]+")
+
+
+def _code_written(
+    context: str,
+    snapshot: dict[str, Any],
+    chosen: dict[str, Any] | None,
+) -> str | None:
+    """The stop and target basis code writes next to the thesis (drawer,
+    feed, stored decision) — level ids renumber, so the stop's level is
+    named by kind, time and its own id (docs/SPEC.md, Decision v3)."""
+    if chosen is None:
+        return None
+    levels = {
+        str(lv.get("id")): lv
+        for lv in (snapshot.get("levels") or [])
+        if isinstance(lv, dict)
+    }
+
+    def _basis_text(basis: str, level_id: str | None) -> str:
+        lv = levels.get(level_id or "")
+        if lv is None:
+            return basis
+        buffer = basis.split(" ATR below")[0]
+        kind_text = (
+            f"{lv.get('timeframe')} {str(lv.get('kind')).replace('_', ' ')}"
+            if lv.get("timeframe") in ("1h", "daily")
+            else str(lv.get("kind")).replace("_", " ")
+        )
+        when = ""
+        if lv.get("time"):
+            try:
+                t = datetime.fromisoformat(str(lv["time"]))
+                months = ("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+                when = f"{t.day} {months[t.month - 1]}"
+                if t.hour or t.minute:
+                    when += f" {t:%H:%M}"
+            except ValueError:
+                when = ""
+        ref = f"the {when} {kind_text}".replace("  ", " ")
+        return f"{buffer} ATR below {ref} ({lv.get('id')})"
+
+    parts: list[str] = []
+    stop = _decimal_or_none(chosen.get("stop"))
+    if stop is not None:
+        basis = str(chosen.get("stop_basis") or chosen.get("basis") or "")
+        sid = str(chosen["stop_level"]) if chosen.get("stop_level") else None
+        text = _basis_text(basis, sid) if sid else basis
+        parts.append(f"stop {stop:.2f}, {text}".rstrip(", "))
+    target = _decimal_or_none(chosen.get("target"))
+    if target is not None:
+        basis = str(chosen.get("target_basis") or "")
+        parts.append(f"target {target:.2f}, {basis}".rstrip(", "))
+    return " · ".join(parts) or None
+
+
+def _claim_checks(
+    output: ModelOutputV3,
+    *,
+    context: str,
+    snapshot: dict[str, Any],
+    chosen: dict[str, Any] | None,
+) -> ExplanationCheck:
+    """The v3 claim checks (docs/SPEC.md, Decision v3 — Claim checks).
+
+    A thesis or conflict that says the stop "locks in" profit fails when
+    the relevant stop's locked R is 0 or less; a sentence naming the stop
+    or the target together with a level id other than that level's own id
+    fails too. Like the explanation check, it never changes the decision.
+    """
+    position = snapshot.get("position") or {}
+    stop_level: str | None = None
+    target_level: str | None = None
+    locked_r: Decimal | None = None
+    if context == "candidate":
+        if chosen is not None:
+            stop_level = (
+                str(chosen["stop_level"]) if chosen.get("stop_level") else None
+            )
+            target_level = (
+                str(chosen["target_level"]) if chosen.get("target_level") else None
+            )
+        locked_r = None  # no position: the locks-in check does not apply
+    else:
+        # Held: stop claims are read against the position's own stop
+        # level; for a tighten the chosen stop option sets locked_r.
+        stop_level = (
+            str(position["stop_level"])
+            if isinstance(position, dict) and position.get("stop_level")
+            else None
+        )
+        if chosen is not None and chosen.get("locked_r") is not None:
+            locked_r = _decimal_or_none(chosen.get("locked_r"))
+        elif isinstance(position, dict):
+            entry = _decimal_or_none(position.get("entry"))
+            stop = _decimal_or_none(position.get("stop"))
+            initial = _decimal_or_none(position.get("initial_stop"))
+            if entry is not None and stop is not None and initial is not None:
+                risk = entry - initial
+                if risk > 0:
+                    locked_r = (stop - entry) / risk
+
+    bad: list[str] = []
+    for part in [output.thesis, *output.conflicts]:
+        for match in _SENTENCE_RE.finditer(part):
+            sentence = match.group(0)
+            ids = set(_LEVEL_ID_RE.findall(sentence))
+            if not ids:
+                continue
+            allowed: set[str] = set()
+            low = sentence.lower()
+            if "stop" in low and stop_level is not None:
+                allowed.add(stop_level)
+            if "target" in low and target_level is not None:
+                allowed.add(target_level)
+            if ("stop" in low or "target" in low) and not allowed:
+                bad.extend(sorted(ids))
+            else:
+                bad.extend(sorted(ids - allowed))
+        if _LOCKS_IN_RE.search(part) and locked_r is not None and locked_r <= 0:
+            bad.append("locks-in claim")
+    return ExplanationCheck(passed=not bad, bad_ids=sorted(set(bad)))
+
+
+def validate_model_output_v3(
+    raw: str | None,
+    *,
+    symbol: str,
+    context: str,
+    snapshot: dict[str, Any],
+    atr_1h: Decimal | None,
+    current_stop: Decimal | None,
+    call_error: str | None = None,
+    config: AppConfig,
+) -> ValidationResult:
+    """Parse a decision.v3 answer and run the v3 code checks.
+
+    On top of v2: the confidence gate (``edge_too_small``), data flags
+    (``data_flag``) and the claim checks (never gate the action).
+    """
+    allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
+    min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
+    min_edge = float(config.get("decision", "v3", "min_edge", default=0.10))
+    min_room = float(config.get("decision", "v3", "min_room_atr", default=1.0))
+    atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
+    atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
+    min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
+
+    def invalid(error: str, output: ModelOutputV3 | None = None) -> ValidationResult:
+        return ValidationResult(
+            valid=False,
+            output=output,
+            model_action=output.action if output else None,
+            final_action=FALLBACK[context],
+            error=error,
+            note=f"Invalid output — {error}",
+        )
+
+    if call_error is not None:
+        return invalid(f"model call failed: {call_error}")
+    if raw is None or not raw.strip():
+        return invalid("empty response")
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return invalid(f"not JSON: {exc.msg}")
+    try:
+        output = ModelOutputV3.model_validate(parsed)
+    except ValidationError as exc:
+        return invalid(f"schema: {exc.errors()[0]['msg']}")
+    if output.symbol != symbol:
+        return invalid(f"symbol mismatch: {output.symbol!r}", output)
+    if output.action not in allowed:
+        return invalid(
+            f"action {output.action!r} not allowed for {context}", output
+        )
+
+    json_check = CodeCheck(
+        "Valid JSON, allowed action", passed=True, detail="", value=output.action
+    )
+    options = [
+        o for o in (snapshot.get("options") or [])
+        if isinstance(o, dict)
+    ] if context == "candidate" else [
+        o for o in (snapshot.get("stop_options") or [])
+        if isinstance(o, dict)
+    ]
+    chosen = _option_by_id(options, output.option_id)
+    explanation = check_explanation_v3(output, snapshot, chosen)
+    claims = _claim_checks(output, context=context, snapshot=snapshot, chosen=chosen)
+    claims_check = CodeCheck(
+        "Claim checks",
+        passed=claims.passed,
+        detail=(
+            "no unsupported claims"
+            if claims.passed
+            else "; ".join(claims.bad_ids)
+        ),
+    )
+    flags = list(output.data_flags)
+    flags_check = CodeCheck(
+        "Data flags",
+        passed=(context != "candidate" or output.action != "enter" or not flags),
+        detail=", ".join(flags) if flags else "none",
+        value=", ".join(flags) or None,
+    )
+    checks_tail = [
+        CodeCheck(
+            "Explanation check",
+            passed=explanation.passed,
+            detail=(
+                "no unsupported numbers"
+                if explanation.passed
+                else "; ".join(
+                    filter(
+                        None,
+                        [
+                            (
+                                "unknown ids " + ", ".join(explanation.bad_ids)
+                                if explanation.bad_ids
+                                else ""
+                            ),
+                            (
+                                "unsupported numbers "
+                                + ", ".join(explanation.bad_numbers)
+                                if explanation.bad_numbers
+                                else ""
+                            ),
+                        ],
+                    )
+                )
+            ),
+            value=", ".join(output.levels_used) or None,
+        ),
+        claims_check,
+        json_check,
+    ]
+
+    if output.action == "enter":
+        checks: list[CodeCheck] = []
+        option_ok = chosen is not None
+        checks.append(
+            CodeCheck(
+                f"Option {output.option_id or '—'} offered",
+                passed=option_ok,
+                detail=(
+                    "valid choice"
+                    if option_ok
+                    else f"option {output.option_id!r} was not offered"
+                ),
+                value=output.option_id,
+            )
+        )
+        if not option_ok:
+            return ValidationResult(
+                valid=False,
+                output=output,
+                model_action="enter",
+                final_action="skip",
+                checks=[json_check, *checks],
+                error=f"invalid option_id {output.option_id!r}",
+                note="Invalid output — option id was not offered",
+            )
+        assert chosen is not None  # noqa: S101 - internal invariant
+        stop = _decimal_or_none(chosen.get("stop"))
+        target = _decimal_or_none(chosen.get("target"))
+        limit = _decimal_or_none(
+            (snapshot.get("constraints") or {}).get("entry_limit")
+        )
+        reference = _decimal_or_none(snapshot.get("stop_reference_price"))
+        entry = limit if limit is not None else _decimal_or_none(snapshot.get("price"))
+        risk = trade_risk(entry, stop, target, atr_1h) if (
+            entry is not None and stop is not None and target is not None
+        ) else None
+        stop_distance = (
+            (reference - stop) if reference is not None and stop is not None else None
+        )
+        atr_multiple = (
+            stop_distance / atr_1h
+            if stop_distance is not None and atr_1h is not None and atr_1h > 0
+            else None
+        )
+        stop_ok = atr_multiple is not None and atr_min <= atr_multiple <= atr_max
+        checks.append(
+            CodeCheck(
+                f"Stop {_fmt(atr_min)}–{_fmt(atr_max)} × ATR (1h)",
+                passed=stop_ok,
+                detail=(
+                    f"{_fmt(stop_distance)} = {_fmt(atr_multiple)} × ATR"
+                    if atr_multiple is not None
+                    else "reference or ATR missing"
+                ),
+                value=f"{_fmt(atr_multiple)} × ATR" if atr_multiple else "—",
+            )
+        )
+        rr = risk.reward_to_risk if risk is not None else None
+        checks.append(
+            CodeCheck(
+                f"Reward / risk ≥ {_fmt(min_rr)}",
+                passed=rr is not None and rr >= min_rr,
+                detail=f"{_fmt(rr)}",
+                value=_fmt(rr),
+            )
+        )
+        snap_checks = snapshot.get("checks") or {}
+        room_atr = snap_checks.get("room_atr")
+        checks.append(
+            CodeCheck(
+                f"Room to first level ≥ {_fmt(Decimal(str(min_room)))} ATR",
+                passed=True,
+                detail=(
+                    f"{snap_checks.get('room_level')} · {room_atr}"
+                    if room_atr is not None
+                    else "no level in the way"
+                ),
+                value=str(room_atr) if room_atr is not None else None,
+            )
+        )
+        breakeven = _decimal_or_none(chosen.get("breakeven_confidence"))
+        required = max(min_conf, float(breakeven or 0) + min_edge)
+        conf_ok = output.confidence >= required
+        checks.append(
+            CodeCheck(
+                f"Confidence ≥ max({_fmt(Decimal(str(min_conf)))}, "
+                f"break-even + {_fmt(Decimal(str(min_edge)))})",
+                passed=conf_ok,
+                detail=(
+                    f"{output.confidence} ≥ max({_fmt(Decimal(str(min_conf)))}, "
+                    f"{_fmt(Decimal(str(required)))})"
+                ),
+                value=_fmt(_decimal_or_none(output.confidence)),
+            )
+        )
+        checks.append(flags_check)
+        checks.extend(checks_tail)
+        gating = [c for c in checks if c.name not in ("Explanation check", "Claim checks")]
+        if all(c.passed for c in gating):
+            return ValidationResult(
+                valid=True, output=output, model_action="enter",
+                final_action="enter", checks=checks,
+                note="Valid · passed all checks",
+                chosen_option=chosen, explanation=explanation, claims=claims,
+                code_written=_code_written(context, snapshot, chosen),
+            )
+        if not flags_check.passed:
+            reason = "data_flag"
+            label = "data flag"
+        else:
+            first_fail = next(c for c in gating if not c.passed)
+            reason = (
+                "edge_too_small"
+                if first_fail.name.startswith("Confidence")
+                else first_fail.name
+            )
+            label = first_fail.name
+        return ValidationResult(
+            valid=True, output=output, model_action="enter",
+            final_action="skip", checks=checks, reason=reason,
+            note=f"Valid output · code changed enter → skip ({label})",
+            chosen_option=chosen, explanation=explanation, claims=claims,
+        )
+
+    if output.action == "tighten_stop":
+        option_ok = chosen is not None
+        new_stop = _decimal_or_none(chosen.get("stop")) if chosen else None
+        raises = (
+            new_stop is not None
+            and current_stop is not None
+            and new_stop > current_stop
+        )
+        checks = [
+            CodeCheck(
+                f"Option {output.option_id or '—'} offered",
+                passed=option_ok,
+                detail=(
+                    "valid choice"
+                    if option_ok
+                    else f"option {output.option_id!r} was not offered"
+                ),
+                value=output.option_id,
+            ),
+            CodeCheck(
+                "Tighten stop only raises the stop",
+                passed=raises,
+                detail=(
+                    f"{_fmt(new_stop)} > {_fmt(current_stop)}"
+                    if new_stop is not None and current_stop is not None
+                    else "new stop or current stop missing"
+                ),
+                value=_fmt(new_stop),
+            ),
+        ]
+        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        price = _decimal_or_none(snapshot.get("stop_reference_price"))
+        distance_ok = (
+            price is not None and atr_1h is not None and atr_1h > 0
+            and new_stop is not None
+            and price - new_stop >= margin * atr_1h
+        )
+        checks.append(
+            CodeCheck(
+                "Tighten stop market distance",
+                passed=distance_ok,
+                detail=(
+                    "passed"
+                    if distance_ok
+                    else (
+                        "reference_missing"
+                        if price is None or atr_1h is None
+                        else "tighten_market_distance"
+                    )
+                ),
+                value=_fmt(new_stop),
+            )
+        )
+        checks.extend(checks_tail)
+        if not option_ok:
+            return ValidationResult(
+                valid=False, output=output, model_action="tighten_stop",
+                final_action="hold", checks=checks,
+                error=f"invalid option_id {output.option_id!r}",
+                note="Invalid output — option id was not offered",
+                chosen_option=chosen, explanation=explanation, claims=claims,
+            )
+        if raises and distance_ok:
+            return ValidationResult(
+                valid=True, output=output, model_action="tighten_stop",
+                final_action="tighten_stop", checks=checks,
+                note="Valid · passed all checks",
+                chosen_option=chosen, explanation=explanation, claims=claims,
+                code_written=_code_written(context, snapshot, chosen),
+            )
+        return ValidationResult(
+            valid=True, output=output, model_action="tighten_stop",
+            final_action="hold", checks=checks,
+            note="Valid output · code changed tighten_stop → hold (stop not raised)",
+            chosen_option=chosen, explanation=explanation, claims=claims,
+        )
+
+    # skip / hold / exit: action stands; checks still run for the audit.
+    checks = [flags_check, *checks_tail]
+    return ValidationResult(
+        valid=True, output=output, model_action=output.action,
+        final_action=output.action, checks=checks, note="Valid",
+        explanation=explanation, claims=claims,
     )
 
 

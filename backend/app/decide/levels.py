@@ -138,6 +138,8 @@ class Level:
     kind: str
     timeframe: str  # "1h" | "daily" | "session"
     time: datetime | None  # the swing bar's start / session open
+    # decision.v3: every kind merged into this level's id (None = one kind)
+    kinds: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
