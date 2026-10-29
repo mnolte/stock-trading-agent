@@ -1,0 +1,43 @@
+# Spec-owned paths — the list behind the "spec change" label gate.
+#
+# Read by .github/scripts/check-spec-label.sh on every PR (workflow:
+# .github/workflows/spec-label.yml). A PR whose diff touches ANY path
+# matching a pattern here must carry the "spec change" label; it fails
+# CI otherwise. These are the files where behaviour, wording and the
+# rules for agents live — the things AGENTS.md says decide what the app
+# does and how it looks.
+#
+# Format: one pattern per line. Blank lines and lines starting with '#'
+# are skipped. Matching is bash [[ $file == $pattern ]] glob semantics:
+# '*' crosses '/', so 'design/*' also matches 'design/screens/x.md'.
+# Pattern order doesn't matter; keep it grouped for readability.
+#
+# Not every match also needs a changelog entry — that second gate is a
+# shorter list inside the script (needs_spec_log / needs_design_log).
+
+# --- Behaviour spec and its map ---
+docs/SPEC.md
+docs/README.md
+docs/DEVIN_KICKOFF.md
+docs/analysis/*
+
+# --- Agent rules ---
+AGENTS.md
+CLAUDE.md
+
+# --- Behaviour-bearing config and prompts ---
+# Prompts are immutable once used (AGENTS.md rule 8); config.example.yaml
+# holds every spec threshold; .env.example defines the env contract.
+backend/prompts/*.md
+backend/config.example.yaml
+.env.example
+
+# --- Look and wording ---
+design/*
+
+# --- The gate itself ---
+# A change to the check, its pattern list or its workflow is a process
+# change — it needs the label like any other spec edit.
+.github/spec-paths.txt
+.github/scripts/check-spec-label.sh
+.github/workflows/spec-label.yml

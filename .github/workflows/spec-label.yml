@@ -1,0 +1,55 @@
+name: spec-label
+
+# Enforces the repo's spec and changelog discipline on every PR.
+# AGENTS.md requires that a behaviour change updates docs/SPEC.md (when
+# asked) and always adds a dated entry to docs/CHANGES.md, newest first;
+# CLAUDE.md does the same for design files and design/CHANGES.md. A PR
+# that touches spec-owned files must carry the "spec change" label so
+# the change is visible as spec work, not just code.
+#
+# Three parts, kept apart so each can be tested on its own:
+#   .github/spec-paths.txt                  — which paths are spec-owned
+#   .github/scripts/check-spec-label.sh     — the check itself
+#   this file                               — when it runs, what it sees
+
+on:
+  pull_request:
+    # opened/synchronize/reopened: the diff changed, re-run the check.
+    # labeled/unlabeled: the gate depends on labels, so re-evaluate it —
+    # adding the label must clear a failure, removing it must restore it.
+    # ready_for_review: a draft that becomes ready gets checked before
+    # it can be merged.
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review]
+
+permissions:
+  # Read-only: the script inspects the PR diff and labels and never
+  # writes back. Labels themselves are managed by humans.
+  contents: read
+
+concurrency:
+  # One run per PR. A new push or label change cancels the stale run
+  # rather than letting it race to a wrong verdict.
+  group: spec-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  spec-label:
+    runs-on: ubuntu-latest
+    # The check is a diff plus label inspection; 5 minutes is generous.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Full history so the script can diff the merge base against
+          # the PR head instead of guessing at touched files.
+          fetch-depth: 0
+      - name: Check spec label and changelogs
+        env:
+          # Endpoints of the PR diff the script inspects.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Whether the PR carries the "spec change" label; the script
+          # combines this with whether the diff touches a spec-owned
+          # path from .github/spec-paths.txt.
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'spec change') }}
+        run: .github/scripts/check-spec-label.sh
