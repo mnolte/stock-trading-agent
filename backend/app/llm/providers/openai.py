@@ -58,7 +58,11 @@ class OpenAIAdapter:
     def _build(self, api_key: str) -> None:
         from openai import AsyncOpenAI
 
-        self._client = AsyncOpenAI(api_key=api_key, max_retries=0)
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=model_timeout_seconds(self._config, self.default_model),
+            max_retries=0,
+        )
 
     def update_key(self, api_key: str) -> None:
         """Swap the key in place after a Settings save."""

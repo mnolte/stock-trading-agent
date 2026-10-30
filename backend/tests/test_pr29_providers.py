@@ -9,10 +9,11 @@ every gate test uses the fake stores.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from app.config import AppConfig
@@ -52,7 +53,7 @@ def test_sent_schema_has_no_unsupported_keywords(version: str) -> None:
     from app.decide.prompt import prompt_spec
 
     spec = prompt_spec(version)
-    sent = anthropic_safe_schema(dict(spec.json_schema["schema"]))
+    sent = anthropic_safe_schema(cast(dict[str, Any], spec.json_schema["schema"]))
     assert _find_unsupported(sent, _UNSUPPORTED_KEYS) == []
 
 
@@ -143,23 +144,27 @@ class _StubRawResponse:
 
 
 class _StubMessages:
-    def __init__(self, raw: _StubRawResponse, calls: list[dict]) -> None:
+    def __init__(self, raw: _StubRawResponse, calls: list[dict[str, Any]]) -> None:
         self.with_raw_response = SimpleNamespace(
             create=self._create(raw, calls)
         )
 
     @staticmethod
-    def _create(raw: _StubRawResponse, calls: list[dict]):
-        async def create(**kwargs):
+    def _create(
+        raw: _StubRawResponse, calls: list[dict[str, Any]]
+    ) -> Callable[..., Any]:
+        async def create(**kwargs: Any) -> _StubRawResponse:
             calls.append(kwargs)
             return raw
 
         return create
 
 
-def _adapter(config: AppConfig, raw: _StubRawResponse, calls: list[dict]) -> AnthropicAdapter:
+def _adapter(
+    config: AppConfig, raw: _StubRawResponse, calls: list[dict[str, Any]]
+) -> AnthropicAdapter:
     adapter = AnthropicAdapter(config, api_key="sk-ant-test")
-    adapter._client = SimpleNamespace(messages=_StubMessages(raw, calls))
+    adapter._client = cast(Any, SimpleNamespace(messages=_StubMessages(raw, calls)))
     return adapter
 
 
@@ -176,7 +181,7 @@ def _config() -> AppConfig:
 
 
 async def test_anthropic_success_parses_and_sends_no_temperature() -> None:
-    calls: list[dict] = []
+    calls: list[dict[str, Any]] = []
     raw = _StubRawResponse(_message('{"a": 1}'))
     adapter = _adapter(_config(), raw, calls)
     resp = await adapter.complete(
@@ -210,12 +215,12 @@ async def test_anthropic_max_tokens_is_truncated_invalid_output() -> None:
 
 
 async def test_anthropic_529_is_api_error_with_type() -> None:
-    import httpx
+    import httpx2
     from anthropic import InternalServerError
 
-    response = httpx.Response(
+    response = httpx2.Response(
         529,
-        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"),
         headers={"request-id": "req_529"},
     )
     exc = InternalServerError(
@@ -232,11 +237,11 @@ async def test_anthropic_529_is_api_error_with_type() -> None:
 
 
 async def test_anthropic_timeout_maps_to_timeout() -> None:
-    import httpx
+    import httpx2
     from anthropic import APITimeoutError
 
     exc = APITimeoutError(
-        request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+        request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
     )
     adapter = _adapter(_config(), _StubRawResponse(exc=exc), [])
     resp = await adapter.complete(system="s", user="u", model="claude-haiku-5-5")
@@ -244,7 +249,7 @@ async def test_anthropic_timeout_maps_to_timeout() -> None:
 
 
 async def test_only_final_text_stored() -> None:
-    calls: list[dict] = []
+    calls: list[dict[str, Any]] = []
     msg = SimpleNamespace(
         content=[
             SimpleNamespace(type="thinking", thinking="hmm"),
@@ -270,19 +275,19 @@ def test_unknown_decision_model_fails_startup() -> None:
         check_models(config)
 
 
-def test_legacy_model_prices_warn(caplog) -> None:
+def test_legacy_model_prices_warn(caplog: pytest.LogCaptureFixture) -> None:
     """With no ``models`` block the legacy keys load, with a warning."""
     import app.llm.models as models_mod
 
     class _Stub:
-        def get(self, *keys: str, default=None):
+        def get(self, *keys: str, default: object = None) -> object:
             tree = {
                 "model_prices": {
                     "gpt-4o-mini": {"input": 0.15, "output": 0.60}
                 },
                 "backtest": {"model_cutoffs": {"gpt-4o-mini": "2023-10-01"}},
             }
-            node = tree
+            node: object = tree
             for key in keys:
                 if not isinstance(node, dict) or key not in node:
                     return default
@@ -291,7 +296,7 @@ def test_legacy_model_prices_warn(caplog) -> None:
 
     models_mod._legacy_warned = False
     with caplog.at_level("WARNING"):
-        table = models_table(_Stub())  # type: ignore[arg-type]
+        table = models_table(cast(Any, _Stub()))
     assert table["gpt-4o-mini"]["provider"] == "openai"
     assert table["gpt-4o-mini"]["cutoff"] == "2023-10-01"
     assert any("models" in r.message for r in caplog.records)

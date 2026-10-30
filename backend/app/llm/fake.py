@@ -71,9 +71,15 @@ class FakeModelClient:
     # decision answers
 
     def _default(
-        self, snapshot: dict[str, Any], *, v2: bool = False
+        self, snapshot: dict[str, Any], *, v2: bool = False, v3: bool = False
     ) -> dict[str, Any]:
         symbol = snapshot["symbol"]
+        if v3:
+            # The v3 answer shape: conflicts and data_flags instead of risks.
+            out = self._default_v2(snapshot)
+            out["conflicts"] = out.pop("risks")
+            out["data_flags"] = []
+            return out
         if v2:
             return self._default_v2(snapshot)
         if snapshot["context"] == "held":
@@ -219,7 +225,13 @@ class FakeModelClient:
         raw = (
             override
             if isinstance(override, str)
-            else json.dumps(self._default(snapshot, v2=_uses_v2(schema, snapshot)))
+            else json.dumps(
+                self._default(
+                    snapshot,
+                    v2=_uses_v2(schema, snapshot),
+                    v3=_uses_v3(schema, snapshot),
+                )
+            )
         )
         # Deterministic pseudo-usage so cost tracking is exercised end to end.
         tokens_in = len(system + user) // 4
@@ -239,5 +251,13 @@ def _uses_v2(schema: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
     """True when the call uses the v2 contract (schema or option input)."""
     if schema is not None:
         props = (schema.get("schema") or {}).get("properties") or {}
-        return "option_id" in props
-    return "options" in snapshot or "stop_options" in snapshot
+        return "option_id" in props and "data_flags" not in props
+    return ("options" in snapshot or "stop_options" in snapshot) and "checks" not in snapshot
+
+
+def _uses_v3(schema: dict[str, Any] | None, snapshot: dict[str, Any]) -> bool:
+    """True when the call uses the v3 contract (schema or checks input)."""
+    if schema is not None:
+        props = (schema.get("schema") or {}).get("properties") or {}
+        return "data_flags" in props
+    return "checks" in snapshot

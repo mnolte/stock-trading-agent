@@ -193,7 +193,9 @@ def test_remove_unused_key_pauses_shadows() -> None:
     store = cast(Any, client.app).state.secrets_store
     assert store.get("anthropic") is None
     with get_session_maker()() as session:
-        assert session.get(Strategy, sid).status == "paused"
+        strategy = session.get(Strategy, sid)
+        assert strategy is not None
+        assert strategy.status == "paused"
 
 
 def test_missing_model_key_is_refused_on_save() -> None:

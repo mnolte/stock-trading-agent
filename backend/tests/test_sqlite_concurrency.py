@@ -100,6 +100,8 @@ class LockProbeClient:
     """While the model call is awaited, another connection tries to take
     the write lock with no wait at all — it must get it at once."""
 
+    provider = "fake"
+
     def __init__(self, db_path: str) -> None:
         self.db_path = db_path
         self.inner = FakeDecisionClient(enter_symbols={"MSFT"})

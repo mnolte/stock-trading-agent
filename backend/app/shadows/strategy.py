@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.decide.client import model_price, prices_for, require_price
+from app.decide.client import model_price, prices_for
 from app.decide.prompt import (
     PromptError,
     UnknownPromptVersion,
