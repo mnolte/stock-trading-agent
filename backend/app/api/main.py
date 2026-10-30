@@ -877,10 +877,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _last_logs_push[0] = now
             loop.call_soon_threadsafe(bus.publish, "logs")
 
+    # "New error" (docs/SPEC.md, Notifications): the first time an ERROR
+    # fingerprint appears this session it sends the Warning notification
+    # once — a repeating bug stays visible after the first one.
+    seen_error_fingerprints: set[str] = set()
+
+    def _on_warning_or_above(record: logging.LogRecord) -> None:
+        _push_logs_topic(record)
+        if record.levelno < logging.ERROR:
+            return
+        from app.log_index import fingerprint
+
+        fp = fingerprint(
+            record.name, getattr(record, "event", None), record.getMessage()
+        )
+        if fp in seen_error_fingerprints:
+            return
+        seen_error_fingerprints.add(fp)
+        notifier = getattr(app.state, "notification_service", None)
+        if notifier is None:
+            return
+        from app.logging_config import _all_secrets
+        from app.secrets_service import scrub
+
+        notifier.notify(
+            "new_error",
+            scrub(record.getMessage()[:300], _all_secrets()),
+            link="/logs",
+        )
+
     index_handler = make_index_handler(
         config,
         file_fallback=pipeline.file_handler,
-        on_warning_or_above=_push_logs_topic,
+        on_warning_or_above=_on_warning_or_above,
     )
     if index_handler is not None:
         pipeline.add_handler(index_handler)
@@ -899,6 +928,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         publish=lambda topics: bus.publish(*topics),
     )
     notification_service.start()
+    app.state.notification_service = notification_service
     set_event_sink(notification_service.sink)
     key_testers = make_key_testers(config, clock)
     await secrets_store.import_env_keys(read_env_keys(), key_testers)

@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 from app.broker.fake import FakeBroker, _OrderRec, _PosRec
-from app.broker.models import BrokerAccount, BrokerOrder
+from app.broker.models import BrokerAccount, BrokerOrder, BrokerPosition
 from app.config import AppConfig
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -3397,3 +3397,38 @@ def test_stream_degraded_event_maps_to_notification() -> None:
         "stream_degraded", {"reason": "unparseable update"}
     )
     assert mapped == ("stream_degraded", "unparseable update", "/positions")
+
+
+async def test_flat_symbol_is_not_refetched_within_a_pass(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A position found flat at the broker isn't asked for again in the
+    same pass (the 29 Oct RTX 404 burst); the next pass asks fresh."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    calls: list[str] = []
+    real_get_position = broker.get_position
+
+    async def spy(symbol: str) -> DataResult[BrokerPosition | None]:
+        calls.append(symbol)
+        return await real_get_position(symbol)
+
+    broker.get_position = spy  # type: ignore[method-assign]
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    report = await executor.reconcile()
+    calls.clear()
+
+    assert "MSFT" in executor._flat_symbols
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "MSFT")
+        ).scalar_one()
+        placed = await executor._place_protective_stop(
+            session, position, None, report
+        )
+    # The flat marker answered it — no second broker ask this pass.
+    assert placed == Decimal(0)
+    assert calls == []

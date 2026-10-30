@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import cast
 
+import pytest
 from app.log_index import (
     LogIndexHandler,
     fingerprint,
@@ -19,6 +20,8 @@ from app.log_index import (
 )
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.anyio
 
 
 def _rec(
@@ -211,3 +214,64 @@ def test_client_log_rate_limit(client: TestClient) -> None:
             json={"message": "spam", "tab_id": "t-spam"},
         )
     assert resp.json()["logged"] is False or resp.json()["rate_limited"]
+
+
+async def test_new_error_notification_once_per_fingerprint(
+    client: TestClient,
+) -> None:
+    """The first ERROR fingerprint of the session sends one "New error"
+    notification; the repeat and the next fingerprint behave per spec."""
+    from typing import Any
+
+    from app.db.base import get_session_maker
+    from app.db.models import Notification
+    from fastapi import FastAPI
+    from sqlalchemy import select
+
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    service = cast(Any, client.app).state.notification_service
+    # Numbers fold in the fingerprint: lines 1 and 2 are one problem.
+    handler.emit(_rec("broker call failed after 1 retries", logging.ERROR))
+    handler.emit(_rec("broker call failed after 2 retries", logging.ERROR))
+    handler.emit(_rec("a different failure", logging.ERROR))
+    await service.drain()
+
+    with get_session_maker()() as session:
+        rows = (
+            session.execute(
+                select(Notification).where(Notification.event == "new_error")
+            )
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 2
+    assert all(row.severity == "warning" for row in rows)
+    assert all(row.link == "/logs" for row in rows)
+    assert rows[0].body is not None
+    assert "broker call failed" in rows[0].body
+
+
+def test_library_loggers_warning_unless_library_debug(
+    client: TestClient,
+) -> None:
+    """websockets/uvicorn/httpx/apscheduler log at WARNING unless
+    logging.library_debug is on (29 Oct: 52 MB in 2.5 days)."""
+    from app.config import get_config
+    from app.logging_config import get_pipeline, install_queue_root
+
+    for name in ("uvicorn.access", "httpx", "websockets", "apscheduler.scheduler"):
+        assert logging.getLogger(name).level == logging.WARNING
+
+    get_config().yaml.setdefault("logging", {})["library_debug"] = True
+    try:
+        pipeline = get_pipeline()
+        assert pipeline is not None
+        install_queue_root(pipeline)
+        for name in ("uvicorn.access", "httpx", "websockets"):
+            assert logging.getLogger(name).level == logging.DEBUG
+    finally:
+        get_config().yaml["logging"]["library_debug"] = False
+        pipeline = get_pipeline()
+        assert pipeline is not None
+        install_queue_root(pipeline)
+    assert logging.getLogger("httpx").level == logging.WARNING

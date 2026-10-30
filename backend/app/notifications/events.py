@@ -247,6 +247,13 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "warnings",
         WARNING,
     ),
+    EventDef(
+        "new_error",
+        "New error",
+        "An ERROR fingerprint seen for the first time this session",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}

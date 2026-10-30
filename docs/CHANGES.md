@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-30 — Ops: alerts, log volume and small fixes — implementation
+
+- `docs/kickoffs/ops-alerts.md` lands in code: the "New error" warning notification (one per ERROR fingerprint per session, link to Logs), third-party loggers at WARNING unless `logging.library_debug`, no `/api/chart/` call without a symbol, and no repeat broker ask for a position already found flat in the same pass.
+- `config.example.yaml`: `notifications.events.new_error: [browser, email]` — the spec's on/on default for the new row.
+
 ## 2026-10-30 — Review attribution (PR 32) — implementation
 
 - The 2026-10-30 spec entry above lands in code on `feat/pr32-review-attribution` (stacked on PR 31). `config.example.yaml` gains `reviews.min_closed_trades_for_suggestion` (10) and `reviews.prompts` moves to `weekly.v2` / `verdict.v2` (briefing stays v1). No new spec behaviour beyond that entry.

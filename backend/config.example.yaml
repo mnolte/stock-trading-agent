@@ -168,6 +168,7 @@ notifications:
     order_rejected: [browser, email]
     stream_degraded: [browser, email]
     clock_check_failing: [browser, email]
+    new_error: [browser, email]
     daily_loss_limit: [browser, email]
     shock_brake: [browser]
     source_failing: [browser, email]

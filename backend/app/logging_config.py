@@ -375,13 +375,23 @@ def install_queue_root(pipeline: LogPipeline) -> None:
         root.removeHandler(handler)
     root.addHandler(pipeline._queue_handler)
     # uvicorn and the libraries log to the same handlers via propagation.
+    # Their DEBUG keep-alive lines made stock-agent.log grow ~20 MB/day;
+    # WARNING and above unless logging.library_debug is on (spec).
+    try:
+        library_debug = bool(
+            get_config().get("logging", "library_debug", default=False)
+        )
+    except Exception:  # noqa: BLE001 - logging must never fail on config
+        library_debug = False
+    lib_level = logging.DEBUG if library_debug else logging.WARNING
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx",
-                 "websockets", "apscheduler", "apscheduler.executors.default",
+                 "httpx2", "openai", "anthropic", "websockets",
+                 "apscheduler", "apscheduler.executors.default",
                  "apscheduler.scheduler", "alembic"):
         lib = logging.getLogger(name)
         for handler in list(lib.handlers):
             lib.removeHandler(handler)
-        lib.setLevel(logging.DEBUG)
+        lib.setLevel(lib_level)
         lib.propagate = True
     # Per-run "Running job / executed successfully" lines are INFO noise:
     # with the 10-second backtest tick alone that is ~17k lines a day.

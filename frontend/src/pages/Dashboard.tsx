@@ -869,7 +869,9 @@ export default function Dashboard() {
     [chartSymbol],
   );
   const chartRes = useApiResource(
-    () => getChart(chartSymbol ?? ''),
+    // reload() ignores the enabled flag, so the fetcher itself must not
+    // hit /api/chart/ without a symbol.
+    () => (chartSymbol === null ? Promise.resolve(null) : getChart(chartSymbol)),
     [chartSymbol],
     chartSymbol !== null,
   );
