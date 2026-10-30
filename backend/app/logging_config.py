@@ -34,7 +34,7 @@ import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -260,7 +260,7 @@ class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
             self.stream = None
         base = Path(self.baseFilename)
         rotated = base.with_name(
-            f"{base.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S')}{base.suffix}.gz"
+            f"{base.stem}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}{base.suffix}.gz"
         )
         if base.exists():
             with base.open("rb") as src, gzip.open(rotated, "wb") as dst:

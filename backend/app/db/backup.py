@@ -8,7 +8,7 @@ spec) and filenames carry the local date.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -60,7 +60,7 @@ def create_backup(clock: Clock | None = None) -> None:
         try:
             backup_date = datetime.strptime(
                 backup.name.rsplit(".", 1)[-1], "%Y-%m-%d"
-            ).date()
+            ).replace(tzinfo=UTC).date()
         except ValueError:
             continue  # Not a dated backup of this database.
         if backup_date < cutoff:
