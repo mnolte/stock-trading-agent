@@ -645,6 +645,42 @@ def check_model_prices_at_startup(config: AppConfig) -> None:
             raise RuntimeError(f"Refusing to start: {exc}") from exc
 
 
+def check_prompt_versions_at_startup(config: AppConfig) -> None:
+    """Refuse to start when config or an active strategy names a prompt
+    version without a registered contract (docs/SPEC.md, Known prompt
+    versions only)."""
+    from app.db.base import get_session_maker
+    from app.db.models import Strategy
+    from app.decide.prompt import UnknownPromptVersion, prompt_spec
+    from app.reviews.service import ReviewService
+
+    versions = [str(config.get("decision", "prompt", default="decision.v1"))]
+    for kind, known in ReviewService._REVIEW_CONTRACTS.items():
+        version = str(
+            config.get("reviews", "prompts", kind, default=f"{kind}.v1")
+        )
+        if version not in known:
+            raise RuntimeError(
+                f"Refusing to start: unknown_prompt_version {version} "
+                f"for reviews.prompts.{kind}"
+            )
+    with get_session_maker()() as session:
+        versions.extend(
+            s
+            for s in session.execute(
+                select(Strategy.prompt_version).where(
+                    Strategy.status == "active", Strategy.prompt_version.is_not(None)
+                )
+            ).scalars()
+            if s is not None
+        )
+    try:
+        for version in versions:
+            prompt_spec(version)
+    except UnknownPromptVersion as exc:
+        raise RuntimeError(f"Refusing to start: {exc}") from exc
+
+
 def check_execution_mode(config: AppConfig) -> None:
     """Only automatic and supervised exist; refuse to start on anything else."""
     mode = str(config.get("execution", "mode", default="automatic"))
@@ -823,6 +859,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     load_saved_settings(config)
     check_execution_mode(config)
     check_model_prices_at_startup(config)
+    check_prompt_versions_at_startup(config)
 
     clock = make_clock(config)
     bus = UpdateBus()

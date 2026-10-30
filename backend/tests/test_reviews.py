@@ -649,7 +649,7 @@ async def test_model_text_passes_number_check(
     assert review.source == "model"
     assert review.reason is None
     assert review.model == "fake-review"
-    assert review.prompt_version == "weekly.v1"
+    assert review.prompt_version == "weekly.v2"
     assert review.cost is not None
     assert (review.content or {})["summary"] == review.text
     # A caught-up/scheduled write keeps the Saturday slot as due_at.

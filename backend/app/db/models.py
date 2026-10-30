@@ -214,6 +214,9 @@ class Outcome(Base):
     # For trades: which of the stop or target levels price touched first
     # ("stop" | "target" | "neither"). None until a trade's bars were read.
     first_touch: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # decision.v2/v3 options: option id -> first of its stop/target touched
+    # ("stop" | "target" | "neither" | "not_filled" | null for missing bars).
+    option_touches: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class EquitySnapshot(Base):
@@ -445,6 +448,11 @@ class Verdict(Base):
     )  # good_call | bad_call | unclear
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     source: Mapped[str] = mapped_column(String(16), nullable=False)  # draft | marc
+    # verdict.v2 (PR 32): the model's thesis check (consistent | contradicts |
+    # unclear) and, when it contradicts, the contradiction text. The label in
+    # ``verdict`` always comes from code's draft_verdict, never the model.
+    thesis_check: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    contradiction: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Who wrote the draft: the model or the plain template after a fallback.
     draft_source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="model"

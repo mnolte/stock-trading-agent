@@ -65,10 +65,55 @@ VERDICT_JSON_SCHEMA: dict[str, Any] = {
     },
 }
 
+# weekly.v2 (PR 32): suggestion is {text, evidence} or null.
+WEEKLY_V2_JSON_SCHEMA: dict[str, Any] = {
+    "name": "weekly_review_v2",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "summary": {"type": "string"},
+            "observations": {"type": "array", "items": {"type": "string"}},
+            "suggestion": {
+                "type": ["object", "null"],
+                "additionalProperties": False,
+                "properties": {
+                    "text": {"type": "string"},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["text", "evidence"],
+            },
+        },
+        "required": ["summary", "observations", "suggestion"],
+    },
+}
+
+# verdict.v2 (PR 32): no verdict field — the label is code's draft_verdict.
+VERDICT_V2_JSON_SCHEMA: dict[str, Any] = {
+    "name": "decision_verdict_v2",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "reason": {"type": "string"},
+            "thesis_check": {
+                "type": "string",
+                "enum": ["consistent", "contradicts", "unclear"],
+            },
+            "contradiction": {"type": ["string", "null"]},
+        },
+        "required": ["reason", "thesis_check", "contradiction"],
+    },
+}
+
 SCHEMAS: dict[str, dict[str, Any]] = {
     "weekly": WEEKLY_JSON_SCHEMA,
     "briefing": BRIEFING_JSON_SCHEMA,
     "verdict": VERDICT_JSON_SCHEMA,
+    "weekly.v2": WEEKLY_V2_JSON_SCHEMA,
+    "verdict.v2": VERDICT_V2_JSON_SCHEMA,
 }
 
 

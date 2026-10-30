@@ -385,6 +385,20 @@ def weekly_facts(
         "by_symbol": _group(lambda t, _p: t["symbol"]),
         "strategies": _strategy_facts(session, config=config, clock=clock, calendar=calendar),
         "insights": _insights_facts(session, monday=monday, friday=friday),
+        # weekly.v2 (PR 32): a suggestion only once the run has enough
+        # closed trades; code drops a suggestion it didn't allow.
+        "suggestion_allowed": (
+            session.execute(
+                select(func.count(Position.id)).where(
+                    Position.closed_at.is_not(None), Position.origin == "agent"
+                )
+            ).scalar_one()
+            >= int(
+                config.get(
+                    "reviews", "min_closed_trades_for_suggestion", default=10
+                )
+            )
+        ),
     }
 
 
@@ -657,6 +671,47 @@ def verdict_facts(
             * 100
         )
     output = decision.model_output or {}
+    model_action = (
+        output.get("action")
+        if isinstance(output.get("action"), str)
+        else None
+    )
+    changed_by_code = (
+        model_action is not None and model_action != decision.final_action
+    )
+    change_reason: str | None = None
+    if changed_by_code:
+        for source in (decision.validation_result, decision.gates_result):
+            if isinstance(source, dict):
+                reason = source.get("reason") or source.get("blocked_by")
+                if isinstance(reason, str) and reason:
+                    change_reason = reason
+                    break
+    option_id = decision.chosen_option or (
+        output.get("option_id")
+        if isinstance(output.get("option_id"), str | int)
+        else None
+    )
+    options_facts: list[dict[str, Any]] = []
+    raw_options = (decision.options or {}).get("options", [])
+    touches = (outcome.option_touches or {}) if outcome else {}
+    if isinstance(raw_options, list):
+        for option in raw_options:
+            if not isinstance(option, dict):
+                continue
+            oid = option.get("id") or option.get("option_id")
+            entry = option.get("entry_limit", option.get("entry"))
+            stop = option.get("stop", option.get("stop_price"))
+            target = option.get("target", option.get("target_price"))
+            rr: float | None = None
+            if all(
+                isinstance(v, int | float | Decimal) for v in (entry, stop, target)
+            ):
+                risk = Decimal(str(entry)) - Decimal(str(stop))
+                if risk > 0:
+                    rr = float((Decimal(str(target)) - Decimal(str(entry))) / risk)
+            touch = touches.get(str(oid)) if isinstance(touches, dict) else None
+            options_facts.append({"option_id": oid, "rr": rr, "touch": touch})
     trade: dict[str, Any] | None = None
     position = session.execute(
         select(Position).where(Position.entry_decision_id == decision.id)
@@ -689,10 +744,22 @@ def verdict_facts(
             "pnl_usd": _f(position.realized_pnl_raw),
             "first_touch": outcome.first_touch,
         }
-    return {
+    base_facts = {
         "kind": "verdict",
         "symbol": decision.symbol,
+        "model_action": model_action,
+        "option_id": option_id,
         "final_action": decision.final_action,
+        "changed_by_code": changed_by_code,
+        "change_reason": change_reason,
+        "execution": (
+            "trade"
+            if trade is not None
+            else ("blocked_by_code" if changed_by_code else "no_trade")
+        ),
+        "checks_at_decision": decision.validation_result,
+        "options": options_facts,
+        "prompt_version": decision.prompt_version,
         "context": decision.context,
         "decided_at": _aware(scheduled).isoformat(),
         "date": _aware(scheduled).astimezone(NY_TZ).date().isoformat(),
@@ -714,3 +781,7 @@ def verdict_facts(
         "skip_flat_pct": flat_pct,
         "trade": trade,
     }
+    from app.reviews.templates import verdict_plain
+
+    base_facts["draft_verdict"] = verdict_plain(base_facts)["verdict"]
+    return base_facts

@@ -18,7 +18,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.decide.client import model_price, prices_for, require_price
-from app.decide.prompt import PromptError, load_prompt
+from app.decide.prompt import (
+    PromptError,
+    UnknownPromptVersion,
+    load_prompt,
+    prompt_spec,
+)
 from app.settings_service import EDITABLE, LABELS
 
 if TYPE_CHECKING:
@@ -248,7 +253,10 @@ def validate_new_strategy(
     if kind == "llm":
         prompt = str(body.get("prompt_version") or config.get("decision", "prompt"))
         try:
+            prompt_spec(prompt)
             load_prompt(prompt)
+        except UnknownPromptVersion:
+            errors.append(f"unknown_prompt_version: {prompt}")
         except (OSError, PromptError):
             errors.append(f"Prompt version {prompt!r} does not exist")
         model = str(body.get("model") or config.get("decision", "model"))

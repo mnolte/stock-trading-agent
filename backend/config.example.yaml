@@ -146,7 +146,8 @@ reviews:
     briefing: gpt-4o-mini
     verdict: gpt-4o-mini
   temperature: 0.2              # OpenAI models only
-  prompts: {weekly: weekly.v1, briefing: briefing.v1, verdict: verdict.v1}
+  prompts: {weekly: weekly.v2, briefing: briefing.v1, verdict: verdict.v2}
+  min_closed_trades_for_suggestion: 10
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 
