@@ -321,7 +321,7 @@ async def replay(
         ).scalar()
         decisions = _candidate_snapshots(
             session,
-            run_start or datetime(2000, 1, 1),
+            run_start or datetime(2000, 1, 1, tzinfo=UTC),
             from_day,
             to_day,
         )

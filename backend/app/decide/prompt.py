@@ -66,8 +66,19 @@ class PromptSpec:
         return self.builder == "v3"
 
 
+class UnknownPromptVersion(ValueError):
+    """A prompt version with no registered contract (SPEC: known versions only)."""
+
+    def __init__(self, version: str) -> None:
+        self.version = version
+        super().__init__(f"unknown_prompt_version: {version}")
+
+
+# Contracts per kind (docs/SPEC.md, Decision layer — Known prompt versions
+# only). Every version named in config, a strategy, a backtest or a replay
+# must be registered here or startup/save refuses it.
 def prompt_spec(version: str) -> PromptSpec:
-    """The code contract for a prompt version; unknown versions get v1's."""
+    """The code contract for a prompt version; unknown versions raise."""
     from app.decide.output import (
         DECISION_JSON_SCHEMA,
         DECISION_V2_JSON_SCHEMA,
@@ -82,7 +93,9 @@ def prompt_spec(version: str) -> PromptSpec:
         return PromptSpec(
             version, DECISION_V2_JSON_SCHEMA, uses_options=True, builder="v2"
         )
-    return PromptSpec(version, DECISION_JSON_SCHEMA)
+    if version == "decision.v1":
+        return PromptSpec(version, DECISION_JSON_SCHEMA)
+    raise UnknownPromptVersion(version)
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ the client.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
@@ -57,6 +58,11 @@ class Broker(Protocol):
 
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         """All orders still live at the broker (legs included)."""
+        ...
+
+    async def get_filled_orders(
+        self, symbol: str, since: datetime
+    ) -> DataResult[list[BrokerOrder]]:
         ...
 
     async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:

@@ -17,6 +17,7 @@ rate for display.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -49,6 +50,8 @@ _PRICE_WINDOW = timedelta(days=2)
 _TOUCH_STOP = "stop"
 _TOUCH_TARGET = "target"
 _TOUCH_NEITHER = "neither"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -274,6 +277,38 @@ class OutcomeWorker:
                 changed = True
             if changed:
                 report.filled += 1
+                if outcome.price_5sessions is not None:
+                    self._fill_option_touches(
+                        session, decision, outcome, decision_time
+                    )
+        session.flush()
+
+        # Backfill: v2/v3 decisions whose 5-session outcome landed before
+        # this code existed (docs/SPEC.md, Outcome tracking — Option
+        # outcomes). From stored bars only; missing bars stay null.
+        stale = session.execute(
+            select(Decision, Cycle.scheduled_time, Outcome)
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .join(Outcome, Outcome.decision_id == Decision.id)
+            .where(
+                Outcome.option_touches.is_(None),
+                Outcome.price_5sessions.is_not(None),
+                Decision.options.is_not(None),
+            )
+        ).all()
+        filled_n = missing_n = 0
+        for decision, scheduled, outcome in stale:
+            if self._fill_option_touches(
+                session, decision, outcome, _aware_utc(scheduled)
+            ):
+                filled_n += 1
+            else:
+                missing_n += 1
+        if stale:
+            logger.info(
+                "option-touches backfill: %d rows filled, %d missing bars",
+                filled_n, missing_n,
+            )
         session.flush()
 
         for position in session.execute(
@@ -283,6 +318,80 @@ class OutcomeWorker:
                 report.best_worst += 1
         session.flush()
         return report
+
+    def _fill_option_touches(
+        self,
+        session: Session,
+        decision: Decision,
+        outcome: Outcome,
+        decision_time: datetime,
+    ) -> bool:
+        """First stop/target touch per offered option (docs/SPEC.md, Option
+        outcomes). True when every option got a non-null verdict.
+
+        Rules: the entry_limit must be reached inside a 10-minute window
+        from the decision ("not_filled" otherwise); bars after the fill bar
+        decide, and a bar touching both counts as a stop touch. The traded
+        option uses the real fill and the stored ``first_touch``.
+        """
+        if outcome.option_touches is not None:
+            return True
+        options_raw = (decision.options or {}).get("options", [])
+        if not isinstance(options_raw, list) or not options_raw:
+            return True
+        assert self.market_data is not None  # noqa: S101 - internal invariant
+        if outcome.price_5sessions_at is None:
+            return False
+        end = _aware_utc(outcome.price_5sessions_at) + timedelta(minutes=5)
+        bars = self.market_data.get_5m_bars(decision.symbol, decision_time, end)
+        if not bars:
+            outcome.option_touches = {
+                str(o.get("id")): None
+                for o in options_raw
+                if isinstance(o, dict)
+            }
+            return False
+        ordered = sorted(bars, key=lambda b: b.start)
+        traded_id = decision.chosen_option
+        touches: dict[str, object] = {}
+        all_filled = True
+        for option in options_raw:
+            if not isinstance(option, dict):
+                continue
+            oid = str(option.get("id"))
+            if oid == traded_id and outcome.first_touch is not None:
+                touches[oid] = outcome.first_touch
+                continue
+            entry = option.get("entry_limit", option.get("entry"))
+            stop = option.get("stop")
+            target = option.get("target")
+            if entry is None or stop is None or target is None:
+                touches[oid] = None
+                all_filled = False
+                continue
+            limit = Decimal(str(entry))
+            fill_index: int | None = None
+            for index, bar in enumerate(ordered):
+                if bar.start - decision_time > timedelta(minutes=10):
+                    break
+                if bar.low <= limit <= bar.high or bar.low <= limit:
+                    fill_index = index
+                    break
+            if fill_index is None:
+                touches[oid] = "not_filled"
+                continue
+            touch: str = _TOUCH_NEITHER
+            for bar in ordered[fill_index:]:
+                # A bar touching both counts as a stop touch.
+                if bar.low <= Decimal(str(stop)):
+                    touch = _TOUCH_STOP
+                    break
+                if bar.high >= Decimal(str(target)):
+                    touch = _TOUCH_TARGET
+                    break
+            touches[oid] = touch
+        outcome.option_touches = touches
+        return all_filled
 
     def _update_best_worst(
         self, session: Session, position: Position, now: datetime

@@ -9,7 +9,7 @@ time). No lookahead: a run can never see a later bar, headline or event.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -41,8 +41,6 @@ SIP_MIN_AGE = timedelta(minutes=16)
 
 
 def _aware_utc(dt: datetime) -> datetime:
-    from datetime import UTC
-
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
@@ -237,7 +235,7 @@ class BacktestCorporateActionSource:
                     action_type=r.action_type,
                     ex_date=r.date.date(),
                     amount_or_ratio=r.ratio_or_amount,
-                    fetched_at=datetime.min,
+                    fetched_at=datetime.min.replace(tzinfo=UTC),
                 )
                 for r in rows
             ],
@@ -284,7 +282,7 @@ class FixedFXSource:
                 quote="USD",
                 usd_per_eur=Decimal("1.08"),
                 for_date=for_date,
-                fetched_at=datetime.min,
+                fetched_at=datetime.min.replace(tzinfo=UTC),
             ),
             source="backtest",
         )

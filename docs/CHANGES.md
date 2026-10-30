@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-30 — Review attribution (PR 32) — implementation
+
+- The 2026-10-30 spec entry above lands in code on `feat/pr32-review-attribution` (stacked on PR 31). `config.example.yaml` gains `reviews.min_closed_trades_for_suggestion` (10) and `reviews.prompts` moves to `weekly.v2` / `verdict.v2` (briefing stays v1). No new spec behaviour beyond that entry.
+
 ## 2026-10-30 — Review attribution (PR 32)
 
 - From the model-call analysis of 30 October (1,067 calls, 19–29 October): 32 of 99 verdicts judged a skip that code had made out of a model enter, because the verdict facts held only the final action; `verdict.v1` called a skip followed by +1.1% a good call ("avoided a small gain"); the one weekly review suggested a rule change on 1 closed trade; the briefing showed its status line twice; and an unknown prompt version silently used decision.v1's contract.

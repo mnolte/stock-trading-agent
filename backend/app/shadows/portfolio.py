@@ -321,7 +321,8 @@ def gate_context(
         for p in b.closed
     )
     streak = 0
-    for p in sorted(b.closed, key=lambda p: p.closed_at or datetime.min, reverse=True):
+    epoch = datetime.min.replace(tzinfo=UTC)
+    for p in sorted(b.closed, key=lambda p: p.closed_at or epoch, reverse=True):
         if (p.pnl or Decimal(0)) < 0:
             streak += 1
         else:

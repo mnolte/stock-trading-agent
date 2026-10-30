@@ -1077,6 +1077,18 @@ class Executor:
             self._order_seq,
         )
 
+    def _mismatch(
+        self, session: Session, report: ReconcileReport, message: str,
+        details: dict[str, object], position: Position | None = None,
+        event_type: str = "reconciliation",
+    ) -> None:
+        report.mismatches.append(message)
+        if position is not None:
+            position.pending_ack = True
+        record_event(session, self.clock, level="critical", event_type=event_type, details=details)
+        ev(log_reconcile, logging.CRITICAL, "reconcile.mismatch", message)
+        self._notify({"positions", "banners", "header"})
+
     def _check_foreign_instance(
         self, session: Session, order: BrokerOrder
     ) -> str | None:
@@ -1107,18 +1119,12 @@ class Executor:
             + (f", not {own}" if own else "")
             + ". Kill switch turned on. Stop the other copy, then acknowledge."
         )
-        record_event(
-            session,
-            self.clock,
-            level="critical",
+        self._mismatch(
+            session, ReconcileReport(), message,
+            {"kind": "another_instance", "order": order.id,
+             "client_order_id": order.client_order_id, "foreign_instance": other,
+             "own_instance": own or None, "message": message},
             event_type="another_instance",
-            details={
-                "order": order.id,
-                "client_order_id": order.client_order_id,
-                "foreign_instance": other,
-                "own_instance": own or None,
-                "message": message,
-            },
         )
         return other
 
@@ -1209,14 +1215,20 @@ class Executor:
         intended = (
             row.stop_price if row.leg == "stop" else row.limit_price
         ) or order.filled_avg_price
+        recorded_value = session.execute(
+            select(Fill).where(Fill.order_id == row.id)
+        ).scalars().all()
+        price = (order.filled_avg_price * order.filled_qty - sum(
+            (fill.price * fill.qty for fill in recorded_value), Decimal(0)
+        )) / delta
         session.add(
             Fill(
                 order_id=row.id,
                 qty=delta,
-                price=order.filled_avg_price,
+                price=price,
                 filled_at=_naive_utc(order.filled_at or self.clock.now()),
                 # Slippage vs the intended price; shown separately in the GUI.
-                slippage=order.filled_avg_price - intended,
+                slippage=price - intended,
             )
         )
         if new_fills is not None:
@@ -1302,7 +1314,29 @@ class Executor:
                         or update.timestamp
                         or self.clock.now()
                     )
+                recorded = session.execute(
+                    select(func.coalesce(func.sum(Fill.qty), 0)).where(Fill.order_id == row.id)
+                ).scalar_one()
                 self._record_fills(session, row, update.order)
+                session.flush()
+                delta = update.order.filled_qty - int(recorded)
+                if row.side == "sell" and delta > 0 and self._own_exit(session, row):
+                    position = session.execute(
+                        select(Position).where(
+                            Position.symbol == row.symbol, Position.closed_at.is_(None)
+                        )
+                    ).scalar_one_or_none()
+                    if position is not None and _naive_utc(
+                        update.order.filled_at or self.clock.now()
+                    ) >= position.opened_at:
+                        if delta >= position.qty:
+                            self._close_position(
+                                session, position, ReconcileReport(), exit_reason=row.leg,
+                                explained=True,
+                            )
+                        else:
+                            position.qty -= delta
+                            position.exit_filled_qty += delta
                 session.commit()
         if foreign is not None:
             await self.activate_kill_switch(
@@ -1403,14 +1437,9 @@ class Executor:
                 if known is None and matched_client is None:
                     # An order we never recorded: a timed-out write that
                     # Alpaca accepted, or an order placed outside the agent.
-                    report.mismatches.append(
-                        f"unknown order {order.symbol} {order.side} {order.qty}"
-                    )
-                    record_event(
-                        session,
-                        self.clock,
-                        level="critical",
-                        event_type="reconciliation",
+                    self._mismatch(
+                        session, report,
+                        f"unknown order {order.symbol} {order.side} {order.qty}",
                         details={
                             "kind": "unknown_order",
                             "symbol": order.symbol,
@@ -1498,31 +1527,44 @@ class Executor:
             for position in db_positions:
                 bp = broker_positions.get(position.symbol)
                 if bp is None:
+                    session.commit()
+                    history = await self.broker.get_filled_orders(
+                        position.symbol, position.opened_at.replace(tzinfo=UTC)
+                    )
+                    if history.error is not None:
+                        report.ok = False
+                        report.errors.append(f"exit history {position.symbol}: {history.error}")
+                        ev(log_reconcile, logging.WARNING, "reconcile.history_failed",
+                           f"exit history unavailable for {position.symbol}: {history.error}")
+                        continue
+                    for order in history.data:
+                        self._store_broker_order(session, order, None)
+                    session.flush()
+                    sold = session.execute(select(Fill, Order).join(
+                        Order, Fill.order_id == Order.id
+                    ).where(
+                        Order.symbol == position.symbol, Order.side == "sell",
+                        Fill.filled_at >= position.opened_at,
+                    )).all()
+                    explained = sum(
+                        fill.qty for fill, order in sold if self._own_exit(session, order)
+                    ) >= position.qty + position.exit_filled_qty
                     self._close_position(
-                        session, position, report, exit_reason="broker_close"
+                        session, position, report, exit_reason="broker_close",
+                        explained=explained, offline=explained,
                     )
                     continue
                 if bp.qty != position.qty or (
                     bp.avg_entry_price != position.avg_entry_price
                 ):
-                    report.mismatches.append(
-                        f"{position.symbol}: broker {bp.qty} vs db {position.qty}"
+                    self._mismatch(
+                        session, report,
+                        f"{position.symbol}: broker {bp.qty} vs db {position.qty}",
+                        {"kind": "qty_mismatch", "symbol": position.symbol,
+                         "broker_qty": bp.qty, "db_qty": position.qty}, position,
                     )
                     position.qty = bp.qty
                     position.avg_entry_price = bp.avg_entry_price
-                    position.pending_ack = True
-                    record_event(
-                        session,
-                        self.clock,
-                        level="critical",
-                        event_type="reconciliation",
-                        details={
-                            "kind": "qty_mismatch",
-                            "symbol": position.symbol,
-                            "broker_qty": bp.qty,
-                            "db_qty": position.qty,
-                        },
-                    )
             # Sell-side stops already open at the broker, per symbol.
             # Needed before adoption (a position may already be covered
             # by a stop placed before the database was rebuilt) and for
@@ -1683,8 +1725,17 @@ class Executor:
                 # grow qty/avg from the fill rows (broker-derived) so step
                 # 4 doesn't flag a false qty mismatch before Alpaca's
                 # position view catches up.
-                if filled_qty > open_pos.qty:
-                    open_pos.qty = filled_qty
+                sold = session.execute(select(Fill, Order).join(
+                    Order, Fill.order_id == Order.id
+                ).where(
+                    Order.symbol == order.symbol, Order.side == "sell",
+                    Fill.filled_at >= open_pos.opened_at,
+                )).all()
+                remaining = filled_qty - sum(
+                    f.qty for f, o in sold if self._own_exit(session, o)
+                )
+                if remaining > open_pos.qty:
+                    open_pos.qty = remaining
                     open_pos.avg_entry_price = avg_price
                 continue
             covered = session.execute(
@@ -1752,6 +1803,16 @@ class Executor:
             )
         return opened
 
+    def _own_exit(self, session: Session, order: Order) -> bool:
+        client_id = order.client_order_id
+        if order_kind(client_id) is None and order.parent_alpaca_order_id:
+            parent = session.execute(select(Order).where(
+                Order.alpaca_order_id == order.parent_alpaca_order_id
+            )).scalar_one_or_none()
+            client_id = parent.client_order_id if parent else None
+        own = "".join(c for c in str(self.config.env.sa_instance_id) if c.isalnum())
+        return order_kind(client_id) is not None and order_instance(client_id) == (own or None)
+
     def _close_position(
         self,
         session: Session,
@@ -1759,6 +1820,8 @@ class Executor:
         report: ReconcileReport,
         *,
         exit_reason: str,
+        explained: bool = False,
+        offline: bool = False,
     ) -> None:
         """The broker no longer reports this position; find its exit fill."""
         fills = session.execute(
@@ -1771,7 +1834,13 @@ class Executor:
             )
             .order_by(Fill.filled_at.desc())
         ).all()
-        qty_closed = position.qty
+        if explained:
+            fills = [
+                row
+                for row in fills
+                if self._own_exit(session, row[1])
+            ]
+        qty_closed = sum(f.qty for f, _ in fills) if explained else position.qty
         exit_price: Decimal | None = None
         if fills:
             newest = fills[0][1]
@@ -1808,7 +1877,19 @@ class Executor:
         position.exit_reason = exit_reason
         position.closed_at = _naive_utc(self.clock.now())
         # Keep qty at the closed size: Performance shows the shares traded.
-        report.mismatches.append(f"{position.symbol}: closed at broker")
+        if explained:
+            position.qty = qty_closed
+            position.exit_filled_qty = qty_closed
+            position.closed_while_offline = offline
+            ev(
+                log_reconcile, logging.WARNING if offline else logging.INFO, "position.closed",
+                f"closed {position.symbol}: {exit_reason} @ {exit_price}",
+            )
+        else:
+            self._mismatch(
+                session, report, f"{position.symbol}: closed at broker",
+                {"kind": "flat_without_fill", "symbol": position.symbol}, position,
+            )
         pnl = (
             f"P&L {raw:+.2f}" if raw is not None else "P&L unknown"
         )
@@ -1900,12 +1981,9 @@ class Executor:
                 self._store_broker_order(session, result.data, None, leg="stop")
                 placed = Decimal(bp.qty)
         report.adopted.append(bp.symbol)
-        report.mismatches.append(f"{bp.symbol}: adopted {bp.qty} shares")
-        record_event(
-            session,
-            self.clock,
-            level="critical",
-            event_type="reconciliation",
+        self._mismatch(
+            session, report, f"{bp.symbol}: adopted {bp.qty} shares",
+            position=position,
             details={
                 "kind": "adopted_position",
                 "symbol": bp.symbol,

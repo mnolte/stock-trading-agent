@@ -14,7 +14,7 @@ from decimal import Decimal
 from typing import cast
 
 import pytest
-from app.broker.fake import FakeBroker
+from app.broker.fake import FakeBroker, _PosRec
 from app.config import AppConfig, get_config
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -170,6 +170,8 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
     )
 
     # A held position makes the cycle take the tighten/exit review path.
+    # It exists at the broker too: flat-without-fill is a CRITICAL
+    # reconciliation mismatch that blocks entries (PR 31).
     with session_factory() as session:
         session.add(
             Position(
@@ -182,6 +184,7 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
             )
         )
         session.commit()
+    fake.positions["MSFT"] = _PosRec(10, Decimal("410"))
     # Entries need a successful earnings fetch first — the same
     # precondition the startup daily refresh provides in production.
     await market_data.refresh_earnings(
@@ -195,8 +198,6 @@ async def test_cycle_and_position_check_commit_before_every_io_call(
 
     # A broker-side position the database doesn't know: reconcile adopts
     # it and places a protective stop, exercising those write→call paths.
-    from app.broker.fake import _PosRec
-
     fake.positions["IBM"] = _PosRec(5, Decimal("150"))
     checker = PositionChecker(
         executor=executor,

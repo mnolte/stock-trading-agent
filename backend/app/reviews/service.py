@@ -62,7 +62,7 @@ REASON_INVALID = "invalid model output"
 REASON_CAP = "cost cap reached"
 
 # The latest prompt version per review kind; config can pin an older one.
-_LATEST_PROMPT = {"weekly": "weekly.v1", "briefing": "briefing.v2", "verdict": "verdict.v1"}
+_LATEST_PROMPT = {"weekly": "weekly.v2", "briefing": "briefing.v2", "verdict": "verdict.v2"}
 
 # Briefing facts the model may never call "unavailable": they are always
 # lists — empty means none, a null would mean unavailable and never occurs.
@@ -213,6 +213,15 @@ class ReviewService:
             day += timedelta(days=1)
         return None
 
+    # Registered review-prompt contracts (docs/SPEC.md, Decision layer —
+    # Known prompt versions only). Adding a version requires code that
+    # validates its output shape; unknown names raise.
+    _REVIEW_CONTRACTS = {
+        "weekly": {"weekly.v1", "weekly.v2"},
+        "briefing": {"briefing.v1", "briefing.v2"},
+        "verdict": {"verdict.v1", "verdict.v2"},
+    }
+
     def _prompt(self, kind: str) -> Prompt:
         version = str(
             self.config.get(
@@ -220,6 +229,10 @@ class ReviewService:
                 default=_LATEST_PROMPT.get(kind, f"{kind}.v1"),
             )
         )
+        if version not in self._REVIEW_CONTRACTS.get(kind, set()):
+            from app.decide.prompt import UnknownPromptVersion
+
+            raise UnknownPromptVersion(version)
         return cached_prompt(version)
 
     # ------------------------------------------------------------------
@@ -318,7 +331,15 @@ class ReviewService:
                 return None
             if not all(isinstance(o, str) for o in observations):
                 return None
-            if suggestion is not None and not isinstance(suggestion, str):
+            # v1 suggestion is a string; v2 is {text, evidence} or null.
+            if suggestion is not None and not (
+                isinstance(suggestion, str)
+                or (
+                    isinstance(suggestion, dict)
+                    and isinstance(suggestion.get("text"), str)
+                    and isinstance(suggestion.get("evidence"), str)
+                )
+            ):
                 return None
             return content
         if kind == "briefing":
@@ -331,9 +352,19 @@ class ReviewService:
             return content if _words(text) <= limit else None
         verdict = content.get("verdict")
         reason = content.get("reason")
-        if verdict not in ("good_call", "bad_call", "unclear"):
+        # verdict.v2: the label is code's draft_verdict; a model-sent
+        # verdict field is ignored (schema rejects it outright).
+        if verdict is not None and verdict not in ("good_call", "bad_call", "unclear"):
             return None
         if not isinstance(reason, str) or not reason.strip():
+            return None
+        thesis_check = content.get("thesis_check")
+        if thesis_check is not None and thesis_check not in (
+            "consistent", "contradicts", "unclear"
+        ):
+            return None
+        contradiction = content.get("contradiction")
+        if contradiction is not None and not isinstance(contradiction, str):
             return None
         return content
 
@@ -346,6 +377,8 @@ class ReviewService:
                 texts.append(value)
             elif isinstance(value, list):
                 texts.extend(v for v in value if isinstance(v, str))
+            elif isinstance(value, dict):
+                texts.extend(v for v in value.values() if isinstance(v, str))
         return texts
 
     async def _compose(
@@ -372,7 +405,7 @@ class ReviewService:
         response = await self.client.complete(
             system=prompt.text,
             user=json.dumps({"kind": kind, "facts": facts}, indent=2),
-            schema=SCHEMAS[kind],
+            schema=SCHEMAS.get(prompt.version, SCHEMAS[kind]),
         )
         if (
             response.error is not None
@@ -456,6 +489,21 @@ class ReviewService:
                 response=response,
                 sent_at=sent_at,
             )
+        if (
+            kind == "weekly"
+            and content.get("suggestion") is not None
+            and facts.get("suggestion_allowed") is False
+        ):
+            # The sample is too small for a suggestion; drop it (INFO).
+            logger.info(
+                "weekly suggestion dropped: fewer than %d closed trades in the run",
+                int(
+                    self.config.get(
+                        "reviews", "min_closed_trades_for_suggestion", default=10
+                    )
+                ),
+            )
+            content = {**content, "suggestion": None}
         return Composed(
             content=content,
             source="model",
@@ -734,10 +782,26 @@ class ReviewService:
                 composed = await self._compose(
                     session, kind="verdict", ref=ref, facts=facts
                 )
+                # The label always comes from code's draft_verdict; the
+                # model writes the reason and the thesis check only.
+                verdict_label = str(
+                    facts.get("draft_verdict") or composed.content["verdict"]
+                )
+                thesis_check = composed.content.get("thesis_check")
                 verdict = Verdict(
                     decision_id=decision.id,
-                    verdict=str(composed.content["verdict"]),
+                    verdict=verdict_label,
                     reason=str(composed.content["reason"]),
+                    thesis_check=(
+                        str(thesis_check)
+                        if isinstance(thesis_check, str)
+                        else None
+                    ),
+                    contradiction=(
+                        str(composed.content["contradiction"])
+                        if isinstance(composed.content.get("contradiction"), str)
+                        else None
+                    ),
                     source="draft",
                     draft_source=composed.source,
                     draft_reason=composed.reason,
