@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-30 — Decision reload keeps saved model credentials
+
+- Reloading decision settings or saving a model key now keeps the shared, credential-aware model client. Previously reload replaced it with a client without the secrets store, causing model calls to use the `missing` placeholder even when the saved key passed its Settings test.
+- Regression tests cover both providers, cached and uncached adapters, saved and missing keys, key replacement and removal, and prompt refresh. No spec or design change.
+
 ## 2026-10-30 — Live fixes of 30 October
 
 - From the live-data report of 30 October. A settings reload dropped the model keys (fixed in #64), and two cycles ran with no model answer while only a per-symbol warning went out. The PG entry notification said 10 shares for a 12-share position. Two critical `qty_mismatch` events fired while PG was still filling, and cleared themselves a second later. Two GUI reads waited 87 seconds on Alpaca. An HD tighten was blocked as `price_stale`, visible only in `gates_result`. httpcore and urllib3 DEBUG lines still filled the log, and the overnight stream reconnect loop logged an ERROR every 30 seconds for an hour.

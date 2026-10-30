@@ -163,9 +163,6 @@ class DecisionService:
 
     def reload(self) -> None:
         """Pick up promoted settings: new prompt version and/or model."""
-        from app.llm.clients import make_model_clients
-
-        self.client = make_model_clients(self.config)
         version = str(self.config.get("decision", "prompt", default="decision.v1"))
         self._prompt = cached_prompt(version)
         self._spec = prompt_spec(version)
