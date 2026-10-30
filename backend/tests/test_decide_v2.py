@@ -100,8 +100,13 @@ class TestRegistry:
         schema = cast("dict[str, Any]", spec.json_schema)
         assert "stop_price" in schema["schema"]["properties"]
 
-    def test_unknown_version_gets_v1(self) -> None:
-        assert prompt_spec("decision.v99").uses_options is False
+    def test_unknown_version_raises(self) -> None:
+        """Known prompt versions only (PR 32): no fallback to v1's contract."""
+        import pytest
+        from app.decide.prompt import UnknownPromptVersion
+
+        with pytest.raises(UnknownPromptVersion):
+            prompt_spec("decision.v99")
 
 
 class TestV2Validation:

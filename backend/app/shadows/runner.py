@@ -47,7 +47,7 @@ from app.decide.output import (
     validate_model_output_v2,
     validate_model_output_v3,
 )
-from app.decide.prompt import cached_prompt, prompt_spec
+from app.decide.prompt import PromptSpec, cached_prompt, prompt_spec
 from app.decide.service import (
     model_output_json,
     rules_result_json,
@@ -154,6 +154,11 @@ class LiveInput:
     snapshot: dict[str, Any]
     live_id: int | None
     order: int
+
+
+def _spec(strategy: Strategy) -> PromptSpec:
+    """The strategy's prompt contract; rules_only shadows use v1's shape."""
+    return prompt_spec(str(strategy.prompt_version or "decision.v1"))
 
 
 def _rank_key(item: LiveInput) -> tuple[int, int]:
@@ -517,7 +522,7 @@ class ShadowRunner:
             for i, (symbol, snap) in enumerate(sorted(extra_snapshots.items()))
             if symbol in held and symbol not in seen
         ]
-        if prompt_spec(str(strategy.prompt_version)).is_v3:
+        if _spec(strategy).is_v3:
             # v3 checks.earnings needs every reviewed symbol's next report.
             earnings = next_earnings(
                 session, [d.symbol for d in decisions], scheduled
@@ -573,7 +578,7 @@ class ShadowRunner:
             state["calls"] = int(state["calls"]) + 1
             sr.calls += 1
             prompt = cached_prompt(str(strategy.prompt_version))
-            spec = prompt_spec(prompt.version)
+            spec = _spec(strategy)
             budget = (deadline - self.clock.now()).total_seconds() if deadline is not None else None
             sent_at = _naive_utc(self.clock.now())
             # Never hold a database write transaction across an await: live
@@ -798,7 +803,7 @@ class ShadowRunner:
                     | {"synthetic": synthetic}
                 )
             v2_held: V2Build | None = None
-            is_v3 = prompt_spec(str(strategy.prompt_version)).is_v3
+            is_v3 = _spec(strategy).is_v3
             if llm and is_v3:
                 h_bars, h_daily, h_todays = rebuild_bars(
                     d.symbol, scheduled, calendar=self.calendar,
@@ -841,7 +846,7 @@ class ShadowRunner:
                     cycle_time_ny=scheduled,
                 )
                 snap_json.update(v2_held.fields)
-            elif llm and prompt_spec(str(strategy.prompt_version)).uses_options:
+            elif llm and _spec(strategy).uses_options:
                 h_bars, h_daily, h_todays = rebuild_bars(
                     d.symbol, scheduled, calendar=self.calendar,
                     bars_reader=self._bars,
@@ -956,7 +961,7 @@ class ShadowRunner:
                     snap_json["context"] = "candidate"
                     snap_json["position"] = None
                     v2_cand: V2Build | None = None
-                    if prompt_spec(str(strategy.prompt_version)).uses_options:
+                    if _spec(strategy).uses_options:
                         atr_v2 = indicators_from_snapshot(
                             d.symbol, snap_json
                         ).atr_1h
@@ -973,7 +978,7 @@ class ShadowRunner:
                             d.symbol, scheduled, calendar=self.calendar,
                             bars_reader=self._bars,
                         )
-                        if prompt_spec(str(strategy.prompt_version)).is_v3:
+                        if _spec(strategy).is_v3:
                             v2_cand = build_v3_fields(
                                 context="candidate",
                                 base=snap_json,
@@ -1016,7 +1021,7 @@ class ShadowRunner:
                         row.options_version = v2_cand.options_column.get(
                             "options_version"
                         )
-                        if prompt_spec(str(strategy.prompt_version)).is_v3:
+                        if _spec(strategy).is_v3:
                             # v3: the no_options reason (room, ...) is
                             # stored with the row for the drawer and feed.
                             row.validation_result = {
