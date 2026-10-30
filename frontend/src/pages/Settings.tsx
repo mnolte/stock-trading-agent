@@ -18,6 +18,7 @@ import {
   postSettings,
   postSmtpSettings,
   postStartRun,
+  providerLabel,
 } from '../api/state';
 import type {
   KeyGroup,
@@ -2358,7 +2359,7 @@ export default function Settings() {
                           disabled={opt?.needs_key}
                         >
                           {opt
-                            ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                            ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
                             : v}
                         </option>
                       );
@@ -2438,7 +2439,7 @@ export default function Settings() {
                             disabled={opt?.needs_key}
                           >
                             {opt
-                              ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                              ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
                               : v}
                           </option>
                         );

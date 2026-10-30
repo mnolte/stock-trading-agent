@@ -13,6 +13,7 @@ import {
   postBacktestCancel,
   postBacktestEstimate,
   postClearBarStore,
+  providerLabel,
 } from '../api/state';
 import { Banner } from '../components/Banner';
 import { Card } from '../components/Card';
@@ -141,7 +142,7 @@ function pickOptions(data: BacktestsResponse): PickOption[] {
       name: `Live settings`,
       sub: `${data.available.live.prompt_version ?? '—'} · ${data.available.live.model ?? '—'}${
         (data.available.model_options ?? []).find((o) => o.id === data.available.live.model)?.provider
-          ? ` · ${(data.available.model_options ?? []).find((o) => o.id === data.available.live.model)?.provider}`
+          ? ` · ${providerLabel((data.available.model_options ?? []).find((o) => o.id === data.available.live.model)?.provider)}`
           : ''
       }`,
       model: data.available.live.model,
@@ -160,7 +161,7 @@ function pickOptions(data: BacktestsResponse): PickOption[] {
           ? 'no model · free'
           : `${s.prompt_version ?? '—'} · ${s.model ?? '—'}${
               (data.available.model_options ?? []).find((o) => o.id === s.model)?.provider
-                ? ` · ${(data.available.model_options ?? []).find((o) => o.id === s.model)?.provider}`
+                ? ` · ${providerLabel((data.available.model_options ?? []).find((o) => o.id === s.model)?.provider)}`
                 : ''
             }`,
       model: s.model,

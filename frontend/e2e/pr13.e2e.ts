@@ -51,7 +51,7 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
   // Every priced model in the `models` block is offered (docs/SPEC.md →
   // Model providers — OpenAI and Anthropic entries both count).
   await expect(dialog.getByLabel('Model').locator('option')).toHaveText(
-    ['claude-haiku-5-5', 'claude-sonnet-5-5', 'gpt-4.1-mini', 'gpt-4o-mini'],
+    ['claude-haiku-5-5 · Anthropic', 'claude-sonnet-5-5 · Anthropic', 'gpt-4.1-mini · OpenAI', 'gpt-4o-mini · OpenAI'],
   );
   await expect(dialog.getByLabel('Min confidence to enter')).toBeVisible();
   await page.screenshot({ path: shot('strategies-new-shadow', testInfo.project.name) });

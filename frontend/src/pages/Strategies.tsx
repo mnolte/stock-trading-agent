@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
-import { getStrategies, postStrategy, postStrategyAction } from '../api/state';
+import { getStrategies, postStrategy, postStrategyAction, providerLabel } from '../api/state';
 import { Banner } from '../components/Banner';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
@@ -223,7 +223,7 @@ function NewShadowDialog({
                 return (
                   <option key={m} value={m} disabled={opt?.needs_key}>
                     {opt
-                      ? `${opt.id} · ${opt.provider}${opt.needs_key ? ` — needs the ${opt.provider === 'openai' ? 'OpenAI' : 'Anthropic'} key` : ''}`
+                      ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
                       : m}
                   </option>
                 );
