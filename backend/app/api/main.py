@@ -1037,6 +1037,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Trade updates → ledger; then reconcile once so the database starts
     # as a mirror of the broker (adopted positions get their stop here).
     broker.subscribe_trade_updates(executor.on_trade_update)
+    broker.subscribe_stream_failures(executor.on_stream_failure)
     await broker.start_stream()
     if config.env.mode != "simulated":
         # Broker-side guardrails (no shorts, 1× margin) — set and
@@ -1210,7 +1211,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         clock,
         notifier=notification_service,
         secrets=secrets_store,
-        broker=broker,
+        data_client=sources.alpaca,
     )
     app.state.ops = ops_service
     # Persist the startup reconciliation so deploy.sh reads it back

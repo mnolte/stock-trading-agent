@@ -299,6 +299,11 @@ class DecisionService:
                 current_stop=current_stop,
                 call_error=response.error,
                 config=self.config,
+                position=(
+                    snapshot_json.get("position")
+                    if isinstance(snapshot_json.get("position"), dict)
+                    else None
+                ),
             )
         # v3 data flags: every flag is logged at WARNING and recorded as
         # an event in every context, so data bugs surface quickly

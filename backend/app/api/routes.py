@@ -1175,6 +1175,11 @@ async def positions(request: Request) -> dict[str, object]:
             "stream_connected": (
                 broker.stream_connected() if broker is not None else None
             ),
+            "stream_degraded": (
+                getattr(state, "stream_degraded", False)
+                if state is not None
+                else False
+            ),
             "account_number": account.account_number if account else None,
         },
         "max_open_positions": max_positions,
@@ -1869,6 +1874,20 @@ def banners(request: Request) -> dict[str, object]:
             .order_by(Cycle.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+    if state is not None and getattr(state, "stream_degraded", False):
+        # docs/SPEC.md, Alpaca integration — Stream health (verbatim text).
+        items.append(
+            {
+                "id": None,
+                "kind": "stream_degraded",
+                "level": "critical",
+                "message": (
+                    "Order updates delayed: positions are checked every "
+                    "15 minutes."
+                ),
+                "actions": [],
+            }
+        )
     health = (last_cycle.data_source_health or {}) if last_cycle else {}
     bars_health = str(health.get("bars", ""))
     if bars_health.startswith("failed"):
@@ -2317,11 +2336,19 @@ def _connections(request: Request) -> list[dict[str, object]]:
         }
     )
     stream = broker.stream_connected() if broker is not None else None
+    exec_state = getattr(request.app.state, "exec_state", None)
+    degraded = bool(getattr(exec_state, "stream_degraded", False))
     rows.append(
         {
             "source": "Trade updates stream",
             "status": (
-                "connected" if stream else ("simulated" if simulated else "down")
+                "degraded"
+                if degraded
+                else (
+                    "connected"
+                    if stream
+                    else ("simulated" if simulated else "down")
+                )
             ),
             "detail": "fill, cancel and reject events",
         }

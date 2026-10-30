@@ -655,6 +655,11 @@ class ShadowRunner:
                     current_stop=current_stop,
                     call_error=response.error,
                     config=cfg,
+                    position=(
+                        snap_json.get("position")
+                        if isinstance(snap_json.get("position"), dict)
+                        else None
+                    ),
                 )
             # v3 data flags: WARNING + event in every context
             # (docs/SPEC.md, Decision v3 — Data flags).

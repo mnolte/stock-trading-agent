@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 
-from app.broker.base import TradeUpdateHandler
+from app.broker.base import StreamFailureHandler, TradeUpdateHandler
 from app.broker.models import (
     OPEN_ORDER_STATUSES,
     BrokerAccount,
@@ -78,6 +78,7 @@ class FakeBroker:
         self.orders: dict[str, _OrderRec] = {}
         self._seq = 0
         self._handlers: list[TradeUpdateHandler] = []
+        self._failure_handlers: list[StreamFailureHandler] = []
         # Test/simulation knobs.
         self.fail_writes = False
         self.place_then_fail = False
@@ -679,6 +680,11 @@ class FakeBroker:
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         self._handlers.append(handler)
+
+    def subscribe_stream_failures(self, handler: StreamFailureHandler) -> None:
+        # The fake only ever emits well-formed updates; handlers are kept
+        # so tests can fire one deliberately.
+        self._failure_handlers.append(handler)
 
     def stream_connected(self) -> bool:
         return self._stream_started

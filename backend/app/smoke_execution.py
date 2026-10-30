@@ -149,6 +149,9 @@ class ReadOnlyBroker:
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         return None
 
+    def subscribe_stream_failures(self, handler: object) -> None:
+        return None
+
     async def start_stream(self) -> None:
         return None
 

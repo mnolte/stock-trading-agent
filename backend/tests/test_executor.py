@@ -378,12 +378,16 @@ async def test_crash_after_broker_accepted_stop_reconciles_without_resend(
         *,
         leg: str | None = None,
         parent: BrokerOrder | None = None,
+        new_fills: list[tuple[str, datetime | None]] | None = None,
     ) -> Order:
         nonlocal fired
         if not fired:
             fired = True
             raise RuntimeError("simulated crash after broker accept")
-        return real_store(self, session, order, decision_id, leg=leg, parent=parent)
+        return real_store(
+            self, session, order, decision_id,
+            leg=leg, parent=parent, new_fills=new_fills,
+        )
 
     monkeypatch.setattr(Executor, "_store_broker_order", crash_once)
     with pytest.raises(RuntimeError, match="simulated crash"):
@@ -438,12 +442,16 @@ async def test_crash_after_broker_accepted_entry_reconciles_without_resend(
         *,
         leg: str | None = None,
         parent: BrokerOrder | None = None,
+        new_fills: list[tuple[str, datetime | None]] | None = None,
     ) -> Order:
         nonlocal fired
         if not fired:
             fired = True
             raise RuntimeError("simulated crash after broker accept")
-        return real_store(self, session, order, decision_id, leg=leg, parent=parent)
+        return real_store(
+            self, session, order, decision_id,
+            leg=leg, parent=parent, new_fills=new_fills,
+        )
 
     monkeypatch.setattr(Executor, "_store_broker_order", crash_once)
     with session_factory() as session:
@@ -3149,3 +3157,147 @@ async def test_v2_order_time_recheck_fails_fresh_quote(
         # The chosen option stands; nothing swapped in its place.
         assert decision.chosen_option == "A"
         assert "option_id" in (decision.model_output or {})
+
+
+# ----------------------------------------------------------------------
+# trade-updates stream health (docs/SPEC.md, Alpaca integration)
+
+
+async def test_unparseable_update_marks_stream_degraded(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """One failure: counted, the critical event recorded once, the
+    stream marked degraded (banner + notification ride on that)."""
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)))
+    await executor.on_stream_failure("KeyError('id')")
+    assert executor.state.stream_degraded
+    assert executor.state.stream_failures == 1
+    with session_factory() as session:
+        events = _events(session, "stream_degraded")
+        assert len(events) == 1
+        assert events[0].level == "critical"
+
+
+async def test_repeat_failures_notify_once_per_episode(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Every failure counts and extends the window; the alert fires
+    once per degradation episode, not per bad message."""
+    executor = _executor(session_factory, FakeBroker(FakeClock(NOW)))
+    await executor.on_stream_failure("bad 1")
+    await executor.on_stream_failure("bad 2")
+    assert executor.state.stream_failures == 2
+    with session_factory() as session:
+        assert len(_events(session, "stream_degraded")) == 1
+
+
+async def test_degraded_clears_after_quiet_window(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Degraded clears 30 minutes after the last failure."""
+    clock = FakeClock(NOW)
+    executor = _executor(session_factory, FakeBroker(clock), clock=clock)
+    await executor.on_stream_failure("bad message")
+    assert executor.state.stream_degraded
+    clock.advance(timedelta(minutes=29))
+    assert executor.state.stream_degraded
+    clock.advance(timedelta(minutes=2))
+    assert not executor.state.stream_degraded
+
+
+async def test_reconcile_missed_fill_marks_degraded(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A fill reconciliation records for the first time — the stream
+    update never arrived within the grace window — marks degraded."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("410"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="fill-1", client_order_id=None, symbol="MSFT", side="buy",
+        order_type="limit", order_class="", status="filled", qty=4,
+        filled_qty=4, filled_avg_price=Decimal("410"),
+        limit_price=Decimal("410"), stop_price=None,
+        created_at=now, updated_at=now - timedelta(minutes=5),
+        filled_at=now - timedelta(minutes=5),
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        session.add(
+            Order(
+                alpaca_order_id="fill-1",
+                symbol="MSFT",
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=4,
+                limit_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+
+    await executor.reconcile()
+
+    assert executor.state.stream_degraded
+    assert executor.state.stream_failures == 1
+    with session_factory() as session:
+        assert _events(session, "stream_degraded")
+
+
+async def test_reconcile_fresh_fill_waits_out_grace(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A fill recorded seconds ago may still have its update in flight:
+    no degraded mark inside the grace window, but the pending fill is
+    flagged at the next pass once the window has passed."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("410"))
+    rec = _OrderRec(
+        id="fill-1", client_order_id=None, symbol="MSFT", side="buy",
+        order_type="limit", order_class="", status="filled", qty=4,
+        filled_qty=4, filled_avg_price=Decimal("410"),
+        limit_price=Decimal("410"), stop_price=None,
+        created_at=NOW, updated_at=NOW,
+        filled_at=NOW - timedelta(seconds=30),
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock=clock)
+    with session_factory() as session:
+        session.add(
+            Order(
+                alpaca_order_id="fill-1",
+                symbol="MSFT",
+                side="buy",
+                order_type="limit",
+                leg="entry",
+                qty=4,
+                limit_price=Decimal("410"),
+                status="new",
+                created_at=YESTERDAY,
+            )
+        )
+        session.commit()
+
+    await executor.reconcile()
+    assert not executor.state.stream_degraded
+    assert "fill-1" in executor._fills_awaiting_update
+
+    clock.advance(timedelta(minutes=3))
+    await executor.reconcile()
+    assert executor.state.stream_degraded
+
+
+def test_stream_degraded_event_maps_to_notification() -> None:
+    """The critical event becomes the "Trade-updates stream degraded"
+    notification through the event sink."""
+    from app.notifications.events import EVENTS, format_recorded
+
+    assert EVENTS["stream_degraded"].severity == "critical"
+    mapped = format_recorded(
+        "stream_degraded", {"reason": "unparseable update"}
+    )
+    assert mapped == ("stream_degraded", "unparseable update", "/positions")

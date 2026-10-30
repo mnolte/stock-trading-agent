@@ -264,3 +264,66 @@ def test_v1_snapshot_keys_unchanged() -> None:
     assert "options" not in snap and "constraints" not in snap
     assert "stop_options" not in snap
     assert isinstance(snap["levels"], (dict, str))  # v1's swing dict, not a list
+
+
+class TestBreakevenGuard:
+    """The break-even guard protects v2 (and v1) until v3 stops offering
+    these options (docs/SPEC.md, Decision layer — Code checks)."""
+
+    def _snap(self, r_so_far: object, stop: float = 100.0) -> dict[str, Any]:
+        return {
+            **_SNAPSHOT,
+            "context": "held",
+            "position": {
+                "entry": 100.0,
+                "initial_stop": 96.0,
+                "stop": 97.0,
+                "r_so_far": r_so_far,
+            },
+            "stop_reference_price": "104.0",
+            "stop_options": [
+                {
+                    "id": "T1",
+                    "stop": stop,
+                    "basis": "break-even",
+                    "locks_profit": stop >= 100.0,
+                    "r_at_stop": (stop - 100.0) / 4.0,
+                    "level": None,
+                }
+            ],
+        }
+
+    def test_breakeven_tighten_at_0_4r_becomes_hold(self) -> None:
+        v = validate_model_output_v2(
+            _v2(action="tighten_stop", option_id="T1"),
+            symbol="ABC", context="held", snapshot=self._snap(0.40),
+            atr_1h=Decimal("2"), current_stop=Decimal("97"), config=CFG,
+        )
+        assert v.valid and v.final_action == "hold"
+        assert v.reason == "breakeven_too_early"
+        assert v.changed_by_code
+
+    def test_breakeven_tighten_at_0_13r_becomes_hold(self) -> None:
+        v = validate_model_output_v2(
+            _v2(action="tighten_stop", option_id="T1"),
+            symbol="ABC", context="held", snapshot=self._snap(0.13),
+            atr_1h=Decimal("2"), current_stop=Decimal("97"), config=CFG,
+        )
+        assert v.final_action == "hold"
+        assert v.reason == "breakeven_too_early"
+
+    def test_breakeven_tighten_at_1r_is_allowed(self) -> None:
+        v = validate_model_output_v2(
+            _v2(action="tighten_stop", option_id="T1"),
+            symbol="ABC", context="held", snapshot=self._snap(1.0),
+            atr_1h=Decimal("2"), current_stop=Decimal("97"), config=CFG,
+        )
+        assert v.final_action == "tighten_stop"
+
+    def test_tighten_above_entry_allowed_below_1r(self) -> None:
+        v = validate_model_output_v2(
+            _v2(action="tighten_stop", option_id="T1"),
+            symbol="ABC", context="held", snapshot=self._snap(0.40, stop=101.0),
+            atr_1h=Decimal("2"), current_stop=Decimal("97"), config=CFG,
+        )
+        assert v.final_action == "tighten_stop"
