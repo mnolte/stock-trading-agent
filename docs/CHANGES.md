@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-10-30 — Live fixes of 30 October
+
+- From the live-data report of 30 October. A settings reload dropped the model keys (fixed in #64), and two cycles ran with no model answer while only a per-symbol warning went out. The PG entry notification said 10 shares for a 12-share position. Two critical `qty_mismatch` events fired while PG was still filling, and cleared themselves a second later. Two GUI reads waited 87 seconds on Alpaca. An HD tighten was blocked as `price_stale`, visible only in `gates_result`. httpcore and urllib3 DEBUG lines still filled the log, and the overnight stream reconnect loop logged an ERROR every 30 seconds for an hour.
+- Decision layer: **Live decisions failing** (critical, banner, email). It fires when every live call of a cycle fails or any call gets a 401 or 403; an auth error also marks the key as failing.
+- Market price: a tighten accepts a last trade up to 5 minutes old (`execution.tighten_quote_max_age_seconds`). A blocked tighten is shown as changed by code.
+- Alpaca integration: **Broker reads from the GUI** wait at most 5 seconds (`api.broker_timeout_seconds`), then fall back to the last reconciled values, marked stale. **Fills still settling**: no quantity comparison while an entry order is working or within 10 seconds of a fill (`execution.fill_settle_seconds`).
+- Stream health: reconnect errors are logged once per outage, then once per 10 minutes with a count. An outage of more than 5 minutes in a session marks the stream `degraded`.
+- Notifications: "Trade opened" waits for the entry order to be final and shows the filled quantity. New row "Live decisions failing".
+- Logging: every logger outside `app.*` and `frontend` logs at WARNING and up, not a fixed list.
+- Kickoff `docs/kickoffs/fix-live-2026-10-30.md`. No design change: the GUI uses the existing banner and the stale-data pattern from `States.dc.html`.
+
 ## 2026-10-30 — Analysis: IEX quote plausibility
 
 - `docs/analysis/2026-10-29-quote-plausibility.md` plus the reproducible script `scripts/analysis/quote_plausibility.py` (read-only, `mode=ro`). No behaviour change.
