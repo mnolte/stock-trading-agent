@@ -14,6 +14,13 @@ Newest first.
 - Not in this change, kept for a decision.v4 once the v3 shadow has data: ignoring unrelated headlines (RTX the company vs NVIDIA's RTX laptops) and saying what each cited headline changed; explaining why a conflict is outweighed instead of "manageable"; a meaning for confidence on a skip.
 - Build plan item 32.
 
+## 2026-10-30 — Live fixes: stream, clock check, break-even guard
+
+- Trade-updates stream: the raw_data envelope (`{"stream": "trade_updates", "data": {...}}`) is now unwrapped before parsing — every update since 28 Oct had been dropped at parse. One bad message is logged at ERROR with the scrubbed raw, counted and dropped; the next message still delivers. The parser is tested on recorded paper envelopes for new, fill, partial_fill, canceled and replaced.
+- Stream health per spec: an unparseable update, or a fill reconciliation records whose update never arrived inside `execution.stream_update_grace_seconds` (120 s), marks the stream `degraded`. Degraded shows the banner "Order updates delayed: positions are checked every 15 minutes", sends the critical "Trade-updates stream degraded" event/notification once per episode, and clears after `execution.stream_degraded_minutes` (30) without a new failure. Fills from before the run started are offline fills, not stream failures. Settings → Connections shows `degraded`.
+- Clock check: `OpsService.check_clock` reads the data client's `fetch_clock` (the broker interface has no clock — the check had been raising AttributeError since 28 Oct). A failing check stores offset null and sends the new "Clock check failing" notification once per New York session.
+- Break-even guard: a `tighten_stop` to a stop at or below the entry (locks in 0 R or less) while `r_now` is below `decision.breakeven_min_r` (1.0) becomes `hold` with reason `breakeven_too_early`, shown as changed by code — for every prompt version. The v2/v1 prompts and snapshots are unchanged.
+
 ## 2026-10-29 — Break-even guard
 
 - From the decision report of 29 October: live decision.v2 tightened four stops to break-even at +0.13R to +0.40R, each called "locking in profit" because the v2 snapshot marks a stop equal to the entry as `locks_profit`. RTX turned a +0.40R open gain into −$2.07 within two hours.

@@ -204,3 +204,76 @@ def test_credentials_roundtrip(tmp_path: Path) -> None:
     env = offsite._restic_env(creds)
     assert env["RESTIC_PASSWORD"] == "pw"
     assert env["AWS_ACCESS_KEY_ID"] == "a"
+
+
+# --- clock check -----------------------------------------------------------
+
+def test_clock_check_reads_data_client(tmp_path: Path) -> None:
+    """The check reads the data client's fetch_clock — the broker
+    interface has no clock — and stores the measured offset."""
+    import asyncio
+    from datetime import timedelta
+
+    from app.data.models import DataResult, MarketClock
+
+    class _Data:
+        async def fetch_clock(self) -> DataResult[MarketClock | None]:
+            return DataResult(
+                data=MarketClock(
+                    is_open=True,
+                    timestamp=NOW + timedelta(milliseconds=250),
+                    next_open=NOW,
+                    next_close=NOW,
+                ),
+                source="fake",
+            )
+
+    ops = _ops(tmp_path, data_client=_Data())
+    result = asyncio.run(ops.check_clock())
+    assert result["offset_ms"] is not None
+    assert result["level"] == "ok"
+    assert ops.status["clock"]["offset_ms"] == result["offset_ms"]
+
+
+def test_clock_check_failing_notifies_once_per_session(
+    tmp_path: Path,
+) -> None:
+    """A failing check sends "Clock check failing" once per New York
+    session, not every hourly run."""
+    import asyncio
+
+    from app.data.models import DataResult
+
+    class _Data:
+        async def fetch_clock(self) -> DataResult[None]:
+            return DataResult(data=None, error="unreachable", source="fake")
+
+    class _Notifier:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def notify(self, event: str, line: str, **_kw: Any) -> None:
+            self.calls.append(event)
+
+    notifier = _Notifier()
+    ops = _ops(tmp_path, data_client=_Data(), notifier=notifier)
+    asyncio.run(ops.check_clock())
+    asyncio.run(ops.check_clock())
+    assert notifier.calls == ["clock_check_failing"]
+
+
+def test_clock_check_failure_marks_offset_unknown(tmp_path: Path) -> None:
+    """The check itself failing leaves offset_ms null — the GUI must not
+    show a stale good value."""
+    import asyncio
+
+    from app.data.models import DataResult
+
+    class _Data:
+        async def fetch_clock(self) -> DataResult[None]:
+            return DataResult(data=None, error="unreachable", source="fake")
+
+    ops = _ops(tmp_path, data_client=_Data())
+    result = asyncio.run(ops.check_clock())
+    assert result["offset_ms"] is None
+    assert result["level"] == "unknown"

@@ -193,3 +193,77 @@ def test_call_failure_is_invalid() -> None:
 def test_empty_response_is_invalid() -> None:
     result = _validate("   ")
     assert not result.valid
+
+
+# ----------------------------------------------------------------------
+# break-even guard (docs/SPEC.md, Decision layer — Code checks)
+
+
+def _held_position(r_so_far: object, entry: float = 410.0) -> dict[str, object]:
+    return {
+        "entry": entry,
+        "initial_stop": 400.0,
+        "stop": 405.0,
+        "r_so_far": r_so_far,
+    }
+
+
+def test_breakeven_tighten_at_0_4r_becomes_hold() -> None:
+    """The 29 Oct live bug: a tighten to the entry at +0.40R was sold as
+    "locking in profit" — the guard turns it into hold."""
+    raw = _enter(action="tighten_stop", stop_price=410.00, target_price=None)
+    result = validate_model_output(
+        raw, symbol="MSFT", context="held",
+        price=Decimal("414.00"), atr_1h=Decimal("3.10"),
+        current_stop=Decimal("405.00"), config=CONFIG,
+        position=_held_position(0.40),
+    )
+    assert result.valid
+    assert result.final_action == "hold"
+    assert result.reason == "breakeven_too_early"
+    assert result.changed_by_code
+
+
+def test_breakeven_tighten_at_0_13r_becomes_hold() -> None:
+    raw = _enter(action="tighten_stop", stop_price=410.00, target_price=None)
+    result = validate_model_output(
+        raw, symbol="MSFT", context="held",
+        price=Decimal("411.30"), atr_1h=Decimal("3.10"),
+        current_stop=Decimal("405.00"), config=CONFIG,
+        position=_held_position(0.13),
+    )
+    assert result.final_action == "hold"
+    assert result.reason == "breakeven_too_early"
+
+
+def test_breakeven_tighten_at_1r_is_allowed() -> None:
+    """At exactly breakeven_min_r the guard no longer refuses."""
+    raw = _enter(action="tighten_stop", stop_price=410.00, target_price=None)
+    result = validate_model_output(
+        raw, symbol="MSFT", context="held",
+        price=Decimal("420.00"), atr_1h=Decimal("3.10"),
+        current_stop=Decimal("405.00"), config=CONFIG,
+        position=_held_position(1.0),
+    )
+    assert result.final_action == "tighten_stop"
+
+
+def test_tighten_above_entry_is_not_breakeven() -> None:
+    """A stop above the entry locks in more than 0 R — the guard does
+    not apply even below breakeven_min_r."""
+    raw = _enter(action="tighten_stop", stop_price=412.00, target_price=None)
+    result = validate_model_output(
+        raw, symbol="MSFT", context="held",
+        price=Decimal("414.00"), atr_1h=Decimal("3.10"),
+        current_stop=Decimal("405.00"), config=CONFIG,
+        position=_held_position(0.40),
+    )
+    assert result.final_action == "tighten_stop"
+
+
+def test_breakeven_tighten_without_position_still_runs() -> None:
+    """No position block (odd input): the guard cannot fire, the rest
+    of the checks decide."""
+    raw = _enter(action="tighten_stop", stop_price=412.00, target_price=None)
+    result = _validate(raw, context="held", stop=Decimal("409.60"))
+    assert result.final_action == "tighten_stop"

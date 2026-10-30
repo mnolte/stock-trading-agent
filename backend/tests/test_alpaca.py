@@ -614,3 +614,172 @@ def test_parse_clock() -> None:
     clock = parse_clock(raw)
     assert clock.is_open is True
     assert clock.next_open == datetime(2026, 10, 16, 13, 30, tzinfo=UTC)
+
+
+# ----------------------------------------------------------------------
+# trade-updates stream: the raw_data envelope and stream health
+
+
+def _update_envelope(event: str, **order_overrides: Any) -> dict[str, Any]:
+    """A trade_updates message in the exact shape the SDK delivers with
+    raw_data=True: the websocket envelope {"stream": "trade_updates",
+    "data": {...}} around the update payload (recorded from the paper
+    stream, values scrubbed)."""
+    order: dict[str, Any] = {
+        "id": "b7f5d8f4-3b2a-4c1d-9e8f-0123456789ab",
+        "client_order_id": "sa-a1b2c3-entry-1",
+        "created_at": "2026-10-28T15:47:32.123456Z",
+        "updated_at": "2026-10-28T15:47:34.654321Z",
+        "submitted_at": "2026-10-28T15:47:32.123456Z",
+        "filled_at": None,
+        "expired_at": None,
+        "canceled_at": None,
+        "failed_at": None,
+        "replaced_at": None,
+        "replaced_by": None,
+        "replaces": None,
+        "asset_id": "8f0e4d2c-1111-2222-3333-0123456789ab",
+        "symbol": "RTX",
+        "asset_class": "us_equity",
+        "notional": None,
+        "qty": "40",
+        "filled_qty": "0",
+        "filled_avg_price": None,
+        "order_class": "bracket",
+        "order_type": "limit",
+        "type": "limit",
+        "side": "buy",
+        "time_in_force": "gtc",
+        "limit_price": "178.50",
+        "stop_price": None,
+        "status": "new",
+        "extended_hours": False,
+        "legs": [],
+        "trail_percent": None,
+        "trail_price": None,
+        "hwm": None,
+    }
+    order.update(order_overrides)
+    data: dict[str, Any] = {
+        "event": event,
+        "order": order,
+        "timestamp": "2026-10-28T15:47:34.712345Z",
+    }
+    if event in ("fill", "partial_fill"):
+        data["qty"] = order["filled_qty"]
+        data["price"] = order["filled_avg_price"]
+        data["position_qty"] = "40"
+    return {"stream": "trade_updates", "data": data}
+
+
+def test_parse_trade_update_unwraps_sdk_envelope() -> None:
+    """The stream delivers the envelope; every event kind parses into
+    the right TradeUpdateInfo (docs/SPEC.md, Stream health)."""
+    from app.broker.alpaca import parse_trade_update
+
+    fill = parse_trade_update(
+        _update_envelope(
+            "fill",
+            status="filled",
+            filled_qty="40",
+            filled_avg_price="178.12",
+            filled_at="2026-10-28T15:47:34.654321Z",
+        )
+    )
+    assert fill.event == "fill"
+    assert fill.order.id == "b7f5d8f4-3b2a-4c1d-9e8f-0123456789ab"
+    assert fill.order.symbol == "RTX"
+    assert fill.order.filled_qty == 40
+    assert fill.order.filled_avg_price == Decimal("178.12")
+    assert fill.qty == 40
+    assert fill.price == Decimal("178.12")
+    assert fill.position_qty == 40
+
+    cases = [
+        ("new", {"status": "new"}),
+        (
+            "partial_fill",
+            {
+                "status": "partially_filled",
+                "filled_qty": "10",
+                "filled_avg_price": "178.10",
+            },
+        ),
+        ("canceled", {"status": "canceled"}),
+        ("replaced", {"status": "replaced"}),
+    ]
+    for event, overrides in cases:
+        update = parse_trade_update(_update_envelope(event, **overrides))
+        assert update.event == event
+        assert update.order.symbol == "RTX"
+
+
+def test_parse_trade_update_bare_payload_still_parses() -> None:
+    """The inner payload without the envelope keeps working."""
+    from app.broker.alpaca import parse_trade_update
+
+    update = parse_trade_update(_update_envelope("canceled")["data"])
+    assert update.event == "canceled"
+    assert update.order.symbol == "RTX"
+
+
+async def test_bad_stream_message_does_not_stop_the_next() -> None:
+    """An unparseable message is logged, counted by the failure
+    handlers and dropped — the next valid update still delivers
+    (docs/SPEC.md, Stream health)."""
+    from app.broker.alpaca import AlpacaPaperBroker
+    from app.broker.models import TradeUpdateInfo
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    broker._main_loop = asyncio.get_running_loop()
+
+    failures: list[str] = []
+    updates: list[TradeUpdateInfo] = []
+    done = asyncio.Event()
+
+    async def on_failure(reason: str) -> None:
+        failures.append(reason)
+
+    async def on_update(update: TradeUpdateInfo) -> None:
+        updates.append(update)
+        done.set()
+
+    broker.subscribe_stream_failures(on_failure)
+    broker.subscribe_trade_updates(on_update)
+
+    # A wrapper whose data is not a trade update, then a valid fill.
+    await broker._on_trade_update(
+        {"stream": "trade_updates", "data": {"event": "fill", "order": {}}}
+    )
+    await broker._on_trade_update(
+        _update_envelope(
+            "fill",
+            status="filled",
+            filled_qty="40",
+            filled_avg_price="178.12",
+            filled_at="2026-10-28T15:47:34.654321Z",
+        )
+    )
+    assert await asyncio.wait_for(done.wait(), timeout=5)
+    assert len(failures) == 1
+    assert "id" in failures[0]
+    assert len(updates) == 1
+    assert updates[0].order.symbol == "RTX"
+    assert updates[0].order.filled_avg_price == Decimal("178.12")
+
+
+async def test_unparseable_update_is_logged_at_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The raw message lands in the log at ERROR (scrubbed by the log
+    pipeline) — without it the failure is invisible."""
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    broker._main_loop = asyncio.get_running_loop()
+    await broker._on_trade_update({"stream": "trade_updates", "data": 42})
+    assert any(
+        "unparseable trade update" in record.getMessage()
+        and record.levelname == "ERROR"
+        for record in caplog.records
+    )
