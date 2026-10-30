@@ -58,6 +58,7 @@ from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_b
 from app.decide.v3 import HeldV3, build_v3_fields, stop_basis_info, v3_send_snapshot
 from app.engine.state import record_event
 from app.inspector.record import build_llm_call, sync_llm_call
+from app.llm.models import model_effort, model_provider
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
@@ -231,6 +232,7 @@ class ShadowRunner:
         notify: Callable[[set[str]], None] | None = None,
         llm_cache: LLMCacheStore | None = None,
         secrets: Callable[[], list[str]] | None = None,
+        provider_ready: Callable[[str], bool] | None = None,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -249,6 +251,8 @@ class ShadowRunner:
         self._llm_cache = llm_cache
         # Scrubbed stored keys for call-history error messages.
         self._secrets = secrets
+        # provider -> its stored key passes (simulated/tests: always).
+        self._provider_ready = provider_ready or (lambda provider: True)
 
     # ------------------------------------------------------------------
     # helpers
@@ -507,6 +511,18 @@ class ShadowRunner:
             sr.paused_by_cap = True
             self._notify_cap(session)
             return
+        if llm and not self._provider_ready(
+            model_provider(self.config, str(strategy.model))
+        ):
+            # No working key for this shadow's provider: skip the cycle
+            # with a warning — live is never held up (docs/SPEC.md →
+            # Model providers, Keys).
+            logger.warning(
+                "shadow %r skipped this cycle: no working %s key",
+                strategy.name,
+                model_provider(self.config, str(strategy.model)),
+            )
+            return
 
         decisions = [
             LiveInput(d.symbol, dict(d.input_snapshot or {}), d.id, d.id)
@@ -595,6 +611,10 @@ class ShadowRunner:
                         system=prompt.text,
                         user=sent,
                         schema=spec.json_schema,
+                        model=str(strategy.model),
+                        temperature=float(
+                            cfg.get("decision", "temperature", default=0)
+                        ),
                     ),
                     timeout=budget,
                 )
@@ -610,10 +630,17 @@ class ShadowRunner:
                 and response.error is None
                 and response.raw is not None
             ):
+                _provider = model_provider(self.config, str(strategy.model))
                 self._llm_cache.store(
                     model=str(strategy.model),
                     temperature=float(
                         cfg.get("decision", "temperature", default=0.2)
+                    ),
+                    provider=_provider,
+                    effort=(
+                        model_effort(self.config, str(strategy.model))
+                        if _provider == "anthropic"
+                        else None
                     ),
                     prompt_version=prompt.version,
                     prompt_hash=prompt.sha256,

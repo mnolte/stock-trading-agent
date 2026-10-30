@@ -57,8 +57,9 @@ CONTEXT_FIELDS = (
 # the PR 23 auth shapes (sa_-prefixed session/pending/CSRF tokens and
 # XXXX-XXXX-XXXX recovery codes) so they can never reach a log line.
 _KEY_PATTERNS = (
-    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"sk-proj-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\b(PK|AK)[A-Z0-9]{14,}\b"),
     re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?\S+"),
     re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{10,}"),

@@ -45,7 +45,7 @@ from app.data.cache import BarCache, _naive_utc
 from app.data.models import Bar5m, CalendarDay
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome, Position, Run
-from app.decide.client import DecisionClient, ModelResponse, make_decision_client, token_cost
+from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.output import (
     ModelOutputV3,
     ValidationResult,
@@ -66,6 +66,8 @@ from app.decide.v3 import (
     stop_basis_info,
     v3_send_snapshot,
 )
+from app.llm.clients import make_model_clients
+from app.llm.models import model_provider
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
 from app.risk.earnings import next_earnings
@@ -362,7 +364,7 @@ async def replay(
         from app.secrets_service import SecretsStore
 
         secrets = SecretsStore(config, RealClock())
-        client = make_decision_client(config, api_key=secrets.get("openai"))
+        client = make_model_clients(config, secrets)
 
     # Sessions for the level builder come from the bar cache itself —
     # replay never needs a calendar service or the network for bars.
@@ -558,6 +560,10 @@ async def replay(
                     v3_send_snapshot(snap) if spec.is_v3 else snap, indent=2
                 ),
                 schema=spec.json_schema,
+                model=use_model,
+                temperature=float(
+                    config.get("decision", "temperature", default=0)
+                ),
             )
             cost = token_cost(response, config, model=use_model)
             if cost is not None:
@@ -852,6 +858,7 @@ async def replay(
         replay_id,
         prompt_version,
         use_model,
+        model_provider(config, use_model),
         from_day,
         to_day,
         rows,
@@ -876,6 +883,11 @@ async def replay(
                 },
                 "estimated_usd": float(estimate_usd),
                 "cost_usd": float(total_cost),
+                "not_repeatable": (
+                    "the model has no temperature 0"
+                    if model_provider(config, use_model) == "anthropic"
+                    else None
+                ),
                 "created_at": datetime.now(UTC).isoformat(),
             },
             indent=2,
@@ -924,6 +936,7 @@ def _report(
     replay_id: str,
     prompt: str,
     model: str,
+    provider: str,
     from_day: date,
     to_day: date,
     rows: list[ReplayRow],
@@ -1051,6 +1064,11 @@ def _report(
         "",
         f"prompt `{prompt}` · model `{model}` · {from_day} → {to_day}",
         f"estimated ${estimate:.2f} · actual ${cost:.4f}",
+        *(
+            ["", "not repeatable: the model has no temperature 0"]
+            if provider == "anthropic"
+            else []
+        ),
         "",
         *status_lines,
         "## decision prompt",

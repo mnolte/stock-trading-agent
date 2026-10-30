@@ -626,7 +626,7 @@ function CallListRow({
           </span>
         </span>
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {rowContext(call)} · {call.model ?? '—'}
+          {rowContext(call)} · {call.model ?? '—'}{call.provider ? ` · ${call.provider}` : ''}
         </span>
       </span>
       <Chip outcome={call.outcome} text={chipText(call)} />
@@ -670,6 +670,7 @@ function CallDetails({
     detail.error.http_status !== null ? `HTTP ${detail.error.http_status}` : null,
     detail.error.code,
     detail.error.message ? `"${detail.error.message}"` : null,
+    detail.error.provider ? `${detail.error.provider} ` : null,
     detail.error.request_id ? `request id ${detail.error.request_id}` : null,
   ]
     .filter(Boolean)
@@ -679,7 +680,7 @@ function CallDetails({
     { label: 'Source', value: sourceLabel },
     {
       label: 'Model',
-      value: `${detail.model ?? '—'} · temp ${detail.temperature ?? '—'}`,
+      value: `${detail.model ?? '—'} · ${detail.provider ?? '—'} · temp ${detail.temperature ?? '—'}`,
     },
     { label: 'Prompt', value: detail.prompt_version ?? '—' },
     {

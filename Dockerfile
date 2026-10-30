@@ -43,6 +43,7 @@ WORKDIR /srv
 # job — the image runs the app test suite.
 CMD ["/opt/venv/bin/python", "-m", "pytest", "backend/tests", \
      "-m", "not slow and not perf", \
+     "-n", "auto", "--dist", "worksteal", "--durations=20", \
      "--deselect", "backend/tests/test_security.py::test_live_alpaca_url_not_present", \
      "--deselect", "backend/tests/test_compose.py", \
      "--deselect", "backend/tests/test_deploy_scripts.py", \

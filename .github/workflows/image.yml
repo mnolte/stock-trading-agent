@@ -17,10 +17,10 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build test image and run the suite inside it
-        run: |
-          docker build --target test -t stock-agent-test:${{ github.ref_name }} .
-          docker run --rm stock-agent-test:${{ github.ref_name }}
+      - name: Build test image
+        run: docker build --target test -t stock-agent-test:ci .
+      - name: Run the suite inside the image
+        run: docker run --rm stock-agent-test:ci
 
   compose-test:
     # The through-Caddy stack test — in CI only, never in unit tests.

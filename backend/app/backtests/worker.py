@@ -60,7 +60,7 @@ from app.db.models import (
     Strategy,
     UniversePoolRow,
 )
-from app.decide.client import FakeDecisionClient, make_decision_client
+from app.decide.client import FakeDecisionClient
 from app.decide.llm_cache import LLMCacheStore
 from app.market.clock import NY_TZ, Clock, FakeClock, RealClock, SessionClock
 
@@ -640,25 +640,15 @@ def _bundle_config(
 
 
 def _bundle_client(config: AppConfig, spec: dict[str, Any], secrets: Any) -> Any:
+    """One provider dispatcher per bundle — the call's model picks the
+    adapter; the strategy's key gate was checked before the run started."""
     if spec["kind"] == "rules_only":
         return None
     if config.env.mode == "simulated":
         return FakeDecisionClient()
-    key = secrets.get("openai") if secrets is not None else None
-    if spec["ref"] == "live":
-        return make_decision_client(config, api_key=key)
-    from app.decide.client import OpenAIDecisionClient
-    from app.secrets_service import MISSING_KEY
+    from app.llm.clients import make_model_clients
 
-    view = config.overlay(
-        {
-            "decision": {
-                "model": spec.get("model"),
-                "temperature": spec.get("temperature") or 0,
-            }
-        }
-    )
-    return OpenAIDecisionClient(view, api_key=key or MISSING_KEY)
+    return make_model_clients(config, secrets)
 
 
 async def run_backtest(

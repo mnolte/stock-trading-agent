@@ -36,10 +36,11 @@ from app.data.fake import (
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import Position
-from app.decide.client import DecisionClient, OpenAIDecisionClient, token_cost
+from app.decide.client import DecisionClient, token_cost
 from app.decide.output import ValidationResult, validate_model_output
 from app.decide.prompt import cached_prompt
 from app.decide.snapshot import build_input_snapshot
+from app.llm.clients import make_model_clients
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, Clock, make_clock
 from app.rules.prefilter import RulesResult
@@ -235,7 +236,10 @@ def main() -> int:
     if not key:
         print("smoke-decision needs an OpenAI key saved in Settings")
         return 2
-    client = OpenAIDecisionClient(config, api_key=key)
+    client = make_model_clients(config, secrets=None, default_model=None)
+    update = getattr(client, "update_key", None)
+    if callable(update):
+        update("openai", key)
     try:
         return asyncio.run(run(symbol, config, client, make_clock(config)))
     except ValueError as exc:

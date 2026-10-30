@@ -128,6 +128,8 @@ def build_llm_call(
         error_code=response.error_code,
         error_message=_scrubbed(error_detail or response.error, scrub_values),
         request_id=response.request_id,
+        provider=response.provider,
+        provider_request_id=response.request_id,
         # A transport failure left nothing usable behind; an invalid or
         # refused response still keeps its raw text for the audit.
         raw_response=response.raw if response.error is None else None,

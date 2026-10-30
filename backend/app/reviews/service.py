@@ -36,6 +36,7 @@ from app.decide.client import ModelResponse, token_cost
 from app.decide.prompt import Prompt, cached_prompt
 from app.engine.state import ExecutionState, record_event
 from app.inspector.record import build_llm_call
+from app.llm.models import model_provider, provider_label
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
@@ -128,6 +129,7 @@ class ReviewService:
         notify: Callable[[set[str]], None] | None = None,
         notifier: Notifier | None = None,
         secrets: Callable[[], list[str]] | None = None,
+        key_ready: Callable[[str], bool] | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -141,6 +143,8 @@ class ReviewService:
         self._notifier = notifier or NullNotifier()
         # Scrubbed stored keys for call-history error messages.
         self._secrets = secrets
+        # provider -> stored key passes its test (simulated mode: True).
+        self._key_ready = key_ready or (lambda provider: True)
 
     # ------------------------------------------------------------------
     # schedule helpers
@@ -401,11 +405,25 @@ class ReviewService:
                 session, kind=kind, ref=ref, facts=facts,
                 reason=REASON_NO_KEY, prompt=prompt
             )
+        model = self._model_for(kind)
+        if not self._key_ready(model_provider(self.config, model)):
+            return self._fallback(
+                session,
+                kind=kind,
+                ref=ref,
+                facts=facts,
+                reason=f"no {provider_label(model_provider(self.config, model))} key",
+                prompt=prompt,
+            )
         sent_at = _naive_utc(self.clock.now())
         response = await self.client.complete(
             system=prompt.text,
             user=json.dumps({"kind": kind, "facts": facts}, indent=2),
             schema=SCHEMAS.get(prompt.version, SCHEMAS[kind]),
+            model=model,
+            temperature=float(
+                self.config.get("reviews", "temperature", default=0.2)
+            ),
         )
         if (
             response.error is not None
@@ -522,13 +540,10 @@ class ReviewService:
         )
 
     def _model_for(self, kind: str) -> str:
-        """The model configured for this review task — ``reviews.models``
-        is one per task; a legacy scalar ``reviews.model`` is honoured
-        for one release (docs/SPEC.md → Model providers)."""
-        models = self.config.get("reviews", "models", default=None)
-        if isinstance(models, dict) and kind in models:
-            return str(models[kind])
-        return str(self.config.get("reviews", "model", default=""))
+        """The model configured for this review task."""
+        from app.llm.models import review_model
+
+        return review_model(self.config, kind)
 
     def _record_call(
         self,

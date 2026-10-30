@@ -773,10 +773,19 @@ class SlowClient:
         self.inner = FakeDecisionClient(enter_symbols=set())
 
     async def complete(
-        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
     ) -> ModelResponse:
         self.clock.advance(timedelta(minutes=6))
-        return await self.inner.complete(system=system, user=user)
+        return await self.inner.complete(
+            system=system, user=user, schema=schema,
+            model=model, temperature=temperature,
+        )
 
 
 async def test_work_past_next_live_event_is_missed(sf: sessionmaker[Session]) -> None:

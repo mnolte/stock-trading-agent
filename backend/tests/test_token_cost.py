@@ -113,7 +113,7 @@ async def test_settings_refuse_unpriced_model() -> None:
             broker=None,  # type: ignore[arg-type]
             held_symbols=set(),
         )
-    assert any("no price" in e for e in exc.value.errors)
+    assert any("not in the models list" in e for e in exc.value.errors)
     cleaned, _ = await validate_settings(
         {"decision": {"model": "gpt-4.1-mini"}},
         active,
