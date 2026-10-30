@@ -721,7 +721,7 @@ async def test_held_position_uses_position_stop_for_tighten_check(
             Position(
                 symbol="MSFT",
                 qty=4,
-                avg_entry_price=Decimal("415.00"),
+                avg_entry_price=Decimal("405.00"),
                 current_stop_price=Decimal("410.00"),
                 target_price=Decimal("435.00"),
                 opened_at=datetime(2026, 10, 14, 15, 0),
