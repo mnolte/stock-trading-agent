@@ -95,6 +95,14 @@ class ExecutionState:
     stream_last_failure_at: datetime | None = None
     stream_degraded_since: datetime | None = None
     stream_degraded_until: datetime | None = None
+    # Live decisions failing (docs/SPEC.md, Decision layer): set while an
+    # episode runs — every live model call of a cycle failed, or a live
+    # call got a 401/403. The provider whose key an auth error marked as
+    # failing is remembered so a later good call can un-mark it.
+    live_calls_failing_since: datetime | None = None
+    live_calls_failing_provider: str | None = None
+    live_calls_failing_error: str | None = None
+    live_calls_key_marked: str | None = None
 
     @property
     def stream_degraded(self) -> bool:

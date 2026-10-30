@@ -241,6 +241,13 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         CRITICAL,
     ),
     EventDef(
+        "live_decisions_failing",
+        "Live decisions failing",
+        "Every live model call of a cycle failed, or a call got a 401/403",
+        "critical",
+        CRITICAL,
+    ),
+    EventDef(
         "clock_check_failing",
         "Clock check failing",
         "The hourly check itself, not the offset",
@@ -284,6 +291,7 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "restart_paused": "restarted_paused",
     "backup_downloaded": "backup_downloaded",
     "stream_degraded": "stream_degraded",
+    "live_decisions_failing": "live_decisions_failing",
 }
 
 
@@ -415,6 +423,13 @@ def format_recorded(
             str(details.get("reason") or "order updates may be delayed"),
             "/positions",
         )
+    if event_type == "live_decisions_failing":
+        line = (
+            f"{details.get('provider') or 'model'}: "
+            f"{details.get('error') or 'calls failing'} — "
+            "held positions are not being reviewed"
+        )
+        return key, line, "/settings"
     if event_type == "restart_resumed":
         return key, "resumed after a clean restart", "/"
     if event_type == "restart_paused":

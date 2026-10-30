@@ -46,6 +46,7 @@ from app.decide.service import DecisionService
 from app.engine.after_exit import AfterExitWorker
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
+from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
 from app.engine.position_check import PositionChecker
 from app.engine.state import (
@@ -1040,6 +1041,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         outcomes=outcome_worker,
         notify=lambda topics: bus.publish(*topics),
         notifier=notification_service,
+        model_health=LiveModelHealth(
+            state=exec_state,
+            clock=clock,
+            config=config,
+            secrets=secrets_store,
+            notify=lambda topics: bus.publish(*topics),
+        ),
     )
     def live_gate_state() -> LiveGateState:
         from app.db.base import get_session_maker

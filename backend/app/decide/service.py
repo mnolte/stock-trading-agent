@@ -180,6 +180,7 @@ class DecisionService:
         atr_1h: Decimal | None,
         current_stop: Decimal | None,
         v2: V2Build | None = None,
+        on_response: Callable[[ModelResponse], None] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
         user = json.dumps(
@@ -241,6 +242,8 @@ class DecisionService:
                     self.config.get("decision", "temperature", default=0)
                 ),
             )
+            if on_response is not None:
+                on_response(response)
             ev(
                 logging.getLogger(f"model.{_provider}"),
                 logging.DEBUG if response.error is None else logging.WARNING,

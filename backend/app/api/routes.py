@@ -1929,6 +1929,26 @@ def banners(request: Request) -> dict[str, object]:
                 "actions": [],
             }
         )
+    if state is not None and getattr(
+        state, "live_calls_failing_since", None
+    ) is not None:
+        # docs/SPEC.md, Decision layer — Live decisions failing
+        # (verbatim text).
+        provider = getattr(state, "live_calls_failing_provider", "") or ""
+        error = getattr(state, "live_calls_failing_error", "") or ""
+        items.append(
+            {
+                "id": None,
+                "kind": "live_decisions_failing",
+                "level": "critical",
+                "message": (
+                    f"Live decisions failing: {provider} {error}. "
+                    "Held positions are not being reviewed; their stops "
+                    "at Alpaca still stand"
+                ),
+                "actions": [],
+            }
+        )
     health = (last_cycle.data_source_health or {}) if last_cycle else {}
     bars_health = str(health.get("bars", ""))
     if bars_health.startswith("failed"):

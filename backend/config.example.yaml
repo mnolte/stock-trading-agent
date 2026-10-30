@@ -167,6 +167,7 @@ notifications:
     reconciliation: [browser, email]
     order_rejected: [browser, email]
     stream_degraded: [browser, email]
+    live_decisions_failing: [browser, email]
     clock_check_failing: [browser, email]
     new_error: [browser, email]
     daily_loss_limit: [browser, email]
