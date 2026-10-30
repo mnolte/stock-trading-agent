@@ -9,7 +9,7 @@ import type {
   PositionRow,
 } from '../types/api';
 import { Card } from '../components/Card';
-import { CardBody } from '../components/cardState';
+import { AlpacaStaleNote, CardBody } from '../components/cardState';
 import { Chip } from '../components/Chip';
 import { formatPrice } from '../components/watchlistFormat';
 import {
@@ -242,6 +242,7 @@ export default function Positions() {
       </div>
 
       <Card label={`Open positions · ${open.length} of ${positions?.max_open_positions ?? '—'}`} busy={positionsRes.loading}>
+        {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
         <CardBody
           res={positionsRes}
           what="positions"
@@ -317,6 +318,7 @@ export default function Positions() {
         </div>
         <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column' }}>
           <Card label="Account at Alpaca" busy={positionsRes.loading} style={{ flex: 1 }}>
+            {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: '6px var(--sa-space-4)', fontSize: 'var(--sa-text-md)' }}>
               <span style={{ color: 'var(--sa-text-muted)' }}>Equity</span>
               <span style={{ ...mono, textAlign: 'right' }}>

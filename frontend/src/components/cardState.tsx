@@ -44,6 +44,29 @@ function WarningIcon() {
   );
 }
 
+/** "Alpaca not answering · as of HH:MM" — shown on cards the backend
+ * answered from its last reconciled values after a broker read timed
+ * out (docs/SPEC.md — Broker reads from the GUI). */
+export function AlpacaStaleNote({ asOf }: { asOf: string | null }) {
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        gap: 8,
+        alignItems: 'flex-start',
+        color: 'var(--sa-warning-text)',
+        fontSize: 'var(--sa-text-md)',
+        lineHeight: 1.5,
+      }}
+    >
+      <WarningIcon />
+      <span>
+        Alpaca not answering{asOf ? ` · as of ${displayTime(asOf)}` : ''}
+      </span>
+    </span>
+  );
+}
+
 const RETRY_BUTTON: CSSProperties = {
   height: 36,
   padding: '0 var(--sa-space-3)',

@@ -197,6 +197,7 @@ class Executor:
             return None
         account = result.data
         self.state.account = account
+        self.state.account_fetched_at = self.clock.now()
         self.state.reset_session_if_new_day()
         limit = Decimal(str(self.config.get("risk", "daily_loss_limit_pct", default=2)))
         pnl_pct = session_pnl_pct(account.equity, account.last_equity)
@@ -1447,6 +1448,9 @@ class Executor:
             return report
 
         broker_positions = {p.symbol: p for p in positions_r.data}
+        # The GUI's stale fallback serves these when Alpaca stops
+        # answering (docs/SPEC.md — Broker reads from the GUI).
+        self.state.last_broker_positions = positions_r.data
         broker_open: dict[str, BrokerOrder] = {}
         for order in orders_r.data:
             broker_open[order.id] = order

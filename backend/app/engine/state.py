@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
@@ -103,6 +103,11 @@ class ExecutionState:
     live_calls_failing_provider: str | None = None
     live_calls_failing_error: str | None = None
     live_calls_key_marked: str | None = None
+    # Last reconciled broker values for GUI reads (docs/SPEC.md, Alpaca
+    # integration — Broker reads from the GUI): when Alpaca times out
+    # the API answers these, marked stale with their as_of.
+    last_broker_positions: list[Any] | None = None
+    account_fetched_at: datetime | None = None
 
     @property
     def stream_degraded(self) -> bool:

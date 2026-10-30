@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import type { Resource } from '../api/useResource';
 import type { BudgetMeter, BudgetMeterLevel, RiskBudgetResponse } from '../types/api';
-import { CardBody } from './cardState';
+import { AlpacaStaleNote, CardBody } from './cardState';
 import {
   budgetHints,
   drawdownUsed,
@@ -172,6 +172,7 @@ export function RiskBudgetCard({
             : 'limits from settings'}
         </span>
       </div>
+      {budget?.stale && <AlpacaStaleNote asOf={budget.as_of ?? null} />}
       <CardBody res={res} what="the risk budget">
         {() => (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4) 28px' }}>

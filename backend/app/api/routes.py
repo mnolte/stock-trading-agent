@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import secrets
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
@@ -1072,6 +1073,23 @@ def _position_legs(session: Session, position: Position) -> list[dict[str, objec
     return out
 
 
+def _broker_timeout() -> float:
+    """docs/SPEC.md, Alpaca integration — Broker reads from the GUI."""
+    return float(
+        get_config().get("api", "broker_timeout_seconds", default=5)
+    )
+
+
+async def _broker_read(awaitable: Awaitable[Any]) -> Any:
+    """Bound one broker read for a GUI route; TimeoutError past the
+    api.broker_timeout_seconds window — the caller serves the last
+    reconciled values instead."""
+    try:
+        return await asyncio.wait_for(awaitable, _broker_timeout())
+    except TimeoutError:
+        return None
+
+
 @router.get("/positions")
 async def positions(request: Request) -> dict[str, object]:
     """Open positions with legs, marks, account and day-trade boxes."""
@@ -1080,15 +1098,25 @@ async def positions(request: Request) -> dict[str, object]:
     market_data = getattr(request.app.state, "market_data", None)
     marks: dict[str, Decimal | None] = {}
     last_prices: dict[str, Decimal | None] = {}
+    state = getattr(request.app.state, "exec_state", None)
+    broker_positions = None
+    stale = False
     broker = getattr(request.app.state, "broker", None)
     if broker is not None:
-        broker_positions = await broker.get_positions()
-        if broker_positions.error is None:
+        broker_positions = await _broker_read(broker.get_positions())
+        if broker_positions is not None and broker_positions.error is None:
             marks = {p.symbol: p.market_value for p in broker_positions.data}
             last_prices = {
                 p.symbol: p.current_price for p in broker_positions.data
             }
-    state = getattr(request.app.state, "exec_state", None)
+        else:
+            # Alpaca didn't answer inside the window, or answered with
+            # an error: the last reconciled values stand in, marked
+            # stale (docs/SPEC.md — Broker reads from the GUI).
+            cached = getattr(state, "last_broker_positions", None) or []
+            marks = {p.symbol: p.market_value for p in cached}
+            last_prices = {p.symbol: p.current_price for p in cached}
+            stale = True
     account = getattr(state, "account", None) if state is not None else None
 
     fx = getattr(market_data, "latest_fx", None) if market_data else None
@@ -1223,6 +1251,14 @@ async def positions(request: Request) -> dict[str, object]:
             ),
             "account_number": account.account_number if account else None,
         },
+        "stale": stale,
+        "as_of": (
+            state.last_reconcile_at.astimezone(UTC).isoformat()
+            if stale
+            and state is not None
+            and state.last_reconcile_at is not None
+            else None
+        ),
         "max_open_positions": max_positions,
     }
 
@@ -1255,7 +1291,10 @@ async def risk_budget_state(request: Request) -> dict[str, object]:
     clock = getattr(request.app.state, "clock", None) or make_clock()
     now = clock.now()
     today_ny = now.astimezone(NY_TZ).date()
-    await executor.refresh_account()
+    # A hung Alpaca must not hold the card: past the broker read window
+    # the budget computes on the last reconciled account, marked stale.
+    account = await _broker_read(executor.refresh_account())
+    stale = account is None
     spy_1h: Decimal | None = None
     spy_session: Decimal | None = None
     market_data = getattr(request.app.state, "market_data", None)
@@ -1335,6 +1374,12 @@ async def risk_budget_state(request: Request) -> dict[str, object]:
             "open": budget.open_count,
             "cap": budget.max_positions,
         },
+        "stale": stale,
+        "as_of": (
+            executor.state.account_fetched_at.astimezone(UTC).isoformat()
+            if stale and executor.state.account_fetched_at is not None
+            else None
+        ),
     }
 
 
@@ -2880,7 +2925,7 @@ async def _apply_keys(request: Request, changed: set[str]) -> None:
             )
         executor = getattr(request.app.state, "executor", None)
         if executor is not None:
-            await executor.refresh_account()
+            await _broker_read(executor.refresh_account())
     if "finnhub" in changed and sources is not None:
         update_key = getattr(sources.earnings, "update_key", None)
         if callable(update_key):

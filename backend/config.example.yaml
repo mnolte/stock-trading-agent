@@ -45,6 +45,9 @@ schedule:
   bars_5m_keep_sessions: 120   # older 5-min bars deleted after the 03:00 backup
   cycle_duration_warn_minutes: 10
 
+api:
+  broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
+
 execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)
   entry_limit_offset_pct: 0.05
