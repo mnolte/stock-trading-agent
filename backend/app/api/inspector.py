@@ -156,6 +156,7 @@ def _row_json(call: LlmCall, strategy_names: dict[int, str]) -> dict[str, Any]:
         "symbol": call.symbol,
         "context": call.context,
         "model": call.model,
+        "provider": call.provider,
         "temperature": call.temperature,
         "prompt_version": call.prompt_version,
         "prompt_hash": call.prompt_hash,
@@ -453,7 +454,8 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
             "http_status": call.http_status,
             "code": call.error_code,
             "message": call.error_message,
-            "request_id": call.request_id,
+            "request_id": call.provider_request_id or call.request_id,
+            "provider": call.provider,
         }
         body["raw_response"] = call.raw_response
 

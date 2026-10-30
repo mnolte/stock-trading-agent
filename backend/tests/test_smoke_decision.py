@@ -52,10 +52,19 @@ class CountingFake(FakeDecisionClient):
         self.calls: list[str] = []
 
     async def complete(
-        self, *, system: str, user: str, schema: dict[str, Any] | None = None
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
     ) -> ModelResponse:
         self.calls.append(json.loads(user)["symbol"])
-        return await super().complete(system=system, user=user)
+        return await super().complete(
+            system=system, user=user, schema=schema,
+            model=model, temperature=temperature,
+        )
 
 
 async def test_smoke_decision_prints_call_details_and_stores_nothing(

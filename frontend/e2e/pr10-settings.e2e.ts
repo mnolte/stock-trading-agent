@@ -22,7 +22,7 @@ test('settings: sections, key rows and the unsaved-changes bar', async ({
     page.getByRole('heading', { name: 'API keys and data' })
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText('Alpaca paper keys')).toBeVisible();
-  await expect(page.getByText('OpenAI', { exact: true })).toBeVisible();
+  await expect(page.getByText('OpenAI (optional)', { exact: true })).toBeVisible();
   await expect(page.getByText('Finnhub', { exact: true })).toBeVisible();
   await expect(
     page.getByText('Keys are stored encrypted on this computer')

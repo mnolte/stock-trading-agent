@@ -181,6 +181,10 @@ export function postKey(
   return post<SaveKeyResult>(`/api/keys/${group}`, body);
 }
 
+export function postKeyRemove(group: KeyGroup): Promise<{ ok: boolean; paused_shadows: string[] }> {
+  return post<{ ok: boolean; paused_shadows: string[] }>(`/api/keys/${group}/remove`, {});
+}
+
 export function postKeyTest(group: KeyGroup): Promise<TestKeyResult> {
   return post<TestKeyResult>(`/api/keys/${group}/test`, {});
 }
@@ -400,4 +404,11 @@ export function getLlmCall(id: number): Promise<LlmCallDetail> {
 /** The filtered calls' metadata as CSV — never prompts or responses. */
 export function llmCallsExportUrl(filters: LlmCallFilters): string {
   return `/api/llm-calls/export.csv${llmCallsQuery(filters)}`;
+}
+
+/** Provider id → display name in pickers ("gpt-4o-mini · OpenAI", design). */
+export function providerLabel(provider: string | null | undefined): string {
+  if (provider === 'openai') return 'OpenAI';
+  if (provider === 'anthropic') return 'Anthropic';
+  return provider ?? '';
 }

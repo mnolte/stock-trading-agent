@@ -561,6 +561,12 @@ export interface ApproveResult {
 
 // ---- Settings -------------------------------------------------------------
 
+export interface ModelOption {
+  id: string;
+  provider: string;
+  needs_key: boolean;
+}
+
 export interface SettingsForm {
   execution: {
     mode: string;
@@ -596,7 +602,11 @@ export interface SettingsForm {
     max_orders_per_cycle: number;
   };
   performance: { slippage_pct_per_side: number; starting_equity: number };
-  reviews: { briefing_enabled: boolean; monthly_cost_cap_usd: number };
+  reviews: {
+    briefing_enabled: boolean;
+    monthly_cost_cap_usd: number;
+    models?: { weekly: string; briefing: string; verdict: string };
+  };
   readiness: {
     min_closed_trades: number;
     min_sessions: number;
@@ -669,6 +679,7 @@ export interface SettingsResponse {
   next_version: number;
   held_symbols: string[];
   priced_models?: string[];
+  model_options?: ModelOption[];
   prompt_options: { version: string; hash: string }[];
   schedule: {
     rows: ScheduleRow[];
@@ -733,7 +744,7 @@ export interface SettingsError {
 
 // ---- API keys (write-only; never a key value) -------------------------------
 
-export type KeyGroup = 'alpaca' | 'openai' | 'finnhub';
+export type KeyGroup = 'alpaca' | 'openai' | 'anthropic' | 'finnhub';
 export type KeyStatus = 'ok' | 'failing' | 'untested' | 'missing';
 
 export interface KeyRow {
@@ -750,6 +761,7 @@ export interface KeyRow {
 }
 
 export interface KeysResponse {
+  model_keys_note?: string;
   keys: KeyRow[];
   set_count: number;
   all_ready: boolean;
@@ -1375,6 +1387,7 @@ export interface StrategiesResponse {
   options: {
     cycles: string[];
     models: string[];
+    model_options?: ModelOption[];
     prompts: string[];
     live: { prompt_version: string; model: string; temperature: number };
     overrides: StrategyOverrideOption[];
@@ -1477,6 +1490,7 @@ export interface BacktestsResponse {
     rules_only: { ref: string; name: string };
     shadows: { ref: string; name: string; kind: string; model: string | null; prompt_version: string | null }[];
     priced_models: string[];
+    model_options?: ModelOption[];
     model_cutoffs: Record<string, string>;
     universe: { mode: string; fixed_count: number };
   };
@@ -1632,6 +1646,7 @@ export interface LlmCallRow {
   symbol: string | null;
   context: string | null;
   model: string | null;
+  provider?: string | null;
   temperature: number | null;
   prompt_version: string | null;
   prompt_hash: string | null;
@@ -1690,6 +1705,7 @@ export interface LlmCallDetail extends LlmCallRow {
     code: string | null;
     message: string | null;
     request_id: string | null;
+    provider: string | null;
   };
   raw_response: string | null;
   prompt: {

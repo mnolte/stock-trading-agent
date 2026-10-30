@@ -45,16 +45,21 @@ class LLMCacheStore:
         self,
         *,
         model: str,
-        temperature: float,
+        temperature: float | None = None,
         prompt_hash: str,
         user: str,
+        provider: str = "openai",
+        effort: str | None = None,
     ) -> dict[str, Any] | None:
         """The stored answer for this exact call, or None."""
         with self._sessions() as session:
             row = session.execute(
                 select(LLMCache).where(
+                    LLMCache.provider == provider,
                     LLMCache.model == model,
-                    LLMCache.temperature == temperature,
+                    LLMCache.effort.is_(None) if effort is None
+                    else LLMCache.effort == effort,
+                    LLMCache.temperature == (temperature or 0),
                     LLMCache.prompt_hash == prompt_hash,
                     LLMCache.input_hash == input_hash(user),
                 )
@@ -71,7 +76,7 @@ class LLMCacheStore:
         self,
         *,
         model: str,
-        temperature: float,
+        temperature: float | None = None,
         prompt_version: str,
         prompt_hash: str,
         user: str,
@@ -79,13 +84,17 @@ class LLMCacheStore:
         response: str,
         tokens_in: int | None,
         tokens_out: int | None,
+        provider: str = "openai",
+        effort: str | None = None,
     ) -> None:
         """Persist one answer; a duplicate key (a racing rerun) is ignored."""
         with self._sessions() as session:
             session.add(
                 LLMCache(
+                    provider=provider,
                     model=model,
-                    temperature=temperature,
+                    effort=effort,
+                    temperature=temperature or 0,
                     prompt_version=prompt_version,
                     prompt_hash=prompt_hash,
                     input_hash=input_hash(user),
@@ -111,6 +120,8 @@ def cache_hit_count(
     prompt_hash: str,
     start: datetime,
     end: datetime,
+    provider: str = "openai",
+    effort: str | None = None,
 ) -> int:
     """Estimate input: cached rows whose cycle time falls in the period."""
     with session_factory() as session:
@@ -118,7 +129,10 @@ def cache_hit_count(
 
         return session.execute(
             select(func.count(LLMCache.id)).where(
+                LLMCache.provider == provider,
                 LLMCache.model == model,
+                LLMCache.effort.is_(None) if effort is None
+                else LLMCache.effort == effort,
                 LLMCache.temperature == temperature,
                 LLMCache.prompt_hash == prompt_hash,
                 LLMCache.cycle_time >= _naive_utc(start),

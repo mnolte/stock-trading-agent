@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.decide.client import model_price, prices_for, require_price
+from app.decide.client import model_price, prices_for
 from app.decide.prompt import (
     PromptError,
     UnknownPromptVersion,
@@ -233,7 +233,10 @@ def slots_used(session: Session) -> int:
 
 
 def validate_new_strategy(
-    body: dict[str, Any], config: AppConfig, session: Session
+    body: dict[str, Any],
+    config: AppConfig,
+    session: Session,
+    provider_ready: Any = None,
 ) -> dict[str, Any]:
     """Check a New shadow request; returns the cleaned column values."""
     errors: list[str] = []
@@ -262,6 +265,14 @@ def validate_new_strategy(
         model = str(body.get("model") or config.get("decision", "model"))
         if model_price(prices_for(config), model) is None:
             errors.append(f"Model {model!r} has no price in models")
+        elif provider_ready is not None:
+            from app.llm.models import model_provider, provider_label
+
+            provider = model_provider(config, model)
+            if not provider_ready(provider):
+                errors.append(
+                    f"Model {model!r} needs the {provider_label(provider)} key"
+                )
         try:
             temperature = _num(
                 body.get("temperature", config.get("decision", "temperature", default=0))
@@ -375,24 +386,11 @@ def validate_new_strategy(
 
 
 def check_model_prices(config: AppConfig, session: Session) -> None:
-    """Startup refuses an unpriced live, reviews or active shadow model."""
-    from app.db.models import Strategy
+    """Startup refuses an unknown or unpriced live, reviews or active
+    shadow model (docs/SPEC.md → Model providers, Model list)."""
+    from app.llm.models import check_models
 
-    require_price(config, str(config.get("decision", "model", default="")), "Live")
-    # ``reviews.models`` is one model per task (docs/SPEC.md → Model
-    # providers); a legacy scalar ``reviews.model`` is still honoured.
-    review_models = config.get("reviews", "models", default=None)
-    if isinstance(review_models, dict) and review_models:
-        for task, model in review_models.items():
-            require_price(config, str(model), f"Reviews ({task})")
-    else:
-        require_price(
-            config, str(config.get("reviews", "model", default="")), "Reviews"
-        )
-    for strategy in session.execute(
-        select(Strategy).where(Strategy.status == "active", Strategy.kind == "llm")
-    ).scalars():
-        require_price(config, str(strategy.model), f"Shadow {strategy.name!r}")
+    check_models(config, session)
 
 
 def strategy_start(strategy: Strategy, run_started_at: datetime) -> datetime:

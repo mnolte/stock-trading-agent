@@ -648,7 +648,7 @@ async def test_model_text_passes_number_check(
     assert review.period == "2026-W42"
     assert review.source == "model"
     assert review.reason is None
-    assert review.model == "fake-review"
+    assert review.model == "gpt-4o-mini"
     assert review.prompt_version == "weekly.v2"
     assert review.cost is not None
     assert (review.content or {})["summary"] == review.text

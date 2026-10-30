@@ -4,7 +4,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
-import { getStrategies, postStrategy, postStrategyAction } from '../api/state';
+import { getStrategies, postStrategy, postStrategyAction, providerLabel } from '../api/state';
 import { Banner } from '../components/Banner';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
@@ -218,11 +218,16 @@ function NewShadowDialog({
           <label style={label}>
             Model
             <select aria-label="Model" style={input} value={model} onChange={(e) => setModel(e.target.value)}>
-              {data.options.models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {data.options.models.map((m) => {
+                const opt = (data.options.model_options ?? []).find((o) => o.id === m);
+                return (
+                  <option key={m} value={m} disabled={opt?.needs_key}>
+                    {opt
+                      ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
+                      : m}
+                  </option>
+                );
+              })}
             </select>
           </label>
           <label style={label}>

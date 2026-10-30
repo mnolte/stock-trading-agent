@@ -4,6 +4,7 @@ SPEC.md, Security hardening → One source for the address)."""
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -62,6 +63,14 @@ def test_no_host_port_flags_anywhere() -> None:
 
 def test_entrypoint_is_app_serve() -> None:
     text = (ROOT / "Dockerfile").read_text()
+    command = re.search(r"CMD (\[.*?\])", text, re.DOTALL)
+    assert command is not None
+    args = json.loads(command.group(1).replace("\\\n", ""))
+    assert args[:4] == ["/opt/venv/bin/python", "-m", "pytest", "backend/tests"]
+    assert args[args.index("-n") + 1] == "auto"
+    assert args[args.index("--dist") + 1] == "worksteal"
+    assert "--durations=20" in args
+    assert args[args.index("-m", 3) + 1] == "not slow and not perf"
     assert 'ENTRYPOINT ["python", "-m", "app.serve"]' in text
     assert "uvicorn" not in re.search(r"ENTRYPOINT.*", text).group(0)  # type: ignore[union-attr]
 

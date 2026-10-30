@@ -11,12 +11,14 @@ import {
   getStrategyPromotion,
   getUniverse,
   postKey,
+  postKeyRemove,
   postKeyTest,
   postNotificationTest,
   postPaperReset,
   postSettings,
   postSmtpSettings,
   postStartRun,
+  providerLabel,
 } from '../api/state';
 import type {
   KeyGroup,
@@ -536,6 +538,7 @@ function useUnsavedGuard(active: boolean) {
 const KEY_FIELD_LABELS: Record<KeyGroup, string> = {
   alpaca: 'New Alpaca key id',
   openai: 'New OpenAI API key',
+  anthropic: 'New Anthropic API key',
   finnhub: 'New Finnhub API key',
 };
 
@@ -543,6 +546,8 @@ const KEY_FORM_NOTES: Record<KeyGroup, string> = {
   alpaca:
     'The keys are tested with a paper-account check before they are saved. The old keys keep working until the new ones pass. Only paper keys are accepted.',
   openai:
+    'The key is tested with a models list before it is saved. The old key keeps working until the new one passes.',
+  anthropic:
     'The key is tested with a models list before it is saved. The old key keeps working until the new one passes.',
   finnhub:
     'The key is tested with one earnings-calendar request before it is saved. The old key keeps working until the new one passes.',
@@ -583,6 +588,23 @@ function KeysSection({
     setValue('');
     setShowKey(false);
     setRowError({});
+  };
+
+  const removeKey = (group: KeyGroup) => {
+    setBusy(group);
+    setRowError((r) => ({ ...r, [group]: '' }));
+    postKeyRemove(group)
+      .then((res) => {
+        if (res.paused_shadows?.length) {
+          setTestNote((n) => ({
+            ...n,
+            [group]: `paused ${res.paused_shadows.join(', ')}`,
+          }));
+        }
+        onChanged();
+      })
+      .catch((e) => setRowError((r) => ({ ...r, [group]: errorMessages(e).join(' ') })))
+      .finally(() => setBusy(null));
   };
 
   const testStored = (group: KeyGroup) => {
@@ -664,7 +686,7 @@ function KeysSection({
     <Section
       id="keys"
       title="API keys and data"
-      right={`${keys.set_count} of 3 keys set`}
+      right={`${keys.set_count} of ${keys.keys.length} keys set`}
       blurb="Connections the agent needs. A missing or failing key keeps the agent paused and shows a banner."
     >
       <div
@@ -714,9 +736,16 @@ function KeysSection({
         </div>
       )}
 
+      {keys.model_keys_note && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '14px 0 0', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+          <b style={{ fontWeight: 600 }}>Model keys.</b>{' '}
+          {keys.model_keys_note}
+        </div>
+      )}
       {keys.keys.map((row) => {
         const status = keyStatusChip(row);
         const isAlpaca = row.name === 'alpaca';
+        const isModelKey = row.name === 'openai' || row.name === 'anthropic';
         const replaceDisabled = isAlpaca && !keys.replace_allowed;
         return (
           <div key={row.name} style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -755,6 +784,16 @@ function KeysSection({
                 {row.set && (
                   <Button variant="ghost" onClick={() => testStored(row.name)} disabled={busy !== null} style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}>
                     {busy === row.name ? 'Testing…' : 'Test'}
+                  </Button>
+                )}
+                {isModelKey && row.set && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => removeKey(row.name)}
+                    disabled={busy !== null}
+                    style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}
+                  >
+                    Remove
                   </Button>
                 )}
                 {isAlpaca ? (
@@ -1384,6 +1423,30 @@ export default function Settings() {
   const patch = (section: keyof SettingsForm, key: string, value: unknown) => {
     setForm((f) =>
       f ? { ...f, [section]: { ...(f[section] as object), [key]: value } } : f,
+    );
+    setNotice(null);
+  };
+
+  const patchReviewModel = (
+    task: 'weekly' | 'briefing' | 'verdict',
+    value: string,
+  ) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            reviews: {
+              ...f.reviews,
+              models: {
+                weekly: '',
+                briefing: '',
+                verdict: '',
+                ...f.reviews.models,
+                [task]: value,
+              },
+            },
+          }
+        : f,
     );
     setNotice(null);
   };
@@ -2277,7 +2340,7 @@ export default function Settings() {
             {row('decision.model', {
               id: 'model',
               label: 'Model',
-              help: 'Used for decisions and reviews.',
+              help: 'Used for live decisions.',
               children: (
                 <select
                   id="model"
@@ -2285,11 +2348,22 @@ export default function Settings() {
                   onChange={(e) => patch('decision', 'model', e.target.value)}
                   style={selectStyle}
                 >
-                  {[s.decision.model, ...(data.priced_models ?? [])]
+                  {[s.decision.model, ...(data.model_options ?? []).map((o) => o.id)]
                     .filter((v, i, a) => a.indexOf(v) === i)
-                    .map((v) => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
+                    .map((v) => {
+                      const opt = (data.model_options ?? []).find((o) => o.id === v);
+                      return (
+                        <option
+                          key={v}
+                          value={v}
+                          disabled={opt?.needs_key}
+                        >
+                          {opt
+                            ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
+                            : v}
+                        </option>
+                      );
+                    })}
                 </select>
               ),
             })}
@@ -2317,7 +2391,7 @@ export default function Settings() {
             {row('decision.temperature', {
               id: 'temp',
               label: 'Temperature',
-              help: 'Decisions use 0 so the same input gives the same answer.',
+              help: 'Decisions use 0 so the same input gives the same answer. OpenAI models only — Claude models use their effort setting instead.',
               children: (
                 <NumBox id="temp" value={s.decision.temperature} width={60} accent={'decision.temperature' in changed} invalid={!!fieldErrors['decision.temperature']} onChange={(v) => patch('decision', 'temperature', v)} />
               ),
@@ -2332,6 +2406,48 @@ export default function Settings() {
             })}
 
             <h3 style={subHead}>Reviews</h3>
+            {(['weekly', 'briefing', 'verdict'] as const).map((task) => {
+              const taskLabels = {
+                weekly: 'Weekly review model',
+                briefing: 'Daily briefing model',
+                verdict: 'Verdict model',
+              } as const;
+              return row(`reviews.models.${task}`, {
+                id: `rmodel-${task}`,
+                label: taskLabels[task],
+                help:
+                  task === 'weekly'
+                    ? 'Runs after the Friday close.'
+                    : task === 'briefing'
+                      ? 'The text of the daily briefing.'
+                      : 'Scores closed decisions.',
+                children: (
+                  <select
+                    id={`rmodel-${task}`}
+                    value={s.reviews.models?.[task] ?? ''}
+                    onChange={(e) => patchReviewModel(task, e.target.value)}
+                    style={selectStyle}
+                  >
+                    {[s.reviews.models?.[task] ?? '', ...(data.model_options ?? []).map((o) => o.id)]
+                      .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
+                      .map((v) => {
+                        const opt = (data.model_options ?? []).find((o) => o.id === v);
+                        return (
+                          <option
+                            key={v}
+                            value={v}
+                            disabled={opt?.needs_key}
+                          >
+                            {opt
+                              ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
+                              : v}
+                          </option>
+                        );
+                      })}
+                  </select>
+                ),
+              });
+            })}
             {row('reviews.briefing_enabled', {
               id: 'brief',
               label: 'Daily briefing',

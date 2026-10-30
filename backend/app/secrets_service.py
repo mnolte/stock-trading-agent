@@ -1,7 +1,7 @@
 """Encrypted API keys (docs/SPEC.md, API keys).
 
 The keys — ``alpaca_key_id``, ``alpaca_secret``, ``openai``,
-``finnhub`` and the SMTP ``smtp_password`` — live in the ``secrets``
+``anthropic``, ``finnhub`` and the SMTP ``smtp_password`` — live in the ``secrets``
 table, Fernet-encrypted. The key
 file is ``SA_DATA_DIR/secret.key`` (created at first start, mode 600,
 never in the DB). Reads never expose values: only the name, the last
@@ -44,6 +44,7 @@ SECRET_NAMES = (
     "alpaca_key_id",
     "alpaca_secret",
     "openai",
+    "anthropic",
     "finnhub",
     "smtp_password",
 )
@@ -52,19 +53,22 @@ SECRET_NAMES = (
 GROUPS: dict[str, tuple[str, ...]] = {
     "alpaca": ("alpaca_key_id", "alpaca_secret"),
     "openai": ("openai",),
+    "anthropic": ("anthropic",),
     "finnhub": ("finnhub",),
 }
 GROUP_LABELS = {
     "alpaca": "Alpaca keys",
     "openai": "OpenAI key",
+    "anthropic": "Anthropic key",
     "finnhub": "Finnhub key",
 }
-GROUP_ORDER = ("alpaca", "openai", "finnhub")
+GROUP_ORDER = ("alpaca", "openai", "anthropic", "finnhub")
 
 ENV_VARS = {
     "alpaca_key_id": "ALPACA_API_KEY",
     "alpaca_secret": "ALPACA_SECRET_KEY",
     "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
     "finnhub": "FINNHUB_API_KEY",
 }
 
@@ -80,6 +84,8 @@ def masked_hint(name: str, value: str) -> str:
         return f"PK••••{last4}"
     if name == "openai" and value.startswith("sk-"):
         return f"sk-••••{last4}"
+    if name == "anthropic" and value.startswith("sk-ant-"):
+        return f"sk-ant-••••{last4}"
     return f"••••{last4}"
 
 
@@ -151,6 +157,8 @@ class KeyTesters(Protocol):
 
     async def openai(self, key: str) -> KeyTestResult: ...
 
+    async def anthropic(self, key: str) -> KeyTestResult: ...
+
     async def finnhub(self, key: str) -> KeyTestResult: ...
 
 
@@ -187,14 +195,16 @@ class LiveKeyTesters:
         )
 
     async def openai(self, key: str) -> KeyTestResult:
-        from openai import AsyncOpenAI
+        from app.llm.providers.openai import test_key
 
-        try:
-            client = AsyncOpenAI(api_key=key, timeout=15)
-            await client.models.list()
-            return KeyTestResult(ok=True)
-        except Exception as exc:  # noqa: BLE001
-            return KeyTestResult(ok=False, error=scrub(str(exc), [key]))
+        ok, error = await test_key(key)
+        return KeyTestResult(ok=ok, error=scrub(error or "", [key]) or None)
+
+    async def anthropic(self, key: str) -> KeyTestResult:
+        from app.llm.providers.anthropic import test_key
+
+        ok, error = await test_key(key)
+        return KeyTestResult(ok=ok, error=scrub(error or "", [key]) or None)
 
     async def finnhub(self, key: str) -> KeyTestResult:
         import asyncio
@@ -235,6 +245,10 @@ class FakeKeyTesters:
     async def openai(self, key: str) -> KeyTestResult:
         self.calls.append(("openai", (key,)))
         return self.results.get("openai") or KeyTestResult(ok=True)
+
+    async def anthropic(self, key: str) -> KeyTestResult:
+        self.calls.append(("anthropic", (key,)))
+        return self.results.get("anthropic") or KeyTestResult(ok=True)
 
     async def finnhub(self, key: str) -> KeyTestResult:
         self.calls.append(("finnhub", (key,)))
@@ -500,8 +514,45 @@ class SecretsStore:
             if self.group_status(group)["status"] != "ok"
         ]
 
+    def provider_ok(self, provider: str) -> bool:
+        """True when that provider's stored key passes its test."""
+        return self.group_status(provider)["status"] == "ok"
+
+    def missing_resume_groups(self) -> list[str]:
+        """Keys Resume actually needs (docs/SPEC.md → API keys):
+        Alpaca and Finnhub passing, at least one model key set and
+        passing, and a passing key for every provider live decisions
+        and the three review tasks use."""
+        from app.config import get_config
+        from app.llm.models import REVIEW_TASKS, model_provider, review_model
+
+        out = [
+            group
+            for group in ("alpaca", "finnhub")
+            if self.group_status(group)["status"] != "ok"
+        ]
+        config = get_config()
+        used = {model_provider(config, str(config.get("decision", "model", default="")))}
+        used |= {
+            model_provider(config, review_model(config, task)) for task in REVIEW_TASKS
+        }
+        for provider in sorted(used):
+            if not self.provider_ok(provider):
+                out.append(provider)
+        return out
+
     def all_ready(self) -> bool:
-        return not self.missing_groups()
+        return not self.missing_resume_groups()
+
+    def remove(self, name: str) -> None:
+        """Delete a stored key (behind "Confirm it is you" at the API)."""
+        from sqlalchemy import delete
+
+        with self._factory() as session:
+            session.execute(delete(Secret).where(Secret.name == name))
+            session.commit()
+        self._values.pop(name, None)
+        self._load_rows()
 
     # ------------------------------------------------------------------
     # tests + import
@@ -524,6 +575,8 @@ class SecretsStore:
             result = await (
                 testers.openai(value)
                 if group == "openai"
+                else testers.anthropic(value)
+                if group == "anthropic"
                 else testers.finnhub(value)
             )
             self.record_test(group, result.ok, result.detail or result.error)
@@ -572,14 +625,20 @@ class SecretsStore:
                         self.record_event(name, "imported", outcome == "ok", detail)
                         self.imported.append(name)
 
-        for name in ("openai", "finnhub"):
+        for name in ("openai", "anthropic", "finnhub"):
             value = found.get(name)
             if not value:
                 continue
             if self.get(name):
                 ignored.append(name)
                 continue
-            tester = testers.openai if name == "openai" else testers.finnhub
+            tester = (
+                testers.openai
+                if name == "openai"
+                else testers.anthropic
+                if name == "anthropic"
+                else testers.finnhub
+            )
             result = await tester(value)
             self.save(
                 name,

@@ -170,6 +170,9 @@ class Executor:
         # nonce keeps ids unique across restarts and DB rebuilds.
         self._order_nonce = secrets.token_hex(3)
         self._reconcile_failed = False
+        # Symbols found flat at the broker during this reconcile pass;
+        # later steps must not ask Alpaca for the same 404 again.
+        self._flat_symbols: set[str] = set()
         self._reconcile_lock = asyncio.Lock()
         # Set by main: closes every shadow's virtual positions on flatten.
         self.on_flatten: Callable[[], object] = lambda: None
@@ -1391,6 +1394,7 @@ class Executor:
 
     async def _reconcile(self) -> ReconcileReport:
         report = ReconcileReport()
+        self._flat_symbols = set()
         positions_r = await self.broker.get_positions()
         orders_r = await self.broker.get_open_orders()
         if positions_r.error is not None:
@@ -1527,6 +1531,7 @@ class Executor:
             for position in db_positions:
                 bp = broker_positions.get(position.symbol)
                 if bp is None:
+                    self._flat_symbols.add(position.symbol)
                     session.commit()
                     history = await self.broker.get_filled_orders(
                         position.symbol, position.opened_at.replace(tzinfo=UTC)
@@ -2013,7 +2018,11 @@ class Executor:
         write.
         """
         # Confirm first: the symbol's position and open orders straight
-        # from the broker, never the state this reconcile fetched.
+        # from the broker, never the state this reconcile fetched. A
+        # symbol this pass already found flat is skipped — asking again
+        # only repeats the same 404.
+        if position.symbol in self._flat_symbols:
+            return Decimal(0)
         pos_r = await self.broker.get_position(position.symbol)
         orders_r = await self.broker.get_open_orders()
         if pos_r.error is not None:
@@ -2024,7 +2033,8 @@ class Executor:
         confirmed = pos_r.data
         if confirmed is None or confirmed.qty <= 0:
             # Flat at the broker — nothing to protect. The row closes on
-            # the next pass.
+            # the next pass; remember it so nothing asks again this pass.
+            self._flat_symbols.add(position.symbol)
             return Decimal(0)
         live_sells: list[BrokerOrder] = []
         for order in orders_r.data or []:
@@ -2916,7 +2926,14 @@ class Executor:
         # right before the send. Falling back to the stored qty is only
         # allowed while the broker guard is confirmed — without it the
         # exit waits for a confirmed qty (retried at the next check).
+        if position.symbol in self._flat_symbols:
+            # Already found flat this pass — nothing left to sell.
+            return
         confirmed = await self.broker.get_position(position.symbol)
+        if confirmed.error is None and (
+            confirmed.data is None or confirmed.data.qty <= 0
+        ):
+            self._flat_symbols.add(position.symbol)
         if confirmed.error is None and confirmed.data is not None:
             sell_qty = min(position.qty, confirmed.data.qty)
         elif self.state.broker_guard_confirmed:

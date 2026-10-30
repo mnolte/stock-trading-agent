@@ -33,6 +33,7 @@ from app.db.models import (
 from app.decide.client import model_price, prices_for
 from app.decide.llm_cache import cache_hit_count
 from app.decide.prompt import cached_prompt
+from app.llm.models import model_effort, model_provider
 from app.market.calendar import CalendarProvider
 
 
@@ -283,6 +284,10 @@ def estimate(
                 per_cycle = live_avg
             calls = int(n_sessions * cycles_per * per_cycle)
             upper = n_sessions * cycles_per * max_calls
+            provider = model_provider(config, model)
+            effort = (
+                model_effort(config, model) if provider == "anthropic" else None
+            )
             hits = 0
             if prompt_hash:
                 hits = cache_hit_count(
@@ -292,6 +297,8 @@ def estimate(
                     prompt_hash=prompt_hash,
                     start=datetime.combine(start, datetime.min.time()),
                     end=datetime.combine(end, datetime.max.time()),
+                    provider=provider,
+                    effort=effort,
                 )
             hits = min(hits, calls)
             avg_tokens = _avg_tokens(session, model, temperature, prompt_hash)
@@ -337,8 +344,10 @@ def estimate(
                 out.cap_cost_usd = Decimal(-1)  # unknown → bound unknown
             if cutoff is not None and start <= cutoff:
                 out.cutoff = cutoff
+                earliest = cutoff + timedelta(days=1)
                 out.cutoff_label = (
-                    f"Period starts before {model}'s knowledge cutoff"
+                    f"{model}'s knowledge cutoff is {cutoff.isoformat()} — "
+                    f"the earliest start is {earliest.isoformat()}"
                 )
     if out.cap_cost_usd < 0:
         out.cap_cost_usd = out.cost_usd
@@ -355,18 +364,12 @@ def estimate(
 
 
 def _model_cutoff(config: AppConfig, model: str) -> date | None:
-    """The model's knowledge cutoff — lives on its ``models`` entry;
-    the legacy ``backtest.model_cutoffs`` block is honoured for one
+    """The model's knowledge cutoff from its ``models`` entry; the
+    legacy ``backtest.model_cutoffs`` block is folded in for one
     release (docs/SPEC.md → Model providers)."""
-    entry = (config.get("models", default={}) or {}).get(model)
-    raw = entry.get("cutoff") if isinstance(entry, dict) else None
-    if raw is None:
-        raw = (config.get("backtest", "model_cutoffs", default={}) or {}).get(
-            model
-        )
-    if raw is None:
-        return None
-    return date.fromisoformat(str(raw))
+    from app.llm.models import model_cutoff
+
+    return model_cutoff(config, model)
 
 
 def _calendar_span(

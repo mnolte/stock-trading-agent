@@ -40,13 +40,7 @@ from app.data.service import MarketDataService
 from app.db.backup import create_backup
 from app.db.base import check_schema_matches_models, get_session_maker
 from app.db.models import Event, Strategy
-from app.decide.client import (
-    DecisionClient,
-    FakeDecisionClient,
-    OpenAIDecisionClient,
-    UnpricedModelError,
-    make_decision_client,
-)
+from app.decide.client import UnpricedModelError
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.service import DecisionService
 from app.engine.after_exit import AfterExitWorker
@@ -61,11 +55,14 @@ from app.engine.state import (
     recover_interrupted_cycles,
     set_event_sink,
 )
+from app.llm.base import ModelClient
+from app.llm.clients import make_model_clients
+from app.llm.fake import FakeModelClient
+from app.llm.models import check_models
 from app.logging_config import setup_logging
 from app.market.calendar import CalendarProvider, CalendarStore
 from app.market.clock import NY_TZ, UTC, Clock, make_clock
 from app.notifications.service import NotificationService, Notifier
-from app.reviews.client import make_review_client
 from app.reviews.service import ReviewService
 from app.secrets_service import (
     MISSING_KEY,
@@ -79,7 +76,6 @@ from app.secrets_service import (
 )
 from app.shadows.portfolio import LiveGateState
 from app.shadows.runner import ShadowRunner
-from app.shadows.strategy import check_model_prices
 from app.signals.service import SignalService
 from app.universe.service import UniverseService
 
@@ -601,23 +597,15 @@ async def startup_key_checks(
 
 
 def make_shadow_client_factory(
-    config: AppConfig, secrets: SecretsStore
-) -> Callable[[Strategy], DecisionClient]:
-    """Each shadow gets its own model client — never live's — with its own
-    model and temperature; simulated mode uses the fake."""
+    config: AppConfig, model_clients: ModelClient
+) -> Callable[[Strategy], ModelClient]:
+    """Every shadow shares the provider dispatcher — the call's own model
+    picks the adapter; simulated mode uses the fake (per call, per test)."""
 
-    def factory(strategy: Strategy) -> DecisionClient:
+    def factory(strategy: Strategy) -> ModelClient:
         if config.env.mode == "simulated":
-            return FakeDecisionClient()
-        view = config.overlay(
-            {
-                "decision": {
-                    "model": strategy.model,
-                    "temperature": strategy.temperature or 0,
-                }
-            }
-        )
-        return OpenAIDecisionClient(view, api_key=secrets.get("openai") or MISSING_KEY)
+            return FakeModelClient(config=config)
+        return model_clients
 
     return factory
 
@@ -634,14 +622,20 @@ def spawn_background(
 
 
 def check_model_prices_at_startup(config: AppConfig) -> None:
+    """Compat name — the models-list validation (docs/SPEC.md → Model
+    providers)."""
+    check_models_at_startup(config)
+
+
+def check_models_at_startup(config: AppConfig) -> None:
     """Refuse to start when the live, reviews or an active shadow's model
-    has no entry in model_prices (docs/SPEC.md, Strategies and shadows)."""
+    is unknown or misconfigured (docs/SPEC.md → Model providers)."""
     from app.db.base import get_session_maker
 
     with get_session_maker()() as session:
         try:
-            check_model_prices(config, session)
-        except UnpricedModelError as exc:
+            check_models(config, session)
+        except (ValueError, UnpricedModelError) as exc:
             raise RuntimeError(f"Refusing to start: {exc}") from exc
 
 
@@ -858,7 +852,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
     check_execution_mode(config)
-    check_model_prices_at_startup(config)
+    check_models_at_startup(config)
     check_prompt_versions_at_startup(config)
 
     clock = make_clock(config)
@@ -877,10 +871,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _last_logs_push[0] = now
             loop.call_soon_threadsafe(bus.publish, "logs")
 
+    # "New error" (docs/SPEC.md, Notifications): the first time an ERROR
+    # fingerprint appears this session it sends the Warning notification
+    # once — a repeating bug stays visible after the first one.
+    seen_error_fingerprints: set[str] = set()
+
+    def _on_warning_or_above(record: logging.LogRecord) -> None:
+        _push_logs_topic(record)
+        if record.levelno < logging.ERROR:
+            return
+        from app.log_index import fingerprint
+
+        fp = fingerprint(
+            record.name, getattr(record, "event", None), record.getMessage()
+        )
+        if fp in seen_error_fingerprints:
+            return
+        seen_error_fingerprints.add(fp)
+        notifier = getattr(app.state, "notification_service", None)
+        if notifier is None:
+            return
+        from app.logging_config import _all_secrets
+        from app.secrets_service import scrub
+
+        notifier.notify(
+            "new_error",
+            scrub(record.getMessage()[:300], _all_secrets()),
+            link="/logs",
+        )
+
     index_handler = make_index_handler(
         config,
         file_fallback=pipeline.file_handler,
-        on_warning_or_above=_push_logs_topic,
+        on_warning_or_above=_on_warning_or_above,
     )
     if index_handler is not None:
         pipeline.add_handler(index_handler)
@@ -899,6 +922,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         publish=lambda topics: bus.publish(*topics),
     )
     notification_service.start()
+    app.state.notification_service = notification_service
     set_event_sink(notification_service.sink)
     key_testers = make_key_testers(config, clock)
     await secrets_store.import_env_keys(read_env_keys(), key_testers)
@@ -939,8 +963,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # The llm_cache is shared: live and shadows write through to it (never
     # read it), backtests read it — a rerun on identical inputs is free.
     llm_cache = LLMCacheStore(get_session_maker(), clock)
+    # One provider dispatcher behind live decisions, reviews and every
+    # shadow — the call's model picks the adapter (docs/SPEC.md → Model
+    # providers).
+    model_clients = make_model_clients(config, secrets_store)
+    app.state.model_clients = model_clients
     decision_service = DecisionService(
-        make_decision_client(config, api_key=secrets_store.get("openai")),
+        model_clients,
         config,
         api_key=secrets_store.get("openai"),
         notifier=notification_service,
@@ -976,7 +1005,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Reviews have their own client and cost cap — they can never use the
     # budget or rate limits reserved for trading decisions.
     review_service = ReviewService(
-        client=make_review_client(config, api_key=secrets_store.get("openai")),
+        client=model_clients,
         config=config,
         clock=clock,
         calendar=calendar_store,
@@ -986,6 +1015,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notify=lambda topics: bus.publish(*topics),
         notifier=notification_service,
         secrets=secrets_store.scrub_values,
+        key_ready=(
+            (lambda provider: secrets_store.group_status(provider)["status"] == "ok")
+            if config.env.mode != "simulated"
+            else None
+        ),
     )
     position_checker = PositionChecker(
         executor=executor,
@@ -1025,12 +1059,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         config=config,
         clock=clock,
         calendar=calendar_store,
-        client_factory=make_shadow_client_factory(config, secrets_store),
+        client_factory=make_shadow_client_factory(config, model_clients),
         live_state=live_gate_state,
         notifier=notification_service,
         notify=lambda topics: bus.publish(*topics),
         llm_cache=llm_cache,
         secrets=secrets_store.scrub_values,
+        provider_ready=(
+            (lambda provider: secrets_store.provider_ok(provider))
+            if config.env.mode != "simulated"
+            else None
+        ),
     )
     shadow_tasks: set[asyncio.Task[object]] = set()
     cycle_runner.on_cycle_done = lambda report: spawn_background(
