@@ -2872,8 +2872,13 @@ class Executor:
         else:
             reason = quote.price_reason(
                 now=now,
+                # Held-position tighten decisions may accept an older
+                # IEX last trade (docs/SPEC.md, tighten_stop).
                 max_age_seconds=float(
-                    self.config.get("execution", "quote_max_age_seconds")
+                    self.config.get(
+                        "execution", "tighten_quote_max_age_seconds",
+                        default=300,
+                    )
                 ),
                 bar_close=bar.close if bar is not None else None,
                 max_deviation_pct=Decimal(
@@ -2898,6 +2903,28 @@ class Executor:
         if reason is not None:
             decision.final_action = "hold"
             decision.gates_result = {"tighten_noop": True, "reason": reason}
+            if reason in ("price_stale", "price_suspect"):
+                # Same display as the break-even guard: drawer, feed and
+                # inspector show the code change with its reason
+                # (docs/SPEC.md, tighten_stop).
+                validation = dict(decision.validation_result or {})
+                checks = list(cast("list[dict[str, object]]", validation.get("checks") or []))
+                checks.append(
+                    {
+                        "name": "Market price",
+                        "passed": False,
+                        "detail": reason,
+                        "value": None,
+                    }
+                )
+                validation["final_action"] = "hold"
+                validation["changed_by_code"] = True
+                validation["reason"] = reason
+                validation["note"] = (
+                    f"code changed tighten_stop → hold ({reason})"
+                )
+                validation["checks"] = checks
+                decision.validation_result = validation
             session.flush()
             return
         result = await self.broker.replace_stop(

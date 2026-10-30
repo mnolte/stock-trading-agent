@@ -3597,3 +3597,79 @@ async def test_qty_check_defers_while_fills_settle(
             and e.details.get("broker_qty") == 10
             and e.details.get("db_qty") == 12
         ]
+
+
+async def _tighten_with_quote_age(
+    session_factory: sessionmaker[Session], age_seconds: int,
+) -> dict[str, object]:
+    """HD of 30 Oct, cycle 255: last trade 329.84 vs bar close 330.00,
+    aged ``age_seconds``. Returns the decision and position rows."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"HD": Decimal("330")})
+    broker.positions["HD"] = _PosRec(qty=4, avg_entry_price=Decimal("325"))
+    stop = await broker.submit_stop_order(
+        symbol="HD", qty=4, stop_price=Decimal("325.54"),
+        client_order_id="original",
+    )
+    quote = Quote(
+        "HD",
+        Decimal("329.80"), Decimal("329.90"), Decimal("329.84"),
+        NOW - timedelta(seconds=age_seconds), "iex",
+        trade_timestamp=NOW - timedelta(seconds=age_seconds),
+        fetched_at=NOW,
+    )
+    executor = _executor(
+        session_factory, broker, clock,
+        sources=_sources(quotes=_StaticQuotes({"HD": quote})),
+    )
+    _store_reference(executor, "HD", Decimal("330.00"))
+    assert stop.data is not None
+    with session_factory() as session:
+        position = _open_position(session, "HD", entry="325", stop="325.54")
+        executor._store_broker_order(session, stop.data, None, leg="stop")
+        decision = _decision(
+            session, "HD", "tighten_stop", {"stop_price": "329.00"}
+        )
+        item = replace(
+            _item("HD"),
+            snapshot=replace(_snapshot("HD"), atr_1h=Decimal("1")),
+        )
+        await executor.apply_decision(
+            session, decision, item, position, quote, NOW,
+            account=_account(), earnings_known=True,
+        )
+        session.commit()
+        return {
+            "final_action": decision.final_action,
+            "validation": decision.validation_result,
+            "stop": position.current_stop_price,
+        }
+
+
+async def test_tighten_accepts_trade_up_to_300_seconds_old(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """200 s old is inside execution.tighten_quote_max_age_seconds
+    (HD cycle 255: 64 s — it would have tightened)."""
+    result = await _tighten_with_quote_age(session_factory, 200)
+    assert result["final_action"] == "tighten_stop"
+    assert result["stop"] == Decimal("329.00")
+
+
+async def test_tighten_blocked_past_300_seconds_is_code_change(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """400 s old: hold, marked changed_by_code with reason price_stale
+    — same display as the break-even guard."""
+    result = await _tighten_with_quote_age(session_factory, 400)
+    assert result["final_action"] == "hold"
+    assert result["stop"] == Decimal("325.54")
+    validation = result["validation"] or {}
+    assert validation["changed_by_code"] is True
+    assert validation["reason"] == "price_stale"
+    assert validation["final_action"] == "hold"
+    assert "tighten_stop" in validation["note"]
+    assert any(
+        c["passed"] is False and c["detail"] == "price_stale"
+        for c in validation["checks"]
+    )

@@ -813,7 +813,16 @@ class ShadowRunner:
                     sp.initial_stop, entry
                 )
             quote, synthetic, price_failure = self._market_quote(
-                d.symbol, snap_json, scheduled
+                # Held positions only ever gate a tighten_stop on the
+                # market price — the longer tighten window applies
+                # (docs/SPEC.md, tighten_stop).
+                d.symbol, snap_json, scheduled,
+                max_age_seconds=float(
+                    self.config.get(
+                        "execution", "tighten_quote_max_age_seconds",
+                        default=300,
+                    )
+                ),
             )
             dev_pct = Decimal(
                 str(self.config.get("execution", "quote_max_deviation_pct"))
@@ -1253,6 +1262,27 @@ class ShadowRunner:
             if price_failure is not None:
                 row.final_action = "hold"
                 row.gates_result = {"tighten_noop": True, "reason": price_failure}
+                if price_failure in ("price_stale", "price_suspect"):
+                    # Same display as live: the code change and its
+                    # reason (docs/SPEC.md, tighten_stop).
+                    validation = dict(row.validation_result or {})
+                    checks = list(cast("list[dict[str, object]]", validation.get("checks") or []))
+                    checks.append(
+                        {
+                            "name": "Market price",
+                            "passed": False,
+                            "detail": price_failure,
+                            "value": None,
+                        }
+                    )
+                    validation["final_action"] = "hold"
+                    validation["changed_by_code"] = True
+                    validation["reason"] = price_failure
+                    validation["note"] = (
+                        f"code changed tighten_stop → hold ({price_failure})"
+                    )
+                    validation["checks"] = checks
+                    row.validation_result = validation
             elif reference is None or atr is None:
                 row.final_action = "hold"
                 row.gates_result = {"tighten_noop": True, "reason": "reference_missing"}
@@ -1269,6 +1299,7 @@ class ShadowRunner:
 
     def _market_quote(
         self, symbol: str, snapshot: dict[str, Any], at: datetime,
+        max_age_seconds: float | None = None,
     ) -> tuple[Quote | None, bool, str | None]:
         """Live's fetched quote rebuilt from the stored snapshot, or a
         synthetic market price from the last closed bar when live fetched
@@ -1313,7 +1344,13 @@ class ShadowRunner:
         )
         reason = quote.price_reason(
             now=quote.fetched_at or at,
-            max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+            max_age_seconds=(
+                max_age_seconds
+                if max_age_seconds is not None
+                else float(
+                    self.config.get("execution", "quote_max_age_seconds")
+                )
+            ),
             bar_close=bar,
             max_deviation_pct=Decimal(str(
                 self.config.get("execution", "quote_max_deviation_pct")

@@ -58,6 +58,7 @@ execution:
   max_spread_pct: 0.15
   quote_max_deviation_pct: 1.0   # last trade vs last closed 5-min bar (price_suspect); bid/ask vs market price (plausible quote)
   quote_max_age_seconds: 60    # IEX last trade must be this fresh (market price); older = price_stale
+  tighten_quote_max_age_seconds: 300  # held-position tighten may accept an IEX last trade this old
   time_in_force: gtc
 
 rules:
