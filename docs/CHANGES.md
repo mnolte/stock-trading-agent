@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-30 — Analysis: IEX quote plausibility
+
+- `docs/analysis/2026-10-29-quote-plausibility.md` plus the reproducible script `scripts/analysis/quote_plausibility.py` (read-only, `mode=ro`). No behaviour change.
+
 ## 2026-10-30 — Ops: alerts, log volume and small fixes — implementation
 
 - `docs/kickoffs/ops-alerts.md` lands in code: the "New error" warning notification (one per ERROR fingerprint per session, link to Logs), third-party loggers at WARNING unless `logging.library_debug`, no `/api/chart/` call without a symbol, and no repeat broker ask for a position already found flat in the same pass.
