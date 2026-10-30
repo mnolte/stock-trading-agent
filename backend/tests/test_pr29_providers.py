@@ -180,6 +180,60 @@ def _config() -> AppConfig:
     return AppConfig()
 
 
+@pytest.mark.parametrize("provider,model", [
+    ("openai", "gpt-4o-mini"),
+    ("anthropic", "claude-haiku-5-5"),
+])
+@pytest.mark.parametrize("saved", [False, True])
+@pytest.mark.parametrize("warm", [False, True])
+async def test_decision_reload_preserves_provider_credentials(
+    monkeypatch: pytest.MonkeyPatch, provider: str, model: str,
+    saved: bool, warm: bool,
+) -> None:
+    from app.decide.prompt import cached_prompt, prompt_spec
+    from app.decide.service import DecisionService
+    from app.llm.clients import ProviderClients
+    from app.llm.fake import FakeModelClient
+    from app.secrets_service import MISSING_KEY
+
+    config = _config()
+    config.yaml["decision"]["prompt"] = "decision.v1"
+    keys = {provider: "fake-saved-key"} if saved else {}
+    constructed: list[tuple[str, str]] = []
+
+    def adapter(name: str, config: AppConfig, api_key: str) -> FakeModelClient:
+        constructed.append((name, api_key))
+        return FakeModelClient(config=config)
+
+    monkeypatch.setattr("app.llm.clients.make_adapter", adapter)
+    clients = ProviderClients(config, keys.get)
+    service = DecisionService(clients, config)
+    payload = json.dumps({"symbol": "MSFT", "context": "candidate"})
+    if warm:
+        await clients.complete(system="system", user=payload, model=model)
+    config.yaml["decision"]["prompt"] = "decision.v2"
+    config.yaml["decision"]["model"] = model
+    service.reload()
+
+    assert service.client is clients
+    assert service.prompt is cached_prompt("decision.v2")
+    assert service.spec == prompt_spec("decision.v2")
+    await service.client.complete(system="system", user=payload, model=model)
+    assert constructed == [(provider, keys.get(provider, MISSING_KEY))]
+
+    keys[provider] = "fake-replacement-key"
+    clients.update_key(provider, keys[provider])
+    service.reload()
+    await service.client.complete(system="system", user=payload, model=model)
+    assert constructed[-1] == (provider, "fake-replacement-key")
+
+    keys.pop(provider)
+    clients.drop(provider)
+    service.reload()
+    await service.client.complete(system="system", user=payload, model=model)
+    assert constructed[-1] == (provider, MISSING_KEY)
+
+
 async def test_anthropic_success_parses_and_sends_no_temperature() -> None:
     calls: list[dict[str, Any]] = []
     raw = _StubRawResponse(_message('{"a": 1}'))
