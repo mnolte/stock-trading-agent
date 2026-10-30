@@ -51,6 +51,7 @@ execution:
   entry_timeout_minutes: 10
   stream_update_grace_seconds: 120   # a fill found by reconciliation whose stream update never arrived within this marks the stream degraded
   stream_degraded_minutes: 30        # the degraded stream banner clears this long after the last failure
+  fill_settle_seconds: 10            # no qty check while an entry order works or a fill is this fresh (fills still settling)
   max_spread_pct: 0.15
   quote_max_deviation_pct: 1.0   # last trade vs last closed 5-min bar (price_suspect); bid/ask vs market price (plausible quote)
   quote_max_age_seconds: 60    # IEX last trade must be this fresh (market price); older = price_stale

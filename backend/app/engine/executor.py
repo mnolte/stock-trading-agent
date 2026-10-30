@@ -171,6 +171,11 @@ class Executor:
         # Notifications — Trade opened or closed).
         self._entry_finals: list[str] = []
         self._opened_notified: set[str] = set()
+        # Fills still settling (docs/SPEC.md, Alpaca integration): a
+        # deferred quantity check is re-run ~fill_settle_seconds after
+        # an entry order goes final.
+        self._settle_recheck_needed = False
+        self._settle_recheck_scheduled = False
         # Alpaca enforces client_order_id uniqueness account-wide
         # forever; the seq restarts each process, so a per-process
         # nonce keeps ids unique across restarts and DB rebuilds.
@@ -1207,6 +1212,7 @@ class Executor:
             # open so the quantity is settled.
             self._entry_finals.append(order.id)
             self._opened_notified.add(order.id)
+            self._settle_recheck_needed = True
         for leg_order in order.legs:
             self._store_broker_order(
                 session, leg_order, decision_id, parent=order,
@@ -1337,6 +1343,7 @@ class Executor:
                     # notification goes out once, from the drain below.
                     self._entry_finals.append(update.order.id)
                     self._opened_notified.add(update.order.id)
+                    self._settle_recheck_needed = True
                 if (
                     update.order.status not in OPEN_ORDER_STATUSES
                     and row.active_until is None
@@ -1595,14 +1602,28 @@ class Executor:
                 if bp.qty != position.qty or (
                     bp.avg_entry_price != position.avg_entry_price
                 ):
-                    self._mismatch(
-                        session, report,
-                        f"{position.symbol}: broker {bp.qty} vs db {position.qty}",
-                        {"kind": "qty_mismatch", "symbol": position.symbol,
-                         "broker_qty": bp.qty, "db_qty": position.qty}, position,
-                    )
-                    position.qty = bp.qty
-                    position.avg_entry_price = bp.avg_entry_price
+                    if self._settling(session, position.symbol, now):
+                        # Fills still settling: the broker position can
+                        # lag the last prints by a second or two — log,
+                        # don't compare (docs/SPEC.md, Fills still
+                        # settling).
+                        ev(
+                            log_reconcile, logging.INFO,
+                            "reconcile.settling",
+                            f"{position.symbol}: quantity check deferred "
+                            f"— fills still settling "
+                            f"(broker {bp.qty}, db {position.qty})",
+                            symbol=position.symbol,
+                        )
+                    else:
+                        self._mismatch(
+                            session, report,
+                            f"{position.symbol}: broker {bp.qty} vs db {position.qty}",
+                            {"kind": "qty_mismatch", "symbol": position.symbol,
+                             "broker_qty": bp.qty, "db_qty": position.qty}, position,
+                        )
+                        position.qty = bp.qty
+                        position.avg_entry_price = bp.avg_entry_price
             # Sell-side stops already open at the broker, per symbol.
             # Needed before adoption (a position may already be covered
             # by a stop placed before the database was rebuilt) and for
@@ -1716,7 +1737,66 @@ class Executor:
                 "; ".join(report.mismatches[:5]),
             )
         self._notify({"positions", "orders", "banners", "header"})
+        if self._settle_recheck_needed:
+            self._settle_recheck_needed = False
+            try:
+                self._schedule_settle_recheck()
+            except RuntimeError:
+                # No running loop (unit tests driving _reconcile pieces).
+                self._settle_recheck_scheduled = False
         return report
+
+    def _fill_settle_seconds(self) -> int:
+        return int(
+            self.config.get("execution", "fill_settle_seconds", default=10)
+        )
+
+    def _settling(
+        self, session: Session, symbol: str, now: datetime
+    ) -> bool:
+        """Fills still settling (docs/SPEC.md, Alpaca integration): the
+        quantity comparison defers while an entry order for the symbol
+        is working, or a fill landed inside the settle window — the
+        broker position can lag the last print by a second or two."""
+        working = session.execute(
+            select(Order.id).where(
+                Order.symbol == symbol,
+                Order.leg == "entry",
+                Order.status.in_(OPEN_ORDER_STATUSES),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if working is not None:
+            return True
+        latest = session.execute(
+            select(func.max(Fill.filled_at))
+            .select_from(Fill)
+            .join(Order, Fill.order_id == Order.id)
+            .where(Order.symbol == symbol)
+        ).scalar()
+        if latest is None:
+            return False
+        cutoff = _naive_utc(
+            now - timedelta(seconds=self._fill_settle_seconds())
+        )
+        return latest > cutoff
+
+    def _schedule_settle_recheck(self) -> None:
+        """Re-run reconciliation once, ~fill_settle_seconds after an
+        entry order went final — the broker's position view can lag
+        the last prints (docs/SPEC.md — Fills still settling)."""
+        if self._settle_recheck_scheduled:
+            return
+        self._settle_recheck_scheduled = True
+        from app.spawn import spawn
+
+        async def recheck() -> None:
+            try:
+                await asyncio.sleep(self._fill_settle_seconds())
+                await self.reconcile()
+            finally:
+                self._settle_recheck_scheduled = False
+
+        spawn(recheck(), "reconcile-settle-recheck")
 
     def _notify_opened(self, session: Session) -> None:
         """One "trade opened" notification per final entry order.

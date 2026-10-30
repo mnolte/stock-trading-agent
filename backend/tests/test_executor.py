@@ -3533,3 +3533,67 @@ async def test_opened_notification_partial_fill_then_cancel(
             select(Position).where(Position.symbol == "PG")
         ).scalar_one()
         assert position.qty == 8
+
+
+async def test_qty_check_defers_while_fills_settle(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """PG of 30 Oct: prints still arriving — no qty_mismatch while the
+    entry works or a fill is fresh; a real difference after the settle
+    window still raises the CRITICAL mismatch."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.85")})
+    broker.partial_fill["PG"] = 10
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("163.00"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-3",
+    )
+    executor = _executor(session_factory, broker, clock)
+    scheduled: list[bool] = []
+    executor._schedule_settle_recheck = lambda: scheduled.append(True)  # type: ignore[method-assign]
+    with session_factory() as session:
+        # The DB recorded 12 shares' worth of prints; the broker's
+        # position view still shows the earlier 10.
+        _open_position(session, "PG", qty=12, entry="162.85", stop="158.00")
+        await _seed_entry_row(session, submitted, "PG", 12, "163.00")
+
+    await broker.tick("PG", Decimal("162.85"))  # 10 of 12 print
+    report = await executor.reconcile()
+    with session_factory() as session:
+        # The bracket's working legs report as unknown orders — what
+        # matters here is that no qty_mismatch fires while settling.
+        assert not [m for m in report.mismatches if "vs db" in m]
+        events = session.execute(
+            select(Event).where(Event.event_type == "reconciliation")
+        ).scalars().all()
+        assert not [
+            e for e in events
+            if (e.details or {}).get("kind") == "qty_mismatch"
+        ]
+
+    # The order goes final (rest cancelled); the last fill is still
+    # inside the settle window — no comparison yet, but a recheck is
+    # scheduled ~fill_settle_seconds out.
+    await broker.cancel_order(submitted.data.id)
+    report = await executor.reconcile()
+    assert report.mismatches == []
+    assert scheduled
+
+    # Settle window passed, order final, difference remains → mismatch.
+    clock.advance(timedelta(seconds=11))
+    report = await executor.reconcile()
+    assert any("PG" in m for m in report.mismatches)
+    with session_factory() as session:
+        events = session.execute(
+            select(Event).where(Event.event_type == "reconciliation")
+        ).scalars().all()
+        assert [
+            e for e in events
+            if (e.details or {}).get("kind") == "qty_mismatch"
+            and e.details.get("broker_qty") == 10
+            and e.details.get("db_qty") == 12
+        ]
