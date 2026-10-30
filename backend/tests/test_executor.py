@@ -5,7 +5,7 @@ integration + Risk management)."""
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from app.broker.fake import FakeBroker, _OrderRec, _PosRec
@@ -3442,7 +3442,13 @@ class _Notices:
         self.calls.append((event, line))
 
 
-async def _seed_entry_row(session, submitted, symbol: str, qty: int, limit: str) -> None:
+async def _seed_entry_row(
+    session: Session,
+    submitted: DataResult[BrokerOrder],
+    symbol: str,
+    qty: int,
+    limit: str,
+) -> None:
     session.add(
         Order(
             alpaca_order_id=submitted.data.id,
@@ -3594,8 +3600,8 @@ async def test_qty_check_defers_while_fills_settle(
         assert [
             e for e in events
             if (e.details or {}).get("kind") == "qty_mismatch"
-            and e.details.get("broker_qty") == 10
-            and e.details.get("db_qty") == 12
+            and (e.details or {}).get("broker_qty") == 10
+            and (e.details or {}).get("db_qty") == 12
         ]
 
 
@@ -3664,7 +3670,7 @@ async def test_tighten_blocked_past_300_seconds_is_code_change(
     result = await _tighten_with_quote_age(session_factory, 400)
     assert result["final_action"] == "hold"
     assert result["stop"] == Decimal("325.54")
-    validation = result["validation"] or {}
+    validation = cast("dict[str, Any]", result["validation"] or {})
     assert validation["changed_by_code"] is True
     assert validation["reason"] == "price_stale"
     assert validation["final_action"] == "hold"

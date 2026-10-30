@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from app.api.main import check_execution_mode
@@ -314,11 +314,11 @@ def test_hanging_broker_positions_answers_stale_within_six_seconds(
     app_state = cast(FastAPI, client.app).state
     broker = app_state.broker
 
-    async def hang() -> object:
+    async def hang() -> Any:
         await asyncio.sleep(60)
         return None
 
-    broker.get_positions = hang  # type: ignore[method-assign]
+    broker.get_positions = hang
     app_state.exec_state.last_reconcile_at = datetime(
         2026, 10, 15, 12, 55
     )

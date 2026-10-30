@@ -2,8 +2,9 @@
 call failed, or any call got a 401/403, opens an episode — critical
 event, banner state, notification once — cleared by the first good call."""
 
+from collections.abc import Generator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from app.config import AppConfig
@@ -57,7 +58,7 @@ class _FakeSecrets:
 
 def _health(
     session_factory: sessionmaker[Session],
-) -> tuple[LiveModelHealth, ExecutionState, _FakeSecrets, list[dict]]:
+) -> tuple[LiveModelHealth, ExecutionState, _FakeSecrets, list[dict[str, Any]]]:
     clock = FakeClock(NOW)
     state = ExecutionState(clock=clock)
     secrets = _FakeSecrets()
@@ -67,9 +68,9 @@ def _health(
         config=AppConfig(),
         secrets=secrets,
     )
-    events: list[dict] = []
+    events: list[dict[str, Any]] = []
 
-    def sink(et, level, details):
+    def sink(et: str, level: str, details: dict[str, Any] | None) -> None:
         events.append({"type": et, "level": level, "details": details})
 
     set_event_sink(sink)
@@ -77,12 +78,14 @@ def _health(
 
 
 @pytest.fixture(autouse=True)
-def _sink_reset():
+def _sink_reset() -> Generator[None, None, None]:
     yield
     set_event_sink(None)
 
 
-def test_every_call_401_episode_then_clear(session_factory):
+def test_every_call_401_episode_then_clear(
+    session_factory: sessionmaker[Session],
+) -> None:
     health, state, secrets, events = _health(session_factory)
     with session_factory() as session:
         health.settle_cycle(
@@ -111,11 +114,14 @@ def test_every_call_401_episode_then_clear(session_factory):
         # the key this check had marked.
         health.settle_cycle(session, [_resp()])
         session.commit()
-        assert state.live_calls_failing_since is None
+        since = cast("datetime | None", state.live_calls_failing_since)
+        assert since is None
         assert secrets.status["openai"] == "ok"
 
 
-def test_one_401_among_good_calls_triggers(session_factory):
+def test_one_401_among_good_calls_triggers(
+    session_factory: sessionmaker[Session],
+) -> None:
     health, state, secrets, events = _health(session_factory)
     with session_factory() as session:
         health.settle_cycle(
@@ -127,7 +133,9 @@ def test_one_401_among_good_calls_triggers(session_factory):
         assert secrets.status["openai"] == "failing"
 
 
-def test_one_timeout_among_good_calls_does_not(session_factory):
+def test_one_timeout_among_good_calls_does_not(
+    session_factory: sessionmaker[Session],
+) -> None:
     health, state, secrets, events = _health(session_factory)
     with session_factory() as session:
         health.settle_cycle(
@@ -139,7 +147,9 @@ def test_one_timeout_among_good_calls_does_not(session_factory):
         assert secrets.tests == []
 
 
-def test_all_failed_without_auth_opens_episode(session_factory):
+def test_all_failed_without_auth_opens_episode(
+    session_factory: sessionmaker[Session],
+) -> None:
     health, state, secrets, events = _health(session_factory)
     with session_factory() as session:
         health.settle_cycle(
@@ -155,7 +165,9 @@ def test_all_failed_without_auth_opens_episode(session_factory):
         assert secrets.tests == []
 
 
-def test_no_calls_keeps_episode_state(session_factory):
+def test_no_calls_keeps_episode_state(
+    session_factory: sessionmaker[Session],
+) -> None:
     health, state, secrets, events = _health(session_factory)
     with session_factory() as session:
         health.settle_cycle(session, [_resp(error="x")])

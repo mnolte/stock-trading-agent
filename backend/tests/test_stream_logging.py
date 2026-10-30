@@ -6,11 +6,12 @@ degraded."""
 
 import logging
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from app.broker.alpaca import StreamOutageFilter
 from app.market.clock import FakeClock
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
@@ -30,7 +31,9 @@ def _record(name: str, level: int, msg: str) -> logging.LogRecord:
     )
 
 
-def test_outage_first_error_then_counted_repeats(caplog):
+def test_outage_first_error_then_counted_repeats(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     clock = [0.0]
     degraded: list[bool] = []
     stream = StreamOutageFilter(
@@ -69,7 +72,7 @@ def test_outage_first_error_then_counted_repeats(caplog):
     ) is True
 
 
-def test_outage_past_five_minutes_marks_degraded_once():
+def test_outage_past_five_minutes_marks_degraded_once() -> None:
     clock = [0.0]
     degraded: list[bool] = []
     stream = StreamOutageFilter(
@@ -86,7 +89,7 @@ def test_outage_past_five_minutes_marks_degraded_once():
 
 
 async def test_outage_degrades_only_in_session(
-    session_factory: sessionmaker,
+    session_factory: sessionmaker[Session],
 ) -> None:
     """The 5-minute outage marks the stream degraded while New York is
     in session; an overnight drop does not (docs/SPEC.md — Stream
@@ -97,7 +100,7 @@ async def test_outage_degrades_only_in_session(
     from tests.test_executor import _executor
 
     clock = FakeClock(NOW)
-    broker = FakeBroker(clock, prices={"MSFT": 100})
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("100")})
     executor = _executor(session_factory, broker, clock)
 
     await executor.on_stream_failure("stream reconnect outage 320s")
@@ -105,7 +108,7 @@ async def test_outage_degrades_only_in_session(
 
     executor2 = _executor(
         session_factory,
-        FakeBroker(FakeClock(AFTER_HOURS), prices={"MSFT": 100}),
+        FakeBroker(FakeClock(AFTER_HOURS), prices={"MSFT": Decimal("100")}),
         FakeClock(AFTER_HOURS),
     )
     await executor2.on_stream_failure("stream reconnect outage 320s")
