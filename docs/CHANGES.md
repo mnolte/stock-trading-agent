@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-30 — Decision reload keeps saved model credentials
+
+- Reloading decision settings or saving a model key now keeps the shared, credential-aware model client. Previously reload replaced it with a client without the secrets store, causing model calls to use the `missing` placeholder even when the saved key passed its Settings test.
+- Regression tests cover both providers, cached and uncached adapters, saved and missing keys, key replacement and removal, and prompt refresh. No spec or design change.
+
 ## 2026-10-30 — Analysis: IEX quote plausibility
 
 - `docs/analysis/2026-10-29-quote-plausibility.md` plus the reproducible script `scripts/analysis/quote_plausibility.py` (read-only, `mode=ro`). No behaviour change.
