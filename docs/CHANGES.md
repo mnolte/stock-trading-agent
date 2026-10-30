@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-10-30 — Review attribution (PR 32)
+
+- From the model-call analysis of 30 October (1,067 calls, 19–29 October): 32 of 99 verdicts judged a skip that code had made out of a model enter, because the verdict facts held only the final action; `verdict.v1` called a skip followed by +1.1% a good call ("avoided a small gain"); the one weekly review suggested a rule change on 1 closed trade; the briefing showed its status line twice; and an unknown prompt version silently used decision.v1's contract.
+- Outcome tracking: **option outcomes**. For decisions with options, which of each offered option's stop or target was touched first in 5 sessions, traded or not (`outcomes.option_touches`).
+- Reviews → **Verdicts**: verdicts judge the model's call; facts carry the model's action, code's change and its reason, execution, the checks at decision time (v3 rules) and option outcomes. The draft label is set by code from an outcome table; the model writes the reason and a thesis check (`consistent`, `contradicts`, `unclear`). Confirmed verdicts are counted per model call.
+- Reviews → **Weekly suggestion**: only from `reviews.min_closed_trades_for_suggestion` (10) closed trades in the run, with an evidence line; otherwise "No suggestion yet".
+- Reviews → **Briefing text**: the status line is stored and shown once.
+- Decision layer → **Known prompt versions only**: no fallback to another version's contract; `unknown_prompt_version` at startup and on save.
+- New prompts `verdict.v2.md` and `weekly.v2.md`. They are not in `prompts/manifest.json` yet, so they can't load until PR 32 adds their code and their manifest entries. `config.example.yaml` changes (the new defaults and `reviews.min_closed_trades_for_suggestion`) come with PR 32 (rule 7).
+- Not in this change, kept for a decision.v4 once the v3 shadow has data: ignoring unrelated headlines (RTX the company vs NVIDIA's RTX laptops) and saying what each cited headline changed; explaining why a conflict is outweighed instead of "manageable"; a meaning for confidence on a skip.
+- Build plan item 32.
+
 ## 2026-10-29 — Break-even guard
 
 - From the decision report of 29 October: live decision.v2 tightened four stops to break-even at +0.13R to +0.40R, each called "locking in profit" because the v2 snapshot marks a stop equal to the entry as `locks_profit`. RTX turned a +0.40R open gain into −$2.07 within two hours.

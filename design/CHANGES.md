@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-30 — Review attribution
+
+- `Reviews.dc.html`, Verdicts to confirm (PR 32): each row shows the model's call and, when code changed it, the final action in amber with the reason ("ENTER B → SKIP by code · reward to risk 1.4, min 1.5"); an Outcome line (option touches, or the fill and R); the draft chip marked "label by code"; and a Thesis check line ("consistent with the facts", or an amber "contradicts the facts" chip with the claim). Confirm buttons use `aria-pressed`.
+- `Reviews.dc.html`, Suggestion: until the run has 10 closed trades the box is neutral and says "No suggestion yet: 3 closed trades in this run, 10 needed". An allowed suggestion keeps the accent box, "not applied", plus an evidence line.
+- `Reviews.dc.html`, Observations: confirmed verdicts are counted per group (executed model entries, entries blocked by code, model skips) with thesis contradictions.
+
 ## 2026-10-29 — Decision v3: momentum, neutral probability, stop basis by code
 
 - `DecisionV3.dc.html`: a Momentum row in Checks by code; the stop and target basis shown as a line "Written by code" under the reasoning (the model's text no longer describes them); a Claim checks gate.
