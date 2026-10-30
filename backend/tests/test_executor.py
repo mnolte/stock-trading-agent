@@ -3432,3 +3432,104 @@ async def test_flat_symbol_is_not_refetched_within_a_pass(
     # The flat marker answered it — no second broker ask this pass.
     assert placed == Decimal(0)
     assert calls == []
+
+
+class _Notices:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def notify(self, event: str, line: str, **kwargs: object) -> None:
+        self.calls.append((event, line))
+
+
+async def _seed_entry_row(session, submitted, symbol: str, qty: int, limit: str) -> None:
+    session.add(
+        Order(
+            alpaca_order_id=submitted.data.id,
+            client_order_id=submitted.data.client_order_id,
+            symbol=symbol,
+            decision_id=None,
+            side="buy",
+            order_type="limit",
+            leg="entry",
+            qty=qty,
+            limit_price=Decimal(limit),
+            status="new",
+            created_at=NOW.replace(tzinfo=None),
+        )
+    )
+    session.commit()
+
+
+async def test_opened_notification_once_on_final_fill(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """PG of 30 Oct: prints arriving over seconds give one "opened"
+    notification with the filled quantity, not one per partial fill."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.90")})
+    broker.partial_fill["PG"] = 4
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("162.90"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-1",
+    )
+    executor = _executor(session_factory, broker, clock)
+    notices = _Notices()
+    executor._notifier = notices
+    with session_factory() as session:
+        await _seed_entry_row(session, submitted, "PG", 12, "162.90")
+
+    # Four prints: 4, 8, 12 — the first two are still working.
+    for _ in range(2):
+        await broker.tick("PG", Decimal("162.85"))
+        await executor.reconcile()
+        assert [c for c in notices.calls if c[0] == "trade"] == []
+
+    await broker.tick("PG", Decimal("162.85"))
+    await executor.reconcile()
+    trades = [c for c in notices.calls if c[0] == "trade"]
+    assert trades == [("trade", "opened PG: 12 shares @ 162.85")]
+
+    # Later reconciles never repeat it.
+    await executor.reconcile()
+    assert [c for c in notices.calls if c[0] == "trade"] == trades
+
+
+async def test_opened_notification_partial_fill_then_cancel(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An entry cancelled after partial fills reports "8 of 12"."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.90")})
+    broker.partial_fill["PG"] = 8
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("162.90"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-2",
+    )
+    executor = _executor(session_factory, broker, clock)
+    notices = _Notices()
+    executor._notifier = notices
+    with session_factory() as session:
+        await _seed_entry_row(session, submitted, "PG", 12, "162.90")
+
+    await broker.tick("PG", Decimal("162.85"))
+    await executor.reconcile()
+    assert [c for c in notices.calls if c[0] == "trade"] == []
+
+    await broker.cancel_order(submitted.data.id)
+    await executor.reconcile()
+    trades = [c for c in notices.calls if c[0] == "trade"]
+    assert trades == [("trade", "opened PG: 8 of 12 shares @ 162.85")]
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "PG")
+        ).scalar_one()
+        assert position.qty == 8

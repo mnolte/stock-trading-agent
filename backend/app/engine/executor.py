@@ -165,6 +165,12 @@ class Executor:
         # still be in flight (order id -> fill time); re-checked every
         # pass against the stream-health grace window.
         self._fills_awaiting_update: dict[str, datetime] = {}
+        # Entry orders that reached a final state with fills since the
+        # last drain — the "trade opened" notification fires once, on
+        # the final state, never on the first partial fill (docs/SPEC.md,
+        # Notifications — Trade opened or closed).
+        self._entry_finals: list[str] = []
+        self._opened_notified: set[str] = set()
         # Alpaca enforces client_order_id uniqueness account-wide
         # forever; the seq restarts each process, so a per-process
         # nonce keeps ids unique across restarts and DB rebuilds.
@@ -1157,6 +1163,8 @@ class Executor:
         row = session.execute(
             select(Order).where(Order.alpaca_order_id == order.id)
         ).scalar_one_or_none()
+        was_open = row is not None and row.status in OPEN_ORDER_STATUSES
+        was_known = row is not None
         if row is None:
             row = Order(
                 alpaca_order_id=order.id,
@@ -1187,6 +1195,18 @@ class Executor:
             row.active_until = _naive_utc(order.updated_at or self.clock.now())
         if order.filled_qty > 0 and order.filled_avg_price is not None:
             self._record_fills(session, row, order, new_fills=new_fills)
+        if (
+            row.leg == "entry"
+            and order.status not in OPEN_ORDER_STATUSES
+            and order.filled_qty > 0
+            and (was_open or not was_known)
+            and order.id not in self._opened_notified
+        ):
+            # Open → final (or first seen final) with fills: queue the
+            # one "trade opened" notification; drained after positions
+            # open so the quantity is settled.
+            self._entry_finals.append(order.id)
+            self._opened_notified.add(order.id)
         for leg_order in order.legs:
             self._store_broker_order(
                 session, leg_order, decision_id, parent=order,
@@ -1302,9 +1322,21 @@ class Executor:
                 select(Order).where(Order.alpaca_order_id == update.order.id)
             ).scalar_one_or_none()
             if row is not None:
+                was_open = row.status in OPEN_ORDER_STATUSES
                 row.status = update.order.status
                 if update.order.filled_at is not None:
                     row.filled_at = _naive_utc(update.order.filled_at)
+                if (
+                    row.leg == "entry"
+                    and was_open
+                    and update.order.status not in OPEN_ORDER_STATUSES
+                    and update.order.filled_qty > 0
+                    and update.order.id not in self._opened_notified
+                ):
+                    # Entry order final with fills: the "opened"
+                    # notification goes out once, from the drain below.
+                    self._entry_finals.append(update.order.id)
+                    self._opened_notified.add(update.order.id)
                 if (
                     update.order.status not in OPEN_ORDER_STATUSES
                     and row.active_until is None
@@ -1521,6 +1553,7 @@ class Executor:
             # 3. An entry fill opens the DB position (qty/avg are then
             #    corrected from the broker position below).
             report.fills_recorded += self._open_positions_from_fills(session)
+            self._notify_opened(session)
 
             # 4. Position-level sync: adopt unknown, adopt mismatched,
             #    close positions the broker no longer reports.
@@ -1685,6 +1718,43 @@ class Executor:
         self._notify({"positions", "orders", "banners", "header"})
         return report
 
+    def _notify_opened(self, session: Session) -> None:
+        """One "trade opened" notification per final entry order.
+
+        Fires when the order is final — filled, or cancelled/expired
+        with a partial fill — never on the first partial print. The
+        filled quantity comes from the recorded fill rows: "opened
+        PG: 12 shares @ 162.85", or "8 of 12 shares" when the rest was
+        cancelled (docs/SPEC.md, Notifications).
+        """
+        for alpaca_order_id in list(self._entry_finals):
+            self._entry_finals.remove(alpaca_order_id)
+            row = session.execute(
+                select(Order).where(
+                    Order.alpaca_order_id == alpaca_order_id
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                continue
+            fills = session.execute(
+                select(Fill).where(Fill.order_id == row.id)
+            ).scalars().all()
+            if not fills:
+                continue
+            qty = sum(f.qty for f in fills)
+            avg = sum((f.price * f.qty for f in fills), Decimal(0)) / qty
+            partial = (
+                f"{qty} of {row.qty} shares"
+                if qty < row.qty
+                else f"{qty} shares"
+            )
+            self._notifier.notify(
+                "trade",
+                f"opened {row.symbol}: {partial} @ "
+                f"{avg.quantize(Decimal('0.01'))}",
+                link="/positions",
+            )
+
     def _open_positions_from_fills(self, session: Session) -> int:
         """Open a DB position for each entry fill that has none yet.
 
@@ -1699,12 +1769,11 @@ class Executor:
         the source of truth for qty and whether a position still exists.
         """
         opened = 0
-        opened_symbols: list[tuple[str, int, Decimal]] = []
         filled_buys = session.execute(
-            select(Order).where(
-                Order.side == "buy",
-                Order.status.in_(("filled", "partially_filled")),
-            )
+            select(Order)
+            .join(Fill, Fill.order_id == Order.id)
+            .where(Order.side == "buy")
+            .distinct()
         ).scalars().all()
         for order in filled_buys:
             fill_rows = session.execute(
@@ -1798,14 +1867,7 @@ class Executor:
                 )
             )
             opened += 1
-            opened_symbols.append((order.symbol, filled_qty, avg_price))
         session.flush()
-        for symbol, qty, avg_price in opened_symbols:
-            self._notifier.notify(
-                "trade",
-                f"opened {symbol}: {qty} shares @ {avg_price}",
-                link="/positions",
-            )
         return opened
 
     def _own_exit(self, session: Session, order: Order) -> bool:
