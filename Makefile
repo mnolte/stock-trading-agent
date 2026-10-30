@@ -91,7 +91,7 @@ test-e2e:
 
 readme-screens: ## README screenshots → docs/images/readme/ (simulated, seeded fixtures)
 	mkdir -p docs/images/readme
-	$(FE) exec playwright test --config=playwright.readme.config.ts --reporter=line
+	SCREENSHOT_DIR=../docs/images/readme $(FE) exec playwright test --config=playwright.readme.config.ts --reporter=line
 	@for f in docs/images/readme/*.png; do \
 	  sz=$$(stat -c%s "$$f"); \
 	  [ $$sz -gt 409600 ] && echo "optimising $$f ($$sz bytes)" && \
