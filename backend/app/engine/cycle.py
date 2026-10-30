@@ -610,7 +610,7 @@ class CycleRunner:
         # Symbols the rules reject — and held positions skipped for a
         # pending acknowledgment — still get a stored decision: "no_call"
         # with reason "rules", so the inspector shows why they were skipped.
-        rules_log = logging.getLogger("rules")
+        rules_log = logging.getLogger("app.rules")
         review_symbols = {item.symbol for item in reviews}
         for item in evaluation.items:
             ev(

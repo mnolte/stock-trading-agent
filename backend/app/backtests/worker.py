@@ -64,7 +64,7 @@ from app.decide.client import FakeDecisionClient
 from app.decide.llm_cache import LLMCacheStore
 from app.market.clock import NY_TZ, Clock, FakeClock, RealClock, SessionClock
 
-logger = logging.getLogger("backtest.worker")
+logger = logging.getLogger("app.backtest.worker")
 
 
 class RunCancelled(Exception):

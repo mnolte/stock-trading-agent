@@ -66,9 +66,9 @@ if TYPE_CHECKING:
 CENT = Decimal("0.01")
 
 logger = logging.getLogger(__name__)
-log_orders = logging.getLogger("broker.orders")
-log_gates = logging.getLogger("risk")
-log_reconcile = logging.getLogger("broker.reconcile")
+log_orders = logging.getLogger("app.broker.orders")
+log_gates = logging.getLogger("app.risk")
+log_reconcile = logging.getLogger("app.broker.reconcile")
 
 
 @dataclass
@@ -1267,9 +1267,28 @@ class Executor:
     # ------------------------------------------------------------------
     # reconciliation
 
+    def _market_in_session(self) -> bool:
+        """Whether New York is inside today's session right now."""
+        ny_now = self.clock.now().astimezone(NY_TZ)
+        session = self.calendar.session_for(ny_now.date())
+        return (
+            session is not None and session.open <= ny_now < session.close
+        )
+
     async def on_stream_failure(self, reason: str) -> None:
-        """An unparseable trade update: count it and mark the stream
-        degraded (docs/SPEC.md, Alpaca integration — Stream health)."""
+        """A stream health failure; entering ``degraded`` records the
+        critical event (docs/SPEC.md, Alpaca integration — Stream
+        health). A reconnect outage only degrades during a session —
+        overnight drops are routine."""
+        if (
+            reason.startswith("stream reconnect outage")
+            and not self._market_in_session()
+        ):
+            ev(
+                logger, logging.INFO, "stream.outage_after_hours",
+                f"{reason} outside session — stream stays healthy",
+            )
+            return
         with self._session_factory() as session:
             self._mark_stream_failure(session, reason)
             session.commit()

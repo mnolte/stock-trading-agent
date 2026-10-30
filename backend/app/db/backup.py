@@ -47,7 +47,7 @@ def create_backup(clock: Clock | None = None) -> None:
     from app.logging_config import ev
 
     ev(
-        logging.getLogger("db"), logging.INFO, "db.backup",
+        logging.getLogger("app.db"), logging.INFO, "db.backup",
         f"backup {backup_path.name} ok (integrity_check)",
         job="backup",
     )

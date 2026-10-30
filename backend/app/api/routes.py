@@ -4939,7 +4939,7 @@ def api_logs_summary(request: Request) -> dict[str, object]:
                 ):
                     reviews[fp] = review
         except Exception:  # noqa: BLE001 - table may predate the migration
-            logging.getLogger("api").debug("log_reviews not available yet")
+            logging.getLogger("app.api").debug("log_reviews not available yet")
     return {
         "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
         "level_counts": dict(level_counts),

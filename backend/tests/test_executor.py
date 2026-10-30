@@ -2081,7 +2081,7 @@ async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
             Quote(
                 "MSFT", Decimal("100"), Decimal("100"), Decimal("100"),
                 NOW, "iex",
-                trade_timestamp=NOW - timedelta(minutes=2), fetched_at=NOW,
+                trade_timestamp=NOW - timedelta(seconds=400), fetched_at=NOW,
             ),
             "price_stale",
         ),

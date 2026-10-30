@@ -77,7 +77,7 @@ class PositionChecker:
             return report
         from app.logging_config import ev, log_context
 
-        log = logging.getLogger("check")
+        log = logging.getLogger("app.check")
         with self._session_factory() as session:
             cycle = Cycle(
                 kind="position_check",

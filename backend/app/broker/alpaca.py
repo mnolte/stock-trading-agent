@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
+from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime
 from decimal import Decimal
@@ -609,6 +611,23 @@ class AlpacaPaperBroker:
             )
             future.add_done_callback(self._log_handler_result)
 
+    def _on_stream_outage(self) -> None:
+        """The SDK logger's outage crossed the degrade window — hand the
+        failure handlers a reason on the app loop (docs/SPEC.md —
+        Stream health). Runs on the SDK thread; the session check is
+        the executor's."""
+        loop = self._main_loop
+        if loop is None or loop.is_closed():
+            return
+        for failure_handler in self._failure_handlers:
+            failed: Future[None] = asyncio.run_coroutine_threadsafe(
+                _await_failure_handler(
+                    failure_handler, "stream reconnect outage"
+                ),
+                loop,
+            )
+            failed.add_done_callback(self._log_handler_result)
+
     @staticmethod
     def _log_handler_result(future: Future[None]) -> None:
         """Surface handler failures: the scheduled future is never awaited."""
@@ -625,6 +644,17 @@ class AlpacaPaperBroker:
         self._stream_started = True
         self._main_loop = asyncio.get_running_loop()
         self._stream.subscribe_trade_updates(self._on_trade_update)
+        # Outage-aware dedup on the SDK's stream logger: first failure
+        # at ERROR, repeats at most once per 10 minutes, reconnect at
+        # INFO with the outage length, long outages handed to the
+        # failure handlers (docs/SPEC.md — Stream health).
+        stream_logger = logging.getLogger("alpaca.trading.stream")
+        if not any(
+            isinstance(f, StreamOutageFilter) for f in stream_logger.filters
+        ):
+            stream_logger.addFilter(
+                StreamOutageFilter(degraded=self._on_stream_outage)
+            )
         await asyncio.to_thread(self._run_stream_blocking)
 
     def _run_stream_blocking(self) -> None:
@@ -658,6 +688,101 @@ class AlpacaPaperBroker:
         self._stream_started = False
         await asyncio.to_thread(self._stream.stop)
         self._stream_thread = None
+
+
+class StreamOutageFilter(logging.Filter):
+    """Reconnect logging for the SDK's ``alpaca.trading.stream`` logger
+    (docs/SPEC.md, Alpaca integration — Stream health).
+
+    An outage opens at the first WARNING/ERROR line and ends when the
+    SDK reports "connected to:". While it runs, the first failure is
+    kept at ERROR, the same error repeats at most once per
+    REPORT_EVERY_SECONDS with a count, the SDK's own INFO is left to
+    the library rule, and the reconnect is announced at INFO by the
+    app logger with the outage length. An outage that crosses
+    DEGRADE_AFTER_SECONDS calls ``degraded`` once — the executor
+    decides whether a session is open.
+    """
+
+    REPORT_EVERY_SECONDS = 600.0
+    DEGRADE_AFTER_SECONDS = 300.0
+
+    def __init__(
+        self,
+        *,
+        degraded: Callable[[], None] | None = None,
+        now: Callable[[], float] = time.monotonic,
+    ) -> None:
+        super().__init__()
+        self._degraded = degraded
+        self._now = now
+        self._outage_start: float | None = None
+        # error key → (count, last reported monotonic)
+        self._errors: dict[str, list[Any]] = {}
+        self._degraded_notified = False
+
+    def _check_degraded(self, at: float) -> None:
+        if (
+            self._degraded is not None
+            and not self._degraded_notified
+            and self._outage_start is not None
+            and at - self._outage_start >= self.DEGRADE_AFTER_SECONDS
+        ):
+            self._degraded_notified = True
+            try:
+                self._degraded()
+            except Exception:
+                # A filter must never break logging; the callback's own
+                # failure is still reported (hard rule 15).
+                logger.exception("stream-outage degraded callback failed")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - never break logging
+            return True
+        at = self._now()
+        if record.levelno >= logging.WARNING:
+            key = message.splitlines()[0][:160]
+            if self._outage_start is None:
+                # First failure of an outage — at ERROR (spec).
+                self._outage_start = at
+                self._errors = {key: [1, at]}
+                self._degraded_notified = False
+                if record.levelno < logging.ERROR:
+                    record.levelno = logging.ERROR
+                    record.levelname = "ERROR"
+                return True
+            entry = self._errors.get(key)
+            if entry is None:
+                # A different failure during the same outage: logged.
+                self._errors[key] = [1, at]
+                self._check_degraded(at)
+                return True
+            entry[0] += 1
+            if at - entry[1] < self.REPORT_EVERY_SECONDS:
+                self._check_degraded(at)
+                return False
+            entry[1] = at
+            record.msg = (
+                f"{message} (repeated x{entry[0]} since the outage began)"
+            )
+            record.args = ()
+            self._check_degraded(at)
+            return True
+        if (
+            message.startswith("connected to:")
+            and self._outage_start is not None
+        ):
+            duration = at - self._outage_start
+            self._outage_start = None
+            self._errors = {}
+            self._degraded_notified = False
+            logging.getLogger("app.broker.stream").info(
+                "trade-updates stream reconnected after %.0f s down",
+                duration,
+            )
+        return True
 
 
 __all__ = [

@@ -22,7 +22,7 @@ from app.llm.models import model_timeout_seconds
 if TYPE_CHECKING:
     from app.config import AppConfig
 
-logger = logging.getLogger("model.openai")
+logger = logging.getLogger("app.model.openai")
 
 
 def _classify_error(exc: Exception) -> str:

@@ -254,24 +254,40 @@ async def test_new_error_notification_once_per_fingerprint(
 def test_library_loggers_warning_unless_library_debug(
     client: TestClient,
 ) -> None:
-    """websockets/uvicorn/httpx/apscheduler log at WARNING unless
-    logging.library_debug is on (29 Oct: 52 MB in 2.5 days)."""
+    """The name rule: every logger outside app/frontend drops below
+    WARNING before the queue — any library, no name list (docs/SPEC.md,
+    Logging). logging.library_debug lets them through again."""
     from app.config import get_config
-    from app.logging_config import get_pipeline, install_queue_root
+    from app.logging_config import _LibraryFilter, get_pipeline
 
-    for name in ("uvicorn.access", "httpx", "websockets", "apscheduler.scheduler"):
-        assert logging.getLogger(name).level == logging.WARNING
+    pipeline = get_pipeline()
+    assert pipeline is not None
+    assert any(
+        isinstance(f, _LibraryFilter)
+        for f in pipeline._queue_handler.filters
+    )
+
+    def record(name: str, level: int) -> logging.LogRecord:
+        return logging.makeLogRecord(
+            {"name": name, "levelno": level, "levelname": logging.getLevelName(level),
+             "msg": "noise", "args": ()}
+        )
+
+    lib_filter = _LibraryFilter()
+    # DEBUG from real libraries and an invented one is dropped.
+    for name in ("httpcore", "urllib3", "invented.library",
+                 "uvicorn.access", "websockets"):
+        assert not lib_filter.filter(record(name, logging.DEBUG)), name
+        assert not lib_filter.filter(record(name, logging.INFO)), name
+    # WARNING and above still pass; app/frontend pass at any level.
+    assert lib_filter.filter(record("httpcore", logging.WARNING))
+    assert lib_filter.filter(record("invented.library", logging.ERROR))
+    assert lib_filter.filter(record("app.engine.executor", logging.DEBUG))
+    assert lib_filter.filter(record("app", logging.DEBUG))
+    assert lib_filter.filter(record("frontend", logging.INFO))
 
     get_config().yaml.setdefault("logging", {})["library_debug"] = True
     try:
-        pipeline = get_pipeline()
-        assert pipeline is not None
-        install_queue_root(pipeline)
-        for name in ("uvicorn.access", "httpx", "websockets"):
-            assert logging.getLogger(name).level == logging.DEBUG
+        assert lib_filter.filter(record("urllib3", logging.DEBUG))
     finally:
         get_config().yaml["logging"]["library_debug"] = False
-        pipeline = get_pipeline()
-        assert pipeline is not None
-        install_queue_root(pipeline)
-    assert logging.getLogger("httpx").level == logging.WARNING

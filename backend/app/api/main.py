@@ -1665,7 +1665,7 @@ def create_app() -> FastAPI:
         with log_context(request=rid):
             response = await call_next(request)
         response.headers["X-Request-Id"] = rid
-        logging.getLogger("api").debug(
+        logging.getLogger("app.api").debug(
             "%s %s -> %s in %dms",
             request.method,
             request.url.path,
