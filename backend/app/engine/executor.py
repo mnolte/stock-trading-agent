@@ -161,6 +161,10 @@ class Executor:
         self._notifier = notifier or NullNotifier()
         self._orders_this_cycle = 0
         self._order_seq = 0
+        # Fills reconciliation recorded while their stream update could
+        # still be in flight (order id -> fill time); re-checked every
+        # pass against the stream-health grace window.
+        self._fills_awaiting_update: dict[str, datetime] = {}
         # Alpaca enforces client_order_id uniqueness account-wide
         # forever; the seq restarts each process, so a per-process
         # nonce keeps ids unique across restarts and DB rebuilds.
@@ -1138,6 +1142,7 @@ class Executor:
         *,
         leg: str | None = None,
         parent: BrokerOrder | None = None,
+        new_fills: list[tuple[str, datetime | None]] | None = None,
     ) -> Order:
         """Insert or update the DB row for one broker order (idempotent)."""
         row = session.execute(
@@ -1172,17 +1177,27 @@ class Executor:
         if order.status not in OPEN_ORDER_STATUSES and row.active_until is None:
             row.active_until = _naive_utc(order.updated_at or self.clock.now())
         if order.filled_qty > 0 and order.filled_avg_price is not None:
-            self._record_fills(session, row, order)
+            self._record_fills(session, row, order, new_fills=new_fills)
         for leg_order in order.legs:
             self._store_broker_order(
-                session, leg_order, decision_id, parent=order
+                session, leg_order, decision_id, parent=order,
+                new_fills=new_fills,
             )
         return row
 
     def _record_fills(
-        self, session: Session, row: Order, order: BrokerOrder
+        self,
+        session: Session,
+        row: Order,
+        order: BrokerOrder,
+        new_fills: list[tuple[str, datetime | None]] | None = None,
     ) -> None:
-        """Record fill rows for any broker filled qty not yet stored."""
+        """Record fill rows for any broker filled qty not yet stored.
+
+        ``new_fills`` (reconciliation only) collects every fill first seen
+        here — a fill the stream update never announced (docs/SPEC.md,
+        Alpaca integration — Stream health).
+        """
         recorded = session.execute(
             select(func.coalesce(func.sum(Fill.qty), 0)).where(
                 Fill.order_id == row.id
@@ -1204,12 +1219,66 @@ class Executor:
                 slippage=order.filled_avg_price - intended,
             )
         )
+        if new_fills is not None:
+            new_fills.append((order.id, order.filled_at))
 
     # ------------------------------------------------------------------
     # reconciliation
 
+    async def on_stream_failure(self, reason: str) -> None:
+        """An unparseable trade update: count it and mark the stream
+        degraded (docs/SPEC.md, Alpaca integration — Stream health)."""
+        with self._session_factory() as session:
+            self._mark_stream_failure(session, reason)
+            session.commit()
+
+    def _mark_stream_failure(self, session: Session, reason: str) -> None:
+        """One stream-health failure; entering ``degraded`` records the
+        critical event (its notification goes through the event sink).
+        Repeat failures extend the window without a new alert."""
+        now = self.clock.now()
+        already = self.state.stream_degraded
+        self.state.stream_failures += 1
+        self.state.stream_last_failure_at = now
+        clear_min = int(
+            self.config.get("execution", "stream_degraded_minutes", default=30)
+        )
+        self.state.stream_degraded_until = now + timedelta(minutes=clear_min)
+        if already:
+            return
+        self.state.stream_degraded_since = now
+        record_event(
+            session,
+            self.clock,
+            level="critical",
+            event_type="stream_degraded",
+            details={
+                "reason": reason,
+                "failures": self.state.stream_failures,
+                "message": "Trade-updates stream degraded",
+            },
+        )
+        self._notify({"banners", "header"})
+
+    def _stream_grace(self) -> timedelta:
+        return timedelta(
+            seconds=int(
+                self.config.get(
+                    "execution", "stream_update_grace_seconds", default=120
+                )
+            )
+        )
+
     async def on_trade_update(self, update: TradeUpdateInfo) -> None:
         """A trade-updates event: mark the order, then reconcile the rest."""
+        # An update arriving inside the grace window answers a fill
+        # reconciliation had already recorded (stream health).
+        pending_fill = self._fills_awaiting_update.get(update.order.id)
+        if (
+            pending_fill is not None
+            and self.clock.now() - pending_fill <= self._stream_grace()
+        ):
+            del self._fills_awaiting_update[update.order.id]
         foreign: str | None = None
         with self._session_factory() as session:
             foreign = self._check_foreign_instance(session, update.order)
@@ -1308,6 +1377,9 @@ class Executor:
                 broker_open[leg.id] = leg
 
         with self._session_factory() as session:
+            # Fills first seen by this pass (their stream update never
+            # arrived) feed the stream-health check after step 2.
+            new_fills: list[tuple[str, datetime | None]] = []
             # 1. Store/update rows for every open order at the broker.
             foreign_instance: str | None = None
             for order in orders_r.data:
@@ -1346,7 +1418,7 @@ class Executor:
                             "client_order_id": order.client_order_id,
                         },
                     )
-                self._store_broker_order(session, order, None)
+                self._store_broker_order(session, order, None, new_fills=new_fills)
                 report.orders_synced += 1
 
             # 2. DB orders still open but no longer open at the broker.
@@ -1365,7 +1437,9 @@ class Executor:
                         f"{fetched.error or 'not found'}"
                     )
                     continue
-                self._store_broker_order(session, fetched.data, row.decision_id)
+                self._store_broker_order(
+                    session, fetched.data, row.decision_id, new_fills=new_fills
+                )
                 report.orders_synced += 1
                 # Live orders the open list missed — Alpaca's open filter
                 # never returns `held`, so a bracket's working stop leg
@@ -1376,6 +1450,40 @@ class Executor:
                         if leg.is_open:
                             broker_open[leg.id] = leg
             session.flush()
+
+            # Stream health (docs/SPEC.md, Alpaca integration): a fill
+            # this pass recorded for the first time is one the stream
+            # never delivered. It marks the stream degraded once the
+            # update is provably late — past the grace window — while a
+            # fresher fill waits for the next pass. Fills from before
+            # this run started are offline fills, not stream failures.
+            grace = self._stream_grace()
+            now = self.clock.now()
+            run_started = self.state.run_started_at
+            if run_started is not None and run_started.tzinfo is None:
+                run_started = run_started.replace(tzinfo=UTC)
+            for order_id, fill_at in new_fills:
+                fill_time = fill_at or now
+                if run_started is not None and fill_time < run_started:
+                    continue
+                if fill_time + grace <= now:
+                    self._mark_stream_failure(
+                        session,
+                        f"no trade update within "
+                        f"{int(grace.total_seconds())}s of a fill "
+                        f"(order {order_id})",
+                    )
+                else:
+                    self._fills_awaiting_update[order_id] = fill_time
+            for order_id, fill_time in list(self._fills_awaiting_update.items()):
+                if fill_time + grace <= now:
+                    del self._fills_awaiting_update[order_id]
+                    self._mark_stream_failure(
+                        session,
+                        f"no trade update within "
+                        f"{int(grace.total_seconds())}s of a fill "
+                        f"(order {order_id})",
+                    )
 
             # 3. An entry fill opens the DB position (qty/avg are then
             #    corrected from the broker position below).

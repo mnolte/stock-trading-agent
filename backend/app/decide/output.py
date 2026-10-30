@@ -346,6 +346,38 @@ def _decimal_or_none(value: object) -> Decimal | None:
         return None
 
 
+def _breakeven_guard(
+    *,
+    new_stop: Decimal | None,
+    position: Any,
+    price: Decimal | None,
+    min_r: Decimal,
+) -> str | None:
+    """The break-even guard (docs/SPEC.md, Decision layer — Code checks).
+
+    A tighten to a stop at or below the entry locks in 0 R or less;
+    while the position is less than ``decision.breakeven_min_r`` in
+    profit the action becomes ``hold`` with reason
+    ``breakeven_too_early``. Returns that reason when the guard refuses
+    the tighten, else None. Applies to every prompt version.
+    """
+    if new_stop is None or not isinstance(position, dict):
+        return None
+    entry = _decimal_or_none(position.get("entry"))
+    if entry is None or new_stop > entry:
+        return None
+    r_now = _decimal_or_none(position.get("r_now"))
+    if r_now is None:
+        r_now = _decimal_or_none(position.get("r_so_far"))
+    if r_now is None:
+        initial = _decimal_or_none(position.get("initial_stop"))
+        if price is not None and initial is not None and entry > initial:
+            r_now = (price - entry) / (entry - initial)
+    if r_now is not None and r_now >= min_r:
+        return None
+    return "breakeven_too_early"
+
+
 def _invalid(
     context: str, error: str, output: ModelOutput | None = None
 ) -> ValidationResult:
@@ -369,6 +401,7 @@ def validate_model_output(
     current_stop: Decimal | None,
     call_error: str | None = None,
     config: AppConfig,
+    position: dict[str, Any] | None = None,
 ) -> ValidationResult:
     """Parse ``raw`` and run the spec's code checks for the given context."""
     allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
@@ -376,6 +409,7 @@ def validate_model_output(
     atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
     atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
     min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
+    min_r = Decimal(str(config.get("decision", "breakeven_min_r", default=1.0)))
 
     if call_error is not None:
         return _invalid(context, f"model call failed: {call_error}")
@@ -520,8 +554,20 @@ def validate_model_output(
                 else "tighten_market_distance"
             ), value=_fmt(output.stop_price),
         )
-        checks = [check, distance, json_check]
-        if raises and distance_ok:
+        guard_reason = _breakeven_guard(
+            new_stop=output.stop_price,
+            position=position,
+            price=price,
+            min_r=min_r,
+        )
+        guard = CodeCheck(
+            "Break-even guard",
+            passed=guard_reason is None,
+            detail=guard_reason or "stop above entry or enough profit",
+            value=_fmt(output.stop_price),
+        )
+        checks = [check, distance, guard, json_check]
+        if raises and distance_ok and guard_reason is None:
             return ValidationResult(
                 valid=True,
                 output=output,
@@ -536,7 +582,11 @@ def validate_model_output(
             model_action="tighten_stop",
             final_action="hold",
             checks=checks,
-            note="Valid output · code changed tighten_stop → hold (stop not raised)",
+            reason=guard_reason,
+            note=(
+                "Valid output · code changed tighten_stop → hold "
+                f"({guard_reason or 'stop not raised'})"
+            ),
         )
 
     # skip / hold / exit need no further checks.
@@ -822,6 +872,22 @@ def validate_model_output_v2(
                 value=_fmt(new_stop),
             )
         )
+        guard_reason = _breakeven_guard(
+            new_stop=new_stop,
+            position=snapshot.get("position"),
+            price=price,
+            min_r=Decimal(
+                str(config.get("decision", "breakeven_min_r", default=1.0))
+            ),
+        )
+        checks.append(
+            CodeCheck(
+                "Break-even guard",
+                passed=guard_reason is None,
+                detail=guard_reason or "stop above entry or enough profit",
+                value=_fmt(new_stop),
+            )
+        )
         explanation = check_explanation(output, snapshot, chosen)
         checks.append(
             CodeCheck(
@@ -843,7 +909,7 @@ def validate_model_output_v2(
                 chosen_option=chosen,
                 explanation=explanation,
             )
-        if raises and distance_ok:
+        if raises and distance_ok and guard_reason is None:
             return ValidationResult(
                 valid=True,
                 output=output,
@@ -860,7 +926,11 @@ def validate_model_output_v2(
             model_action="tighten_stop",
             final_action="hold",
             checks=checks,
-            note="Valid output · code changed tighten_stop → hold (stop not raised)",
+            reason=guard_reason,
+            note=(
+                "Valid output · code changed tighten_stop → hold "
+                f"({guard_reason or 'stop not raised'})"
+            ),
             chosen_option=chosen,
             explanation=explanation,
         )
@@ -1303,6 +1373,22 @@ def validate_model_output_v3(
                 value=_fmt(new_stop),
             )
         )
+        guard_reason = _breakeven_guard(
+            new_stop=new_stop,
+            position=snapshot.get("position"),
+            price=price,
+            min_r=Decimal(
+                str(config.get("decision", "breakeven_min_r", default=1.0))
+            ),
+        )
+        checks.append(
+            CodeCheck(
+                "Break-even guard",
+                passed=guard_reason is None,
+                detail=guard_reason or "stop above entry or enough profit",
+                value=_fmt(new_stop),
+            )
+        )
         checks.extend(checks_tail)
         if not option_ok:
             return ValidationResult(
@@ -1312,7 +1398,7 @@ def validate_model_output_v3(
                 note="Invalid output — option id was not offered",
                 chosen_option=chosen, explanation=explanation, claims=claims,
             )
-        if raises and distance_ok:
+        if raises and distance_ok and guard_reason is None:
             return ValidationResult(
                 valid=True, output=output, model_action="tighten_stop",
                 final_action="tighten_stop", checks=checks,
@@ -1323,7 +1409,11 @@ def validate_model_output_v3(
         return ValidationResult(
             valid=True, output=output, model_action="tighten_stop",
             final_action="hold", checks=checks,
-            note="Valid output · code changed tighten_stop → hold (stop not raised)",
+            reason=guard_reason,
+            note=(
+                "Valid output · code changed tighten_stop → hold "
+                f"({guard_reason or 'stop not raised'})"
+            ),
             chosen_option=chosen, explanation=explanation, claims=claims,
         )
 

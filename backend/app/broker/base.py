@@ -23,6 +23,10 @@ from app.data.models import DataResult
 
 TradeUpdateHandler = Callable[[TradeUpdateInfo], Awaitable[None]]
 
+# Called with a short reason when the stream delivers something the
+# parser cannot read (docs/SPEC.md, Alpaca integration — Stream health).
+StreamFailureHandler = Callable[[str], Awaitable[None]]
+
 
 class Broker(Protocol):
     """Trading account operations. Implementations: AlpacaPaperBroker, FakeBroker."""
@@ -142,6 +146,10 @@ class Broker(Protocol):
 
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         """Register a handler for fill/cancel/reject events."""
+        ...
+
+    def subscribe_stream_failures(self, handler: StreamFailureHandler) -> None:
+        """Register a handler for unparseable stream messages."""
         ...
 
     async def start_stream(self) -> None:

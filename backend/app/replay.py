@@ -603,6 +603,11 @@ async def replay(
                     current_stop=held.current_stop if held else None,
                     call_error=response.error,
                     config=config,
+                    position=(
+                        snap.get("position")
+                        if isinstance(snap.get("position"), dict)
+                        else None
+                    ),
                 )
             model_action = validation.model_action
             final_action = validation.final_action

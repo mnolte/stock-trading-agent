@@ -233,6 +233,20 @@ EVENT_DEFS: tuple[EventDef, ...] = (
         "warnings",
         WARNING,
     ),
+    EventDef(
+        "stream_degraded",
+        "Trade-updates stream degraded",
+        "An update could not be parsed, or none within 2 minutes of a fill",
+        "critical",
+        CRITICAL,
+    ),
+    EventDef(
+        "clock_check_failing",
+        "Clock check failing",
+        "The hourly check itself, not the offset",
+        "warnings",
+        WARNING,
+    ),
 )
 
 EVENTS: dict[str, EventDef] = {d.key: d for d in EVENT_DEFS}
@@ -262,6 +276,7 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "restart_resumed": "restarted_resumed",
     "restart_paused": "restarted_paused",
     "backup_downloaded": "backup_downloaded",
+    "stream_degraded": "stream_degraded",
 }
 
 
@@ -387,6 +402,12 @@ def format_recorded(
             or f"order carries instance id {details.get('foreign_instance')}"
         )
         return key, line, "/settings"
+    if event_type == "stream_degraded":
+        return (
+            key,
+            str(details.get("reason") or "order updates may be delayed"),
+            "/positions",
+        )
     if event_type == "restart_resumed":
         return key, "resumed after a clean restart", "/"
     if event_type == "restart_paused":

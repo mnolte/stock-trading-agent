@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.broker.models import BrokerAccount
 from app.db.base import get_session_maker
 from app.db.models import Cycle, EquitySnapshot, Event, Position, Run
-from app.market.clock import NY_TZ
+from app.market.clock import NY_TZ, UTC
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -87,6 +87,22 @@ class ExecutionState:
     # Last broker reconciliation, for the Positions sync strip.
     last_reconcile_at: datetime | None = None
     last_reconcile_ok: bool = True
+    # Trade-updates stream health (docs/SPEC.md, Alpaca integration —
+    # Stream health): every unparseable update or reconcile-found fill
+    # with no timely update counts; ``degraded`` clears after the
+    # configured quiet window without a new failure.
+    stream_failures: int = 0
+    stream_last_failure_at: datetime | None = None
+    stream_degraded_since: datetime | None = None
+    stream_degraded_until: datetime | None = None
+
+    @property
+    def stream_degraded(self) -> bool:
+        until = self.stream_degraded_until
+        if until is None:
+            return False
+        aware = until if until.tzinfo is not None else until.replace(tzinfo=UTC)
+        return self.clock.now() < aware
 
     def _today_ny(self) -> date:
         return self.clock.now().astimezone(NY_TZ).date()

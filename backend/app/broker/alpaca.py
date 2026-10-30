@@ -35,7 +35,7 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.stream import TradingStream
 
-from app.broker.base import TradeUpdateHandler
+from app.broker.base import StreamFailureHandler, TradeUpdateHandler
 from app.broker.models import (
     BrokerAccount,
     BrokerAsset,
@@ -67,6 +67,13 @@ async def _await_handler(
 ) -> None:
     """Wrap an Awaitable handler in a coroutine for run_coroutine_threadsafe."""
     await handler(update)
+
+
+async def _await_failure_handler(
+    handler: StreamFailureHandler, reason: str
+) -> None:
+    """Same wrap for the stream-failure handlers."""
+    await handler(reason)
 
 
 def _raw(item: Any) -> dict[str, Any]:
@@ -131,6 +138,11 @@ def parse_account(item: Any) -> BrokerAccount:
 
 def parse_trade_update(item: Any) -> TradeUpdateInfo:
     raw = _raw(item)
+    # The stream is created with raw_data=True, so the SDK delivers the
+    # websocket envelope {"stream": "trade_updates", "data": {...}} —
+    # unwrap it. The bare payload and SDK models still parse directly.
+    if raw.get("stream") == "trade_updates":
+        raw = _raw(raw.get("data"))
     return TradeUpdateInfo(
         event=str(raw.get("event", "")),
         order=parse_order(raw.get("order", {})),
@@ -160,6 +172,7 @@ class AlpacaPaperBroker:
         # calls fail as ordinary errors, but the trade stream stays off.
         self._keyed = keyed
         self._handlers: list[TradeUpdateHandler] = []
+        self._failure_handlers: list[StreamFailureHandler] = []
         self._stream_started = False
         self._stream_thread: threading.Thread | None = None
         # The app event loop the stream hands updates to; captured in
@@ -519,6 +532,9 @@ class AlpacaPaperBroker:
     def subscribe_trade_updates(self, handler: TradeUpdateHandler) -> None:
         self._handlers.append(handler)
 
+    def subscribe_stream_failures(self, handler: StreamFailureHandler) -> None:
+        self._failure_handlers.append(handler)
+
     async def _on_trade_update(self, item: Any) -> None:
         """Runs on the stream thread's private loop: hand work to the app loop.
 
@@ -526,11 +542,28 @@ class AlpacaPaperBroker:
         bus — all bound to the application event loop. Awaiting them here
         would crash on the loop-bound ``asyncio.Lock``, so each handler is
         scheduled on the main loop with ``run_coroutine_threadsafe``.
+        One bad message is logged and counted, never fatal to the next
+        (docs/SPEC.md, Alpaca integration — Stream health).
         """
         loop = self._main_loop
         if loop is None or loop.is_closed():
             return
-        update = parse_trade_update(item)
+        try:
+            update = parse_trade_update(item)
+        except Exception as exc:  # noqa: BLE001 - carry on to the next message
+            # The log scrubber strips any stored keys from the raw dump.
+            logger.error(
+                "unparseable trade update dropped: %s — raw: %s",
+                exc,
+                repr(item)[:2000],
+                exc_info=True,
+            )
+            for failure_handler in self._failure_handlers:
+                failed: Future[None] = asyncio.run_coroutine_threadsafe(
+                    _await_failure_handler(failure_handler, str(exc)), loop
+                )
+                failed.add_done_callback(self._log_handler_result)
+            return
         for handler in self._handlers:
             future: Future[None] = asyncio.run_coroutine_threadsafe(
                 _await_handler(handler, update), loop

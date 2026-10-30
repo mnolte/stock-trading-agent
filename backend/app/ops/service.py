@@ -24,19 +24,27 @@ import ssl
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 
+from app.market.clock import NY_TZ
 from app.ops.offsite import restore_latest
 from app.ops.urls import UrlRejected, validate_public_https_url
 
 if TYPE_CHECKING:
-    from app.broker.base import Broker
     from app.config import AppConfig
+    from app.data.models import DataResult, MarketClock
     from app.market.clock import Clock
     from app.notifications.service import NotificationService
     from app.secrets_service import SecretsStore
+
+
+class ClockSource(Protocol):
+    """What ``check_clock`` needs: Alpaca's ``/v2/clock`` through the data
+    client (the broker interface has no clock)."""
+
+    async def fetch_clock(self) -> DataResult[MarketClock | None]: ...
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +59,14 @@ class OpsService:
         *,
         notifier: NotificationService | None = None,
         secrets: SecretsStore | None = None,
-        broker: Broker | None = None,
+        data_client: ClockSource | None = None,
         pinger: Any = None,
     ) -> None:
         self._config = config
         self._clock = clock
         self._notifier = notifier
         self._secrets = secrets
-        self._broker = broker
+        self._data_client = data_client
         self._pinger = pinger or self._http_ping
         self._status_path = Path(config.env.sa_data_dir) / _STATUS_NAME
         self._status: dict[str, Any] = self._load()
@@ -162,33 +170,39 @@ class OpsService:
         return result
 
     async def check_clock(self) -> dict[str, Any]:
-        """Offset vs the broker clock (chrony keeps the host; the offset
-        is what matters to cycles). Simulated mode: no reference."""
+        """Offset vs the broker clock, read through the data client's
+        ``fetch_clock`` (chrony keeps the host; the offset is what matters
+        to cycles). Simulated mode: no reference. A failing check notifies
+        "Clock check failing" once per New York session."""
         max_off = float(
             self._config.get("ops", "clock_max_offset_seconds", default=1)
         )
         offset_ms: float | None = None
-        if self._broker is not None:
+        check_failed = False
+        if self._data_client is not None:
+            remote: datetime | None = None
             try:
                 started = time.monotonic()
-                result = await self._broker.get_clock()  # type: ignore[attr-defined]
+                clock_result = await self._data_client.fetch_clock()
                 rtt = time.monotonic() - started
-                stamp = (
-                    result.data.get("timestamp")
-                    if getattr(result, "data", None)
-                    else None
-                )
-                if stamp:
-                    remote = datetime.fromisoformat(
-                        str(stamp).replace("Z", "+00:00")
+                if clock_result.error is not None:
+                    logger.warning(
+                        "clock check failed: %s", clock_result.error
                     )
-                    # subtract half the round-trip: the timestamp is one-way stale
-                    offset_ms = abs(
-                        (remote - self._clock.now()).total_seconds() * 1000
-                        - (rtt * 1000) / 2
-                    )
+                elif clock_result.data is not None:
+                    remote = clock_result.data.timestamp
             except Exception as exc:  # noqa: BLE001
                 logger.warning("clock check failed: %s", exc)
+            if remote is None:
+                check_failed = True
+            else:
+                # subtract half the round-trip: the timestamp is one-way stale
+                offset_ms = abs(
+                    (remote - self._clock.now()).total_seconds() * 1000
+                    - (rtt * 1000) / 2
+                )
+        if check_failed:
+            self._notify_clock_failure()
         # Half the round-trip is the one-way error budget on the broker
         # timestamp; warn only after 3 consecutive checks over the
         # threshold so one skewed response does not page Marc.
@@ -211,6 +225,19 @@ class OpsService:
         }
         self._set("clock", result)
         return result
+
+    def _notify_clock_failure(self) -> None:
+        """"Clock check failing" fires once per New York session, not
+        every hourly check (docs/SPEC.md, Notifications)."""
+        today = self._clock.now().astimezone(NY_TZ).date().isoformat()
+        if self._status.get("clock_fail_notified") == today:
+            return
+        self._status["clock_fail_notified"] = today
+        self._save()
+        self._notify(
+            "clock_check_failing",
+            "the hourly clock check could not read Alpaca's clock",
+        )
 
     def check_cert(self) -> dict[str, Any]:
         """Days until the public certificate expires (14-day warning)."""

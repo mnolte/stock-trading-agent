@@ -203,6 +203,11 @@ async def run(
         current_stop=inputs.current_stop,
         call_error=response.error,
         config=config,
+        position=(
+            inputs.snapshot_json.get("position")
+            if isinstance(inputs.snapshot_json.get("position"), dict)
+            else None
+        ),
     )
     print_report(
         inputs,
