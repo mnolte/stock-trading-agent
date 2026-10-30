@@ -107,7 +107,11 @@ export function getDashboard(symbol?: string): Promise<DashboardResponse> {
   return get<DashboardResponse>(`/api/dashboard${query}`);
 }
 
-export function getChart(symbol: string): Promise<ChartResponse> {
+export function getChart(symbol: string): Promise<ChartResponse | null> {
+  // No symbol must never reach the wire: 30 Oct logged GET /api/chart/
+  // (empty segment) from a stale bundle whose Dashboard guard didn't
+  // exist yet — the API layer is the last line of defence.
+  if (!symbol.trim()) return Promise.resolve(null);
   return get<ChartResponse>(`/api/chart/${symbol}`);
 }
 
