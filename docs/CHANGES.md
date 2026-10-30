@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-10-30 — Analysis: IEX quote plausibility
+
+- `docs/analysis/2026-10-29-quote-plausibility.md` plus the reproducible script `scripts/analysis/quote_plausibility.py` (read-only, `mode=ro`). No behaviour change.
+
 ## 2026-10-30 — Review attribution (PR 32) — implementation
 
 - The 2026-10-30 spec entry above lands in code on `feat/pr32-review-attribution` (stacked on PR 31). `config.example.yaml` gains `reviews.min_closed_trades_for_suggestion` (10) and `reviews.prompts` moves to `weekly.v2` / `verdict.v2` (briefing stays v1). No new spec behaviour beyond that entry.
