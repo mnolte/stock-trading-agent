@@ -312,6 +312,45 @@ class AlpacaPaperBroker:
         except Exception as exc:  # noqa: BLE001
             return DataResult(data=[], error=str(exc), source="alpaca")
 
+    async def get_filled_orders(
+        self, symbol: str, since: datetime
+    ) -> DataResult[list[BrokerOrder]]:
+        try:
+            raw = await self.limiter.run_read(
+                self.trading.get_orders,
+                GetOrdersRequest(
+                    status=QueryOrderStatus.CLOSED,
+                    symbols=[symbol],
+                    nested=True,
+                    limit=500,
+                ),
+            )
+            parents = [parse_order(order) for order in (list(raw) if raw else [])]
+            if len(parents) >= 500:
+                return DataResult(
+                    data=[],
+                    error="filled order history exceeded page limit",
+                    source="alpaca",
+                )
+            orders = {
+                order.id: order
+                for parent in parents
+                for order in (parent, *parent.legs)
+            }
+            return DataResult(
+                data=[
+                    order
+                    for order in orders.values()
+                    if order.filled_qty > 0
+                    and order.filled_at is not None
+                    and order.filled_at >= since
+                ],
+                source="alpaca",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("filled order history failed for %s", symbol)
+            return DataResult(data=[], error=str(exc), source="alpaca")
+
     async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:
         try:
             raw = await self.limiter.run_read(self.trading.get_order_by_id, order_id)

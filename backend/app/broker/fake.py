@@ -290,6 +290,18 @@ class FakeBroker:
             source="fake",
         )
 
+    async def get_filled_orders(
+        self, symbol: str, since: datetime
+    ) -> DataResult[list[BrokerOrder]]:
+        if self.fail_reads:
+            return DataResult(data=[], error="simulated read failure", source="fake")
+        orders = [self._to_broker_order(rec) for rec in self.orders.values()]
+        return DataResult(data=[
+            order for order in orders if order.symbol == symbol
+            and order.filled_qty > 0 and order.filled_at is not None
+            and order.filled_at >= since
+        ], source="fake")
+
     async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:
         rec = self.orders.get(order_id)
         return DataResult(

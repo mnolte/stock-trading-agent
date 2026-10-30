@@ -173,6 +173,8 @@ class Position(Base):
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     realized_pnl_adjusted: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     exit_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_while_offline: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    exit_filled_qty: Mapped[int] = mapped_column(nullable=False, default=0)
     # After-exit metrics (docs/SPEC.md, Tail metrics): the highest high and
     # the 5th session's close in the sessions after the exit, split-adjusted.
     # Written once by the daily job; status runs pending → done | unavailable.

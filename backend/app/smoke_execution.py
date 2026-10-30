@@ -10,6 +10,7 @@ fails locally with "read-only check" before reaching Alpaca.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from decimal import Decimal
 
 from app.api.main import (
@@ -72,6 +73,11 @@ class ReadOnlyBroker:
 
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         return await self._inner.get_open_orders()
+
+    async def get_filled_orders(
+        self, symbol: str, since: datetime
+    ) -> DataResult[list[BrokerOrder]]:
+        return await self._inner.get_filled_orders(symbol, since)
 
     async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:
         return await self._inner.get_order(order_id)

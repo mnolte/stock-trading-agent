@@ -2464,6 +2464,102 @@ async def test_drawdown_kill_turns_the_switch_on(
         assert events[0].details["automatic"] is True
 
 
+@pytest.mark.parametrize(
+    "kind,order_type",
+    [("stop", "stop"), ("target", "limit"), ("exit", "market"), ("breach", "market")],
+)
+async def test_exit_stream_closes_before_reconcile(
+    session_factory: sessionmaker[Session], kind: str, order_type: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.broker.models import TradeUpdateInfo
+
+    broker = FakeBroker(FakeClock(NOW), prices={"SBUX": Decimal("103.15")})
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "SBUX", entry="103.15")
+        session.add(Order(
+            alpaca_order_id="stream-exit", client_order_id=executor._client_id(kind, 1, "SBUX"),
+            symbol="SBUX", side="sell", order_type=order_type, leg=kind,
+            qty=4, status="new", created_at=YESTERDAY,
+        ))
+        session.commit()
+
+    async def check_closed() -> object:
+        with session_factory() as session:
+            position = session.execute(select(Position)).scalar_one()
+            assert position.closed_at is not None
+            assert position.exit_reason == ("stop_breached" if kind == "breach" else kind)
+            assert position.realized_pnl_raw == Decimal("0")
+            assert session.execute(select(func.count(Fill.id))).scalar_one() == 1
+            assert not _events(session, "reconciliation")
+        return None
+
+    monkeypatch.setattr(executor, "reconcile", check_closed)
+    await executor.on_trade_update(TradeUpdateInfo(
+        event="fill", order=BrokerOrder(
+            id="stream-exit", client_order_id=executor._client_id(kind, 1, "SBUX"), symbol="SBUX",
+            side="sell", order_type=order_type, order_class="simple", status="filled",
+            qty=4, filled_qty=4, filled_avg_price=Decimal("103.15"), filled_at=NOW,
+            limit_price=None, stop_price=None, created_at=NOW, updated_at=NOW,
+        ), timestamp=NOW, position_qty=0, qty=4, price=Decimal("103.15"),
+    ))
+
+
+async def test_reconcile_closes_position_from_offline_fill(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The app was down while the stop filled: reconcile explains it from
+    Alpaca's filled orders — closed_while_offline, no banner, no block."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        position = _open_position(session, "MSFT", entry="415")
+        session.commit()
+        pos_id = position.id
+    rec = _OrderRec(
+        id="offline-stop", client_order_id=executor._client_id("stop", pos_id, "MSFT"),
+        symbol="MSFT", side="sell", order_type="stop", order_class="simple",
+        status="filled", qty=4, filled_qty=4, filled_avg_price=Decimal("410"),
+        limit_price=None, stop_price=Decimal("410"), created_at=YESTERDAY,
+        updated_at=NOW, filled_at=NOW,
+    )
+    broker.orders[rec.id] = rec
+
+    report = await executor.reconcile()
+
+    assert not report.mismatches
+    with session_factory() as session:
+        closed = session.get(Position, pos_id)
+        assert closed is not None
+        assert closed.closed_at is not None
+        assert closed.closed_while_offline is True
+        assert closed.exit_reason == "stop"
+        assert closed.realized_pnl_raw == Decimal("-20")
+        assert not _events(session, "reconciliation")
+        assert not executor.state.pending_ack(session)
+
+
+async def test_reconcile_flat_without_fill_is_mismatch(
+    session_factory: sessionmaker[Session],
+) -> None:
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert any("closed at broker" in m for m in report.mismatches)
+    with session_factory() as session:
+        events = _events(session, "reconciliation")
+        assert len(events) == 1
+        assert events[0].details is not None
+        assert events[0].details["kind"] == "flat_without_fill"
+        assert executor.state.pending_ack(session)
+
+
 async def test_trade_update_updates_order_and_reconciles(
     session_factory: sessionmaker[Session],
 ) -> None:
