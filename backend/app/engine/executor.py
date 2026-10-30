@@ -66,9 +66,9 @@ if TYPE_CHECKING:
 CENT = Decimal("0.01")
 
 logger = logging.getLogger(__name__)
-log_orders = logging.getLogger("broker.orders")
-log_gates = logging.getLogger("risk")
-log_reconcile = logging.getLogger("broker.reconcile")
+log_orders = logging.getLogger("app.broker.orders")
+log_gates = logging.getLogger("app.risk")
+log_reconcile = logging.getLogger("app.broker.reconcile")
 
 
 @dataclass
@@ -165,6 +165,17 @@ class Executor:
         # still be in flight (order id -> fill time); re-checked every
         # pass against the stream-health grace window.
         self._fills_awaiting_update: dict[str, datetime] = {}
+        # Entry orders that reached a final state with fills since the
+        # last drain — the "trade opened" notification fires once, on
+        # the final state, never on the first partial fill (docs/SPEC.md,
+        # Notifications — Trade opened or closed).
+        self._entry_finals: list[str] = []
+        self._opened_notified: set[str] = set()
+        # Fills still settling (docs/SPEC.md, Alpaca integration): a
+        # deferred quantity check is re-run ~fill_settle_seconds after
+        # an entry order goes final.
+        self._settle_recheck_needed = False
+        self._settle_recheck_scheduled = False
         # Alpaca enforces client_order_id uniqueness account-wide
         # forever; the seq restarts each process, so a per-process
         # nonce keeps ids unique across restarts and DB rebuilds.
@@ -186,6 +197,7 @@ class Executor:
             return None
         account = result.data
         self.state.account = account
+        self.state.account_fetched_at = self.clock.now()
         self.state.reset_session_if_new_day()
         limit = Decimal(str(self.config.get("risk", "daily_loss_limit_pct", default=2)))
         pnl_pct = session_pnl_pct(account.equity, account.last_equity)
@@ -1157,6 +1169,8 @@ class Executor:
         row = session.execute(
             select(Order).where(Order.alpaca_order_id == order.id)
         ).scalar_one_or_none()
+        was_open = row is not None and row.status in OPEN_ORDER_STATUSES
+        was_known = row is not None
         if row is None:
             row = Order(
                 alpaca_order_id=order.id,
@@ -1187,6 +1201,19 @@ class Executor:
             row.active_until = _naive_utc(order.updated_at or self.clock.now())
         if order.filled_qty > 0 and order.filled_avg_price is not None:
             self._record_fills(session, row, order, new_fills=new_fills)
+        if (
+            row.leg == "entry"
+            and order.status not in OPEN_ORDER_STATUSES
+            and order.filled_qty > 0
+            and (was_open or not was_known)
+            and order.id not in self._opened_notified
+        ):
+            # Open → final (or first seen final) with fills: queue the
+            # one "trade opened" notification; drained after positions
+            # open so the quantity is settled.
+            self._entry_finals.append(order.id)
+            self._opened_notified.add(order.id)
+            self._settle_recheck_needed = True
         for leg_order in order.legs:
             self._store_broker_order(
                 session, leg_order, decision_id, parent=order,
@@ -1240,9 +1267,28 @@ class Executor:
     # ------------------------------------------------------------------
     # reconciliation
 
+    def _market_in_session(self) -> bool:
+        """Whether New York is inside today's session right now."""
+        ny_now = self.clock.now().astimezone(NY_TZ)
+        session = self.calendar.session_for(ny_now.date())
+        return (
+            session is not None and session.open <= ny_now < session.close
+        )
+
     async def on_stream_failure(self, reason: str) -> None:
-        """An unparseable trade update: count it and mark the stream
-        degraded (docs/SPEC.md, Alpaca integration — Stream health)."""
+        """A stream health failure; entering ``degraded`` records the
+        critical event (docs/SPEC.md, Alpaca integration — Stream
+        health). A reconnect outage only degrades during a session —
+        overnight drops are routine."""
+        if (
+            reason.startswith("stream reconnect outage")
+            and not self._market_in_session()
+        ):
+            ev(
+                logger, logging.INFO, "stream.outage_after_hours",
+                f"{reason} outside session — stream stays healthy",
+            )
+            return
         with self._session_factory() as session:
             self._mark_stream_failure(session, reason)
             session.commit()
@@ -1302,9 +1348,22 @@ class Executor:
                 select(Order).where(Order.alpaca_order_id == update.order.id)
             ).scalar_one_or_none()
             if row is not None:
+                was_open = row.status in OPEN_ORDER_STATUSES
                 row.status = update.order.status
                 if update.order.filled_at is not None:
                     row.filled_at = _naive_utc(update.order.filled_at)
+                if (
+                    row.leg == "entry"
+                    and was_open
+                    and update.order.status not in OPEN_ORDER_STATUSES
+                    and update.order.filled_qty > 0
+                    and update.order.id not in self._opened_notified
+                ):
+                    # Entry order final with fills: the "opened"
+                    # notification goes out once, from the drain below.
+                    self._entry_finals.append(update.order.id)
+                    self._opened_notified.add(update.order.id)
+                    self._settle_recheck_needed = True
                 if (
                     update.order.status not in OPEN_ORDER_STATUSES
                     and row.active_until is None
@@ -1408,6 +1467,9 @@ class Executor:
             return report
 
         broker_positions = {p.symbol: p for p in positions_r.data}
+        # The GUI's stale fallback serves these when Alpaca stops
+        # answering (docs/SPEC.md — Broker reads from the GUI).
+        self.state.last_broker_positions = positions_r.data
         broker_open: dict[str, BrokerOrder] = {}
         for order in orders_r.data:
             broker_open[order.id] = order
@@ -1521,6 +1583,7 @@ class Executor:
             # 3. An entry fill opens the DB position (qty/avg are then
             #    corrected from the broker position below).
             report.fills_recorded += self._open_positions_from_fills(session)
+            self._notify_opened(session)
 
             # 4. Position-level sync: adopt unknown, adopt mismatched,
             #    close positions the broker no longer reports.
@@ -1562,14 +1625,28 @@ class Executor:
                 if bp.qty != position.qty or (
                     bp.avg_entry_price != position.avg_entry_price
                 ):
-                    self._mismatch(
-                        session, report,
-                        f"{position.symbol}: broker {bp.qty} vs db {position.qty}",
-                        {"kind": "qty_mismatch", "symbol": position.symbol,
-                         "broker_qty": bp.qty, "db_qty": position.qty}, position,
-                    )
-                    position.qty = bp.qty
-                    position.avg_entry_price = bp.avg_entry_price
+                    if self._settling(session, position.symbol, now):
+                        # Fills still settling: the broker position can
+                        # lag the last prints by a second or two — log,
+                        # don't compare (docs/SPEC.md, Fills still
+                        # settling).
+                        ev(
+                            log_reconcile, logging.INFO,
+                            "reconcile.settling",
+                            f"{position.symbol}: quantity check deferred "
+                            f"— fills still settling "
+                            f"(broker {bp.qty}, db {position.qty})",
+                            symbol=position.symbol,
+                        )
+                    else:
+                        self._mismatch(
+                            session, report,
+                            f"{position.symbol}: broker {bp.qty} vs db {position.qty}",
+                            {"kind": "qty_mismatch", "symbol": position.symbol,
+                             "broker_qty": bp.qty, "db_qty": position.qty}, position,
+                        )
+                        position.qty = bp.qty
+                        position.avg_entry_price = bp.avg_entry_price
             # Sell-side stops already open at the broker, per symbol.
             # Needed before adoption (a position may already be covered
             # by a stop placed before the database was rebuilt) and for
@@ -1683,7 +1760,103 @@ class Executor:
                 "; ".join(report.mismatches[:5]),
             )
         self._notify({"positions", "orders", "banners", "header"})
+        if self._settle_recheck_needed:
+            self._settle_recheck_needed = False
+            try:
+                self._schedule_settle_recheck()
+            except RuntimeError:
+                # No running loop (unit tests driving _reconcile pieces).
+                self._settle_recheck_scheduled = False
         return report
+
+    def _fill_settle_seconds(self) -> int:
+        return int(
+            self.config.get("execution", "fill_settle_seconds", default=10)
+        )
+
+    def _settling(
+        self, session: Session, symbol: str, now: datetime
+    ) -> bool:
+        """Fills still settling (docs/SPEC.md, Alpaca integration): the
+        quantity comparison defers while an entry order for the symbol
+        is working, or a fill landed inside the settle window — the
+        broker position can lag the last print by a second or two."""
+        working = session.execute(
+            select(Order.id).where(
+                Order.symbol == symbol,
+                Order.leg == "entry",
+                Order.status.in_(OPEN_ORDER_STATUSES),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if working is not None:
+            return True
+        latest = session.execute(
+            select(func.max(Fill.filled_at))
+            .select_from(Fill)
+            .join(Order, Fill.order_id == Order.id)
+            .where(Order.symbol == symbol)
+        ).scalar()
+        if latest is None:
+            return False
+        cutoff = _naive_utc(
+            now - timedelta(seconds=self._fill_settle_seconds())
+        )
+        return latest > cutoff
+
+    def _schedule_settle_recheck(self) -> None:
+        """Re-run reconciliation once, ~fill_settle_seconds after an
+        entry order went final — the broker's position view can lag
+        the last prints (docs/SPEC.md — Fills still settling)."""
+        if self._settle_recheck_scheduled:
+            return
+        self._settle_recheck_scheduled = True
+        from app.spawn import spawn
+
+        async def recheck() -> None:
+            try:
+                await asyncio.sleep(self._fill_settle_seconds())
+                await self.reconcile()
+            finally:
+                self._settle_recheck_scheduled = False
+
+        spawn(recheck(), "reconcile-settle-recheck")
+
+    def _notify_opened(self, session: Session) -> None:
+        """One "trade opened" notification per final entry order.
+
+        Fires when the order is final — filled, or cancelled/expired
+        with a partial fill — never on the first partial print. The
+        filled quantity comes from the recorded fill rows: "opened
+        PG: 12 shares @ 162.85", or "8 of 12 shares" when the rest was
+        cancelled (docs/SPEC.md, Notifications).
+        """
+        for alpaca_order_id in list(self._entry_finals):
+            self._entry_finals.remove(alpaca_order_id)
+            row = session.execute(
+                select(Order).where(
+                    Order.alpaca_order_id == alpaca_order_id
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                continue
+            fills = session.execute(
+                select(Fill).where(Fill.order_id == row.id)
+            ).scalars().all()
+            if not fills:
+                continue
+            qty = sum(f.qty for f in fills)
+            avg = sum((f.price * f.qty for f in fills), Decimal(0)) / qty
+            partial = (
+                f"{qty} of {row.qty} shares"
+                if qty < row.qty
+                else f"{qty} shares"
+            )
+            self._notifier.notify(
+                "trade",
+                f"opened {row.symbol}: {partial} @ "
+                f"{avg.quantize(Decimal('0.01'))}",
+                link="/positions",
+            )
 
     def _open_positions_from_fills(self, session: Session) -> int:
         """Open a DB position for each entry fill that has none yet.
@@ -1699,12 +1872,11 @@ class Executor:
         the source of truth for qty and whether a position still exists.
         """
         opened = 0
-        opened_symbols: list[tuple[str, int, Decimal]] = []
         filled_buys = session.execute(
-            select(Order).where(
-                Order.side == "buy",
-                Order.status.in_(("filled", "partially_filled")),
-            )
+            select(Order)
+            .join(Fill, Fill.order_id == Order.id)
+            .where(Order.side == "buy")
+            .distinct()
         ).scalars().all()
         for order in filled_buys:
             fill_rows = session.execute(
@@ -1798,14 +1970,7 @@ class Executor:
                 )
             )
             opened += 1
-            opened_symbols.append((order.symbol, filled_qty, avg_price))
         session.flush()
-        for symbol, qty, avg_price in opened_symbols:
-            self._notifier.notify(
-                "trade",
-                f"opened {symbol}: {qty} shares @ {avg_price}",
-                link="/positions",
-            )
         return opened
 
     def _own_exit(self, session: Session, order: Order) -> bool:
@@ -2726,8 +2891,13 @@ class Executor:
         else:
             reason = quote.price_reason(
                 now=now,
+                # Held-position tighten decisions may accept an older
+                # IEX last trade (docs/SPEC.md, tighten_stop).
                 max_age_seconds=float(
-                    self.config.get("execution", "quote_max_age_seconds")
+                    self.config.get(
+                        "execution", "tighten_quote_max_age_seconds",
+                        default=300,
+                    )
                 ),
                 bar_close=bar.close if bar is not None else None,
                 max_deviation_pct=Decimal(
@@ -2752,6 +2922,28 @@ class Executor:
         if reason is not None:
             decision.final_action = "hold"
             decision.gates_result = {"tighten_noop": True, "reason": reason}
+            if reason in ("price_stale", "price_suspect"):
+                # Same display as the break-even guard: drawer, feed and
+                # inspector show the code change with its reason
+                # (docs/SPEC.md, tighten_stop).
+                validation = dict(decision.validation_result or {})
+                checks = list(cast("list[dict[str, object]]", validation.get("checks") or []))
+                checks.append(
+                    {
+                        "name": "Market price",
+                        "passed": False,
+                        "detail": reason,
+                        "value": None,
+                    }
+                )
+                validation["final_action"] = "hold"
+                validation["changed_by_code"] = True
+                validation["reason"] = reason
+                validation["note"] = (
+                    f"code changed tighten_stop → hold ({reason})"
+                )
+                validation["checks"] = checks
+                decision.validation_result = validation
             session.flush()
             return
         result = await self.broker.replace_stop(

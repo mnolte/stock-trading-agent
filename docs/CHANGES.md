@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-30 — Live fixes of 30 October — implementation
+
+- `docs/kickoffs/fix-live-2026-10-30.md` lands in code: the "Live decisions failing" critical event, banner and notification (once per episode, cleared by the first good call) with the provider key marked failing on a 401/403; "Trade opened" fires once when the entry order is final, with the filled quantity; reconcile defers the quantity check while an entry order works or a fill is fresh; GUI broker reads answer the last reconciled values, marked stale, past the timeout; a held-position tighten accepts an older last trade and a still-blocked tighten shows as changed by code (`price_stale`/`price_suspect`); stream reconnect errors log once per outage then once per 10 minutes, and a long outage degrades the stream only in session; no chart request without a symbol; screenshot specs write to a temp dir unless `SCREENSHOT_DIR`.
+- `config.example.yaml`: `api.broker_timeout_seconds` (5), `execution.fill_settle_seconds` (10), `execution.tighten_quote_max_age_seconds` (300), `notifications.events.live_decisions_failing` ([browser, email]).
+- Logger names outside `app`/`frontend` log at WARNING and up; the app's own bare logger names (`model.*`, `broker.*`, `data.*`, `rules`, `risk`, `check`, `db`, `api`, `backtest.worker`) moved under `app.*`. Reconnects announce `app.broker.stream` INFO with the outage length.
+
 ## 2026-10-30 — Decision reload keeps saved model credentials
 
 - Reloading decision settings or saving a model key now keeps the shared, credential-aware model client. Previously reload replaced it with a client without the secrets store, causing model calls to use the `missing` placeholder even when the saved key passed its Settings test.

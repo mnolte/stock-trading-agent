@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
     from app.config import AppConfig
 
-logger = logging.getLogger("model.anthropic")
+logger = logging.getLogger("app.model.anthropic")
 
 # JSON Schema keywords Anthropic's structured outputs reject (numeric,
 # string and array constraints, and additionalProperties other than

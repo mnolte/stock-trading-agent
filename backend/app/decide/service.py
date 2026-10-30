@@ -45,7 +45,7 @@ from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
 
-logger = logging.getLogger("model.openai")
+logger = logging.getLogger("app.model.openai")
 
 # Final action recorded when no usable model answer exists (no call made,
 # or the call failed). ``no_call_reason`` says why: rules, call_cap,
@@ -180,6 +180,7 @@ class DecisionService:
         atr_1h: Decimal | None,
         current_stop: Decimal | None,
         v2: V2Build | None = None,
+        on_response: Callable[[ModelResponse], None] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
         user = json.dumps(
@@ -225,7 +226,7 @@ class DecisionService:
                 await self._before_call()
             sent_at = _naive_utc(self._clock.now())
             ev(
-                logging.getLogger(f"model.{_provider}"), logging.DEBUG,
+                logging.getLogger(f"app.model.{_provider}"), logging.DEBUG,
                 "model.call_sent",
                 f"{symbol}: model call sent "
                 f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
@@ -241,8 +242,10 @@ class DecisionService:
                     self.config.get("decision", "temperature", default=0)
                 ),
             )
+            if on_response is not None:
+                on_response(response)
             ev(
-                logging.getLogger(f"model.{_provider}"),
+                logging.getLogger(f"app.model.{_provider}"),
                 logging.DEBUG if response.error is None else logging.WARNING,
                 "model.call_returned" if response.error is None else "model.call_failed",
                 (

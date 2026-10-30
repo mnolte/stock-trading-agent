@@ -5,7 +5,7 @@ integration + Risk management)."""
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from app.broker.fake import FakeBroker, _OrderRec, _PosRec
@@ -2081,7 +2081,7 @@ async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
             Quote(
                 "MSFT", Decimal("100"), Decimal("100"), Decimal("100"),
                 NOW, "iex",
-                trade_timestamp=NOW - timedelta(minutes=2), fetched_at=NOW,
+                trade_timestamp=NOW - timedelta(seconds=400), fetched_at=NOW,
             ),
             "price_stale",
         ),
@@ -3432,3 +3432,250 @@ async def test_flat_symbol_is_not_refetched_within_a_pass(
     # The flat marker answered it — no second broker ask this pass.
     assert placed == Decimal(0)
     assert calls == []
+
+
+class _Notices:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def notify(self, event: str, line: str, **kwargs: object) -> None:
+        self.calls.append((event, line))
+
+
+async def _seed_entry_row(
+    session: Session,
+    submitted: DataResult[BrokerOrder],
+    symbol: str,
+    qty: int,
+    limit: str,
+) -> None:
+    session.add(
+        Order(
+            alpaca_order_id=submitted.data.id,
+            client_order_id=submitted.data.client_order_id,
+            symbol=symbol,
+            decision_id=None,
+            side="buy",
+            order_type="limit",
+            leg="entry",
+            qty=qty,
+            limit_price=Decimal(limit),
+            status="new",
+            created_at=NOW.replace(tzinfo=None),
+        )
+    )
+    session.commit()
+
+
+async def test_opened_notification_once_on_final_fill(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """PG of 30 Oct: prints arriving over seconds give one "opened"
+    notification with the filled quantity, not one per partial fill."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.90")})
+    broker.partial_fill["PG"] = 4
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("162.90"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-1",
+    )
+    executor = _executor(session_factory, broker, clock)
+    notices = _Notices()
+    executor._notifier = notices
+    with session_factory() as session:
+        await _seed_entry_row(session, submitted, "PG", 12, "162.90")
+
+    # Four prints: 4, 8, 12 — the first two are still working.
+    for _ in range(2):
+        await broker.tick("PG", Decimal("162.85"))
+        await executor.reconcile()
+        assert [c for c in notices.calls if c[0] == "trade"] == []
+
+    await broker.tick("PG", Decimal("162.85"))
+    await executor.reconcile()
+    trades = [c for c in notices.calls if c[0] == "trade"]
+    assert trades == [("trade", "opened PG: 12 shares @ 162.85")]
+
+    # Later reconciles never repeat it.
+    await executor.reconcile()
+    assert [c for c in notices.calls if c[0] == "trade"] == trades
+
+
+async def test_opened_notification_partial_fill_then_cancel(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An entry cancelled after partial fills reports "8 of 12"."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.90")})
+    broker.partial_fill["PG"] = 8
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("162.90"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-2",
+    )
+    executor = _executor(session_factory, broker, clock)
+    notices = _Notices()
+    executor._notifier = notices
+    with session_factory() as session:
+        await _seed_entry_row(session, submitted, "PG", 12, "162.90")
+
+    await broker.tick("PG", Decimal("162.85"))
+    await executor.reconcile()
+    assert [c for c in notices.calls if c[0] == "trade"] == []
+
+    await broker.cancel_order(submitted.data.id)
+    await executor.reconcile()
+    trades = [c for c in notices.calls if c[0] == "trade"]
+    assert trades == [("trade", "opened PG: 8 of 12 shares @ 162.85")]
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "PG")
+        ).scalar_one()
+        assert position.qty == 8
+
+
+async def test_qty_check_defers_while_fills_settle(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """PG of 30 Oct: prints still arriving — no qty_mismatch while the
+    entry works or a fill is fresh; a real difference after the settle
+    window still raises the CRITICAL mismatch."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"PG": Decimal("162.85")})
+    broker.partial_fill["PG"] = 10
+    submitted = await broker.submit_bracket_entry(
+        symbol="PG",
+        qty=12,
+        limit_price=Decimal("163.00"),
+        stop_price=Decimal("158.00"),
+        target_price=Decimal("170.00"),
+        client_order_id="sa-entry-1-PG-3",
+    )
+    executor = _executor(session_factory, broker, clock)
+    scheduled: list[bool] = []
+    executor._schedule_settle_recheck = lambda: scheduled.append(True)  # type: ignore[method-assign]
+    with session_factory() as session:
+        # The DB recorded 12 shares' worth of prints; the broker's
+        # position view still shows the earlier 10.
+        _open_position(session, "PG", qty=12, entry="162.85", stop="158.00")
+        await _seed_entry_row(session, submitted, "PG", 12, "163.00")
+
+    await broker.tick("PG", Decimal("162.85"))  # 10 of 12 print
+    report = await executor.reconcile()
+    with session_factory() as session:
+        # The bracket's working legs report as unknown orders — what
+        # matters here is that no qty_mismatch fires while settling.
+        assert not [m for m in report.mismatches if "vs db" in m]
+        events = session.execute(
+            select(Event).where(Event.event_type == "reconciliation")
+        ).scalars().all()
+        assert not [
+            e for e in events
+            if (e.details or {}).get("kind") == "qty_mismatch"
+        ]
+
+    # The order goes final (rest cancelled); the last fill is still
+    # inside the settle window — no comparison yet, but a recheck is
+    # scheduled ~fill_settle_seconds out.
+    await broker.cancel_order(submitted.data.id)
+    report = await executor.reconcile()
+    assert report.mismatches == []
+    assert scheduled
+
+    # Settle window passed, order final, difference remains → mismatch.
+    clock.advance(timedelta(seconds=11))
+    report = await executor.reconcile()
+    assert any("PG" in m for m in report.mismatches)
+    with session_factory() as session:
+        events = session.execute(
+            select(Event).where(Event.event_type == "reconciliation")
+        ).scalars().all()
+        assert [
+            e for e in events
+            if (e.details or {}).get("kind") == "qty_mismatch"
+            and (e.details or {}).get("broker_qty") == 10
+            and (e.details or {}).get("db_qty") == 12
+        ]
+
+
+async def _tighten_with_quote_age(
+    session_factory: sessionmaker[Session], age_seconds: int,
+) -> dict[str, object]:
+    """HD of 30 Oct, cycle 255: last trade 329.84 vs bar close 330.00,
+    aged ``age_seconds``. Returns the decision and position rows."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"HD": Decimal("330")})
+    broker.positions["HD"] = _PosRec(qty=4, avg_entry_price=Decimal("325"))
+    stop = await broker.submit_stop_order(
+        symbol="HD", qty=4, stop_price=Decimal("325.54"),
+        client_order_id="original",
+    )
+    quote = Quote(
+        "HD",
+        Decimal("329.80"), Decimal("329.90"), Decimal("329.84"),
+        NOW - timedelta(seconds=age_seconds), "iex",
+        trade_timestamp=NOW - timedelta(seconds=age_seconds),
+        fetched_at=NOW,
+    )
+    executor = _executor(
+        session_factory, broker, clock,
+        sources=_sources(quotes=_StaticQuotes({"HD": quote})),
+    )
+    _store_reference(executor, "HD", Decimal("330.00"))
+    assert stop.data is not None
+    with session_factory() as session:
+        position = _open_position(session, "HD", entry="325", stop="325.54")
+        executor._store_broker_order(session, stop.data, None, leg="stop")
+        decision = _decision(
+            session, "HD", "tighten_stop", {"stop_price": "329.00"}
+        )
+        item = replace(
+            _item("HD"),
+            snapshot=replace(_snapshot("HD"), atr_1h=Decimal("1")),
+        )
+        await executor.apply_decision(
+            session, decision, item, position, quote, NOW,
+            account=_account(), earnings_known=True,
+        )
+        session.commit()
+        return {
+            "final_action": decision.final_action,
+            "validation": decision.validation_result,
+            "stop": position.current_stop_price,
+        }
+
+
+async def test_tighten_accepts_trade_up_to_300_seconds_old(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """200 s old is inside execution.tighten_quote_max_age_seconds
+    (HD cycle 255: 64 s — it would have tightened)."""
+    result = await _tighten_with_quote_age(session_factory, 200)
+    assert result["final_action"] == "tighten_stop"
+    assert result["stop"] == Decimal("329.00")
+
+
+async def test_tighten_blocked_past_300_seconds_is_code_change(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """400 s old: hold, marked changed_by_code with reason price_stale
+    — same display as the break-even guard."""
+    result = await _tighten_with_quote_age(session_factory, 400)
+    assert result["final_action"] == "hold"
+    assert result["stop"] == Decimal("325.54")
+    validation = cast("dict[str, Any]", result["validation"] or {})
+    assert validation["changed_by_code"] is True
+    assert validation["reason"] == "price_stale"
+    assert validation["final_action"] == "hold"
+    assert "tighten_stop" in validation["note"]
+    assert any(
+        c["passed"] is False and c["detail"] == "price_stale"
+        for c in validation["checks"]
+    )

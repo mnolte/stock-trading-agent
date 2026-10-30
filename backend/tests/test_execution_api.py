@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from app.api.main import check_execution_mode
@@ -297,3 +297,44 @@ def test_universe_screen_pending_shows_list_date_banner(
     assert item["level"] == "warning"
     assert "2026-10-14" in item["message"]
     assert item["actions"] == ["acknowledge"]
+
+
+def test_hanging_broker_positions_answers_stale_within_six_seconds(
+    client: TestClient,
+) -> None:
+    """docs/SPEC.md — Broker reads from the GUI: a hung Alpaca must not
+    hold /api/positions past api.broker_timeout_seconds; it answers the
+    last reconciled values with stale: true and as_of."""
+    import asyncio
+    import time
+
+    from app.config import get_config
+
+    get_config().yaml["api"]["broker_timeout_seconds"] = 0.2
+    app_state = cast(FastAPI, client.app).state
+    broker = app_state.broker
+
+    async def hang() -> Any:
+        await asyncio.sleep(60)
+        return None
+
+    broker.get_positions = hang
+    app_state.exec_state.last_reconcile_at = datetime(
+        2026, 10, 15, 12, 55
+    )
+
+    started = time.monotonic()
+    data = client.get("/api/positions").json()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 6
+    assert data["stale"] is True
+    assert data["as_of"] is not None
+
+
+def test_positions_not_stale_when_broker_answers(
+    client: TestClient,
+) -> None:
+    data = client.get("/api/positions").json()
+    assert data["stale"] is False
+    assert data["as_of"] is None

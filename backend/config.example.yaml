@@ -45,15 +45,20 @@ schedule:
   bars_5m_keep_sessions: 120   # older 5-min bars deleted after the 03:00 backup
   cycle_duration_warn_minutes: 10
 
+api:
+  broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
+
 execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
   stream_update_grace_seconds: 120   # a fill found by reconciliation whose stream update never arrived within this marks the stream degraded
   stream_degraded_minutes: 30        # the degraded stream banner clears this long after the last failure
+  fill_settle_seconds: 10            # no qty check while an entry order works or a fill is this fresh (fills still settling)
   max_spread_pct: 0.15
   quote_max_deviation_pct: 1.0   # last trade vs last closed 5-min bar (price_suspect); bid/ask vs market price (plausible quote)
   quote_max_age_seconds: 60    # IEX last trade must be this fresh (market price); older = price_stale
+  tighten_quote_max_age_seconds: 300  # held-position tighten may accept an IEX last trade this old
   time_in_force: gtc
 
 rules:
@@ -167,6 +172,7 @@ notifications:
     reconciliation: [browser, email]
     order_rejected: [browser, email]
     stream_degraded: [browser, email]
+    live_decisions_failing: [browser, email]
     clock_check_failing: [browser, email]
     new_error: [browser, email]
     daily_loss_limit: [browser, email]

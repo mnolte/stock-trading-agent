@@ -11,7 +11,7 @@ from app.data.models import DataResult, EarningsEvent, normalise_earnings_hour
 from app.logging_config import ev
 from app.market.clock import Clock, RealClock
 
-log = logging.getLogger("data.earnings")
+log = logging.getLogger("app.data.earnings")
 
 # Finnhub answers /calendar/earnings with at most 1500 rows and silently
 # keeps only the tail of a wider window — a real report early in the

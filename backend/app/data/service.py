@@ -176,7 +176,7 @@ class MarketDataService:
 
         from app.logging_config import ev
 
-        log = logging.getLogger("data.prices")
+        log = logging.getLogger("app.data.prices")
         wanted = symbols if symbols is not None else self.universe()
         if not wanted:
             return {}

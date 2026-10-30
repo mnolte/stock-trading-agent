@@ -82,7 +82,7 @@ def shutdown_engine() -> None:
             with engine.connect() as conn:
                 conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
         except Exception:  # noqa: BLE001 - checkpoint failure must not stop disposal
-            logging.getLogger("db").exception(
+            logging.getLogger("app.db").exception(
                 "wal_checkpoint(TRUNCATE) failed for %s", url
             )
         engine.dispose()

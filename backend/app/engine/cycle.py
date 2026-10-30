@@ -30,9 +30,11 @@ from app.decide.snapshot import build_input_snapshot
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
 from app.decide.v3 import build_v3_fields, held_v3
 from app.engine.executor import Executor
+from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import record_event
 from app.inspector.record import sync_llm_call
+from app.llm.base import ModelResponse
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
@@ -83,6 +85,7 @@ class CycleRunner:
         on_settings_promoted: Callable[[], None] | None = None,
         notifier: Notifier | None = None,
         on_cycle_done: Callable[[CycleReport], None] | None = None,
+        model_health: LiveModelHealth | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -104,6 +107,10 @@ class CycleRunner:
         self.on_cycle_done = on_cycle_done or (lambda report: None)
         # Symbols held by active or paused shadows (set by main).
         self.shadow_symbols: Callable[[], list[str]] = lambda: []
+        # "Live decisions failing" episode tracker (docs/SPEC.md,
+        # Decision layer); only the live app sets it — shadows, reviews
+        # and backtests never see one.
+        self.model_health = model_health
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -603,7 +610,7 @@ class CycleRunner:
         # Symbols the rules reject — and held positions skipped for a
         # pending acknowledgment — still get a stored decision: "no_call"
         # with reason "rules", so the inspector shows why they were skipped.
-        rules_log = logging.getLogger("rules")
+        rules_log = logging.getLogger("app.rules")
         review_symbols = {item.symbol for item in reviews}
         for item in evaluation.items:
             ev(
@@ -655,6 +662,10 @@ class CycleRunner:
         # the first model call awaits I/O.
         session.commit()
         capped_at: int | None = None
+        # Real model calls this cycle — the live-decisions-failing check
+        # reads them once every symbol settled (docs/SPEC.md, Decision
+        # layer).
+        call_responses: list[ModelResponse] = []
         for i, item in enumerate(reviews):
             if report.calls >= max_calls:
                 capped_at = i
@@ -806,6 +817,11 @@ class CycleRunner:
                         position.current_stop_price if position else None
                     ),
                     v2=v2,
+                    on_response=(
+                        call_responses.append
+                        if self.model_health is not None
+                        else None
+                    ),
                 )
             if self.executor is not None:
                 # Hard rule 13: commit the stored decision before the
@@ -869,6 +885,9 @@ class CycleRunner:
             )
             report.decisions.append(decision.id)
         session.commit()
+        if self.model_health is not None:
+            self.model_health.settle_cycle(session, call_responses)
+            session.commit()
         self._notify({"decisions", "watchlist", "header", "banners", "performance"})
 
     async def run_due(self) -> CycleReport | None:

@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { screenshotDir, test } from './shots';
 // PR 28 screenshot: Settings → Email (SMTP), password required after a host change.
 test('smtp password required after host change', async ({ page }) => {
   await page.goto('/settings');
@@ -13,5 +14,5 @@ test('smtp password required after host change', async ({ page }) => {
   await expect(notify.locator('#smtp-host')).toHaveValue('mail.saved.example', { timeout: 15_000 });
   await notify.locator('#smtp-host').fill('mail.other.example');
   await expect(notify.getByText('required — server changed')).toBeVisible();
-  await page.screenshot({ path: '../docs/screenshots/pr-28/smtp-password-required.png' });
+  await page.screenshot({ path: `${screenshotDir('pr-28')}/smtp-password-required.png` });
 });

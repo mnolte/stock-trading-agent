@@ -1,10 +1,13 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { screenshotDir, test } from './shots';
 
-// `make readme-screens` images → docs/images/readme/. One test per screen;
-// every wait targets a stable element so the shot is deterministic.
-const outDir = path.resolve('../docs/images/readme');
+// `make readme-screens` images → docs/images/readme/ (it passes
+// SCREENSHOT_DIR). A plain `make test` writes to a temp folder instead —
+// committed images are never overwritten. One test per screen; every wait
+// targets a stable element so the shot is deterministic.
+const outDir = screenshotDir('readme');
 
 async function shot(page: import('@playwright/test').Page, name: string, fullPage = true) {
   await page.screenshot({ path: path.join(outDir, name), fullPage });

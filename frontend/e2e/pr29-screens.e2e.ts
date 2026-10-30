@@ -1,12 +1,13 @@
 import path from 'node:path';
 
-import { expect, test } from '@playwright/test';
+import { expect } from '@playwright/test';
+import { screenshotDir, test } from './shots';
 
 // PR 29 screenshots → docs/screenshots/pr-29/ (next to the design PNGs
 // for Settings, Inspector and Logs). Simulated mode: the seeded app has
 // no keys saved, so every model row shows as unset and the model pickers
 // list "id · provider".
-const outDir = path.resolve('../docs/screenshots/pr-29');
+const outDir = screenshotDir('pr-29');
 
 async function shot(page: import('@playwright/test').Page, name: string, fullPage = true) {
   await page.screenshot({ path: path.join(outDir, name), fullPage });

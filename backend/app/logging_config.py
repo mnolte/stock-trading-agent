@@ -284,6 +284,32 @@ class GzipRotatingFileHandler(logging.handlers.RotatingFileHandler):
             path.unlink(missing_ok=True)
 
 
+class _LibraryFilter(logging.Filter):
+    """The logger-name rule (docs/SPEC.md, Logging, error handling and
+    shutdown): every logger whose name does not start with ``app`` or
+    ``frontend`` logs at WARNING and above, unless
+    ``logging.library_debug`` is enabled. It sits on the queue handler
+    so it covers every library and future logger without a name list —
+    httpcore, urllib3, websockets, the next dependency."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.name == "app"
+            or record.name.startswith("app.")
+            or record.name == "frontend"
+            or record.name.startswith("frontend.")
+        ):
+            return True
+        if record.levelno >= logging.WARNING:
+            return True
+        try:
+            return bool(
+                get_config().get("logging", "library_debug", default=False)
+            )
+        except Exception:  # noqa: BLE001 - logging must never fail on config
+            return False
+
+
 class _QueueHandler(logging.handlers.QueueHandler):
     """Same-process queue: ``prepare`` flattens exceptions into the
     message text (kept — the console format wants that) and clears
@@ -375,24 +401,27 @@ def install_queue_root(pipeline: LogPipeline) -> None:
     for handler in list(root.handlers):
         root.removeHandler(handler)
     root.addHandler(pipeline._queue_handler)
-    # uvicorn and the libraries log to the same handlers via propagation.
-    # Their DEBUG keep-alive lines made stock-agent.log grow ~20 MB/day;
-    # WARNING and above unless logging.library_debug is on (spec).
-    try:
-        library_debug = bool(
-            get_config().get("logging", "library_debug", default=False)
-        )
-    except Exception:  # noqa: BLE001 - logging must never fail on config
-        library_debug = False
-    lib_level = logging.DEBUG if library_debug else logging.WARNING
+    # The library rule is a filter on the queue handler: any logger
+    # outside app/frontend drops below WARNING before the file and the
+    # index ever see it, without a fixed name list. uvicorn and the
+    # libraries still log through propagation; their own handlers go
+    # and their level opens so the filter is the single floor —
+    # logging.library_debug then genuinely shows library DEBUG.
+    if not any(
+        isinstance(f, _LibraryFilter)
+        for f in pipeline._queue_handler.filters
+    ):
+        pipeline._queue_handler.addFilter(_LibraryFilter())
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx",
-                 "httpx2", "openai", "anthropic", "websockets",
-                 "apscheduler", "apscheduler.executors.default",
-                 "apscheduler.scheduler", "alembic"):
+                 "httpx2", "httpcore", "urllib3", "openai", "anthropic",
+                 "websockets", "apscheduler",
+                 "apscheduler.executors.default",
+                 "apscheduler.scheduler", "alembic",
+                 "alpaca.trading.stream"):
         lib = logging.getLogger(name)
         for handler in list(lib.handlers):
             lib.removeHandler(handler)
-        lib.setLevel(lib_level)
+        lib.setLevel(logging.DEBUG)
         lib.propagate = True
     # Per-run "Running job / executed successfully" lines are INFO noise:
     # with the 10-second backtest tick alone that is ~17k lines a day.

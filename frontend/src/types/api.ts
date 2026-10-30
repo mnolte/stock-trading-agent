@@ -285,6 +285,9 @@ export interface PositionsResponse {
   account?: AccountSummary;
   reconciliation?: ReconciliationSummary;
   max_open_positions?: number;
+  /** True when Alpaca timed out: last reconciled values, see `as_of`. */
+  stale?: boolean;
+  as_of?: string | null;
 }
 
 export interface KillSwitchResponse {
@@ -1098,6 +1101,9 @@ export interface RiskBudgetResponse {
   };
   re_entry: { allowed: boolean };
   positions: { open: number; cap: number };
+  /** True when Alpaca timed out: last reconciled account, see `as_of`. */
+  stale?: boolean;
+  as_of?: string | null;
 }
 
 export interface DashboardSigChip {
