@@ -1333,7 +1333,7 @@ export default function Dashboard() {
             <CardBody
               res={chartRes}
               what={chartSymbol ? `the chart for ${chartSymbol}` : 'the chart'}
-              isEmpty={(d) => d.bars.length === 0}
+              isEmpty={(d) => d === null || d.bars.length === 0}
               skeleton={
                 <div
                   className="sa-skel"
@@ -1353,7 +1353,7 @@ export default function Dashboard() {
                 </div>
               }
             >
-              {(d) => <PriceChart bars={d.bars} levels={d.levels} />}
+              {(d) => d !== null && <PriceChart bars={d.bars} levels={d.levels} />}
             </CardBody>
             <div style={{ display: 'flex', gap: 'var(--sa-space-4)', flexWrap: 'wrap', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               <Legend swatch="var(--sa-chart-ema20)" label="EMA 20" />
