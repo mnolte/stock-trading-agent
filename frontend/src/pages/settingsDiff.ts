@@ -32,6 +32,9 @@ const FIELD_LABELS: Record<string, string> = {
   'performance.slippage_pct_per_side': 'Assumed slippage',
   'reviews.briefing_enabled': 'Daily briefing',
   'reviews.monthly_cost_cap_usd': 'Review cost cap',
+  'reviews.models.weekly': 'Weekly review model',
+  'reviews.models.briefing': 'Daily briefing model',
+  'reviews.models.verdict': 'Verdict model',
   'schedule.cycles': 'Cycle times',
   'notifications.repeat_limit_minutes': 'Repeat limit',
   'notifications.quiet_hours.start': 'Quiet hours from',
@@ -181,6 +184,18 @@ function screenLeafRows(
   }
 }
 
+/** Nested leaves of `reviews.models`, as `reviews.models.<task>` paths. */
+function reviewModelLeafRows(
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  dictLeafRows('reviews', 'models', current, edited, fmtVal,
+    (sub) => FIELD_LABELS[`reviews.models.${sub}`] ?? `Review model ${sub}`,
+    map, rows);
+}
+
 /** Client-side diff between the saved settings and the edited form. */
 export function diffSettings(
   current: SettingsForm,
@@ -213,6 +228,10 @@ export function diffSettings(
       }
       if (path === 'notifications.quiet_hours' || path === 'notifications.events') {
         notificationLeafRows(key as 'quiet_hours' | 'events', current, edited, null, rows);
+        continue;
+      }
+      if (path === 'reviews.models') {
+        reviewModelLeafRows(current, edited, null, rows);
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;
@@ -252,6 +271,10 @@ export function diffMap(
       }
       if (path === 'notifications.quiet_hours' || path === 'notifications.events') {
         notificationLeafRows(key as 'quiet_hours' | 'events', current, edited, map, null);
+        continue;
+      }
+      if (path === 'reviews.models') {
+        reviewModelLeafRows(current, edited, map, null);
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;

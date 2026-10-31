@@ -39,7 +39,15 @@ function base(): SettingsForm {
       max_orders_per_cycle: 6,
     },
     performance: { slippage_pct_per_side: 0.05, starting_equity: 10000 },
-    reviews: { briefing_enabled: true, monthly_cost_cap_usd: 2 },
+    reviews: {
+      briefing_enabled: true,
+      monthly_cost_cap_usd: 2,
+      models: {
+        weekly: 'gpt-4o-mini',
+        briefing: 'gpt-4o-mini',
+        verdict: 'gpt-4o-mini',
+      },
+    },
     readiness: {
       min_closed_trades: 100,
       min_sessions: 60,
@@ -143,6 +151,17 @@ describe('diffSettings', () => {
       label: 'Drop after',
       from: '3 days',
       to: '5 days',
+    });
+  });
+
+  it('reports review model changes as leaf diffs', () => {
+    const edited = base();
+    edited.reviews.models!.weekly = 'claude-sonnet-5-5';
+    const diffs = diffSettings(base(), edited);
+    expect(diffs).toContainEqual({
+      label: 'Weekly review model',
+      from: 'gpt-4o-mini',
+      to: 'claude-sonnet-5-5',
     });
   });
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from datetime import UTC, datetime
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -21,6 +23,7 @@ from app.logging_config import (
     _ConsoleFormatter,
     _scrub_text,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 FAKE_KEY = "sk-proj-FAKEKEY1234567890"
 
@@ -122,3 +125,118 @@ def test_authorization_in_message_scrubbed_everywhere() -> None:
     outputs = _outputs(rec)
     for name, text in outputs.items():
         assert "hunter2secret" not in text, name
+
+
+# ---------------------------------------------------------------------
+# a provider that emits a record while collecting
+# ---------------------------------------------------------------------
+
+
+def test_provider_log_during_collection_does_not_recurse(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A provider may emit a record while collecting (auth's
+    ``scrub_values`` warns once when its store is already closed at
+    shutdown). That record re-enters the filter on the same thread; the
+    collector falls back to the last known values instead of recursing —
+    and the provider's own record is still scrubbed."""
+    import app.logging_config as lc
+
+    emit = False
+    calls = 0
+
+    def provider() -> list[str]:
+        nonlocal calls
+        calls += 1
+        if emit:
+            logging.getLogger("app.test.scrub").error(
+                "provider failed near abc123secret00"
+            )
+        return ["abc123secret00"]
+
+    handler = logging.StreamHandler()
+    handler.addFilter(SecretScrubFilter())
+    test_log = logging.getLogger("app.test.scrub")
+    test_log.addHandler(handler)
+    lc.register_secret_provider(provider)
+    try:
+        lc._all_secrets()  # a clean collection seeds the fallback
+        emit = True
+        with caplog.at_level(logging.ERROR):
+            test_log.error("outer record")
+    finally:
+        lc._secret_providers.remove(provider)
+        lc._secrets_cache.clear()
+        test_log.removeHandler(handler)
+
+    # One clean call plus one during the outer record's filter; the
+    # provider's own record sees the cached values, not a new collection.
+    assert calls == 2
+    leaked = [r for r in caplog.records if "abc123secret00" in r.getMessage()]
+    assert leaked == []
+    assert any(
+        "provider failed near [redacted]" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_auth_scrub_values_warns_once_per_failure_episode(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``AuthService.scrub_values`` runs inside the scrub filter, so a
+    record logged on every failure feeds itself forever. It warns once
+    per failure episode and resets on the first success."""
+    from app.auth.service import AuthService
+    from app.config import get_config
+    from app.market.clock import FakeClock
+
+    class _EmptySession:
+        def __enter__(self) -> _EmptySession:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def execute(self, _stmt: object) -> object:
+            class _Result:
+                def scalars(self) -> _Result:
+                    return self
+
+                def first(self) -> None:
+                    return None
+
+            return _Result()
+
+    class _Factory:
+        def __init__(self) -> None:
+            self.dead = True
+
+        def __call__(self) -> Session:
+            if self.dead:
+                raise RuntimeError("engine disposed")
+            return cast(Session, _EmptySession())
+
+    factory = _Factory()
+    service = AuthService(
+        get_config(),
+        FakeClock(datetime(2026, 10, 15, 13, 30, tzinfo=UTC)),
+        session_factory=cast(sessionmaker[Session], factory),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="app.auth.service"):
+        assert service.scrub_values() == []
+        assert service.scrub_values() == []
+    warnings = [
+        r for r in caplog.records if "auth scrub values" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+
+    factory.dead = False
+    assert service.scrub_values() == []
+    factory.dead = True
+    with caplog.at_level(logging.ERROR, logger="app.auth.service"):
+        service.scrub_values()
+    warnings = [
+        r for r in caplog.records if "auth scrub values" in r.getMessage()
+    ]
+    assert len(warnings) == 2
