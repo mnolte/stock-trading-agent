@@ -10,8 +10,12 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("cycles", sa.Column("selection", sa.JSON(), nullable=True))
     op.add_column("decisions", sa.Column("selection", sa.JSON(), nullable=True))
+    op.add_column(
+        "shadow_decisions", sa.Column("selection", sa.JSON(), nullable=True)
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("shadow_decisions", "selection")
     op.drop_column("decisions", "selection")
     op.drop_column("cycles", "selection")

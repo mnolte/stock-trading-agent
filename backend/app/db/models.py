@@ -824,6 +824,9 @@ class ShadowDecision(Base):
     # Only for a symbol live made no decision on (held by shadows only):
     # the snapshot live's cycle built for it.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Entry selection (PR 33): the same per-decision record live stores
+    # for a scored candidate in expected_profit mode.
+    selection: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
