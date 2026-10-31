@@ -86,6 +86,8 @@ def _scrub_text(text: str, secrets: list[str]) -> str:
 
 
 _secret_providers: list[Callable[[], list[str]]] = []
+_secrets_cache: list[str] = []
+_collecting = threading.local()
 
 
 def register_secret_provider(provider: Callable[[], list[str]]) -> None:
@@ -95,13 +97,24 @@ def register_secret_provider(provider: Callable[[], list[str]]) -> None:
 
 
 def _all_secrets() -> list[str]:
-    values: list[str] = []
-    for provider in _secret_providers:
-        try:
-            values.extend(provider())
-        except Exception:  # noqa: BLE001,S112 - a broken provider must not break logging
-            continue  # noqa: S112 - a broken provider must not break logging
-    return values
+    """Collect live secret values. A provider may emit a log line while
+    collecting (e.g. its store is already closed at shutdown) — that record
+    re-enters this collector on the same thread, so reuse the last known
+    values instead of recursing forever."""
+    if getattr(_collecting, "active", False):
+        return list(_secrets_cache)
+    _collecting.active = True
+    try:
+        values: list[str] = []
+        for provider in _secret_providers:
+            try:
+                values.extend(provider())
+            except Exception:  # noqa: BLE001,S112 - a broken provider must not break logging
+                continue  # noqa: S112 - a broken provider must not break logging
+        _secrets_cache[:] = values
+        return values
+    finally:
+        _collecting.active = False
 
 
 class SecretScrubFilter(logging.Filter):
