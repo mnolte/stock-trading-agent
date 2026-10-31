@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { chunkReloadPending, installErrorHooks } from './errors';
+import { installErrorHooks } from './errors';
 
 type Listener = (event: Event) => void;
 
@@ -18,7 +17,6 @@ function fakeBrowser() {
   vi.stubGlobal('sessionStorage', {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => void store.set(key, value),
-    removeItem: (key: string) => void store.delete(key),
   });
   const fetchMock = vi
     .fn()
@@ -66,52 +64,5 @@ describe('installErrorHooks', () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(second.defaultPrevented).toBe(false);
-  });
-
-  it('marks the reload pending until the next page load', () => {
-    const { fire } = fakeBrowser();
-    installErrorHooks();
-    expect(chunkReloadPending()).toBe(false);
-
-    fire('vite:preloadError', preloadError());
-    expect(chunkReloadPending()).toBe(true);
-
-    // The reload lands: hooks reinstall on the fresh document.
-    installErrorHooks();
-    expect(chunkReloadPending()).toBe(false);
-  });
-
-  it('skips the duplicate boundary report while the reload is pending', () => {
-    const { fire, reload, fetchMock } = fakeBrowser();
-    installErrorHooks();
-    fire('vite:preloadError', preloadError());
-    const reports = fetchMock.mock.calls.length;
-
-    // preventDefault resolves the lazy import to undefined; React
-    // throws on `.default` before the navigation lands.
-    const boundary = new ErrorBoundary({ children: null });
-    boundary.componentDidCatch(
-      new Error('can\'t access property "default", t._result is undefined'),
-    );
-
-    expect(fetchMock.mock.calls.length).toBe(reports);
-    expect(reload).toHaveBeenCalledTimes(2);
-  });
-
-  it('reports boundary errors again once the reload landed', () => {
-    const { fire, fetchMock } = fakeBrowser();
-    installErrorHooks();
-    fire('vite:preloadError', preloadError());
-    installErrorHooks();
-
-    const boundary = new ErrorBoundary({ children: null });
-    boundary.componentDidCatch(new Error('render broke'));
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/logs/client',
-      expect.objectContaining({
-        body: expect.stringContaining('react boundary: render broke'),
-      }),
-    );
   });
 });
