@@ -65,7 +65,9 @@ from app.secrets_service import (
     GROUP_LABELS,
     GROUP_ORDER,
     GROUPS,
+    MIN_SECRET_LENGTH,
     MISSING_KEY,
+    SECRET_TOO_SHORT,
     KeyTesters,
     SecretsStore,
     scrub,
@@ -2724,6 +2726,8 @@ async def save_smtp(
         port = 0
     if port not in (465, 587, 2525):
         errors.append("SMTP port must be 465, 587 or 2525")
+    if password is not None and len(password) < MIN_SECRET_LENGTH:
+        errors.append(SECRET_TOO_SHORT)
     if errors:
         raise HTTPException(status_code=422, detail=errors)
     # Changing where the stored password is sent (host, port, username)
@@ -2977,6 +2981,8 @@ async def save_api_key(
                 status_code=422,
                 detail="the Alpaca key id and secret are both required",
             )
+        if len(key_id) < MIN_SECRET_LENGTH or len(secret) < MIN_SECRET_LENGTH:
+            raise HTTPException(status_code=422, detail=SECRET_TOO_SHORT)
         state = getattr(request.app.state, "exec_state", None)
         paused_or_kill = bool(
             state is not None
@@ -3042,6 +3048,8 @@ async def save_api_key(
     value = str(body.get("value") or "").strip()
     if not value:
         raise HTTPException(status_code=422, detail="a key is required")
+    if len(value) < MIN_SECRET_LENGTH:
+        raise HTTPException(status_code=422, detail=SECRET_TOO_SHORT)
     result = await (
         testers.openai(value)
         if group == "openai"
@@ -5247,6 +5255,8 @@ async def server_backup_credentials(
             errors.append(f"{name} is required")
     if not password:
         errors.append("backup password is required")
+    elif len(password) < MIN_SECRET_LENGTH:
+        errors.append(SECRET_TOO_SHORT)
     if errors:
         raise HTTPException(status_code=422, detail=errors)
     secrets.save(
