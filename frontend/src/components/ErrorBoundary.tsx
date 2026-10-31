@@ -2,7 +2,7 @@ import { Component } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
-import { reportError } from '../errors';
+import { chunkReloadPending, reportError } from '../errors';
 import { accentButton, ghostButton } from './errorPageStyles';
 import { BugIcon } from './errorPages';
 
@@ -34,6 +34,14 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error): void {
+    if (chunkReloadPending()) {
+      // The stale-chunk handler already reported and is reloading; this
+      // throw is the lazy import resolving to undefined — not a new
+      // error. Re-arm the reload in case the first call stalled.
+      this.setState({ reported: true });
+      window.location.reload();
+      return;
+    }
     void reportError({
       message: `react boundary: ${error.message}`,
       stack: error.stack,

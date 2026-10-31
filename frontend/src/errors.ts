@@ -21,6 +21,15 @@ export function newErrorId(): string {
   return `e-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+/** True between a stale-chunk reload and the next page load; cleared by
+ * installErrorHooks on every boot. preventDefault() resolves the failed
+ * lazy import to undefined and React throws before the reload lands —
+ * the boundary skips its report while this is set, so one stale chunk
+ * logs one error. */
+export function chunkReloadPending(): boolean {
+  return sessionStorage.getItem('sa-chunk-reload-pending') !== null;
+}
+
 function csrfToken(): string | null {
   const match =
     typeof document !== 'undefined'
@@ -66,6 +75,8 @@ export function reportError(report: {
 }
 
 export function installErrorHooks(): void {
+  // A pending flag from before this load means the reload landed.
+  sessionStorage.removeItem('sa-chunk-reload-pending');
   window.addEventListener('error', (event) => {
     reportError({
       message: event.message || 'window error',
@@ -89,11 +100,13 @@ export function installErrorHooks(): void {
   // the old index.html 404s on its lazy chunks and lands on the error
   // boundary. Vite fires vite:preloadError first — reload so the tab
   // picks up the new build; the minute-guard keeps a broken build from
-  // looping, and then the error still reaches the boundary.
+  // looping, and then the error still reaches the boundary. The pending
+  // flag tells the boundary its error is this reload's, not a new one.
   window.addEventListener('vite:preloadError', (event) => {
     const last = Number(sessionStorage.getItem('sa-chunk-reload') ?? 0);
     if (Date.now() - last < 60_000) return;
     sessionStorage.setItem('sa-chunk-reload', String(Date.now()));
+    sessionStorage.setItem('sa-chunk-reload-pending', '1');
     event.preventDefault();
     reportError({
       message: `stale chunk after rebuild: ${String(
