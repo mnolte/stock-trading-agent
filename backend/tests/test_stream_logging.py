@@ -1,8 +1,8 @@
 """Stream reconnect logging (docs/SPEC.md, Alpaca integration — Stream
-health): first failure of an outage at ERROR, the same error at most
-once per 10 minutes with a count, the reconnect at INFO with the outage
-length, an outage over 5 minutes in-session marking the stream
-degraded."""
+health): the first failed connection of an outage at ERROR, the same
+error at most once per 10 minutes with a count, the reconnect at INFO
+with the outage length, an outage over 5 minutes in-session marking
+the stream degraded."""
 
 import logging
 from datetime import UTC, datetime
@@ -39,22 +39,33 @@ def test_outage_first_error_then_counted_repeats(
     stream = StreamOutageFilter(
         degraded=lambda: degraded.append(True), now=lambda: clock[0]
     )
-    err = "error during websocket communication: TimeoutError"
+    drop = (
+        "trading stream websocket error, restarting  connection: "
+        "no close frame received or sent"
+    )
 
-    first = _record("alpaca.trading.stream", logging.WARNING, err)
+    # A lost socket opens the outage at the SDK's WARNING — only a
+    # failed connection is ERROR (spec).
+    first = _record("alpaca.trading.stream", logging.WARNING, drop)
     assert stream.filter(first) is True
-    assert first.levelno == logging.ERROR  # first failure at ERROR
+    assert first.levelno == logging.WARNING
 
-    # The same error is silent until the 10-minute report.
+    # The same failure is silent until the 10-minute report.
     for _ in range(5):
         assert stream.filter(
-            _record("alpaca.trading.stream", logging.ERROR, err)
+            _record("alpaca.trading.stream", logging.WARNING, drop)
         ) is False
 
     clock[0] += 601
-    report = _record("alpaca.trading.stream", logging.ERROR, err)
+    report = _record("alpaca.trading.stream", logging.WARNING, drop)
     assert stream.filter(report) is True
     assert "x7" in report.getMessage()
+
+    # A failed reconnect during the outage logs at ERROR (spec).
+    err = "error during websocket communication: TimeoutError"
+    failed = _record("alpaca.trading.stream", logging.ERROR, err)
+    assert stream.filter(failed) is True
+    assert failed.levelno == logging.ERROR
 
     # Reconnect: INFO with the outage length on the app logger.
     with caplog.at_level(logging.INFO, logger="app.broker.stream"):

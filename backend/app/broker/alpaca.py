@@ -644,10 +644,11 @@ class AlpacaPaperBroker:
         self._stream_started = True
         self._main_loop = asyncio.get_running_loop()
         self._stream.subscribe_trade_updates(self._on_trade_update)
-        # Outage-aware dedup on the SDK's stream logger: first failure
-        # at ERROR, repeats at most once per 10 minutes, reconnect at
-        # INFO with the outage length, long outages handed to the
-        # failure handlers (docs/SPEC.md — Stream health).
+        # Outage-aware dedup on the SDK's stream logger: the first
+        # failed connection at ERROR, repeats at most once per 10
+        # minutes, reconnect at INFO with the outage length, long
+        # outages handed to the failure handlers (docs/SPEC.md —
+        # Stream health).
         stream_logger = logging.getLogger("alpaca.trading.stream")
         if not any(
             isinstance(f, StreamOutageFilter) for f in stream_logger.filters
@@ -695,8 +696,10 @@ class StreamOutageFilter(logging.Filter):
     (docs/SPEC.md, Alpaca integration — Stream health).
 
     An outage opens at the first WARNING/ERROR line and ends when the
-    SDK reports "connected to:". While it runs, the first failure is
-    kept at ERROR, the same error repeats at most once per
+    SDK reports "connected to:". While it runs, every record keeps the
+    SDK's own level — a lost socket is WARNING, a failed (re)connection
+    is ERROR (spec: "the first failed connection of an outage is logged
+    at ERROR") — the same error repeats at most once per
     REPORT_EVERY_SECONDS with a count, the SDK's own INFO is left to
     the library rule, and the reconnect is announced at INFO by the
     app logger with the outage length. An outage that crosses
@@ -745,13 +748,11 @@ class StreamOutageFilter(logging.Filter):
         if record.levelno >= logging.WARNING:
             key = message.splitlines()[0][:160]
             if self._outage_start is None:
-                # First failure of an outage — at ERROR (spec).
+                # First failure of an outage — at the SDK's own level:
+                # a lost socket is WARNING, a failed connect is ERROR.
                 self._outage_start = at
                 self._errors = {key: [1, at]}
                 self._degraded_notified = False
-                if record.levelno < logging.ERROR:
-                    record.levelno = logging.ERROR
-                    record.levelname = "ERROR"
                 return True
             entry = self._errors.get(key)
             if entry is None:

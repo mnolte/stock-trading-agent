@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-10-31 — Stream drops and stale-chunk reload fixes
+
+- Stream health: a lost trade-updates socket that reconnects cleanly stays at the SDK's WARNING. "The first failed connection of an outage is logged at ERROR" (docs/SPEC.md) now means a failed (re)connection attempt, not the drop itself — a self-healing blip no longer logs ERROR or sends a "New error" notification. A failed reconnect still logs ERROR and notifies.
+- Frontend: a stale lazy chunk after a rebuild reported two errors — the `vite:preloadError` handler's and the React boundary's, because `preventDefault()` resolves the lazy import to `undefined` and React throws before the reload lands. The boundary now skips its report while the chunk reload is pending, so one stale chunk logs one error.
+
 ## 2026-10-31 — Review attribution, remainder — implementation
 
 - Verdict facts per spec: `checks_at_decision` is recomputed with the decision.v3 rules on the stored input (v3 rows keep their stored checks; v1/v2 get them too — trend 1h and daily, regime, room in ATR), `execution` reports `filled`/`not_filled`/`not_sent`/null, and `change_text` carries the failing check's human detail.
