@@ -314,7 +314,13 @@ def install_secret_scrub_filter(secrets: Callable[[], list[str]]) -> None:
     ]
     for log in loggers:
         for handler in log.handlers:
-            handler.addFilter(shared)
+            # Handlers that outlive the app (pytest's capture handler)
+            # would stack one filter per boot otherwise — each runs
+            # _all_secrets on the same record.
+            if not any(
+                isinstance(f, SecretScrubFilter) for f in handler.filters
+            ):
+                handler.addFilter(shared)
 
 
 class SecretsStore:

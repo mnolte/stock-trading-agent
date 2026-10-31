@@ -30,7 +30,8 @@ Newest first.
   - several smaller issues.
 - Sign-in and access: **Confirm and password change** count failed attempts per session. After 5 in 15 minutes the session is signed out and the warning is sent.
 - API keys: a secret shorter than 8 characters is refused at save.
-- An app's secret providers are unregistered at shutdown. Registered per app and never removed, a stale `AuthService.scrub_values` keeps running on every later record in the process, fails on its dead store once per failure episode, and that warn is a stray "logs" publish on whatever app is still live (it flaked `test_websocket_needs_session_and_own_origin`: an `update` beat the `pong`).
+- A body that is not JSON at all still answers 400 `bad_request` (logged at WARNING); typed route bodies only changed the parsed-but-invalid cases to 422 `invalid`.
+- An app's secret providers are unregistered at shutdown, and `install_secret_scrub_filter` no longer stacks a second scrub filter on a handler that already has one. Registered per app and never removed, a stale `AuthService.scrub_values` keeps running on every later record in the process, fails on its dead store once per failure episode, and that warn is a stray "logs" publish on whatever app is still live (it flaked `test_websocket_needs_session_and_own_origin`: an `update` beat the `pong`); filters that survive their app made one extra `_all_secrets` collection per record per boot.
 - Kickoff `docs/kickoffs/fix-scan-2026-10-31.md`. The rest are code bugs against the existing spec and AGENTS.md.
 
 ## 2026-10-31 — Misfire grace on every scheduled job

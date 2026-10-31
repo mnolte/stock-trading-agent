@@ -140,19 +140,33 @@ def test_provider_log_during_collection_does_not_recurse(
     shutdown). That record re-enters the filter on the same thread; the
     collector falls back to the last known values instead of recursing —
     and the provider's own record is still scrubbed."""
+    import threading
+
     import app.logging_config as lc
 
     emit = False
     calls = 0
+    # Re-entry depth per thread: a record can pass several scrub filters
+    # on its way out (filters accumulate on shared handlers), so extra
+    # sequential calls are fine — a call nested inside an active
+    # collection on the same thread is the bug this guards.
+    local = threading.local()
+    max_depth = 0
 
     def provider() -> list[str]:
-        nonlocal calls
+        nonlocal calls, max_depth
         calls += 1
-        if emit:
-            logging.getLogger("app.test.scrub").error(
-                "provider failed near abc123secret00"
-            )
-        return ["abc123secret00"]
+        depth = getattr(local, "depth", 0) + 1
+        local.depth = depth
+        max_depth = max(max_depth, depth)
+        try:
+            if emit:
+                logging.getLogger("app.test.scrub").error(
+                    "provider failed near abc123secret00"
+                )
+            return ["abc123secret00"]
+        finally:
+            local.depth = depth - 1
 
     handler = logging.StreamHandler()
     handler.addFilter(SecretScrubFilter())
@@ -169,9 +183,10 @@ def test_provider_log_during_collection_does_not_recurse(
         lc._secrets_cache.clear()
         test_log.removeHandler(handler)
 
-    # One clean call plus one during the outer record's filter; the
-    # provider's own record sees the cached values, not a new collection.
-    assert calls == 2
+    # The outer record's filter collected; the provider's own record saw
+    # the cached values instead of re-entering the collection.
+    assert calls >= 2
+    assert max_depth == 1
     leaked = [r for r in caplog.records if "abc123secret00" in r.getMessage()]
     assert leaked == []
     assert any(
