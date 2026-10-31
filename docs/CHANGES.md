@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-10-31 — Settings saves restored — implementation
+
+- `validate_settings` lost two branches in PR 29: `reviews.models` was overwritten by the quiet-hours cleaner, so every model save failed on a quiet-hours message; and `notifications.quiet_hours` had no branch left, so every quiet-hours save failed as "not a number". Both branches are back.
+- `config.example.yaml`: the notification event `earnings_exit_tomorrow` was renamed `exit_deferred_or_earnings_exit` in PR 26, but the defaults kept the old key — the settings form echoed it into every channel save, which then failed as unknown. The key is renamed in the defaults and the form now drops event keys the code no longer knows, so an older saved tree can't poison a save either.
+- `test_settings_saves.py` saves every reviews.models and quiet_hours case through the API and walks every key the Settings page can send (a dropped validation branch now fails the suite); `settings-save.e2e.ts` saves both through the page.
+- Kickoff `docs/kickoffs/fix-scan-2026-10-31.md`, step 1.
+
 ## 2026-10-31 — Repository scan fixes
 
 - From the repository scan of 31 October. Its main findings:
