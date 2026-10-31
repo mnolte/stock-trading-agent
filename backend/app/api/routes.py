@@ -54,7 +54,7 @@ from app.market.clock import (
     SessionState,
     make_clock,
 )
-from app.notifications.events import EVENT_DEFS
+from app.notifications.events import EVENT_DEFS, EVENTS
 from app.notifications.service import (
     EMAIL_FAILURE_BANNER_AT,
     NotificationService,
@@ -2281,7 +2281,16 @@ def _settings_form(config: object) -> dict[str, object]:
                 "quiet_hours",
                 default={"start": "23:00", "end": "08:00"},
             ),
-            "events": get("notifications", "events", default={}),
+            # Only known event keys: the page echoes this whole map back on
+            # a channel save, and a stale key in an older saved tree (an
+            # event renamed since) would fail every save as unknown.
+            "events": {
+                key: channels
+                for key, channels in (
+                    get("notifications", "events", default={}) or {}
+                ).items()
+                if key in EVENTS
+            },
         },
         "readiness": {
             "min_closed_trades": get(

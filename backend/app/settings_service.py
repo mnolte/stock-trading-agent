@@ -388,6 +388,7 @@ async def validate_settings(
                                 [f"{task_labels[task]}: must not be empty"]
                             )
                         out[key][task] = text
+                elif kind == "quiet_hours":
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":
                     out[key] = _clean_notify_events(value)
