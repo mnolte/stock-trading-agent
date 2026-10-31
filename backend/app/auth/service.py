@@ -155,6 +155,7 @@ class AuthService:
         # Pending password-step tickets, keyed by token hash. In memory:
         # a restart just means typing the password again.
         self._pending: dict[str, dict[str, object]] = {}
+        self._totp_cache: tuple[str, str] | None = None
         self._global_locked_until: datetime | None = None
         self._lockout_notified: set[str] = set()
 
@@ -176,12 +177,18 @@ class AuthService:
             return self._user(session) is not None
 
     def _totp_secret(self, user: User) -> str:
-        from app.secrets_service import _load_or_create_key
+        """Decrypt the stored TOTP blob; the scrub filter calls this on
+        every log record, so the plaintext is cached on the ciphertext —
+        a rotated blob simply misses once."""
+        blob = user.totp_secret_encrypted
+        if self._totp_cache is None or self._totp_cache[0] != blob:
+            from app.secrets_service import _load_or_create_key
 
-        fernet = _load_or_create_key(
-            Path(self._config.env.sa_data_dir) / "secret.key"
-        )
-        return fernet.decrypt(user.totp_secret_encrypted.encode()).decode()
+            fernet = _load_or_create_key(
+                Path(self._config.env.sa_data_dir) / "secret.key"
+            )
+            self._totp_cache = (blob, fernet.decrypt(blob.encode()).decode())
+        return self._totp_cache[1]
 
     # ------------------------------------------------------------------
     # attempts and rate limits

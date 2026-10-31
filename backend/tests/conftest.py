@@ -8,6 +8,27 @@ from pathlib import Path
 
 import pytest
 
+
+# Test databases, logs and the template cache go to tmpfs when there is a
+# big enough one: SQLite commits never wait on a disk flush and the 7 MB
+# template copy is a RAM copy. Skipped where /dev/shm is absent or small
+# (minimal containers); pytest resolves basetemp lazily, so forcing
+# tempfile.tempdir here still redirects tmp_path.
+def _prefer_tmpfs() -> None:
+    shm = Path("/dev/shm")
+    try:
+        free = shutil.disk_usage(shm).free
+    except OSError:
+        return
+    if not shm.is_dir() or free < 512 * 1024**2:
+        return
+    target = shm / f"stock-agent-tests-{os.getuid()}"
+    target.mkdir(exist_ok=True)
+    tempfile.tempdir = str(target)
+
+
+_prefer_tmpfs()
+
 os.environ.setdefault(
     "SA_DB_PATH", str(Path(tempfile.gettempdir()) / "stock-agent-test.db")
 )
@@ -91,6 +112,15 @@ def _build_template(path: Path) -> None:
 
         asyncio.run(seed())
 
+        # One evaluate warms the stored 1h aggregates (bars_1h): every
+        # test boot then reads them instead of re-aggregating 60 sessions
+        # of 5m bars per symbol.
+        from app.signals.service import SignalService
+
+        SignalService(market_data, calendar_store, config, clock).evaluate(
+            clock.now()
+        )
+
         # WAL sidecars are not part of the template: checkpoint everything
         # into the main file so a plain copy carries the whole database.
         engine = get_engine()
@@ -121,6 +151,8 @@ def _template_fingerprint() -> str:
             for part in (
                 "api/main.py",
                 "config.py",
+                "data/aggregate.py",
+                "data/cache.py",
                 "data/factory.py",
                 "data/fake.py",
                 "data/service.py",
@@ -128,6 +160,7 @@ def _template_fingerprint() -> str:
                 "db/models.py",
                 "market/calendar.py",
                 "market/clock.py",
+                "signals/service.py",
             )
             if (backend / "app" / part).exists()
         ]
@@ -222,6 +255,10 @@ def _isolated_db(
     engine = _engines.pop(f"sqlite:///{db_path}", None)
     if engine is not None:
         engine.dispose()
+    # pytest keeps every tmp_path until the run ends; on tmpfs the
+    # retained 7 MB database copies would fill it — the bulk goes at
+    # teardown, the rest stays for postmortem debugging.
+    db_path.unlink(missing_ok=True)
 
 
 @pytest.fixture

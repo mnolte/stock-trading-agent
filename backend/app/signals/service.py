@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h, bars_per_session
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
@@ -207,25 +206,14 @@ class SignalService:
         today: date,
         now: datetime,
     ) -> tuple[list[Bar1h], list[DailyBar], list[Bar5m]]:
-        """One cache read → closed 1h bars, completed daily bars, today's 5m."""
-        bars_5m = self.market_data.get_5m_rows_sessions(symbol, sessions)
-        per = bars_per_session(bars_5m, sessions)
+        """Closed 1h bars, completed daily bars, today's 5m bars."""
         bars_1h = [
             b
-            for s in sessions
-            for b in aggregate_1h(symbol, per[s.date], s)
+            for b in self.market_data.get_1h_bars_range(symbol, sessions)
             if b.end <= now
         ]
         daily = self.daily_bars(symbol, daily_sessions, now)
-        # Same close-time rule as today_5m: a bar closes at start + 5m,
-        # never past the session close (the early-close partial bar).
-        todays = [
-            r.to_bar5m()
-            for s in sessions
-            if s.date == today
-            for r in per[s.date]
-            if min(r.start + BAR_5M, s.close) <= now
-        ]
+        todays = self.today_5m(symbol, today, now)
         return bars_1h, daily, todays
 
     def _snapshot_from_bars(

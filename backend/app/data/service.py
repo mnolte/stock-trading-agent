@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
-from app.data.aggregate import aggregate_1h, bars_per_session, session_bars
+from app.data.aggregate import aggregate_1h, session_bars
 from app.data.cache import BarCache, RawBar5m, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import (
@@ -288,8 +288,7 @@ class MarketDataService:
         return self.bars_cache.get(symbol, start, end)
 
     def get_1h_bars(self, symbol: str, session: CalendarDay) -> list[Bar1h]:
-        bars_5m = self.bars_cache.get_rows(symbol, session.open, session.close)
-        return aggregate_1h(symbol, bars_5m, session)
+        return self.get_1h_bars_range(symbol, [session])
 
     def get_5m_bars_sessions(
         self, symbol: str, sessions: list[CalendarDay]
@@ -315,15 +314,45 @@ class MarketDataService:
     def get_1h_bars_range(
         self, symbol: str, sessions: list[CalendarDay]
     ) -> list[Bar1h]:
-        """Session-aligned 1h bars across several sessions, in order."""
-        per_session = bars_per_session(
-            self.get_5m_rows_sessions(symbol, sessions), sessions
+        """Session-aligned 1h bars across several sessions, in order.
+
+        Aggregates are stored per session in ``bars_1h`` together with
+        the 5m fingerprint (row count, newest start) they were computed
+        from. A session whose fingerprint still matches is served from
+        the store; a stale or missing one is recomputed — so writes that
+        bypass ``BarCache.store`` can never serve stale bars.
+        """
+        if not sessions:
+            return []
+        live = self.bars_cache.session_fingerprints(symbol, sessions)
+        states = self.bars_cache.get_1h_states(symbol, sessions)
+        hits = {
+            s.date
+            for s in sessions
+            if states.get(s.date) is not None
+            and states.get(s.date) == live.get(s.date, "0:")
+        }
+        stored = self.bars_cache.get_1h(
+            symbol, [s for s in sessions if s.date in hits]
         )
-        return [
-            bar
-            for session in sessions
-            for bar in aggregate_1h(symbol, per_session[session.date], session)
-        ]
+        out: list[Bar1h] = []
+        for session in sessions:
+            cached = stored.get(session.date)
+            if session.date in hits and (
+                cached is not None or live.get(session.date, "0:") == "0:"
+            ):
+                out.extend(cached or [])
+                continue
+            bars = aggregate_1h(
+                symbol,
+                self.bars_cache.get_rows(symbol, session.open, session.close),
+                session,
+            )
+            self.bars_cache.replace_1h(
+                symbol, session.date, bars, live.get(session.date, "0:")
+            )
+            out.extend(bars)
+        return out
 
     async def refresh_daily(
         self,

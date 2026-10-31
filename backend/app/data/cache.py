@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import delete, func, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.data.models import Bar5m, CalendarDay, DailyBar
+from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 from app.db.base import get_session_maker
 from app.db.models import Bar1d as Bar1dRow
+from app.db.models import Bar1h as Bar1hRow
+from app.db.models import Bar1hState as Bar1hStateRow
 from app.db.models import Bar5m as Bar5mRow
 
 UTC = ZoneInfo("UTC")
@@ -115,8 +117,21 @@ class BarCache:
             return len(new_rows)
 
     def prune_5m(self, before: datetime) -> int:
-        """Delete every 5m bar starting before ``before``; returns count."""
+        """Delete every 5m bar starting before ``before``; returns count.
+
+        The affected sessions' stored 1h bars go too — the fingerprint
+        check would catch them anyway, this just keeps the table small.
+        """
         with self._session_factory() as session:
+            affected = {
+                date.fromisoformat(r[0])
+                for r in session.connection()
+                .exec_driver_sql(
+                    "SELECT DISTINCT date(start) FROM bars_5m WHERE start < ?",
+                    (_naive_utc(before).strftime("%Y-%m-%d %H:%M:%S.%f"),),
+                )
+                .fetchall()
+            }
             count = session.execute(
                 select(func.count())
                 .select_from(Bar5mRow)
@@ -125,6 +140,15 @@ class BarCache:
             session.execute(
                 delete(Bar5mRow).where(Bar5mRow.start < _naive_utc(before))
             )
+            if affected:
+                session.execute(
+                    delete(Bar1hRow).where(Bar1hRow.session_date.in_(affected))
+                )
+                session.execute(
+                    delete(Bar1hStateRow).where(
+                        Bar1hStateRow.session_date.in_(affected)
+                    )
+                )
             session.commit()
         return count
 
@@ -455,6 +479,153 @@ class BarCache:
                 )
                 for r in rows
             ]
+
+    def session_fingerprints(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> dict[date, str]:
+        """Per-session ``"count:newest_start:value_total"`` fingerprint of
+        the cached 5m set — an insert, delete or in-place edit all shift
+        it, so stored aggregates recompute instead of going stale.
+
+        Same invariant as ``covered_session_counts``: cached bars only
+        span regular sessions, so a bar's UTC date is always its New York
+        session date and SQL ``date(start)`` does the grouping.
+        """
+        if not sessions:
+            return {}
+        lo, hi = _window(
+            min(s.open for s in sessions), max(s.close for s in sessions)
+        )
+        with self._session_factory() as session:
+            rows = (
+                session.connection()
+                .exec_driver_sql(
+                    "SELECT date(start) AS d, COUNT(*) || ':' || MAX(start)"
+                    " || ':' || TOTAL(open + high + low + close + volume)"
+                    " FROM bars_5m WHERE symbol = ? AND start >= ?"
+                    " AND start <= ? GROUP BY d",
+                    (symbol, lo, hi),
+                )
+                .fetchall()
+            )
+        return {date.fromisoformat(d): fp for d, fp in rows}
+
+    def get_1h_states(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> dict[date, str]:
+        """The source fingerprint each session's stored 1h bars were
+        computed from — matched against ``session_fingerprints``."""
+        if not sessions:
+            return {}
+        dates = [s.date for s in sessions]
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    Bar1hStateRow.session_date, Bar1hStateRow.src_fingerprint
+                ).where(
+                    Bar1hStateRow.symbol == symbol,
+                    Bar1hStateRow.session_date.in_(dates),
+                )
+            ).all()
+        return dict(rows)
+
+    def get_1h(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> dict[date, list[Bar1h]]:
+        """Stored session-aligned 1h bars for the given sessions, by date."""
+        result: dict[date, list[Bar1h]] = {}
+        dates = [s.date for s in sessions]
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(
+                        Bar1hRow.session_date,
+                        Bar1hRow.start,
+                        Bar1hRow.end,
+                        Bar1hRow.open,
+                        Bar1hRow.high,
+                        Bar1hRow.low,
+                        Bar1hRow.close,
+                        Bar1hRow.volume,
+                        Bar1hRow.feed,
+                        Bar1hRow.complete,
+                    )
+                    .where(
+                        Bar1hRow.symbol == symbol,
+                        Bar1hRow.session_date.in_(dates),
+                    )
+                    .order_by(Bar1hRow.session_date, Bar1hRow.start)
+                )
+                .all()
+            )
+            for r in rows:
+                day: date = r[0]
+                result.setdefault(day, []).append(
+                    Bar1h(
+                        symbol=symbol,
+                        start=_aware_utc(r[1]).astimezone(NY_TZ),
+                        end=_aware_utc(r[2]).astimezone(NY_TZ),
+                        open=Decimal(str(r[3])),
+                        high=Decimal(str(r[4])),
+                        low=Decimal(str(r[5])),
+                        close=Decimal(str(r[6])),
+                        volume=r[7],
+                        feed=r[8],
+                        complete=bool(r[9]),
+                    )
+                )
+        return result
+
+    def replace_1h(
+        self,
+        symbol: str,
+        session_date: date,
+        bars: list[Bar1h],
+        src_fingerprint: str,
+    ) -> None:
+        """Store one session's computed 1h bars with the 5m fingerprint
+        they were built from — recomputed data replaces in one unit."""
+        with self._session_factory() as session:
+            session.execute(
+                delete(Bar1hRow).where(
+                    Bar1hRow.symbol == symbol,
+                    Bar1hRow.session_date == session_date,
+                )
+            )
+            session.execute(
+                delete(Bar1hStateRow).where(
+                    Bar1hStateRow.symbol == symbol,
+                    Bar1hStateRow.session_date == session_date,
+                )
+            )
+            session.add(
+                Bar1hStateRow(
+                    symbol=symbol,
+                    session_date=session_date,
+                    src_fingerprint=src_fingerprint,
+                )
+            )
+            if bars:
+                session.execute(
+                    insert(Bar1hRow),
+                    [
+                        {
+                            "symbol": symbol,
+                            "session_date": session_date,
+                            "start": _naive_utc(b.start),
+                            "end": _naive_utc(b.end),
+                            "open": b.open,
+                            "high": b.high,
+                            "low": b.low,
+                            "close": b.close,
+                            "volume": b.volume,
+                            "feed": b.feed,
+                            "complete": b.complete,
+                        }
+                        for b in bars
+                    ],
+                )
+            session.commit()
 
     def get_rows(
         self, symbol: str, start: datetime, end: datetime
