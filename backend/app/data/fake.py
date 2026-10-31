@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import math
 import random
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from app.data.aggregate import aggregate_daily
 from app.data.models import (
     Bar5m,
     CalendarDay,
@@ -49,6 +49,9 @@ def _to_decimal(value: float) -> Decimal:
     return Decimal(str(round(value, 4)))
 
 
+_FIVE_MIN = timedelta(minutes=5)
+
+
 def _bars_for_session(
     symbol: str,
     day: date,
@@ -60,24 +63,29 @@ def _bars_for_session(
     seed = f"{symbol}:{day.isoformat()}"
     rng = random.Random(seed)  # noqa: S311 - deterministic fake data, not crypto
     base = float(_BASE_PRICES.get(symbol, Decimal("100")))
+    uniform = rng.uniform
+    randint = rng.randint
 
     bars: list[Bar5m] = []
-    current = session_open
-    previous_close = base + rng.uniform(-base * 0.005, base * 0.005)
-    while current < session_close:
-        nxt = current + timedelta(minutes=5)
-        if nxt > session_close:
-            nxt = session_close
+    # Stepping in UTC gives the same instants as stepping in New York and
+    # converting each bar — a session never contains a DST transition.
+    utc_close = session_close.astimezone(UTC)
+    current = session_open.astimezone(UTC)
+    previous_close = base + uniform(-base * 0.005, base * 0.005)
+    while current < utc_close:
+        nxt = current + _FIVE_MIN
+        if nxt > utc_close:
+            nxt = utc_close
         open_p = previous_close
-        noise = rng.uniform(-0.002, 0.002)
+        noise = uniform(-0.002, 0.002)
         close_p = open_p * (1 + noise + drift)
-        high_p = max(open_p, close_p) * (1 + abs(rng.uniform(0, 0.001)))
-        low_p = min(open_p, close_p) * (1 - abs(rng.uniform(0, 0.001)))
-        volume = rng.randint(1_000, 50_000)
+        high_p = max(open_p, close_p) * (1 + abs(uniform(0, 0.001)))
+        low_p = min(open_p, close_p) * (1 - abs(uniform(0, 0.001)))
+        volume = randint(1_000, 50_000)
         bars.append(
             Bar5m(
                 symbol=symbol,
-                start=current.astimezone(UTC),
+                start=current,
                 open=_to_decimal(open_p),
                 high=_to_decimal(high_p),
                 low=_to_decimal(low_p),
@@ -89,6 +97,76 @@ def _bars_for_session(
         previous_close = close_p
         current = nxt
     return bars
+
+
+def _daily_for_session(
+    symbol: str,
+    day: date,
+    session_open: datetime,
+    session_close: datetime,
+    drift: float = 0.0,
+) -> DailyBar | None:
+    """The session's daily bar without building 78 5-minute bars.
+
+    Runs the same random walk as ``_bars_for_session`` and keeps only the
+    session's open/high/low/close/volume — identical to
+    ``aggregate_daily(_bars_for_session(...))`` because ``_to_decimal``
+    is monotonic, so rounding the session's extremes equals taking the
+    extremes of the rounded bars.
+    """
+    seconds = (session_close - session_open).total_seconds()
+    if seconds <= 0:
+        return None
+    rng = random.Random(f"{symbol}:{day.isoformat()}")  # noqa: S311 - deterministic fake data, not crypto
+    base = float(_BASE_PRICES.get(symbol, Decimal("100")))
+    uniform = rng.uniform
+    randint = rng.randint
+
+    previous_close = base + uniform(-base * 0.005, base * 0.005)
+    open_p = previous_close
+    high_p = low_p = close_p = previous_close
+    volume = 0
+    for _ in range(math.ceil(seconds / 300)):
+        open_i = previous_close
+        close_i = open_i * (1 + uniform(-0.002, 0.002) + drift)
+        high_i = max(open_i, close_i) * (1 + abs(uniform(0, 0.001)))
+        low_i = min(open_i, close_i) * (1 - abs(uniform(0, 0.001)))
+        volume += randint(1_000, 50_000)
+        if high_i > high_p:
+            high_p = high_i
+        if low_i < low_p:
+            low_p = low_i
+        close_p = close_i
+        previous_close = close_i
+    return DailyBar(
+        symbol=symbol,
+        date=day,
+        open=_to_decimal(open_p),
+        high=_to_decimal(high_p),
+        low=_to_decimal(low_p),
+        close=_to_decimal(close_p),
+        volume=volume,
+    )
+
+
+def _next_weekday(day: date) -> date:
+    """The next calendar day, skipping Saturday and Sunday."""
+    nxt = day + timedelta(days=1)
+    if nxt.weekday() == 5:
+        nxt += timedelta(days=2)
+    elif nxt.weekday() == 6:
+        nxt += timedelta(days=1)
+    return nxt
+
+
+def _prev_weekday(day: date) -> date:
+    """The previous calendar day, skipping Saturday and Sunday."""
+    prev = day - timedelta(days=1)
+    if prev.weekday() == 5:
+        prev -= timedelta(days=1)
+    elif prev.weekday() == 6:
+        prev -= timedelta(days=2)
+    return prev
 
 
 class FakeCalendarSource:
@@ -134,8 +212,9 @@ class FakeCalendarSource:
 
     def next_trading_day(self, day: date) -> CalendarDay | None:
         current = day
-        for _ in range(370):
-            current += timedelta(days=1)
+        # Same ~one-year horizon as the old day-at-a-time scan.
+        while (current - day).days < 370:
+            current = _next_weekday(current)
             session = self.session_for(current)
             if session is not None:
                 return session
@@ -143,8 +222,8 @@ class FakeCalendarSource:
 
     def previous_trading_day(self, day: date) -> CalendarDay | None:
         current = day
-        for _ in range(370):
-            current -= timedelta(days=1)
+        while (day - current).days < 370:
+            current = _prev_weekday(current)
             session = self.session_for(current)
             if session is not None:
                 return session
@@ -202,12 +281,8 @@ class FakeBarSource:
         for day in calendar.data:
             if not start <= day.date <= end:
                 continue
-            bar = aggregate_daily(
-                symbol,
-                _bars_for_session(
-                    symbol, day.date, day.open, day.close, self.drift.get(symbol, 0.0)
-                ),
-                day,
+            bar = _daily_for_session(
+                symbol, day.date, day.open, day.close, self.drift.get(symbol, 0.0)
             )
             if bar is not None:
                 bars.append(bar)

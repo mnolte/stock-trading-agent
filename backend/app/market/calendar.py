@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from datetime import date, datetime, time, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -26,21 +27,18 @@ class StaticCalendarProvider:
     def __init__(self, days: list[CalendarDay] | None = None) -> None:
         self._days = {d.date: d for d in (days or [])}
         self._sorted = sorted(self._days.values(), key=lambda d: d.date)
+        self._dates = [d.date for d in self._sorted]
 
     def session_for(self, day: date) -> CalendarDay | None:
         return self._days.get(day)
 
     def next_trading_day(self, day: date) -> CalendarDay | None:
-        for d in self._sorted:
-            if d.date > day:
-                return d
-        return None
+        idx = bisect_right(self._dates, day)
+        return self._sorted[idx] if idx < len(self._sorted) else None
 
     def previous_trading_day(self, day: date) -> CalendarDay | None:
-        for d in reversed(self._sorted):
-            if d.date < day:
-                return d
-        return None
+        idx = bisect_left(self._dates, day) - 1
+        return self._sorted[idx] if idx >= 0 else None
 
 
 class WeekdayCalendarProvider:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import batched
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, insert, select
@@ -17,6 +18,38 @@ UTC = ZoneInfo("UTC")
 NY_TZ = ZoneInfo("America/New_York")
 
 
+class RawBar5m(NamedTuple):
+    """A cached 5m bar as stored: floats, no Decimal construction.
+
+    Aggregation paths (1h bars, bucketing) read this instead of ``Bar5m``
+    so the per-row ``Decimal(str(...))`` work happens only on the handful
+    of values their output actually keeps. Prices round-trip through
+    SQLite REAL, so ``Decimal(str(x))`` here gives the same value the
+    ``Bar5m`` path produces.
+    """
+
+    symbol: str
+    start: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    feed: str
+
+    def to_bar5m(self) -> Bar5m:
+        return Bar5m(
+            symbol=self.symbol,
+            start=self.start,
+            open=Decimal(str(self.open)),
+            high=Decimal(str(self.high)),
+            low=Decimal(str(self.low)),
+            close=Decimal(str(self.close)),
+            volume=self.volume,
+            feed=self.feed,
+        )
+
+
 def _naive_utc(dt: datetime) -> datetime:
     """SQLite stores naive datetimes; keep them as naive UTC."""
     if dt.tzinfo is None:
@@ -26,6 +59,15 @@ def _naive_utc(dt: datetime) -> datetime:
 
 def _aware_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
+def _window(start: datetime, end: datetime) -> tuple[str, str]:
+    """SQLite text bounds for a [start, end] window — stored starts are
+    'YYYY-MM-DD HH:MM:SS.ffffff', so lexicographic bounds compare right."""
+    return (
+        _naive_utc(start).strftime("%Y-%m-%d %H:%M:%S.%f"),
+        _naive_utc(end).strftime("%Y-%m-%d %H:%M:%S.%f"),
+    )
 
 
 class BarCache:
@@ -38,9 +80,10 @@ class BarCache:
         """Upsert bars; returns number of new rows inserted."""
         if not bars:
             return 0
-        bars = list({(b.symbol, _naive_utc(b.start)): b for b in bars}.values())
-        symbols = {b.symbol for b in bars}
-        naive_starts = list({_naive_utc(b.start) for b in bars})
+        keyed = [(b, b.symbol, _naive_utc(b.start)) for b in bars]
+        keyed = list({(sym, start): (b, sym, start) for b, sym, start in keyed}.values())
+        symbols = {sym for _b, sym, _start in keyed}
+        naive_starts = list({start for _b, _sym, start in keyed})
         with self._session_factory() as session:
             existing = {
                 (symbol, start)
@@ -54,8 +97,8 @@ class BarCache:
             }
             new_rows = [
                 {
-                    "symbol": b.symbol,
-                    "start": _naive_utc(b.start),
+                    "symbol": sym,
+                    "start": start,
                     "open": b.open,
                     "high": b.high,
                     "low": b.low,
@@ -63,8 +106,8 @@ class BarCache:
                     "volume": b.volume,
                     "feed": b.feed,
                 }
-                for b in bars
-                if (b.symbol, _naive_utc(b.start)) not in existing
+                for b, sym, start in keyed
+                if (sym, start) not in existing
             ]
             if new_rows:
                 session.execute(insert(Bar5mRow), new_rows)
@@ -295,19 +338,19 @@ class BarCache:
                 volume=row.volume, feed=row.feed,
             )
 
-    def get(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
-        """Return cached bars for a symbol in [start, end], sorted by start."""
-        # Stored as 'YYYY-MM-DD HH:MM:SS.ffffff' — lexicographic bounds.
-        lo = _naive_utc(start).strftime("%Y-%m-%d %H:%M:%S.%f")
-        hi = _naive_utc(end).strftime("%Y-%m-%d %H:%M:%S.%f")
+    def get_latest(
+        self, symbol: str, start: datetime, end: datetime, limit: int
+    ) -> list[Bar5m]:
+        """The ``limit`` newest cached bars in [start, end], newest first."""
+        lo, hi = _window(start, end)
         with self._session_factory() as session:
             rows = (
                 session.connection()
                 .exec_driver_sql(
                     "SELECT start, open, high, low, close, volume, feed"
                     " FROM bars_5m WHERE symbol = ? AND start >= ? AND start <= ?"
-                    " ORDER BY start",
-                    (symbol, lo, hi),
+                    " ORDER BY start DESC LIMIT ?",
+                    (symbol, lo, hi, limit),
                 )
                 .fetchall()
             )
@@ -324,3 +367,125 @@ class BarCache:
                 )
                 for r in rows
             ]
+
+    def get_extremes(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> tuple[tuple[datetime, Decimal], tuple[datetime, Decimal]] | None:
+        """(start, high) of the highest bar and (start, low) of the lowest
+        in [start, end] — the earliest bar wins a tie, matching
+        ``max(bars, key=high)``/``min(bars, key=low)`` on an ordered list.
+        """
+        lo, hi = _window(start, end)
+        with self._session_factory() as session:
+            conn = session.connection()
+            best = conn.exec_driver_sql(
+                "SELECT start, high FROM bars_5m"
+                " WHERE symbol = ? AND start >= ? AND start <= ?"
+                " ORDER BY high DESC, start ASC LIMIT 1",
+                (symbol, lo, hi),
+            ).fetchone()
+            worst = conn.exec_driver_sql(
+                "SELECT start, low FROM bars_5m"
+                " WHERE symbol = ? AND start >= ? AND start <= ?"
+                " ORDER BY low ASC, start ASC LIMIT 1",
+                (symbol, lo, hi),
+            ).fetchone()
+        if best is None or worst is None:
+            return None
+        return (
+            (
+                datetime.fromisoformat(best[0]).replace(tzinfo=UTC),
+                Decimal(str(best[1])),
+            ),
+            (
+                datetime.fromisoformat(worst[0]).replace(tzinfo=UTC),
+                Decimal(str(worst[1])),
+            ),
+        )
+
+    def get_touching(
+        self,
+        symbol: str,
+        start: datetime,
+        end: datetime,
+        stop: Decimal | None,
+        target: Decimal | None,
+    ) -> list[Bar5m]:
+        """Bars that could touch a stop or target: ``low <= stop`` or
+        ``high >= target``, sorted by start.
+
+        ``stop``/``target`` are the coarse bounds over every level that
+        could be in play (the loosest stop, the tightest target); floats
+        compare monotonically, so no Decimal touch is ever filtered out —
+        the caller re-checks each candidate exactly.
+        """
+        if stop is None and target is None:
+            return []
+        lo, hi = _window(start, end)
+        with self._session_factory() as session:
+            rows = (
+                session.connection()
+                .exec_driver_sql(
+                    # -inf/+inf stand in for a missing side — they never
+                    # match a real bar, so the condition degrades cleanly.
+                    "SELECT start, open, high, low, close, volume, feed"
+                    " FROM bars_5m WHERE symbol = ? AND start >= ?"
+                    " AND start <= ? AND (low <= ? OR high >= ?)"
+                    " ORDER BY start",
+                    (
+                        symbol,
+                        lo,
+                        hi,
+                        float(stop) if stop is not None else float("-inf"),
+                        float(target) if target is not None else float("inf"),
+                    ),
+                )
+                .fetchall()
+            )
+            return [
+                Bar5m(
+                    symbol=symbol,
+                    start=datetime.fromisoformat(r[0]).replace(tzinfo=UTC),
+                    open=Decimal(str(r[1])),
+                    high=Decimal(str(r[2])),
+                    low=Decimal(str(r[3])),
+                    close=Decimal(str(r[4])),
+                    volume=r[5],
+                    feed=r[6],
+                )
+                for r in rows
+            ]
+
+    def get_rows(
+        self, symbol: str, start: datetime, end: datetime
+    ) -> list[RawBar5m]:
+        """Same rows as ``get``, without the per-bar Decimal work."""
+        lo, hi = _window(start, end)
+        with self._session_factory() as session:
+            rows = (
+                session.connection()
+                .exec_driver_sql(
+                    "SELECT start, open, high, low, close, volume, feed"
+                    " FROM bars_5m WHERE symbol = ? AND start >= ? AND start <= ?"
+                    " ORDER BY start",
+                    (symbol, lo, hi),
+                )
+                .fetchall()
+            )
+            return [
+                RawBar5m(
+                    symbol,
+                    datetime.fromisoformat(r[0]).replace(tzinfo=UTC),
+                    r[1],
+                    r[2],
+                    r[3],
+                    r[4],
+                    r[5],
+                    r[6],
+                )
+                for r in rows
+            ]
+
+    def get(self, symbol: str, start: datetime, end: datetime) -> list[Bar5m]:
+        """Return cached bars for a symbol in [start, end], sorted by start."""
+        return [row.to_bar5m() for row in self.get_rows(symbol, start, end)]

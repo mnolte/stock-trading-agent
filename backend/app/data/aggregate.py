@@ -1,21 +1,31 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
+from decimal import Decimal
+from operator import attrgetter
 
+from app.data.cache import RawBar5m
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 
 
-def bars_per_session(
-    bars_5m: list[Bar5m], sessions: list[CalendarDay]
-) -> dict[date, list[Bar5m]]:
+def _price(value: Decimal | float) -> Decimal:
+    """A raw float needs the ``Decimal(str(...))`` the Bar5m path applies;
+    an already-Decimal value passes through unchanged."""
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def bars_per_session[BarT: (Bar5m, RawBar5m)](
+    bars_5m: list[BarT], sessions: list[CalendarDay]
+) -> dict[date, list[BarT]]:
     """Bucket 5-minute bars into their trading session in one pass.
 
     ``bars_5m`` and ``sessions`` are sorted by time; sessions never overlap.
     Bars outside every session window are dropped.
     """
-    result: dict[date, list[Bar5m]] = {s.date: [] for s in sessions}
+    result: dict[date, list[BarT]] = {s.date: [] for s in sessions}
     idx = 0
-    for bar in sorted(bars_5m, key=lambda b: b.start):
+    for bar in sorted(bars_5m, key=attrgetter("start")):
         while idx < len(sessions) and bar.start >= sessions[idx].close:
             idx += 1
         if idx == len(sessions):
@@ -25,7 +35,9 @@ def bars_per_session(
     return result
 
 
-def session_bars(bars_5m: list[Bar5m], sessions: list[CalendarDay]) -> list[Bar5m]:
+def session_bars[BarT: (Bar5m, RawBar5m)](
+    bars_5m: list[BarT], sessions: list[CalendarDay]
+) -> list[BarT]:
     """Only the bars inside one of the given session windows, in order.
 
     Alpaca's SIP feed returns the full extended session (04:00-20:00 New
@@ -50,14 +62,18 @@ def session_1h_windows(session: CalendarDay) -> list[tuple[datetime, datetime]]:
     return windows
 
 
-def aggregate_1h(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> list[Bar1h]:
+def aggregate_1h(
+    symbol: str,
+    bars_5m: Sequence[Bar5m | RawBar5m],
+    session: CalendarDay,
+) -> list[Bar1h]:
     """Aggregate 5-minute bars into session-aligned 1-hour bars for one session."""
     windows = session_1h_windows(session)
-    matched: list[list[Bar5m]] = [[] for _ in windows]
+    matched: list[list[Bar5m | RawBar5m]] = [[] for _ in windows]
     idx = 0
     # Bars and windows are both time-ordered: each bar joins its window in
     # one pass instead of rescanning the session per window.
-    for bar in sorted(bars_5m, key=lambda b: b.start):
+    for bar in sorted(bars_5m, key=attrgetter("start")):
         start = bar.start.astimezone(windows[0][0].tzinfo)
         while idx < len(windows) and start >= windows[idx][1]:
             idx += 1
@@ -76,10 +92,10 @@ def aggregate_1h(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> lis
                 symbol=symbol,
                 start=win_start,
                 end=win_end,
-                open=first.open,
-                high=max(b.high for b in window_bars),
-                low=min(b.low for b in window_bars),
-                close=last.close,
+                open=_price(first.open),
+                high=_price(max(b.high for b in window_bars)),
+                low=_price(min(b.low for b in window_bars)),
+                close=_price(last.close),
                 volume=sum(b.volume for b in window_bars),
                 feed=first.feed,
                 complete=len(window_bars) == expected,
@@ -93,7 +109,7 @@ def aggregate_daily(symbol: str, bars_5m: list[Bar5m], session: CalendarDay) -> 
     tz = session.open.tzinfo
     matched = sorted(
         (b for b in bars_5m if session.open <= b.start.astimezone(tz) < session.close),
-        key=lambda b: b.start,
+        key=attrgetter("start"),
     )
     if not matched:
         return None

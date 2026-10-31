@@ -46,6 +46,11 @@ from app.market.clock import NY_TZ, UTC, Clock
 # A price target needs this much new data either side of the target.
 _PRICE_WINDOW = timedelta(days=2)
 
+# ``_price_at`` checks the newest few bars first; a bar not yet closed at
+# the target can only start inside its final minutes, so more candidates
+# than this are never closed-at-target anyway.
+_PRICE_CANDIDATES = 8
+
 # First-touch results recorded on a trade's outcome row.
 _TOUCH_STOP = "stop"
 _TOUCH_TARGET = "target"
@@ -86,13 +91,15 @@ def _first_touch(
 ) -> str:
     """Which of the position's stop or target the 5m bars touched first.
 
-    Both sides follow the order live at each bar's timestamp: the stop-leg
-    price and the target leg's limit apply only between the order's
-    creation and its ``active_until``, so a cancelled or replaced leg no
-    longer counts retroactively. Without stop history the initial stop is
-    the only known level; without a recorded target leg the position's
-    stored target price is used. A bar that touches both counts as a stop
-    touch — intrabar order is unknowable, so the pessimistic read wins.
+    ``bars`` must be ordered by start — the first touch is defined by bar
+    order. Both sides follow the order live at each bar's timestamp: the
+    stop-leg price and the target leg's limit apply only between the
+    order's creation and its ``active_until``, so a cancelled or replaced
+    leg no longer counts retroactively. Without stop history the initial
+    stop is the only known level; without a recorded target leg the
+    position's stored target price is used. A bar that touches both
+    counts as a stop touch — intrabar order is unknowable, so the
+    pessimistic read wins.
     """
     stops = [o for o in history or [] if o.leg == "stop"]
     # Only legs of this position's own entry decision count as its
@@ -105,7 +112,7 @@ def _first_touch(
         and position.entry_decision_id is not None
         and o.decision_id == position.entry_decision_id
     ]
-    for bar in sorted(bars, key=lambda b: b.start):
+    for bar in bars:
         if stops:
             current = _active_order(stops, bar.start)
             stop = current.stop_price if current is not None else None
@@ -222,11 +229,32 @@ class OutcomeWorker:
     def _price_at(self, symbol: str, target: datetime) -> Bar5m | None:
         """Last 5-minute bar closed at or before ``target`` (aware UTC)."""
         assert self.market_data is not None  # noqa: S101 - internal invariant
-        bars = self.market_data.get_5m_bars(symbol, target - _PRICE_WINDOW, target)
-        if not bars:
+        assert self.calendar is not None  # noqa: S101 - internal invariant
+        # The answer is almost always among the newest few bars: a bar
+        # whose close is still after ``target`` can only start inside its
+        # last 5 minutes, so only a handful of candidates need fetching.
+        candidates = self.market_data.bars_cache.get_latest(
+            symbol, target - _PRICE_WINDOW, target, _PRICE_CANDIDATES
+        )
+        if not candidates:
             return None
         sessions: dict[date, CalendarDay] = {}
-        assert self.calendar is not None  # noqa: S101 - internal invariant
+        for bar in candidates:
+            day = bar.start.astimezone(NY_TZ).date()
+            if day not in sessions:
+                found = self.calendar.session_for(day)
+                if found is not None:
+                    sessions[day] = found
+        for bar in candidates:
+            if self._bar_close_time(bar, sessions) <= target:
+                return bar
+        if len(candidates) < _PRICE_CANDIDATES:
+            return None
+        # More than a handful of consecutive unclosed bars — only possible
+        # with misaligned data; the full window scan settles it.
+        bars = self.market_data.get_5m_bars(
+            symbol, target - _PRICE_WINDOW, target
+        )
         for bar in bars:
             day = bar.start.astimezone(NY_TZ).date()
             if day not in sessions:
@@ -351,7 +379,7 @@ class OutcomeWorker:
                 if isinstance(o, dict)
             }
             return False
-        ordered = sorted(bars, key=lambda b: b.start)
+        # ``get_5m_bars`` returns bars in start order already.
         traded_id = decision.chosen_option
         touches: dict[str, object] = {}
         all_filled = True
@@ -371,7 +399,7 @@ class OutcomeWorker:
                 continue
             limit = Decimal(str(entry))
             fill_index: int | None = None
-            for index, bar in enumerate(ordered):
+            for index, bar in enumerate(bars):
                 if bar.start - decision_time > timedelta(minutes=10):
                     break
                 if bar.low <= limit <= bar.high or bar.low <= limit:
@@ -381,7 +409,7 @@ class OutcomeWorker:
                 touches[oid] = "not_filled"
                 continue
             touch: str = _TOUCH_NEITHER
-            for bar in ordered[fill_index:]:
+            for bar in bars[fill_index:]:
                 # A bar touching both counts as a stop touch.
                 if bar.low <= Decimal(str(stop)):
                     touch = _TOUCH_STOP
@@ -418,25 +446,28 @@ class OutcomeWorker:
                 and outcome.first_touch is not None
             ):
                 return False
-        bars = self.market_data.get_5m_bars(position.symbol, opened, end)
-        if not bars:
-            return False
         outcome = session.execute(
             select(Outcome).where(Outcome.decision_id == position.entry_decision_id)
         ).scalar_one_or_none()
         if outcome is None:
             return False
-        best = max(bars, key=lambda b: b.high)
-        worst = min(bars, key=lambda b: b.low)
+        extremes = self.market_data.bars_cache.get_extremes(
+            position.symbol, opened, end
+        )
+        if extremes is None:
+            return False
+        (best_start, best_high), (worst_start, worst_low) = extremes
         changed = False
-        if outcome.best_price is None or best.high > outcome.best_price:
-            outcome.best_price = best.high
-            outcome.best_price_at = _naive_utc(best.start)
+        if outcome.best_price is None or best_high > outcome.best_price:
+            outcome.best_price = best_high
+            outcome.best_price_at = _naive_utc(best_start)
             changed = True
-        if outcome.worst_price is None or worst.low < outcome.worst_price:
-            outcome.worst_price = worst.low
-            outcome.worst_price_at = _naive_utc(worst.start)
+        if outcome.worst_price is None or worst_low < outcome.worst_price:
+            outcome.worst_price = worst_low
+            outcome.worst_price_at = _naive_utc(worst_start)
             changed = True
+        if outcome.first_touch in (_TOUCH_STOP, _TOUCH_TARGET):
+            return changed
         # Legs of this position: everything its entry decision produced,
         # plus decision-less orders (protective stops, adopted orders the
         # broker already had) created while it was open. Another entry
@@ -453,11 +484,40 @@ class OutcomeWorker:
                 ),
             ),
         )).scalars())
+        # A bar can only touch if it dips below the loosest stop in play
+        # or reaches the tightest target — fetch just those candidates and
+        # let ``_first_touch`` settle each one exactly.
+        stops = [o for o in history if o.leg == "stop"]
+        targets = [
+            o
+            for o in history
+            if o.leg == "target" and o.decision_id == position.entry_decision_id
+        ]
+        if stops:
+            stop_levels = [
+                o.stop_price for o in stops if o.stop_price is not None
+            ]
+        elif position.initial_stop is not None:
+            stop_levels = [position.initial_stop]
+        else:
+            stop_levels = []
+        if targets:
+            target_levels = [
+                o.limit_price for o in targets if o.limit_price is not None
+            ]
+        elif position.target_price is not None:
+            target_levels = [position.target_price]
+        else:
+            target_levels = []
+        bars = self.market_data.bars_cache.get_touching(
+            position.symbol,
+            opened,
+            end,
+            max(stop_levels) if stop_levels else None,
+            min(target_levels) if target_levels else None,
+        )
         touch = _first_touch(bars, position, history)
-        if (
-            outcome.first_touch not in (_TOUCH_STOP, _TOUCH_TARGET)
-            and outcome.first_touch != touch
-        ):
+        if outcome.first_touch != touch:
             outcome.first_touch = touch
             changed = True
         return changed
