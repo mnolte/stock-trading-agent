@@ -55,9 +55,7 @@ def _sign_in(client: TestClient, secret: str) -> str:
     app.state.clock.advance(timedelta(seconds=31))
     r = client.post("/api/auth/sign-in", json={"password": PASSWORD})
     assert r.status_code == 200, r.text
-    r = client.post(
-        "/api/auth/code", json={"code": totp_code(secret, app.state.clock.now())}
-    )
+    r = client.post("/api/auth/code", json={"code": totp_code(secret, app.state.clock.now())})
     assert r.status_code == 200, r.text
     return client.cookies.get("sa_csrf") or ""
 
@@ -117,9 +115,7 @@ def _wrong_attempts(ip: str) -> int:
     with get_session_maker()() as session:
         return len(
             session.execute(
-                select(SignInAttempt).where(
-                    SignInAttempt.ip == ip, SignInAttempt.result == "wrong"
-                )
+                select(SignInAttempt).where(SignInAttempt.ip == ip, SignInAttempt.result == "wrong")
             )
             .scalars()
             .all()
@@ -133,15 +129,11 @@ def test_confirm_failures_revoke_session_after_five(app_auth: Any) -> None:
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
         for _ in range(4):
-            r = client.post(
-                "/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client)
-            )
+            r = client.post("/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client))
             assert r.status_code == 401
         # Still signed in at four.
         assert client.get("/api/header").status_code == 200
-        r = client.post(
-            "/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client)
-        )
+        r = client.post("/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client))
         assert r.status_code == 401
         # The fifth failure ends the session.
         r = client.get("/api/header")
@@ -156,9 +148,7 @@ def test_change_password_failures_revoke_session(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
-        client.post(
-            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
-        )
+        client.post("/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client))
         for _ in range(5):
             r = client.post(
                 "/api/auth/password",
@@ -178,14 +168,10 @@ def test_confirm_failures_outside_window_do_not_count(app_auth: Any) -> None:
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
         for _ in range(4):
-            client.post(
-                "/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client)
-            )
+            client.post("/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client))
         app.state.clock.advance(timedelta(minutes=16))
         # Old failures expired: one more wrong secret is not a revoke.
-        r = client.post(
-            "/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client)
-        )
+        r = client.post("/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client))
         assert r.status_code == 401
         assert client.get("/api/header").status_code == 200
 
@@ -196,14 +182,15 @@ def test_confirm_failures_send_the_warning(app_auth: Any) -> None:
     with TestClient(app, base_url="https://testserver") as client:
         auth = app.state.auth
         original = auth._notifier.notify
-        auth._notifier.notify = lambda key, line, link=None: notifications.append(  # type: ignore[method-assign]
-            (key, line)
-        ) or original(key, line, link=link)
+
+        def spy(key: str, line: str, link: str | None = None) -> None:
+            notifications.append((key, line))
+            original(key, line, link=link)
+
+        auth._notifier.notify = spy
         _sign_in(client, secret)
         for _ in range(5):
-            client.post(
-                "/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client)
-            )
+            client.post("/api/auth/confirm", json={"secret": "nope"}, headers=_csrf(client))
     assert any(key == "sign_in_lockout" for key, _line in notifications)
 
 
@@ -249,12 +236,8 @@ def test_keys_route_refuses_short_secret(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         _sign_in(client, secret)
-        client.post(
-            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
-        )
-        r = client.post(
-            "/api/keys/openai", json={"value": "short1"}, headers=_csrf(client)
-        )
+        client.post("/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client))
+        r = client.post("/api/keys/openai", json={"value": "short1"}, headers=_csrf(client))
         assert r.status_code == 422
         assert "Too short" in r.text
 

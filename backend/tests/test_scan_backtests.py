@@ -10,15 +10,12 @@ from __future__ import annotations
 import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
 from unittest.mock import patch
 
-import pytest
 from app.backtests.manager import BacktestManager, _pid_same, _pid_start
 from app.config import AppConfig
 from app.db.models import Backtest
 from app.market.clock import FakeClock
-from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -29,7 +26,7 @@ def _manager(session_factory: sessionmaker[Session]) -> BacktestManager:
 
 
 def _running_row(mgr: BacktestManager) -> int:
-    row = mgr.create(
+    created = mgr.create(
         name="run",
         start=date(2026, 1, 5),
         end=date(2026, 1, 9),
@@ -38,15 +35,15 @@ def _running_row(mgr: BacktestManager) -> int:
         starting_equity=Decimal(10000),
         slippage_pct=Decimal(0),
     )
+    run_id = created.id
     with mgr._sessions() as session:
-        row = session.get(Backtest, row.id)
+        row = session.get(Backtest, run_id)
         assert row is not None
         row.status = "running"
         row.process_id = os.getpid()  # a live pid that is not ours
         row.process_started_at = 1.0  # start time that cannot match
         session.commit()
-        session.refresh(row)
-        return row.id
+        return run_id
 
 
 def test_reused_pid_is_not_ours(session_factory: sessionmaker[Session]) -> None:
