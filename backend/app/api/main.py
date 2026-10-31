@@ -216,7 +216,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
     around (docs/SPEC.md → VPS deployment → Backups).
     """
     try:
-        create_backup()
+        create_backup(clock)
     except Exception as exc:  # noqa: BLE001
         logger.exception("daily database copy failed")
         from app.db.base import get_session_maker
@@ -371,9 +371,9 @@ async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -
     return True
 
 
-async def _catch_up_missed_screen(service: Any, event_id: int, session_factory: Any) -> None:
-    from zoneinfo import ZoneInfo
-
+async def _catch_up_missed_screen(
+    service: Any, event_id: int, session_factory: Any, clock: Clock
+) -> None:
     from app.data.cache import _naive_utc
     from app.db.models import Event
 
@@ -381,9 +381,7 @@ async def _catch_up_missed_screen(service: Any, event_id: int, session_factory: 
     with session_factory() as session:
         event = session.get(Event, event_id)
         if event is not None:
-            event.acknowledged_at = _naive_utc(
-                datetime.now(ZoneInfo("UTC"))
-            )
+            event.acknowledged_at = _naive_utc(clock.now())
             session.commit()
 
 
@@ -437,7 +435,7 @@ async def run_missed_screen_at_startup(
     from app.spawn import spawn
 
     spawn(
-        _catch_up_missed_screen(service, event_id, session_factory),
+        _catch_up_missed_screen(service, event_id, session_factory, clock),
         "missed-universe-screen",
     )
 
