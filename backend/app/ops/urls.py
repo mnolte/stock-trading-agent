@@ -13,6 +13,18 @@ class UrlRejected(Exception):
     """The URL fails the https-and-public rule; message is 422-safe."""
 
 
+def _public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """One address check for both the literal-IP and the resolved paths."""
+    return not (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
 def _resolves_public(host: str, resolver: object = None) -> bool:
     resolve = resolver or socket.getaddrinfo
     try:
@@ -25,14 +37,7 @@ def _resolves_public(host: str, resolver: object = None) -> bool:
             ip = ipaddress.ip_address(raw)
         except ValueError:
             continue
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        if not _public_ip(ip):
             return False
     return True
 
@@ -54,13 +59,7 @@ def validate_public_https_url(url: str, resolver: object = None) -> str:
         raise UrlRejected("must not contain credentials")
     try:
         ip = ipaddress.ip_address(host)
-        if (
-            ip.is_loopback
-            or ip.is_private
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
+        if not _public_ip(ip):
             raise UrlRejected("must not point at a private address")
     except ValueError:
         if host.lower() in {"localhost", "localhost.localdomain"} or host.lower().endswith(
