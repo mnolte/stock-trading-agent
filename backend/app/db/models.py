@@ -102,6 +102,9 @@ class Cycle(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     errors: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
     data_source_health: Mapped[dict[str, str] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Entry selection (PR 33): free slots, scored count, chosen ids and
+    # the total rank order would have taken — expected_profit mode only.
+    selection: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Decision(Base):
@@ -142,6 +145,9 @@ class Decision(Base):
     chosen_option: Mapped[str | None] = mapped_column(String(8), nullable=True)
     explanation_check: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     options_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Entry selection (PR 33): the score and chosen/not-chosen record of
+    # one scored candidate decision in expected_profit mode.
+    selection: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Order(Base):
