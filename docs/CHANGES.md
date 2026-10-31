@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-10-31 — Entry selection (PR 33)
+
+- From the 31 October report on how entries are chosen when more pass than there are slots: there is no selection step. Entries are gated and sent in rank order, so the first ones to pass take the 4 slots, and candidates after the 10th call are never seen. Rank (20-session strength against SPY) says nothing about the offered trade or about dollars at risk. The 20% max-position cap cuts the risk, and so the profit, on tight-stop stocks.
+- New section **Entry selection**. With `selection.mode: expected_profit`, code collects all candidate decisions of a cycle and scores each enter as expected R × dollars at risk. Confidence is moved halfway to break-even (`selection.confidence_weight` 0.5). Code then sends the set with the highest total that fits the existing limits, and the rest get `not_selected`. Model calls go in pre-score order (dollars at risk). `make replay-selection` compares both modes on stored cycles.
+- `selection.mode` defaults to `rank`, so live behaviour is unchanged until Marc switches it after the replay and a shadow.
+- Cycles at scale and Working entry orders refer to the selection mode. Build plan item 33.
+- The `selection` config block comes with PR 33 (rule 7).
+
 ## 2026-10-30 — Live fixes of 30 October — implementation
 
 - `docs/kickoffs/fix-live-2026-10-30.md` lands in code: the "Live decisions failing" critical event, banner and notification (once per episode, cleared by the first good call) with the provider key marked failing on a 401/403; "Trade opened" fires once when the entry order is final, with the filled quantity; reconcile defers the quantity check while an entry order works or a fill is fresh; GUI broker reads answer the last reconciled values, marked stale, past the timeout; a held-position tighten accepts an older last trade and a still-blocked tighten shows as changed by code (`price_stale`/`price_suspect`); stream reconnect errors log once per outage then once per 10 minutes, and a long outage degrades the stream only in session; no chart request without a symbol; screenshot specs write to a temp dir unless `SCREENSHOT_DIR`.

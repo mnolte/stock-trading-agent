@@ -2,6 +2,13 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-10-31 — Entry selection
+
+- `DecisionV2.dc.html` (PR 33): a "Selection · expected profit" gate row, and a "Selection in this cycle" block.
+  - The block lists each scored entry with its rank, R/R, p used, dollars at risk, expected R and expected profit, and shows it as selected (green) or not selected (amber, with the reason). This decision is marked with the accent bar.
+  - A note gives the chosen set's total and what rank order would have taken: XOM + MSFT $41.08 against AMZN + MSFT $27.42.
+- The v3 drawers get the same block. No other screen changes; the feed shows `not_selected` like other code blocks.
+
 ## 2026-10-30 — Review attribution
 
 - `Reviews.dc.html`, Verdicts to confirm (PR 32): each row shows the model's call and, when code changed it, the final action in amber with the reason ("ENTER B → SKIP by code · reward to risk 1.4, min 1.5"); an Outcome line (option touches, or the fill and R); the draft chip marked "label by code"; and a Thesis check line ("consistent with the facts", or an amber "contradicts the facts" chip with the claim). Confirm buttons use `aria-pressed`.
