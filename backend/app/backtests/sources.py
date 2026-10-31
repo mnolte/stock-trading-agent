@@ -35,6 +35,7 @@ from app.data.models import (
     Quote,
 )
 from app.db.models import CorporateAction, Earning
+from app.market.calendar import CalendarProvider, StaticCalendarProvider
 from app.market.clock import NY_TZ, Clock
 
 SIP_MIN_AGE = timedelta(minutes=16)
@@ -85,17 +86,59 @@ class BacktestBarSource:
         )
 
 
+# ``fetch_quotes`` checks the newest few bars first, like
+# ``OutcomeWorker._price_at``: a bar not yet closed can only start inside
+# its final minutes, so more candidates than this are never closed anyway.
+_QUOTE_CANDIDATES = 8
+_QUOTE_LOOKBACK = timedelta(days=7)
+
+
 class BacktestQuoteSource:
     """Synthesised quotes: the last fully-closed 5-min bar's close, with the
     assumed spread around it. Stamped at ``now`` — in a replayed world the
     quote is available at decision time by definition."""
 
-    def __init__(self, store: BarCache, clock: Clock, config: AppConfig) -> None:
+    def __init__(
+        self,
+        store: BarCache,
+        clock: Clock,
+        config: AppConfig,
+        calendar: CalendarProvider | None = None,
+    ) -> None:
         self._store = store
         self._clock = clock
+        self._calendar = calendar
         self._spread = Decimal(
             str(config.get("backtest", "assumed_spread_pct", default=0.05))
         )
+
+    def _bar_close(self, bar: Bar5m) -> datetime:
+        """When the bar is closed: start + 5m, never past the session
+        close — the same rule the outcome worker applies, so an early
+        close doesn't leave the last bar looking unclosed."""
+        end = bar.start + timedelta(minutes=5)
+        if self._calendar is not None:
+            session = self._calendar.session_for(
+                bar.start.astimezone(NY_TZ).date()
+            )
+            if session is not None and session.close.astimezone(UTC) < end:
+                end = session.close.astimezone(UTC)
+        return end
+
+    def _closed_bars(self, symbol: str, now: datetime) -> list[Bar5m]:
+        """Closed bars for a symbol in the lookback window, newest first."""
+        start = now - _QUOTE_LOOKBACK
+        bars = self._store.get_latest(symbol, start, now, _QUOTE_CANDIDATES)
+        closed = [b for b in bars if self._bar_close(b) <= now]
+        if closed or len(bars) < _QUOTE_CANDIDATES:
+            return closed
+        # More than a handful of consecutive unclosed bars — only possible
+        # with misaligned data; the full window scan settles it.
+        return [
+            b
+            for b in reversed(self._store.get(symbol, start, now))
+            if self._bar_close(b) <= now
+        ]
 
     async def fetch_quotes(
         self, symbols: list[str]
@@ -103,11 +146,10 @@ class BacktestQuoteSource:
         now = self._clock.now()
         out: dict[str, Quote] = {}
         for symbol in symbols:
-            bars = self._store.get(symbol, now - timedelta(days=7), now)
-            closed = [b for b in bars if b.start + timedelta(minutes=5) <= now]
+            closed = self._closed_bars(symbol, now)
             if not closed:
                 continue
-            last = closed[-1].close
+            last = closed[0].close
             half = last * self._spread / Decimal(200)
             out[symbol] = Quote(
                 symbol=symbol,
@@ -116,7 +158,7 @@ class BacktestQuoteSource:
                 last=last,
                 timestamp=now,
                 feed="backtest",
-                trade_timestamp=closed[-1].start + timedelta(minutes=5),
+                trade_timestamp=self._bar_close(closed[0]),
                 fetched_at=now,
             )
         return DataResult(data=out, source="backtest")
@@ -243,6 +285,29 @@ class BacktestCorporateActionSource:
         )
 
 
+def _calendar_days(
+    market_sessions: sessionmaker[Session], start: date, end: date
+) -> list[CalendarDay]:
+    """The market.db calendar rows for [start, end], in date order."""
+    with market_sessions() as session:
+        rows = session.execute(
+            select(MARKET_CALENDAR)
+            .where(
+                MARKET_CALENDAR.c.date >= start,
+                MARKET_CALENDAR.c.date <= end,
+            )
+            .order_by(MARKET_CALENDAR.c.date)
+        ).all()
+    return [
+        CalendarDay(
+            date=r.date,
+            open=datetime.fromisoformat(r.open),
+            close=datetime.fromisoformat(r.close),
+        )
+        for r in rows
+    ]
+
+
 class BacktestCalendarSource:
     """The run's trading calendar from market.db."""
 
@@ -252,24 +317,10 @@ class BacktestCalendarSource:
     async def fetch_calendar(
         self, start: date, end: date
     ) -> DataResult[list[CalendarDay]]:
-        with self._sessions() as session:
-            rows = session.execute(
-                select(MARKET_CALENDAR)
-                .where(
-                    MARKET_CALENDAR.c.date >= start,
-                    MARKET_CALENDAR.c.date <= end,
-                )
-                .order_by(MARKET_CALENDAR.c.date)
-            ).all()
-        days = [
-            CalendarDay(
-                date=r.date,
-                open=datetime.fromisoformat(r.open),
-                close=datetime.fromisoformat(r.close),
-            )
-            for r in rows
-        ]
-        return DataResult(data=days, source="market.db")
+        return DataResult(
+            data=_calendar_days(self._sessions, start, end),
+            source="market.db",
+        )
 
 
 class FixedFXSource:
@@ -297,9 +348,14 @@ def make_backtest_sources(
     """A ``DataSources`` for a backtest engine — every leg local."""
     from app.data.factory import DataSources
 
+    # Session closes let the quote source mark the partial last bar of an
+    # early-close session as closed; the run's calendar lives in market.db.
+    provider = StaticCalendarProvider(
+        _calendar_days(market_sessions, date.min, date.max)
+    )
     return DataSources(
         bars=BacktestBarSource(store, clock),
-        quotes=BacktestQuoteSource(store, clock, config),
+        quotes=BacktestQuoteSource(store, clock, config, provider),
         news=BacktestNewsSource(market_sessions, clock),
         earnings=BacktestEarningsSource(market_sessions),
         fx=FixedFXSource(),

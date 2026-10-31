@@ -169,12 +169,22 @@ class SignalService:
         return self.market_data.get_daily_bars(symbol, completed)
 
     def today_5m(self, symbol: str, today: date, now: datetime) -> list[Bar5m]:
-        """Today's 5-minute bars whose bar has closed by ``now``."""
+        """Today's 5-minute bars whose bar has closed by ``now``.
+
+        A bar closes at start + 5m, never past the session close — the
+        partial last bar of an early close is closed too.
+        """
         session = self.calendar.session_for(today)
         if session is None:
             return []
-        bars = self.market_data.get_5m_bars(symbol, session.open, session.close)
-        return [b for b in bars if b.start + BAR_5M <= now]
+        rows = self.market_data.bars_cache.get_rows(
+            symbol, session.open, session.close
+        )
+        return [
+            r.to_bar5m()
+            for r in rows
+            if min(r.start + BAR_5M, session.close) <= now
+        ]
 
     def next_earnings(
         self, symbols: list[str], today: date
@@ -198,7 +208,7 @@ class SignalService:
         now: datetime,
     ) -> tuple[list[Bar1h], list[DailyBar], list[Bar5m]]:
         """One cache read → closed 1h bars, completed daily bars, today's 5m."""
-        bars_5m = self.market_data.get_5m_bars_sessions(symbol, sessions)
+        bars_5m = self.market_data.get_5m_rows_sessions(symbol, sessions)
         per = bars_per_session(bars_5m, sessions)
         bars_1h = [
             b
@@ -207,7 +217,15 @@ class SignalService:
             if b.end <= now
         ]
         daily = self.daily_bars(symbol, daily_sessions, now)
-        todays = [b for b in per.get(today, []) if b.start + BAR_5M <= now]
+        # Same close-time rule as today_5m: a bar closes at start + 5m,
+        # never past the session close (the early-close partial bar).
+        todays = [
+            r.to_bar5m()
+            for s in sessions
+            if s.date == today
+            for r in per[s.date]
+            if min(r.start + BAR_5M, s.close) <= now
+        ]
         return bars_1h, daily, todays
 
     def _snapshot_from_bars(

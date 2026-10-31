@@ -454,6 +454,44 @@ async def test_quote_source_uses_last_close_and_assumed_spread() -> None:
     assert q.fetched_at == clock.now()
 
 
+async def test_quote_source_counts_partial_bar_closed_at_early_close() -> None:
+    """A session ending mid-bar closes that bar at the session close, not
+    at start + 5m — the quote uses its close, matching the outcome
+    worker's close-time rule."""
+    from app.market.calendar import StaticCalendarProvider
+
+    config = AppConfig()
+    store = make_bar_store(bar_store_path(config), config)
+    # The 12:45 bar is partial: the session closes 12:47 NY.
+    day = CalendarDay(
+        date=D0,
+        open=datetime(2024, 6, 3, 9, 30, tzinfo=NY_TZ),
+        close=datetime(2024, 6, 3, 12, 47, tzinfo=NY_TZ),
+    )
+    t0 = datetime(2024, 6, 3, 12, 45, tzinfo=NY_TZ)
+    _store_bars(
+        store,
+        [
+            _bar("AAA", t0 - timedelta(minutes=5), "99", "99", "99", "99"),
+            _bar("AAA", t0, "100", "100", "100", "100"),
+        ],
+    )
+    # Now is between the bar's real close (12:47) and start + 5m (12:50).
+    clock = FakeClock(datetime(2024, 6, 3, 12, 48, tzinfo=NY_TZ))
+    src = BacktestQuoteSource(
+        store, clock, config, StaticCalendarProvider([day])
+    )
+    out = await src.fetch_quotes(["AAA"])
+    assert out.data["AAA"].last == Decimal("100")
+    assert out.data["AAA"].trade_timestamp == datetime(
+        2024, 6, 3, 12, 47, tzinfo=NY_TZ
+    )
+    # Without a session the same bar still looks open at 12:48.
+    naive = BacktestQuoteSource(store, clock, config)
+    out2 = await naive.fetch_quotes(["AAA"])
+    assert out2.data["AAA"].last == Decimal("99")
+
+
 async def test_calendar_source_from_market_db(tmp_path: Path) -> None:
     config = AppConfig()
     sf = make_market_db(tmp_path / "market.db", config)
@@ -1035,11 +1073,16 @@ async def _run_deterministic_pair(
     schedule["daily_history_sessions"] = daily_history
     sf = get_session_maker()
     # The daily-indicator warmup plus the run window, all as cached bars.
-    window_days = (end - D0).days
+    # seed_start sits ~14 weekdays of margin before the warmup, so the
+    # count must cover the whole range — warmup + window alone leaves
+    # the run's tail unseeded (and outcome targets re-queried forever).
     seed_start = D0 - timedelta(days=warmup_sessions * 7 // 5 + 20)
-    _seed_live_bars(
-        ["AAA", "SPY"], seed_start, warmup_sessions + window_days * 5 // 7 + 5
+    seeded_weekdays = sum(
+        1
+        for i in range((end - seed_start).days + 1)
+        if (seed_start + timedelta(days=i)).weekday() < 5
     )
+    _seed_live_bars(["AAA", "SPY"], seed_start, seeded_weekdays + 5)
 
     manager = BacktestManager(config, FakeClock(datetime.now(tz=NY_TZ)))
     specs = [

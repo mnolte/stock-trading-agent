@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig
 from app.data.aggregate import aggregate_1h, bars_per_session, session_bars
-from app.data.cache import BarCache, _naive_utc
+from app.data.cache import BarCache, RawBar5m, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import (
     Bar1h,
@@ -288,7 +288,7 @@ class MarketDataService:
         return self.bars_cache.get(symbol, start, end)
 
     def get_1h_bars(self, symbol: str, session: CalendarDay) -> list[Bar1h]:
-        bars_5m = self.get_5m_bars(symbol, session.open, session.close)
+        bars_5m = self.bars_cache.get_rows(symbol, session.open, session.close)
         return aggregate_1h(symbol, bars_5m, session)
 
     def get_5m_bars_sessions(
@@ -301,12 +301,23 @@ class MarketDataService:
         end = max(s.close for s in sessions)
         return self.get_5m_bars(symbol, start, end)
 
+    def get_5m_rows_sessions(
+        self, symbol: str, sessions: list[CalendarDay]
+    ) -> list[RawBar5m]:
+        """The same read as ``get_5m_bars_sessions``, as raw rows —
+        aggregation callers skip the per-bar Decimal construction."""
+        if not sessions:
+            return []
+        start = min(s.open for s in sessions)
+        end = max(s.close for s in sessions)
+        return self.bars_cache.get_rows(symbol, start, end)
+
     def get_1h_bars_range(
         self, symbol: str, sessions: list[CalendarDay]
     ) -> list[Bar1h]:
         """Session-aligned 1h bars across several sessions, in order."""
         per_session = bars_per_session(
-            self.get_5m_bars_sessions(symbol, sessions), sessions
+            self.get_5m_rows_sessions(symbol, sessions), sessions
         )
         return [
             bar
