@@ -32,7 +32,7 @@ from app.db.base import Base
 from app.db.models import CorporateAction as CorporateActionRow
 from app.db.models import Earning as EarningRow
 from app.market.clock import NY_TZ, UTC
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -231,6 +231,144 @@ async def test_get_1h_bars_from_cache(
     bars = service.get_1h_bars("AAPL", session)
     assert len(bars) == 7
     assert bars[-1].end == session.close
+
+
+async def _seed_one_session(
+    service: MarketDataService, symbol: str = "AAPL"
+) -> Any:
+    """Fetch one full session of fake 5m bars into the shared cache."""
+    calendar = FakeCalendarSource()
+    session = calendar.session_for(date(2026, 10, 15))
+    assert session is not None
+    await service.refresh_bars(
+        session.open.astimezone(UTC), session.close.astimezone(UTC)
+    )
+    return session
+
+
+def _service(
+    fake_sources: DataSources, session_factory: sessionmaker[Session]
+) -> MarketDataService:
+    return MarketDataService(
+        fake_sources,
+        FakeCalendarSource(),
+        AppConfig(),
+        session_factory=session_factory,
+    )
+
+
+async def test_get_1h_bars_stored_path_matches_fresh_aggregation(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """Stored 1h bars are identical to a fresh aggregation — every field
+    including tz-aware window bounds and ``complete``."""
+    from app.data.aggregate import aggregate_1h
+
+    service = _service(fake_sources, session_factory)
+    session = await _seed_one_session(service)
+    first = service.get_1h_bars("AAPL", session)
+    rows = service.bars_cache.get_rows("AAPL", session.open, session.close)
+    assert first == aggregate_1h("AAPL", rows, session)
+    # Second read serves the stored rows, identical to the first pass.
+    assert service.get_1h_bars("AAPL", session) == first
+
+
+async def test_get_1h_bars_recomputes_after_a_bypassing_5m_update(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A bars_5m row edited behind BarCache's back still shifts the
+    fingerprint, so the stored aggregate is recomputed on next read."""
+    from app.db.models import Bar5m as Bar5mRow
+
+    service = _service(fake_sources, session_factory)
+    session = await _seed_one_session(service)
+    before = service.get_1h_bars("AAPL", session)
+    with session_factory() as write:
+        write.execute(
+            update(Bar5mRow)
+            .where(Bar5mRow.symbol == "AAPL")
+            .values(volume=99999999)
+        )
+        write.commit()
+    after = service.get_1h_bars("AAPL", session)
+    assert after != before
+    assert after[-1].volume > before[-1].volume
+
+
+async def test_get_1h_bars_recomputes_after_a_bypassing_5m_delete(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    from app.data.cache import _naive_utc
+    from app.db.models import Bar5m as Bar5mRow
+
+    service = _service(fake_sources, session_factory)
+    session = await _seed_one_session(service)
+    before = service.get_1h_bars("AAPL", session)
+    with session_factory() as write:
+        write.execute(
+            delete(Bar5mRow).where(
+                Bar5mRow.symbol == "AAPL",
+                Bar5mRow.start == _naive_utc(session.open),
+            )
+        )
+        write.commit()
+    after = service.get_1h_bars("AAPL", session)
+    assert len(after) == len(before)
+    assert after[0] != before[0]
+
+
+async def test_get_1h_bars_incomplete_window_marks_complete_false(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    """A session with a 5m bar missing mid-window stores and reads back
+    complete=False, same as a fresh aggregation."""
+    from app.data.aggregate import aggregate_1h
+    from app.data.cache import _naive_utc
+    from app.db.models import Bar5m as Bar5mRow
+
+    service = _service(fake_sources, session_factory)
+    session = await _seed_one_session(service)
+    with session_factory() as write:
+        write.execute(
+            delete(Bar5mRow).where(
+                Bar5mRow.symbol == "AAPL",
+                Bar5mRow.start == _naive_utc(
+                    session.open + timedelta(minutes=65)
+                ),
+            )
+        )
+        write.commit()
+    bars = service.get_1h_bars("AAPL", session)
+    rows = service.bars_cache.get_rows("AAPL", session.open, session.close)
+    assert bars == aggregate_1h("AAPL", rows, session)
+    assert bars[1].complete is False
+
+
+async def test_prune_5m_drops_stored_1h_rows(
+    session_factory: sessionmaker[Session], fake_sources: DataSources
+) -> None:
+    from app.db.models import Bar1h as Bar1hRow
+    from app.db.models import Bar1hState as Bar1hStateRow
+
+    service = _service(fake_sources, session_factory)
+    session = await _seed_one_session(service)
+    assert service.get_1h_bars("AAPL", session)
+    service.bars_cache.prune_5m(session.close)
+    with session_factory() as read:
+        assert (
+            read.execute(
+                select(Bar1hRow).where(Bar1hRow.session_date == session.date)
+            ).first()
+            is None
+        )
+        assert (
+            read.execute(
+                select(Bar1hStateRow).where(
+                    Bar1hStateRow.session_date == session.date
+                )
+            ).first()
+            is None
+        )
 
 
 async def test_refresh_earnings_stores_rows(

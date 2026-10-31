@@ -7,6 +7,9 @@ ALEMBIC := .venv/bin/alembic
 RUFF := .venv/bin/ruff
 MYPY := .venv/bin/mypy
 PYTEST := .venv/bin/pytest
+# pytest-xdist workers for the parallel suites; cap on small machines:
+# make test-backend TEST_WORKERS=4
+TEST_WORKERS ?= auto
 PNPM := $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 FE := cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM)
 
@@ -71,13 +74,13 @@ replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2
 test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
-	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n auto --dist worksteal --durations=15
+	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n $(TEST_WORKERS) --dist worksteal --durations=15
 
 test-perf: ## timing-budget tests, serial — CPU contention skews them
 	cd backend && ../$(PYTEST) -v -m perf --durations=15
 
 test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
-	cd backend && ../$(PYTEST) -v -m slow -n auto --dist worksteal --durations=15
+	cd backend && ../$(PYTEST) -v -m slow -n $(TEST_WORKERS) --dist worksteal --durations=15
 
 test-frontend:
 	$(FE) test

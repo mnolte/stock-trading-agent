@@ -47,6 +47,47 @@ class Bar1d(Base):
     volume: Mapped[int] = mapped_column(nullable=False)
 
 
+class Bar1h(Base):
+    """Session-aligned 1-hour bars, aggregated from bars_5m once per
+    session change and stored so readers skip the raw scan."""
+
+    __tablename__ = "bars_1h"
+    __table_args__ = (
+        UniqueConstraint(
+            "symbol", "session_date", "start", name="uq_bars_1h_sym_sess_start"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True, nullable=False)
+    session_date: Mapped[date] = mapped_column(nullable=False)
+    start: Mapped[datetime] = mapped_column(nullable=False)
+    end: Mapped[datetime] = mapped_column(nullable=False)
+    open: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    high: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    low: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    close: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    volume: Mapped[int] = mapped_column(nullable=False)
+    feed: Mapped[str] = mapped_column(String(16), nullable=False)
+    complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class Bar1hState(Base):
+    """Fingerprint of the bars_5m set a session's bars_1h rows were
+    computed from — a mismatch on read recomputes, so writes that bypass
+    ``BarCache.store`` can never leave stale aggregates behind."""
+
+    __tablename__ = "bars_1h_state"
+    __table_args__ = (
+        UniqueConstraint("symbol", "session_date", name="uq_bars_1h_state_sym_sess"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_date: Mapped[date] = mapped_column(nullable=False)
+    src_fingerprint: Mapped[str] = mapped_column(String(96), nullable=False)
+
+
 class Cycle(Base):
     """One decision cycle or position check."""
 
