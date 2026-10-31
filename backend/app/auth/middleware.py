@@ -10,7 +10,6 @@ On top of the session check:
 - unsafe methods with a session must echo the CSRF cookie in
   ``X-CSRF-Token`` (double-submit; ``SameSite=Strict`` already blocks
   cross-site sends, this is the second line per spec);
-- the WebSocket refuses a foreign ``Origin`` header;
 - failures answer in the PR 25 JSON shape with codes
   ``not_signed_in`` / ``session_expired`` / ``forbidden``, and the
   socket closes with 1008 instead of accepting.
@@ -24,13 +23,12 @@ from __future__ import annotations
 import json
 import logging
 from http.cookies import SimpleCookie
-from urllib.parse import urlparse
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.auth.guard import OPEN_PATHS, auth_required
 from app.auth.service import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
-from app.config import AppConfig, get_config
+from app.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +41,10 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def _cookies(scope: Scope) -> dict[str, str]:
-    raw = b""
-    for name, value in scope.get("headers", []):
-        if name == b"cookie":
-            raw += value
+    # Multiple Cookie headers are legal; they join with "; " (RFC 6265).
+    raw = b"; ".join(
+        value for name, value in scope.get("headers", []) if name == b"cookie"
+    )
     jar = SimpleCookie()
     jar.load(raw.decode("latin-1"))
     return {key: morsel.value for key, morsel in jar.items()}
@@ -124,9 +122,9 @@ class AuthMiddleware:
             return
 
         if scope["type"] == "websocket":
-            if not _origin_ok(scope, config):
-                await _close_ws(send, "origin")
-                return
+            # Host and Origin are the request gate's job — it runs in
+            # front of this middleware on every scope, WebSocket included,
+            # and its _split_host handles IPv6 brackets.
             scope["state"] = {**scope.get("state", {}), "session": row}
             await self.app(scope, receive, send)
             return
@@ -151,18 +149,3 @@ async def _close_ws(send: Send, reason: str) -> None:
             "reason": reason,
         }
     )
-
-
-def _origin_ok(scope: Scope, config: AppConfig) -> bool:
-    """Browser WebSockets always send Origin; it must be ours."""
-    origin = _header(scope, b"origin")
-    if not origin:
-        return True  # non-browser client; the cookie check still applied
-    host = (urlparse(origin).hostname or "").lower()
-    if not host:
-        return False
-    request_host = _header(scope, b"host").split(":")[0].lower()
-    if host == request_host:
-        return True
-    public = (urlparse(config.env.sa_public_url).hostname or "").lower()
-    return bool(public) and host == public
