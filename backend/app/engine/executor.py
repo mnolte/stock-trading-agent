@@ -18,7 +18,7 @@ from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
@@ -1872,10 +1872,44 @@ class Executor:
         the source of truth for qty and whether a position still exists.
         """
         opened = 0
+        # Only buys that can still matter: filled since the oldest open
+        # entry (partial fills may still be arriving for it), or not yet
+        # linked to a position. Every buy ever used to be scanned.
+        first_fill_sq = (
+            select(Fill.order_id, func.min(Fill.filled_at).label("first_fill"))
+            .group_by(Fill.order_id)
+            .subquery()
+        )
+        oldest_open = session.execute(
+            select(func.min(Position.opened_at)).where(
+                Position.closed_at.is_(None)
+            )
+        ).scalar()
+        linked = (
+            select(Position.id)
+            .where(
+                Position.symbol == Order.symbol,
+                or_(
+                    and_(
+                        Position.closed_at.is_not(None),
+                        Position.closed_at >= first_fill_sq.c.first_fill,
+                    ),
+                    and_(
+                        Position.closed_at.is_(None),
+                        Position.opened_at <= first_fill_sq.c.first_fill,
+                    ),
+                ),
+            )
+            .exists()
+        )
+        keep = [~linked]
+        if oldest_open is not None:
+            keep.append(first_fill_sq.c.first_fill >= oldest_open)
         filled_buys = session.execute(
             select(Order)
             .join(Fill, Fill.order_id == Order.id)
-            .where(Order.side == "buy")
+            .join(first_fill_sq, first_fill_sq.c.order_id == Order.id)
+            .where(Order.side == "buy", or_(*keep))
             .distinct()
         ).scalars().all()
         for order in filled_buys:
