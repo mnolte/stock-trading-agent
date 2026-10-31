@@ -150,6 +150,8 @@ async def test_briefing_rejects_unavailable_claim_when_facts_exist(
 async def test_briefing_status_line_is_written_by_code(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """PR 32: the status line is code's and lives only in
+    content.status_line; text holds the model's sentences alone."""
     service = _service(
         session_factory, FakeClock(_ny(date(2026, 10, 22))),
         client=FakeReviewClient(handler=lambda _s, _u: json.dumps({"text": "Watch the market."})),
@@ -157,9 +159,12 @@ async def test_briefing_status_line_is_written_by_code(
     review = await service.write_briefing_for(date(2026, 10, 22))
     assert review is not None
     assert review.source == "model"
-    assert review.text.startswith("Positions: none.")
-    assert "Earnings today: none; tomorrow: none." in review.text
-    assert "Banners:" in review.text
+    assert review.text == "Watch the market."
+    status = (review.content or {}).get("status_line")
+    assert isinstance(status, str)
+    assert status.startswith("Positions: none.")
+    assert "Earnings today: none; tomorrow: none." in status
+    assert "Banners:" in status
 
 
 def _naive(dt: datetime) -> datetime:
@@ -823,9 +828,11 @@ async def test_no_verdict_for_rules_no_call(
     assert _verdicts(session_factory) == []
 
 
-async def test_verdict_for_enter_uses_trade_r(
+async def test_verdict_for_enter_uses_first_touch(
     session_factory: sessionmaker[Session],
 ) -> None:
+    """The real trade's first touch decides: target first → good call,
+    stop first → bad call (PR 32 draft-label table)."""
     now = datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
     with session_factory() as session:
         entry = _seed_decision(
@@ -840,6 +847,7 @@ async def test_verdict_for_enter_uses_trade_r(
         ).scalar_one()
         outcome.price_5sessions = Decimal("104.00")
         outcome.price_5sessions_at = _naive(_ny(date(2026, 10, 22)))
+        outcome.first_touch = "target"
         _seed_position(
             session,
             entry,
@@ -853,7 +861,7 @@ async def test_verdict_for_enter_uses_trade_r(
     service = _service(session_factory, FakeClock(now))
     assert await service.write_due_verdicts() == 1
     verdict = _verdicts(session_factory)[0]
-    assert verdict.verdict == "good_call"  # +1.5R target hit
+    assert verdict.verdict == "good_call"  # target touched first
     assert verdict.reason is not None and "target" in verdict.reason
 
 

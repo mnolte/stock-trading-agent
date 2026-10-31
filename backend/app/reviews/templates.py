@@ -174,17 +174,137 @@ def _fmt_usd_signed(value: object) -> str:
     )
 
 
+def briefing_display(review: Any) -> tuple[str | None, str]:
+    """(status_line, text) for the GUI and email (docs/SPEC.md, Reviews —
+    Briefing text). New rows store the code-written status line in
+    ``content.status_line`` and only the model's sentences in ``text``;
+    rows written before that had the line prefixed into the text — the
+    leading copy is removed here, never rewritten in storage.
+    """
+    content = review.content if isinstance(review.content, dict) else {}
+    facts = review.facts if isinstance(review.facts, dict) else {}
+    status = content.get("status_line")
+    if not isinstance(status, str) or not status.strip():
+        status = briefing_status(facts) if facts else None
+    text = review.text if isinstance(review.text, str) else ""
+    if status and text.startswith(status):
+        text = text[len(status) :].lstrip()
+    return status, text
+
+
+def _code_bit(facts: dict[str, Any]) -> str:
+    """"; code blocked it (<reason>)" for the verdict reason line."""
+    if not facts.get("changed_by_code"):
+        return ""
+    reason = facts.get("change_text") or facts.get("change_reason")
+    verb = (
+        "blocked it"
+        if facts.get("final_action") in ("skip", "blocked")
+        else f"changed it to {facts.get('final_action')}"
+    )
+    return f"; code {verb}" + (f" ({reason})" if reason else "")
+
+
+def _option_touch_text(option_id: object, touch: object, n: int) -> str:
+    """The "what happened" part for an enter's chosen option."""
+    label = f"option {option_id}" if option_id is not None else "the entry"
+    if touch == "target":
+        return f"{label} reached its target first"
+    if touch == "stop":
+        return f"{label} reached its stop first"
+    if touch == "not_filled":
+        return "the order never filled"
+    if touch == "neither":
+        return f"neither stop nor target was reached in {n} sessions"
+    return "the option outcome is unknown"
+
+
 def verdict_plain(facts: dict[str, Any]) -> dict[str, Any]:
     """{verdict, reason} for a draft verdict without a model.
 
-    Enters: the trade's R decides (positive good, negative bad). Model
-    skips: a move beyond the flat band decides — up is a missed winner
-    (bad call), down an avoided loss (good call), inside the band unclear.
+    The draft-label table (docs/SPEC.md, Reviews — Verdicts): the verdict
+    judges the model's call. Enters are labelled by the chosen option's
+    (or the real trade's) first touch; model skips with offered options
+    by what those options did afterwards, and v1 skips by the 5-session
+    price move against the flat band.
     """
     n = facts.get("sessions", 5)
     pct = facts.get("pct_5sessions")
     trade = facts.get("trade")
-    if facts.get("final_action") == "skip":
+    action = facts.get("model_action") or facts.get("final_action")
+    code_bit = _code_bit(facts)
+    option_id = facts.get("option_id")
+    options = [o for o in facts.get("options") or [] if isinstance(o, dict)]
+
+    if action == "enter":
+        call = (
+            f"Model entered on {option_id}"
+            if option_id is not None
+            else "Model entered"
+        )
+        chosen = next(
+            (
+                o
+                for o in options
+                if option_id is not None
+                and str(o.get("option_id")) == str(option_id)
+            ),
+            None,
+        )
+        if chosen is not None:
+            touch = chosen.get("touch")
+            # The traded option's null touch falls back to the real
+            # trade's stored first touch (SPEC: "or the real trade").
+            if touch is None and trade is not None:
+                touch = trade.get("first_touch")
+            happened = _option_touch_text(option_id, touch, n)
+        elif trade is not None:
+            touch = trade.get("first_touch")
+            if touch in ("target", "stop"):
+                happened = f"the trade reached its {touch} first"
+            else:
+                happened = f"neither stop nor target was reached in {n} sessions"
+        else:
+            touch = None
+            happened = f"no {n}-session outcome recorded"
+        verdict = (
+            "good_call"
+            if touch == "target"
+            else "bad_call"
+            if touch == "stop"
+            else "unclear"
+        )
+        return {
+            "verdict": verdict,
+            "reason": f"{call}{code_bit}; {happened}.",
+        }
+
+    if action == "skip" and options:
+        touches = [o.get("touch") for o in options]
+        total = len(touches)
+        targets = sum(1 for t in touches if t == "target")
+        if targets:
+            verdict = "bad_call"
+            happened = (
+                f"{targets} of {total} option{'s' if total != 1 else ''} "
+                "reached its target first"
+            )
+        elif all(t in ("stop", "not_filled") for t in touches):
+            verdict = "good_call"
+            happened = "every option hit its stop first or never filled"
+        elif all(t == "neither" for t in touches):
+            verdict = "unclear"
+            ids = ", ".join(str(o.get("option_id")) for o in options)
+            happened = f"{ids}: none reached stop or target in {n} sessions"
+        else:
+            verdict = "unclear"
+            happened = "the option outcomes were mixed or unknown"
+        return {
+            "verdict": verdict,
+            "reason": f"Model skipped{code_bit}; {happened}.",
+        }
+
+    if action == "skip":
         flat = facts.get("skip_flat_pct", 2)
         if pct is None:
             verdict, reason = "unclear", f"No {n}-session price recorded."
@@ -203,30 +323,26 @@ def verdict_plain(facts: dict[str, Any]) -> dict[str, Any]:
                 f"Stayed within ±{flat:g}% in the {n} sessions after "
                 "the skip."
             )
-    else:
-        r = trade.get("r") if trade else None
-        exit_label = trade.get("exit") if trade else None
+        return {"verdict": verdict, "reason": f"Model skipped{code_bit}; {reason}"}
+
+    # Anything else (hold, tighten, exit or no model action): no label
+    # table row — the decision's outcome decides nothing by itself.
+    if trade is not None:
+        r = trade.get("r")
+        exit_label = trade.get("exit")
         if exit_label is not None and r is not None:
             verdict = (
                 "good_call"
                 if float(r) > 0
-                else "bad_call" if float(r) < 0 else "unclear"
+                else "bad_call"
+                if float(r) < 0
+                else "unclear"
             )
-            reason = f"Closed at the {exit_label}, {_fmt_signed(r)}R."
-        elif pct is not None:
-            verdict = (
-                "good_call"
-                if float(pct) > 0
-                else "bad_call" if float(pct) < 0 else "unclear"
-            )
-            direction = "Up" if float(pct) >= 0 else "Down"
-            reason = (
-                f"{direction} {abs(float(pct)):.1f}% {n} sessions after "
-                "entry; position still open."
-            )
-        else:
-            verdict, reason = "unclear", f"No {n}-session price recorded."
-    return {"verdict": verdict, "reason": reason}
+            return {
+                "verdict": verdict,
+                "reason": f"Closed at the {exit_label}, {_fmt_signed(r)}R.",
+            }
+    return {"verdict": "unclear", "reason": "No model call to judge."}
 
 
 def plain_content(kind: str, facts: dict[str, Any]) -> dict[str, Any]:

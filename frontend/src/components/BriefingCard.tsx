@@ -103,6 +103,18 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
             )}
             {enabled && card !== null && (
               <>
+                {card.status_line && (
+                  <p
+                    style={{
+                      margin: 0,
+                      lineHeight: 1.5,
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-muted)',
+                    }}
+                  >
+                    {card.status_line}
+                  </p>
+                )}
                 <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
                   {card.text}
                 </p>

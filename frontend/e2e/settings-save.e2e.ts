@@ -43,8 +43,13 @@ test('settings: quiet hours save', async ({ page }) => {
   ).toBeVisible({ timeout: 60_000 });
 
   const notify = page.locator('section#notify');
-  await notify.getByLabel('from', { exact: true }).fill('22:45');
-  await notify.getByLabel('to', { exact: true }).fill('06:30');
+  // The cached e2e database can already hold a quiet-hours save from an
+  // earlier run — pick values that differ from whatever is saved so the
+  // two fields always count as changes.
+  const from = notify.getByLabel('from', { exact: true });
+  const to = notify.getByLabel('to', { exact: true });
+  await from.fill((await from.inputValue()) === '22:45' ? '23:15' : '22:45');
+  await to.fill((await to.inputValue()) === '06:30' ? '07:15' : '06:30');
   await expect(page.getByText('2 unsaved changes')).toBeVisible();
 
   await page.getByLabel('Reason for this change').fill('e2e: quiet hours');

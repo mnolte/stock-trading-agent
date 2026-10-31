@@ -29,7 +29,12 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
-from app.decide.prompt import PromptError, load_prompt
+from app.decide.prompt import (
+    PromptError,
+    UnknownPromptVersion,
+    load_prompt,
+    prompt_spec,
+)
 from app.llm.models import model_cutoff, model_provider
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock, make_clock
@@ -124,6 +129,16 @@ def _resolve_strategies(
             )
         else:
             raise HTTPException(400, f"unknown strategy ref {ref!r}")
+    # Known prompt versions only: a ref pointing at a version without a
+    # registered contract is refused (docs/SPEC.md, Decision layer).
+    for spec in specs:
+        if spec.prompt_version:
+            try:
+                prompt_spec(spec.prompt_version)
+            except UnknownPromptVersion:
+                raise HTTPException(
+                    422, f"unknown_prompt_version: {spec.prompt_version}"
+                ) from None
     return specs
 
 

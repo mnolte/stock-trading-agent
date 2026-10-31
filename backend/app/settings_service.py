@@ -18,7 +18,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.data.cache import _naive_utc
-from app.decide.prompt import PromptError, load_prompt
+from app.decide.prompt import (
+    PromptError,
+    UnknownPromptVersion,
+    load_prompt,
+    prompt_spec,
+)
 from app.market.clock import NY_TZ, SessionClock
 from app.notifications.events import EVENT_DEFS, EVENTS
 
@@ -462,10 +467,18 @@ async def validate_settings(
             )
     prompt = str(decision.get("prompt", ""))
     if prompt:
+        # Known prompt versions only: a version without a registered
+        # contract is refused as unknown_prompt_version (docs/SPEC.md,
+        # Decision layer); an unlisted file fails the manifest check.
         try:
-            load_prompt(prompt)
-        except (OSError, PromptError):
-            errors.append(f"Prompt version {prompt!r} does not exist")
+            prompt_spec(prompt)
+        except UnknownPromptVersion:
+            errors.append(f"unknown_prompt_version: {prompt}")
+        else:
+            try:
+                load_prompt(prompt)
+            except (OSError, PromptError):
+                errors.append(f"Prompt version {prompt!r} does not exist")
     if errors:
         raise SettingsError(errors)
     # A model whose provider has no passing key can't be picked

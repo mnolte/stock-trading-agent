@@ -24,9 +24,11 @@ from app.db.models import (
     Earning,
     EquitySnapshot,
     Event,
+    Order,
     Outcome,
     Position,
     Review,
+    Run,
     Verdict,
 )
 from app.engine.performance import (
@@ -78,6 +80,56 @@ def weekly_period(due: datetime) -> tuple[str, date, date]:
     monday = friday - timedelta(days=4)
     iso = monday.isocalendar()
     return f"{iso[0]}-W{iso[1]:02d}", monday, friday
+
+
+def _decision_model_action(decision: Decision) -> str | None:
+    """What the model answered, from its output or the validation row."""
+    action = (decision.model_output or {}).get("action")
+    if isinstance(action, str) and action:
+        return action
+    candidate = (decision.validation_result or {}).get("model_action")
+    return candidate if isinstance(candidate, str) else None
+
+
+def _change_reason(decision: Decision) -> str | None:
+    """The gate or check that changed the model's action, if recorded."""
+    for source in (decision.validation_result, decision.gates_result):
+        if isinstance(source, dict):
+            reason = source.get("reason") or source.get("blocked_by")
+            if isinstance(reason, str) and reason:
+                return reason
+    return None
+
+
+def _change_text(decision: Decision) -> str | None:
+    """The failing check's "<name> <detail>" for the code-change line."""
+    for source in (decision.validation_result, decision.gates_result):
+        if not isinstance(source, dict):
+            continue
+        checks = source.get("checks")
+        if not isinstance(checks, list):
+            continue
+        failed = next(
+            (
+                c
+                for c in checks
+                if isinstance(c, dict) and c.get("passed") is False
+            ),
+            None,
+        )
+        if failed is not None:
+            detail = failed.get("detail")
+            name = failed.get("name")
+            text = " ".join(
+                part
+                for part in (
+                    str(name) if isinstance(name, str) else "",
+                    str(detail) if isinstance(detail, str) else "",
+                )
+                if part
+            )
+            return text or None
+    return None
 
 
 def _last_snapshot(session: Session, before: datetime) -> EquitySnapshot | None:
@@ -248,7 +300,7 @@ def weekly_facts(
 
     # ---- skipped setups after 5 sessions -----------------------------------
     flat_pct = Decimal(str(config.get("reviews", "skip_flat_pct", default=2)))
-    skips = session.execute(
+    skip_rows = session.execute(
         select(Decision, Cycle.scheduled_time, Outcome)
         .join(Cycle, Decision.cycle_id == Cycle.id)
         .join(Outcome, Outcome.decision_id == Decision.id)
@@ -261,6 +313,13 @@ def weekly_facts(
         )
         .order_by(Cycle.scheduled_time)
     ).all()
+    # PR 32: only the model's own skips count — a model enter that code
+    # turned into a skip is judged as an enter, never a model skip.
+    skips = [
+        (d, scheduled, o)
+        for d, scheduled, o in skip_rows
+        if _decision_model_action(d) == "skip"
+    ]
     up = flat = down = pending = 0
     biggest_miss: dict[str, Any] | None = None
     for decision, scheduled, outcome in skips:
@@ -288,17 +347,47 @@ def weekly_facts(
                 "pct": _f(pct, "0.1"),
             }
 
-    # ---- confirmed verdicts in the window -----------------------------------
+    # ---- confirmed verdicts in the window, per model call (PR 32) -----------
     confirmed = session.execute(
-        select(Verdict).where(
+        select(Verdict, Decision)
+        .join(Decision, Verdict.decision_id == Decision.id)
+        .where(
             Verdict.source == "marc",
             Verdict.updated_at >= _naive_utc(start),
             Verdict.updated_at < _naive_utc(end),
         )
-    ).scalars().all()
+    ).all()
     verdict_counts = {"good_call": 0, "bad_call": 0, "unclear": 0}
-    for v in confirmed:
+    groups: dict[str, dict[str, Any]] = {
+        "entered": {"good_call": 0, "bad_call": 0, "unclear": 0},
+        "blocked": {"good_call": 0, "bad_call": 0, "unclear": 0, "reasons": {}},
+        "skips": {"good_call": 0, "bad_call": 0, "unclear": 0},
+    }
+    thesis_contradictions = 0
+    for v, d in confirmed:
         verdict_counts[v.verdict] = verdict_counts.get(v.verdict, 0) + 1
+        if v.thesis_check == "contradicts":
+            thesis_contradictions += 1
+        vfacts = v.facts if isinstance(v.facts, dict) else {}
+        model_action = vfacts.get("model_action")
+        if not isinstance(model_action, str):
+            model_action = _decision_model_action(d)
+        changed = vfacts.get("changed_by_code")
+        if not isinstance(changed, bool):
+            changed = model_action is not None and model_action != d.final_action
+        reason = vfacts.get("change_reason")
+        if not isinstance(reason, str) or not reason:
+            reason = _change_reason(d) if changed else None
+        if model_action == "enter" and changed:
+            group = "blocked"
+        elif model_action == "enter":
+            group = "entered"
+        else:
+            group = "skips"
+        groups[group][v.verdict] = groups[group].get(v.verdict, 0) + 1
+        if group == "blocked" and reason:
+            reasons = groups["blocked"]["reasons"]
+            reasons[reason] = reasons.get(reason, 0) + 1
 
     # ---- results by regime and by symbol ------------------------------------
     def _group(key_fn: Any) -> list[dict[str, Any]]:
@@ -353,6 +442,11 @@ def weekly_facts(
                 config.get("reviews", "verdict_after_sessions", default=5)
             ),
             "skip_flat_pct": float(flat_pct),
+            "min_closed_trades_for_suggestion": int(
+                config.get(
+                    "reviews", "min_closed_trades_for_suggestion", default=10
+                )
+            ),
         },
         "return_pct": _f(return_pct),
         "return_usd": _f(return_usd),
@@ -380,7 +474,17 @@ def weekly_facts(
             "down": down,
             "biggest_miss": biggest_miss,
         },
-        "verdicts": {**verdict_counts, "total": len(confirmed)},
+        "verdicts": {
+            **verdict_counts,
+            "total": len(confirmed),
+            "entered": groups["entered"],
+            "blocked": groups["blocked"],
+            "skips": groups["skips"],
+            "thesis_contradictions": thesis_contradictions,
+        },
+        # weekly.v2 (PR 32): the evidence behind observations and the
+        # suggestion gate — this week and the current run.
+        "sample": _sample_facts(session, start=start, end=end),
         "by_regime": _group(lambda t, _p: t["regime"] or "Unknown"),
         "by_symbol": _group(lambda t, _p: t["symbol"]),
         "strategies": _strategy_facts(session, config=config, clock=clock, calendar=calendar),
@@ -399,6 +503,83 @@ def weekly_facts(
                 )
             )
         ),
+    }
+
+
+def _sample_facts(
+    session: Session, *, start: datetime, end: datetime
+) -> dict[str, Any]:
+    """The evidence sample for weekly.v2 (docs/SPEC.md, Weekly
+    suggestion): closed trades, model skips with a 5-session outcome and
+    confirmed verdicts — this week and in the current run."""
+    run_start = session.execute(select(func.max(Run.started_at))).scalar()
+
+    closed_week = session.execute(
+        select(func.count(Position.id)).where(
+            Position.origin == "agent",
+            Position.closed_at.is_not(None),
+            Position.closed_at >= _naive_utc(start),
+            Position.closed_at < _naive_utc(end),
+        )
+    ).scalar_one()
+    closed_run = (
+        session.execute(
+            select(func.count(Position.id)).where(
+                Position.origin == "agent",
+                Position.closed_at.is_not(None),
+                Position.closed_at >= run_start,
+            )
+        ).scalar_one()
+        if run_start is not None
+        else 0
+    )
+    skip_q = (
+        select(Decision, Outcome)
+        .join(Outcome, Outcome.decision_id == Decision.id)
+        .where(
+            Decision.context == "candidate",
+            Decision.final_action == "skip",
+            Decision.no_call_reason.is_(None),
+            Outcome.price_5sessions.is_not(None),
+        )
+    )
+    skips_rows = session.execute(
+        skip_q.join(Cycle, Decision.cycle_id == Cycle.id).where(
+            Cycle.scheduled_time >= _naive_utc(start),
+            Cycle.scheduled_time < _naive_utc(end),
+        )
+    ).all()
+    skips_week = sum(1 for d, _ in skips_rows if _decision_model_action(d) == "skip")
+    skips_run = 0
+    if run_start is not None:
+        run_rows = session.execute(
+            skip_q.join(Cycle, Decision.cycle_id == Cycle.id).where(
+                Cycle.scheduled_time >= run_start,
+            )
+        ).all()
+        skips_run = sum(
+            1 for d, _ in run_rows if _decision_model_action(d) == "skip"
+        )
+    verdicts_week = session.execute(
+        select(func.count(Verdict.id)).where(
+            Verdict.source == "marc",
+            Verdict.updated_at >= _naive_utc(start),
+            Verdict.updated_at < _naive_utc(end),
+        )
+    ).scalar_one()
+    verdicts_run = (
+        session.execute(
+            select(func.count(Verdict.id)).where(
+                Verdict.source == "marc", Verdict.updated_at >= run_start
+            )
+        ).scalar_one()
+        if run_start is not None
+        else 0
+    )
+    return {
+        "closed_trades": {"week": closed_week, "run": closed_run},
+        "model_skips_with_outcome": {"week": skips_week, "run": skips_run},
+        "confirmed_verdicts": {"week": verdicts_week, "run": verdicts_run},
     }
 
 
@@ -650,6 +831,120 @@ def verdict_eligible(decision: Decision) -> bool:
     )
 
 
+def _stored_levels(snapshot: dict[str, Any]) -> list[Any]:
+    """Level objects from a stored input snapshot.
+
+    v2/v3 store the level list code built; v1 stored only the swing
+    highs/lows block (``{"swing_highs": [...], "swing_lows": [...]}``),
+    which maps onto the same room kinds. Returns [] for neither shape.
+    """
+    from app.decide.levels import Level
+    from app.decide.v3 import _levels_from_stored
+
+    raw = snapshot.get("levels")
+    if isinstance(raw, list):
+        return list(_levels_from_stored(raw))
+    if isinstance(raw, dict):
+        out: list[Level] = []
+        for kind, key in (("swing_high", "swing_highs"), ("swing_low", "swing_lows")):
+            for i, price in enumerate(raw.get(key) or []):
+                try:
+                    level_price = Decimal(str(price))
+                except ArithmeticError:
+                    continue
+                out.append(
+                    Level(
+                        id=f"S{i + 1}",
+                        price=level_price,
+                        kind=kind,
+                        timeframe="1h",
+                        time=None,
+                    )
+                )
+        return out
+    return []
+
+
+def checks_at_decision(
+    decision: Decision, *, config: AppConfig
+) -> dict[str, Any] | None:
+    """The v3 check facts for a stored decision (docs/SPEC.md, Reviews —
+    Facts). v3 rows stored them under ``input_snapshot.checks``; for v1/v2
+    rows they are recomputed with the decision.v3 rules on the stored
+    input — never refetched.
+    """
+    from app.decide.snapshot import UNAVAILABLE
+    from app.decide.v3 import _trend, room_check, v3_config
+
+    snapshot = decision.input_snapshot
+    if not isinstance(snapshot, dict):
+        return None
+    stored = snapshot.get("checks")
+    if isinstance(stored, dict):
+        return dict(stored)
+
+    def _num(value: object) -> Decimal | None:
+        try:
+            return Decimal(str(value))
+        except ArithmeticError:
+            return None
+
+    ind_1h = snapshot.get("indicators_1h")
+    ind_1h = ind_1h if isinstance(ind_1h, dict) else {}
+    ind_d = snapshot.get("indicators_daily")
+    ind_d = ind_d if isinstance(ind_d, dict) else {}
+    regime = snapshot.get("regime")
+    regime = regime if isinstance(regime, dict) else {}
+    price = _num(snapshot.get("price"))
+    atr_1h = _num(ind_1h.get("atr14"))
+    offset = Decimal(
+        str(config.get("execution", "entry_limit_offset_pct", default=0.05))
+    )
+    limit = (
+        price * (1 + offset / 100)
+        if decision.context == "candidate" and price is not None
+        else None
+    )
+    v3 = v3_config(config)
+    room_level, room_atr = (
+        room_check(_stored_levels(snapshot), limit, atr_1h, v3.room_level_kinds)
+        if limit is not None and atr_1h is not None and atr_1h > 0
+        else (None, None)
+    )
+    return {
+        "trend_1h": _trend(
+            price, _num(ind_1h.get("ema20")), _num(ind_1h.get("ema50"))
+        ),
+        "trend_daily": _trend(
+            _num(ind_d.get("close")),
+            _num(ind_d.get("sma50")),
+            _num(ind_d.get("sma200")),
+        ),
+        "regime_trend": str(regime.get("trend") or UNAVAILABLE),
+        "regime_volatility": str(regime.get("volatility") or UNAVAILABLE),
+        "room_atr": float(room_atr.quantize(Decimal("0.01"))) if room_atr is not None else None,
+        "room_level": room_level.id if room_level is not None else None,
+    }
+
+
+def _execution(session: Session, decision: Decision, *, has_trade: bool) -> str | None:
+    """filled | not_filled | not_sent for a model enter; null otherwise."""
+    output = decision.model_output or {}
+    model_action = output.get("action")
+    if model_action is None:
+        model_action = (decision.validation_result or {}).get("model_action")
+    if model_action != "enter":
+        return None
+    if has_trade:
+        return "filled"
+    sent = session.execute(
+        select(Order.id)
+        .where(Order.decision_id == decision.id, Order.leg == "entry")
+        .limit(1)
+    ).first()
+    return "not_filled" if sent is not None else "not_sent"
+
+
 def verdict_facts(
     session: Session,
     *,
@@ -671,22 +966,12 @@ def verdict_facts(
             * 100
         )
     output = decision.model_output or {}
-    model_action = (
-        output.get("action")
-        if isinstance(output.get("action"), str)
-        else None
-    )
+    model_action = _decision_model_action(decision)
     changed_by_code = (
         model_action is not None and model_action != decision.final_action
     )
-    change_reason: str | None = None
-    if changed_by_code:
-        for source in (decision.validation_result, decision.gates_result):
-            if isinstance(source, dict):
-                reason = source.get("reason") or source.get("blocked_by")
-                if isinstance(reason, str) and reason:
-                    change_reason = reason
-                    break
+    change_reason = _change_reason(decision) if changed_by_code else None
+    change_text = _change_text(decision) if changed_by_code else None
     option_id = decision.chosen_option or (
         output.get("option_id")
         if isinstance(output.get("option_id"), str | int)
@@ -752,12 +1037,9 @@ def verdict_facts(
         "final_action": decision.final_action,
         "changed_by_code": changed_by_code,
         "change_reason": change_reason,
-        "execution": (
-            "trade"
-            if trade is not None
-            else ("blocked_by_code" if changed_by_code else "no_trade")
-        ),
-        "checks_at_decision": decision.validation_result,
+        "change_text": change_text,
+        "execution": _execution(session, decision, has_trade=trade is not None),
+        "checks_at_decision": checks_at_decision(decision, config=config),
         "options": options_facts,
         "prompt_version": decision.prompt_version,
         "context": decision.context,
