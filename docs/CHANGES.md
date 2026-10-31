@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-10-31 — Repository scan fixes
+
+- From the repository scan of 31 October. Its main findings:
+  - review models and quiet hours can't be saved (a regression from PR 29);
+  - four auth routes return 500 on a bad body;
+  - backtests can kill a reused process id;
+  - "Confirm it is you" and Change password allow unlimited guesses;
+  - a CSV import calls Alpaca while it holds a write lock;
+  - working entries without a limit price count as zero risk;
+  - several smaller issues.
+- Sign-in and access: **Confirm and password change** count failed attempts per session. After 5 in 15 minutes the session is signed out and the warning is sent.
+- API keys: a secret shorter than 8 characters is refused at save.
+- Kickoff `docs/kickoffs/fix-scan-2026-10-31.md`. The rest are code bugs against the existing spec and AGENTS.md.
+
 ## 2026-10-31 — Misfire grace on every scheduled job
 
 - Every scheduler job now carries `schedule.misfire_grace_seconds` (120 s) and `coalesce=True`; only `backtests-tick` keeps its own 10-second grace. Previously jobs without an explicit grace fell back to APScheduler's 1-second default, so a brief event-loop stall silently skipped the run — a one-off warning for the 1-minute `readiness-tick`, but a lost day/week/month for the `daily-data-refresh`, `daily-db-backup`, `daily-briefing`, `weekly-review` and `restore-test` crons.
