@@ -7,7 +7,6 @@ from decimal import Decimal
 from itertools import combinations
 
 import pytest
-
 from app.config import AppConfig
 from app.engine.selection import (
     ScoredEntry,

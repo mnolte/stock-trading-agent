@@ -64,6 +64,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |
 | `regime.*` | Volatility bands that block entries |
 | `decision.*` | Model, temperature, prompt, confidence, levels and call limits |
+| `selection.*` | Entry selection: `selection.mode` (`rank` or `expected_profit`), `selection.confidence_weight`, `selection.last_slot_min_ev_r` |
 | `risk.*` | Position sizing, portfolio and daily loss limits |
 | `performance.*` | Slippage and cost assumptions for measured results |
 | `reviews.*` | Weekly review, briefing and verdict models, times and caps |
