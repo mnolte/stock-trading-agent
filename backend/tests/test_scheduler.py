@@ -36,6 +36,21 @@ def test_backtests_tick_tolerates_a_late_wakeup(client: TestClient) -> None:
     assert job.coalesce is True
 
 
+def test_every_job_runs_late_within_the_misfire_grace(
+    client: TestClient,
+) -> None:
+    """A stalled loop delays a run instead of silently skipping it: the
+    configured grace replaces APScheduler's 1-second default everywhere."""
+    scheduler = cast(FastAPI, client.app).state.scheduler
+    grace = int(get_config().get("schedule", "misfire_grace_seconds"))
+    jobs = scheduler.get_jobs()
+    assert jobs, "expected at least one scheduled job"
+    for job in jobs:
+        expected = 10 if job.id == "backtests-tick" else grace
+        assert job.misfire_grace_time == expected, job.id
+        assert job.coalesce is True, job.id
+
+
 def test_startup_catch_up_only_in_simulated_mode() -> None:
     """Paper mode never runs a missed cycle late, not even at startup."""
     config = AppConfig()

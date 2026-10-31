@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-31 — Misfire grace on every scheduled job
+
+- Every scheduler job now carries `schedule.misfire_grace_seconds` (120 s) and `coalesce=True`; only `backtests-tick` keeps its own 10-second grace. Previously jobs without an explicit grace fell back to APScheduler's 1-second default, so a brief event-loop stall silently skipped the run — a one-off warning for the 1-minute `readiness-tick`, but a lost day/week/month for the `daily-data-refresh`, `daily-db-backup`, `daily-briefing`, `weekly-review` and `restore-test` crons.
+- `scheduled-cycle-audit`, `calendar-retry`, `daily-data-refresh` and `daily-db-backup` also gain `coalesce=True`; several misses inside the grace merge into one run, never a queue of catch-ups.
+- `test_scheduler.py` asserts every job carries the configured grace.
+
 ## 2026-10-31 — Entry selection (PR 33)
 
 - From the 31 October report on how entries are chosen when more pass than there are slots: there is no selection step. Entries are gated and sent in rank order, so the first ones to pass take the 4 slots, and candidates after the 10th call are never seen. Rank (20-session strength against SPY) says nothing about the offered trade or about dollars at risk. The 20% max-position cap cuts the risk, and so the profit, on tight-stop stocks.
