@@ -1431,6 +1431,9 @@ class CycleRunner:
                 "chosen": [e.decision_id for e in sel.chosen],
                 "total": str(sel.total),
                 "rank_total": str(sel.rank_total),
+                "rank_chosen": [
+                    int(k) for k in sel.rank_keys if k.isdigit()
+                ],
             }
         for se in scored:
             decision = by_key[se.key]["decision"]
@@ -1444,6 +1447,7 @@ class CycleRunner:
                 "dollars_at_risk": str(se.dollars_at_risk),
                 "expected_profit": str(se.expected_profit),
                 "rank": se.rank,
+                "rr": str(se.reward_to_risk),
                 "chosen": se.key in chosen_keys,
                 "total": str(sel.total),
             }

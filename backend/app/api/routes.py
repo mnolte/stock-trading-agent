@@ -572,6 +572,25 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             select(LlmCall.id).where(LlmCall.decision_id == decision_id)
         ).scalar_one_or_none()
         earnings = _decision_earnings(session, decision, scheduled)
+        # Entry selection (PR 33): the cycle's record plus every scored
+        # candidate of the same cycle for the drawer block.
+        cycle_sel = session.execute(
+            select(Cycle.selection).where(Cycle.id == decision.cycle_id)
+        ).scalar_one_or_none()
+        cycle_scored = [
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "selection": r.selection,
+            }
+            for r in session.execute(
+                select(Decision.id, Decision.symbol, Decision.selection)
+                .where(
+                    Decision.cycle_id == decision.cycle_id,
+                    Decision.selection.is_not(None),
+                )
+            ).all()
+        ] if cycle_sel is not None else []
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
     trade = _trade_block(
@@ -722,6 +741,14 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "options": decision.options,
         "chosen_option": decision.chosen_option,
         "explanation_check": decision.explanation_check,
+        # Entry selection (PR 33): this decision's score and the cycle's
+        # set result for the "Selection in this cycle" drawer block.
+        "selection": decision.selection,
+        "cycle_selection": (
+            {**(cycle_sel or {}), "scored": cycle_scored}
+            if cycle_sel is not None
+            else None
+        ),
         "model": decision.model,
         "tokens_in": decision.tokens_in,
         "tokens_out": decision.tokens_out,

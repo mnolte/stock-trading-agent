@@ -11,6 +11,11 @@ function base(): SettingsForm {
       entry_timeout_minutes: 10,
       max_spread_pct: 0.15,
     },
+    selection: {
+      mode: 'rank',
+      confidence_weight: 0.5,
+      last_slot_min_ev_r: null,
+    },
     rules: { rsi_min: 40, rsi_max: 70 },
     decision: {
       model: 'gpt-4o-mini',

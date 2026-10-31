@@ -1,6 +1,11 @@
 /** Pure helpers for the decision drawer and the dashboard's latest-decision card. */
 
-import type { DecisionDetail, DecisionEarnings } from '../types/api';
+import type {
+  CycleSelection,
+  DecisionDetail,
+  DecisionEarnings,
+  SelectionRecord,
+} from '../types/api';
 import { actionLabel } from '../components/decisionFormat';
 
 export type GateState = 'pass' | 'fail' | 'reduced';
@@ -50,7 +55,105 @@ export function gateRows(decision: DecisionDetail): GateRow[] {
       state: !check.passed ? 'fail' : reduced ? 'reduced' : 'pass',
     });
   }
+  const selection = selectionGateRow(decision);
+  if (selection !== null) rows.push(selection);
   return rows;
+}
+
+interface ScoredRow {
+  id: number;
+  symbol: string;
+  selection: SelectionRecord;
+}
+
+function scoredRows(decision: DecisionDetail): ScoredRow[] {
+  const cs = decision.cycle_selection;
+  if (!cs || !Array.isArray(cs.scored)) return [];
+  return (cs.scored as ScoredRow[])
+    .filter((r) => r.selection !== null)
+    .sort(
+      (a, b) =>
+        Number(b.selection.expected_profit) - Number(a.selection.expected_profit),
+    );
+}
+
+function ordinal(n: number): string {
+  const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th';
+  return `${n}${suffix}`;
+}
+
+/** The "Selection · expected profit" gate row for a scored candidate. */
+export function selectionGateRow(decision: DecisionDetail): GateRow | null {
+  const sel = decision.selection;
+  if (!sel) return null;
+  const rows = scoredRows(decision);
+  const pos = rows.findIndex((r) => r.id === decision.id);
+  const where = pos >= 0 ? ` · ${ordinal(pos + 1)} of ${rows.length}` : '';
+  return {
+    name: 'Selection · expected profit',
+    detail: `$${money(sel.expected_profit)}${where} · ${
+      sel.chosen ? 'selected' : 'not selected'
+    }`,
+    state: sel.chosen ? 'pass' : 'reduced',
+  };
+}
+
+export interface SelectionCycleBlock {
+  freeSlots: number;
+  scoredCount: number;
+  rows: {
+    id: number;
+    symbol: string;
+    rr: string;
+    p: string;
+    risk: string;
+    expectedR: string;
+    expectedProfit: string;
+    chosen: boolean;
+  }[];
+  chosenSymbols: string[];
+  total: string;
+  rankSymbols: string[];
+  rankTotal: string;
+}
+
+function money(value: string | null | undefined): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : '—';
+}
+
+/** The "Selection in this cycle" block for the v2/v3 drawers. */
+export function selectionCycleBlock(
+  decision: DecisionDetail,
+): SelectionCycleBlock | null {
+  const cs = decision.cycle_selection as CycleSelection | null | undefined;
+  if (!cs || cs.mode !== 'expected_profit') return null;
+  const rows = scoredRows(decision).map((r) => ({
+    id: r.id,
+    symbol: r.symbol,
+    rr: money(r.selection.rr),
+    p: money(r.selection.p),
+    risk: money(r.selection.dollars_at_risk),
+    expectedR: money(r.selection.expected_r),
+    expectedProfit: money(r.selection.expected_profit),
+    chosen: r.selection.chosen === true,
+  }));
+  const chosenSymbols = rows.filter((r) => r.chosen).map((r) => r.symbol);
+  const rankChosen = new Set<number>(
+    (cs as { rank_chosen?: number[] }).rank_chosen ?? [],
+  );
+  const rankSymbols = rows
+    .filter((r) => rankChosen.has(r.id))
+    .map((r) => r.symbol);
+  return {
+    freeSlots: cs.free_slots ?? 0,
+    scoredCount: rows.length,
+    rows,
+    chosenSymbols,
+    total: money(cs.total),
+    rankSymbols,
+    rankTotal: money(cs.rank_total),
+  };
 }
 
 export function num(value: unknown): number | null {

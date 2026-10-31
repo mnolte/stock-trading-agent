@@ -186,6 +186,9 @@ const DEFAULTS: Record<string, string> = {
   'reviews.briefing_enabled': 'On',
   'reviews.monthly_cost_cap_usd': '$2',
   'universe.mode': 'Fixed list',
+  'selection.mode': 'Rank order',
+  'selection.confidence_weight': '0.5',
+  'selection.last_slot_min_ev_r': 'Off',
   'universe.screen.min_price': '$10',
   'universe.screen.min_avg_dollar_volume': '$100M',
   'universe.screen.lookback_sessions': '20',
@@ -231,6 +234,9 @@ const UNITS: Record<string, string> = {
 // field path -> section id, for the section-list change badges
 const SECTION_OF: Record<string, string> = {
   'execution.mode': 'trading',
+  'selection.mode': 'trading',
+  'selection.confidence_weight': 'trading',
+  'selection.last_slot_min_ev_r': 'trading',
   'performance.slippage_pct_per_side': 'trading',
   'risk.risk_per_trade_pct': 'risk',
   'risk.max_position_pct': 'risk',
@@ -1976,6 +1982,54 @@ export default function Settings() {
                 <option>Return vs SPY, 20 sessions</option>
               </select>
             </Row>
+            {row('selection.mode', {
+              id: 'selmode',
+              label: 'Entry selection',
+              help: 'Rank sends entries in rank order; expected profit picks the set with the highest total expected profit within the same limits. Gates, sizing and orders do not change.',
+              children: (
+                <select
+                  id="selmode"
+                  aria-label="Entry selection"
+                  value={s.selection.mode}
+                  onChange={(e) => patch('selection', 'mode', e.target.value)}
+                  style={{ ...selectStyle, minWidth: 200 }}
+                >
+                  <option value="rank">Rank order</option>
+                  <option value="expected_profit">Expected profit</option>
+                </select>
+              ),
+            })}
+            {row('selection.confidence_weight', {
+              id: 'selw',
+              label: 'Confidence weight',
+              help: 'How far confidence moves the probability away from break-even when scoring entries.',
+              children: (
+                <NumBox
+                  id="selw"
+                  value={s.selection.confidence_weight}
+                  accent={'selection.confidence_weight' in changed}
+                  invalid={!!fieldErrors['selection.confidence_weight']}
+                  onChange={(v) => patch('selection', 'confidence_weight', v)}
+                />
+              ),
+            })}
+            {row('selection.last_slot_min_ev_r', {
+              id: 'selfloor',
+              label: 'Last slot min expected R',
+              help: 'Minimum expected R for an entry taking the last free slot. 0 means off.',
+              children: (
+                <NumBox
+                  id="selfloor"
+                  value={s.selection.last_slot_min_ev_r ?? 0}
+                  unit="R"
+                  accent={'selection.last_slot_min_ev_r' in changed}
+                  invalid={!!fieldErrors['selection.last_slot_min_ev_r']}
+                  onChange={(v) =>
+                    patch('selection', 'last_slot_min_ev_r', v > 0 ? v : null)
+                  }
+                />
+              ),
+            })}
 
             <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>

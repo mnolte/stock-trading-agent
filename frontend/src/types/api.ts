@@ -558,6 +558,10 @@ export interface DecisionDetail {
     bad_ids: string[];
     bad_numbers: string[];
   } | null;
+  /** Entry selection (PR 33): this decision's score in expected_profit mode. */
+  selection?: SelectionRecord | null;
+  /** The cycle's winning set and every scored candidate of the cycle. */
+  cycle_selection?: CycleSelection | null;
   model: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
@@ -623,12 +627,41 @@ export interface ModelOption {
   needs_key: boolean;
 }
 
+export interface SelectionRecord {
+  mode: string;
+  pre_score: string | null;
+  call_position: number | null;
+  be: string;
+  p: string;
+  expected_r: string;
+  dollars_at_risk: string;
+  expected_profit: string;
+  rank: number | null;
+  rr?: string;
+  chosen: boolean;
+  total: string;
+}
+
+export interface CycleSelection {
+  mode: string;
+  free_slots: number;
+  scored: number | { id: number; symbol: string; selection: SelectionRecord }[];
+  chosen: number[];
+  total: string;
+  rank_total: string;
+}
+
 export interface SettingsForm {
   execution: {
     mode: string;
     entry_limit_offset_pct: number;
     entry_timeout_minutes: number;
     max_spread_pct: number;
+  };
+  selection: {
+    mode: string;
+    confidence_weight: number;
+    last_slot_min_ev_r: number | null;
   };
   rules: { rsi_min: number; rsi_max: number };
   decision: {

@@ -30,6 +30,7 @@ import {
   gateRows,
   num,
   orderStatusText,
+  selectionCycleBlock,
   signalRows,
   signedPct,
   sipBarEnd,
@@ -195,6 +196,74 @@ function SafetyGates({ decision }: { decision: DecisionDetail }) {
       )}
       {(decision.gates_result as GatesResult | null)?.pending_approval && (
         muted('Passed the gates — waiting for approval (supervised mode).')
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// entry selection (PR 33)
+
+function SelectionBlock({ decision }: { decision: DecisionDetail }) {
+  const block = selectionCycleBlock(decision);
+  if (block === null) return null;
+  return (
+    <Section
+      label="Selection in this cycle"
+      right={`${block.freeSlots} slots free · ${block.scoredCount} entries passed`}
+    >
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          padding: '0 var(--sa-space-3)',
+        }}
+      >
+        {block.rows.map((row, i) => (
+          <div
+            key={row.id}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 'var(--sa-space-3)',
+              padding: '7px 0',
+              fontSize: 'var(--sa-text-md)',
+              borderBottom:
+                i < block.rows.length ? '1px solid var(--sa-border)' : 'none',
+            }}
+          >
+            <span style={{ color: 'var(--sa-text)' }}>
+              {row.symbol}{' '}
+              <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+                {row.rr} R/R · p {row.p}
+              </span>
+            </span>
+            <span
+              style={{
+                fontFamily: 'var(--sa-font-mono)',
+                fontSize: 'var(--sa-text-sm)',
+                textAlign: 'right',
+                color: 'var(--sa-text-2)',
+              }}
+            >
+              ${row.risk} · {row.expectedR} R · ${row.expectedProfit}{' '}
+              <span
+                style={{
+                  color: row.chosen
+                    ? 'var(--sa-positive)'
+                    : 'var(--sa-warning-text)',
+                }}
+              >
+                {row.chosen ? 'selected' : 'not selected'}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+      {muted(
+        `Selected: ${block.chosenSymbols.join(' + ') || '—'}, $${block.total}. ` +
+          `Rank order would have taken ${block.rankSymbols.join(' + ') || '—'}, ` +
+          `$${block.rankTotal}.`,
       )}
     </Section>
   );
@@ -1817,10 +1886,12 @@ export default function Decision() {
               <V3Reasoning decision={decision} />
               <V2Explanation decision={decision} />
               <SafetyGates decision={decision} />
+              <SelectionBlock decision={decision} />
             </>
           ) : (
             <>
               <SafetyGates decision={decision} />
+              <SelectionBlock decision={decision} />
               {decision.prompt_version === 'decision.v2' && (
                 <>
                   <V2OptionsTable decision={decision} />

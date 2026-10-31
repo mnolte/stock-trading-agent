@@ -1543,6 +1543,7 @@ class ShadowRunner:
                 "dollars_at_risk": str(se.dollars_at_risk),
                 "expected_profit": str(se.expected_profit),
                 "rank": se.rank,
+                "rr": str(se.reward_to_risk),
                 "chosen": se.key in chosen_keys,
                 "total": str(sel.total),
             }
