@@ -351,6 +351,7 @@ async def test_verdict_facts_blocked_enter(
     assert "1.4" in str(facts["change_text"])
     assert facts["execution"] == "not_sent"
     checks = facts["checks_at_decision"]
+    assert isinstance(checks, dict)
     assert checks["trend_1h"] == "mixed"  # 420 not > 430 > 425
     assert checks["trend_daily"] == "mixed"  # 390 between 380 and 400
     assert checks["regime_trend"] == "up"
@@ -871,13 +872,16 @@ def test_verdicts_api_v1_row_has_no_thesis(client: TestClient) -> None:
 
 
 async def test_settings_save_refuses_unknown_prompt() -> None:
+    from typing import cast
+
+    from app.broker.base import Broker
     from app.settings_service import SettingsError, validate_settings
 
     try:
         await validate_settings(
             {"decision": {"prompt": "decision.v4"}},
             {},
-            broker=None,  # type: ignore[arg-type] - unused without a universe save
+            broker=cast(Broker, None),  # unused without a universe save
             held_symbols=set(),
         )
     except SettingsError as exc:
@@ -888,10 +892,12 @@ async def test_settings_save_refuses_unknown_prompt() -> None:
 
 def test_backtest_resolve_refuses_unknown_prompt() -> None:
     """A strategy row naming a version without a contract → 422."""
+    from typing import cast
+
     from app.api.backtests import _resolve_strategies
     from app.db.base import get_session_maker
     from app.db.models import Strategy
-    from fastapi import HTTPException
+    from fastapi import HTTPException, Request
 
     with get_session_maker()() as session:
         session.add(
@@ -908,12 +914,11 @@ def test_backtest_resolve_refuses_unknown_prompt() -> None:
         session.commit()
         sid = session.execute(select(Strategy.id)).scalar_one()
 
-    class _Req:
-        pass
-
     with get_session_maker()() as session:
         try:
-            _resolve_strategies(_Req(), session, [f"strategy:{sid}"])
+            _resolve_strategies(
+                cast(Request, object()), session, [f"strategy:{sid}"]
+            )
         except HTTPException as exc:
             assert exc.status_code == 422
             assert "unknown_prompt_version" in str(exc.detail)
