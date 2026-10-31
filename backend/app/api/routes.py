@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import secrets
@@ -4895,7 +4896,7 @@ def api_logs(request: Request) -> dict[str, object]:
     conn = _log_db(request)
     if conn is None:
         return {"lines": [], "next_cursor": None, "index_available": False}
-    with conn:
+    with contextlib.closing(conn), conn:
         try:
             rows = conn.execute(
                 f"SELECT {_COLS} FROM log_lines {where} "  # noqa: S608 - whitelisted column list, params bound
@@ -4921,7 +4922,7 @@ def api_logs_summary(request: Request) -> dict[str, object]:
     conn = _log_db(request)
     if conn is None:
         return {"days": [], "problems": [], "index_available": False}
-    with conn:
+    with contextlib.closing(conn), conn:
         days = conn.execute(
             "SELECT substr(ts,1,10) day, level, count(*) FROM log_lines "
             "WHERE level IN ('WARNING','ERROR','CRITICAL') "
@@ -4970,7 +4971,7 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     conn = _log_db(request)
     if conn is None:
         raise HTTPException(status_code=503, detail="log index unavailable")
-    with conn:
+    with contextlib.closing(conn), conn:
         rows = conn.execute(
             f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "  # noqa: S608 - whitelisted column list, params bound
             "ORDER BY id",
