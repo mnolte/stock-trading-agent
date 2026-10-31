@@ -144,6 +144,7 @@ class BacktestManager:
             row.cancel_requested = True
             session.commit()
             pid = row.process_id
+            started_at = row.process_started_at
         grace = float(
             self.config.get("backtest", "cancel_grace_seconds", default=60)
         )
@@ -151,12 +152,14 @@ class BacktestManager:
             from app.spawn import spawn
 
             self._cancel_task = spawn(
-                self._stop_after_grace(run_id, pid, grace),
+                self._stop_after_grace(run_id, pid, started_at, grace),
                 f"backtest-cancel-{run_id}",
             )
         return True
 
-    async def _stop_after_grace(self, run_id: int, pid: int, grace: float) -> None:
+    async def _stop_after_grace(
+        self, run_id: int, pid: int, started_at: float | None, grace: float
+    ) -> None:
         await asyncio.sleep(grace)
         with self._sessions() as session:
             row = session.get(Backtest, run_id)
@@ -164,9 +167,10 @@ class BacktestManager:
                 # The child already wrote a terminal status itself.
                 return
             requested = bool(row.cancel_requested)
-        if _pid_alive(pid):
+        if _pid_same(pid, started_at):
             # Stop only this process, by the PID the app recorded — never
-            # by name or pattern (hard rule 12).
+            # by name or pattern (hard rule 12). A recycled pid (different
+            # start time) is not ours and is never signalled.
             with contextlib.suppress(OSError):
                 os.kill(pid, 15)
             deadline = time.monotonic() + float(
@@ -174,11 +178,11 @@ class BacktestManager:
                     "backtest", "cancel_kill_wait_seconds", default=5
                 )
             )
-            while _pid_alive(pid) and time.monotonic() < deadline:
+            while _pid_same(pid, started_at) and time.monotonic() < deadline:
                 self._reap(run_id)
                 await asyncio.sleep(0.1)
             self._reap(run_id)
-            if _pid_alive(pid):
+            if _pid_same(pid, started_at):
                 with contextlib.suppress(OSError):
                     os.kill(pid, 9)
                 await asyncio.sleep(0.05)
@@ -239,10 +243,13 @@ class BacktestManager:
             for row in rows:
                 if row.status == "queued":
                     continue
-                if row.process_id and _pid_alive(row.process_id):
+                if row.process_id and _pid_same(
+                    row.process_id, row.process_started_at
+                ):
                     continue
-                # A child that disappeared or never spawned — mark it and
-                # keep its partial results (docs/SPEC.md, Process).
+                # A child that disappeared, never spawned or whose pid was
+                # recycled — mark it and keep its partial results
+                # (docs/SPEC.md, Process).
                 row.status = "interrupted"
                 row.finished_at = _naive_utc(self.clock.now())
                 session.commit()
@@ -269,6 +276,7 @@ class BacktestManager:
             stderr=subprocess.DEVNULL,
         )
         row.process_id = proc.pid
+        row.process_started_at = _pid_start(proc.pid)
         self._process = proc
         self._run_id = row.id
         from app.logging_config import ev
@@ -301,7 +309,7 @@ class BacktestManager:
             for row in rows:
                 row.cancel_requested = True
                 if row.process_id:
-                    pids.append(row.process_id)
+                    pids.append((row.process_id, row.process_started_at))
             session.commit()
         # Cancel flag first; a child that ignores it is SIGTERMed by its
         # recorded PID after logging.backtest_kill_after_seconds.
@@ -311,12 +319,12 @@ class BacktestManager:
         if pids:
             deadline = asyncio.get_running_loop().time() + kill_after
             while (
-                any(_pid_alive(pid) for pid in pids)
+                any(_pid_same(pid, started) for pid, started in pids)
                 and asyncio.get_running_loop().time() < deadline
             ):
                 await asyncio.sleep(0.05)
-        for pid in pids:
-            if _pid_alive(pid):
+        for pid, started in pids:
+            if _pid_same(pid, started):
                 with contextlib.suppress(OSError):
                     os.kill(pid, 15)
         with self._sessions() as session:
@@ -336,7 +344,9 @@ class BacktestManager:
             for row in session.execute(
                 select(Backtest).where(Backtest.status.in_(ACTIVE_STATUSES))
             ).scalars():
-                if row.process_id is not None and _pid_alive(row.process_id):
+                if row.process_id is not None and _pid_same(
+                    row.process_id, row.process_started_at
+                ):
                     continue
                 row.status = "interrupted"
                 row.finished_at = _naive_utc(self.clock.now())
@@ -360,6 +370,30 @@ def _pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _pid_start(pid: int) -> float | None:
+    """The process's start time in /proc jiffies (stat field 22), or
+    None when the pid can't be read."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_bytes()
+        # The comm field may contain spaces/parens — the real fields
+        # start after the last ')'.
+        return float(stat.rsplit(b")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _pid_same(pid: int, started_at: float | None) -> bool:
+    """Alive AND the same process the app recorded — a recycled pid
+    (different start time) is never our child and is never signalled.
+    A row written before the column existed (``started_at`` None) falls
+    back to the alive check."""
+    if not _pid_alive(pid):
+        return False
+    if started_at is None:
+        return True
+    return _pid_start(pid) == started_at
 
 
 def store_usage(config: AppConfig, sessions: sessionmaker[Session]) -> dict[str, Any]:
