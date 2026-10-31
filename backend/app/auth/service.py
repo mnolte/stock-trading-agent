@@ -158,6 +158,7 @@ class AuthService:
         self._totp_cache: tuple[str, str] | None = None
         self._global_locked_until: datetime | None = None
         self._lockout_notified: set[str] = set()
+        self._scrub_warned = False
 
     # ------------------------------------------------------------------
     # basics
@@ -617,6 +618,13 @@ class AuthService:
                 if user is not None:
                     values.append(self._totp_secret(user))
         except Exception:  # noqa: BLE001 - the scrubber must never break
-            logger.exception("auth scrub values failed")
+            # This provider runs inside the log scrubber's own filter: a
+            # record logged here is filtered by it, so warn once per
+            # failure episode — a record per call feeds itself forever.
+            if not self._scrub_warned:
+                self._scrub_warned = True
+                logger.exception("auth scrub values failing")
+        else:
+            self._scrub_warned = False
         return values
 

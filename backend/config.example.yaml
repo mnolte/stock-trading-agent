@@ -181,7 +181,7 @@ notifications:
     position_checks_failing: [browser, email]
     model_failing: [browser]
     approval_waiting: [browser]
-    earnings_exit_tomorrow: [browser]
+    exit_deferred_or_earnings_exit: [browser]
     trade: []
     daily_briefing: [email]
     weekly_review: [email]
