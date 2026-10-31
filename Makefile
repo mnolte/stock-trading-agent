@@ -71,6 +71,9 @@ replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2
 		$(if $(MODEL),--model $(MODEL),) $(if $(filter 1 true yes,$(YES)),--yes,) \
 		$(if $(filter 1 true yes,$(APPROX)),--approx-reference,)
 
+replay-selection: ## rank vs expected-profit on stored cycles with a slot/sector/open-risk block: make replay-selection [OUT=docs/analysis/selection.md]
+	cd backend && ../$(PYTHON) -m app.replay_selection $(if $(OUT),--out $(OUT),)
+
 test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
