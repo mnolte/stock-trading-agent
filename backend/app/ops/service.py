@@ -378,6 +378,7 @@ class OpsService:
         import sqlite3
         import tempfile
 
+        target_root: Path | None = None
         try:
             target_root = Path(tempfile.mkdtemp(prefix="sa-restore-test-"))
             db = await asyncio.to_thread(
@@ -404,4 +405,5 @@ class OpsService:
             )
             return False
         finally:
-            shutil.rmtree(target_root, ignore_errors=True)
+            if target_root is not None:
+                shutil.rmtree(target_root, ignore_errors=True)
