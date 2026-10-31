@@ -1610,13 +1610,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         shutdown_engine()
         run_lock.release()
         set_current(None)
-        from app.logging_config import shutdown_logging
+        from app.logging_config import (
+            shutdown_logging,
+            unregister_secret_provider,
+        )
 
         _ev(
             logger, logging.INFO, "app.shutdown_complete",
             "shutdown complete",
         )
         shutdown_logging()
+        # This app's scrub providers die with it: left registered, a
+        # stale provider fails on every later record in the process.
+        unregister_secret_provider(auth_service.scrub_values)
+        unregister_secret_provider(secrets_store.scrub_values)
 
 
 def create_app() -> FastAPI:
