@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-10-31 — Analysis: decision.v4 candidates
+
+- `docs/analysis/2026-10-31-decision-v4-candidates.md`: ranked,
+  evidence-backed change list for decision.v4, re-measuring the
+  30 October findings on 1,055 called decisions (19–30 Oct, live +
+  shadow) with recomputed option touches. No behaviour change.
+
 ## 2026-10-31 — Settings saves restored — implementation
 
 - `validate_settings` lost two branches in PR 29: `reviews.models` was overwritten by the quiet-hours cleaner, so every model save failed on a quiet-hours message; and `notifications.quiet_hours` had no branch left, so every quiet-hours save failed as "not a number". Both branches are back.
