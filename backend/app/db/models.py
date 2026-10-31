@@ -948,6 +948,9 @@ class Backtest(Base):
     cost_usd: Mapped[Decimal] = mapped_column(Money, nullable=False, default=Decimal(0))
     run_dir: Mapped[str] = mapped_column(String(255), nullable=False)
     process_id: Mapped[int | None] = mapped_column(nullable=True)
+    # The child's start time (/proc jiffies), so a signal goes only to a
+    # pid whose start time matches — a recycled pid is never signalled.
+    process_started_at: Mapped[float | None] = mapped_column(nullable=True)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Set by the app while a live cycle or position check runs; the child
     # waits before every Alpaca download and every model call.

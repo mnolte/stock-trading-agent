@@ -195,6 +195,7 @@ class DecisionService:
         sent_at = None
         from_cache = False
         _model = str(self.config.get("decision", "model", default=""))
+        _temperature = self._temperature()
         from app.llm.models import model_effort, model_provider
 
         _provider = model_provider(self.config, _model)
@@ -204,9 +205,7 @@ class DecisionService:
         if self._cache is not None and self._cache_reads:
             hit = self._cache.lookup(
                 model=_model,
-                temperature=float(
-                    self.config.get("decision", "temperature", default=0.2)
-                ),
+                temperature=_temperature,
                 prompt_hash=self._prompt.sha256,
                 user=user,
                 provider=_provider,
@@ -238,9 +237,7 @@ class DecisionService:
                 user=user,
                 schema=self._spec.json_schema,
                 model=model,
-                temperature=float(
-                    self.config.get("decision", "temperature", default=0)
-                ),
+                temperature=_temperature,
             )
             if on_response is not None:
                 on_response(response)
@@ -266,9 +263,7 @@ class DecisionService:
                 cycle = session.get(Cycle, cycle_id)
                 self._cache.store(
                     model=_model,
-                    temperature=float(
-                        self.config.get("decision", "temperature", default=0.2)
-                    ),
+                    temperature=_temperature,
                     provider=_provider,
                     effort=_effort,
                     prompt_version=self._prompt.version,
@@ -507,9 +502,7 @@ class DecisionService:
                     symbol=symbol,
                     context=context,
                     model=response.model,
-                    temperature=float(
-                        self.config.get("decision", "temperature", default=0)
-                    ),
+                    temperature=self._temperature(),
                     prompt_version=self._prompt.version,
                     prompt_hash=self._prompt.sha256,
                     cost=decision.cost,
@@ -519,6 +512,12 @@ class DecisionService:
                 )
             )
         return decision
+
+    def _temperature(self) -> float:
+        """One source for the decision temperature: the call, the cache
+        lookup, the cache store and the call record all read the same
+        config value — disagreeing defaults would drift the cache key."""
+        return float(self.config.get("decision", "temperature", default=0))
 
     def _slow_ms(self) -> int:
         return int(

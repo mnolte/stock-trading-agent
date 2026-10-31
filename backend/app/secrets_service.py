@@ -76,10 +76,21 @@ ENV_VARS = {
 # swap credentials in place; the placeholder fails auth until then.
 MISSING_KEY = "missing"
 
+# A stored secret this short is never a real key or password (docs/SPEC.md
+# → API keys): refused at save, never hinted, never scrubbed char-by-char.
+MIN_SECRET_LENGTH = 8
+SECRET_TOO_SHORT = "Too short to be a real key or password"  # noqa: S105
+
+
+class SecretError(Exception):
+    """A secret refused at save; the API maps it to a 422."""
+
 
 def masked_hint(name: str, value: str) -> str:
     """The only key text that ever leaves the backend: a masked hint."""
-    last4 = value[-4:] if len(value) >= 4 else value
+    if len(value) < MIN_SECRET_LENGTH:
+        return "••••"
+    last4 = value[-4:]
     if name == "alpaca_key_id" and value.startswith("PK"):
         return f"PK••••{last4}"
     if name == "openai" and value.startswith("sk-"):
@@ -303,7 +314,13 @@ def install_secret_scrub_filter(secrets: Callable[[], list[str]]) -> None:
     ]
     for log in loggers:
         for handler in log.handlers:
-            handler.addFilter(shared)
+            # Handlers that outlive the app (pytest's capture handler)
+            # would stack one filter per boot otherwise — each runs
+            # _all_secrets on the same record.
+            if not any(
+                isinstance(f, SecretScrubFilter) for f in handler.filters
+            ):
+                handler.addFilter(shared)
 
 
 class SecretsStore:
@@ -363,6 +380,8 @@ class SecretsStore:
         test_detail: str | None = None,
     ) -> None:
         """Encrypt and store one key; refresh its test state when given."""
+        if len(value) < MIN_SECRET_LENGTH:
+            raise SecretError(SECRET_TOO_SHORT)
         now = _naive_utc(self._clock.now())
         encrypted = self._fernet.encrypt(value.encode()).decode()
         with self._factory() as session:
@@ -621,7 +640,13 @@ class SecretsStore:
                 for name in GROUPS["alpaca"]:
                     value = found.get(name)
                     if value:
-                        self.save(name, value, outcome, detail)
+                        try:
+                            self.save(name, value, outcome, detail)
+                        except SecretError as exc:
+                            self.record_event(
+                                name, "imported", False, str(exc)
+                            )
+                            continue
                         self.record_event(name, "imported", outcome == "ok", detail)
                         self.imported.append(name)
 
@@ -640,12 +665,16 @@ class SecretsStore:
                 else testers.finnhub
             )
             result = await tester(value)
-            self.save(
-                name,
-                value,
-                "ok" if result.ok else "failed",
-                result.detail or result.error,
-            )
+            try:
+                self.save(
+                    name,
+                    value,
+                    "ok" if result.ok else "failed",
+                    result.detail or result.error,
+                )
+            except SecretError as exc:
+                self.record_event(name, "imported", False, str(exc))
+                continue
             self.record_event(name, "imported", result.ok, result.detail or result.error)
             self.imported.append(name)
 

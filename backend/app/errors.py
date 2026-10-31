@@ -284,6 +284,24 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # A body that isn't JSON at all is a client mistake, not a
+        # validation failure — the same 400 bad_request the untyped
+        # request.json() routes gave, logged at WARNING so it never lands
+        # in the Readiness "unreviewed errors" bucket (PR 25 review).
+        errors = exc.errors()
+        if errors and all(
+            error.get("type") == "json_invalid" for error in errors
+        ):
+            logger.warning(
+                "unreadable JSON body on %s %s: %s",
+                request.method,
+                request.url.path,
+                exc,
+            )
+            return JSONResponse(
+                status_code=400,
+                content=error_body(ErrorCode.BAD_REQUEST),
+            )
         return JSONResponse(
             status_code=422,
             content=error_body(

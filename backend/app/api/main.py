@@ -216,7 +216,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
     around (docs/SPEC.md → VPS deployment → Backups).
     """
     try:
-        create_backup()
+        create_backup(clock)
     except Exception as exc:  # noqa: BLE001
         logger.exception("daily database copy failed")
         from app.db.base import get_session_maker
@@ -371,9 +371,9 @@ async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -
     return True
 
 
-async def _catch_up_missed_screen(service: Any, event_id: int, session_factory: Any) -> None:
-    from zoneinfo import ZoneInfo
-
+async def _catch_up_missed_screen(
+    service: Any, event_id: int, session_factory: Any, clock: Clock
+) -> None:
     from app.data.cache import _naive_utc
     from app.db.models import Event
 
@@ -381,9 +381,7 @@ async def _catch_up_missed_screen(service: Any, event_id: int, session_factory: 
     with session_factory() as session:
         event = session.get(Event, event_id)
         if event is not None:
-            event.acknowledged_at = _naive_utc(
-                datetime.now(ZoneInfo("UTC"))
-            )
+            event.acknowledged_at = _naive_utc(clock.now())
             session.commit()
 
 
@@ -437,7 +435,7 @@ async def run_missed_screen_at_startup(
     from app.spawn import spawn
 
     spawn(
-        _catch_up_missed_screen(service, event_id, session_factory),
+        _catch_up_missed_screen(service, event_id, session_factory, clock),
         "missed-universe-screen",
     )
 
@@ -1612,13 +1610,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         shutdown_engine()
         run_lock.release()
         set_current(None)
-        from app.logging_config import shutdown_logging
+        from app.logging_config import (
+            shutdown_logging,
+            unregister_secret_provider,
+        )
 
         _ev(
             logger, logging.INFO, "app.shutdown_complete",
             "shutdown complete",
         )
         shutdown_logging()
+        # This app's scrub providers die with it: left registered, a
+        # stale provider fails on every later record in the process.
+        unregister_secret_provider(auth_service.scrub_values)
+        unregister_secret_provider(secrets_store.scrub_values)
 
 
 def create_app() -> FastAPI:

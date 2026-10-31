@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,6 +94,15 @@ def register_secret_provider(provider: Callable[[], list[str]]) -> None:
     """Feed the scrub filter live secret values (keys, then auth values:
     TOTP secret and pending sign-in tokens, PR 23)."""
     _secret_providers.append(provider)
+
+
+def unregister_secret_provider(provider: Callable[[], list[str]]) -> None:
+    """Drop a provider whose app has shut down. A stale provider keeps
+    running on every later record in the process; with its store gone it
+    fails once per failure episode — one warn each, and on a live app
+    that warn is a stray "logs" publish."""
+    with suppress(ValueError):
+        _secret_providers.remove(provider)
 
 
 def _all_secrets() -> list[str]:

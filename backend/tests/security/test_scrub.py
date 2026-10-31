@@ -140,19 +140,33 @@ def test_provider_log_during_collection_does_not_recurse(
     shutdown). That record re-enters the filter on the same thread; the
     collector falls back to the last known values instead of recursing —
     and the provider's own record is still scrubbed."""
+    import threading
+
     import app.logging_config as lc
 
     emit = False
     calls = 0
+    # Re-entry depth per thread: a record can pass several scrub filters
+    # on its way out (filters accumulate on shared handlers), so extra
+    # sequential calls are fine — a call nested inside an active
+    # collection on the same thread is the bug this guards.
+    local = threading.local()
+    max_depth = 0
 
     def provider() -> list[str]:
-        nonlocal calls
+        nonlocal calls, max_depth
         calls += 1
-        if emit:
-            logging.getLogger("app.test.scrub").error(
-                "provider failed near abc123secret00"
-            )
-        return ["abc123secret00"]
+        depth = getattr(local, "depth", 0) + 1
+        local.depth = depth
+        max_depth = max(max_depth, depth)
+        try:
+            if emit:
+                logging.getLogger("app.test.scrub").error(
+                    "provider failed near abc123secret00"
+                )
+            return ["abc123secret00"]
+        finally:
+            local.depth = depth - 1
 
     handler = logging.StreamHandler()
     handler.addFilter(SecretScrubFilter())
@@ -169,9 +183,10 @@ def test_provider_log_during_collection_does_not_recurse(
         lc._secrets_cache.clear()
         test_log.removeHandler(handler)
 
-    # One clean call plus one during the outer record's filter; the
-    # provider's own record sees the cached values, not a new collection.
-    assert calls == 2
+    # The outer record's filter collected; the provider's own record saw
+    # the cached values instead of re-entering the collection.
+    assert calls >= 2
+    assert max_depth == 1
     leaked = [r for r in caplog.records if "abc123secret00" in r.getMessage()]
     assert leaked == []
     assert any(
@@ -240,3 +255,30 @@ def test_auth_scrub_values_warns_once_per_failure_episode(
         r for r in caplog.records if "auth scrub values" in r.getMessage()
     ]
     assert len(warnings) == 2
+
+
+def test_unregistered_provider_is_not_consulted() -> None:
+    """A provider removed at app shutdown must not run on later records:
+    left registered, a stale one fails once per failure episode and that
+    warn is a stray "logs" publish on whatever app is still live."""
+    import app.logging_config as lc
+
+    calls = 0
+
+    def provider() -> list[str]:
+        nonlocal calls
+        calls += 1
+        return ["abc123secret00"]
+
+    lc.register_secret_provider(provider)
+    try:
+        lc._all_secrets()
+        lc.unregister_secret_provider(provider)
+        values = lc._all_secrets()
+    finally:
+        if provider in lc._secret_providers:
+            lc._secret_providers.remove(provider)
+        lc._secrets_cache.clear()
+
+    assert calls == 1
+    assert "abc123secret00" not in values

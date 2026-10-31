@@ -64,6 +64,9 @@ class GateContext:
     orders_this_cycle: int  # orders already submitted in this cycle
     sectors: dict[str, str] | None = None
     daily_loss_hit: bool = False
+    # Current market price per symbol, for working entries without a
+    # stored/broker limit — an unpriced entry fails closed.
+    market_prices: dict[str, Decimal] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -251,7 +254,17 @@ def evaluate_entry_gates(
     # unfilled qty × (limit − stop) counts toward open risk, unfilled qty ×
     # limit toward cash; an entry whose stop leg is missing counts its full
     # committed value as risk — the conservative worst case.
-    working_risk, working_cash = committed_entries(ctx.working_entries)
+    spent = committed_entries(
+        ctx.working_entries, (ctx.market_prices or {}).get
+    )
+    if spent.unpriced:
+        # A working entry with no stored/broker limit and no market
+        # price can't be bounded — fail closed, never count it as zero.
+        return block(
+            "working_entry_unpriced",
+            f"no price for working entry {', '.join(spent.unpriced)}",
+        )
+    working_risk, working_cash = spent.risk, spent.cash
     current_open_risk = (
         open_risk(
             (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))

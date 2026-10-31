@@ -356,21 +356,39 @@ class UniverseService:
         now = self._clock.now()
         with self._sf() as session:
             active = {r.symbol for r in self._active_pool(session)}
-            for line_no, symbol, sector in rows:
-                if symbol in active:
-                    skipped += 1
-                    continue
-                if len(active) + len(added) >= self.max_pool():
-                    raise PoolError(
-                        [
-                            f"the pool is full ({self.max_pool()} symbols) — "
-                            "import rejected"
-                        ]
-                    )
-                line_errors = await self._check_symbol_add(session, symbol, sector)
-                if line_errors:
-                    errors.extend(f"line {line_no}: {e}" for e in line_errors)
-                    continue
+        # Broker checks run before any write transaction opens — no
+        # network call while a write is pending (hard rule 13).
+        pending: list[tuple[int, str, str]] = []
+        for line_no, symbol, sector in rows:
+            if symbol in active:
+                skipped += 1
+                continue
+            if len(active) + len(pending) >= self.max_pool():
+                raise PoolError(
+                    [
+                        f"the pool is full ({self.max_pool()} symbols) — "
+                        "import rejected"
+                    ]
+                )
+            asset_result = await self._broker.get_asset(symbol)
+            asset = asset_result.data if asset_result.error is None else None
+            if asset is None or not asset.tradable or asset.status != "active":
+                errors.append(
+                    f"line {line_no}: {symbol} is not an active, "
+                    "tradable US stock or ETF at Alpaca."
+                )
+                continue
+            if asset.asset_class != "us_equity":
+                errors.append(
+                    f"line {line_no}: {symbol}: {asset.asset_class} "
+                    "is not a US stock or ETF"
+                )
+                continue
+            pending.append((line_no, symbol, sector))
+        if errors:
+            raise PoolError(errors)
+        with self._sf() as session:
+            for _line_no, symbol, sector in pending:
                 session.add(
                     UniversePoolRow(
                         symbol=symbol,
@@ -380,8 +398,6 @@ class UniverseService:
                     )
                 )
                 added.append(symbol)
-            if errors:
-                raise PoolError(errors)
             session.commit()
         if added:
             self._ping()

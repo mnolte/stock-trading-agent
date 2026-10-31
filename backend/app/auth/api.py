@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Request, Response
+from pydantic import BaseModel
 
 from app.auth.guard import auth_required, client_ip, request_is_https
 from app.auth.service import (
@@ -30,6 +31,24 @@ from app.db.models import AuthSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
+
+
+class _SignInBody(BaseModel):
+    password: str = ""
+    remember: bool = False
+
+
+class _CodeBody(BaseModel):
+    code: str = ""
+
+
+class _ConfirmBody(BaseModel):
+    secret: str = ""
+
+
+class _PasswordBody(BaseModel):
+    current_password: str = ""
+    new_password: str = ""
 
 
 def error_response(exc: AuthError) -> Response:
@@ -132,19 +151,18 @@ def auth_status(request: Request) -> dict[str, object]:
 
 
 @router.post("/sign-in")
-async def sign_in(request: Request) -> Response:
+async def sign_in(request: Request, body: _SignInBody) -> Response:
     """Step 1: password → a pending ticket in an HttpOnly cookie, bound
     to this browser (docs/SPEC.md, Sign-in: two steps)."""
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
-    body = await request.json()
     ip = client_ip(request, get_config())
     ua = request.headers.get("user-agent", "")
     try:
         pending = auth.start_sign_in(
-            str(body.get("password", "")),
-            bool(body.get("remember")),
+            body.password,
+            body.remember,
             ip,
             ua,
         )
@@ -156,17 +174,16 @@ async def sign_in(request: Request) -> Response:
 
 
 @router.post("/code")
-async def sign_in_code(request: Request) -> Response:
+async def sign_in_code(request: Request, body: _CodeBody) -> Response:
     """Step 2: TOTP or recovery code → session + CSRF cookies. The
     pending ticket comes from the ``sa_pending`` cookie, not the body."""
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
-    body = await request.json()
     ip = client_ip(request, get_config())
     pending = request.cookies.get(PENDING_COOKIE, "")
     try:
-        signed = auth.finish_sign_in(pending, str(body.get("code", "")), ip)
+        signed = auth.finish_sign_in(pending, body.code, ip)
     except AuthError as exc:
         return error_response(exc)
     response = JSONResponse({"ok": True})
@@ -219,14 +236,13 @@ def require_confirmed(request: Request) -> None:
 
 
 @router.post("/confirm")
-async def confirm(request: Request) -> Response:
+async def confirm(request: Request, body: _ConfirmBody) -> Response:
     from fastapi.responses import JSONResponse
 
     auth = _auth(request)
     token = _session_token(request)
-    body = await request.json()
     try:
-        auth.confirm(token, str(body.get("secret", "")))
+        auth.confirm(token, body.secret)
     except AuthError as exc:
         return error_response(exc)
     return JSONResponse({"ok": True})
@@ -281,17 +297,16 @@ def sign_out_session(request: Request, session_id: int) -> dict[str, object]:
 
 
 @router.post("/password")
-async def change_password(request: Request) -> Response:
+async def change_password(request: Request, body: _PasswordBody) -> Response:
     from fastapi.responses import JSONResponse
 
     try:
         require_confirmed(request)
         auth = _auth(request)
-        body = await request.json()
         auth.change_password(
             _session_token(request),
-            str(body.get("current_password", "")),
-            str(body.get("new_password", "")),
+            body.current_password,
+            body.new_password,
         )
     except AuthError as exc:
         return error_response(exc)

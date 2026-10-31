@@ -158,6 +158,9 @@ class AuthService:
         self._totp_cache: tuple[str, str] | None = None
         self._global_locked_until: datetime | None = None
         self._lockout_notified: set[str] = set()
+        # Wrong "Confirm it is you"/current-password guesses per session
+        # token hash (spec, Sign-in — Confirm and password change).
+        self._confirm_failures: dict[str, list[datetime]] = {}
         self._scrub_warned = False
 
     # ------------------------------------------------------------------
@@ -435,6 +438,40 @@ class AuthService:
         until = row.confirmed_until.replace(tzinfo=UTC)
         return until > self._now()
 
+    def _session_failed(self, session: Session, key: str, ip: str) -> None:
+        """A wrong secret for a live session — counts per session like a
+        sign-in failure counts per address (spec: after 5 in 15 minutes
+        the session is signed out and the "Failed sign-ins" warning
+        goes out; a stolen cookie must not allow unlimited guessing)."""
+        now = self._now()
+        window = timedelta(
+            minutes=int(
+                self._config.get("auth", "lockout_window_minutes", default=15)
+            )
+        )
+        fails = [
+            t for t in self._confirm_failures.get(key, []) if now - t < window
+        ]
+        fails.append(now)
+        self._record_attempt(session, ip, "wrong")
+        needed = int(self._config.get("auth", "lockout_failures", default=5))
+        if len(fails) >= needed:
+            session.execute(
+                delete(AuthSession).where(AuthSession.token_hash == key)
+            )
+            self._confirm_failures.pop(key, None)
+            session.commit()
+            logger.warning("session signed out after %d failed confirm attempts", needed)
+            self._notifier.notify(
+                "sign_in_lockout",
+                f"A session was signed out after {needed} failed "
+                "confirm-it-is-you attempts",
+                link="/settings",
+            )
+            return
+        self._confirm_failures[key] = fails
+        session.commit()
+
     def confirm(self, token: str, secret: str) -> None:
         """Password or authenticator code again → confirmed_until."""
         key = hash_token(token)
@@ -450,7 +487,9 @@ class AuthService:
             if not ok:
                 ok = verify_totp(self._totp_secret(user), secret, now)
             if not ok:
+                self._session_failed(session, key, row.ip)
                 raise AuthError(401, "invalid_credentials", _WRONG)
+            self._confirm_failures.pop(key, None)
             minutes = int(self._config.get("auth", "confirm_minutes", default=5))
             row.confirmed_until = _naive_utc(now + timedelta(minutes=minutes))
             session.commit()
@@ -552,7 +591,13 @@ class AuthService:
             )
         with self._factory() as session:
             user = self._user(session)
+            key = hash_token(token)
+            row = session.execute(
+                select(AuthSession).where(AuthSession.token_hash == key)
+            ).scalar_one_or_none()
             if user is None or not verify_password(user.password_hash, current):
+                if row is not None:
+                    self._session_failed(session, key, row.ip)
                 raise user_error
             user.password_hash = hash_password(new)
             user.password_changed_at = _naive_utc(self._now())
