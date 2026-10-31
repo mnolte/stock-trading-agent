@@ -1,4 +1,4 @@
-name: spec-label
+name: Workflow
 
 # Enforces the repo's spec and changelog discipline on every PR.
 # AGENTS.md requires that a behaviour change updates docs/SPEC.md (when
