@@ -100,7 +100,18 @@ def risk_budget(
     spy_session_pct: Decimal | None = None,
 ) -> RiskBudget:
     """The card's figures from one gate context."""
-    working_risk, working_cash = committed_entries(ctx.working_entries)
+    spent = committed_entries(
+        ctx.working_entries, (ctx.market_prices or {}).get
+    )
+    working_risk, working_cash = spent.risk, spent.cash
+    if spent.unpriced:
+        # An unpriced working entry counts as the largest order the
+        # gates allow — never zero (scan fix 2026-10-31).
+        bound = ctx.equity * Decimal(
+            str(config.get("risk", "max_order_pct", default=25))
+        ) / 100
+        working_risk += bound * len(spent.unpriced)
+        working_cash += bound * len(spent.unpriced)
     position_risk = open_risk(
         (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0)) for p in ctx.open_positions
     )

@@ -2497,6 +2497,17 @@ class Executor:
                     stop_price=stop_leg,
                 )
             )
+        # Working entries without a stored/broker limit still count
+        # toward risk and cash — at the last closed 1h bar, never zero.
+        market_prices: dict[str, Decimal] = {}
+        for e in working:
+            if e.limit_price is None and e.symbol not in market_prices:
+                sessions_ = self.market_data.recent_sessions(
+                    self.clock.now().astimezone(NY_TZ).date(), 5
+                )
+                bars = self.market_data.get_1h_bars_range(e.symbol, sessions_)
+                if bars:
+                    market_prices[e.symbol] = bars[-1].close
         since = self.clock.now().astimezone(NY_TZ).date()
         recent_closed = session.execute(
             select(Position.closed_at).where(
@@ -2550,6 +2561,7 @@ class Executor:
             orders_this_cycle=self._orders_this_cycle,
             sectors=resolve_sectors(self.config, session),
             daily_loss_hit=self.state.daily_loss_hit,
+            market_prices=market_prices,
         )
 
     def budget_context(self, session: Session) -> GateContext:

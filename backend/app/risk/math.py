@@ -7,7 +7,7 @@ prices are Decimal; shares are always whole.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING
@@ -118,14 +118,16 @@ def position_size(
     def shares_for(budget: Decimal, per_share: Decimal) -> int:
         return int((budget / per_share).to_integral_value(rounding=ROUND_FLOOR))
 
-    candidates = {
-        "risk_per_trade": shares_for(risk_budget, risk.stop_distance),
-        "max_position": shares_for(max_position_value, entry),
-        "open_risk": shares_for(risk_room, risk.stop_distance),
-        "cash": shares_for(cash, entry),
-    }
-    shares = min(candidates.values())
-    limited_by = sorted(name for name, n in candidates.items() if n == shares)
+    # The spec's gate order — blocked_by names the constraint that
+    # actually bound the size; ties report in this order, not sorted.
+    candidates = [
+        ("risk_per_trade", shares_for(risk_budget, risk.stop_distance)),
+        ("max_position", shares_for(max_position_value, entry)),
+        ("open_risk", shares_for(risk_room, risk.stop_distance)),
+        ("cash", shares_for(cash, entry)),
+    ]
+    shares = min(n for _name, n in candidates)
+    limited_by = [name for name, n in candidates if n == shares]
     return Sizing(shares=shares, risk_budget=risk_budget, limited_by=limited_by)
 
 
@@ -137,26 +139,47 @@ def open_risk(positions: Iterable[tuple[int, Decimal, Decimal]]) -> Decimal:
     return total
 
 
-def committed_entries(entries: Iterable[WorkingEntry]) -> tuple[Decimal, Decimal]:
+@dataclass(frozen=True)
+class CommittedEntries:
+    """(risk, cash) already spent by working entry orders, plus the
+    symbols that had no usable price at all."""
+
+    risk: Decimal
+    cash: Decimal
+    unpriced: tuple[str, ...] = ()
+
+
+def committed_entries(
+    entries: Iterable[WorkingEntry],
+    market_price: Callable[[str], Decimal | None] | None = None,
+) -> CommittedEntries:
     """(risk, cash) already spent by working entry orders.
 
     docs/SPEC.md, Working entry orders: unfilled qty x (limit - stop)
     counts toward open risk, unfilled qty x limit toward cash; an entry
     whose stop leg is missing counts its full committed value as risk —
-    the conservative worst case.
+    the conservative worst case. An entry without a limit price counts
+    at the current market price when the caller passes one, never zero;
+    symbols with no usable price at all come back in ``unpriced`` so
+    the entry gates can fail closed.
     """
     risk = Decimal(0)
     cash = Decimal(0)
+    unpriced: list[str] = []
     for e in entries:
-        committed = e.unfilled_qty * (e.limit_price or Decimal(0))
+        price = e.limit_price
+        if price is None and market_price is not None:
+            price = market_price(e.symbol)
+        if price is None:
+            unpriced.append(e.symbol)
+            continue
+        committed = e.unfilled_qty * price
         cash += committed
-        if e.limit_price is not None and e.stop_price is not None:
-            risk += e.unfilled_qty * max(
-                Decimal(0), e.limit_price - e.stop_price
-            )
+        if e.stop_price is not None:
+            risk += e.unfilled_qty * max(Decimal(0), price - e.stop_price)
         else:
             risk += committed
-    return risk, cash
+    return CommittedEntries(risk=risk, cash=cash, unpriced=tuple(unpriced))
 
 
 def session_pnl_pct(equity: Decimal, last_equity: Decimal) -> Decimal:

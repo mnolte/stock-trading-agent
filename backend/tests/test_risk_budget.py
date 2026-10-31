@@ -87,7 +87,7 @@ def test_card_figures_equal_gate_inputs() -> None:
     expected_risk = open_risk(
         (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
         for p in positions
-    ) + committed_entries(entries)[0]
+    ) + committed_entries(entries).risk
     assert budget.open_risk_usd == expected_risk == Decimal("36")
     assert budget.open_risk is not None
     assert budget.open_risk.used_pct == expected_risk / 9900 * 100
