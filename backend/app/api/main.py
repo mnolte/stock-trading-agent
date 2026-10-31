@@ -1312,9 +1312,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.backtests = backtest_manager
 
     scheduler = AsyncIOScheduler(timezone=NY_TZ)
+    # One "may run this late" budget for every job — the same seconds the
+    # cycle audit waits before flagging a missing cycle. Without it a job
+    # is silently skipped when its dispatch is more than 1 second late
+    # (APScheduler's default), e.g. during a brief event-loop stall.
+    misfire_grace = int(
+        config.get("schedule", "misfire_grace_seconds", default=120)
+    )
     scheduler.add_job(
         cycle_runner.record_missing_cycles, IntervalTrigger(minutes=1),
         args=["error: scheduled cycle not started"], id="scheduled-cycle-audit",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
     )
     # When promoted settings move cycle times the cron jobs are rebuilt.
     cycle_runner._on_settings_promoted = (
@@ -1337,12 +1346,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             bus,
         ],
         id="daily-data-refresh",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
     )
     scheduler.add_job(
         retry_calendar_load,
         IntervalTrigger(minutes=5),
         args=[calendar_store, config, clock],
         id="calendar-retry",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
     )
     # Liquidity screen (v0.2): 08:10 New York on trading days, after the
     # daily bars refresh. Reads the configured time each startup; no-ops
@@ -1359,9 +1372,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         CronTrigger(hour=screen_hour, minute=screen_minute, timezone=NY_TZ),
         args=[universe_service, bus],
         id="universe-screen",
-        misfire_grace_time=int(
-            config.get("schedule", "misfire_grace_seconds", default=120)
-        ),
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     # Daily database copy: an app-timezone job (Amsterdam per spec).
@@ -1373,6 +1384,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         CronTrigger(hour=backup_hour, minute=backup_minute, timezone=app_tz),
         args=[clock, market_data, ops_service],
         id="daily-db-backup",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
     )
     # Run the decision cycle at every configured cycle time; the runner
     # refreshes the stored signal snapshot as part of the cycle. Missed
@@ -1388,6 +1401,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         IntervalTrigger(hours=1),
         args=[ops_service],
         id="server-checks",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     # The offsite upload is chained to the daily local copy above — not a
@@ -1400,10 +1414,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ops_service.run_restore_test,
         CronTrigger(day=restore_day, hour=4, minute=10, timezone=app_tz),
         id="restore-test",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
-    )
-    misfire_grace = int(
-        config.get("schedule", "misfire_grace_seconds", default=120)
     )
     for check_at in config.get("schedule", "position_checks", default=[]) or []:
         hour, minute = (int(p) for p in str(check_at).split(":")[:2])
@@ -1436,6 +1448,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         ),
         args=[review_service],
         id="weekly-review",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     briefing_at = str(config.get("reviews", "briefing_time_ny", default="09:00"))
@@ -1445,6 +1458,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         CronTrigger(hour=briefing_hour, minute=briefing_minute, timezone=NY_TZ),
         args=[review_service],
         id="daily-briefing",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     scheduler.add_job(
@@ -1452,6 +1466,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         IntervalTrigger(minutes=15),
         args=[review_service],
         id="verdict-scan",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     # Quiet-hours heartbeat: sends the held-notifications summary when
@@ -1460,6 +1475,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notification_service.tick,
         IntervalTrigger(minutes=1),
         id="notifications-tick",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     # Readiness: after each session's close evaluate the 15 criteria once
@@ -1478,6 +1494,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             after_exit_worker,
         ],
         id="readiness-tick",
+        misfire_grace_time=misfire_grace,
         coalesce=True,
     )
     # Backtest lifecycle: spawn the oldest queued run, sync progress from a

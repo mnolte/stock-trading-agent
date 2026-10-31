@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-10-31 — Misfire grace on every scheduled job
+
+- Every scheduler job now carries `schedule.misfire_grace_seconds` (120 s) and `coalesce=True`; only `backtests-tick` keeps its own 10-second grace. Previously jobs without an explicit grace fell back to APScheduler's 1-second default, so a brief event-loop stall silently skipped the run — a one-off warning for the 1-minute `readiness-tick`, but a lost day/week/month for the `daily-data-refresh`, `daily-db-backup`, `daily-briefing`, `weekly-review` and `restore-test` crons.
+- `scheduled-cycle-audit`, `calendar-retry`, `daily-data-refresh` and `daily-db-backup` also gain `coalesce=True`; several misses inside the grace merge into one run, never a queue of catch-ups.
+- `test_scheduler.py` asserts every job carries the configured grace.
+
 ## 2026-10-30 — Live fixes of 30 October — implementation
 
 - `docs/kickoffs/fix-live-2026-10-30.md` lands in code: the "Live decisions failing" critical event, banner and notification (once per episode, cleared by the first good call) with the provider key marked failing on a 401/403; "Trade opened" fires once when the entry order is final, with the filled quantity; reconcile defers the quantity check while an entry order works or a fill is fresh; GUI broker reads answer the last reconciled values, marked stale, past the timeout; a held-position tighten accepts an older last trade and a still-blocked tighten shows as changed by code (`price_stale`/`price_suspect`); stream reconnect errors log once per outage then once per 10 minutes, and a long outage degrades the stream only in session; no chart request without a symbol; screenshot specs write to a temp dir unless `SCREENSHOT_DIR`.
