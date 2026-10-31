@@ -26,10 +26,14 @@ import {
   dayLabel,
   decidedLabel,
   metaLine,
+  modelCallText,
+  noSuggestionText,
   numVariant,
   signedPct,
   signedPts,
   signedR,
+  suggestionParts,
+  thesisCheckChip,
   upcomingWeek,
   usd,
   verdictLabel,
@@ -336,7 +340,8 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
         </Card>
       )}
 
-      {content?.suggestion && (
+      {(suggestionParts(content?.suggestion) !== null ||
+        facts.suggestion_allowed === false) && (
         <section
           aria-label="Suggestion"
           style={{
@@ -345,8 +350,8 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
             alignItems: 'center',
             gap: 'var(--sa-space-3) var(--sa-space-5)',
             padding: 'var(--sa-space-4) var(--sa-space-5)',
-            border: '1px solid var(--sa-accent-border)',
-            background: 'var(--sa-accent-bg)',
+            border: '1px solid var(--sa-border)',
+            background: 'var(--sa-panel)',
             borderRadius: 'var(--sa-radius-lg)',
           }}
         >
@@ -362,14 +367,37 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
               style={{
                 fontSize: 'var(--sa-text-sm)',
                 fontWeight: 600,
-                color: 'var(--sa-accent)',
+                color: 'var(--sa-text-muted)',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
               }}
             >
-              Suggestion · not applied
+              Suggestion
             </div>
-            <div style={{ lineHeight: 1.55 }}>{content.suggestion}</div>
+            {suggestionParts(content?.suggestion) !== null ? (
+              <>
+                <div style={{ lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+                  {suggestionParts(content?.suggestion)!.text}{' '}
+                  <span style={{ color: 'var(--sa-text-muted)' }}>(not applied)</span>
+                </div>
+                {suggestionParts(content?.suggestion)!.evidence && (
+                  <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    {suggestionParts(content?.suggestion)!.evidence}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div style={{ lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
+                  {noSuggestionText(facts)} Until then the review only describes
+                  what happened.
+                </div>
+                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  With enough trades, a suggestion shows here marked "not
+                  applied", with the evidence it rests on and its limit.
+                </div>
+              </>
+            )}
           </div>
           <Link
             to="/performance"
@@ -420,6 +448,19 @@ function BriefingView({ review }: { review: ReviewDetail }) {
         </h2>
         <MetaLine review={review} />
       </div>
+      {(review.status_line ?? review.content?.status_line) && (
+        <p
+          style={{
+            margin: 0,
+            maxWidth: '760px',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+            lineHeight: 1.5,
+          }}
+        >
+          {review.status_line ?? review.content?.status_line}
+        </p>
+      )}
       <p
         style={{
           margin: 0,
@@ -506,73 +547,127 @@ function VerdictsCard({
           result is in.
         </div>
       ) : (
-        items.map((v, i) => (
-          <div
-            key={v.id}
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: 'var(--sa-space-2) var(--sa-space-4)',
-              padding: 'var(--sa-space-3) 0',
-              borderBottom:
-                i < items.length - 1 ? '1px solid var(--sa-border)' : 'none',
-            }}
-          >
+        items.map((v, i) => {
+          const thesis = thesisCheckChip(v.thesis_check);
+          return (
             <div
+              key={v.id}
               style={{
-                flex: '1 1 320px',
-                minWidth: 0,
                 display: 'flex',
-                flexDirection: 'column',
-                gap: '4px',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 'var(--sa-space-2) var(--sa-space-4)',
+                padding: 'var(--sa-space-3) 0',
+                borderBottom:
+                  i < items.length - 1 ? '1px solid var(--sa-border)' : 'none',
               }}
             >
-              <div style={{ fontSize: 'var(--sa-text-md)' }}>
-                <Link
-                  to={`/decisions/${v.decision_id}`}
-                  state={{ backgroundLocation: location }}
-                  style={{ fontWeight: 600, color: 'var(--sa-text)', textDecoration: 'none' }}
-                >
-                  {v.symbol}
-                </Link>{' '}
-                <span
-                  style={{
-                    fontFamily: 'var(--sa-font-mono)',
-                    fontSize: 'var(--sa-text-sm)',
-                    color: 'var(--sa-text-2)',
-                  }}
-                >
-                  {v.final_action.toUpperCase()}
-                </span>{' '}
-                <span style={{ color: 'var(--sa-text-muted)' }}>
-                  · {decidedLabel(v.decided_at)} · {verdictOutcomeText(v.outcome)}
-                </span>
+              <div
+                style={{
+                  flex: '1 1 320px',
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '5px',
+                }}
+              >
+                <div style={{ fontSize: 'var(--sa-text-md)' }}>
+                  <Link
+                    to={`/decisions/${v.decision_id}`}
+                    state={{ backgroundLocation: location }}
+                    style={{ fontWeight: 600, color: 'var(--sa-text)', textDecoration: 'none' }}
+                  >
+                    {v.symbol}
+                  </Link>{' '}
+                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    model
+                  </span>{' '}
+                  <span
+                    style={{
+                      fontFamily: 'var(--sa-font-mono)',
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-2)',
+                    }}
+                  >
+                    {modelCallText(v.model_action, v.option_id)}
+                  </span>
+                  {v.changed_by_code && (
+                    <>
+                      {' '}
+                      <span style={{ color: 'var(--sa-text-muted)' }}>→</span>{' '}
+                      <span
+                        style={{
+                          fontFamily: 'var(--sa-font-mono)',
+                          fontSize: 'var(--sa-text-sm)',
+                          color: 'var(--sa-warning-text)',
+                        }}
+                      >
+                        {v.final_action.toUpperCase()}
+                      </span>{' '}
+                      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-warning-text)' }}>
+                        by code{v.change_text || v.change_reason
+                          ? ` · ${v.change_text ?? v.change_reason}`
+                          : ''}
+                      </span>
+                    </>
+                  )}{' '}
+                  <span style={{ color: 'var(--sa-text-muted)' }}>
+                    · {decidedLabel(v.decided_at)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  Outcome:{' '}
+                  <span style={{ color: 'var(--sa-text-2)' }}>
+                    {verdictOutcomeText(v.outcome)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+                  Draft:{' '}
+                  <Chip variant={verdictVariant(v.verdict)}>
+                    {verdictLabel(v.verdict)}
+                  </Chip>{' '}
+                  {v.label_by_code && (
+                    <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                      label by code ·{' '}
+                    </span>
+                  )}
+                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    {v.reason}
+                  </span>
+                </div>
+                {thesis && (
+                  <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    Thesis check: <Chip variant={thesis.variant}>{thesis.text}</Chip>
+                    {v.contradiction && (
+                      <>
+                        {' '}
+                        <span style={{ color: 'var(--sa-text-2)' }}>{v.contradiction}</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
-              <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
-                Draft:{' '}
-                <Chip variant={verdictVariant(v.verdict)}>
-                  {verdictLabel(v.verdict)}
-                </Chip>{' '}
-                <span style={{ color: 'var(--sa-text-muted)' }}>{v.reason}</span>
-              </div>
+              <VerdictButtons
+                current={v.verdict}
+                onPick={(value) => onResolve(v.id, value)}
+              />
             </div>
-            <VerdictButtons
-              current={v.verdict}
-              onPick={(value) => onResolve(v.id, value)}
-            />
-          </div>
-        ))
+          );
+        })
       )}
       <div
         style={{
           fontSize: 'var(--sa-text-sm)',
           color: 'var(--sa-text-muted)',
           paddingTop: '4px',
+          lineHeight: 1.5,
         }}
       >
-        Drafts are written once the 5-session result is in. Only verdicts you
-        confirm count in reviews.
+        Drafts are written once the 5-session result is in. Code sets the
+        label from the outcome; the model writes the reason and checks the
+        thesis against the facts at the time. A verdict judges what the
+        model answered: an entry blocked by code is judged as an entry.
+        Only verdicts you confirm count in reviews.
       </div>
     </Card>
   );

@@ -328,8 +328,11 @@ export interface ReviewsResponse {
 export interface ReviewContent {
   summary?: string;
   observations?: string[];
-  suggestion?: string | null;
+  /** weekly.v2: {text, evidence} or null; weekly.v1 rows stored a string. */
+  suggestion?: { text: string; evidence: string } | string | null;
   text?: string;
+  /** Briefings: the code-written status line shown above the text. */
+  status_line?: string;
 }
 
 export interface WeeklyTrade {
@@ -398,7 +401,29 @@ export interface WeeklyFacts {
   best_trade: WeeklyTrade | null;
   worst_trade: WeeklyTrade | null;
   skips: WeeklySkips;
-  verdicts: { good_call: number; bad_call: number; unclear: number; total: number };
+  verdicts: {
+    good_call: number;
+    bad_call: number;
+    unclear: number;
+    total: number;
+    /** weekly.v2 (PR 32): confirmed verdicts per model call. */
+    entered?: { good_call: number; bad_call: number; unclear: number };
+    blocked?: {
+      good_call: number;
+      bad_call: number;
+      unclear: number;
+      reasons: Record<string, number>;
+    };
+    skips?: { good_call: number; bad_call: number; unclear: number };
+    thesis_contradictions?: number;
+  };
+  /** weekly.v2: the evidence sample, this week and the current run. */
+  sample?: {
+    closed_trades: { week: number; run: number };
+    model_skips_with_outcome: { week: number; run: number };
+    confirmed_verdicts: { week: number; run: number };
+  };
+  suggestion_allowed?: boolean;
   by_regime: WeeklyAggRow[];
   by_symbol: WeeklyAggRow[];
 }
@@ -423,6 +448,8 @@ export interface ReviewDetail extends ReviewListItem {
   facts: Record<string, unknown> | null;
   text: string;
   content: ReviewContent | null;
+  /** Briefings: the code-written status line shown above the text. */
+  status_line?: string | null;
   model: string | null;
   prompt_version: string | null;
   tokens: number | null;
@@ -433,15 +460,31 @@ export interface ReviewDetail extends ReviewListItem {
 
 export type VerdictValue = 'good_call' | 'bad_call' | 'unclear';
 
+/** verdict.v2's thesis check values; null on v1-era drafts. */
+export type ThesisCheck = 'consistent' | 'contradicts' | 'unclear';
+
 export interface VerdictItem {
   id: number;
   decision_id: number;
   symbol: string;
+  /** What the model answered — the call being judged. */
+  model_action: string;
+  /** The offered option it picked, when there were options. */
+  option_id: string | null;
   final_action: string;
+  changed_by_code: boolean;
+  change_reason: string | null;
+  /** The failing check's human detail ("reward to risk 1.4, min 1.5"). */
+  change_text: string | null;
   decided_at: string;
   outcome: string | null;
   verdict: VerdictValue;
+  /** The label came from code's draft_verdict (verdict.v2+). */
+  label_by_code: boolean;
   reason: string | null;
+  thesis_check: ThesisCheck | null;
+  contradiction: string | null;
+  prompt_version: string | null;
   source: 'draft' | 'marc';
   draft_source: 'model' | 'template';
   created_at: string | null;
@@ -464,6 +507,16 @@ export interface DecisionVerdict {
   id: number;
   verdict: VerdictValue;
   reason: string | null;
+  model_action: string | null;
+  option_id: string | null;
+  changed_by_code: boolean;
+  change_reason: string | null;
+  change_text: string | null;
+  thesis_check: ThesisCheck | null;
+  contradiction: string | null;
+  prompt_version: string | null;
+  label_by_code: boolean;
+  outcome: string | null;
   source: 'draft' | 'marc';
   draft_source: 'model' | 'template';
   created_at: string | null;
@@ -1050,6 +1103,8 @@ export interface BriefingCardData {
   today: boolean;
   /** The briefing's write slot in app time, "15:00" — shown for today's. */
   time: string;
+  /** The code-written status line shown above the text (PR 32). */
+  status_line: string | null;
   text: string;
   chips: BriefingChip[];
   /** "model" = every number checked; "template" = plain fallback + reason. */

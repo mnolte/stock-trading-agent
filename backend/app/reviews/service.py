@@ -708,11 +708,12 @@ class ReviewService:
             composed = await self._compose(
                 session, kind="briefing", ref=period, facts=facts
             )
+            # PR 32: the status line is code's and lives only in
+            # ``status_line``; ``text`` holds the model's (or template's)
+            # sentences alone. The GUI and email show the line above the
+            # text; older rows that stored the prefix have it removed on
+            # read, never rewritten.
             composed.content["status_line"] = briefing_status(facts)
-            if composed.source == "model":
-                composed.content["text"] = (
-                    briefing_status(facts) + " " + str(composed.content.get("text", ""))
-                )
             review = Review(
                 kind="briefing",
                 period=period,
@@ -747,7 +748,14 @@ class ReviewService:
         self._notifier.notify(
             "daily_briefing",
             f"{period} ready",
-            body=str(composed.content.get("text", "")),
+            body="\n".join(
+                part
+                for part in (
+                    str(composed.content.get("status_line") or ""),
+                    str(composed.content.get("text", "")),
+                )
+                if part
+            ),
             link="/reviews",
         )
         if waiting:
@@ -818,6 +826,7 @@ class ReviewService:
                         else None
                     ),
                     source="draft",
+                    prompt_version=composed.prompt_version,
                     draft_source=composed.source,
                     draft_reason=composed.reason,
                     cost=composed.cost,

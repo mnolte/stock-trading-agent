@@ -11,6 +11,8 @@ import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3C
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
+  modelCallText,
+  thesisCheckChip,
   verdictLabel,
   verdictVariant,
 } from './reviewsFormat';
@@ -1210,12 +1212,64 @@ function VerdictRow({
           <Chip variant={verdictVariant(verdict.verdict)}>
             {verdictLabel(verdict.verdict)}
           </Chip>
+          {verdict.label_by_code && (
+            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              label by code
+            </span>
+          )}
           {verdict.reason && (
             <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               {verdict.reason}
             </span>
           )}
           <VerdictButtons current={verdict.verdict} onPick={pick} />
+          {(verdict.model_action || verdict.thesis_check) && (
+            <div
+              style={{
+                flexBasis: '100%',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 'var(--sa-space-2)',
+                fontSize: 'var(--sa-text-sm)',
+                color: 'var(--sa-text-muted)',
+              }}
+            >
+              {verdict.model_action && (
+                <span>
+                  model{' '}
+                  <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
+                    {modelCallText(verdict.model_action, verdict.option_id)}
+                  </span>
+                  {verdict.changed_by_code && (
+                    <>
+                      {' → '}
+                      <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-warning-text)' }}>
+                        {decision.final_action.toUpperCase()}
+                      </span>{' '}
+                      <span style={{ color: 'var(--sa-warning-text)' }}>
+                        by code
+                        {verdict.change_text || verdict.change_reason
+                          ? ` · ${verdict.change_text ?? verdict.change_reason}`
+                          : ''}
+                      </span>
+                    </>
+                  )}
+                </span>
+              )}
+              {thesisCheckChip(verdict.thesis_check) && (
+                <span>
+                  Thesis:{' '}
+                  <Chip variant={thesisCheckChip(verdict.thesis_check)!.variant}>
+                    {thesisCheckChip(verdict.thesis_check)!.text}
+                  </Chip>
+                  {verdict.contradiction && (
+                    <span style={{ color: 'var(--sa-text-2)' }}> {verdict.contradiction}</span>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <span

@@ -1,6 +1,7 @@
 import type {
   ReviewDetail,
   ReviewListItem,
+  ThesisCheck,
   VerdictValue,
   WeeklyFacts,
 } from '../types/api';
@@ -160,6 +161,61 @@ export function verdictVariant(v: VerdictValue): ChipVariant {
 /** Right-hand context in a verdict row ("target +1.6R"), from the API. */
 export function verdictOutcomeText(outcome: string | null): string {
   return outcome ?? '—';
+}
+
+/** "ENTER B" / "SKIP" — the model's call next to a verdict row. */
+export function modelCallText(
+  modelAction: string | null | undefined,
+  optionId: string | null | undefined,
+): string {
+  const action = (modelAction ?? '').toUpperCase() || '—';
+  return optionId ? `${action} ${optionId}` : action;
+}
+
+/** The thesis-check chip text and variant (design: verdict rows). */
+export function thesisCheckChip(check: ThesisCheck | null | undefined): {
+  text: string;
+  variant: ChipVariant;
+} | null {
+  if (check === 'contradicts') {
+    return { text: 'contradicts the facts', variant: 'warning' };
+  }
+  if (check === 'consistent') {
+    return { text: 'consistent with the facts', variant: 'neutral' };
+  }
+  if (check === 'unclear') {
+    return { text: 'unclear', variant: 'neutral' };
+  }
+  return null;
+}
+
+/** A weekly suggestion body: v2 {text, evidence} or a v1 string. */
+export function suggestionParts(
+  suggestion:
+    | { text: string; evidence: string }
+    | string
+    | null
+    | undefined,
+): { text: string; evidence: string | null } | null {
+  if (suggestion == null) return null;
+  if (typeof suggestion === 'string') {
+    return suggestion ? { text: suggestion, evidence: null } : null;
+  }
+  return { text: suggestion.text, evidence: suggestion.evidence };
+}
+
+/**
+ * The "No suggestion yet" line (design: "No suggestion yet: 3 closed
+ * trades in this run, 10 needed.") — null when a suggestion exists.
+ */
+export function noSuggestionText(facts: WeeklyFacts): string | null {
+  const have = facts.sample?.closed_trades.run ?? 0;
+  const need =
+    (facts.limits?.min_closed_trades_for_suggestion as number | undefined) ??
+    10;
+  return `No suggestion yet: ${have} closed trade${
+    have === 1 ? '' : 's'
+  } in this run, ${need} needed.`;
 }
 
 /** ISO week number for a YYYY-MM-DD date (used for the upcoming due row). */

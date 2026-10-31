@@ -494,6 +494,9 @@ class Verdict(Base):
     # ``verdict`` always comes from code's draft_verdict, never the model.
     thesis_check: Mapped[str | None] = mapped_column(String(16), nullable=True)
     contradiction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The review prompt the draft was written with (verdict.v1/v2); null
+    # on rows written before the column existed — treated as v1-era.
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # Who wrote the draft: the model or the plain template after a fallback.
     draft_source: Mapped[str] = mapped_column(
         String(16), nullable=False, default="model"

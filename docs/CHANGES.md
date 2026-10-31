@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-10-31 — Review attribution, remainder — implementation
+
+- Verdict facts per spec: `checks_at_decision` is recomputed with the decision.v3 rules on the stored input (v3 rows keep their stored checks; v1/v2 get them too — trend 1h and daily, regime, room in ATR), `execution` reports `filled`/`not_filled`/`not_sent`/null, and `change_text` carries the failing check's human detail.
+- The draft label follows the SPEC table: an enter is judged on the chosen option's (or the real trade's) first touch, a model skip on the offered options' touches, and only optionless v1 skips on the 5-session move — the trade-R shortcut is gone.
+- Weekly facts count model skips only (a code-blocked enter is never a model skip) and confirmed verdicts in the three groups — executed enters, enters blocked by code with their reasons, and skips — plus thesis contradictions and the `sample` block (closed trades, model skips with an outcome, confirmed verdicts; week and run).
+- `verdicts.prompt_version` records the review prompt (new Alembic revision on `c3d4e5f6a7b8`); `/api/verdicts` and the decision verdict now carry the model's call, code's change with its reason, the outcome line, the thesis check and `label_by_code`.
+- Briefing: `text` stores only the model's sentences; `status_line` is code's and shows above the text in the GUI and email; a leading copy in older rows is stripped on read, never rewritten.
+- Known prompt versions: saving settings with `decision.prompt` without a contract is refused `unknown_prompt_version`, as is a backtest strategy naming one; the replay CLI already raised.
+- Kickoff `docs/kickoffs/pr-32.md` steps 6 and 8 and the listed test gaps; the read-only live-database check and a frontend pass under the design screenshot remain open.
+
 ## 2026-10-31 — Analysis: decision.v4 candidates
 
 - `docs/analysis/2026-10-31-decision-v4-candidates.md`: ranked,

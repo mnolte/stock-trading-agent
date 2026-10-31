@@ -61,6 +61,7 @@ from app.notifications.service import (
     NotificationService,
 )
 from app.reviews.facts import verdict_eligible, verdict_facts
+from app.reviews.templates import briefing_display
 from app.risk.budget import Meter, risk_budget
 from app.secrets_service import (
     GROUP_LABELS,
@@ -651,6 +652,52 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
                 "id": verdict_row.id,
                 "verdict": verdict_row.verdict,
                 "reason": verdict_row.reason,
+                "thesis_check": verdict_row.thesis_check,
+                "contradiction": verdict_row.contradiction,
+                "prompt_version": verdict_row.prompt_version,
+                "label_by_code": (
+                    verdict_row.prompt_version == "verdict.v2"
+                    or (
+                        isinstance(verdict_row.facts, dict)
+                        and "draft_verdict" in verdict_row.facts
+                    )
+                ),
+                # The call and code's change shown next to it (PR 32):
+                # the model's answer, what code did, and the checks at
+                # the time — from the stored facts or the decision row.
+                "model_action": (
+                    (verdict_row.facts or {}).get("model_action")
+                    if isinstance(verdict_row.facts, dict)
+                    else None
+                )
+                or _decision_call(decision)[0],
+                "option_id": (
+                    str((verdict_row.facts or {}).get("option_id"))
+                    if isinstance(verdict_row.facts, dict)
+                    and (verdict_row.facts or {}).get("option_id") is not None
+                    else _decision_call(decision)[1]
+                ),
+                "changed_by_code": (
+                    bool((verdict_row.facts or {}).get("changed_by_code"))
+                    if isinstance(verdict_row.facts, dict)
+                    and "changed_by_code" in (verdict_row.facts or {})
+                    else _decision_call(decision)[2]
+                ),
+                "change_reason": (
+                    (verdict_row.facts or {}).get("change_reason")
+                    if isinstance(verdict_row.facts, dict)
+                    else None
+                ),
+                "change_text": (
+                    (verdict_row.facts or {}).get("change_text")
+                    if isinstance(verdict_row.facts, dict)
+                    else None
+                ),
+                "outcome": _verdict_outcome(
+                    _verdict_facts(
+                        request, session, verdict_row, decision, scheduled, outcome
+                    )
+                ),
                 "source": verdict_row.source,
                 "draft_source": verdict_row.draft_source,
                 "created_at": _iso(verdict_row.created_at),
@@ -3573,12 +3620,14 @@ def _briefing_card(
         ).scalar_one_or_none()
     if review is not None:
         due = review.due_at.replace(tzinfo=UTC)
+        status_line, text = briefing_display(review)
         card = {
             "id": review.id,
             "label": _review_label(review),
             "today": review.period == today_ny.isoformat(),
             "time": due.astimezone(app_tz).strftime("%H:%M"),
-            "text": (review.content or {}).get("text") or review.text,
+            "status_line": status_line,
+            "text": text,
             "chips": _briefing_chips(review.facts or {}),
             "source": review.source,
             "reason": review.reason,
@@ -4453,7 +4502,8 @@ def _review_item(review: Review) -> dict[str, object]:
     if review.kind == "weekly":
         item["return_pct"] = facts.get("return_pct")
     else:
-        item["preview"] = review.text[:80]
+        _status, text = briefing_display(review)
+        item["preview"] = text[:80]
     return item
 
 
@@ -4529,7 +4579,7 @@ def review_detail(review_id: int) -> dict[str, object]:
         ).scalar_one_or_none()
     if review is None:
         raise HTTPException(status_code=404, detail="review not found")
-    return {
+    detail: dict[str, object] = {
         **_review_item(review),
         "facts": review.facts,
         "text": review.text,
@@ -4539,19 +4589,129 @@ def review_detail(review_id: int) -> dict[str, object]:
         "tokens": review.tokens,
         "cost": str(review.cost) if review.cost is not None else None,
     }
+    if review.kind == "briefing":
+        # PR 32: the status line shows above the text; a leading copy in
+        # older stored rows is removed on read, never rewritten.
+        status, text = briefing_display(review)
+        detail["status_line"] = status
+        detail["text"] = text
+        content = review.content if isinstance(review.content, dict) else {}
+        if isinstance(content.get("text"), str) and status and content[
+            "text"
+        ].startswith(status):
+            detail["content"] = {
+                **content,
+                "text": content["text"][len(status) :].lstrip(),
+            }
+    return detail
 
 
 def _verdict_outcome(
+    facts: dict[str, Any],
+) -> str | None:
+    """The one-line outcome next to a draft verdict (design Reviews:
+    "option B reached its target first", "filled · stop first · −1.0R",
+    "A, B, C: none reached stop or target")."""
+    n = facts.get("sessions", 5)
+    trade = facts.get("trade")
+    action = facts.get("model_action") or facts.get("final_action")
+    options = [o for o in facts.get("options") or [] if isinstance(o, dict)]
+    option_id = facts.get("option_id")
+
+    if action == "enter":
+        if trade is not None:
+            bits = ["filled"]
+            touch = trade.get("first_touch")
+            if touch in ("target", "stop"):
+                bits.append(f"{touch} first")
+            r = trade.get("r")
+            if r is not None:
+                bits.append(f"{float(r):+.1f}R")
+            elif trade.get("open"):
+                bits.append("still open")
+            return " · ".join(bits)
+        chosen = next(
+            (
+                o
+                for o in options
+                if option_id is not None
+                and str(o.get("option_id")) == str(option_id)
+            ),
+            None,
+        )
+        touch = chosen.get("touch") if chosen is not None else None
+        label = f"option {option_id}" if option_id is not None else "the entry"
+        if touch in ("target", "stop"):
+            return f"{label} reached its {touch} first"
+        if touch == "not_filled":
+            return f"{label} never filled"
+        if touch == "neither":
+            return f"{label}: neither stop nor target in {n} sessions"
+        if facts.get("execution") == "not_sent":
+            return "never sent — blocked by code"
+        if facts.get("execution") == "not_filled":
+            return "the order never filled"
+        return f"{label}: outcome unknown"
+
+    if options:
+        touches = [o.get("touch") for o in options]
+        ids = ", ".join(str(o.get("option_id")) for o in options)
+        targets = sum(1 for t in touches if t == "target")
+        if targets:
+            return (
+                f"{targets} of {len(touches)} option"
+                f"{'s' if len(touches) != 1 else ''} reached a target first"
+            )
+        if all(t == "neither" for t in touches):
+            return f"{ids}: none reached stop or target"
+        if all(t in ("stop", "not_filled") for t in touches):
+            return f"{ids}: stops first or never filled"
+        return f"{ids}: mixed or unknown outcomes"
+
+    pct = facts.get("pct_5sessions")
+    if pct is None:
+        return None
+    suffix = " · open" if trade is not None and trade.get("open") else ""
+    return f"{float(pct):+.1f}% after {n} sessions{suffix}"
+
+
+def _decision_call(
+    decision: Decision,
+) -> tuple[str | None, str | None, bool]:
+    """(model_action, option_id, changed_by_code) from the decision row —
+    the fallback for verdict rows written before facts were stored."""
+    output = decision.model_output or {}
+    action = output.get("action")
+    if not isinstance(action, str) or not action:
+        candidate = (decision.validation_result or {}).get("model_action")
+        action = candidate if isinstance(candidate, str) else None
+    option_id = decision.chosen_option or (
+        str(output.get("option_id"))
+        if isinstance(output.get("option_id"), str | int)
+        else None
+    )
+    changed = action is not None and action != decision.final_action
+    return action, option_id, changed
+
+
+def _verdict_facts(
     request: Request,
     session: Session,
+    verdict: Verdict,
     decision: Decision,
     scheduled: datetime,
     outcome: Outcome | None,
-) -> str | None:
-    """The one-line outcome next to a draft verdict ("target +1.6R")."""
-    if outcome is None or outcome.price_5sessions is None:
-        return None
-    facts = verdict_facts(
+) -> dict[str, Any]:
+    """The verdict's facts: the stored v2 block when present, otherwise
+    rebuilt from the decision (v1-era rows; docs/SPEC.md — "Drafts
+    written under verdict.v1 show the same call and code line, built
+    from the decision")."""
+    stored = verdict.facts
+    if isinstance(stored, dict) and "model_action" in stored:
+        return stored
+    if outcome is None:
+        return stored if isinstance(stored, dict) else {}
+    return verdict_facts(
         session,
         config=get_config(),
         clock=_clock(request),
@@ -4559,16 +4719,6 @@ def _verdict_outcome(
         scheduled=scheduled,
         outcome=outcome,
     )
-    n = facts.get("sessions", 5)
-    trade = facts.get("trade")
-    if trade is not None and trade.get("exit") is not None and trade.get("r") is not None:
-        r = float(trade["r"])
-        return f"{trade['exit']} {r:+.1f}R"
-    pct = facts.get("pct_5sessions")
-    if pct is None:
-        return None
-    suffix = " · open" if trade is not None and trade.get("open") else ""
-    return f"{float(pct):+.1f}% after {n} sessions{suffix}"
 
 
 @router.get("/verdicts")
@@ -4591,25 +4741,49 @@ def verdicts_list(request: Request, status: str = "draft") -> dict[str, object]:
                 Verdict.updated_at.desc()
             )
         rows = session.execute(query.limit(100)).all()
-        items = [
-            {
-                "id": verdict.id,
-                "decision_id": decision.id,
-                "symbol": decision.symbol,
-                "final_action": decision.final_action,
-                "decided_at": _aware(scheduled).isoformat(),
-                "outcome": _verdict_outcome(
-                    request, session, decision, scheduled, outcome
-                ),
-                "verdict": verdict.verdict,
-                "reason": verdict.reason,
-                "source": verdict.source,
-                "draft_source": verdict.draft_source,
-                "created_at": _iso(verdict.created_at),
-                "updated_at": _iso(verdict.updated_at),
-            }
-            for verdict, decision, scheduled, outcome in rows
-        ]
+        items = []
+        for verdict, decision, scheduled, outcome in rows:
+            facts = _verdict_facts(
+                request, session, verdict, decision, scheduled, outcome
+            )
+            model_action = facts.get("model_action")
+            if not isinstance(model_action, str):
+                model_action = decision.final_action
+            option_id = facts.get("option_id")
+            items.append(
+                {
+                    "id": verdict.id,
+                    "decision_id": decision.id,
+                    "symbol": decision.symbol,
+                    "model_action": model_action,
+                    "option_id": (
+                        str(option_id) if option_id is not None else None
+                    ),
+                    "final_action": decision.final_action,
+                    "changed_by_code": bool(facts.get("changed_by_code")),
+                    "change_reason": facts.get("change_reason"),
+                    "change_text": facts.get("change_text"),
+                    "decided_at": _aware(scheduled).isoformat(),
+                    "outcome": _verdict_outcome(facts),
+                    "verdict": verdict.verdict,
+                    # verdict.v2+: code set the label from the outcome.
+                    "label_by_code": (
+                        verdict.prompt_version == "verdict.v2"
+                        or (
+                            isinstance(verdict.facts, dict)
+                            and "draft_verdict" in verdict.facts
+                        )
+                    ),
+                    "reason": verdict.reason,
+                    "thesis_check": verdict.thesis_check,
+                    "contradiction": verdict.contradiction,
+                    "prompt_version": verdict.prompt_version,
+                    "source": verdict.source,
+                    "draft_source": verdict.draft_source,
+                    "created_at": _iso(verdict.created_at),
+                    "updated_at": _iso(verdict.updated_at),
+                }
+            )
     return {"items": items, "status": status}
 
 
