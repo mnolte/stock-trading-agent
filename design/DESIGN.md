@@ -98,7 +98,7 @@ These apply to every screen. Inline styles can't express hover or focus, so the 
 
 ## Phone width
 
-`Main-390.png` shows the dashboard at 390 px. Cards stack and wide tables scroll inside their card. The sidebar stacks above the content, as in Trading Agent; turning it into a menu button on phones is an acceptable improvement in PR 6.
+The `-390.png` screenshots show each screen at 390 px. Below 820 px the sidebar is replaced by a sticky top bar: the app mark, the screen title, the Needs you count and a menu button that opens the sidebar as an overlay (focus rules as for dialogs). The header's Needs you chip is hidden there, since the bar carries the count. Cards stack, wide tables scroll inside their card, and no screen scrolls sideways.
 
 ## Answered questions
 

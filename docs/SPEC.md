@@ -313,7 +313,7 @@ Risk gates run in code after the model answers, in the order below; the first ga
 
 The GUI reuses Trading Agent's visual language: the dark "instrument panel" style, IBM Plex type and the design tokens from its DESIGN.md. Copy the tokens file into this repo; do not import from the other project. Money is shown in USD with the EUR equivalent beside it; times are in Amsterdam time with New York time on hover.
 
-**Header (every screen):** PAPER badge, market session state with a countdown to the next open, close or cycle, equity in USD and EUR, today's P&L, regime label, Pause/Resume button, kill switch button.
+**Header (every screen):** PAPER badge, market session state with a countdown to the next open, close or cycle, a "Needs you · n" chip linking to the dashboard's Needs you card (hidden when n is 0, PR 35), equity in USD and EUR, today's P&L, regime label, Pause/Resume button, kill switch button.
 
 | Screen | What it shows |
 | --- | --- |
@@ -333,7 +333,37 @@ The GUI reuses Trading Agent's visual language: the dark "instrument panel" styl
 | Sign in | Password, then authenticator code; locked-out state; no data before signing in (see VPS deployment) |
 | States and dialogs | Market closed, early close, kill switch on, reconciliation mismatch, data source down, pending approval (supervised mode), shutting down, previous run not shut down cleanly, session expired, restarted (resumed or paused), another instance on the account, server warnings, new sign-in; confirm dialogs (including "Confirm it is you" before risky actions) for Stop & flatten, reset paper account and settings changes |
 
-The layout must also work at phone width, so the VPS version can be checked from a phone.
+The layout must also work at phone width, so the VPS version can be checked from a phone. Below 820 px the sidebar is replaced by a sticky top bar: the app mark, the screen title, the Needs you count and a menu button that opens the sidebar as an overlay (PR 35). No screen scrolls sideways at 390 px; wide tables scroll inside their card.
+
+**Needs you** (dashboard, first card, PR 35). One list of everything that waits for Marc, most urgent first. Each item has one line of what and why, and one button that goes where it is done. An item leaves when it is done, not when it is seen. Banners stay under the header on every screen as today; this card repeats the ones that need an action, plus tasks that never had a banner.
+
+| Order | Item | Leaves when |
+| --- | --- | --- |
+| 1 | Critical banners waiting for acknowledgement: reconciliation mismatch, adopted position, position without a stop, another instance, kill switch turned on automatically | acknowledged or resumed |
+| 2 | Live decisions failing; trade-updates stream degraded; a key failing | the episode clears |
+| 3 | Entries waiting for approval (supervised mode), with their expiry | approved, rejected or expired |
+| 4 | A notification channel failing (email or browser permission) | a send succeeds |
+| 5 | Errors not reviewed (ERROR fingerprints without a review, as counted on Readiness) | reviewed on Logs |
+| 6 | Verdicts to confirm | confirmed or changed |
+| 7 | Settings or prompts saved but waiting for a restart or the next run (for example a review prompt) | applied |
+
+- Under the list, one **health line**, always shown:
+  - Alpaca: in sync, with the last reconcile time;
+  - order stream: connected, degraded or disconnected;
+  - clock offset;
+  - keys passing;
+  - email on or failing.
+- With nothing to do, the card shows "Nothing needs you" and the health line, and the header chip is hidden.
+- The backend serves the list from one endpoint and pushes changes on the WebSocket (topic `attention`). The header chip, the phone bar and the card read the same list.
+
+**Positions at a glance** (dashboard and Positions, PR 35).
+- Every open position shows a bar from its stop to its target, with the entry and the last price marked, and its distance to the stop in % and in ATR(1h).
+- The distance turns amber under `gui.near_stop_atr` (1.5) ATR.
+- On the dashboard, open positions sit directly under the cycle strip, next to the risk budget. Then come the chart and latest decision, then today's decisions and the briefing, and the watchlist last.
+- On Positions:
+  - a totals line: unrealized P&L, the result if every stop hits (in $ and % of equity), open risk against its cap, and the position closest to its stop;
+  - per position: the bar, the result if the stop hits ($ and R; "locked in" when the stop is above the entry), the distance to the stop and to the target (with levels in the way), the planned exit, and the latest decision with a link;
+  - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state.
 
 **Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text, chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
 
@@ -516,6 +546,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 32. **Review attribution.** From the model-call analysis of 30 October: verdict facts with the model's action, code's change and its reason, execution, the checks at decision time and option outcomes (`outcomes.option_touches`); draft verdict labels by code from the outcome table; `prompts/verdict.v2.md` writing the reason and a thesis check; confirmed verdicts counted per model call; `prompts/weekly.v2.md` with the sample and evidence, and suggestions only from 10 closed trades in the run; the briefing status line shown once; known prompt versions only (`unknown_prompt_version`). *Done when:* a model enter blocked for reward to risk gets a verdict on the enter with "Code blocked: reward to risk 1.4, min 1.5" and is not counted as a model skip; a skip whose option A touched its target first is drafted bad call by code; an enter whose thesis says "daily trend up" with the daily trend mixed gets `contradicts`; a weekly review with 1 closed trade in the run has no suggestion; a briefing shows its status line once; and a strategy set to `decision.v4` is refused at save and at startup.
 33. **Entry selection.** `selection.mode` (`rank` default, `expected_profit`), `confidence_weight` and `last_slot_min_ev_r` as settings and strategy overrides; for `expected_profit`: pre-score call order, collect-then-choose, the exact best set within slots, sector cap, open risk, cash and orders per cycle, submit in expected-profit order with the next-best fallback, `not_selected` for the rest; selection stored per decision and cycle; the drawer block; `make replay-selection` comparing both modes on stored cycles. Gates, sizing and orders unchanged. *Done when:* with `rank` every existing cycle test and replay is byte-for-byte unchanged; the XOM, MSFT, AMZN example of the design with 2 free slots chooses XOM and MSFT ($41.08) where rank order chooses AMZN and MSFT ($27.42); a sector-cap case picks the best set that fits; a chosen entry failing the fresh quote is replaced by the next best that fits; an enter with expected R ≤ 0 is never chosen; supervised mode queues only the chosen set; a shadow with `expected_profit` runs next to live; and the replay report lists every cycle where the modes differ.
 34. **Decision v4.** From the analysis of 31 October: snapshot v4 (`previous_decision` with code-computed `since`, headlines with `about_symbol` and `new`, capped headlines and levels, `stop_group` on options, `checks_at_entry`, `thesis_holds`, time held, session minutes left); `prompts/decision.v4.md` with confidence defined for every action and `best_option_id`, conflicts with `outweighed_by`, `what_changed`, news effects, path and exit rules; code checks for the flip-flop guard, confidence sanity, path claims, unresolved conflicts and the claim-check fix; the `checks_gate` strategy override; shadow input snapshots stored; `make eval-decision` with `backend/eval/decision_v4.json`; the v4 drawers. v1–v3 untouched. *Done when:* the TSLA case of the design becomes `skip` · `flip_flop` while a skip → enter after a new headline about the symbol passes; a held PG answer of 0.85 at neutral 0.15 is stored with `confidence_outlier`; IBM call 1734's conflict "levels L2 and L1 in the way" no longer fails the claim check; a skip carries a valid `best_option_id`; `thesis_holds` is false for a position whose 1h trend and momentum turned against it; the eval runs v3 and v4 on the same calls and reports per category; and a v4 shadow runs next to live in simulated mode.
+35. **Needs you and positions at a glance.** From the UX audit of 1 November: the Needs you card on the dashboard with its endpoint and WebSocket topic, the header chip and the phone top bar with the count; the stop-to-target bar and distance in ATR on the dashboard and Positions; the dashboard order; the Positions totals line, four facts per position and folded legs that open on a problem; the phone top bar and menu below 820 px; no sideways scroll at 390 px. No trading change. *Done when:* each item kind in the table appears and leaves on its own condition in a test; with nothing pending the card says "Nothing needs you" and the header chip is gone; a position under 1.5 ATR from its stop shows amber; a missing stop leg opens its legs line in amber; and every screen at 390 px has a document width of 390.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
