@@ -973,7 +973,7 @@ def dismiss_event(
             if detail == "a note is required to dismiss an error":
                 raise HTTPException(status_code=422, detail=detail) from exc
             raise HTTPException(status_code=409, detail=detail) from exc
-    _notify(request, "banners", "readiness")
+    _notify(request, "banners", "readiness", "attention")
     return {"dismissed": True, "id": dismissed_id}
 
 
@@ -1474,6 +1474,14 @@ def orders(request: Request) -> dict[str, object]:
             for row in rows
         }
     return {"orders": [_order_json(row, fills[row.id]) for row in rows]}
+
+
+@router.get("/attention")
+def attention(request: Request) -> dict[str, object]:
+    """Needs you: every item waiting for Marc, plus the health line."""
+    from app.attention import build_attention
+
+    return build_attention(request)
 
 
 @router.get("/banners")
@@ -2722,7 +2730,7 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         schedule["cycles"] != _nested_get(base, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
-    _notify(request, "header", "settings", "strategies")
+    _notify(request, "header", "settings", "strategies", "attention")
     return {
         "version": version,
         "changes": changes,
@@ -3143,7 +3151,7 @@ async def save_api_key(
                 automatic=True,
                 new_run_required=True,
             )
-        _notify(request, "banners", "header", "settings")
+        _notify(request, "banners", "header", "settings", "attention")
         return {
             "ok": True,
             "account_changed": account_changed,
@@ -3169,7 +3177,7 @@ async def save_api_key(
     store.save(group, value, "ok", result.detail)
     store.record_event(group, "saved", True, result.detail)
     await _apply_keys(request, {group})
-    _notify(request, "banners", "header", "settings")
+    _notify(request, "banners", "header", "settings", "attention")
     return {"ok": True, "key": store.group_status(group)}
 
 
@@ -3254,7 +3262,7 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
     shadows = getattr(request.app.state, "shadow_runner", None)
     if shadows is not None:
         shadows.reset_clients()
-    _notify(request, "banners", "header", "settings", "strategies")
+    _notify(request, "banners", "header", "settings", "strategies", "attention")
     return {"ok": True, "paused_shadows": paused}
 
 
@@ -3272,7 +3280,7 @@ async def test_api_key(request: Request, group: str) -> dict[str, object]:
         raise HTTPException(
             status_code=422, detail=f"no {GROUP_LABELS[group]} saved yet"
         )
-    _notify(request, "banners", "header", "settings")
+    _notify(request, "banners", "header", "settings", "attention")
     return {
         "ok": result.ok,
         "error": scrub(result.error or "", store.scrub_values()) or None,
@@ -4862,7 +4870,7 @@ def verdict_resolve(
         verdict.updated_at = _naive_utc(_clock(request).now())
         session.commit()
         resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
-    _notify(request, "reviews", "decisions")
+    _notify(request, "reviews", "decisions", "attention")
     return resolved
 
 
@@ -5286,6 +5294,7 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
             )
         )
         session.commit()
+    _notify(request, "logs", "attention")
     return {"ok": True, "review": review}
 
 

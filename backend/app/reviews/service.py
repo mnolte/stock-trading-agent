@@ -850,7 +850,7 @@ class ReviewService:
                     continue
                 written += 1
         if written:
-            self._notify({"reviews", "decisions"})
+            self._notify({"reviews", "decisions", "attention"})
         return written
 
     # ------------------------------------------------------------------

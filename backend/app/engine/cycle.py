@@ -501,7 +501,7 @@ class CycleRunner:
             if self.config.reschedule_cycles:
                 self.config.reschedule_cycles = False
                 self._on_settings_promoted()
-            self._notify({"watchlist", "header", "decisions"})
+            self._notify({"watchlist", "header", "decisions", "settings", "attention"})
 
         account = None
         if self.executor is not None:
