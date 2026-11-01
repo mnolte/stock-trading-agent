@@ -27,6 +27,7 @@ Newest first.
   - on Positions: a totals line, four facts per position, and Alpaca legs folded into a line that opens on a problem.
 - **Phone:** below 820 px a sticky top bar with the menu replaces the sidebar; no sideways scroll at 390 px.
 - Build plan item 35. Kickoff `docs/kickoffs/pr-35.md`. `gui.near_stop_atr` comes with PR 35 (rule 7).
+- Config: `gui.near_stop_atr: 1.5` added to `backend/config.example.yaml`.
 
 ## 2026-11-01 — Decision v4: best option and conflict checks clarified
 

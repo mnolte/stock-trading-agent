@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 
 import { useLiveStatus, useLiveUpdates } from '../api/liveContext';
+import { useApiResource } from '../api/useResource';
 import {
+  getAttention,
   getHeaderState,
   getPositions,
   postKillSwitch,
@@ -18,6 +20,7 @@ import { documentTitle, pageTitle } from './documentTitle';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
+import { PhoneBar } from './PhoneBar';
 import { Sidebar } from './Sidebar';
 import { ConfirmYouDialog } from './ConfirmYouDialog';
 import { registerConfirmHandler, useAuthStatus } from '../api/auth';
@@ -82,6 +85,9 @@ export function Layout() {
     ['header', 'banners', 'positions', 'orders', 'approvals'],
     refreshAll,
   );
+  const attentionRes = useApiResource(getAttention);
+  useLiveUpdates(['attention'], attentionRes.reload);
+  const needsYou = narrow ? 0 : (attentionRes.data?.count ?? 0);
   // BannerStrip fetches on mount; only the header needs a fetch here.
   useEffect(() => {
     refreshHeader();
@@ -210,13 +216,20 @@ export function Layout() {
         </div>
       )}
       <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {narrow && (
+          <PhoneBar
+            title={pageTitle(location.pathname)}
+            needsYou={attentionRes.data?.count ?? 0}
+            onMenu={() => setMenuOpen((v) => !v)}
+            menuOpen={menuOpen}
+          />
+        )}
         <Header
           state={state}
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
-          onMenu={narrow ? () => setMenuOpen((v) => !v) : undefined}
-          menuOpen={menuOpen}
+          needsYou={needsYou}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
           {liveStatus === 'paused' && (

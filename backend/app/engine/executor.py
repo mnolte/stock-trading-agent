@@ -354,7 +354,7 @@ class Executor:
                 },
             )
             session.commit()
-        self._notify({"banners", "header", "approvals"})
+        self._notify({"banners", "header", "approvals", "attention"})
 
     async def pause(self) -> None:
         """Pause new entries (docs/SPEC.md, Paused at startup).
@@ -377,7 +377,7 @@ class Executor:
                 details={"on": True, "reason": "manual"},
             )
             session.commit()
-        self._notify({"banners", "header"})
+        self._notify({"banners", "header", "attention"})
 
     async def resume_from_pause(self) -> None:
         """Resume entries after a pause: one click, no reason needed."""
@@ -397,7 +397,7 @@ class Executor:
                 details={"on": False, "reason": "manual"},
             )
             session.commit()
-        self._notify({"banners", "header", "approvals"})
+        self._notify({"banners", "header", "approvals", "attention"})
 
     async def resume(self, reason: str) -> None:
         """Resume after a kill switch. The typed reason is stored."""
@@ -418,7 +418,7 @@ class Executor:
                 details={"on": False, "reason": reason.strip()},
             )
             session.commit()
-        self._notify({"banners", "header"})
+        self._notify({"banners", "header", "attention"})
 
     async def flatten(self) -> dict[str, object]:
         """Stop & flatten: kill switch on, cancel all orders, sell everything.
@@ -582,7 +582,7 @@ class Executor:
             session.commit()
             count = len(pending)
         if count:
-            self._notify({"approvals", "decisions"})
+            self._notify({"approvals", "decisions", "attention"})
         return count
 
     def reject_approval(self, approval_id: int, reason: str | None) -> bool:
@@ -594,7 +594,7 @@ class Executor:
             approval.reason = reason or "rejected"
             approval.resolved_at = _naive_utc(self.clock.now())
             session.commit()
-        self._notify({"approvals", "decisions"})
+        self._notify({"approvals", "decisions", "attention"})
         return True
 
     def _resolve_approval(
@@ -794,7 +794,7 @@ class Executor:
                         "quote": self._quote_provenance(quote) if quote is not None else None,
                     }
                 session.commit()
-                self._notify({"approvals", "decisions"})
+                self._notify({"approvals", "decisions", "attention"})
                 return {"ok": False, "error": fail}
             assert quote is not None and limit is not None  # noqa: S101 - internal invariant
             ctx = self._gate_context(
@@ -844,7 +844,7 @@ class Executor:
                 session.commit()
                 if result.blocked_by == "drawdown_kill":
                     await self.activate_kill_switch(reason="drawdown kill gate", automatic=True)
-                self._notify({"approvals", "decisions"})
+                self._notify({"approvals", "decisions", "attention"})
                 return {"ok": False, "error": fail}
             assert result.sizing is not None  # noqa: S101 - internal invariant
             qty = result.sizing.shares
@@ -903,7 +903,7 @@ class Executor:
                 )
                 session.commit()
                 _stack.close()
-                self._notify({"approvals", "decisions", "banners"})
+                self._notify({"approvals", "decisions", "banners", "attention"})
                 return {
                     "ok": False,
                     "error": f"order submit failed: {submitted.error}",
@@ -923,7 +923,7 @@ class Executor:
             self._resolve_approval(approval, "approved", None)
             session.commit()
             _stack.close()
-        self._notify({"approvals", "decisions", "positions", "orders", "header"})
+        self._notify({"approvals", "decisions", "positions", "orders", "header", "attention"})
         return {"ok": True}
 
     # ------------------------------------------------------------------
@@ -1067,6 +1067,7 @@ class Executor:
             for event in blocking:
                 event.acknowledged_at = now
             session.commit()
+        self._notify({"banners", "header", "positions", "attention"})
         return True
 
     def acknowledge_event(self, event_id: int) -> bool:
@@ -1076,6 +1077,7 @@ class Executor:
                 return False
             event.acknowledged_at = _naive_utc(self.clock.now())
             session.commit()
+        self._notify({"banners", "header", "attention"})
         return True
 
     # ------------------------------------------------------------------
@@ -1102,7 +1104,7 @@ class Executor:
             position.pending_ack = True
         record_event(session, self.clock, level="critical", event_type=event_type, details=details)
         ev(log_reconcile, logging.CRITICAL, "reconcile.mismatch", message)
-        self._notify({"positions", "banners", "header"})
+        self._notify({"positions", "banners", "header", "attention"})
 
     def _check_foreign_instance(
         self, session: Session, order: BrokerOrder
@@ -1319,7 +1321,7 @@ class Executor:
                 "message": "Trade-updates stream degraded",
             },
         )
-        self._notify({"banners", "header"})
+        self._notify({"banners", "header", "attention"})
 
     def _stream_grace(self) -> timedelta:
         return timedelta(
@@ -2832,7 +2834,7 @@ class Executor:
                 "approve on the dashboard",
                 link="/",
             )
-            self._notify({"approvals", "decisions"})
+            self._notify({"approvals", "decisions", "attention"})
             return
 
         # The "Fresh quote" gate right before the order is sent — the

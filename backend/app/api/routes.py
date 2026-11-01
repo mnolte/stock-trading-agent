@@ -42,6 +42,7 @@ from app.db.models import (
 )
 from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
+from app.decide.v3 import scheduled_exit_text
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
@@ -63,6 +64,8 @@ from app.notifications.service import (
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
 from app.risk.budget import Meter, risk_budget
+from app.risk.earnings import next_earnings
+from app.risk.math import open_risk
 from app.secrets_service import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -973,7 +976,7 @@ def dismiss_event(
             if detail == "a note is required to dismiss an error":
                 raise HTTPException(status_code=422, detail=detail) from exc
             raise HTTPException(status_code=409, detail=detail) from exc
-    _notify(request, "banners", "readiness")
+    _notify(request, "banners", "readiness", "attention")
     return {"dismissed": True, "id": dismissed_id}
 
 
@@ -1236,6 +1239,33 @@ async def positions(request: Request) -> dict[str, object]:
         (m for m in marks.values() if m is not None), Decimal(0)
     )
 
+    # PR 35, Positions at a glance: per-position facts and the totals
+    # line. Risk figures reuse the shared functions — ATR(1h) and the
+    # levels on the way to the target come from the symbol's latest
+    # stored decision snapshot.
+    config = get_config()
+    near_stop_atr = Decimal(
+        str(config.get("gui", "near_stop_atr", default=1.5))
+    )
+    now = clock.now()
+    calendar = _calendar(request)
+    symbols = [p.symbol for p in open_rows]
+    latest_decisions: dict[str, tuple[Decision, datetime]] = {}
+    with get_session_maker()() as dec_session:
+        earnings_tuples = (
+            next_earnings(dec_session, symbols, now) if symbols else {}
+        )
+        for sym in set(symbols):
+            row = dec_session.execute(
+                select(Decision, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .where(Decision.symbol == sym)
+                .order_by(Decision.id.desc())
+                .limit(1)
+            ).first()
+            if row is not None:
+                latest_decisions[sym] = (row[0], row[1])
+
     out_open = []
     for p in open_rows:
         item = _position_json(p, marks.get(p.symbol))
@@ -1282,10 +1312,169 @@ async def positions(request: Request) -> dict[str, object]:
         )
         opened_today = _ny_date(p.opened_at) == today_ny
         item["opened_today"] = opened_today
+
+        # --- Positions at a glance (PR 35) -------------------------------
+        last_price = last_prices.get(p.symbol)
+        stop = p.current_stop_price
+        atr = None
+        levels_to_target = None
+        latest_card = None
+        ld = latest_decisions.get(p.symbol)
+        if ld is not None:
+            decision, scheduled = ld
+            snapshot = decision.input_snapshot or {}
+            ind1h = cast("dict[str, object]", snapshot.get("indicators_1h") or {})
+            atr_raw = ind1h.get("atr14")
+            atr = (
+                Decimal(str(atr_raw))
+                if isinstance(atr_raw, int | float | Decimal)
+                else None
+            )
+            pos_block = cast(
+                "dict[str, object]", snapshot.get("position") or {}
+            )
+            ltt = pos_block.get("levels_to_target")
+            if isinstance(ltt, list):
+                levels_to_target = len(ltt)
+            latest_card = {
+                "id": decision.id,
+                "action": decision.final_action,
+                "confidence": (decision.model_output or {}).get("confidence"),
+                "time": scheduled.replace(tzinfo=UTC).isoformat(),
+            }
+        item["atr_1h"] = str(atr) if atr is not None else None
+        item["levels_to_target"] = levels_to_target
+        item["latest_decision"] = latest_card
+        item["scheduled_exit"] = scheduled_exit_text(
+            earnings_tuples.get(p.symbol),
+            now,
+            calendar=calendar,
+            config=config,
+        )
+        # Distances from the last price, in % and ATR(1h) — the amber
+        # threshold comes from gui.near_stop_atr.
+        if last_price is not None and last_price > 0:
+            if stop is not None:
+                item["to_stop_pct"] = float(
+                    (last_price - stop) / last_price * 100
+                )
+                if atr is not None and atr > 0:
+                    item["to_stop_atr"] = float((last_price - stop) / atr)
+            if p.target_price is not None:
+                item["to_target_pct"] = float(
+                    (p.target_price - last_price) / last_price * 100
+                )
+                if atr is not None and atr > 0:
+                    item["to_target_atr"] = float(
+                        (p.target_price - last_price) / atr
+                    )
+        # "If the stop hits": signed result in $ and R; "locked in" when
+        # the stop sits above the entry (JPM in the design).
+        if stop is not None:
+            if_stop_usd = p.qty * (stop - p.avg_entry_price)
+            item["if_stop_usd"] = float(if_stop_usd)
+            item["locked_in"] = stop > p.avg_entry_price
+            if (
+                p.initial_stop is not None
+                and p.avg_entry_price > p.initial_stop
+            ):
+                item["if_stop_r"] = float(
+                    (stop - p.avg_entry_price)
+                    / (p.avg_entry_price - p.initial_stop)
+                )
+        # The folded legs line opens amber when a leg is missing or not
+        # in its expected state.
+        leg_rows = legs[p.id]
+        has_entry = any(
+            leg["leg"] == "entry" and leg["status"] == "filled"
+            for leg in leg_rows
+        )
+        has_stop = any(
+            leg["leg"] == "stop" and leg["status"] in OPEN_ORDER_STATUSES
+            for leg in leg_rows
+        )
+        has_target = any(
+            leg["leg"] == "target" and leg["status"] in OPEN_ORDER_STATUSES
+            for leg in leg_rows
+        )
+        problems = []
+        if not has_stop:
+            problems.append("no open stop leg")
+        if p.target_price is not None and not has_target:
+            problems.append("no open target leg")
+        item["legs_problem"] = bool(problems)
+        item["legs_summary"] = (
+            f"{len(leg_rows)} leg{'s' if len(leg_rows) != 1 else ''} · "
+            + (
+                "; ".join(problems)
+                if problems
+                else (
+                    "entry filled, stop and target open ✓"
+                    if has_entry
+                    else "stop and target open ✓"
+                )
+            )
+        )
         out_open.append(item)
+
+    # Totals line (design/screens/Positions.dc.html): unrealized, the
+    # net result if every stop hits, open risk against its cap and the
+    # position closest to its stop.
+    equity = account.equity if account else None
+    if_stops_usd = sum(
+        (Decimal(str(item.get("if_stop_usd") or 0)) for item in out_open),
+        Decimal(0),
+    )
+    # A position with no recorded stop counts at full notional — the
+    # worst case — not zero risk.
+    unprotected = sum(
+        1 for p in open_rows if p.current_stop_price is None
+    )
+    open_risk_usd = open_risk(
+        (
+            p.qty,
+            p.avg_entry_price,
+            p.current_stop_price or Decimal(0),
+        )
+        for p in open_rows
+    )
+    closest = None
+    nearest: float | None = None
+    for item in out_open:
+        atr_dist = item.get("to_stop_atr")
+        if isinstance(atr_dist, int | float) and (
+            nearest is None or atr_dist < nearest
+        ):
+            nearest = float(atr_dist)
+            closest = {"symbol": item["symbol"], "atr": float(atr_dist)}
+    totals = {
+        "unrealized_usd": (
+            sum(
+                float(str(item.get("unrealized_pnl") or 0))
+                for item in out_open
+            )
+            if out_open
+            else None
+        ),
+        "if_stops_usd": float(if_stops_usd),
+        "if_stops_pct_equity": (
+            float(if_stops_usd / equity * 100) if equity else None
+        ),
+        "open_risk_usd": float(open_risk_usd),
+        "open_risk_pct": (
+            float(open_risk_usd / equity * 100) if equity else None
+        ),
+        "open_risk_cap_pct": float(
+            config.get("risk", "max_open_risk_pct", default=2.5)
+        ),
+        "unprotected": unprotected,
+        "closest": closest,
+    }
 
     return {
         "open": out_open,
+        "totals": totals,
+        "near_stop_atr": str(near_stop_atr),
         "closed_today": [_position_json(p) for p in closed_today],
         "today": {
             "entries": len(opened_today_rows) + len(round_trips),
@@ -1474,6 +1663,14 @@ def orders(request: Request) -> dict[str, object]:
             for row in rows
         }
     return {"orders": [_order_json(row, fills[row.id]) for row in rows]}
+
+
+@router.get("/attention")
+def attention(request: Request) -> dict[str, object]:
+    """Needs you: every item waiting for Marc, plus the health line."""
+    from app.attention import build_attention
+
+    return build_attention(request)
 
 
 @router.get("/banners")
@@ -2722,7 +2919,7 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         schedule["cycles"] != _nested_get(base, "schedule", "cycles")
     ):
         config.reschedule_cycles = True
-    _notify(request, "header", "settings", "strategies")
+    _notify(request, "header", "settings", "strategies", "attention")
     return {
         "version": version,
         "changes": changes,
@@ -3143,7 +3340,7 @@ async def save_api_key(
                 automatic=True,
                 new_run_required=True,
             )
-        _notify(request, "banners", "header", "settings")
+        _notify(request, "banners", "header", "settings", "attention")
         return {
             "ok": True,
             "account_changed": account_changed,
@@ -3169,7 +3366,7 @@ async def save_api_key(
     store.save(group, value, "ok", result.detail)
     store.record_event(group, "saved", True, result.detail)
     await _apply_keys(request, {group})
-    _notify(request, "banners", "header", "settings")
+    _notify(request, "banners", "header", "settings", "attention")
     return {"ok": True, "key": store.group_status(group)}
 
 
@@ -3254,7 +3451,7 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
     shadows = getattr(request.app.state, "shadow_runner", None)
     if shadows is not None:
         shadows.reset_clients()
-    _notify(request, "banners", "header", "settings", "strategies")
+    _notify(request, "banners", "header", "settings", "strategies", "attention")
     return {"ok": True, "paused_shadows": paused}
 
 
@@ -3272,7 +3469,7 @@ async def test_api_key(request: Request, group: str) -> dict[str, object]:
         raise HTTPException(
             status_code=422, detail=f"no {GROUP_LABELS[group]} saved yet"
         )
-    _notify(request, "banners", "header", "settings")
+    _notify(request, "banners", "header", "settings", "attention")
     return {
         "ok": result.ok,
         "error": scrub(result.error or "", store.scrub_values()) or None,
@@ -4862,7 +5059,7 @@ def verdict_resolve(
         verdict.updated_at = _naive_utc(_clock(request).now())
         session.commit()
         resolved = {"id": verdict.id, "verdict": verdict.verdict, "source": verdict.source}
-    _notify(request, "reviews", "decisions")
+    _notify(request, "reviews", "decisions", "attention")
     return resolved
 
 
@@ -5286,6 +5483,7 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
             )
         )
         session.commit()
+    _notify(request, "logs", "attention")
     return {"ok": True, "review": review}
 
 

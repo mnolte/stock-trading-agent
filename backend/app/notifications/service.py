@@ -403,7 +403,7 @@ class NotificationService:
         except Exception:  # noqa: BLE001
             logger.exception("could not log notification %s", item.event)
             return
-        self._publish({"notifications"})
+        self._publish({"notifications", "attention"})
         if item.channel_status.get("email") == STATUS_QUEUED:
             await self._send_email(row_id, item.subject, item.body or "")
 
@@ -570,7 +570,7 @@ class NotificationService:
             )
             self._email_failures += 1
             if self._email_failures == EMAIL_FAILURE_BANNER_AT:
-                self._publish({"banners"})
+                self._publish({"banners", "attention"})
             logger.warning(
                 "notification email failed (%s in a row): %s",
                 self._email_failures,
@@ -583,7 +583,7 @@ class NotificationService:
                 notification=notification_id,
             )
             self._email_failures = 0
-        self._publish({"notifications"})
+        self._publish({"notifications", "attention"})
 
     def _scrub_values(self) -> list[str]:
         if self._secrets is None:
