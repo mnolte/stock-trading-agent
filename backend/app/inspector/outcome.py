@@ -23,6 +23,10 @@ WARNING_REASONS = (
     "input_incomplete",
     "number_check_failed",
     "unsupported_claim",
+    "confidence_outlier",
+    "unresolved_conflict",
+    "best_option_mismatch",
+    "best_option_missing",
     "slow",
 )
 ERROR_REASONS = ("timeout", "api_error", "invalid_output", "refusal")
@@ -58,6 +62,9 @@ class CallFacts:
     # decision.v2: a level id or decimal in the explanation matched
     # nothing in the snapshot or the chosen option.
     unsupported_claim: bool = False
+    # decision.v4: extra warning reasons from the code checks
+    # (confidence_outlier, unresolved_conflict).
+    extra_warnings: tuple[str, ...] = ()
     latency_ms: int | None = None
     # inspector.slow_call_seconds converted to ms; None disables the check.
     slow_ms: int | None = None
@@ -88,6 +95,7 @@ def classify(facts: CallFacts) -> tuple[str, list[str]]:
         warnings.append("number_check_failed")
     if facts.unsupported_claim:
         warnings.append("unsupported_claim")
+    warnings.extend(w for w in facts.extra_warnings if w not in warnings)
     if (
         facts.latency_ms is not None
         and facts.slow_ms is not None

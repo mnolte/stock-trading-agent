@@ -10,6 +10,12 @@ Newest first.
   - held answers store null.
 - `unresolved_conflict` applies to enters only. The eval's `conflicts_resolved` predicate does the same; held rows are measured with `conflicts_on_adverse`.
 
+## 2026-11-01 — Decision v4: code and config (PR 34)
+
+- New prompt `backend/prompts/decision.v4.md` and its manifest entry; `decision.v4` becomes a registered prompt version usable by live, shadows, replays and `make eval-decision`.
+- `backend/config.example.yaml` gains the `decision.v4` block: `max_headlines`, `max_level_distance_atr`, `flip_min_move_atr`, `max_confidence_above_anchor` and `checks_gate` — the last also a shadow strategy override.
+- `checks_gate` gates shadow candidates in both selection modes, matching live; eval snapshots rebuild earnings and `checks_at_entry` like the replay does.
+
 ## 2026-11-01 — Decision bookkeeping fixes (claim checks, shadow snapshots, thesis ids)
 
 - Claim checks: only stop/target attributions are claims. A sentence naming a level id without the words stop or target (e.g. "levels L2 and L1 in the way") is no longer marked an unsupported claim — IBM call 1734's conflict failed the check on exactly that. Sentences that do attribute a level to the stop or target are checked unchanged.

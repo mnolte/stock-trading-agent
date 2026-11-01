@@ -879,7 +879,7 @@ async def test_settings_save_refuses_unknown_prompt() -> None:
 
     try:
         await validate_settings(
-            {"decision": {"prompt": "decision.v4"}},
+            {"decision": {"prompt": "decision.v99"}},
             {},
             broker=cast(Broker, None),  # unused without a universe save
             held_symbols=set(),
@@ -887,7 +887,7 @@ async def test_settings_save_refuses_unknown_prompt() -> None:
     except SettingsError as exc:
         assert any("unknown_prompt_version" in e for e in exc.errors)
     else:
-        raise AssertionError("decision.v4 must be refused")
+        raise AssertionError("decision.v99 must be refused")
 
 
 def test_backtest_resolve_refuses_unknown_prompt() -> None:
@@ -905,7 +905,7 @@ def test_backtest_resolve_refuses_unknown_prompt() -> None:
                 name="bad",
                 kind="llm",
                 status="active",
-                prompt_version="decision.v4",
+                prompt_version="decision.v99",
                 model="gpt-4o-mini",
                 temperature=0,
                 created_at=datetime(2026, 10, 22, 12, 0),
@@ -923,7 +923,7 @@ def test_backtest_resolve_refuses_unknown_prompt() -> None:
             assert exc.status_code == 422
             assert "unknown_prompt_version" in str(exc.detail)
         else:
-            raise AssertionError("decision.v4 must be refused")
+            raise AssertionError("decision.v99 must be refused")
 
 
 # ----------------------------------------------------------------------

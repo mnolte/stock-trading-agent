@@ -1436,6 +1436,30 @@ export default function Settings() {
     setNotice(null);
   };
 
+  const patchReviewPrompt = (
+    task: 'weekly' | 'briefing' | 'verdict',
+    value: string,
+  ) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            reviews: {
+              ...f.reviews,
+              prompts: {
+                weekly: '',
+                briefing: '',
+                verdict: '',
+                ...f.reviews.prompts,
+                [task]: value,
+              },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
   const patchReviewModel = (
     task: 'weekly' | 'briefing' | 'verdict',
     value: string,
@@ -2436,10 +2460,10 @@ export default function Settings() {
                   onChange={(e) => patch('decision', 'prompt', e.target.value)}
                   style={selectStyle}
                 >
-                  {[s.decision.prompt, ...data.prompt_options.map((p) => p.version)]
+                  {[s.decision.prompt, ...(data.prompt_options.decision ?? []).map((p) => p.version)]
                     .filter((v, i, a) => a.indexOf(v) === i)
                     .map((v) => {
-                      const opt = data.prompt_options.find((p) => p.version === v);
+                      const opt = (data.prompt_options.decision ?? []).find((p) => p.version === v);
                       return <option key={v} value={v}>{opt ? `${opt.version} · ${opt.hash}` : v}</option>;
                     })}
                 </select>
@@ -2469,41 +2493,79 @@ export default function Settings() {
                 briefing: 'Daily briefing model',
                 verdict: 'Verdict model',
               } as const;
-              return row(`reviews.models.${task}`, {
-                id: `rmodel-${task}`,
-                label: taskLabels[task],
-                help:
-                  task === 'weekly'
-                    ? 'Runs after the Friday close.'
-                    : task === 'briefing'
-                      ? 'The text of the daily briefing.'
-                      : 'Scores closed decisions.',
-                children: (
-                  <select
-                    id={`rmodel-${task}`}
-                    value={s.reviews.models?.[task] ?? ''}
-                    onChange={(e) => patchReviewModel(task, e.target.value)}
-                    style={selectStyle}
-                  >
-                    {[s.reviews.models?.[task] ?? '', ...(data.model_options ?? []).map((o) => o.id)]
-                      .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
-                      .map((v) => {
-                        const opt = (data.model_options ?? []).find((o) => o.id === v);
-                        return (
-                          <option
-                            key={v}
-                            value={v}
-                            disabled={opt?.needs_key}
-                          >
-                            {opt
-                              ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
-                              : v}
-                          </option>
-                        );
-                      })}
-                  </select>
-                ),
-              });
+              const promptLabels = {
+                weekly: 'Weekly review prompt',
+                briefing: 'Daily briefing prompt',
+                verdict: 'Verdict prompt',
+              } as const;
+              return (
+                <div key={task}>
+                  {row(`reviews.models.${task}`, {
+                    id: `rmodel-${task}`,
+                    label: taskLabels[task],
+                    help:
+                      task === 'weekly'
+                        ? 'Runs after the Friday close.'
+                        : task === 'briefing'
+                          ? 'The text of the daily briefing.'
+                          : 'Scores closed decisions.',
+                    children: (
+                      <select
+                        id={`rmodel-${task}`}
+                        value={s.reviews.models?.[task] ?? ''}
+                        onChange={(e) => patchReviewModel(task, e.target.value)}
+                        style={selectStyle}
+                      >
+                        {[s.reviews.models?.[task] ?? '', ...(data.model_options ?? []).map((o) => o.id)]
+                          .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
+                          .map((v) => {
+                            const opt = (data.model_options ?? []).find((o) => o.id === v);
+                            return (
+                              <option
+                                key={v}
+                                value={v}
+                                disabled={opt?.needs_key}
+                              >
+                                {opt
+                                  ? `${opt.id} · ${providerLabel(opt.provider)}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
+                                  : v}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    ),
+                  })}
+                  {row(`reviews.prompts.${task}`, {
+                    id: `rprompt-${task}`,
+                    label: promptLabels[task],
+                    help:
+                      task === 'weekly'
+                        ? 'The prompt the weekly review runs.'
+                        : task === 'briefing'
+                          ? 'The prompt the daily briefing runs.'
+                          : 'The prompt the verdicts run.',
+                    children: (
+                      <select
+                        id={`rprompt-${task}`}
+                        value={s.reviews.prompts?.[task] ?? ''}
+                        onChange={(e) => patchReviewPrompt(task, e.target.value)}
+                        style={selectStyle}
+                      >
+                        {[s.reviews.prompts?.[task] ?? '', ...(data.prompt_options[task] ?? []).map((p) => p.version)]
+                          .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
+                          .map((v) => {
+                            const opt = (data.prompt_options[task] ?? []).find((p) => p.version === v);
+                            return (
+                              <option key={v} value={v}>
+                                {opt ? `${opt.version} · ${opt.hash}` : v}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    ),
+                  })}
+                </div>
+              );
             })}
             {row('reviews.briefing_enabled', {
               id: 'brief',

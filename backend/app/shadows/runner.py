@@ -41,11 +41,11 @@ from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, Shadow
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
-    ModelOutputV3,
     decision_trade_prices,
     validate_model_output,
     validate_model_output_v2,
     validate_model_output_v3,
+    validate_model_output_v4,
 )
 from app.decide.prompt import PromptSpec, cached_prompt, prompt_spec
 from app.decide.service import (
@@ -56,6 +56,14 @@ from app.decide.service import (
 from app.decide.snapshot import UNAVAILABLE, _position_block, entry_invalidation
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.decide.v3 import HeldV3, build_v3_fields, stop_basis_info, v3_send_snapshot
+from app.decide.v4 import (
+    build_v4_fields,
+    checks_at_entry,
+    previous_decision_v4,
+    symbol_names,
+    v4_config,
+    v4_send_snapshot,
+)
 from app.engine.selection import (
     ScoredEntry,
     SelectionBudget,
@@ -177,6 +185,26 @@ def _spec(strategy: Strategy) -> PromptSpec:
 def _rank_key(item: LiveInput) -> tuple[int, int]:
     rank = item.snapshot.get("rank")
     return (rank if isinstance(rank, int) else 10**9, item.order)
+
+
+def _checks_gate_detail(fields: dict[str, Any]) -> str | None:
+    """decision.v4 ``checks_gate``: the code checks that block an entry
+    when the trend is broken (docs/SPEC.md, Decision v4 — checks_gate)."""
+    snap_checks = fields.get("checks") or {}
+    failing = [
+        name
+        for name, bad in (
+            ("trend_1h", snap_checks.get("trend_1h") != "up"),
+            ("regime_trend", snap_checks.get("regime_trend") != "up"),
+            ("trend_daily", snap_checks.get("trend_daily") == "down"),
+        )
+        if bad
+    ]
+    if not failing:
+        return None
+    return "checks_gate: " + ", ".join(
+        f"{name}={snap_checks.get(name)}" for name in failing
+    )
 
 
 def _virtual_position(sp: ShadowPosition) -> Position:
@@ -613,7 +641,11 @@ class ShadowRunner:
             # jobs run on the same event loop and must always get the lock.
             session.commit()
             sent = json.dumps(
-                v3_send_snapshot(snap_json) if spec.is_v3 else snap_json,
+                v4_send_snapshot(snap_json, cfg)
+                if spec.is_v4
+                else v3_send_snapshot(snap_json)
+                if spec.is_v3
+                else snap_json,
                 indent=2,
             )
             started = monotonic()
@@ -663,7 +695,18 @@ class ShadowRunner:
                     tokens_out=response.tokens_out,
                 )
             ind = indicators_from_snapshot(d.symbol, d.snapshot)
-            if spec.is_v3:
+            if spec.is_v4:
+                validation = validate_model_output_v4(
+                    response.raw,
+                    symbol=d.symbol,
+                    context=context,
+                    snapshot=snap_json,
+                    atr_1h=ind.atr_1h,
+                    current_stop=current_stop,
+                    call_error=response.error,
+                    config=cfg,
+                )
+            elif spec.is_v3:
                 validation = validate_model_output_v3(
                     response.raw,
                     symbol=d.symbol,
@@ -707,8 +750,9 @@ class ShadowRunner:
                 )
             # v3 data flags: WARNING + event in every context
             # (docs/SPEC.md, Decision v3 — Data flags).
-            if isinstance(validation.output, ModelOutputV3):
-                for flag in validation.output.data_flags:
+            _flags = getattr(validation.output, "data_flags", None) or []
+            if _flags:
+                for flag in _flags:
                     logger.warning(
                         "model.data_flag %s: model flagged a data conflict (%s)",
                         d.symbol, flag,
@@ -781,6 +825,15 @@ class ShadowRunner:
                     and response.error is None
                     and not response.refused,
                     error_detail=validation.error,
+                    unsupported_claim=(
+                        validation.explanation is not None
+                        and not validation.explanation.passed
+                    )
+                    or (
+                        validation.claims is not None
+                        and not validation.claims.passed
+                    ),
+                    extra_warnings=tuple(validation.warnings),
                     cycle_id=cycle.id,
                     shadow_decision_id=row.id,
                     strategy_id=strategy.id,
@@ -852,7 +905,58 @@ class ShadowRunner:
                 )
             v2_held: V2Build | None = None
             is_v3 = _spec(strategy).is_v3
-            if llm and is_v3:
+            if llm and _spec(strategy).is_v4:
+                h_bars, h_daily, h_todays = rebuild_bars(
+                    d.symbol, scheduled, calendar=self.calendar,
+                    bars_reader=self._bars,
+                )
+                v2_held = build_v4_fields(
+                    context="held",
+                    base=snap_json,
+                    price=price,
+                    reference=reference,
+                    atr_1h=indicators_from_snapshot(d.symbol, snap_json).atr_1h,
+                    indicators=indicators_from_snapshot(d.symbol, snap_json),
+                    regime=regime_from_snapshot(snap_json, cfg),
+                    bars_1h=h_bars,
+                    daily=h_daily,
+                    today_5m=h_todays,
+                    earnings=earnings.get(d.symbol),
+                    held=HeldV3(
+                        entry=sp.entry,
+                        qty=sp.qty,
+                        initial_stop=sp.initial_stop,
+                        current_stop=sp.stop,
+                        target=sp.target,
+                        opened_at=aware(sp.opened_at) if sp.opened_at else None,
+                        entry_thesis=(
+                            (entry.model_output or {}).get("thesis")
+                            if entry is not None
+                            else None
+                        ),
+                        stop_basis=stop_basis_info(entry),
+                        earnings=earnings.get(d.symbol),
+                        entry_levels=tuple(
+                            (entry.levels or {}).get("levels") or ()
+                        )
+                        if entry is not None
+                        else (),
+                    ),
+                    previous=previous_decision_v4(
+                        session,
+                        symbol=d.symbol,
+                        day_ny=scheduled,
+                        strategy_id=strategy.id,
+                        before=scheduled,
+                    ),
+                    entry_checks=checks_at_entry(entry),
+                    names=symbol_names(cfg),
+                    calendar=self.calendar,
+                    config=cfg,
+                    cycle_time_ny=scheduled,
+                )
+                snap_json.update(v2_held.fields)
+            elif llm and is_v3:
                 h_bars, h_daily, h_todays = rebuild_bars(
                     d.symbol, scheduled, calendar=self.calendar,
                     bars_reader=self._bars,
@@ -1038,7 +1142,34 @@ class ShadowRunner:
                                 d.symbol, scheduled, calendar=self.calendar,
                                 bars_reader=self._bars,
                             )
-                            if _spec(strategy).is_v3:
+                            if _spec(strategy).is_v4:
+                                v2_cand = build_v4_fields(
+                                    context="candidate",
+                                    base=snap_json,
+                                    price=price,
+                                    reference=ref_v2,
+                                    atr_1h=atr_v2,
+                                    indicators=indicators_from_snapshot(
+                                        d.symbol, snap_json
+                                    ),
+                                    regime=regime_from_snapshot(snap_json, cfg),
+                                    bars_1h=c_bars,
+                                    daily=c_daily,
+                                    today_5m=c_todays,
+                                    earnings=earnings.get(d.symbol),
+                                    previous=previous_decision_v4(
+                                        session,
+                                        symbol=d.symbol,
+                                        day_ny=scheduled,
+                                        strategy_id=strategy.id,
+                                        before=scheduled,
+                                    ),
+                                    names=symbol_names(cfg),
+                                    calendar=self.calendar,
+                                    config=cfg,
+                                    cycle_time_ny=scheduled,
+                                )
+                            elif _spec(strategy).is_v3:
                                 v2_cand = build_v3_fields(
                                     context="candidate",
                                     base=snap_json,
@@ -1092,6 +1223,35 @@ class ShadowRunner:
                                         f"No call — {v2_cand.reason or 'no option met the rules'}"
                                     ),
                                 }
+                            session.add(row)
+                            session.flush()
+                            sr.decisions += 1
+                            continue
+                        gate_detail: str | None = None
+                        if (
+                            _spec(strategy).is_v4
+                            and v2_cand is not None
+                            and v2_cand.fields["options"]
+                            and v4_config(cfg).checks_gate
+                        ):
+                            gate_detail = _checks_gate_detail(v2_cand.fields)
+                        if gate_detail is not None and v2_cand is not None:
+                            row = self._row(
+                                strategy, cycle, d, "candidate",
+                                final_action="no_call",
+                                no_call_reason="checks",
+                                rules=rules,
+                            )
+                            row.levels = {"levels": v2_cand.fields.get("levels")}
+                            row.options = v2_cand.options_column
+                            row.options_version = v2_cand.options_column.get(
+                                "options_version"
+                            )
+                            row.validation_result = {
+                                "error": gate_detail,
+                                "final_action": "no_call",
+                                "note": f"No call — {gate_detail}",
+                            }
                             session.add(row)
                             session.flush()
                             sr.decisions += 1
@@ -1285,7 +1445,32 @@ class ShadowRunner:
                     d.symbol, scheduled, calendar=self.calendar,
                     bars_reader=self._bars,
                 )
-                if spec.is_v3:
+                if spec.is_v4:
+                    v2_cand = build_v4_fields(
+                        context="candidate",
+                        base=snap_json,
+                        price=price,
+                        reference=ref_v2,
+                        atr_1h=atr_v2,
+                        indicators=indicators_from_snapshot(d.symbol, snap_json),
+                        regime=regime_from_snapshot(snap_json, cfg),
+                        bars_1h=c_bars,
+                        daily=c_daily,
+                        today_5m=c_todays,
+                        earnings=earnings.get(d.symbol),
+                        previous=previous_decision_v4(
+                            session,
+                            symbol=d.symbol,
+                            day_ny=scheduled,
+                            strategy_id=strategy.id,
+                            before=scheduled,
+                        ),
+                        names=symbol_names(cfg),
+                        calendar=self.calendar,
+                        config=cfg,
+                        cycle_time_ny=scheduled,
+                    )
+                elif spec.is_v3:
                     v2_cand = build_v3_fields(
                         context="candidate",
                         base=snap_json,
@@ -1340,6 +1525,29 @@ class ShadowRunner:
                     session.flush()
                     sr.decisions += 1
                     continue
+                if spec.is_v4 and v4_config(cfg).checks_gate:
+                    gate_detail = _checks_gate_detail(v2_cand.fields)
+                    if gate_detail is not None:
+                        row = self._row(
+                            strategy, cycle, d, "candidate",
+                            final_action="no_call",
+                            no_call_reason="checks",
+                            rules=rules,
+                        )
+                        row.levels = {"levels": v2_cand.fields.get("levels")}
+                        row.options = v2_cand.options_column
+                        row.options_version = v2_cand.options_column.get(
+                            "options_version"
+                        )
+                        row.validation_result = {
+                            "error": gate_detail,
+                            "final_action": "no_call",
+                            "note": f"No call — {gate_detail}",
+                        }
+                        session.add(row)
+                        session.flush()
+                        sr.decisions += 1
+                        continue
                 first = options[0]
                 limit0 = cents(price * (1 + offset / 100))
                 sizing0 = position_size(

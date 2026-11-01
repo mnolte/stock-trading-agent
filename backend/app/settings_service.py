@@ -86,6 +86,7 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "briefing_enabled": ("bool", None, None),
         "monthly_cost_cap_usd": ("number", 0, 100),
         "models": ("review_models", None, None),
+        "prompts": ("review_prompts", None, None),
     },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
@@ -180,6 +181,9 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "models.weekly"): "Weekly review model",
     ("reviews", "models.briefing"): "Daily briefing model",
     ("reviews", "models.verdict"): "Verdict model",
+    ("reviews", "prompts.weekly"): "Weekly review prompt",
+    ("reviews", "prompts.briefing"): "Daily briefing prompt",
+    ("reviews", "prompts.verdict"): "Verdict prompt",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("notifications", "repeat_limit_minutes"): "Repeat limit",
@@ -400,6 +404,47 @@ async def validate_settings(
                             raise SettingsError(
                                 [f"{task_labels[task]}: must not be empty"]
                             )
+                        out[key][task] = text
+                elif kind == "review_prompts":
+                    # Each review task accepts only the prompt versions its
+                    # contract knows, and only if the file loads
+                    # (docs/SPEC.md, Settings — Reviews; PR 34).
+                    if not isinstance(value, dict):
+                        raise SettingsError(
+                            ["Review prompts: expected weekly/briefing/verdict"]
+                        )
+                    from app.llm.models import REVIEW_TASKS
+                    from app.reviews.service import ReviewService
+
+                    task_labels = {
+                        "weekly": "Weekly review prompt",
+                        "briefing": "Daily briefing prompt",
+                        "verdict": "Verdict prompt",
+                    }
+                    out[key] = {}
+                    for task, version in value.items():
+                        if task not in REVIEW_TASKS:
+                            raise SettingsError(
+                                [f"reviews.prompts.{task}: unknown review task"]
+                            )
+                        text = str(version).strip()
+                        if (
+                            not text
+                            or text
+                            not in ReviewService._REVIEW_CONTRACTS.get(task, set())
+                        ):
+                            raise SettingsError(
+                                [f"unknown_prompt_version: {text}"]
+                            )
+                        try:
+                            load_prompt(text)
+                        except (OSError, PromptError) as exc:
+                            raise SettingsError(
+                                [
+                                    f"{task_labels[task]}: prompt {text!r} "
+                                    "does not exist"
+                                ]
+                            ) from exc
                         out[key][task] = text
                 elif kind == "quiet_hours":
                     out[key] = _clean_quiet_hours(value)

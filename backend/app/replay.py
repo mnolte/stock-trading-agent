@@ -52,6 +52,7 @@ from app.decide.output import (
     validate_model_output,
     validate_model_output_v2,
     validate_model_output_v3,
+    validate_model_output_v4,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.v2inputs import (
@@ -65,6 +66,13 @@ from app.decide.v3 import (
     build_v3_fields,
     stop_basis_info,
     v3_send_snapshot,
+)
+from app.decide.v4 import (
+    build_v4_fields,
+    checks_at_entry,
+    previous_decision_v4,
+    symbol_names,
+    v4_send_snapshot,
 )
 from app.llm.clients import make_model_clients
 from app.llm.models import model_provider
@@ -444,6 +452,8 @@ async def replay(
         held3: HeldV3 | None = None
         earnings3: tuple[date, str] | None = None
         stored_first_touch: str | None = None
+        prev4 = None
+        entry_checks4: dict[str, str] | None = None
         if spec.is_v3:
             with sf() as qsession:
                 earnings3 = next_earnings(
@@ -494,8 +504,42 @@ async def replay(
                         if entry_dec is not None
                         else (),
                     )
+                    entry_checks4 = checks_at_entry(entry_dec)
+                if spec.is_v4:
+                    prev4 = previous_decision_v4(
+                        qsession,
+                        symbol=symbol,
+                        day_ny=scheduled.replace(tzinfo=UTC).astimezone(NY_TZ),
+                        before=scheduled,
+                    )
         if status != NOT_REPLAYABLE:
-            if spec.is_v3:
+            if spec.is_v4:
+                from app.shadows.runner import (
+                    indicators_from_snapshot,
+                    regime_from_snapshot,
+                )
+
+                v2 = build_v4_fields(
+                    context=decision.context,
+                    base=snap,
+                    price=price,
+                    reference=reference,
+                    atr_1h=atr_1h,
+                    indicators=indicators_from_snapshot(symbol, snap),
+                    regime=regime_from_snapshot(snap, config),
+                    bars_1h=bars_1h,
+                    daily=daily,
+                    today_5m=todays,
+                    earnings=earnings3,
+                    held=held3,
+                    previous=prev4,
+                    entry_checks=entry_checks4,
+                    names=symbol_names(config),
+                    calendar=sessions_provider,
+                    config=config,
+                    cycle_time_ny=scheduled.replace(tzinfo=UTC),
+                )
+            elif spec.is_v3:
                 from app.shadows.runner import (
                     indicators_from_snapshot,
                     regime_from_snapshot,
@@ -557,7 +601,12 @@ async def replay(
             response = await client.complete(
                 system=prompt.text,
                 user=json.dumps(
-                    v3_send_snapshot(snap) if spec.is_v3 else snap, indent=2
+                    v4_send_snapshot(snap, config)
+                    if spec.is_v4
+                    else v3_send_snapshot(snap)
+                    if spec.is_v3
+                    else snap,
+                    indent=2,
                 ),
                 schema=spec.json_schema,
                 model=use_model,
@@ -568,8 +617,29 @@ async def replay(
             cost = token_cost(response, config, model=use_model)
             if cost is not None:
                 total_cost += cost
-            if spec.is_v3:
-                validation: ValidationResult = validate_model_output_v3(
+            validation: ValidationResult
+            if spec.is_v4:
+                validation = validate_model_output_v4(
+                    response.raw,
+                    symbol=symbol,
+                    context=decision.context,
+                    snapshot=snap,
+                    atr_1h=atr_1h,
+                    current_stop=(
+                        held3.current_stop if held3 is not None
+                        else held.current_stop if held else None
+                    ),
+                    call_error=response.error,
+                    config=config,
+                )
+                _flags = getattr(validation.output, "data_flags", None) or []
+                for flag in _flags:
+                    logger.warning(
+                        "model.data_flag %s: model flagged a data conflict (%s)",
+                        symbol, flag,
+                    )
+            elif spec.is_v3:
+                validation = validate_model_output_v3(
                     response.raw,
                     symbol=symbol,
                     context=decision.context,
