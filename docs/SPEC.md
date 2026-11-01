@@ -515,6 +515,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 31. **Exit fills and reconciliation.** The trade-updates handler closes a position row when a fill brings it to zero, with the exit reason and fill; reconciliation explains a flat position from Alpaca's filled orders before calling it a mismatch (`closed_while_offline`); every real mismatch records an event, logs CRITICAL, shows a banner and blocks entries until acknowledged; ruff `DTZ` rules for timezone-aware datetimes. *Done when:* a stop fill closes its position from the stream with no reconciliation event; a stop that filled while the app was down closes at the next start as `closed_while_offline` without a banner; a flat position with no explaining fill gives a CRITICAL mismatch with a banner and blocked entries until acknowledged; and `make lint` fails on a naive `datetime`.
 32. **Review attribution.** From the model-call analysis of 30 October: verdict facts with the model's action, code's change and its reason, execution, the checks at decision time and option outcomes (`outcomes.option_touches`); draft verdict labels by code from the outcome table; `prompts/verdict.v2.md` writing the reason and a thesis check; confirmed verdicts counted per model call; `prompts/weekly.v2.md` with the sample and evidence, and suggestions only from 10 closed trades in the run; the briefing status line shown once; known prompt versions only (`unknown_prompt_version`). *Done when:* a model enter blocked for reward to risk gets a verdict on the enter with "Code blocked: reward to risk 1.4, min 1.5" and is not counted as a model skip; a skip whose option A touched its target first is drafted bad call by code; an enter whose thesis says "daily trend up" with the daily trend mixed gets `contradicts`; a weekly review with 1 closed trade in the run has no suggestion; a briefing shows its status line once; and a strategy set to `decision.v4` is refused at save and at startup.
 33. **Entry selection.** `selection.mode` (`rank` default, `expected_profit`), `confidence_weight` and `last_slot_min_ev_r` as settings and strategy overrides; for `expected_profit`: pre-score call order, collect-then-choose, the exact best set within slots, sector cap, open risk, cash and orders per cycle, submit in expected-profit order with the next-best fallback, `not_selected` for the rest; selection stored per decision and cycle; the drawer block; `make replay-selection` comparing both modes on stored cycles. Gates, sizing and orders unchanged. *Done when:* with `rank` every existing cycle test and replay is byte-for-byte unchanged; the XOM, MSFT, AMZN example of the design with 2 free slots chooses XOM and MSFT ($41.08) where rank order chooses AMZN and MSFT ($27.42); a sector-cap case picks the best set that fits; a chosen entry failing the fresh quote is replaced by the next best that fits; an enter with expected R ≤ 0 is never chosen; supervised mode queues only the chosen set; a shadow with `expected_profit` runs next to live; and the replay report lists every cycle where the modes differ.
+34. **Decision v4.** From the analysis of 31 October: snapshot v4 (`previous_decision` with code-computed `since`, headlines with `about_symbol` and `new`, capped headlines and levels, `stop_group` on options, `checks_at_entry`, `thesis_holds`, time held, session minutes left); `prompts/decision.v4.md` with confidence defined for every action and `best_option_id`, conflicts with `outweighed_by`, `what_changed`, news effects, path and exit rules; code checks for the flip-flop guard, confidence sanity, path claims, unresolved conflicts and the claim-check fix; the `checks_gate` strategy override; shadow input snapshots stored; `make eval-decision` with `backend/eval/decision_v4.json`; the v4 drawers. v1–v3 untouched. *Done when:* the TSLA case of the design becomes `skip` · `flip_flop` while a skip → enter after a new headline about the symbol passes; a held PG answer of 0.85 at neutral 0.15 is stored with `confidence_outlier`; IBM call 1734's conflict "levels L2 and L1 in the way" no longer fails the claim check; a skip carries a valid `best_option_id`; `thesis_holds` is false for a position whose 1h trend and momentum turned against it; the eval runs v3 and v4 on the same calls and reports per category; and a v4 shadow runs next to live in simulated mode.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1587,6 +1588,142 @@ When more entries pass than there are free slots, today the first ones in rank o
 Then a shadow with `selection.mode: expected_profit` runs next to live. Marc switches live when the shadow and the replay agree.
 
 **Later, not in PR 33:** fitting `confidence_weight` from the confidence calibration once Readiness has 50 filled entries; replacing a held position with a better candidate (no: more trades and costs, on a confidence that isn't calibrated).
+
+## Decision v4: calibrated confidence, memory and the entry thesis
+
+The analysis of 31 October (`docs/analysis/2026-10-31-decision-v4-candidates.md`: 1,055 called decisions, v1 to v3, 19–30 October) found that v3 fixed the false "locks in profit" claims and the loose daily-trend claims. These problems remain:
+
+- **Confidence is not a probability.**
+  - Enters sit at 0.6–0.7 whatever the setup.
+  - On a skip the number means nothing: gpt-4.1-mini answers 0.0, gpt-4o-mini 0.4. The skips at 0.0 had the most options that reached their target first (34%).
+  - Held confidence sits about 0.3 above `neutral_probability`, up to 0.85 on a −0.61R position where the neutral probability was 0.15.
+  - Entry selection (PR 33) turns confidence into money, so this matters more now.
+- **Flips without a reason.**
+  - 11 skip↔enter flips between consecutive cycles, and about 28 reversals in a session after moves of 0.3–0.5%.
+  - The model doesn't see its own previous answer.
+- **Conflicts listed, then ignored.**
+  - Entries with their own listed conflicts and no word on why they don't count.
+  - Held decisions under v3 list none, even with adverse checks.
+- **"Clear path" into nearby levels:** it still occurs under v3.
+- **No exits.** 233 held calls, 0 exits. The model re-asserts the entry thesis instead of checking it, because it can't see what changed since entry.
+- **News.** About 35–40% of headlines aren't about the symbol. Citations carry no effect, and the same old headline is cited cycle after cycle.
+- **Input noise.** Levels far out of reach and long headline lists make up most of the tokens.
+
+Decision v4 keeps everything v3 does (options, checks, room filter, break-even machinery, claim checks, conflicts first) and adds the following. Built as PR 34; like v2 and v3 it reaches live only through the eval set, a shadow and Marc's decision.
+
+**Unchanged on purpose.**
+- The trend rules of v3 stay. The analysis found trend and momentum checks going against target-first in one rally week, which is too little evidence to drop them or to enforce them harder.
+- Instead, a strategy override `checks_gate` lets a shadow test the enforced version (see Code checks).
+- The room filter stays at 1.0 ATR.
+
+**Snapshot v4** (decision.v4 strategies only; v1–v3 snapshots unchanged):
+- **`previous_decision`**: the model's last decision on this symbol in the current session, or null.
+  - It holds the cycle time, action, option id, `best_option_id`, confidence, conflicts and price.
+  - It also holds `since`, the facts code computed: the price move in ATR, which checks changed (name: old → new), headline ids that are new since then, and levels that are new within 1 ATR.
+- **Headlines:**
+  - each headline gains `about_symbol`, true when its title names the company or its ticker (the name from the pool or config);
+  - at most `decision.v4.max_headlines` (12), the most recent first;
+  - each gains `new`, true when it wasn't in the previous decision's input.
+- **Levels:** only levels within `decision.v4.max_level_distance_atr` (4) of the entry limit are sent, plus any level used by an option or `position.stop_level`. The stored provenance keeps all of them.
+- **Options:** each gains `stop_group` (S1, S2, …). Options with the same stop share a group, so the choice within a group is only the target distance.
+- **Position** (held) gains:
+  - `checks_at_entry`: `trend_1h`, `trend_daily`, `regime_trend` and `momentum` at the entry decision. Taken from its stored v3 or v4 checks, or computed with the v3 rules from its stored input for older positions.
+  - `thesis_holds`: false when 2 or more of those four turned adverse. Adverse means up → mixed or down, mixed → down, and for momentum strong → mixed or weak, mixed → weak. It is a fact for the model; it never forces an exit.
+  - `held_session_hours` (session time since the entry fill, regular hours only) and `sessions_held`.
+- **`session`**: `minutes_left` until the close (early closes included).
+
+**Prompt v4** (`prompts/decision.v4.md`), changes against v3:
+- **Confidence for every action:**
+  - `enter`: the chosen option, as v3;
+  - `skip`: the best offered option's chance, with `best_option_id`, the option you'd take if you had to;
+  - held: start at `neutral_probability`. More than 0.15 above it needs a named fact from the input; more than 0.30 above it is almost never right.
+- **Resolve every conflict.** Each conflict has an `outweighed_by`: the facts that outweigh it, or null. A candidate with a conflict that nothing outweighs is a skip; a held position with one is a reason to consider exit. Held decisions list conflicts too: every adverse check and `thesis_holds` false.
+- **No path claims near a level:**
+  - never call the path clear, open, easy or manageable while a level in the way is within 1 ATR;
+  - name the level and its distance instead.
+- **What changed:**
+  - when `previous_decision` exists and your action differs from it, `what_changed` names the input facts that changed (from `previous_decision.since`);
+  - when nothing material changed, keep the previous action;
+  - otherwise `what_changed` is null.
+- **News:**
+  - weigh only headlines with `about_symbol` true;
+  - a headline that isn't `new` already counted last time and is not a reason to change;
+  - every cited headline gets its effect.
+- **Exit:** with `thesis_holds` false, say in the thesis why holding is still better, or exit. `session.minutes_left` and the time held matter when the target is far.
+- **Tighten** only when the new stop protects progress made since the last stop move; not every cycle.
+
+**Output schema v4**, all fields required, in this order:
+- `symbol`;
+- `conflicts`: up to 5 of `{text, outweighed_by}`, where `outweighed_by` is a short phrase or null;
+- `data_flags`;
+- `thesis`;
+- `what_changed`: a short phrase or null;
+- `action`;
+- `option_id`;
+- `best_option_id`: an entry option id on a candidate, null when held;
+- `confidence`;
+- `levels_used`;
+- `news_used`: up to 5 of `{id, effect}`, where `effect` is at most 12 words.
+
+For storage, the drawer and verdict facts, `conflicts[].text` takes the place of v3's conflicts. The same strictness as v3; under PR 29 the range checks are stripped from the copy sent to Anthropic and enforced by Pydantic.
+
+**Code checks under v4** (in addition to v3's):
+- **Flip-flop guard.** A candidate `enter` becomes `skip` with reason `flip_flop` (shown as changed by code) when all of these hold:
+  - the previous decision on the symbol in this session was a model `skip`;
+  - the price moved less than `decision.v4.flip_min_move_atr` (0.5) ATR since then;
+  - no check changed;
+  - no headline is both `new` and `about_symbol`;
+  - no new level appeared within 1 ATR.
+
+  What the model writes in `what_changed` doesn't override these facts. An enter → skip flip is never blocked; skipping is always allowed.
+- **Confidence sanity** (warning `confidence_outlier`, never a gate):
+  - confidence more than `decision.v4.max_confidence_above_anchor` (0.30) above the anchor;
+  - the anchor is the chosen option's `breakeven_confidence` (enter), the best option's (skip), or `neutral_probability` (held);
+  - stored, counted on Readiness and Insights, and shown in the drawer.
+- **Path claim** (warning `unsupported_claim`, kind `path`): a sentence with "clear", "open", "easy" or "manageable" together with "path", "way" or "room", while the chosen option (or held: `levels_to_target`) has a level within 1 ATR.
+- **Unresolved conflict** (warning `unresolved_conflict`): an enter with a conflict whose `outweighed_by` is null. The decision stands; it is counted.
+- **Best option:** on a skip, `best_option_id` must be an offered option, otherwise the answer is invalid as today. Held answers must have it null.
+- **Claim check fix:** only a sentence that attributes a level to the stop or the target is checked against the stop's or target's level. A conflict such as "levels L2 and L1 in the way" is not a claim (bug B1 of 31 October).
+- **`checks_gate`** (strategy override, default off): when on, a candidate with `trend_1h` not up, `regime_trend` not up, or `trend_daily` down gets no model call, reason `no_call` · `checks`. Used by a shadow to test the code-enforced checklist against the model's judgement.
+
+**Storage.**
+- Each decision stores `confidence_anchor` (the break-even or neutral probability it was judged against), `best_option_id`, `what_changed`, the warnings, and `previous_decision.since`.
+- The skip-side confidence and the best option's touch are kept in their own calibration series. They never count toward the entry calibration on Readiness and Insights until Marc turns that on.
+- Shadows store their full input snapshot (bug B2 of 31 October).
+- No schema migration: everything lives in the existing JSON columns, except where PR 34 finds a column missing; that needs a new Alembic revision.
+
+**Eval set.**
+- `backend/eval/decision_v4.json` lists the stored calls of the 31 October analysis (about 65), each with its category and the properties a good answer must have.
+- `make eval-decision PROMPTS=decision.v3,decision.v4 MODEL=…` rebuilds both inputs from the stored data (no refetch), calls the model, runs the production validation plus the properties, and reports:
+  - the pass rate per category and prompt;
+  - every call v3 passed and v4 failed;
+  - confidence against the stored option touches;
+  - tokens, cost and latency.
+- Cost counts toward the replay cap.
+
+**Path to live. Nothing switches automatically.**
+1. The eval set: v4 must pass at least as many properties as v3 in every category, with no new invalid answers.
+2. `make replay PROMPT=decision.v4` on the current run's snapshots.
+3. A shadow "E · decision.v4" for at least 10 sessions and 20 entry proposals, next to live. Optional: a second shadow with `checks_gate` on, for the checklist question.
+4. Marc decides with Strategies, Insights, the replay and the eval report.
+
+**GUI.**
+- The decision drawer for a v4 candidate (`design/screens/DecisionV4.dc.html`):
+  - Previous decision with what moved since;
+  - checks compared with the previous cycle;
+  - stop groups in the options;
+  - each conflict with what outweighs it;
+  - "What changed (model)" and, when it fired, the flip-flop guard's finding;
+  - news marked about the symbol or not, with the effect of each cited headline;
+  - the v4 gates.
+- For a held position (`design/screens/DecisionV4Held.dc.html`):
+  - "Does the entry thesis still hold?" (checks at entry against now, `thesis_holds`);
+  - time held and session time left;
+  - confidence against the neutral probability.
+- A skip shows "skip · best A · 0.38".
+- The feed shows `flip_flop` and `checks` like other code blocks.
+
+**Not changed.** The v1–v3 prompts, snapshots and options; live's prompt and model; every risk gate and threshold; the rules pre-filter; entry selection (it uses v4's entry confidence like any other). The live model stays gpt-4.1-mini. A claude-haiku-5-5 shadow is added once its key is set.
 
 ## Out of scope and later versions
 
