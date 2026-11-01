@@ -267,6 +267,57 @@ export interface PositionRow {
   stop_distance_label?: string;
   earnings_date?: string | null;
   opened_today?: boolean;
+  /** Positions at a glance (PR 35). */
+  atr_1h?: string | null;
+  levels_to_target?: number | null;
+  latest_decision?: {
+    id: number;
+    action: string;
+    confidence: number | null;
+    time: string;
+  } | null;
+  scheduled_exit?: string | null;
+  to_stop_pct?: number | null;
+  to_stop_atr?: number | null;
+  to_target_pct?: number | null;
+  to_target_atr?: number | null;
+  if_stop_usd?: number | null;
+  if_stop_r?: number | null;
+  locked_in?: boolean;
+  legs_problem?: boolean;
+  legs_summary?: string;
+}
+
+export interface PositionsTotals {
+  unrealized_usd: number | null;
+  if_stops_usd: number | null;
+  if_stops_pct_equity: number | null;
+  open_risk_usd: number | null;
+  open_risk_pct: number | null;
+  open_risk_cap_pct: number | null;
+  closest: { symbol: string; atr: number } | null;
+}
+
+export interface AttentionItem {
+  kind: 'banner_ack' | 'episode' | 'approval' | 'channel' | 'errors' | 'verdicts' | 'settings';
+  severity: 'critical' | 'warning' | 'info';
+  text: string;
+  detail: string;
+  action_label: string;
+  link: string;
+  created_at: string | null;
+}
+
+export interface AttentionResponse {
+  items: AttentionItem[];
+  count: number;
+  health: {
+    alpaca: { ok: boolean; at: string | null };
+    stream: string;
+    clock: { offset_ms: number | null; level: string };
+    keys: { status: string; detail: string };
+    email: string;
+  };
 }
 
 export interface AccountSummary {
@@ -299,6 +350,8 @@ export interface PositionsResponse {
   open: PositionRow[];
   closed_today: PositionRow[];
   today: PositionsToday;
+  totals?: PositionsTotals;
+  near_stop_atr?: string;
   account?: AccountSummary;
   reconciliation?: ReconciliationSummary;
   max_open_positions?: number;
