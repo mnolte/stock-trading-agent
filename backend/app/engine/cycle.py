@@ -30,6 +30,13 @@ from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
 from app.decide.v3 import build_v3_fields, held_v3
+from app.decide.v4 import (
+    build_v4_fields,
+    checks_at_entry,
+    previous_decision_v4,
+    symbol_names,
+    v4_config,
+)
 from app.engine.executor import Executor
 from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
@@ -847,7 +854,49 @@ class CycleRunner:
         snapshot_json["last_bar_close"] = str(bar.close) if bar else None
         snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
         v2: V2Build | None = None
-        if self.decide.spec.is_v3:
+        if self.decide.spec.is_v4:
+            entry_decision = (
+                session.get(Decision, position.entry_decision_id)
+                if context == "held"
+                and position is not None
+                and position.entry_decision_id is not None
+                else None
+            )
+            v2 = build_v4_fields(
+                context=context,
+                base=snapshot_json,
+                price=price if price is not None else item.price,
+                reference=reference,
+                atr_1h=item.snapshot.atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                earnings=earnings.get(item.symbol),
+                held=(
+                    held_v3(position, entry_decision, earnings.get(item.symbol))
+                    if context == "held" and position is not None
+                    else None
+                ),
+                previous=previous_decision_v4(
+                    session,
+                    symbol=item.symbol,
+                    day_ny=scheduled_ny,
+                    before=scheduled_ny,
+                ),
+                entry_checks=(
+                    checks_at_entry(entry_decision)
+                    if context == "held"
+                    else None
+                ),
+                names=symbol_names(self.config),
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
+            )
+            snapshot_json.update(v2.fields)
+        elif self.decide.spec.is_v3:
             entry_decision = (
                 session.get(Decision, position.entry_decision_id)
                 if context == "held"
@@ -899,7 +948,44 @@ class CycleRunner:
                 ),
             )
             snapshot_json.update(v2.fields)
+        checks_blocked: str | None = None
         if (
+            context == "candidate"
+            and self.decide.spec.is_v4
+            and v2 is not None
+            and v2.fields["options"]
+            and v4_config(self.config).checks_gate
+        ):
+            snap_checks = v2.fields.get("checks") or {}
+            failing = [
+                name
+                for name, bad in (
+                    ("trend_1h", snap_checks.get("trend_1h") != "up"),
+                    ("regime_trend", snap_checks.get("regime_trend") != "up"),
+                    ("trend_daily", snap_checks.get("trend_daily") == "down"),
+                )
+                if bad
+            ]
+            if failing:
+                checks_blocked = (
+                    "checks_gate: "
+                    + ", ".join(
+                        f"{name}={snap_checks.get(name)}" for name in failing
+                    )
+                )
+        if checks_blocked is not None:
+            decision = self.decide.record_no_call(
+                session,
+                cycle_id=cycle_id,
+                symbol=item.symbol,
+                context=context,
+                snapshot_json=snapshot_json,
+                rules=item.rules,
+                reason="checks",
+                detail=checks_blocked,
+                v2=v2,
+            )
+        elif (
             context == "candidate"
             and v2 is not None
             and not v2.fields["options"]
