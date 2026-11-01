@@ -30,14 +30,17 @@ from app.decide.output import (
     ModelOutput,
     ModelOutputV2,
     ModelOutputV3,
+    ModelOutputV4,
     ValidationResult,
     validate_model_output,
     validate_model_output_v2,
     validate_model_output_v3,
+    validate_model_output_v4,
 )
 from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
 from app.decide.v2inputs import V2Build
 from app.decide.v3 import v3_send_snapshot
+from app.decide.v4 import v4_send_snapshot
 from app.engine.state import record_event
 from app.inspector.record import build_llm_call
 from app.logging_config import ev
@@ -73,7 +76,7 @@ def _options_column(v2: V2Build | None) -> dict[str, Any] | None:
 
 
 def model_output_json(
-    output: ModelOutput | ModelOutputV2 | ModelOutputV3
+    output: ModelOutput | ModelOutputV2 | ModelOutputV3 | ModelOutputV4
 ) -> dict[str, Any]:
     return cast(dict[str, Any], _jsonable(output.model_dump()))
 
@@ -101,6 +104,16 @@ def validation_result_json(result: ValidationResult) -> dict[str, Any]:
         "reason": result.reason,
         "code_written": result.code_written,
         "note": result.note,
+        **(
+            {"warnings": result.warnings}
+            if result.warnings
+            else {}
+        ),
+        **(
+            {"confidence_anchor": result.confidence_anchor}
+            if result.confidence_anchor is not None
+            else {}
+        ),
         "checks": [
             {
                 "name": c.name,
@@ -185,7 +198,9 @@ class DecisionService:
         """Call the model, validate the output and store the decision row."""
         user = json.dumps(
             (
-                v3_send_snapshot(snapshot_json)
+                v4_send_snapshot(snapshot_json, self.config)
+                if self._spec.is_v4
+                else v3_send_snapshot(snapshot_json)
                 if self._spec.is_v3
                 else snapshot_json
             ),
@@ -276,7 +291,18 @@ class DecisionService:
                     tokens_in=response.tokens_in,
                     tokens_out=response.tokens_out,
                 )
-        if self._spec.is_v3:
+        if self._spec.is_v4:
+            validation = validate_model_output_v4(
+                response.raw,
+                symbol=symbol,
+                context=context,
+                snapshot=snapshot_json,
+                atr_1h=atr_1h,
+                current_stop=current_stop,
+                call_error=response.error,
+                config=self.config,
+            )
+        elif self._spec.is_v3:
             validation = validate_model_output_v3(
                 response.raw,
                 symbol=symbol,
@@ -324,6 +350,9 @@ class DecisionService:
             list(validation.output.data_flags)
             if isinstance(validation.output, ModelOutputV3)
             else []
+        )
+        flags = list(
+            getattr(validation.output, "data_flags", None) or flags
         )
         for flag in flags:
             ev(
@@ -496,7 +525,12 @@ class DecisionService:
                     unsupported_claim=(
                         validation.explanation is not None
                         and not validation.explanation.passed
+                    )
+                    or (
+                        validation.claims is not None
+                        and not validation.claims.passed
                     ),
+                    extra_warnings=tuple(validation.warnings),
                     cycle_id=cycle_id,
                     decision_id=decision.id,
                     symbol=symbol,
