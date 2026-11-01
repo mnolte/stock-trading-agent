@@ -57,6 +57,7 @@ export const ACTION_OPTIONS = [
   'hold',
   'tighten_stop',
   'exit',
+  'not_selected',
   'no_call',
 ];
 

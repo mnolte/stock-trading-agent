@@ -824,10 +824,17 @@ def briefing_facts(
 
 
 def verdict_eligible(decision: Decision) -> bool:
-    """Enters and model skips get a draft verdict; rules no_calls never do."""
+    """Enters and model skips get a draft verdict; rules no_calls never
+    do. A model enter code blocked — gates or selection's not_selected —
+    is still judged as an enter (docs/SPEC.md, Reviews — Verdicts,
+    Entry selection)."""
+    if decision.no_call_reason is not None:
+        return False
+    if decision.final_action in ("enter", "skip"):
+        return True
     return (
-        decision.final_action in ("enter", "skip")
-        and decision.no_call_reason is None
+        decision.final_action == "blocked"
+        and _decision_model_action(decision) == "enter"
     )
 
 

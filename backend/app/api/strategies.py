@@ -24,6 +24,7 @@ from app.settings_service import EDITABLE, LABELS
 from app.shadows.compare import compare, disagreements
 from app.shadows.strategy import (
     OVERRIDE_KEYS,
+    OVERRIDE_SELECTION,
     StrategyError,
     promotion_changes,
     slots_used,
@@ -185,6 +186,18 @@ def strategies(request: Request) -> dict[str, Any]:
                     "check": section == "decision",
                 }
                 for name, (section, key) in OVERRIDE_KEYS.items()
+            ] + [
+                {
+                    "key": name,
+                    "label": LABELS.get(
+                        ("selection", path[-1]), name
+                    ),
+                    "live": config.get(*path),
+                    "min": 0 if name != "selection_mode" else None,
+                    "max": 1 if name == "selection_confidence_weight" else None,
+                    "check": False,
+                }
+                for name, path in OVERRIDE_SELECTION.items()
             ],
         },
     }

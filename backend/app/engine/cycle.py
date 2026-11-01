@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import func, select
@@ -25,6 +25,7 @@ from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position
+from app.decide.output import decision_trade_prices
 from app.decide.service import DecisionService
 from app.decide.snapshot import build_input_snapshot
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
@@ -32,6 +33,7 @@ from app.decide.v3 import build_v3_fields, held_v3
 from app.engine.executor import Executor
 from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
+from app.engine.selection import ScoredEntry, SelectionBudget, choose, score
 from app.engine.state import record_event
 from app.inspector.record import sync_llm_call
 from app.llm.base import ModelResponse
@@ -39,8 +41,16 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, next_earnings
+from app.risk.gates import evaluate_entry_gates
+from app.risk.math import (
+    committed_entries,
+    open_risk,
+    position_size,
+    streak_risk_factor,
+    trade_risk,
+)
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
-from app.signals.service import SignalService
+from app.signals.service import SignalService, SymbolEval
 
 NEWS_WINDOW = timedelta(hours=24)
 # Top-up window for the 5-minute bar cache each cycle.
@@ -573,19 +583,30 @@ class CycleRunner:
         max_calls = int(
             self.config.get("decision", "max_calls_per_cycle", default=10)
         )
+        ep_mode = (
+            str(self.config.get("selection", "mode", default="rank"))
+            == "expected_profit"
+            and self.executor is not None
+        )
+        # The called set decides the news fetch. Rank order walks the
+        # review list; expected_profit decides its call order inside the
+        # selection path and fetches news for exactly those symbols.
         called: list[str] = []
-        for item in reviews:
-            if len(called) >= max_calls:
-                break
-            # Held positions are always reviewed; a stale or suspect
-            # market price only blocks a tighten_stop (docs/SPEC.md,
-            # Entries — Market price).
-            if (
-                item.rules.status == STATUS_HELD
-                or self._price_reason(item.symbol, quotes.get(item.symbol), now) is None
-            ):
-                called.append(item.symbol)
-        news = await self._fetch_news(called, now, report)
+        if not ep_mode:
+            for item in reviews:
+                if len(called) >= max_calls:
+                    break
+                # Held positions are always reviewed; a stale or suspect
+                # market price only blocks a tighten_stop (docs/SPEC.md,
+                # Entries — Market price).
+                if (
+                    item.rules.status == STATUS_HELD
+                    or self._price_reason(item.symbol, quotes.get(item.symbol), now) is None
+                ):
+                    called.append(item.symbol)
+            news = await self._fetch_news(called, now, report)
+        else:
+            news = None
 
         earnings = self._earnings_map(
             session, [item.symbol for item in reviews], now
@@ -666,66 +687,496 @@ class CycleRunner:
         # reads them once every symbol settled (docs/SPEC.md, Decision
         # layer).
         call_responses: list[ModelResponse] = []
-        for i, item in enumerate(reviews):
-            if report.calls >= max_calls:
-                capped_at = i
-                break
-            quote = quotes.get(item.symbol)
-            context = "held" if item.rules.status == STATUS_HELD else "candidate"
-            price_reason = self._price_reason(item.symbol, quote, now)
-            price = (
-                quote.last
-                if quote is not None and price_reason is None
+        if ep_mode:
+            await self._run_expected_profit(
+                session,
+                cycle_id,
+                reviews,
+                quotes,
+                positions,
+                evaluation,
+                earnings,
+                last_cycle,
+                earnings_known,
+                scheduled_ny,
+                now,
+                report,
+                call_responses,
+                max_calls,
+                account,
+            )
+        else:
+            for i, item in enumerate(reviews):
+                if report.calls >= max_calls:
+                    capped_at = i
+                    break
+                quote = quotes.get(item.symbol)
+                decision = await self._decide_item(
+                    session,
+                    cycle_id,
+                    item,
+                    quote,
+                    position=positions.get(item.symbol),
+                    news_map=news,
+                    earnings=earnings,
+                    last_cycle=last_cycle,
+                    evaluation=evaluation,
+                    scheduled_ny=scheduled_ny,
+                    now=now,
+                    report=report,
+                    call_responses=call_responses,
+                )
+                if self.executor is not None:
+                    await self._apply_item(
+                        session,
+                        item,
+                        decision,
+                        positions.get(item.symbol),
+                        quote,
+                        scheduled_ny,
+                        now=now,
+                        account=account,
+                        earnings=earnings,
+                        last_cycle=last_cycle,
+                        earnings_known=earnings_known,
+                    )
+                session.commit()
+                report.decisions.append(decision.id)
+            # Review items past the cap are recorded without a call — the
+            # tail starts where the loop stopped, not at ``max_calls``,
+            # since quote-missing candidates never consumed a call slot.
+            for item in reviews[
+                capped_at if capped_at is not None else len(reviews):
+            ]:
+                decision = self.decide.record_no_call(
+                    session,
+                    cycle_id=cycle_id,
+                    symbol=item.symbol,
+                    context="held" if item.rules.status == STATUS_HELD else "candidate",
+                    snapshot_json=build_input_snapshot(
+                        symbol=item.symbol,
+                        context=(
+                            "held" if item.rules.status == STATUS_HELD else "candidate"
+                        ),
+                        cycle_time_ny=scheduled_ny,
+                        price=None,
+                        regime=evaluation.regime,
+                        snapshot=item.snapshot,
+                        bars_1h=item.bars_1h,
+                        position=positions.get(item.symbol),
+                        news=None,
+                        rank=item.rank,
+                    last_bar=self.market_data.bars_cache.latest(
+                        item.symbol, now - timedelta(minutes=5),
+                    ),
+                    ),
+                    rules=item.rules,
+                    reason="call_cap",
+                    detail="call cap reached",
+                )
+                report.decisions.append(decision.id)
+            session.commit()
+        if self.model_health is not None:
+            self.model_health.settle_cycle(session, call_responses)
+            session.commit()
+        self._notify({"decisions", "watchlist", "header", "banners", "performance"})
+
+    # ------------------------------------------------------------------
+    # per-item pipeline (shared by rank and expected_profit paths)
+
+    async def _decide_item(
+        self,
+        session: Session,
+        cycle_id: int,
+        item: Any,
+        quote: Quote | None,
+        *,
+        position: Position | None,
+        news_map: dict[str, list[NewsItem]] | None,
+        earnings: dict[str, tuple[date, str]],
+        last_cycle: bool,
+        evaluation: Any,
+        scheduled_ny: datetime,
+        now: datetime,
+        report: CycleReport,
+        call_responses: list[ModelResponse],
+    ) -> Decision:
+        """Build the snapshot and options, then either record the code
+        no_call or run the model call — one stored decision either way."""
+        from app.logging_config import ev
+
+        context = "held" if item.rules.status == STATUS_HELD else "candidate"
+        price_reason = self._price_reason(item.symbol, quote, now)
+        price = (
+            quote.last
+            if quote is not None and price_reason is None
+            else None
+        )
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
+        snapshot_json = build_input_snapshot(
+            symbol=item.symbol,
+            context=context,
+            cycle_time_ny=scheduled_ny,
+            price=price,
+            regime=evaluation.regime,
+            snapshot=item.snapshot,
+            bars_1h=item.bars_1h,
+            position=position,
+            news=None if news_map is None else news_map.get(item.symbol),
+            rank=item.rank,
+            last_bar=self.market_data.bars_cache.latest(
+                item.symbol, now - timedelta(minutes=5),
+            ),
+            quote=quote,
+            quote_plausible=(
+                quote.quote_plausible(dev_pct) if quote is not None else False
+            ),
+            news_status=self._news_status.get(item.symbol, "failed"),
+        )
+        bar = self.market_data.bars_cache.latest(item.symbol, now - timedelta(minutes=5))
+        reference = quote.stop_reference(
+            bar.close if bar else None, item.snapshot.atr_1h,
+            entry=context == "candidate",
+            max_deviation_pct=dev_pct,
+        ) if quote else None
+        snapshot_json["stop_reference_price"] = (
+            str(reference) if reference is not None else None
+        )
+        snapshot_json["last_bar_close"] = str(bar.close) if bar else None
+        snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
+        v2: V2Build | None = None
+        if self.decide.spec.is_v3:
+            entry_decision = (
+                session.get(Decision, position.entry_decision_id)
+                if context == "held"
+                and position is not None
+                and position.entry_decision_id is not None
                 else None
             )
-            position = positions.get(item.symbol)
-            dev_pct = Decimal(
-                str(self.config.get("execution", "quote_max_deviation_pct"))
+            v2 = build_v3_fields(
+                context=context,
+                base=snapshot_json,
+                price=price if price is not None else item.price,
+                reference=reference,
+                atr_1h=item.snapshot.atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                earnings=earnings.get(item.symbol),
+                held=(
+                    held_v3(position, entry_decision, earnings.get(item.symbol))
+                    if context == "held" and position is not None
+                    else None
+                ),
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
             )
-            snapshot_json = build_input_snapshot(
+            snapshot_json.update(v2.fields)
+        elif self.decide.spec.uses_options:
+            v2 = build_v2_fields(
+                context=context,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                price=price if price is not None else item.price,
+                reference=reference,
+                atr_1h=item.snapshot.atr_1h,
+                config=self.config,
+                held=(
+                    HeldContext(
+                        entry=position.avg_entry_price,
+                        current_stop=position.current_stop_price,
+                        initial_stop=position.initial_stop,
+                        opened_at=_aware_utc(position.opened_at),
+                    )
+                    if context == "held" and position is not None
+                    else None
+                ),
+            )
+            snapshot_json.update(v2.fields)
+        if (
+            context == "candidate"
+            and v2 is not None
+            and not v2.fields["options"]
+        ):
+            # No code-built option survived the band and R/R rules —
+            # the model is never asked (docs/SPEC.md, Decision v2).
+            ev(logger, logging.DEBUG, "cycle.no_options",
+               f"{item.symbol}: {v2.reason}", symbol=item.symbol)
+            decision = self.decide.record_no_call(
+                session,
+                cycle_id=cycle_id,
                 symbol=item.symbol,
                 context=context,
-                cycle_time_ny=scheduled_ny,
+                snapshot_json=snapshot_json,
+                rules=item.rules,
+                reason="no_options",
+                detail=v2.reason or "no option met the rules",
+                v2=v2,
+            )
+        elif price_reason is not None and context == "candidate":
+            # An unusable market price means no new entries this
+            # cycle — and no model call, so the cap slot stays free
+            # for the next one. Held positions are always reviewed.
+            ev(logger, logging.WARNING, "cycle.price_blocked",
+               f"{item.symbol}: {price_reason}", symbol=item.symbol)
+            decision = self.decide.record_no_call(
+                session,
+                cycle_id=cycle_id,
+                symbol=item.symbol,
+                context=context,
+                snapshot_json=snapshot_json,
+                rules=item.rules,
+                reason=price_reason,
+                detail=price_reason,
+            )
+        else:
+            report.calls += 1
+            decision = await self.decide.decide(
+                session,
+                cycle_id=cycle_id,
+                symbol=item.symbol,
+                context=context,
+                snapshot_json=snapshot_json,
+                rules=item.rules,
                 price=price,
+                atr_1h=item.snapshot.atr_1h,
+                current_stop=(
+                    position.current_stop_price if position else None
+                ),
+                v2=v2,
+                on_response=(
+                    call_responses.append
+                    if self.model_health is not None
+                    else None
+                ),
+            )
+        return decision
+
+    async def _apply_item(
+        self,
+        session: Session,
+        item: Any,
+        decision: Decision,
+        position: Position | None,
+        quote: Quote | None,
+        scheduled_ny: datetime,
+        *,
+        now: datetime,
+        account: Any,
+        earnings: dict[str, tuple[date, str]],
+        last_cycle: bool,
+        earnings_known: bool,
+    ) -> None:
+        """Gates, sizing and the order for one stored decision."""
+        assert self.executor is not None  # noqa: S101 - caller checks
+        # Hard rule 13: commit the stored decision before the
+        # executor's quote and order calls await the broker.
+        session.commit()
+        force_exit = (
+            "earnings_exit"
+            if (
+                position is not None
+                and self._earnings_exit_due(position, earnings, now, last_cycle)
+            )
+            else None
+        )
+        await self.executor.apply_decision(
+            session,
+            decision,
+            item,
+            position,
+            quote,
+            scheduled_ny,
+            account=account,
+            earnings_known=earnings_known,
+            force_exit_reason=force_exit,
+        )
+        # Fold gate changes to final_action into the call row — same
+        # transaction as the decision's own update.
+        sync_llm_call(session, decision)
+
+    # ------------------------------------------------------------------
+    # expected_profit selection (docs/SPEC.md, Entry selection)
+
+    def _candidate_limit(self, quote: Quote) -> Decimal:
+        offset = Decimal(
+            str(self.config.get("execution", "entry_limit_offset_pct", default=0.05))
+        )
+        return (quote.last * (1 + offset / 100)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    def _sizing_state(
+        self, session: Session, account: Any, earnings_known: bool
+    ) -> tuple[Any, Decimal, Decimal, Decimal, dict[str, int], Decimal]:
+        """(ctx, cash left, open risk in use, risk factor, sector counts,
+        open-risk cap) after the held phase — the budget's starting
+        state for dry runs and the set search."""
+        assert self.executor is not None  # noqa: S101 - ep mode requires it
+        ctx = self.executor._gate_context(  # noqa: SLF001
+            session, account, "", None, earnings_known
+        )
+        spent = committed_entries(
+            ctx.working_entries, (ctx.market_prices or {}).get
+        )
+        used = (
+            open_risk(
+                (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
+                for p in ctx.open_positions
+            )
+            + spent.risk
+        )
+        cash = (
+            max(Decimal(0), ctx.cash - spent.cash)
+            if self.config.get("risk", "cash_only", default=True)
+            else ctx.equity
+        )
+        sector_map = ctx.sectors or {}
+        counts: dict[str, int] = {}
+        for symbol in [p.symbol for p in ctx.open_positions] + [
+            e.symbol for e in ctx.working_entries
+        ]:
+            sector = sector_map.get(symbol)
+            if sector is not None:
+                counts[sector] = counts.get(sector, 0) + 1
+        cap = ctx.equity * Decimal(
+            str(self.config.get("risk", "max_open_risk_pct", default=2.5))
+        ) / 100
+        factor = streak_risk_factor(ctx.losing_streak, self.config)
+        return ctx, cash, used, factor, counts, cap
+
+    async def _run_expected_profit(
+        self,
+        session: Session,
+        cycle_id: int,
+        reviews: list[Any],
+        quotes: dict[str, Quote],
+        positions: dict[str, Position],
+        evaluation: Any,
+        earnings: dict[str, tuple[date, str]],
+        last_cycle: bool,
+        earnings_known: bool,
+        scheduled_ny: datetime,
+        now: datetime,
+        report: CycleReport,
+        call_responses: list[ModelResponse],
+        max_calls: int,
+        account: Any,
+    ) -> None:
+        """Held first, then pre-score, collect, score, choose, submit.
+
+        docs/SPEC.md, Entry selection: model calls go to candidates in
+        pre-score order (dollars at risk of the first option's size);
+        every candidate answer is collected before any order is sent;
+        the winning set is submitted in expected-profit order through
+        the unchanged gates and fresh-quote check.
+        """
+        held_items = [
+            item for item in reviews if item.rules.status == STATUS_HELD
+        ]
+        cand_items = [
+            item for item in reviews if item.rules.status != STATUS_HELD
+        ]
+
+        # 1. Held positions first, as in rank mode — with their news.
+        news_held = await self._fetch_news(
+            [it.symbol for it in held_items][:max_calls], now, report
+        )
+        capped_held: list[SymbolEval] = []
+        for item in held_items:
+            if report.calls >= max_calls:
+                capped_held.append(item)
+                continue
+            quote = quotes.get(item.symbol)
+            decision = await self._decide_item(
+                session,
+                cycle_id,
+                item,
+                quote,
+                position=positions.get(item.symbol),
+                news_map=news_held,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                report=report,
+                call_responses=call_responses,
+            )
+            await self._apply_item(
+                session,
+                item,
+                decision,
+                positions.get(item.symbol),
+                quote,
+                scheduled_ny,
+                now=now,
+                account=account,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                earnings_known=earnings_known,
+            )
+            session.commit()
+            report.decisions.append(decision.id)
+
+        # 2. Pre-score: build the options and size option A — the
+        # pre-score is the dollars at risk of that size; v1 candidates
+        # have no options and keep rank order.
+        ctx, cash_left, open_risk_used, risk_factor, sector_counts, _cap = (
+            self._sizing_state(session, account, earnings_known)
+        )
+        assert self.executor is not None  # noqa: S101 - ep mode requires it
+        prepared: list[dict[str, Any]] = []
+        for item in cand_items:
+            quote = quotes.get(item.symbol)
+            if quote is None or self._price_reason(
+                item.symbol, quote, now
+            ) is not None:
+                continue
+            if not self.decide.spec.uses_options:
+                prepared.append({"item": item, "quote": quote, "pre": None})
+                continue
+            # The options the call will offer, built on a news-less
+            # snapshot: identical to what the call rebuilds (options do
+            # not depend on news).
+            snap = build_input_snapshot(
+                symbol=item.symbol,
+                context="candidate",
+                cycle_time_ny=scheduled_ny,
+                price=quote.last,
                 regime=evaluation.regime,
                 snapshot=item.snapshot,
                 bars_1h=item.bars_1h,
-                position=position,
-                news=None if news is None else news.get(item.symbol),
+                position=None,
+                news=None,
                 rank=item.rank,
                 last_bar=self.market_data.bars_cache.latest(
                     item.symbol, now - timedelta(minutes=5),
                 ),
-                quote=quote,
-                quote_plausible=(
-                    quote.quote_plausible(dev_pct) if quote is not None else False
-                ),
-                news_status=self._news_status.get(item.symbol, "failed"),
             )
-            bar = self.market_data.bars_cache.latest(item.symbol, now - timedelta(minutes=5))
+            bar = self.market_data.bars_cache.latest(
+                item.symbol, now - timedelta(minutes=5)
+            )
+            dev_pct = Decimal(
+                str(self.config.get("execution", "quote_max_deviation_pct"))
+            )
             reference = quote.stop_reference(
                 bar.close if bar else None, item.snapshot.atr_1h,
-                entry=context == "candidate",
+                entry=True,
                 max_deviation_pct=dev_pct,
-            ) if quote else None
-            snapshot_json["stop_reference_price"] = (
-                str(reference) if reference is not None else None
             )
-            snapshot_json["last_bar_close"] = str(bar.close) if bar else None
-            snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
-            v2: V2Build | None = None
+            v2: V2Build | None
             if self.decide.spec.is_v3:
-                entry_decision = (
-                    session.get(Decision, position.entry_decision_id)
-                    if context == "held"
-                    and position is not None
-                    and position.entry_decision_id is not None
-                    else None
-                )
                 v2 = build_v3_fields(
-                    context=context,
-                    base=snapshot_json,
-                    price=price if price is not None else item.price,
+                    context="candidate",
+                    base=snap,
+                    price=quote.last,
                     reference=reference,
                     atr_1h=item.snapshot.atr_1h,
                     indicators=item.snapshot,
@@ -734,129 +1185,83 @@ class CycleRunner:
                     daily=item.daily,
                     today_5m=item.today_5m,
                     earnings=earnings.get(item.symbol),
-                    held=(
-                        held_v3(position, entry_decision, earnings.get(item.symbol))
-                        if context == "held" and position is not None
-                        else None
-                    ),
                     calendar=self.calendar,
                     config=self.config,
                     cycle_time_ny=scheduled_ny,
                 )
-                snapshot_json.update(v2.fields)
-            elif self.decide.spec.uses_options:
+            else:
                 v2 = build_v2_fields(
-                    context=context,
+                    context="candidate",
                     bars_1h=item.bars_1h,
                     daily=item.daily,
                     today_5m=item.today_5m,
-                    price=price if price is not None else item.price,
+                    price=quote.last,
                     reference=reference,
                     atr_1h=item.snapshot.atr_1h,
                     config=self.config,
-                    held=(
-                        HeldContext(
-                            entry=position.avg_entry_price,
-                            current_stop=position.current_stop_price,
-                            initial_stop=position.initial_stop,
-                            opened_at=_aware_utc(position.opened_at),
-                        )
-                        if context == "held" and position is not None
-                        else None
-                    ),
                 )
-                snapshot_json.update(v2.fields)
-            if (
-                context == "candidate"
-                and v2 is not None
-                and not v2.fields["options"]
-            ):
-                # No code-built option survived the band and R/R rules —
-                # the model is never asked (docs/SPEC.md, Decision v2).
-                ev(logger, logging.DEBUG, "cycle.no_options",
-                   f"{item.symbol}: {v2.reason}", symbol=item.symbol)
-                decision = self.decide.record_no_call(
-                    session,
-                    cycle_id=cycle_id,
-                    symbol=item.symbol,
-                    context=context,
-                    snapshot_json=snapshot_json,
-                    rules=item.rules,
-                    reason="no_options",
-                    detail=v2.reason or "no option met the rules",
-                    v2=v2,
+            options = v2.options_column.get("options") or []
+            if not options:
+                prepared.append(
+                    {"item": item, "quote": quote, "pre": Decimal(0)}
                 )
-            elif price_reason is not None and context == "candidate":
-                # An unusable market price means no new entries this
-                # cycle — and no model call, so the cap slot stays free
-                # for the next one. Held positions are always reviewed.
-                ev(logger, logging.WARNING, "cycle.price_blocked",
-                   f"{item.symbol}: {price_reason}", symbol=item.symbol)
-                decision = self.decide.record_no_call(
-                    session,
-                    cycle_id=cycle_id,
-                    symbol=item.symbol,
-                    context=context,
-                    snapshot_json=snapshot_json,
-                    rules=item.rules,
-                    reason=price_reason,
-                    detail=price_reason,
-                )
-            else:
-                report.calls += 1
-                decision = await self.decide.decide(
-                    session,
-                    cycle_id=cycle_id,
-                    symbol=item.symbol,
-                    context=context,
-                    snapshot_json=snapshot_json,
-                    rules=item.rules,
-                    price=price,
-                    atr_1h=item.snapshot.atr_1h,
-                    current_stop=(
-                        position.current_stop_price if position else None
-                    ),
-                    v2=v2,
-                    on_response=(
-                        call_responses.append
-                        if self.model_health is not None
-                        else None
-                    ),
-                )
-            if self.executor is not None:
-                # Hard rule 13: commit the stored decision before the
-                # executor's quote and order calls await the broker.
-                session.commit()
-                force_exit = (
-                    "earnings_exit"
-                    if (
-                        position is not None
-                        and self._earnings_exit_due(
-                            position, earnings, now, last_cycle
-                        )
-                    )
-                    else None
-                )
-                await self.executor.apply_decision(
-                    session,
-                    decision,
-                    item,
-                    position,
-                    quote,
-                    scheduled_ny,
-                    account=account,
-                    earnings_known=earnings_known,
-                    force_exit_reason=force_exit,
-                )
-                # Fold gate changes to final_action into the
-                # call row — same transaction as the decision's own update.
-                sync_llm_call(session, decision)
+                continue
+            first = options[0]
+            sizing = position_size(
+                ctx.equity,
+                self._candidate_limit(quote),
+                Decimal(str(first["stop"])),
+                cash=cash_left,
+                current_open_risk=open_risk_used,
+                config=self.config,
+                risk_factor=risk_factor,
+            )
+            pre = sizing.shares * (
+                self._candidate_limit(quote) - Decimal(str(first["stop"]))
+            )
+            prepared.append({"item": item, "quote": quote, "pre": pre})
+
+        prepared.sort(
+            key=lambda p: (
+                -(p["pre"] if p["pre"] is not None else Decimal(0)),
+                p["item"].rank if p["item"].rank is not None else 10**9,
+                p["item"].symbol,
+            )
+        )
+        budget_left = max(0, max_calls - report.calls)
+        called_pre = prepared[:budget_left]
+        capped = prepared[budget_left:]
+
+        # News for the candidate symbols actually called.
+        news_map = await self._fetch_news(
+            sorted({p["item"].symbol for p in called_pre}), now, report
+        )
+
+        # 3. Collect: every candidate answer first, nothing submitted.
+        collected: list[dict[str, Any]] = []
+        position_of: dict[int, int] = {}
+        for i, p in enumerate(called_pre):
+            item = p["item"]
+            decision = await self._decide_item(
+                session,
+                cycle_id,
+                item,
+                p["quote"],
+                position=None,
+                news_map=news_map,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                report=report,
+                call_responses=call_responses,
+            )
             session.commit()
             report.decisions.append(decision.id)
-        # Review items past the cap are recorded without a call — the tail
-        # starts where the loop stopped, not at ``max_calls``, since
-        # quote-missing candidates never consumed a call slot.
-        for item in reviews[capped_at if capped_at is not None else len(reviews):]:
+            position_of[decision.id] = i + 1
+            collected.append({**p, "decision": decision})
+        for item in capped_held + [p["item"] for p in capped]:
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,
@@ -875,20 +1280,250 @@ class CycleRunner:
                     position=positions.get(item.symbol),
                     news=None,
                     rank=item.rank,
-                last_bar=self.market_data.bars_cache.latest(
-                    item.symbol, now - timedelta(minutes=5),
-                ),
+                    last_bar=self.market_data.bars_cache.latest(
+                        item.symbol, now - timedelta(minutes=5),
+                    ),
                 ),
                 rules=item.rules,
                 reason="call_cap",
                 detail="call cap reached",
             )
             report.decisions.append(decision.id)
+        # Price-blocked candidates get their stored no_call too — the
+        # same rows the rank path records.
+        for item in cand_items:
+            if self._price_reason(item.symbol, quotes.get(item.symbol), now) is None:
+                continue
+            decision = await self._decide_item(
+                session,
+                cycle_id,
+                item,
+                quotes.get(item.symbol),
+                position=None,
+                news_map=news_map,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                report=report,
+                call_responses=call_responses,
+            )
+            report.decisions.append(decision.id)
         session.commit()
-        if self.model_health is not None:
-            self.model_health.settle_cycle(session, call_responses)
+
+        # 4. Score each enter: dry-run gates against the cycle's
+        # starting state, then expected R x dollars at risk.
+        scored: list[ScoredEntry] = []
+        by_key: dict[str, dict[str, Any]] = {}
+        weight = Decimal(
+            str(self.config.get("selection", "confidence_weight", default=0.5))
+        )
+        max_positions = int(self.config.get("risk", "max_open_positions", default=4))
+        max_orders = int(self.config.get("risk", "max_orders_per_cycle", default=6))
+        sector_map = ctx.sectors or {}
+        for c in collected:
+            item = c["item"]
+            cdec: Decision = c["decision"]
+            if cdec.final_action != "enter":
+                continue
+            output = cdec.model_output or {}
+            stop_t, target_t = decision_trade_prices(
+                cdec.model_output, cdec.options, cdec.chosen_option
+            )
+            stop_raw = stop_t if stop_t is not None else output.get("stop_price")
+            target_raw = (
+                target_t if target_t is not None else output.get("target_price")
+            )
+            quote = c["quote"]
+            if stop_raw is None or target_raw is None or quote is None:
+                cdec.gates_result = {
+                    "allowed": False,
+                    "blocked_by": "missing_data",
+                    "checks": [],
+                }
+                cdec.final_action = "blocked"
+                sync_llm_call(session, cdec)
+                continue
+            stop_d = Decimal(str(stop_raw))
+            target_d = Decimal(str(target_raw))
+            limit = self._candidate_limit(quote)
+            gctx = self.executor._gate_context(  # noqa: SLF001
+                session,
+                account,
+                cdec.symbol,
+                item.snapshot.days_to_earnings,
+                earnings_known,
+            )
+            gate = evaluate_entry_gates(
+                gctx, entry=limit, stop=stop_d, config=self.config
+            )
+            if not gate.allowed or gate.sizing is None:
+                cdec.gates_result = gate.to_json()
+                cdec.final_action = "blocked"
+                sync_llm_call(session, cdec)
+                continue
+            risk = trade_risk(limit, stop_d, target_d)
+            if risk.reward_to_risk is None or risk.reward_to_risk <= 0:
+                cdec.gates_result = {
+                    "allowed": False,
+                    "blocked_by": "not_selected",
+                    "detail": "no expected profit",
+                    "checks": [],
+                }
+                cdec.final_action = "blocked"
+                sync_llm_call(session, cdec)
+                continue
+            confidence = Decimal(str(output.get("confidence") or 0))
+            dollars = gate.sizing.shares * (limit - stop_d)
+            be, p_used, expected_r, expected_profit = score(
+                reward_to_risk=risk.reward_to_risk,
+                confidence=confidence,
+                dollars_at_risk=dollars,
+                confidence_weight=weight,
+            )
+            entry_scored = ScoredEntry(
+                symbol=item.symbol,
+                rank=item.rank,
+                sector=sector_map.get(item.symbol),
+                entry=limit,
+                stop=stop_d,
+                reward_to_risk=risk.reward_to_risk,
+                breakeven=be,
+                p_used=p_used,
+                expected_r=expected_r,
+                dollars_at_risk=dollars,
+                expected_profit=expected_profit,
+                decision_id=cdec.id,
+                pre_score=c["pre"],
+                call_position=position_of[cdec.id],
+            )
+            scored.append(entry_scored)
+            by_key[entry_scored.key] = c
+
+        # 5. Choose the set.
+        free_slots = max_positions - (
+            len(ctx.open_positions) + len(ctx.working_entries)
+        )
+        floor_raw = self.config.get("selection", "last_slot_min_ev_r")
+        floor = (
+            Decimal(str(floor_raw)) if floor_raw is not None else None
+        )
+        budget = SelectionBudget(
+            free_slots=max(0, free_slots),
+            sector_cap=int(self.config.get("risk", "max_per_sector", default=2)),
+            sector_counts=sector_counts,
+            open_risk_used=open_risk_used,
+            open_risk_cap=_cap,
+            cash=cash_left,
+            orders_left=max(0, max_orders - ctx.orders_this_cycle),
+            equity=ctx.equity,
+            last_slot_min_ev_r=floor,
+        )
+        sel = choose(scored, budget, self.config, risk_factor=risk_factor)
+        chosen_keys = {e.key for e in sel.chosen}
+        cycle_row = session.get(Cycle, cycle_id)
+        if cycle_row is not None:
+            cycle_row.selection = {
+                "mode": "expected_profit",
+                "free_slots": budget.free_slots,
+                "scored": len(scored),
+                "chosen": [e.decision_id for e in sel.chosen],
+                "total": str(sel.total),
+                "rank_total": str(sel.rank_total),
+                "rank_chosen": [
+                    int(k) for k in sel.rank_keys if k.isdigit()
+                ],
+            }
+        for se in scored:
+            decision = by_key[se.key]["decision"]
+            decision.selection = {
+                "mode": "expected_profit",
+                "pre_score": str(se.pre_score) if se.pre_score is not None else None,
+                "call_position": se.call_position,
+                "be": str(se.breakeven),
+                "p": str(se.p_used),
+                "expected_r": str(se.expected_r),
+                "dollars_at_risk": str(se.dollars_at_risk),
+                "expected_profit": str(se.expected_profit),
+                "rank": se.rank,
+                "rr": str(se.reward_to_risk),
+                "chosen": se.key in chosen_keys,
+                "total": str(sel.total),
+            }
+            if se.key in chosen_keys:
+                continue
+            detail = (
+                "lower expected profit" if se.expected_r > 0 else "no expected profit"
+            )
+            decision.gates_result = {
+                "allowed": False,
+                "blocked_by": "not_selected",
+                "detail": detail,
+                "checks": [],
+            }
+            decision.final_action = "blocked"
+            sync_llm_call(session, decision)
+        session.commit()
+
+        # 6. Submit the chosen set in expected-profit order; on a
+        # gate/fresh-quote failure the best unchosen entry that still
+        # fits is tried, once.
+        tried: set[str] = set()
+
+        async def submit(se: ScoredEntry) -> bool:
+            c = by_key[se.key]
+            decision: Decision = c["decision"]
+            decision.final_action = "enter"
             session.commit()
-        self._notify({"decisions", "watchlist", "header", "banners", "performance"})
+            await self._apply_item(
+                session,
+                c["item"],
+                decision,
+                None,
+                c["quote"],
+                scheduled_ny,
+                now=now,
+                account=account,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                earnings_known=earnings_known,
+            )
+            session.commit()
+            return decision.final_action == "enter"
+
+        async def fallback() -> None:
+            for cand in sorted(
+                (
+                    s
+                    for s in scored
+                    if s.key not in chosen_keys and s.key not in tried
+                ),
+                key=lambda s: -s.expected_profit,
+            ):
+                tried.add(cand.key)
+                c = by_key[cand.key]
+                assert self.executor is not None  # noqa: S101 - ep mode
+                gctx2 = self.executor._gate_context(  # noqa: SLF001
+                    session,
+                    account,
+                    cand.symbol,
+                    c["item"].snapshot.days_to_earnings,
+                    earnings_known,
+                )
+                g = evaluate_entry_gates(
+                    gctx2, entry=cand.entry, stop=cand.stop, config=self.config
+                )
+                if not g.allowed:
+                    continue
+                fdec: Decision = c["decision"]
+                fdec.selection = {**(fdec.selection or {}), "chosen": True}
+                await submit(cand)
+                return
+
+        for se in sel.chosen:
+            if not await submit(se):
+                await fallback()
 
     async def run_due(self) -> CycleReport | None:
         """Catch-up: run today's latest due cycle once, if it has not run.

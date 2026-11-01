@@ -58,6 +58,11 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "min_reward_risk": ("number", 0, 20),
         "max_calls_per_cycle": ("int", 1, 100),
     },
+    "selection": {
+        "mode": ("selection_mode", None, None),
+        "confidence_weight": ("number", 0, 1),
+        "last_slot_min_ev_r": ("null_or_positive", None, None),
+    },
     "risk": {
         "risk_per_trade_pct": ("number", 0, 5),
         "max_position_pct": ("number", 0, 100),
@@ -153,6 +158,9 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "stop_atr_max"): "Stop distance to",
     ("decision", "min_reward_risk"): "Min reward to risk",
     ("decision", "max_calls_per_cycle"): "Max model calls per cycle",
+    ("selection", "mode"): "Entry selection",
+    ("selection", "confidence_weight"): "Confidence weight",
+    ("selection", "last_slot_min_ev_r"): "Last slot min expected R",
     ("risk", "risk_per_trade_pct"): "Risk per trade",
     ("risk", "max_position_pct"): "Max position size",
     ("risk", "max_open_risk_pct"): "Total open risk",
@@ -397,6 +405,20 @@ async def validate_settings(
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":
                     out[key] = _clean_notify_events(value)
+                elif kind == "selection_mode":
+                    if value not in ("rank", "expected_profit"):
+                        raise SettingsError(
+                            [f"{label}: must be rank or expected_profit"]
+                        )
+                    out[key] = value
+                elif kind == "null_or_positive":
+                    if value is None or value == "":
+                        out[key] = None
+                    else:
+                        num = _clean_number(value, 0, None, label)
+                        if num <= 0:
+                            raise SettingsError([f"{label}: must be above 0"])
+                        out[key] = num
                 elif kind == "url_or_empty":
                     text = str(value).strip()
                     if text:

@@ -1617,6 +1617,24 @@ class Executor:
                     explained = sum(
                         fill.qty for fill, order in sold if self._own_exit(session, order)
                     ) >= position.qty + position.exit_filled_qty
+                    if not explained and self._settling(
+                        session, position.symbol, now, buy_only=True
+                    ):
+                        # Unexplained absence while entry fills settle:
+                        # the positions endpoint can lag a fresh fill
+                        # and report nothing — defer, don't declare the
+                        # position flat (docs/SPEC.md, Fills still
+                        # settling). An explaining sell fill always
+                        # closes right away.
+                        self._flat_symbols.discard(position.symbol)
+                        ev(
+                            log_reconcile, logging.INFO,
+                            "reconcile.settling",
+                            f"{position.symbol}: flat check deferred "
+                            "— fills still settling",
+                            symbol=position.symbol,
+                        )
+                        continue
                     self._close_position(
                         session, position, report, exit_reason="broker_close",
                         explained=explained, offline=explained,
@@ -1775,12 +1793,19 @@ class Executor:
         )
 
     def _settling(
-        self, session: Session, symbol: str, now: datetime
+        self,
+        session: Session,
+        symbol: str,
+        now: datetime,
+        *,
+        buy_only: bool = False,
     ) -> bool:
         """Fills still settling (docs/SPEC.md, Alpaca integration): the
-        quantity comparison defers while an entry order for the symbol
-        is working, or a fill landed inside the settle window — the
-        broker position can lag the last print by a second or two."""
+        comparison defers while an entry order for the symbol is working,
+        or a fill landed inside the settle window — the broker position
+        can lag the last print by a second or two. With ``buy_only`` only
+        entry-side fills count: a sell fill explains an absent broker
+        position, it doesn't make one reappear."""
         working = session.execute(
             select(Order.id).where(
                 Order.symbol == symbol,
@@ -1790,12 +1815,15 @@ class Executor:
         ).scalar_one_or_none()
         if working is not None:
             return True
-        latest = session.execute(
+        latest_q = (
             select(func.max(Fill.filled_at))
             .select_from(Fill)
             .join(Order, Fill.order_id == Order.id)
             .where(Order.symbol == symbol)
-        ).scalar()
+        )
+        if buy_only:
+            latest_q = latest_q.where(Order.side == "buy")
+        latest = session.execute(latest_q).scalar()
         if latest is None:
             return False
         cutoff = _naive_utc(

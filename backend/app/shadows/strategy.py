@@ -60,6 +60,13 @@ OVERRIDE_V3: dict[str, tuple[str, ...]] = {
     "breakeven_min_r": ("decision", "v3", "breakeven_min_r"),
     "held_stop_min_atr": ("decision", "v3", "held_stop_min_atr"),
 }
+# Entry selection (PR 33): a shadow can test expected_profit next to
+# live. ``last_slot_min_ev_r`` may be overridden to None (off).
+OVERRIDE_SELECTION: dict[str, tuple[str, ...]] = {
+    "selection_mode": ("selection", "mode"),
+    "selection_confidence_weight": ("selection", "confidence_weight"),
+    "selection_last_slot_min_ev_r": ("selection", "last_slot_min_ev_r"),
+}
 _V3_BOUNDS: dict[str, tuple[float, float]] = {
     "min_room_atr": (0.0, 20.0),
     "min_stop_move_atr": (0.0, 20.0),
@@ -119,6 +126,12 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
         path = OVERRIDE_V3.get(name)
         if path is not None and value is not None:
             _tree_set(tree, path, value)
+            continue
+        sel = OVERRIDE_SELECTION.get(name)
+        if sel is not None:
+            # Selection overrides apply even when the value is None —
+            # None means "floor off", not "same as live".
+            _tree_set(tree, sel, value)
     return tree
 
 
@@ -193,6 +206,21 @@ def differences(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
                     "shadow": _fmt(shadow_value),
                 }
             )
+    for name, path in OVERRIDE_SELECTION.items():
+        if strategy.overrides is None or name not in (strategy.overrides or {}):
+            continue
+        live_value = config.get(*path)
+        shadow_value = _tree_get(shadow_tree, path)
+        if live_value == shadow_value:
+            continue
+        differs.append(
+            {
+                "key": ".".join(path),
+                "label": LABELS.get((path[0], path[-1]), name),
+                "live": _fmt(live_value),
+                "shadow": _fmt(shadow_value),
+            }
+        )
     return {"differs": differs, "same": same}
 
 
@@ -316,6 +344,45 @@ def validate_new_strategy(
             continue
         target = OVERRIDE_KEYS.get(str(item))
         if target is None:
+            sel = OVERRIDE_SELECTION.get(str(item))
+            if sel is not None:
+                label = ".".join(sel)
+                if item == "selection_mode":
+                    if str(value) not in ("rank", "expected_profit"):
+                        errors.append(
+                            f"{label}: must be rank or expected_profit"
+                        )
+                        continue
+                    overrides[str(item)] = str(value)
+                    continue
+                if item == "selection_confidence_weight":
+                    try:
+                        num = _num(value)
+                    except (ArithmeticError, ValueError):
+                        errors.append(f"{label}: not a number")
+                        continue
+                    if not 0 <= num <= 1:
+                        errors.append(f"{label}: must be from 0 to 1")
+                        continue
+                    overrides[str(item)] = num
+                    continue
+                # selection_last_slot_min_ev_r: empty = same as live,
+                # "none"/"null"/0 = off, else a number above zero.
+                if value is None or value == "":
+                    continue
+                if str(value).strip().lower() in ("none", "null", "0", "0.0"):
+                    overrides[str(item)] = None
+                    continue
+                try:
+                    num = _num(value)
+                except (ArithmeticError, ValueError):
+                    errors.append(f"{label}: not a number")
+                    continue
+                if num <= 0:
+                    errors.append(f"{label}: must be above 0")
+                    continue
+                overrides[str(item)] = num
+                continue
             path = OVERRIDE_V3.get(str(item))
             if path is None:
                 # Risk gates, sizing, the day-trade rule and earnings

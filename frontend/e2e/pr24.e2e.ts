@@ -54,8 +54,9 @@ test('Settings → Server renders the design rows', async ({ page }) => {
   });
 });
 
-test('Server section is absent without sign-in build', async () => {
-  // The local build never shows it — the API answers 404; covered by
-  // the backend test, kept here as a documented non-case.
+test('Server section collapses without sign-in build', async () => {
+  // The local build shows only the description line — the panel's data
+  // comes from /api/server, which answers 404 locally; covered by the
+  // backend test, kept here as a documented non-case.
   test.skip();
 });

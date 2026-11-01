@@ -22,7 +22,7 @@ import asyncio
 import copy
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -56,6 +56,12 @@ from app.decide.service import (
 from app.decide.snapshot import UNAVAILABLE, _position_block, entry_invalidation
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.decide.v3 import HeldV3, build_v3_fields, stop_basis_info, v3_send_snapshot
+from app.engine.selection import (
+    ScoredEntry,
+    SelectionBudget,
+    choose,
+    score,
+)
 from app.engine.state import record_event
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.llm.models import model_effort, model_provider
@@ -64,7 +70,13 @@ from app.market.clock import NY_TZ, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, next_earnings
 from app.risk.gates import evaluate_entry_gates, resolve_sectors
-from app.risk.math import trade_risk
+from app.risk.math import (
+    committed_entries,
+    open_risk,
+    position_size,
+    streak_risk_factor,
+    trade_risk,
+)
 from app.rules.prefilter import STATUS_PASS, RulesResult, evaluate_entry_rules
 from app.shadows.portfolio import (
     BarReader,
@@ -951,15 +963,289 @@ class ShadowRunner:
             sr.decisions += 1
 
         # ---- candidates that pass this strategy's rules, in rank order
+        ep_mode = (
+            strategy.kind == "llm"
+            and str(cfg.get("selection", "mode", default="rank"))
+            == "expected_profit"
+        )
+        if ep_mode:
+            await self._decide_candidates_ep(
+                session, strategy, cycle, run, scheduled, live,
+                sr, state, out_of_time, call, passing, b,
+                max_calls, earnings,
+            )
+        else:
+            for d, rules in passing:
+                if out_of_time():
+                    self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
+                    continue
+                snap = copy.deepcopy(d.snapshot)
+                quote, synthetic, quote_failure = self._market_quote(d.symbol, snap, scheduled)
+                dev_pct = Decimal(
+                    str(self.config.get("execution", "quote_max_deviation_pct"))
+                )
+                provenance = (
+                    quote.provenance(quote.quote_plausible(dev_pct))
+                    | {"synthetic": synthetic}
+                ) if quote else None
+                if quote_failure is not None:
+                    row = self._row(
+                        strategy, cycle, d, "candidate", final_action="blocked", rules=rules,
+                    )
+                    row.gates_result = {
+                        "allowed": False, "blocked_by": quote_failure, "quote": provenance,
+                    }
+                    session.add(row)
+                    sr.decisions += 1
+                    continue
+                assert quote is not None  # noqa: S101 - shadow runner invariant
+                price = quote.last
+                snap["price"] = float(price)
+                snap["quote"] = provenance
+                d = replace(d, snapshot=snap)
+                stop: Decimal | None = None
+                target: Decimal | None = None
+                if llm:
+                    if int(state["calls"]) >= max_calls:
+                        row = self._row(
+                            strategy,
+                            cycle,
+                            d,
+                            "candidate",
+                            final_action="no_call",
+                            no_call_reason="call_cap",
+                            rules=rules,
+                        )
+                    else:
+                        snap_json = copy.deepcopy(dict(snap))
+                        snap_json["context"] = "candidate"
+                        snap_json["position"] = None
+                        v2_cand: V2Build | None = None
+                        if _spec(strategy).uses_options:
+                            atr_v2 = indicators_from_snapshot(
+                                d.symbol, snap_json
+                            ).atr_1h
+                            ref_v2 = quote.stop_reference(
+                                _dec(snap_json.get("last_bar_close")),
+                                atr_v2,
+                                entry=True,
+                                max_deviation_pct=dev_pct,
+                            )
+                            snap_json["stop_reference_price"] = (
+                                str(ref_v2) if ref_v2 is not None else None
+                            )
+                            c_bars, c_daily, c_todays = rebuild_bars(
+                                d.symbol, scheduled, calendar=self.calendar,
+                                bars_reader=self._bars,
+                            )
+                            if _spec(strategy).is_v3:
+                                v2_cand = build_v3_fields(
+                                    context="candidate",
+                                    base=snap_json,
+                                    price=price,
+                                    reference=ref_v2,
+                                    atr_1h=atr_v2,
+                                    indicators=indicators_from_snapshot(
+                                        d.symbol, snap_json
+                                    ),
+                                    regime=regime_from_snapshot(snap_json, cfg),
+                                    bars_1h=c_bars,
+                                    daily=c_daily,
+                                    today_5m=c_todays,
+                                    earnings=earnings.get(d.symbol),
+                                    calendar=self.calendar,
+                                    config=cfg,
+                                    cycle_time_ny=scheduled,
+                                )
+                            else:
+                                v2_cand = build_v2_fields(
+                                    context="candidate",
+                                    bars_1h=c_bars,
+                                    daily=c_daily,
+                                    today_5m=c_todays,
+                                    price=price,
+                                    reference=ref_v2,
+                                    atr_1h=atr_v2,
+                                    config=cfg,
+                                )
+                            snap_json.update(v2_cand.fields)
+                        if v2_cand is not None and not v2_cand.fields["options"]:
+                            row = self._row(
+                                strategy, cycle, d, "candidate",
+                                final_action="no_call",
+                                no_call_reason="no_options",
+                                rules=rules,
+                            )
+                            row.levels = {"levels": v2_cand.fields.get("levels")}
+                            row.options = v2_cand.options_column
+                            row.options_version = v2_cand.options_column.get(
+                                "options_version"
+                            )
+                            if _spec(strategy).is_v3:
+                                # v3: the no_options reason (room, ...) is
+                                # stored with the row for the drawer and feed.
+                                row.validation_result = {
+                                    "error": v2_cand.reason
+                                    or "no option met the rules",
+                                    "final_action": "no_call",
+                                    "note": (
+                                        f"No call — {v2_cand.reason or 'no option met the rules'}"
+                                    ),
+                                }
+                            session.add(row)
+                            session.flush()
+                            sr.decisions += 1
+                            continue
+                        try:
+                            row = await call(
+                                d, "candidate", snap_json, price, None, rules,
+                                v2=v2_cand,
+                            )
+                        except _OutOfTime as oot:
+                            missed = self._missed(
+                                session, strategy, cycle, d, "candidate", sr,
+                                str(state["out"]),
+                            )
+                            session.flush()
+                            self._record_timeout(
+                                session, strategy, cycle, d, "candidate", snap_json,
+                                oot, missed.id,
+                            )
+                            continue
+                        output = row.model_output or {}
+                        rstop, rtarget = decision_trade_prices(
+                            row.model_output, row.options, row.chosen_option
+                        )
+                        stop = rstop if rstop is not None else _dec(output.get("stop_price"))
+                        target = (
+                            rtarget
+                            if rtarget is not None
+                            else _dec(output.get("target_price"))
+                        )
+                else:
+                    atr = indicators_from_snapshot(d.symbol, snap).atr_1h
+                    row = self._row(
+                        strategy, cycle, d, "candidate",
+                        final_action="skip", rules=rules,
+                    )
+                    if price is None or atr is None or atr <= 0:
+                        row.gates_result = {
+                            "allowed": False,
+                            "blocked_by": "missing_data",
+                            "checks": [],
+                        }
+                    else:
+                        k = Decimal(
+                            str(self.config.get("shadows", "rules_only", "stop_atr", default=2.0))
+                        )
+                        r_mult = Decimal(
+                            str(self.config.get("shadows", "rules_only", "target_r", default=2.0))
+                        )
+                        stop = price - k * atr
+                        target = price + r_mult * (price - stop)
+                        row.final_action = "enter"
+                session.add(row)
+                session.flush()
+                if row.final_action == "enter" and price is not None and stop is not None:
+                    self._enter(
+                        session, row, b, price, stop, target, strategy,
+                        run, scheduled, live, d, state,
+                    )
+                    if row.final_action == "enter":
+                        sr.entries += 1
+                sync_llm_call(session, row)
+                sr.decisions += 1
+
+        # ---- everything the rules reject: stored, never called
+        for d, rules in failing:
+            if state["out"]:
+                self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
+                continue
+            session.add(
+                self._row(
+                    strategy,
+                    cycle,
+                    d,
+                    "candidate",
+                    final_action="no_call",
+                    no_call_reason="rules",
+                    rules=rules,
+                )
+            )
+            sr.decisions += 1
+        session.flush()
+
+    # ------------------------------------------------------------------
+    # expected_profit selection (docs/SPEC.md, Entry selection): the
+    # same selection the live cycle runs, on the shadow's own book.
+
+    async def _decide_candidates_ep(
+        self,
+        session: Session,
+        strategy: Strategy,
+        cycle: Cycle,
+        run: Run,
+        scheduled: datetime,
+        live: LiveGateState,
+        sr: StrategyReport,
+        state: dict[str, Any],
+        out_of_time: Callable[[], bool],
+        call: Callable[..., Awaitable[ShadowDecision]],
+        passing: list[tuple[LiveInput, RulesResult]],
+        b: Book,
+        max_calls: int,
+        earnings: dict[str, tuple[date, str]],
+    ) -> None:
+        cfg = strategy_config(self.config, strategy)
+        spec = _spec(strategy)
+        dev_pct = Decimal(
+            str(self.config.get("execution", "quote_max_deviation_pct"))
+        )
+        offset = Decimal(
+            str(self.config.get("execution", "entry_limit_offset_pct", default=0.05))
+        )
+
+        # The shadow's starting state: the budget for the pre-score
+        # sizing, the dry runs and the set search.
+        base_ctx = gate_context(
+            session,
+            symbol="",
+            b=b,
+            strategy_id=strategy.id,
+            run_id=run.id,
+            now=scheduled,
+            calendar=self.calendar,
+            live=live,
+            days_to_earnings=None,
+            earnings_known=True,
+            orders_this_cycle=int(state["orders"]),
+            config=self.config,
+        )
+        sector_map = resolve_sectors(self.config, session)
+        base_ctx = replace(base_ctx, sectors=sector_map)
+        spent = committed_entries(base_ctx.working_entries, base_ctx.market_prices.get)
+        used_risk = (
+            open_risk(
+                (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0))
+                for p in base_ctx.open_positions
+            )
+            + spent.risk
+        )
+        cash_left = (
+            max(Decimal(0), base_ctx.cash - spent.cash)
+            if self.config.get("risk", "cash_only", default=True)
+            else base_ctx.equity
+        )
+        factor = streak_risk_factor(base_ctx.losing_streak, self.config)
+
+        # 1. Quote, options and the pre-score, walked in rank order.
+        prepared: list[dict[str, Any]] = []
         for d, rules in passing:
             if out_of_time():
                 self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
                 continue
             snap = copy.deepcopy(d.snapshot)
             quote, synthetic, quote_failure = self._market_quote(d.symbol, snap, scheduled)
-            dev_pct = Decimal(
-                str(self.config.get("execution", "quote_max_deviation_pct"))
-            )
             provenance = (
                 quote.provenance(quote.quote_plausible(dev_pct))
                 | {"synthetic": synthetic}
@@ -979,172 +1265,372 @@ class ShadowRunner:
             snap["price"] = float(price)
             snap["quote"] = provenance
             d = replace(d, snapshot=snap)
-            stop: Decimal | None = None
-            target: Decimal | None = None
-            if llm:
-                if int(state["calls"]) >= max_calls:
+            snap_json = copy.deepcopy(dict(snap))
+            snap_json["context"] = "candidate"
+            snap_json["position"] = None
+            pre: Decimal | None = None
+            v2_cand: V2Build | None = None
+            if spec.uses_options:
+                atr_v2 = indicators_from_snapshot(d.symbol, snap_json).atr_1h
+                ref_v2 = quote.stop_reference(
+                    _dec(snap_json.get("last_bar_close")),
+                    atr_v2,
+                    entry=True,
+                    max_deviation_pct=dev_pct,
+                )
+                snap_json["stop_reference_price"] = (
+                    str(ref_v2) if ref_v2 is not None else None
+                )
+                c_bars, c_daily, c_todays = rebuild_bars(
+                    d.symbol, scheduled, calendar=self.calendar,
+                    bars_reader=self._bars,
+                )
+                if spec.is_v3:
+                    v2_cand = build_v3_fields(
+                        context="candidate",
+                        base=snap_json,
+                        price=price,
+                        reference=ref_v2,
+                        atr_1h=atr_v2,
+                        indicators=indicators_from_snapshot(d.symbol, snap_json),
+                        regime=regime_from_snapshot(snap_json, cfg),
+                        bars_1h=c_bars,
+                        daily=c_daily,
+                        today_5m=c_todays,
+                        earnings=earnings.get(d.symbol),
+                        calendar=self.calendar,
+                        config=cfg,
+                        cycle_time_ny=scheduled,
+                    )
+                else:
+                    v2_cand = build_v2_fields(
+                        context="candidate",
+                        bars_1h=c_bars,
+                        daily=c_daily,
+                        today_5m=c_todays,
+                        price=price,
+                        reference=ref_v2,
+                        atr_1h=atr_v2,
+                        config=cfg,
+                    )
+                snap_json.update(v2_cand.fields)
+                options = v2_cand.fields["options"]
+                if not options:
                     row = self._row(
-                        strategy,
-                        cycle,
-                        d,
-                        "candidate",
+                        strategy, cycle, d, "candidate",
                         final_action="no_call",
-                        no_call_reason="call_cap",
+                        no_call_reason="no_options",
                         rules=rules,
                     )
-                else:
-                    snap_json = copy.deepcopy(dict(snap))
-                    snap_json["context"] = "candidate"
-                    snap_json["position"] = None
-                    v2_cand: V2Build | None = None
-                    if _spec(strategy).uses_options:
-                        atr_v2 = indicators_from_snapshot(
-                            d.symbol, snap_json
-                        ).atr_1h
-                        ref_v2 = quote.stop_reference(
-                            _dec(snap_json.get("last_bar_close")),
-                            atr_v2,
-                            entry=True,
-                            max_deviation_pct=dev_pct,
-                        )
-                        snap_json["stop_reference_price"] = (
-                            str(ref_v2) if ref_v2 is not None else None
-                        )
-                        c_bars, c_daily, c_todays = rebuild_bars(
-                            d.symbol, scheduled, calendar=self.calendar,
-                            bars_reader=self._bars,
-                        )
-                        if _spec(strategy).is_v3:
-                            v2_cand = build_v3_fields(
-                                context="candidate",
-                                base=snap_json,
-                                price=price,
-                                reference=ref_v2,
-                                atr_1h=atr_v2,
-                                indicators=indicators_from_snapshot(
-                                    d.symbol, snap_json
-                                ),
-                                regime=regime_from_snapshot(snap_json, cfg),
-                                bars_1h=c_bars,
-                                daily=c_daily,
-                                today_5m=c_todays,
-                                earnings=earnings.get(d.symbol),
-                                calendar=self.calendar,
-                                config=cfg,
-                                cycle_time_ny=scheduled,
-                            )
-                        else:
-                            v2_cand = build_v2_fields(
-                                context="candidate",
-                                bars_1h=c_bars,
-                                daily=c_daily,
-                                today_5m=c_todays,
-                                price=price,
-                                reference=ref_v2,
-                                atr_1h=atr_v2,
-                                config=cfg,
-                            )
-                        snap_json.update(v2_cand.fields)
-                    if v2_cand is not None and not v2_cand.fields["options"]:
-                        row = self._row(
-                            strategy, cycle, d, "candidate",
-                            final_action="no_call",
-                            no_call_reason="no_options",
-                            rules=rules,
-                        )
-                        row.levels = {"levels": v2_cand.fields.get("levels")}
-                        row.options = v2_cand.options_column
-                        row.options_version = v2_cand.options_column.get(
-                            "options_version"
-                        )
-                        if _spec(strategy).is_v3:
-                            # v3: the no_options reason (room, ...) is
-                            # stored with the row for the drawer and feed.
-                            row.validation_result = {
-                                "error": v2_cand.reason
-                                or "no option met the rules",
-                                "final_action": "no_call",
-                                "note": (
-                                    f"No call — {v2_cand.reason or 'no option met the rules'}"
-                                ),
-                            }
-                        session.add(row)
-                        session.flush()
-                        sr.decisions += 1
-                        continue
-                    try:
-                        row = await call(
-                            d, "candidate", snap_json, price, None, rules,
-                            v2=v2_cand,
-                        )
-                    except _OutOfTime as oot:
-                        missed = self._missed(
-                            session, strategy, cycle, d, "candidate", sr,
-                            str(state["out"]),
-                        )
-                        session.flush()
-                        self._record_timeout(
-                            session, strategy, cycle, d, "candidate", snap_json,
-                            oot, missed.id,
-                        )
-                        continue
-                    output = row.model_output or {}
-                    rstop, rtarget = decision_trade_prices(
-                        row.model_output, row.options, row.chosen_option
+                    row.levels = {"levels": v2_cand.fields.get("levels")}
+                    row.options = v2_cand.options_column
+                    row.options_version = v2_cand.options_column.get(
+                        "options_version"
                     )
-                    stop = rstop if rstop is not None else _dec(output.get("stop_price"))
-                    target = (
-                        rtarget
-                        if rtarget is not None
-                        else _dec(output.get("target_price"))
-                    )
-            else:
-                atr = indicators_from_snapshot(d.symbol, snap).atr_1h
-                row = self._row(strategy, cycle, d, "candidate", final_action="skip", rules=rules)
-                if price is None or atr is None or atr <= 0:
-                    row.gates_result = {
-                        "allowed": False,
-                        "blocked_by": "missing_data",
-                        "checks": [],
-                    }
-                else:
-                    k = Decimal(
-                        str(self.config.get("shadows", "rules_only", "stop_atr", default=2.0))
-                    )
-                    r_mult = Decimal(
-                        str(self.config.get("shadows", "rules_only", "target_r", default=2.0))
-                    )
-                    stop = price - k * atr
-                    target = price + r_mult * (price - stop)
-                    row.final_action = "enter"
-            session.add(row)
-            session.flush()
-            if row.final_action == "enter" and price is not None and stop is not None:
-                self._enter(
-                    session, row, b, price, stop, target, strategy, run, scheduled, live, d, state
+                    if spec.is_v3:
+                        row.validation_result = {
+                            "error": v2_cand.reason
+                            or "no option met the rules",
+                            "final_action": "no_call",
+                            "note": (
+                                f"No call — {v2_cand.reason or 'no option met the rules'}"
+                            ),
+                        }
+                    session.add(row)
+                    session.flush()
+                    sr.decisions += 1
+                    continue
+                first = options[0]
+                limit0 = cents(price * (1 + offset / 100))
+                sizing0 = position_size(
+                    base_ctx.equity,
+                    limit0,
+                    Decimal(str(first["stop"])),
+                    cash=cash_left,
+                    current_open_risk=used_risk,
+                    config=self.config,
+                    risk_factor=factor,
                 )
-                if row.final_action == "enter":
-                    sr.entries += 1
-            sync_llm_call(session, row)
-            sr.decisions += 1
+                pre = sizing0.shares * (limit0 - Decimal(str(first["stop"])))
+            prepared.append(
+                {
+                    "d": d, "rules": rules, "quote": quote, "price": price,
+                    "snap_json": snap_json, "v2": v2_cand, "pre": pre,
+                }
+            )
 
-        # ---- everything the rules reject: stored, never called
-        for d, rules in failing:
-            if state["out"]:
-                self._missed(session, strategy, cycle, d, "candidate", sr, str(state["out"]))
-                continue
+        # 2. Call order: pre-score first, ties by rank; v1 candidates
+        # keep rank order. The call cap applies to that order.
+        prepared.sort(
+            key=lambda p: (
+                -(p["pre"] if p["pre"] is not None else Decimal(0)),
+                _rank_key(p["d"]),
+            )
+        )
+        budget_left = max(0, max_calls - int(state["calls"]))
+        called = prepared[:budget_left]
+        for p in prepared[budget_left:]:
             session.add(
                 self._row(
-                    strategy,
-                    cycle,
-                    d,
-                    "candidate",
-                    final_action="no_call",
-                    no_call_reason="rules",
-                    rules=rules,
+                    strategy, cycle, p["d"], "candidate",
+                    final_action="no_call", no_call_reason="call_cap",
+                    rules=p["rules"],
                 )
             )
             sr.decisions += 1
+
+        # 3. Collect every candidate answer before submitting anything.
+        collected: list[dict[str, Any]] = []
+        for i, p in enumerate(called):
+            if out_of_time():
+                self._missed(
+                    session, strategy, cycle, p["d"], "candidate", sr,
+                    str(state["out"]),
+                )
+                continue
+            try:
+                row = await call(
+                    p["d"], "candidate", p["snap_json"], p["price"], None,
+                    p["rules"], v2=p["v2"],
+                )
+            except _OutOfTime as oot:
+                missed = self._missed(
+                    session, strategy, cycle, p["d"], "candidate", sr,
+                    str(state["out"]),
+                )
+                session.flush()
+                self._record_timeout(
+                    session, strategy, cycle, p["d"], "candidate",
+                    p["snap_json"], oot, missed.id,
+                )
+                continue
+            session.add(row)
+            session.flush()
+            sr.decisions += 1
+            collected.append({**p, "row": row, "call_position": i + 1})
+
+        # 4. Score each enter: the dry-run gates against the cycle's
+        # starting state give the dollars at risk; expected profit is
+        # expected R x that.
+        scored: list[ScoredEntry] = []
+        by_key: dict[str, dict[str, Any]] = {}
+        weight = Decimal(
+            str(cfg.get("selection", "confidence_weight", default=0.5))
+        )
+        for c in collected:
+            row = cast(ShadowDecision, c["row"])
+            if row.final_action != "enter":
+                continue
+            output = row.model_output or {}
+            rstop, rtarget = decision_trade_prices(
+                row.model_output, row.options, row.chosen_option
+            )
+            stop = rstop if rstop is not None else _dec(output.get("stop_price"))
+            target = (
+                rtarget if rtarget is not None else _dec(output.get("target_price"))
+            )
+            if stop is None or target is None:
+                row.gates_result = {
+                    "allowed": False, "blocked_by": "missing_data", "checks": [],
+                }
+                row.final_action = "blocked"
+                sync_llm_call(session, row)
+                continue
+            price = cast(Decimal, c["price"])
+            limit = cents(price * (1 + offset / 100))
+            ind = indicators_from_snapshot(c["d"].symbol, c["d"].snapshot)
+            sctx = gate_context(
+                session,
+                symbol=c["d"].symbol,
+                b=b,
+                strategy_id=strategy.id,
+                run_id=run.id,
+                now=scheduled,
+                calendar=self.calendar,
+                live=live,
+                days_to_earnings=ind.days_to_earnings,
+                earnings_known=ind.earnings_available,
+                orders_this_cycle=int(state["orders"]),
+                config=self.config,
+            )
+            sctx = replace(sctx, sectors=sector_map)
+            gate = evaluate_entry_gates(
+                sctx, entry=limit, stop=stop, config=self.config
+            )
+            if not gate.allowed or gate.sizing is None:
+                row.gates_result = gate.to_json() | {"entry_limit": str(limit)}
+                row.final_action = "blocked"
+                sync_llm_call(session, row)
+                continue
+            risk = trade_risk(limit, stop, target, ind.atr_1h)
+            if risk.reward_to_risk is None or risk.reward_to_risk <= 0:
+                row.gates_result = {
+                    "allowed": False,
+                    "blocked_by": "not_selected",
+                    "detail": "no expected profit",
+                    "checks": [],
+                }
+                row.final_action = "blocked"
+                sync_llm_call(session, row)
+                continue
+            confidence = Decimal(str(output.get("confidence") or 0))
+            dollars = gate.sizing.shares * (limit - stop)
+            be, p_used, expected_r, expected_profit = score(
+                reward_to_risk=risk.reward_to_risk,
+                confidence=confidence,
+                dollars_at_risk=dollars,
+                confidence_weight=weight,
+            )
+            rank = c["d"].snapshot.get("rank")
+            se = ScoredEntry(
+                symbol=c["d"].symbol,
+                rank=rank if isinstance(rank, int) else None,
+                sector=sector_map.get(c["d"].symbol),
+                entry=limit,
+                stop=stop,
+                reward_to_risk=risk.reward_to_risk,
+                breakeven=be,
+                p_used=p_used,
+                expected_r=expected_r,
+                dollars_at_risk=dollars,
+                expected_profit=expected_profit,
+                pre_score=c["pre"],
+                call_position=c["call_position"],
+            )
+            scored.append(se)
+            by_key[se.key] = {**c, "stop": stop, "target": target}
+
+        # 5. The exact best set under the cycle's starting limits.
+        free_slots = int(self.config.get("risk", "max_open_positions", default=4)) - (
+            len(base_ctx.open_positions) + len(base_ctx.working_entries)
+        )
+        max_orders = int(self.config.get("risk", "max_orders_per_cycle", default=6))
+        sector_counts: dict[str, int] = {}
+        for symbol in [p.symbol for p in base_ctx.open_positions] + [
+            e.symbol for e in base_ctx.working_entries
+        ]:
+            sector = sector_map.get(symbol)
+            if sector is not None:
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        floor_raw = cfg.get("selection", "last_slot_min_ev_r")
+        budget = SelectionBudget(
+            free_slots=max(0, free_slots),
+            sector_cap=int(self.config.get("risk", "max_per_sector", default=2)),
+            sector_counts=sector_counts,
+            open_risk_used=used_risk,
+            open_risk_cap=base_ctx.equity
+            * Decimal(str(self.config.get("risk", "max_open_risk_pct", default=2.5)))
+            / 100,
+            cash=cash_left,
+            orders_left=max(0, max_orders - int(state["orders"])),
+            equity=base_ctx.equity,
+            last_slot_min_ev_r=(
+                Decimal(str(floor_raw)) if floor_raw is not None else None
+            ),
+        )
+        sel = choose(scored, budget, self.config, risk_factor=factor)
+        chosen_keys = {e.key for e in sel.chosen}
+        for se in scored:
+            c = by_key[se.key]
+            row = c["row"]
+            row.selection = {
+                "mode": "expected_profit",
+                "pre_score": str(se.pre_score) if se.pre_score is not None else None,
+                "call_position": se.call_position,
+                "be": str(se.breakeven),
+                "p": str(se.p_used),
+                "expected_r": str(se.expected_r),
+                "dollars_at_risk": str(se.dollars_at_risk),
+                "expected_profit": str(se.expected_profit),
+                "rank": se.rank,
+                "rr": str(se.reward_to_risk),
+                "chosen": se.key in chosen_keys,
+                "total": str(sel.total),
+            }
+            if se.key in chosen_keys:
+                continue
+            row.gates_result = {
+                "allowed": False,
+                "blocked_by": "not_selected",
+                "detail": (
+                    "lower expected profit"
+                    if se.expected_r > 0
+                    else "no expected profit"
+                ),
+                "checks": [],
+            }
+            row.final_action = "blocked"
+            sync_llm_call(session, row)
+        session.flush()
+
+        # 6. Submit the chosen set in expected-profit order through the
+        # same gates; on a block the best unchosen entry that still fits
+        # is tried, once.
+        tried: set[str] = set()
+
+        def submit(se: ScoredEntry) -> bool:
+            c = by_key[se.key]
+            row: ShadowDecision = c["row"]
+            row.final_action = "enter"
+            self._enter(
+                session, row, b, c["price"], c["stop"], c["target"],
+                strategy, run, scheduled, live, c["d"], state,
+            )
+            sync_llm_call(session, row)
+            session.flush()
+            if row.final_action == "enter":
+                sr.entries += 1
+                return True
+            return False
+
+        def fallback() -> None:
+            for cand in sorted(
+                (
+                    s
+                    for s in scored
+                    if s.key not in chosen_keys and s.key not in tried
+                ),
+                key=lambda s: -s.expected_profit,
+            ):
+                tried.add(cand.key)
+                c = by_key[cand.key]
+                ind = indicators_from_snapshot(c["d"].symbol, c["d"].snapshot)
+                fctx = gate_context(
+                    session,
+                    symbol=cand.symbol,
+                    b=b,
+                    strategy_id=strategy.id,
+                    run_id=run.id,
+                    now=scheduled,
+                    calendar=self.calendar,
+                    live=live,
+                    days_to_earnings=ind.days_to_earnings,
+                    earnings_known=ind.earnings_available,
+                    orders_this_cycle=int(state["orders"]),
+                    config=self.config,
+                )
+                fctx = replace(fctx, sectors=sector_map)
+                g = evaluate_entry_gates(
+                    fctx, entry=cand.entry, stop=cand.stop, config=self.config
+                )
+                if not g.allowed:
+                    continue
+                row: ShadowDecision = c["row"]
+                row.selection = {**(row.selection or {}), "chosen": True}
+                submit(cand)
+                return
+
+        for se in sel.chosen:
+            if out_of_time():
+                # Chosen but never submitted: mark the stored row itself
+                # missed — a second row would duplicate the candidate.
+                missed_row: ShadowDecision = by_key[se.key]["row"]
+                missed_row.missed = True
+                missed_row.missed_reason = str(state["out"])
+                sr.missed += 1
+                continue
+            if not submit(se):
+                fallback()
         session.flush()
 
     # ------------------------------------------------------------------

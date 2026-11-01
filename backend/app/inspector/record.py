@@ -173,12 +173,23 @@ def sync_llm_call(session: Session, linked: Decision | ShadowDecision) -> None:
     call = session.execute(
         select(LlmCall).where(key == linked.id)
     ).scalar_one_or_none()
-    if call is None or linked.final_action == call.final_action:
+    if call is None:
+        return
+    # A model enter code left out of the winning set is a block on the
+    # decision row, but the call's finer outcome is ``not_selected`` —
+    # it is filterable on its own in the inspector (docs/SPEC.md,
+    # Entry selection).
+    final = linked.final_action
+    if final == "blocked":
+        gates = linked.gates_result or {}
+        if gates.get("blocked_by") == "not_selected":
+            final = "not_selected"
+    if final == call.final_action:
         return
     validation = linked.validation_result or {}
     model_action = validation.get("model_action")
     apply_final_action(
         call,
         model_action if isinstance(model_action, str) else None,
-        linked.final_action,
+        final,
     )

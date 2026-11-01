@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-01 — Settings: Server section shows a description off-VPS
+
+- The Settings section menu listed "Server" on every build, but the section rendered only when `SA_AUTH=required` (the VPS build) — the menu link pointed at an anchor that did not exist. The section now always renders and, like Access, collapses to a one-line description locally: the health rows, backup buttons and `/api/server` fetch stay VPS-only.
+- Reconcile: the flat-position check now honours "Fills still settling" like the quantity check does — a DB position missing from Alpaca's positions response while its entry fill is inside `fill_settle_seconds` is deferred (INFO `reconcile.settling`), not closed as `flat_without_fill`. Real incident on 30 Oct: SHEL's entry filled at 18:46:43 and the 18:46:44 reconcile saw an empty positions endpoint, closed the just-opened row as `broker_close`, then adopted the same 18 shares a second later — two spurious CRITICAL events and a phantom closed position.
+- Backup job logs: an expected `OffsiteError` (missing credentials, restic absent, endpoint refused — messages written for Marc) now logs its reason on one WARNING line ("monthly restore test failed: no backup password or storage credentials stored") instead of an ERROR with a bare "failed" plus a traceback. Unexpected failures keep `logger.exception`. Applies to the restore test and the daily offsite upload, in both `ops.service` and the `run_daily_backup` chain. Note the level change: these expected failures no longer count as unreviewed errors for Readiness.
+
 ## 2026-10-31 — Stream drops and stale-chunk reload fixes
 
 - Stream health: a lost trade-updates socket that reconnects cleanly stays at the SDK's WARNING. "The first failed connection of an outage is logged at ERROR" (docs/SPEC.md) now means a failed (re)connection attempt, not the drop itself — a self-healing blip no longer logs ERROR or sends a "New error" notification. A failed reconnect still logs ERROR and notifies.
@@ -54,6 +60,14 @@ Newest first.
 - Every scheduler job now carries `schedule.misfire_grace_seconds` (120 s) and `coalesce=True`; only `backtests-tick` keeps its own 10-second grace. Previously jobs without an explicit grace fell back to APScheduler's 1-second default, so a brief event-loop stall silently skipped the run — a one-off warning for the 1-minute `readiness-tick`, but a lost day/week/month for the `daily-data-refresh`, `daily-db-backup`, `daily-briefing`, `weekly-review` and `restore-test` crons.
 - `scheduled-cycle-audit`, `calendar-retry`, `daily-data-refresh` and `daily-db-backup` also gain `coalesce=True`; several misses inside the grace merge into one run, never a queue of catch-ups.
 - `test_scheduler.py` asserts every job carries the configured grace.
+
+## 2026-10-31 — Entry selection: implementation (PR 33)
+
+- `config.example.yaml` gains the `selection` block (`mode` rank, `confidence_weight` 0.5, `last_slot_min_ev_r` null) — versioned settings, strategy overrides and the Settings → Trading rows.
+- `selection.mode: expected_profit` collects candidate answers, scores enters (expected R × dollars at risk via the shared sizing), picks the best fitting set under the unchanged limits and submits it in expected-profit order with the next-best fallback once; the rest are `blocked`/`not_selected`. `mode: rank` keeps today's path exactly.
+- `decisions.selection`, `cycles.selection` and `shadow_decisions.selection` store the score and the set result; `not_selected` counts as a code block of a model enter for verdicts and filters on its own in the inspector.
+- `make replay-selection` compares both modes on stored cycles with a slot, sector or open-risk block, judged by `outcomes.option_touches`. The decision drawer shows the selection gate row and the 'Selection in this cycle' block; Settings → Trading offers the three keys.
+- Live stays `selection.mode: rank` until Marc switches it after the replay and a shadow.
 
 ## 2026-10-31 — Entry selection (PR 33)
 

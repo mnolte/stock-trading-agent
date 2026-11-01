@@ -108,6 +108,11 @@ decision:
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 
+selection:                    # PR 33, Entry selection; strategy-overridable
+  mode: rank                  # rank (today's behaviour) | expected_profit
+  confidence_weight: 0.5      # p = break-even + weight x (confidence - break-even)
+  last_slot_min_ev_r: null    # minimum expected R for an entry taking the last free slot; null = off
+
 risk:
   risk_per_trade_pct: 0.5
   max_position_pct: 20

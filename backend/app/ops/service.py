@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import httpx
 
 from app.market.clock import NY_TZ
-from app.ops.offsite import restore_latest
+from app.ops.offsite import OffsiteError, restore_latest
 from app.ops.urls import UrlRejected, validate_public_https_url
 
 if TYPE_CHECKING:
@@ -354,7 +354,12 @@ class OpsService:
         try:
             offsite_backup(self._config, self._secrets)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("offsite backup failed")
+            if isinstance(exc, OffsiteError):
+                # Expected failure — its message is written for Marc;
+                # a traceback would bury the reason.
+                logger.warning("offsite backup failed: %s", exc)
+            else:
+                logger.exception("offsite backup failed")
             self._set(
                 "offsite_backup",
                 {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
@@ -397,7 +402,12 @@ class OpsService:
                 logger.info("monthly restore test ok")
             return bool(ok)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("restore test failed")
+            if isinstance(exc, OffsiteError):
+                # Expected failure — its message is written for Marc;
+                # a traceback would bury the reason.
+                logger.warning("monthly restore test failed: %s", exc)
+            else:
+                logger.exception("restore test failed")
             self._notify("backup_failed", f"restore test failed ({exc})")
             self._set(
                 "restore_test",
