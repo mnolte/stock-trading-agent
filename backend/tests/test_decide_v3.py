@@ -585,6 +585,59 @@ def test_level_claim_wrong_and_right() -> None:
     assert right.claims is not None and right.claims.passed
 
 
+def test_level_ids_without_stop_target_word_are_not_claims() -> None:
+    """IBM call 1734: 'levels L2 and L1 in the way' names the levels in
+    the way without attributing one to the stop or target — not a claim.
+    The stored call failed its claim check on L1/L2."""
+    snap = {
+        "symbol": "IBM",
+        "context": "candidate",
+        "levels": [],
+        "options": [
+            {
+                "id": "A",
+                "stop": 250.75,
+                "stop_basis": "2 × ATR",
+                "stop_level": None,
+                "target": 267.67,
+                "target_basis": "2R",
+                "target_level": None,
+                "rr": 2.0,
+                "breakeven_confidence": 0.33,
+                "levels_in_way": [
+                    {"id": "L1", "distance_atr": 1.32},
+                    {"id": "L2", "distance_atr": 0.42},
+                ],
+            }
+        ],
+    }
+    raw = json.dumps({
+        "symbol": "IBM",
+        "conflicts": [
+            "daily trend mixed",
+            "levels L2 and L1 in the way",
+            "stop is a plain ATR stop, no level support",
+        ],
+        "data_flags": [],
+        "thesis": "the 1h and regime trends are up; two levels in the way",
+        "action": "enter",
+        "option_id": "A",
+        "confidence": 0.6,
+        "levels_used": [],
+        "news_used": [],
+    })
+    result = validate_model_output_v3(
+        raw,
+        symbol="IBM",
+        context="candidate",
+        snapshot=snap,
+        atr_1h=Decimal("5.64"),
+        current_stop=None,
+        config=AppConfig(),
+    )
+    assert result.claims is not None and result.claims.passed
+
+
 def _acn_held() -> HeldV3:
     entry = _fixture("acn_entry.json")
     pos = _fixture("acn_position.json")
@@ -658,6 +711,29 @@ def test_entry_thesis_missing_level_described() -> None:
     assert rewritten == (
         "stop just below the 20 Oct 12:30 1h swing low (238.22), "
         "the old swing low"
+    )
+
+
+def test_thesis_id_keeps_kind_words_already_written() -> None:
+    """HD's stored thesis: "the 1h swing low L16" must become
+    "the 1h swing low (317.61)" — only the id token is replaced, no
+    description is inserted next to kind words already there."""
+    thesis = (
+        "Option E uses a stop just below the 1h swing low L16, "
+        "providing a solid technical stop."
+    )
+    stored_levels = (
+        {
+            "id": "L16",
+            "price": 317.61,
+            "kind": "swing_low",
+            "timeframe": "1h",
+            "time": "2026-10-23T10:30:00",
+        },
+    )
+    assert rewrite_thesis_ids(thesis, stored_levels, []) == (
+        "Option E uses a stop just below the 1h swing low (317.61), "
+        "providing a solid technical stop."
     )
 
 

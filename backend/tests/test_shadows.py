@@ -859,6 +859,22 @@ async def test_shadow_only_symbol_uses_the_snapshot_live_built(
     assert result.counted == 1  # MSFT only
 
 
+async def test_shadow_row_keeps_the_snapshot_on_a_live_linked_symbol(
+    sf: sessionmaker[Session],
+) -> None:
+    """Spec: every shadow decision stores its input_snapshot — also when
+    the shadow ran on a live decision's snapshot (B2: nearly every row
+    had NULL)."""
+    sid = _strategy(sf, "Rules only", kind="rules_only")
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    runner = _runner(sf, FakeClock(CYCLE + timedelta(minutes=1)))
+    await runner.after_cycle(cycle_id)
+    msft = _rows(sf, sid)["MSFT"]
+    assert msft.live_decision_id is not None
+    assert msft.input_snapshot is not None
+    assert msft.input_snapshot["symbol"] == "MSFT"
+
+
 # ----------------------------------------------------------------------
 # "same as live"
 

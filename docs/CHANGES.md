@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-01 — Decision bookkeeping fixes (claim checks, shadow snapshots, thesis ids)
+
+- Claim checks: only stop/target attributions are claims. A sentence naming a level id without the words stop or target (e.g. "levels L2 and L1 in the way") is no longer marked an unsupported claim — IBM call 1734's conflict failed the check on exactly that. Sentences that do attribute a level to the stop or target are checked unchanged.
+- `shadow_decisions.input_snapshot` is stored on every shadow row now, including rows built on a live decision's snapshot — the spec's "what the shadow decided on" record. Missed, no-call and rules-only rows had NULL before.
+- `rewrite_thesis_ids` replaces the id token only when the kind words already precede it: a stored thesis "the 1h swing low L16" now becomes "the 1h swing low (317.61)" instead of "the 1h swing low the 23 Oct 10:30 1h swing low (317.61)". Ids without the kind named in the same clause still get the full description.
+
 ## 2026-11-01 — Settings: Server section shows a description off-VPS
 
 - The Settings section menu listed "Server" on every build, but the section rendered only when `SA_AUTH=required` (the VPS build) — the menu link pointed at an anchor that did not exist. The section now always renders and, like Access, collapses to a one-line description locally: the health rows, backup buttons and `/api/server` fetch stay VPS-only.

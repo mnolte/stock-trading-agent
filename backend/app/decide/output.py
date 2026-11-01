@@ -1067,16 +1067,18 @@ def _claim_checks(
             ids = set(_LEVEL_ID_RE.findall(sentence))
             if not ids:
                 continue
-            allowed: set[str] = set()
             low = sentence.lower()
+            if "stop" not in low and "target" not in low:
+                # Only stop/target attributions are claims: naming a
+                # level in any other role (a level in the way, an entry
+                # reference) is not a claim about the stop or target.
+                continue
+            allowed: set[str] = set()
             if "stop" in low and stop_level is not None:
                 allowed.add(stop_level)
             if "target" in low and target_level is not None:
                 allowed.add(target_level)
-            if ("stop" in low or "target" in low) and not allowed:
-                bad.extend(sorted(ids))
-            else:
-                bad.extend(sorted(ids - allowed))
+            bad.extend(sorted(ids - allowed))
         if _LOCKS_IN_RE.search(part) and locked_r is not None and locked_r <= 0:
             bad.append("locks-in claim")
     return ExplanationCheck(passed=not bad, bad_ids=sorted(set(bad)))
