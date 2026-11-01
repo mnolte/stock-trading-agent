@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-01 — Decision v4: best option and conflict checks clarified
+
+- From the PR 34 review. `best_option_id` never invalidates an answer:
+  - on an enter, code sets it to the chosen option (`best_option_mismatch` when the model named another);
+  - on a skip, a missing or unoffered id leaves the skip standing, stores null with `best_option_missing`, and keeps the decision out of the skip calibration;
+  - held answers store null.
+- `unresolved_conflict` applies to enters only. The eval's `conflicts_resolved` predicate does the same; held rows are measured with `conflicts_on_adverse`.
+
 ## 2026-11-01 — Decision bookkeeping fixes (claim checks, shadow snapshots, thesis ids)
 
 - Claim checks: only stop/target attributions are claims. A sentence naming a level id without the words stop or target (e.g. "levels L2 and L1 in the way") is no longer marked an unsupported claim — IBM call 1734's conflict failed the check on exactly that. Sentences that do attribute a level to the stop or target are checked unchanged.
