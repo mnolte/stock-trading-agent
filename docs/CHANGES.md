@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-01 — Settings: Server section shows a description off-VPS
+
+- The Settings section menu listed "Server" on every build, but the section rendered only when `SA_AUTH=required` (the VPS build) — the menu link pointed at an anchor that did not exist. The section now always renders and, like Access, collapses to a one-line description locally: the health rows, backup buttons and `/api/server` fetch stay VPS-only.
+
 ## 2026-10-31 — Stream drops and stale-chunk reload fixes
 
 - Stream health: a lost trade-updates socket that reconnects cleanly stays at the SDK's WARNING. "The first failed connection of an outage is logged at ERROR" (docs/SPEC.md) now means a failed (re)connection attempt, not the drop itself — a self-healing blip no longer logs ERROR or sends a "New error" notification. A failed reconnect still logs ERROR and notifies.

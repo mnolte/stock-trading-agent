@@ -105,10 +105,11 @@ const fmtStarted = (epoch: number | null) =>
 /**
  * Settings → Server (design/screens/Settings.dc.html): health of the
  * server, its backups and outside monitoring. Read-only except the two
- * backup buttons; shown only when the app runs on a VPS
- * (SA_AUTH=required — the API answers 404 otherwise).
+ * backup buttons; the panel is only live on a VPS (SA_AUTH=required —
+ * the API answers 404 otherwise), locally it collapses to a
+ * description, like Access.
  */
-export function ServerSection() {
+export function ServerSection({ enabled }: { enabled: boolean }) {
   const [data, setData] = useState<ServerStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -125,6 +126,7 @@ export function ServerSection() {
   });
 
   const refresh = () => {
+    if (!enabled) return;
     get<ServerStatus>('/api/server')
       .then((d) => {
         setData(d);
@@ -132,8 +134,15 @@ export function ServerSection() {
       })
       .catch((e) => setError(errorMessages(e)[0]));
   };
-  useEffect(refresh, []);
+  useEffect(refresh, [enabled]);
 
+  if (!enabled) {
+    return (
+      <p style={{ margin: '4px 0 14px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+        Running locally without sign-in — on the VPS build this shows server health, backups and outside monitoring.
+      </p>
+    );
+  }
   if (error && !data) {
     return (
       <p style={{ margin: '4px 0 14px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>

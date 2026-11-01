@@ -2774,15 +2774,13 @@ export default function Settings() {
             {authStatus && <AccessSection auth={authStatus} />}
           </Section>
 
-          {authStatus?.required && (
-            <Section
-              id="server"
-              title="Server"
-              blurb="Health of the server, its backups and outside monitoring. Shown when the app runs on a VPS."
-            >
-              <ServerSection />
-            </Section>
-          )}
+          <Section
+            id="server"
+            title="Server"
+            blurb="Health of the server, its backups and outside monitoring. Shown when the app runs on a VPS."
+          >
+            {authStatus && <ServerSection enabled={authStatus.required} />}
+          </Section>
 
           <Section
             id="history"
