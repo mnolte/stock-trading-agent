@@ -74,6 +74,11 @@ replay: ## replay a prompt over stored snapshots: make replay PROMPT=decision.v2
 replay-selection: ## rank vs expected-profit on stored cycles with a slot/sector/open-risk block: make replay-selection [OUT=docs/analysis/selection.md]
 	cd backend && ../$(PYTHON) -m app.replay_selection $(if $(OUT),--out $(OUT),)
 
+eval-decision: ## run the decision-eval set: make eval-decision PROMPTS=decision.v3,decision.v4 [MODEL=] [YES=1]
+	cd backend && ../$(PYTHON) -m app.eval_decision \
+		--prompts $(PROMPTS) \
+		$(if $(MODEL),--model $(MODEL),) $(if $(filter 1 true yes,$(YES)),--yes,)
+
 test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
 
 test-backend:
