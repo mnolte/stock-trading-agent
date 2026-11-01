@@ -8,6 +8,30 @@ Newest first.
 - `shadow_decisions.input_snapshot` is stored on every shadow row now, including rows built on a live decision's snapshot — the spec's "what the shadow decided on" record. Missed, no-call and rules-only rows had NULL before.
 - `rewrite_thesis_ids` replaces the id token only when the kind words already precede it: a stored thesis "the 1h swing low L16" now becomes "the 1h swing low (317.61)" instead of "the 1h swing low the 23 Oct 10:30 1h swing low (317.61)". Ids without the kind named in the same clause still get the full description.
 
+## 2026-11-01 — Positions: one row per entry order
+
+- Root cause of the 30 Oct SHEL duplicate: the fills sync opened the row at 18:46:43, a stale flat reading closed it a second later while the fill was still settling, and the adopt path re-created the same 18 shares as `adopted` — no decision link, no target. Positions now carry `entry_order_id` (the broker entry order they were opened from) with a unique index; the fills pass checks it before inserting and the adopt path skips a symbol whose position row is open or was closed inside `fill_settle_seconds`.
+- Alembic `i1b2c3d4e5f6` backfills the link, merges duplicate rows sharing one entry order into the surviving open row, and restores the survivor's stop/target from the bracket legs. Applied to the local DB it repairs SHEL exactly as intended: one open row, entry decision 2909, target 110.78 (the bracket's target leg order 32 is live at Alpaca, status `new`).
+
+## 2026-11-01 — Decision v4 (PR 34)
+
+- From the analysis of 31 October (`docs/analysis/2026-10-31-decision-v4-candidates.md`):
+  - confidence isn't a probability (enters at 0.6–0.7, skips at 0.0 or 0.4, held about 0.3 above neutral);
+  - 11 hourly flips and about 28 reversals in a session on unchanged inputs;
+  - conflicts listed and then ignored;
+  - "clear path" into nearby levels survives in v3;
+  - 0 exits in 233 held calls;
+  - about 35–40% of headlines are about another company.
+- New section **Decision v4**:
+  - snapshot v4 adds `previous_decision` with code-computed `since`, headlines with `about_symbol` and `new`, capped headlines and levels, `stop_group`, `checks_at_entry` and `thesis_holds`, time held and session minutes left;
+  - prompt v4 defines confidence for every action and adds `best_option_id` on a skip, held confidence anchored to `neutral_probability`, conflicts with `outweighed_by`, `what_changed`, news effects, and path and exit rules;
+  - code adds the flip-flop guard, confidence sanity and path-claim warnings, `unresolved_conflict`, the `checks_gate` strategy override and `make eval-decision`.
+- The trend rules and the room filter stay as in v3. One rally week isn't enough to drop or enforce them; a `checks_gate` shadow can test the enforced version.
+- New prompt `backend/prompts/decision.v4.md`, deliberately not in `prompts/manifest.json`; PR 34 adds the entry with its code. The `decision.v4` config block comes with PR 34 (rule 7).
+- Reviews: the weekly, briefing and verdict prompts become editable in Settings → Reviews, next to their models; each select lists only that task's versions (PR 34).
+- Build plan item 34.
+- Analyses added to `docs/analysis/`: the dashboard UX review (24 Oct), the security audit (27 Oct), the live data and decision reports of 29 Oct, the model-call and live data reports of 30 Oct, the entry-selection report and the repository scan of 31 Oct. The key hints in the 30 Oct report are redacted.
+
 ## 2026-11-01 — Settings: Server section shows a description off-VPS
 
 - The Settings section menu listed "Server" on every build, but the section rendered only when `SA_AUTH=required` (the VPS build) — the menu link pointed at an anchor that did not exist. The section now always renders and, like Access, collapses to a one-line description locally: the health rows, backup buttons and `/api/server` fetch stay VPS-only.

@@ -207,6 +207,9 @@ class Position(Base):
     # Adopted positions get no model calls and no exits until acknowledged.
     pending_ack: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     entry_decision_id: Mapped[int | None] = mapped_column(ForeignKey("decisions.id"), nullable=True)
+    # The broker entry order this row was opened from — one row per
+    # entry order, enforced by a unique index. NULL for adopted rows.
+    entry_order_id: Mapped[int | None] = mapped_column(ForeignKey("orders.id"), nullable=True)
     qty: Mapped[int] = mapped_column(nullable=False)
     avg_entry_price: Mapped[Decimal] = mapped_column(Money, nullable=False)
     initial_stop: Mapped[Decimal | None] = mapped_column(Money, nullable=True)

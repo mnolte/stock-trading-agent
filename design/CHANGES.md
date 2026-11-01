@@ -2,6 +2,25 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-01 — Decision v4 drawers
+
+- New `DecisionV4.dc.html` (PR 34), the decision.v4 candidate drawer. The example is TSLA in shadow E: the model's enter became a skip through the flip-flop guard. The drawer shows:
+  - **Previous decision**: action, best option, confidence, conflicts, and what moved since;
+  - **Checks by code** compared with the previous cycle;
+  - **Options** with their stop group;
+  - **Conflicts** each with what outweighs it;
+  - the model's **What changed** and the guard's finding (amber);
+  - **News** marked about the symbol or not, with the effect of each cited headline;
+  - the v4 gate rows: confidence sanity and flip-flop;
+  - a note on how a skip shows its best option.
+- New `DecisionV4Held.dc.html`, the held drawer. The example is PG at −0.61R, exiting. It shows:
+  - **Does the entry thesis still hold?**: checks at entry against now, with `thesis_holds`;
+  - time held and minutes left in the session;
+  - conflicts marked "not outweighed";
+  - confidence sanity against the neutral probability.
+- `Settings.dc.html`, Model and reviews → Reviews: a prompt select under each review model: Weekly review prompt, Daily briefing prompt and Verdict prompt. They use the same pattern as the Decision prompt row (`version · short hash`), list only that task's prompts, and show the default under each. The Verdict prompt notes that a change applies to new drafts only. Screenshots `Settings.png` and `Settings-390.png` re-rendered.
+- `DESIGN.md`: both screens listed. `DecisionV3*.dc.html` are unchanged and still used for v3 decisions.
+
 ## 2026-10-31 — Entry selection
 
 - `DecisionV2.dc.html` (PR 33): a "Selection · expected profit" gate row, and a "Selection in this cycle" block.
