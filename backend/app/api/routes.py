@@ -62,7 +62,10 @@ from app.notifications.service import (
 )
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
+from app.decide.v3 import scheduled_exit_text
 from app.risk.budget import Meter, risk_budget
+from app.risk.earnings import next_earnings
+from app.risk.math import open_risk
 from app.secrets_service import (
     GROUP_LABELS,
     GROUP_ORDER,
@@ -1236,6 +1239,33 @@ async def positions(request: Request) -> dict[str, object]:
         (m for m in marks.values() if m is not None), Decimal(0)
     )
 
+    # PR 35, Positions at a glance: per-position facts and the totals
+    # line. Risk figures reuse the shared functions — ATR(1h) and the
+    # levels on the way to the target come from the symbol's latest
+    # stored decision snapshot.
+    config = get_config()
+    near_stop_atr = Decimal(
+        str(config.get("gui", "near_stop_atr", default=1.5))
+    )
+    now = clock.now()
+    calendar = _calendar(request)
+    symbols = [p.symbol for p in open_rows]
+    latest_decisions: dict[str, tuple[Decision, datetime]] = {}
+    with get_session_maker()() as dec_session:
+        earnings_tuples = (
+            next_earnings(dec_session, symbols, now) if symbols else {}
+        )
+        for sym in set(symbols):
+            row = dec_session.execute(
+                select(Decision, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .where(Decision.symbol == sym)
+                .order_by(Decision.id.desc())
+                .limit(1)
+            ).first()
+            if row is not None:
+                latest_decisions[sym] = (row[0], row[1])
+
     out_open = []
     for p in open_rows:
         item = _position_json(p, marks.get(p.symbol))
@@ -1282,10 +1312,154 @@ async def positions(request: Request) -> dict[str, object]:
         )
         opened_today = _ny_date(p.opened_at) == today_ny
         item["opened_today"] = opened_today
+
+        # --- Positions at a glance (PR 35) -------------------------------
+        last_price = last_prices.get(p.symbol)
+        stop = p.current_stop_price
+        atr = None
+        levels_to_target = None
+        latest_card = None
+        ld = latest_decisions.get(p.symbol)
+        if ld is not None:
+            decision, scheduled = ld
+            snapshot = decision.input_snapshot or {}
+            ind1h = cast("dict[str, object]", snapshot.get("indicators_1h") or {})
+            atr_raw = ind1h.get("atr14")
+            atr = (
+                Decimal(str(atr_raw))
+                if isinstance(atr_raw, int | float | Decimal)
+                else None
+            )
+            pos_block = cast(
+                "dict[str, object]", snapshot.get("position") or {}
+            )
+            ltt = pos_block.get("levels_to_target")
+            if isinstance(ltt, list):
+                levels_to_target = len(ltt)
+            latest_card = {
+                "id": decision.id,
+                "action": decision.final_action,
+                "confidence": (decision.model_output or {}).get("confidence"),
+                "time": scheduled.replace(tzinfo=UTC).isoformat(),
+            }
+        item["atr_1h"] = str(atr) if atr is not None else None
+        item["levels_to_target"] = levels_to_target
+        item["latest_decision"] = latest_card
+        item["scheduled_exit"] = scheduled_exit_text(
+            earnings_tuples.get(p.symbol),
+            now,
+            calendar=calendar,
+            config=config,
+        )
+        # Distances from the last price, in % and ATR(1h) — the amber
+        # threshold comes from gui.near_stop_atr.
+        if last_price is not None and last_price > 0:
+            if stop is not None:
+                item["to_stop_pct"] = float(
+                    (last_price - stop) / last_price * 100
+                )
+                if atr is not None and atr > 0:
+                    item["to_stop_atr"] = float((last_price - stop) / atr)
+            if p.target_price is not None:
+                item["to_target_pct"] = float(
+                    (p.target_price - last_price) / last_price * 100
+                )
+                if atr is not None and atr > 0:
+                    item["to_target_atr"] = float(
+                        (p.target_price - last_price) / atr
+                    )
+        # "If the stop hits": signed result in $ and R; "locked in" when
+        # the stop sits above the entry (JPM in the design).
+        if stop is not None:
+            if_stop_usd = p.qty * (stop - p.avg_entry_price)
+            item["if_stop_usd"] = float(if_stop_usd)
+            item["locked_in"] = stop > p.avg_entry_price
+            if (
+                p.initial_stop is not None
+                and p.avg_entry_price > p.initial_stop
+            ):
+                item["if_stop_r"] = float(
+                    (stop - p.avg_entry_price)
+                    / (p.avg_entry_price - p.initial_stop)
+                )
+        # The folded legs line opens amber when a leg is missing or not
+        # in its expected state.
+        leg_rows = legs[p.id]
+        has_entry = any(
+            l["leg"] == "entry" and l["status"] == "filled" for l in leg_rows
+        )
+        has_stop = any(
+            l["leg"] == "stop" and l["status"] in OPEN_ORDER_STATUSES
+            for l in leg_rows
+        )
+        has_target = any(
+            l["leg"] == "target" and l["status"] in OPEN_ORDER_STATUSES
+            for l in leg_rows
+        )
+        problems = []
+        if not has_entry:
+            problems.append("entry leg missing")
+        if not has_stop:
+            problems.append("no open stop leg")
+        if p.target_price is not None and not has_target:
+            problems.append("no open target leg")
+        item["legs_problem"] = bool(problems)
+        item["legs_summary"] = (
+            f"{len(leg_rows)} leg{'s' if len(leg_rows) != 1 else ''} · "
+            + (
+                "; ".join(problems)
+                if problems
+                else "entry filled, stop and target open ✓"
+            )
+        )
         out_open.append(item)
+
+    # Totals line (design/screens/Positions.dc.html): unrealized, the
+    # net result if every stop hits, open risk against its cap and the
+    # position closest to its stop.
+    equity = account.equity if account else None
+    if_stops_usd = sum(
+        Decimal(str(item["if_stop_usd"])) for item in out_open
+    ) if out_open else Decimal(0)
+    open_risk_usd = open_risk(
+        (
+            p.qty,
+            p.avg_entry_price,
+            p.current_stop_price or p.avg_entry_price,
+        )
+        for p in open_rows
+    )
+    closest = None
+    nearest = None
+    for item in out_open:
+        atr_dist = item.get("to_stop_atr")
+        if atr_dist is not None and (
+            nearest is None or atr_dist < nearest
+        ):
+            nearest = atr_dist
+            closest = {"symbol": item["symbol"], "atr": atr_dist}
+    totals = {
+        "unrealized_usd": sum(
+            (item["unrealized_pnl"] or 0) for item in out_open
+        ) if out_open else None,
+        "if_stops_usd": float(if_stops_usd),
+        "if_stops_pct_equity": (
+            float(if_stops_usd / equity * 100) if equity else None
+        ),
+        "open_risk_usd": float(open_risk_usd),
+        "open_risk_pct": (
+            float(open_risk_usd / equity * 100) if equity else None
+        ),
+        "open_risk_cap_pct": float(
+            config.get("risk", "max_open_risk_pct", default=2.5)
+        ),
+        "closest": closest,
+    }
 
     return {
         "open": out_open,
+        "totals": totals,
+        "near_stop_atr": str(near_stop_atr),
         "closed_today": [_position_json(p) for p in closed_today],
         "today": {
             "entries": len(opened_today_rows) + len(round_trips),

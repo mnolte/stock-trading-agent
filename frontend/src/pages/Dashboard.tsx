@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getApprovals,
+  getAttention,
   getChart,
   getDashboard,
   getPositions,
@@ -20,6 +21,8 @@ import type {
   PositionsResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { NeedsYouCard } from '../components/NeedsYouCard';
+import { StopTargetBar } from '../components/StopTargetBar';
 import { Banner } from '../components/Banner';
 import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
@@ -553,94 +556,70 @@ function OpenPositionsMini({
         }
       >
         {() => (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', minWidth: '560px' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
-                {['Symbol', 'Qty', 'Entry', 'Last', 'Stop', 'Stop distance', 'Unrealized'].map((h, i) => (
-                  <th
-                    key={h}
+        <div>
+          {open.map((p) => {
+            const near = Number(res.data?.near_stop_atr ?? 1.5);
+            const closeToStop =
+              p.to_stop_atr !== null && p.to_stop_atr !== undefined && p.to_stop_atr < near;
+            const last = p.last_price !== null && p.last_price !== undefined ? Number(p.last_price) : null;
+            return (
+              <Link
+                key={p.id}
+                to="/positions"
+                className="sa-row"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: '4px 16px',
+                  alignItems: 'center',
+                  padding: '10px 8px',
+                  margin: '0 -8px',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  borderTop: '1px solid var(--sa-border)',
+                  color: 'var(--sa-text)',
+                  textDecoration: 'none',
+                }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <b style={{ fontWeight: 600 }}>{p.symbol}</b>{' '}
+                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    {p.qty} sh{p.opened_today ? ' · today' : ''}
+                  </span>{' '}
+                  <span
                     style={{
-                      padding: 'var(--sa-space-2) 10px',
-                      textAlign: i === 0 ? 'left' : 'right',
-                      fontSize: 'var(--sa-text-sm)',
-                      color: 'var(--sa-text-muted)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {open.map((p) => (
-                <tr key={p.id} style={{ borderBottom: '1px solid var(--sa-border)' }}>
-                  <td style={{ padding: 'var(--sa-space-2) 10px', fontWeight: 600 }}>
-                    {p.symbol}
-                    {p.opened_today && (
-                      <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}> · today</span>
-                    )}
-                  </td>
-                  {[
-                    String(p.qty),
-                    p.avg_entry_price,
-                    p.last_price ?? '—',
-                    p.current_stop_price ?? '—',
-                    p.stop_distance_label ?? '—',
-                  ].map((cell, i) => (
-                    <td
-                      key={i}
-                      style={{
-                        padding: 'var(--sa-space-2) 10px',
-                        textAlign: 'right',
-                        fontFamily: 'var(--sa-font-mono)',
-                        fontSize: 'var(--sa-text-md)',
-                        color: 'var(--sa-text-2)',
-                      }}
-                    >
-                      {cell}
-                    </td>
-                  ))}
-                  <td
-                    style={{
-                      padding: 'var(--sa-space-2) 10px',
-                      textAlign: 'right',
                       fontFamily: 'var(--sa-font-mono)',
-                      fontSize: 'var(--sa-text-md)',
-                      color:
-                        p.unrealized_pnl === null || p.unrealized_pnl === undefined
-                          ? 'var(--sa-text-2)'
-                          : p.unrealized_pnl > 0
-                            ? 'var(--sa-positive)'
-                            : p.unrealized_pnl < 0
-                              ? 'var(--sa-negative-text)'
-                              : 'var(--sa-text-2)',
+                      fontSize: 'var(--sa-text-sm)',
+                      color: closeToStop ? 'var(--sa-warning-text)' : 'var(--sa-text-muted)',
                     }}
                   >
-                    {p.unrealized_pnl === null || p.unrealized_pnl === undefined
-                      ? '—'
-                      : signedUsd(p.unrealized_pnl)}
-                    {(() => {
-                      const sub =
-                        p.r_multiple !== null && p.r_multiple !== undefined
-                          ? `${signed(p.r_multiple)}R`
-                          : p.stop_distance_label === 'stop above entry'
-                            ? 'stop above entry'
-                            : null;
-                      return (
-                        sub && (
-                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                            {sub}
-                          </div>
-                        )
-                      );
-                    })()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    · {p.to_stop_pct !== null && p.to_stop_pct !== undefined ? `${p.to_stop_pct.toFixed(2)}%` : '—'}{' '}
+                    · {p.to_stop_atr !== null && p.to_stop_atr !== undefined ? `${p.to_stop_atr.toFixed(1)}` : '—'} ATR to stop
+                  </span>
+                </span>
+                <span style={{ textAlign: 'right', fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: (p.unrealized_pnl ?? 0) >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>
+                    {p.unrealized_pnl !== null && p.unrealized_pnl !== undefined ? signedUsd(p.unrealized_pnl) : '—'}
+                  </span>{' '}
+                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    {p.locked_in ? 'stop above entry' : p.r_multiple !== null && p.r_multiple !== undefined ? `${signed(p.r_multiple)}R` : ''}
+                  </span>
+                </span>
+                <span style={{ gridColumn: '1 / -1', minWidth: 0, display: 'block' }}>
+                  <StopTargetBar
+                    stop={p.current_stop_price !== null ? Number(p.current_stop_price) : null}
+                    entry={Number(p.avg_entry_price)}
+                    last={last}
+                    target={p.target_price !== null ? Number(p.target_price) : null}
+                  />
+                </span>
+              </Link>
+            );
+          })}
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5, paddingTop: 'var(--sa-space-2)' }}>
+            Bar: stop (red) to target (green), entry tick, white dot for the last
+            price. Under {res.data?.near_stop_atr ?? '1.5'} ATR (1h) to the stop
+            the distance turns amber.
+          </div>
         </div>
         )}
       </CardBody>
@@ -829,6 +808,7 @@ export default function Dashboard() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const positionsRes = useApiResource(getPositions);
+  const attentionRes = useApiResource(getAttention);
   const watchlistRes = useApiResource(getWatchlist);
   const approvalsRes = useApiResource(getApprovals);
   const budgetRes = useApiResource(getRiskBudget);
@@ -881,6 +861,7 @@ export default function Dashboard() {
     dashboardRes.reload,
   );
   useLiveUpdates(['watchlist'], watchlistRes.reload);
+  useLiveUpdates(['attention'], attentionRes.reload);
   useLiveUpdates(['approvals'], () => {
     approvalsRes.reload();
     dashboardRes.reload();
@@ -1018,6 +999,8 @@ export default function Dashboard() {
         </div>
       )}
 
+      <NeedsYouCard res={attentionRes} />
+
       {(dashboard === null ||
         dashboard.cycle_line !== null ||
         dashboard.cycle_counter !== null) && (
@@ -1104,19 +1087,6 @@ export default function Dashboard() {
         }}
       >
         <Link
-          to="/positions"
-          className="sa-tile"
-          aria-label="Positions, open Positions and orders"
-          style={{ display: 'flex', flex: '1 1 190px', minWidth: 0 }}
-        >
-          <StatCard
-            label="Positions"
-            value={`${stats?.positions ?? 0} of ${stats?.positions_cap ?? '—'}`}
-            sub={`cash $${stats?.cash ?? '—'} · no margin`}
-            style={{ flex: '1 1 auto', width: '100%' }}
-          />
-        </Link>
-        <Link
           to="/inspector?source=live"
           className="sa-tile"
           aria-label="Model calls, open the LLM inspector"
@@ -1186,7 +1156,12 @@ export default function Dashboard() {
           alignItems: 'stretch',
         }}
       >
-        <BriefingCard res={dashboardRes} />
+        <OpenPositionsMini
+          res={positionsRes}
+          nextCycle={dashboard?.session.next_cycle ?? null}
+          nextCycleToday={dashboard?.cycle_counter?.next_cycle_today !== false}
+          passCount={passCount}
+        />
         <RiskBudgetCard
           res={budgetRes}
           reentryBlocked={positionsRes.data?.today.reentry_blocked ?? []}
@@ -1370,14 +1345,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <Watchlist
-        res={watchlistRes}
-        selected={chartSymbol}
-        onSelect={pickSymbol}
-      />
-
-      {/* Design: positions and the feed sit side by side, wrapping at
-          narrow widths (Main.dc.html). */}
       <div
         style={{
           display: 'flex',
@@ -1386,18 +1353,19 @@ export default function Dashboard() {
           alignItems: 'stretch',
         }}
       >
-        <div style={{ flex: '3 1 520px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <OpenPositionsMini
-            res={positionsRes}
-            nextCycle={dashboard?.session.next_cycle ?? null}
-            nextCycleToday={dashboard?.cycle_counter?.next_cycle_today !== false}
-            passCount={passCount}
-          />
-        </div>
-        <div style={{ flex: '2 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Feed res={dashboardRes} />
         </div>
+        <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <BriefingCard res={dashboardRes} />
+        </div>
       </div>
+
+      <Watchlist
+        res={watchlistRes}
+        selected={chartSymbol}
+        onSelect={pickSymbol}
+      />
 
       <FindSymbolDialog
         open={pickerOpen}
