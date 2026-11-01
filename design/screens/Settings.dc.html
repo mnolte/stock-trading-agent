@@ -415,16 +415,34 @@ table{border-collapse:collapse}
   <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="rweekly" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>gpt-4o-mini · OpenAI</option><option>gpt-4.1-mini · OpenAI</option><option>claude-haiku-5-5 · Anthropic</option><option>claude-sonnet-5-5 · Anthropic</option></select><span style="font-size: 12px; color: #8A94A1">Default gpt-4o-mini · OpenAI</span></div>
 </div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
   <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+    <label for="pweekly" style="font-size: 14px; color: #E7EAEE">Weekly review prompt</label>
+    <span style="font-size: 12px; color: #98A2AF; line-height: 1.45">Prompts are never edited; a change is a new version. Only weekly prompts are listed.</span>
+  </div>
+  <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="pweekly" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>weekly.v2 · 60e3f3ba</option><option>weekly.v1 · 847e8e70</option></select><span style="font-size: 12px; color: #8A94A1">Default weekly.v2</span></div>
+</div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
+  <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
     <label for="rbrief" style="font-size: 14px; color: #E7EAEE">Daily briefing model</label>
     <span style="font-size: 12px; color: #98A2AF; line-height: 1.45">Trading days before the open.</span>
   </div>
   <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="rbrief" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>gpt-4o-mini · OpenAI</option><option>gpt-4.1-mini · OpenAI</option><option>claude-haiku-5-5 · Anthropic</option><option>claude-sonnet-5-5 · Anthropic</option></select><span style="font-size: 12px; color: #8A94A1">Default gpt-4o-mini · OpenAI</span></div>
 </div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
   <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+    <label for="pbrief" style="font-size: 14px; color: #E7EAEE">Daily briefing prompt</label>
+    <span style="font-size: 12px; color: #98A2AF; line-height: 1.45">Only briefing prompts are listed.</span>
+  </div>
+  <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="pbrief" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>briefing.v1 · 2147ae45</option><option>briefing.v2 · 3510ee22</option></select><span style="font-size: 12px; color: #8A94A1">Default briefing.v1</span></div>
+</div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
+  <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
     <label for="rverdict" style="font-size: 14px; color: #E7EAEE">Verdict model</label>
     <span style="font-size: 12px; color: #98A2AF; line-height: 1.45">Verdicts on decisions after 5 sessions.</span>
   </div>
   <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="rverdict" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>gpt-4o-mini · OpenAI</option><option>gpt-4.1-mini · OpenAI</option><option>claude-haiku-5-5 · Anthropic</option><option>claude-sonnet-5-5 · Anthropic</option></select><span style="font-size: 12px; color: #8A94A1">Default gpt-4o-mini · OpenAI</span></div>
+</div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
+  <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
+    <label for="pverdict" style="font-size: 14px; color: #E7EAEE">Verdict prompt</label>
+    <span style="font-size: 12px; color: #98A2AF; line-height: 1.45">Only verdict prompts are listed. A change applies to drafts written after it; existing drafts keep theirs.</span>
+  </div>
+  <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><select id="pverdict" style="height: 40px; box-sizing: border-box; border-radius: 8px; border: 1px solid #2E3643; background: #0B0E13; color: #E7EAEE; font-size: 14px; padding: 0 10px; min-width: 200px"><option>verdict.v2 · 53f83383</option><option>verdict.v1 · 00fe40f9</option></select><span style="font-size: 12px; color: #8A94A1">Default verdict.v2</span></div>
 </div><div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 24px; padding: 14px 0; border-bottom: 1px solid #232A35; ">
   <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 3px">
     <label for="brief" style="font-size: 14px; color: #E7EAEE">Daily briefing</label>

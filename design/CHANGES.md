@@ -18,6 +18,7 @@ Newest first. Each entry names the screens it touches.
   - time held and minutes left in the session;
   - conflicts marked "not outweighed";
   - confidence sanity against the neutral probability.
+- `Settings.dc.html`, Model and reviews → Reviews: a prompt select under each review model: Weekly review prompt, Daily briefing prompt and Verdict prompt. They use the same pattern as the Decision prompt row (`version · short hash`), list only that task's prompts, and show the default under each. The Verdict prompt notes that a change applies to new drafts only. Screenshots `Settings.png` and `Settings-390.png` re-rendered.
 - `DESIGN.md`: both screens listed. `DecisionV3*.dc.html` are unchanged and still used for v3 decisions.
 
 ## 2026-10-31 — Entry selection

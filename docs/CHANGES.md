@@ -17,6 +17,7 @@ Newest first.
   - code adds the flip-flop guard, confidence sanity and path-claim warnings, `unresolved_conflict`, the `checks_gate` strategy override and `make eval-decision`.
 - The trend rules and the room filter stay as in v3. One rally week isn't enough to drop or enforce them; a `checks_gate` shadow can test the enforced version.
 - New prompt `backend/prompts/decision.v4.md`, deliberately not in `prompts/manifest.json`; PR 34 adds the entry with its code. The `decision.v4` config block comes with PR 34 (rule 7).
+- Reviews: the weekly, briefing and verdict prompts become editable in Settings → Reviews, next to their models; each select lists only that task's versions (PR 34).
 - Build plan item 34.
 - Analyses added to `docs/analysis/`: the dashboard UX review (24 Oct), the security audit (27 Oct), the live data and decision reports of 29 Oct, the model-call and live data reports of 30 Oct, the entry-selection report and the repository scan of 31 Oct. The key hints in the 30 Oct report are redacted.
 
