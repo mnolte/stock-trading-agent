@@ -325,6 +325,12 @@ export default function Positions() {
             <span style={{ color: 'var(--sa-text-muted)' }}>· {positions.totals.if_stops_pct_equity != null ? `${Math.abs(positions.totals.if_stops_pct_equity).toFixed(2)}%` : '—'} of equity</span></span>
           <span><span style={{ color: 'var(--sa-text-muted)' }}>Open risk</span>{' '}
             <span style={mono}>{positions.totals.open_risk_pct != null ? `${positions.totals.open_risk_pct.toFixed(2)}%` : '—'} of {positions.totals.open_risk_cap_pct}%</span></span>
+          {positions.totals.unprotected > 0 && (
+            <span><span style={{ ...mono, color: 'var(--sa-negative-text)' }}>
+              {positions.totals.unprotected} without a stop
+            </span>{' '}
+            <span style={{ color: 'var(--sa-text-muted)' }}>· counted at full value in open risk</span></span>
+          )}
           {positions.totals.closest && (
             <span><span style={{ color: 'var(--sa-text-muted)' }}>Closest to its stop</span>{' '}
               <span style={{ ...mono, color: positions.totals.closest.atr < Number(positions.near_stop_atr ?? 1.5) ? 'var(--sa-warning-text)' : 'var(--sa-text)' }}>

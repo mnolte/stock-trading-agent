@@ -295,6 +295,9 @@ export interface PositionsTotals {
   open_risk_usd: number | null;
   open_risk_pct: number | null;
   open_risk_cap_pct: number | null;
+  /** Open positions with no recorded stop — counted at full notional in
+   * open_risk_usd. */
+  unprotected: number;
   closest: { symbol: string; atr: number } | null;
 }
 

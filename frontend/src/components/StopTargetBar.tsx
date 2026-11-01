@@ -2,7 +2,8 @@ import { formatPrice } from './watchlistFormat';
 
 /** The stop-to-target bar shared by the dashboard position rows and the
  * Positions page (design: stop red, entry tick, white last-price dot,
- * target green). Prices that fall outside the stop–target span (a stop
+ * target green; the fill runs red when the last price sits below the
+ * entry). Prices that fall outside the stop–target span (a stop
  * above the entry, or the last price beyond the target) still place
  * correctly: the bar spans min(stop, entry) to max(target, last). */
 export function StopTargetBar({
@@ -34,12 +35,15 @@ export function StopTargetBar({
           <div
             style={{
               position: 'absolute',
-              left: `${entryPct}%`,
-              width: `${Math.max(0, lastPct - entryPct)}%`,
+              left: `${Math.min(entryPct, lastPct)}%`,
+              width: `${Math.abs(lastPct - entryPct)}%`,
               top: 9,
               height: 4,
               borderRadius: 2,
-              background: 'var(--sa-positive)',
+              background:
+                lastPct >= entryPct
+                  ? 'var(--sa-positive)'
+                  : 'var(--sa-negative-text)',
             }}
           />
         )}

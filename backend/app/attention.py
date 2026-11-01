@@ -27,6 +27,7 @@ from app.db.models import (
     Verdict,
 )
 from app.log_index import index_path
+from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, UTC, SessionClock, make_clock
 from app.readiness.service import unreviewed_error_fingerprints
 from app.secrets_service import GROUP_LABELS, GROUP_ORDER
@@ -96,10 +97,16 @@ def build_attention(request: Request) -> dict[str, Any]:
     notifier = getattr(request.app.state, "notification_service", None)
     broker = getattr(request.app.state, "broker", None)
     ops = getattr(request.app.state, "ops", None)
-    calendar = getattr(request.app.state, "calendar_store", None)
+    calendar_store = getattr(request.app.state, "calendar_store", None)
+    calendar = (
+        calendar_store
+        if calendar_store is not None
+        else WeekdayCalendarProvider()
+    )
     session_state = SessionClock(clock, config, calendar).state()
 
     items: list[dict[str, Any]] = []
+    email_failures = notifier.email_failures if notifier is not None else 0
 
     with get_session_maker()() as session:
         # 1. Critical banners waiting for acknowledgement.
@@ -264,34 +271,27 @@ def build_attention(request: Request) -> dict[str, Any]:
                     )
                 )
 
-    # 4. A notification channel failing: the last email send failed and
-    #    the counter clears only on a send that succeeds.
-    email_failures = (
-        notifier.email_failures if notifier is not None else 0
-    )
-    if email_failures > 0:
-        items.append(
-            _item(
-                "channel",
-                "warning",
-                "Email alerts are failing.",
-                f"{email_failures} notification email"
-                f"{'s' if email_failures != 1 else ''} failed in a row. "
-                "Check the SMTP details under Settings → Notifications.",
-                "Fix in Settings",
-                "/settings",
-                None,
+        # 4. A notification channel failing: the last email send failed
+        #    and the counter clears only on a send that succeeds.
+        if email_failures > 0:
+            items.append(
+                _item(
+                    "channel",
+                    "warning",
+                    "Email alerts are failing.",
+                    f"{email_failures} notification email"
+                    f"{'s' if email_failures != 1 else ''} failed in a "
+                    "row. Check the SMTP details under Settings → "
+                    "Notifications.",
+                    "Fix in Settings",
+                    "/settings",
+                    None,
+                )
             )
-        )
 
-    with get_session_maker()() as session:
         # 5. Errors not reviewed — the count Readiness uses.
-        unreviewed = (
-            unreviewed_error_fingerprints(
-                session, config, calendar, today_ny
-            )
-            if calendar is not None
-            else None
+        unreviewed = unreviewed_error_fingerprints(
+            session, config, calendar, today_ny
         )
         if unreviewed:
             names = [

@@ -22,7 +22,12 @@ function icon(severity: AttentionItem['severity']) {
   return (
     <span
       style={{
-        color: severity === 'info' ? 'var(--sa-info)' : 'var(--sa-warning-text)',
+        color:
+          severity === 'info'
+            ? 'var(--sa-info)'
+            : severity === 'critical'
+              ? 'var(--sa-negative-text)'
+              : 'var(--sa-warning-text)',
         display: 'flex',
         paddingTop: 2,
       }}

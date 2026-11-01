@@ -806,6 +806,17 @@ function FindSymbolDialog({
 export default function Dashboard() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+
+  // The Needs you chip links to "/#needs" — React Router doesn't scroll
+  // to hash anchors, so scroll here once the card is on screen.
+  useEffect(() => {
+    if (location.hash === '#needs') {
+      document
+        .getElementById('needs')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [location.hash]);
 
   const positionsRes = useApiResource(getPositions);
   const attentionRes = useApiResource(getAttention);

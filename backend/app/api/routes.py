@@ -1398,8 +1398,6 @@ async def positions(request: Request) -> dict[str, object]:
             for leg in leg_rows
         )
         problems = []
-        if not has_entry:
-            problems.append("entry leg missing")
         if not has_stop:
             problems.append("no open stop leg")
         if p.target_price is not None and not has_target:
@@ -1410,7 +1408,11 @@ async def positions(request: Request) -> dict[str, object]:
             + (
                 "; ".join(problems)
                 if problems
-                else "entry filled, stop and target open ✓"
+                else (
+                    "entry filled, stop and target open ✓"
+                    if has_entry
+                    else "stop and target open ✓"
+                )
             )
         )
         out_open.append(item)
@@ -1423,11 +1425,16 @@ async def positions(request: Request) -> dict[str, object]:
         (Decimal(str(item.get("if_stop_usd") or 0)) for item in out_open),
         Decimal(0),
     )
+    # A position with no recorded stop counts at full notional — the
+    # worst case — not zero risk.
+    unprotected = sum(
+        1 for p in open_rows if p.current_stop_price is None
+    )
     open_risk_usd = open_risk(
         (
             p.qty,
             p.avg_entry_price,
-            p.current_stop_price or p.avg_entry_price,
+            p.current_stop_price or Decimal(0),
         )
         for p in open_rows
     )
@@ -1460,6 +1467,7 @@ async def positions(request: Request) -> dict[str, object]:
         "open_risk_cap_pct": float(
             config.get("risk", "max_open_risk_pct", default=2.5)
         ),
+        "unprotected": unprotected,
         "closest": closest,
     }
 
