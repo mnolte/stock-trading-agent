@@ -60,6 +60,12 @@ OVERRIDE_V3: dict[str, tuple[str, ...]] = {
     "breakeven_min_r": ("decision", "v3", "breakeven_min_r"),
     "held_stop_min_atr": ("decision", "v3", "held_stop_min_atr"),
 }
+# Decision v4 (PR 34): ``checks_gate`` makes a shadow test the
+# code-enforced checklist — a candidate failing trend_1h up,
+# regime_trend up or trend_daily not down gets no model call.
+OVERRIDE_V4: dict[str, tuple[str, ...]] = {
+    "checks_gate": ("decision", "v4", "checks_gate"),
+}
 # Entry selection (PR 33): a shadow can test expected_profit next to
 # live. ``last_slot_min_ev_r`` may be overridden to None (off).
 OVERRIDE_SELECTION: dict[str, tuple[str, ...]] = {
@@ -132,6 +138,10 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
             # Selection overrides apply even when the value is None —
             # None means "floor off", not "same as live".
             _tree_set(tree, sel, value)
+            continue
+        v4 = OVERRIDE_V4.get(name)
+        if v4 is not None and value is not None:
+            _tree_set(tree, v4, value)
     return tree
 
 
@@ -207,6 +217,21 @@ def differences(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
                 }
             )
     for name, path in OVERRIDE_SELECTION.items():
+        if strategy.overrides is None or name not in (strategy.overrides or {}):
+            continue
+        live_value = config.get(*path)
+        shadow_value = _tree_get(shadow_tree, path)
+        if live_value == shadow_value:
+            continue
+        differs.append(
+            {
+                "key": ".".join(path),
+                "label": LABELS.get((path[0], path[-1]), name),
+                "live": _fmt(live_value),
+                "shadow": _fmt(shadow_value),
+            }
+        )
+    for name, path in OVERRIDE_V4.items():
         if strategy.overrides is None or name not in (strategy.overrides or {}):
             continue
         live_value = config.get(*path)
@@ -385,6 +410,17 @@ def validate_new_strategy(
                 continue
             path = OVERRIDE_V3.get(str(item))
             if path is None:
+                v4_path = OVERRIDE_V4.get(str(item))
+                if v4_path is not None:
+                    if kind == "rules_only":
+                        continue
+                    if not isinstance(value, bool):
+                        errors.append(
+                            "decision.v4.checks_gate: must be true or false"
+                        )
+                        continue
+                    overrides[str(item)] = value
+                    continue
                 # Risk gates, sizing, the day-trade rule and earnings
                 # handling are never overridable.
                 errors.append(f"{item}: not overridable")
