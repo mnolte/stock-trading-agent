@@ -1871,14 +1871,21 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - A failing tool returns its error to the model, which says what it couldn't look up.
 
 **Model.**
-- `ask.model`, any entry in `models` (default `gpt-4.1-mini`).
+- `ask.model`, any entry in `models`. An answer takes several rounds of tool calls, so Ask uses a stronger model than decisions:
+  - recommended: `claude-sonnet-5-5` (the default) and `gpt-6.1-sol`, both $2 in and $10 out per million tokens;
+  - budget: `claude-haiku-5-5` and `gpt-4.1-mini`.
+
+  The Settings select shows these four, marked recommended or budget. `make eval-ask` runs both recommended models; the default is the one that passes more properties.
 - A new call type in the one model interface: `converse(system, messages, tools, model, stream)`, which returns streamed text, tool calls, token counts and the same typed errors. OpenAI and Anthropic adapters, and a fake for tests; the provider rule (hard rule 21) holds.
 - Temperature 0.2 for OpenAI models.
 - Prompt `prompts/ask.v1.md`, versioned and in the manifest like every prompt.
 - Each model round is a row in `llm_calls`: source `ask`, kind `ask`, linked to the message. The LLM inspector filters on it.
 
 **Cost and limits.**
-- Ask has its own monthly cap, `ask.monthly_cost_cap_usd` (5). It never uses the budget or rate limits of trading decisions, and model calls for a cycle go first when both wait on the limiter.
+- **Expected cost.** About $0.05–0.10 a question on the recommended models (2–3 rounds of about 10,000 input tokens), more late in a long thread.
+- **Prompt caching.** The system prompt and the tool definitions are the same for every round, so they are sent as a cached prefix: Anthropic cache control, OpenAI's automatic caching. Cached input counts at the provider's cached price.
+- **Per answer.** `ask.max_cost_per_answer_usd` (0.25). Before each tool round, code adds up the answer's cost so far. At the cap it asks the model for a final answer without tools, which says that it stopped looking things up. The answer is stored with status `ok` and the note "cost limit reached".
+- **Per month.** Ask has its own monthly cap, `ask.monthly_cost_cap_usd` (15). It never uses the budget or rate limits of trading decisions, and model calls for a cycle go first when both wait on the limiter.
 - At the cap, the composer is replaced by a notice (resets on the 1st; raise it in Settings) and earlier chats stay readable.
 - At most `ask.max_questions_per_minute` (10) per session. A question is at most 2,000 characters.
 
@@ -1889,7 +1896,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - **Rendering:** the answer is rendered from the limited Markdown, with references resolved by code; no raw HTML, no links outside the app.
 - **No advice:** asked "should I…", the agent lays out the evidence and the trade-off. For anything about real money it says this is a paper account.
 
-**Settings → Ask the agent:** on or off, model, monthly cap, chats kept for (days), standing instructions. The settings history records changes as usual.
+**Settings → Ask the agent:** on or off, model, monthly cap with this month's spend, number of questions and average cost per question, max cost per answer, chats kept for (days), standing instructions. The settings history records changes as usual.
 
 **Storage** (new Alembic revision):
 - `ask_threads`: title, context JSON, created, updated, archived;

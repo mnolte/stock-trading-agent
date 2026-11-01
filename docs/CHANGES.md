@@ -4,6 +4,14 @@ Newest first.
 
 ## 2026-11-01 — Ask the agent: memory written by Marc, checked numbers
 
+- **Model:** Ask uses a stronger model than decisions. Recommended: `claude-sonnet-5-5` (default) and `gpt-6.1-sol`, both $2/$10 per million tokens. Budget: `claude-haiku-5-5`, `gpt-4.1-mini`. The eval picks the default between the two recommended. `gpt-6.1-sol` joins the models list with PR 36, after its price and cutoff are checked.
+- **Cost:**
+  - about $0.05–0.10 a question;
+  - a cached prompt prefix;
+  - a per-answer cap `ask.max_cost_per_answer_usd` (0.25) that ends the lookups and answers with what it has;
+  - the monthly cap raised to $15.
+  Settings shows this month's spend, the number of questions and the average per question.
+
 - **Ask the agent → Memory.** Nothing is remembered silently.
   - **Standing instructions** (`ask.instructions`, 1,000 characters) in Settings → Ask the agent, added to every chat. They shape how the agent answers, never what it may do.
   - **Saved notes:** "Save as note" under an answer, or written by hand; listed in the drawer with Edit and Delete; kept until Marc deletes them.
