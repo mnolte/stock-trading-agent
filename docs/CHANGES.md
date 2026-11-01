@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-01 — Needs you and positions at a glance (PR 35)
+
+- From the UX audit of 1 November (`docs/analysis/2026-11-01-ux-audit.md`).
+- GUI:
+  - a **Needs you** card on the dashboard: one list, most urgent first, of what waits for Marc. Each item has one action and leaves when done;
+  - a health line under it;
+  - a "Needs you · n" chip in the header on every screen.
+- **Positions at a glance:**
+  - a stop-to-target bar and the distance to the stop in ATR, amber under `gui.near_stop_atr` (1.5);
+  - open positions moved up on the dashboard;
+  - on Positions: a totals line, four facts per position, and Alpaca legs folded into a line that opens on a problem.
+- **Phone:** below 820 px a sticky top bar with the menu replaces the sidebar; no sideways scroll at 390 px.
+- Build plan item 35. Kickoff `docs/kickoffs/pr-35.md`. `gui.near_stop_atr` comes with PR 35 (rule 7).
+
 ## 2026-11-01 — Decision v4: best option and conflict checks clarified
 
 - From the PR 34 review. `best_option_id` never invalidates an answer:

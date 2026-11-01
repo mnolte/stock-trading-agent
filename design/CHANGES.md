@@ -2,6 +2,24 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-01 — Needs you, positions at a glance, phone top bar
+
+From the UX audit (`docs/analysis/2026-11-01-ux-audit.md`).
+
+- `Main.dc.html`:
+  - **Needs you** card first, with 3 sample items (email alerts failing, 2 errors not reviewed, 1 verdict to confirm), each with one action, and the health line;
+  - new order: cycle strip, two tiles (model calls, since start), open positions next to the risk budget, chart and latest decision, today's decisions next to the briefing, watchlist last;
+  - open positions as rows with a stop-to-target bar and the distance to the stop in % and ATR (amber under 1.5 ATR);
+  - the "Positions" tile is removed; the card title carries "2 of 4".
+- `Positions.dc.html`:
+  - a totals line;
+  - per position: the bar, four facts (if the stop hits, to the stop, to the target, exit planned), the latest decision link, and the Alpaca legs folded into one summary line.
+- Every screen with the app shell:
+  - a "Needs you · 3" chip in the header after the session pill;
+  - below 820 px, the sidebar is replaced by a sticky top bar (mark, title, count, menu button); the header chip is hidden there.
+- `Settings.dc.html`: the recovery-codes row wraps at phone width, so the page no longer scrolls sideways at 390 px.
+- Screenshots re-rendered at 1440 and 390 for every screen with the shell. `DESIGN.md` → Phone width updated.
+
 ## 2026-11-01 — Decision v4 drawers
 
 - New `DecisionV4.dc.html` (PR 34), the decision.v4 candidate drawer. The example is TSLA in shadow E: the model's enter became a skip through the flip-flop guard. The drawer shows:
