@@ -2560,6 +2560,64 @@ async def test_reconcile_flat_without_fill_is_mismatch(
         assert executor.state.pending_ack(session)
 
 
+async def test_flat_check_defers_while_fills_settle(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """SHEL of 30 Oct: the entry filled one second before reconcile ran
+    and Alpaca's positions endpoint didn't show the position yet — the
+    flat check defers like the qty check (spec, Fills still settling);
+    the same reading after the window still raises flat_without_fill."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"SHEL": Decimal("108.51")})
+    executor = _executor(session_factory, broker, clock)
+    a_second_ago = NOW.replace(tzinfo=None) - timedelta(seconds=1)
+    with session_factory() as session:
+        # The entry fill landed a second ago; the broker's position
+        # view hasn't caught up (endpoint lags fresh fills).
+        position = _open_position(
+            session, "SHEL", qty=18, entry="108.49", stop="107.37",
+            opened_at=a_second_ago,
+        )
+        entry = Order(
+            alpaca_order_id="shel-entry",
+            client_order_id="sa-salocal-entry-1-SHEL-x-2",
+            symbol="SHEL", decision_id=None, side="buy",
+            order_type="limit", leg="entry", qty=18,
+            limit_price=Decimal("108.51"), status="filled",
+            created_at=a_second_ago, filled_at=a_second_ago,
+        )
+        session.add(entry)
+        session.flush()
+        session.add(Fill(
+            order_id=entry.id, qty=18, price=Decimal("108.49"),
+            filled_at=a_second_ago,
+        ))
+        session.commit()
+        pos_id = position.id
+
+    report = await executor.reconcile()
+
+    # Deferred, not declared flat: the row stays open, no mismatch.
+    assert not [m for m in report.mismatches if "SHEL" in m]
+    with session_factory() as session:
+        position = session.get(Position, pos_id)
+        assert position is not None and position.closed_at is None
+        assert not [
+            e for e in _events(session, "reconciliation")
+            if (e.details or {}).get("kind") == "flat_without_fill"
+        ]
+
+    # Same reading after the settle window: flat_without_fill stands.
+    clock.advance(timedelta(seconds=11))
+    report = await executor.reconcile()
+    assert any("SHEL" in m for m in report.mismatches)
+    with session_factory() as session:
+        assert [
+            e for e in _events(session, "reconciliation")
+            if (e.details or {}).get("kind") == "flat_without_fill"
+        ]
+
+
 async def test_trade_update_updates_order_and_reconciles(
     session_factory: sessionmaker[Session],
 ) -> None:

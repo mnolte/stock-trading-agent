@@ -1594,6 +1594,19 @@ class Executor:
             for position in db_positions:
                 bp = broker_positions.get(position.symbol)
                 if bp is None:
+                    if self._settling(session, position.symbol, now):
+                        # Fills still settling: the positions endpoint
+                        # can lag a fresh fill and report nothing at
+                        # all — defer, don't declare the position flat
+                        # (docs/SPEC.md, Fills still settling).
+                        ev(
+                            log_reconcile, logging.INFO,
+                            "reconcile.settling",
+                            f"{position.symbol}: flat check deferred "
+                            "— fills still settling",
+                            symbol=position.symbol,
+                        )
+                        continue
                     self._flat_symbols.add(position.symbol)
                     session.commit()
                     history = await self.broker.get_filled_orders(
