@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-11-01 — Ask the agent (PR 36)
+
+- New section **Ask the agent**: a chat drawer on every screen, with that screen as context, that answers questions from the app's own data.
+  - **Conversation:** threads kept 90 days, streamed lookup steps and text with Stop, follow-ups with the whole thread, fixed suggestions per screen.
+  - **Answers:** short answers first, reference chips to the records used, and a number check that marks any number not found in the data.
+  - **Tools:** 19 read-only tools over the existing services (status, positions, orders, decisions, cycles, performance, trades, insights, strategies, readiness, reviews, logs, model calls, settings without secrets, stored market data, spec passages, a Decimal calculator). Each is bounded and returns references.
+  - **Model and limits:** `converse` with tools and streaming in the one model interface; `ask.model` (gpt-4.1-mini); its own $5 monthly cap and rate limit; `llm_calls` source `ask`.
+  - **Safety:** read-only by construction, no secrets in any tool result, untrusted text treated as data, strict Markdown rendering.
+  - **Storage, settings and eval:** `ask_threads` and `ask_messages`; Settings → Ask the agent; `make eval-ask` with about 25 questions.
+- New prompt `backend/prompts/ask.v1.md`, not in the manifest until PR 36 wires it. The `ask` config block comes with PR 36 (rule 7).
+- Header: the Ask button on every screen. Out of scope: actions from the chat (later, behind "Confirm it is you"). Build plan item 36. Kickoff `docs/kickoffs/pr-36.md`.
+
 ## 2026-11-01 — Needs you and positions at a glance (PR 35)
 
 - From the UX audit of 1 November (`docs/analysis/2026-11-01-ux-audit.md`).

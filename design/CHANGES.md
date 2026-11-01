@@ -2,6 +2,23 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-01 — Ask the agent drawer
+
+- New `AskDrawer.dc.html` (PR 36). The drawer docked to the right of Positions mid-conversation. It shows:
+  - the context chip ("Positions & orders · 2 open", removable);
+  - "Looked up 2 things" steps;
+  - an answer that opens with the answer, a small table, reference chips (MSFT position, JPM position, Risk budget) and the footer;
+  - a follow-up being answered: live steps (● for the running lookup), the streaming caret, and Stop in place of Send.
+- New `AskStates.dc.html`:
+  - first open on a decision with three suggestions;
+  - earlier chats (search, today and earlier, kept 90 days);
+  - problems: a number not found in the data (dotted amber underline and a footer line), a failed answer with Retry, a stopped answer, the monthly cap notice in place of the composer;
+  - the phone layout.
+- Every screen with the shell:
+  - an **Ask** button in the header before Pause (accent outline; Ctrl/⌘+J);
+  - an Ask button in the phone top bar next to the menu.
+- Screenshots re-rendered for those screens at 1440 and 390.
+
 ## 2026-11-01 — Needs you, positions at a glance, phone top bar
 
 From the UX audit (`docs/analysis/2026-11-01-ux-audit.md`).
