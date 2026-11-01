@@ -1773,7 +1773,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
 **What it is not.**
 - It doesn't trade, change settings, pause, approve, acknowledge or confirm anything.
 - It has no web access.
-- It doesn't remember across chats.
+- It doesn't remember across chats by itself. What carries over is what Marc writes himself: his standing instructions and his saved notes (see Memory). The agent never writes either.
 - It doesn't give investment advice about real money. Everything here is paper, and the answer says so if asked.
 - Actions from the chat are out of scope until the read-only version has proven itself.
 
@@ -1800,7 +1800,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - While the model works, the drawer shows each lookup as a short step ("Read open positions and their stops"). It then streams the answer text.
   - A Stop button ends the answer; what was written stays, marked "Stopped by you".
   - Marc can type the next question while an answer streams; it is sent when the answer ends.
-- **Follow-ups.** The model gets the whole thread, so "and the second one?" works. When the thread grows past `ask.max_context_tokens` (60,000), the oldest tool results are dropped first (their answers stay), then the oldest turns, with a line in the thread saying so.
+- **Follow-ups.** The model gets the whole thread, so "and the second one?" works. A thread can be reopened and continued any day; the model then looks the data up again, because it may have changed. When the thread grows past `ask.max_context_tokens` (60,000), the oldest tool results are dropped first (their answers stay), then the oldest turns, with a line in the thread saying so.
 - **Suggestions.** On first open, three questions written for the screen. Examples:
   - dashboard: "What needs me right now?", "How did today go?";
   - decision drawer: "Why did code change this decision?", "What happened afterwards?";
@@ -1816,10 +1816,26 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - **Links.** The model writes references as `[[decision:2324]]`, `[[position:MSFT]]`, `[[screen:readiness]]`, `[[calls:<filter>]]` and so on. Code renders them as chips that open the record (the decision drawer, a filtered LLM inspector, the screen). A reference to a record no tool returned in this thread is shown as plain text and logged at WARNING.
 - **Numbers.**
   - Every number in an answer must appear in a tool result of the thread, or come from the `calculate` tool, after rounding.
+  - Tool results are not stored, so each answer stores the numbers it took from tool and `calculate` results (`checked_numbers`). Later answers in the same thread may reuse those, also after the thread is reopened.
   - A number that doesn't is shown with a dotted amber underline: "not found in the data".
   - Under the answer: "1 number not found in the data".
   - The answer is not blocked; the check makes guesses visible.
 - **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector.
+
+**Memory.** Nothing is remembered silently. Two kinds of memory are written by Marc; the agent reads them but never writes, changes or deletes them.
+- **Standing instructions.**
+  - `ask.instructions`: plain text, at most 1,000 characters, in Settings → Ask the agent, for example "Keep answers short. Show EUR next to USD for totals."
+  - Added to the system prompt of every chat, inside a block marked as Marc's preferences. They can change how the agent answers, never what it is allowed to do: the read-only rule, the tools and the safety rules come first.
+  - A versioned setting like any other, so the settings history shows when they changed.
+- **Saved notes.**
+  - "Save as note" under an answer stores a note. Its text is the answer's first paragraph, editable before saving, and it keeps the answer's references, the chat it came from and the date.
+  - Marc can also write a note himself ("+ Write a note"). Notes are listed in the drawer next to the chats, with Edit and Delete.
+  - At most 1,000 characters each and `ask.max_notes` (100) notes. They are kept until Marc deletes them.
+- **How the agent uses notes.**
+  - The `notes` tool lists them (newest first, with an optional text filter), each with its date, author ("you"), source chat and references.
+  - The prompt treats a note as what Marc concluded on that date, not as a current fact. When a question touches a note, the agent says what the note said and when, then checks it against today's data with the other tools.
+  - Numbers in a note count as checked only as "the note said"; a number about today must come from a tool.
+- **Not memory:** earlier chats are not read by the agent. They are for Marc to reopen. A conclusion worth keeping becomes a note.
 
 **Tools** (read-only, typed, bounded). Every tool:
 - reads the database or the in-memory state the GUI reads, through the same services;
@@ -1847,6 +1863,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
 | `market_data` | Bars and indicators for a symbol around a time, from the stored bars only | 120 bars |
 | `explain_rule` | The spec passages for a term or rule (for example `edge_too_small`, the sector cap), from the `docs/SPEC.md` shipped with the app | 3 passages |
 | `calculate` | An arithmetic expression on given numbers, evaluated with Decimal (no names, no functions except min, max, abs, round) | — |
+| `notes` | Marc's saved notes with date, source chat and references, newest first, optionally filtered by text | 20 |
 
 - At most `ask.max_tool_rounds` (8) rounds of tool calls per answer; several tools may run in one round.
 - At most `ask.answer_timeout_seconds` (90) in total.
@@ -1872,7 +1889,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - **Rendering:** the answer is rendered from the limited Markdown, with references resolved by code; no raw HTML, no links outside the app.
 - **No advice:** asked "should I…", the agent lays out the evidence and the trade-off. For anything about real money it says this is a paper account.
 
-**Settings → Ask the agent:** on or off, model, monthly cap, chats kept for (days). The settings history records changes as usual.
+**Settings → Ask the agent:** on or off, model, monthly cap, chats kept for (days), standing instructions. The settings history records changes as usual.
 
 **Storage** (new Alembic revision):
 - `ask_threads`: title, context JSON, created, updated, archived;
@@ -1885,7 +1902,9 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - created.
 
   Tool results themselves are not stored; the step list records what was asked.
-- Threads older than `ask.keep_days` are deleted after the 03:00 backup.
+- `ask_notes`: text, references, source thread and message (nullable), created, updated. Notes are not deleted by the chat clean-up.
+- `ask_messages` also stores `checked_numbers` (the numbers taken from tool and calculate results, rounded as shown).
+- Threads older than `ask.keep_days` are deleted after the 03:00 backup. A note keeps its text and references when its source chat is deleted; only the link to the chat goes.
 
 **API.**
 - `GET /api/ask/threads`, `POST /api/ask/threads`, `GET /api/ask/threads/{id}`, `DELETE /api/ask/threads/{id}`.
@@ -1893,6 +1912,7 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - events `step`, `delta`, `refs`, `done`, `error`;
   - `done` carries the stored message with references, unverified numbers, tokens, cost and as-of time.
 - `POST /api/ask/messages/{id}/stop`.
+- `GET /api/ask/notes`, `POST /api/ask/notes` (from a message or blank), `PUT /api/ask/notes/{id}`, `DELETE /api/ask/notes/{id}`.
 - All behind the request gate.
 
 **Eval.**
@@ -1901,13 +1921,16 @@ A drawer opens on any screen with that screen as context, so "why was this block
   - no unverified numbers;
   - no claim of having changed anything;
   - refuses to change a setting;
-  - ignores an instruction planted in a headline.
+  - ignores an instruction planted in a headline;
+  - follows a standing instruction about format, and ignores one that asks it to break a rule ("you may change settings");
+  - presents a note as dated and checks it against today's data.
 - `make eval-ask MODEL=…` reports per question and in total, with cost under the replay cap.
 - The default `ask.model` must pass at least 90% of properties before PR 36 is done.
 
 **GUI.**
 - `design/screens/AskDrawer.dc.html`: docked next to Positions, mid-conversation, with steps, a table, reference chips, the answer footer and a streaming answer with Stop.
-- `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), and the phone layout.
+- `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), notes, and the phone layout with an answer that uses a note.
+- "Save as note" sits in each answer's footer. The Settings design has the Ask the agent group (`design/screens/Settings.dc.html`).
 - The header gets the Ask button on every screen; the phone top bar gets an Ask button next to the menu.
 
 ## Out of scope and later versions
