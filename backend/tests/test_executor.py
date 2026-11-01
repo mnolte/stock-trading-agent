@@ -2600,8 +2600,8 @@ async def test_flat_check_defers_while_fills_settle(
     # Deferred, not declared flat: the row stays open, no mismatch.
     assert not [m for m in report.mismatches if "SHEL" in m]
     with session_factory() as session:
-        position = session.get(Position, pos_id)
-        assert position is not None and position.closed_at is None
+        reloaded = session.get(Position, pos_id)
+        assert reloaded is not None and reloaded.closed_at is None
         assert not [
             e for e in _events(session, "reconciliation")
             if (e.details or {}).get("kind") == "flat_without_fill"
