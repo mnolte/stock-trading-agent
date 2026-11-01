@@ -42,6 +42,7 @@ from app.db.models import (
 )
 from app.decide.client import priced_models
 from app.decide.prompt import PROMPTS_DIR, PromptError, load_prompt
+from app.decide.v3 import scheduled_exit_text
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
@@ -62,7 +63,6 @@ from app.notifications.service import (
 )
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
-from app.decide.v3 import scheduled_exit_text
 from app.risk.budget import Meter, risk_budget
 from app.risk.earnings import next_earnings
 from app.risk.math import open_risk
@@ -1386,15 +1386,16 @@ async def positions(request: Request) -> dict[str, object]:
         # in its expected state.
         leg_rows = legs[p.id]
         has_entry = any(
-            l["leg"] == "entry" and l["status"] == "filled" for l in leg_rows
+            leg["leg"] == "entry" and leg["status"] == "filled"
+            for leg in leg_rows
         )
         has_stop = any(
-            l["leg"] == "stop" and l["status"] in OPEN_ORDER_STATUSES
-            for l in leg_rows
+            leg["leg"] == "stop" and leg["status"] in OPEN_ORDER_STATUSES
+            for leg in leg_rows
         )
         has_target = any(
-            l["leg"] == "target" and l["status"] in OPEN_ORDER_STATUSES
-            for l in leg_rows
+            leg["leg"] == "target" and leg["status"] in OPEN_ORDER_STATUSES
+            for leg in leg_rows
         )
         problems = []
         if not has_entry:
@@ -1419,8 +1420,9 @@ async def positions(request: Request) -> dict[str, object]:
     # position closest to its stop.
     equity = account.equity if account else None
     if_stops_usd = sum(
-        Decimal(str(item["if_stop_usd"])) for item in out_open
-    ) if out_open else Decimal(0)
+        (Decimal(str(item.get("if_stop_usd") or 0)) for item in out_open),
+        Decimal(0),
+    )
     open_risk_usd = open_risk(
         (
             p.qty,
@@ -1430,18 +1432,23 @@ async def positions(request: Request) -> dict[str, object]:
         for p in open_rows
     )
     closest = None
-    nearest = None
+    nearest: float | None = None
     for item in out_open:
         atr_dist = item.get("to_stop_atr")
-        if atr_dist is not None and (
+        if isinstance(atr_dist, int | float) and (
             nearest is None or atr_dist < nearest
         ):
-            nearest = atr_dist
-            closest = {"symbol": item["symbol"], "atr": atr_dist}
+            nearest = float(atr_dist)
+            closest = {"symbol": item["symbol"], "atr": float(atr_dist)}
     totals = {
-        "unrealized_usd": sum(
-            (item["unrealized_pnl"] or 0) for item in out_open
-        ) if out_open else None,
+        "unrealized_usd": (
+            sum(
+                float(str(item.get("unrealized_pnl") or 0))
+                for item in out_open
+            )
+            if out_open
+            else None
+        ),
         "if_stops_usd": float(if_stops_usd),
         "if_stops_pct_equity": (
             float(if_stops_usd / equity * 100) if equity else None

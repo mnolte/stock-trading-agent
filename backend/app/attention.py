@@ -22,14 +22,11 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import (
     Approval,
-    Cycle,
-    Decision,
     Event,
-    Position,
     SettingsVersion,
     Verdict,
 )
-from app.log_index import index_available, index_path
+from app.log_index import index_path
 from app.market.clock import NY_TZ, UTC, SessionClock, make_clock
 from app.readiness.service import unreviewed_error_fingerprints
 from app.secrets_service import GROUP_LABELS, GROUP_ORDER
@@ -195,7 +192,10 @@ def build_attention(request: Request) -> dict[str, Any]:
 
         # 2. Live decisions failing; the trade-updates stream degraded;
         #    a key failing.
-        if getattr(state, "live_calls_failing_since", None) is not None:
+        if (
+            state is not None
+            and state.live_calls_failing_since is not None
+        ):
             provider = state.live_calls_failing_provider or ""
             error = state.live_calls_failing_error or ""
             items.append(
