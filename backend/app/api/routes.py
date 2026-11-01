@@ -2291,6 +2291,13 @@ def _settings_form(config: object) -> dict[str, object]:
             ),
             "max_spread_pct": get("execution", "max_spread_pct", default=0.15),
         },
+        "selection": {
+            "mode": get("selection", "mode", default="rank"),
+            "confidence_weight": get(
+                "selection", "confidence_weight", default=0.5
+            ),
+            "last_slot_min_ev_r": get("selection", "last_slot_min_ev_r"),
+        },
         "rules": {
             "rsi_min": get("rules", "rsi_min", default=40),
             "rsi_max": get("rules", "rsi_max", default=70),

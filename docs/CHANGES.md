@@ -55,6 +55,14 @@ Newest first.
 - `scheduled-cycle-audit`, `calendar-retry`, `daily-data-refresh` and `daily-db-backup` also gain `coalesce=True`; several misses inside the grace merge into one run, never a queue of catch-ups.
 - `test_scheduler.py` asserts every job carries the configured grace.
 
+## 2026-10-31 — Entry selection: implementation (PR 33)
+
+- `config.example.yaml` gains the `selection` block (`mode` rank, `confidence_weight` 0.5, `last_slot_min_ev_r` null) — versioned settings, strategy overrides and the Settings → Trading rows.
+- `selection.mode: expected_profit` collects candidate answers, scores enters (expected R × dollars at risk via the shared sizing), picks the best fitting set under the unchanged limits and submits it in expected-profit order with the next-best fallback once; the rest are `blocked`/`not_selected`. `mode: rank` keeps today's path exactly.
+- `decisions.selection`, `cycles.selection` and `shadow_decisions.selection` store the score and the set result; `not_selected` counts as a code block of a model enter for verdicts and filters on its own in the inspector.
+- `make replay-selection` compares both modes on stored cycles with a slot, sector or open-risk block, judged by `outcomes.option_touches`. The decision drawer shows the selection gate row and the 'Selection in this cycle' block; Settings → Trading offers the three keys.
+- Live stays `selection.mode: rank` until Marc switches it after the replay and a shadow.
+
 ## 2026-10-31 — Entry selection (PR 33)
 
 - From the 31 October report on how entries are chosen when more pass than there are slots: there is no selection step. Entries are gated and sent in rank order, so the first ones to pass take the 4 slots, and candidates after the 10th call are never seen. Rank (20-session strength against SPY) says nothing about the offered trade or about dollars at risk. The 20% max-position cap cuts the risk, and so the profit, on tight-stop stocks.
