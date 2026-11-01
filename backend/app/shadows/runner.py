@@ -1653,7 +1653,7 @@ class ShadowRunner:
             symbol=d.symbol,
             context=context,
             live_decision_id=d.live_id,
-            input_snapshot=None if d.live_id is not None else d.snapshot,
+            input_snapshot=d.snapshot,
             position=position,
             rules_result=rules_result_json(rules),
             final_action=final_action,

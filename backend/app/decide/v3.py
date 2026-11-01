@@ -829,6 +829,18 @@ def rewrite_thesis_ids(
         new_id = stop_level_match(info, levels)
         if new_id is not None:
             return new_id
+        # Replace the id token only: when the clause right before it
+        # already names the level kind ("the 1h swing low L16"),
+        # inserting the full description would double the words — keep
+        # just the price ("the 1h swing low (317.61)").
+        kind_words = (info.level_kind or "").replace("_", " ").strip()
+        clause = re.split(
+            r"[.;,]", thesis[max(0, match.start() - 80) : match.start()]
+        )[-1].lower()
+        if kind_words and kind_words in clause:
+            if info.level_price is not None:
+                return f"({info.level_price:.2f})"
+            return match.group(0)
         price = (
             f" ({info.level_price:.2f})" if info.level_price is not None else ""
         )
