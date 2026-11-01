@@ -138,7 +138,11 @@ def about_symbol(title: str, symbol: str, names: dict[str, str]) -> bool:
     own = (names.get(symbol) or "").strip().lower()
     if own and own in low:
         return True
-    if not re.search(rf"\b{re.escape(symbol)}\b", title, re.IGNORECASE):
+    # One-character tickers match any standalone word ("a deal", "T
+    # bonds") — they can only ever match on the company name above.
+    if len(symbol) < 2 or not re.search(
+        rf"\b{re.escape(symbol)}\b", title, re.IGNORECASE
+    ):
         return False
     for other, other_name in names.items():
         if other == symbol:
@@ -438,13 +442,19 @@ def thesis_holds(
     if not at_entry:
         return None
     adverse = 0
+    comparable = 0
     for name in _CHECK_NAMES:
         old = at_entry.get(name)
         new = checks_now.get(name)
         if not old or not new or old == UNAVAILABLE or new == UNAVAILABLE:
             continue
+        comparable += 1
         if str(new) in _ADVERSE.get(str(old), set()):
             adverse += 1
+    if comparable < 2:
+        # Too few entry checks survive to judge the thesis — say so
+        # rather than reporting a vacuous "holds".
+        return None
     return adverse < 2
 
 

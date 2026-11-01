@@ -14,7 +14,9 @@ from typing import Any
 from app.config import AppConfig
 from app.data.models import CalendarDay
 from app.decide.output import (
+    CodeCheck,
     ModelOutputV4,
+    ValidationResult,
     validate_model_output_v4,
 )
 from app.decide.prompt import prompt_spec
@@ -145,7 +147,7 @@ def _v4(
     )
 
 
-def _validate(raw: str, snap: dict[str, Any], **overlay: Any):
+def _validate(raw: str, snap: dict[str, Any], **overlay: Any) -> ValidationResult:
     config = AppConfig().overlay(overlay)
     return validate_model_output_v4(
         raw,
@@ -158,7 +160,7 @@ def _validate(raw: str, snap: dict[str, Any], **overlay: Any):
     )
 
 
-def _check(validation: Any, name: str):
+def _check(validation: ValidationResult, name: str) -> CodeCheck:
     return next(c for c in validation.checks if c.name == name)
 
 
@@ -303,27 +305,62 @@ def test_thesis_holds_true_on_one_adverse() -> None:
 
 
 # ----------------------------------------------------------------------
-# best_option_id validity
+# best_option_id — never invalidates (docs/SPEC.md, Decision v4)
 
 
-def test_skip_with_invalid_best_option_is_invalid() -> None:
+def test_skip_with_unoffered_best_option_stays_skip() -> None:
     snap = _snapshot()
     v = _validate(_v4(action="skip", best_option_id="Z"), snap)
-    assert not v.valid
+    assert v.valid
     assert v.final_action == "skip"
+    assert "best_option_missing" in v.warnings
+    assert isinstance(v.output, ModelOutputV4) and v.output.best_option_id is None
 
 
-def test_skip_requires_best_option() -> None:
+def test_skip_without_best_option_warns_stays_skip() -> None:
     snap = _snapshot()
     v = _validate(_v4(action="skip", best_option_id=None), snap)
-    assert not v.valid
+    assert v.valid
+    assert v.final_action == "skip"
+    assert "best_option_missing" in v.warnings
 
 
-def test_held_with_best_option_is_invalid() -> None:
+def test_skip_with_offered_best_option_stored() -> None:
+    snap = _snapshot()
+    v = _validate(_v4(action="skip", best_option_id="A"), snap)
+    assert v.valid
+    assert v.final_action == "skip"
+    assert "best_option_missing" not in v.warnings
+    assert isinstance(v.output, ModelOutputV4) and v.output.best_option_id == "A"
+
+
+def test_enter_with_null_best_option_stores_option_id() -> None:
+    snap = _snapshot()
+    v = _validate(
+        _v4(action="enter", option_id="A", best_option_id=None), snap
+    )
+    assert v.valid
+    assert v.final_action == "enter"
+    assert isinstance(v.output, ModelOutputV4) and v.output.best_option_id == "A"
+
+
+def test_enter_with_different_offered_best_warns() -> None:
+    snap = _snapshot()
+    v = _validate(
+        _v4(action="enter", option_id="A", best_option_id="B"), snap
+    )
+    assert v.valid
+    assert v.final_action == "enter"
+    assert "best_option_mismatch" in v.warnings
+    assert isinstance(v.output, ModelOutputV4) and v.output.best_option_id == "A"
+
+
+def test_held_best_option_ignored_stores_null() -> None:
     snap = _snapshot(context="held")
     v = _validate(_v4(action="hold", best_option_id="A"), snap)
-    assert not v.valid
+    assert v.valid
     assert v.final_action == "hold"
+    assert isinstance(v.output, ModelOutputV4) and v.output.best_option_id is None
 
 
 def test_held_without_best_option_valid() -> None:
@@ -627,7 +664,7 @@ def test_held_thesis_fields_in_snapshot() -> None:
 
     config = AppConfig()
     held = HeldV3(
-        entry=Decimal("100"), qty=Decimal("10"),
+        entry=Decimal("100"), qty=10,
         initial_stop=Decimal("97"), current_stop=Decimal("98"),
         target=Decimal("103"),
         opened_at=datetime(2026, 10, 30, 17, 46, tzinfo=UTC),

@@ -1611,7 +1611,7 @@ def _claim_checks_v4(
         if chosen is not None:
             near = any(
                 _decimal_or_none(lv.get("distance_atr")) is not None
-                and abs(_decimal_or_none(lv.get("distance_atr"))) < 1  # type: ignore[arg-type]
+                and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
                 for lv in (chosen.get("levels_in_way") or [])
                 if isinstance(lv, dict)
             )
@@ -1619,7 +1619,7 @@ def _claim_checks_v4(
         position = snapshot.get("position") or {}
         near = any(
             _decimal_or_none(lv.get("distance_atr")) is not None
-            and abs(_decimal_or_none(lv.get("distance_atr"))) < 1  # type: ignore[arg-type]
+            and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
             for lv in (position.get("levels_to_target") or [])
             if isinstance(lv, dict)
         )
@@ -1669,10 +1669,11 @@ def validate_model_output_v4(
 ) -> ValidationResult:
     """Parse a decision.v4 answer and run the v4 code checks.
 
-    On top of v3: ``best_option_id`` validity, the flip-flop guard
-    (``flip_flop``), confidence sanity (``confidence_outlier``),
+    On top of v3: ``best_option_id`` normalisation
+    (``best_option_mismatch`` / ``best_option_missing``), the flip-flop
+    guard (``flip_flop``), confidence sanity (``confidence_outlier``),
     unresolved conflicts (``unresolved_conflict``) and path claims —
-    the last three warn, never gate.
+    these warn, never gate.
     """
     allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
@@ -1728,18 +1729,26 @@ def validate_model_output_v4(
         if isinstance(o, dict)
     ]
     chosen = _option_by_id(options, output.option_id)
-    best = _option_by_id(options, output.best_option_id)
+    named_best = output.best_option_id
+    best = _option_by_id(options, named_best)
 
-    # --- v4 field rules (docs/SPEC.md, Decision v4 — Best option)
+    # decision.v4: best_option_id never invalidates an answer. An enter
+    # stores its own option id — a different offered id the model named
+    # is the best_option_mismatch warning, an unoffered one
+    # best_option_missing. A skip stores the named id only when it was
+    # offered; a missing or unoffered id leaves the skip standing,
+    # stores null and warns — the null also keeps the row out of the
+    # skip calibration. Held ignores the field and stores null
+    # (docs/SPEC.md, Decision v4 — Best option).
+    best_missing = False
     if context == "candidate":
-        if output.best_option_id is None or best is None:
-            return invalid(
-                f"invalid best_option_id {output.best_option_id!r}", output
-            )
-    elif output.best_option_id is not None:
-        return invalid(
-            f"invalid best_option_id {output.best_option_id!r}", output
-        )
+        if output.action == "enter":
+            output.best_option_id = output.option_id
+        elif named_best is None or best is None:
+            output.best_option_id = None
+            best_missing = True
+    else:
+        output.best_option_id = None
 
     explanation = check_explanation_v4(output, snapshot, chosen)
     claims = _claim_checks_v4(output, context=context, snapshot=snapshot, chosen=chosen)
@@ -1813,6 +1822,15 @@ def validate_model_output_v4(
     ] if context == "candidate" and output.action == "enter" else []
     if unresolved:
         warnings.append("unresolved_conflict")
+    if context == "candidate" and output.action == "enter":
+        if named_best is not None and named_best != output.option_id:
+            warnings.append(
+                "best_option_mismatch"
+                if _option_by_id(options, named_best) is not None
+                else "best_option_missing"
+            )
+    elif best_missing:
+        warnings.append("best_option_missing")
     confidence_check = CodeCheck(
         "Confidence sanity",
         passed="confidence_outlier" not in warnings,

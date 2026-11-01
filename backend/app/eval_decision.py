@@ -27,7 +27,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import AppConfig
 from app.data.cache import BarCache
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, LlmCall, ShadowDecision
+from app.db.models import (
+    Cycle,
+    Decision,
+    LlmCall,
+    Position,
+    ShadowDecision,
+    ShadowPosition,
+)
 from app.decide.client import token_cost
 from app.decide.output import (
     ValidationResult,
@@ -40,12 +47,15 @@ from app.decide.v2inputs import build_v2_fields, rebuild_bars
 from app.decide.v3 import HeldV3, build_v3_fields, v3_send_snapshot
 from app.decide.v4 import (
     build_v4_fields,
+    checks_at_entry,
     previous_decision_v4,
     symbol_names,
     v4_send_snapshot,
 )
+from app.llm.base import ModelResponse
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
+from app.risk.earnings import next_earnings
 from app.shadows.runner import (
     indicators_from_snapshot,
     regime_from_snapshot,
@@ -140,7 +150,7 @@ def _checks(snap: dict[str, Any]) -> dict[str, Any]:
 
 
 def _conflicts_resolved(_snap: Any, output: Any, _validation: ValidationResult) -> bool:
-    if getattr(output, "action", None) not in ("enter", "exit", "tighten_stop"):
+    if getattr(output, "action", None) != "enter":
         return True
     conflicts = getattr(output, "conflicts", []) or []
     if not conflicts:
@@ -164,9 +174,11 @@ PREDICATES: dict[str, Callable[[dict[str, Any], Any, ValidationResult], bool]] =
         or str(getattr(o, "option_id", "")) in _offered_ids(s, str(s.get("context") or "candidate"))
     ),
     "best_option_valid": lambda s, o, v: (
-        str(getattr(o, "best_option_id", "")) in _offered_ids(s, "candidate")
-        if str(s.get("context") or "candidate") == "candidate"
-        else getattr(o, "best_option_id", None) is None
+        getattr(o, "best_option_id", None) is None
+        or (
+            str(s.get("context") or "candidate") == "candidate"
+            and str(o.best_option_id) in _offered_ids(s, "candidate")
+        )
     ),
     "no_locks_in_claim": lambda s, o, v: "locks_in" not in _claims_kinds(v),
     "no_daily_uptrend_claim": lambda s, o, v: (
@@ -271,6 +283,50 @@ def _rebuild_input(
         symbol, scheduled, calendar=calendar, bars_reader=cache.get
     )
     held = _held_from_snapshot(snap) if context == "held" else None
+    # Rebuild the same inputs the live and replay paths see: earnings on
+    # v3/v4, and for held rows the entry decision's checks
+    # (position.checks_at_entry → thesis_holds).
+    earnings: tuple[date, str] | None = None
+    entry_checks: dict[str, str] | None = None
+    if spec.is_v3:
+        earnings = next_earnings(
+            session,
+            [symbol],
+            scheduled if scheduled.tzinfo else scheduled.replace(tzinfo=UTC),
+        ).get(symbol)
+        if context == "held" and spec.is_v4:
+            naive = (
+                scheduled.replace(tzinfo=None) if scheduled.tzinfo else scheduled
+            )
+            entry_dec: Any = None
+            if strategy_id is None:
+                prow = session.execute(
+                    select(Position)
+                    .where(
+                        Position.symbol == symbol,
+                        Position.opened_at <= naive,
+                    )
+                    .order_by(Position.opened_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if prow is not None and prow.entry_decision_id is not None:
+                    entry_dec = session.get(Decision, prow.entry_decision_id)
+            else:
+                sp = session.execute(
+                    select(ShadowPosition)
+                    .where(
+                        ShadowPosition.strategy_id == strategy_id,
+                        ShadowPosition.symbol == symbol,
+                        ShadowPosition.opened_at <= naive,
+                    )
+                    .order_by(ShadowPosition.opened_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                if sp is not None and sp.entry_decision_id is not None:
+                    entry_dec = session.get(
+                        ShadowDecision, sp.entry_decision_id
+                    )
+            entry_checks = checks_at_entry(entry_dec) or None
     if spec.is_v4:
         built: Any = build_v4_fields(
             context=context,
@@ -283,6 +339,7 @@ def _rebuild_input(
             bars_1h=bars_1h,
             daily=daily,
             today_5m=today_5m,
+            earnings=earnings,
             held=held,
             previous=previous_decision_v4(
                 session,
@@ -292,7 +349,7 @@ def _rebuild_input(
                 strategy_id=strategy_id,
                 before=scheduled,
             ),
-            entry_checks=None,
+            entry_checks=entry_checks,
             names=symbol_names(config),
             calendar=calendar,
             config=config,
@@ -312,6 +369,7 @@ def _rebuild_input(
             bars_1h=bars_1h,
             daily=daily,
             today_5m=today_5m,
+            earnings=earnings,
             held=held,
             calendar=calendar,
             config=config,
@@ -453,11 +511,13 @@ async def run_eval(
     for version in prompts:
         prompt = cached_prompt(version)
         unit = token_cost(
-            type(
-                "R", (),
-                {"model": use_model, "tokens_in": int(len(prompt.text) / 4) + 900,
-                 "tokens_out": 200},
-            )(),
+            ModelResponse(
+                raw=None,
+                model=use_model,
+                tokens_in=int(len(prompt.text) / 4) + 900,
+                tokens_out=200,
+                latency_ms=0,
+            ),
             config,
             model=use_model,
         )

@@ -61,6 +61,7 @@ from app.decide.v4 import (
     checks_at_entry,
     previous_decision_v4,
     symbol_names,
+    v4_config,
     v4_send_snapshot,
 )
 from app.engine.selection import (
@@ -184,6 +185,26 @@ def _spec(strategy: Strategy) -> PromptSpec:
 def _rank_key(item: LiveInput) -> tuple[int, int]:
     rank = item.snapshot.get("rank")
     return (rank if isinstance(rank, int) else 10**9, item.order)
+
+
+def _checks_gate_detail(fields: dict[str, Any]) -> str | None:
+    """decision.v4 ``checks_gate``: the code checks that block an entry
+    when the trend is broken (docs/SPEC.md, Decision v4 — checks_gate)."""
+    snap_checks = fields.get("checks") or {}
+    failing = [
+        name
+        for name, bad in (
+            ("trend_1h", snap_checks.get("trend_1h") != "up"),
+            ("regime_trend", snap_checks.get("regime_trend") != "up"),
+            ("trend_daily", snap_checks.get("trend_daily") == "down"),
+        )
+        if bad
+    ]
+    if not failing:
+        return None
+    return "checks_gate: " + ", ".join(
+        f"{name}={snap_checks.get(name)}" for name in failing
+    )
 
 
 def _virtual_position(sp: ShadowPosition) -> Position:
@@ -1206,6 +1227,35 @@ class ShadowRunner:
                             session.flush()
                             sr.decisions += 1
                             continue
+                        gate_detail: str | None = None
+                        if (
+                            _spec(strategy).is_v4
+                            and v2_cand is not None
+                            and v2_cand.fields["options"]
+                            and v4_config(cfg).checks_gate
+                        ):
+                            gate_detail = _checks_gate_detail(v2_cand.fields)
+                        if gate_detail is not None and v2_cand is not None:
+                            row = self._row(
+                                strategy, cycle, d, "candidate",
+                                final_action="no_call",
+                                no_call_reason="checks",
+                                rules=rules,
+                            )
+                            row.levels = {"levels": v2_cand.fields.get("levels")}
+                            row.options = v2_cand.options_column
+                            row.options_version = v2_cand.options_column.get(
+                                "options_version"
+                            )
+                            row.validation_result = {
+                                "error": gate_detail,
+                                "final_action": "no_call",
+                                "note": f"No call — {gate_detail}",
+                            }
+                            session.add(row)
+                            session.flush()
+                            sr.decisions += 1
+                            continue
                         try:
                             row = await call(
                                 d, "candidate", snap_json, price, None, rules,
@@ -1475,6 +1525,29 @@ class ShadowRunner:
                     session.flush()
                     sr.decisions += 1
                     continue
+                if spec.is_v4 and v4_config(cfg).checks_gate:
+                    gate_detail = _checks_gate_detail(v2_cand.fields)
+                    if gate_detail is not None:
+                        row = self._row(
+                            strategy, cycle, d, "candidate",
+                            final_action="no_call",
+                            no_call_reason="checks",
+                            rules=rules,
+                        )
+                        row.levels = {"levels": v2_cand.fields.get("levels")}
+                        row.options = v2_cand.options_column
+                        row.options_version = v2_cand.options_column.get(
+                            "options_version"
+                        )
+                        row.validation_result = {
+                            "error": gate_detail,
+                            "final_action": "no_call",
+                            "note": f"No call — {gate_detail}",
+                        }
+                        session.add(row)
+                        session.flush()
+                        sr.decisions += 1
+                        continue
                 first = options[0]
                 limit0 = cents(price * (1 + offset / 100))
                 sizing0 = position_size(

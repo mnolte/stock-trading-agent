@@ -1512,7 +1512,7 @@ export interface NewStrategyBody {
   prompt_version?: string;
   model?: string;
   temperature?: number;
-  overrides?: Record<string, number | string[]>;
+  overrides?: Record<string, number | string[] | boolean>;
 }
 
 export interface StrategyPromotion {

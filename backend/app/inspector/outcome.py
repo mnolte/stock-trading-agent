@@ -25,6 +25,8 @@ WARNING_REASONS = (
     "unsupported_claim",
     "confidence_outlier",
     "unresolved_conflict",
+    "best_option_mismatch",
+    "best_option_missing",
     "slow",
 )
 ERROR_REASONS = ("timeout", "api_error", "invalid_output", "refusal")
