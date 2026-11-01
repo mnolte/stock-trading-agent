@@ -4,6 +4,17 @@
 
 universe:
   symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, GOOGL, META, JPM, XOM]
+  names:                        # PR 34: company names for headline about_symbol
+    SPY: SPDR S&P 500
+    QQQ: Invesco QQQ
+    AAPL: Apple
+    MSFT: Microsoft
+    NVDA: Nvidia
+    AMZN: Amazon
+    GOOGL: Alphabet
+    META: Meta
+    JPM: JPMorgan
+    XOM: Exxon Mobil
   sectors:
     SPY: Index
     QQQ: Technology
@@ -105,6 +116,12 @@ decision:
     breakeven_min_r: 1.0        # held: break-even offered only from this R in profit
     held_stop_min_atr: 1.0      # held: trail and swing-low options at least this x ATR below the price
     level_merge_atr: 0.05       # levels this close (x ATR) become one id listing every kind
+  v4:                           # PR 34, decision.v4 strategies only
+    max_headlines: 12           # headlines sent to the model, most recent first
+    max_level_distance_atr: 4.0 # only levels this close (x ATR) are sent, plus option/stop levels
+    flip_min_move_atr: 0.5      # flip-flop guard: a smaller move counts as unchanged
+    max_confidence_above_anchor: 0.30  # confidence_outlier warning threshold
+    checks_gate: false          # strategy override: code-enforced checklist, no model call
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 
