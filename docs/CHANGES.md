@@ -5,6 +5,7 @@ Newest first.
 ## 2026-11-01 — Settings: Server section shows a description off-VPS
 
 - The Settings section menu listed "Server" on every build, but the section rendered only when `SA_AUTH=required` (the VPS build) — the menu link pointed at an anchor that did not exist. The section now always renders and, like Access, collapses to a one-line description locally: the health rows, backup buttons and `/api/server` fetch stay VPS-only.
+- Backup job logs: an expected `OffsiteError` (missing credentials, restic absent, endpoint refused — messages written for Marc) now logs its reason on one WARNING line ("monthly restore test failed: no backup password or storage credentials stored") instead of an ERROR with a bare "failed" plus a traceback. Unexpected failures keep `logger.exception`. Applies to the restore test and the daily offsite upload, in both `ops.service` and the `run_daily_backup` chain. Note the level change: these expected failures no longer count as unreviewed errors for Readiness.
 
 ## 2026-10-31 — Stream drops and stale-chunk reload fixes
 

@@ -64,6 +64,7 @@ from app.logging_config import setup_logging
 from app.market.calendar import CalendarProvider, CalendarStore
 from app.market.clock import NY_TZ, UTC, Clock, make_clock
 from app.notifications.service import NotificationService, Notifier
+from app.ops.offsite import OffsiteError
 from app.reviews.service import ReviewService
 from app.secrets_service import (
     MISSING_KEY,
@@ -247,7 +248,12 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
         try:
             ops.run_offsite_backup_sync()
         except Exception as exc:  # noqa: BLE001
-            logger.exception("offsite backup failed")
+            if isinstance(exc, OffsiteError):
+                # Expected failure — its message is written for Marc;
+                # a traceback would bury the reason.
+                logger.warning("offsite backup failed: %s", exc)
+            else:
+                logger.exception("offsite backup failed")
             from app.db.base import get_session_maker
             from app.engine.state import record_event
 
