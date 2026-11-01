@@ -1989,6 +1989,15 @@ class Executor:
                 # Already processed into a position that has since closed;
                 # re-creating it would duplicate the realized P&L.
                 continue
+            if session.execute(
+                select(Position.id).where(
+                    Position.entry_order_id == order.id
+                )
+            ).scalar_one_or_none() is not None:
+                # Idempotent open: a row for this entry order exists
+                # (open or closed — e.g. closed by a stale flat reading
+                # while the fill was still settling, SHEL 30 Oct).
+                continue
             legs = session.execute(
                 select(Order).where(
                     Order.parent_alpaca_order_id == order.alpaca_order_id
@@ -2023,6 +2032,7 @@ class Executor:
                     origin="agent",
                     pending_ack=False,
                     entry_decision_id=order.decision_id,
+                    entry_order_id=order.id,
                     qty=filled_qty,
                     avg_entry_price=avg_price,
                     initial_stop=stop,
@@ -2149,6 +2159,30 @@ class Executor:
         existing stop already covers the position, None on a failed
         write.
         """
+        # A row that opened from a stored entry order and was just
+        # closed (e.g. by a stale flat reading while fills settle) is
+        # still that order's position — the fills pass owns it. Adopting
+        # it again would create a duplicate row without its decision
+        # and target (SHEL, 30 Oct).
+        settle_start = _naive_utc(self.clock.now()) - timedelta(
+            seconds=self._fill_settle_seconds()
+        )
+        accounted = session.execute(
+            select(Position.id).where(
+                Position.symbol == bp.symbol,
+                Position.entry_order_id.is_not(None),
+                or_(
+                    Position.closed_at.is_(None),
+                    Position.closed_at >= settle_start,
+                ),
+            )
+        ).scalar_one_or_none()
+        if accounted is not None:
+            logger.info(
+                "%s at broker maps to a recent position row; "
+                "skipping adoption", bp.symbol,
+            )
+            return Decimal(0)
         price = bp.current_price or bp.avg_entry_price
         atr_1h = self._atr_1h(bp.symbol)
         atr_mult = Decimal(

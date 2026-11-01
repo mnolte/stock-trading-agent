@@ -33,7 +33,7 @@ from app.db.models import (
     Order,
     Position,
 )
-from app.engine.executor import Executor
+from app.engine.executor import Executor, ReconcileReport
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
@@ -3737,3 +3737,150 @@ async def test_tighten_blocked_past_300_seconds_is_code_change(
         c["passed"] is False and c["detail"] == "price_stale"
         for c in validation["checks"]
     )
+
+
+async def test_fills_open_and_reconcile_give_one_position(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """B4/SHEL 30 Oct: the fill and the reconcile pass opening at the
+    same moment must produce one row keyed on the entry order, with
+    stop and target taken from the bracket legs."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"SHEL": Decimal("108.51")})
+    executor = _executor(session_factory, broker, clock)
+    decision = None
+    with session_factory() as session:
+        decision = _decision(session, "SHEL", "enter")
+        entry = Order(
+            alpaca_order_id="shel-entry",
+            symbol="SHEL",
+            decision_id=decision.id,
+            side="buy",
+            order_type="market",
+            leg="entry",
+            qty=18,
+            status="filled",
+            created_at=NOW.replace(tzinfo=None),
+            filled_at=NOW.replace(tzinfo=None),
+        )
+        target = Order(
+            alpaca_order_id="shel-target",
+            parent_alpaca_order_id="shel-entry",
+            symbol="SHEL",
+            decision_id=decision.id,
+            side="sell",
+            order_type="limit",
+            leg="target",
+            qty=18,
+            limit_price=Decimal("110.78"),
+            status="new",
+            created_at=NOW.replace(tzinfo=None),
+        )
+        stop = Order(
+            alpaca_order_id="shel-stop",
+            parent_alpaca_order_id="shel-entry",
+            symbol="SHEL",
+            decision_id=decision.id,
+            side="sell",
+            order_type="stop",
+            leg="stop",
+            qty=18,
+            stop_price=Decimal("107.37"),
+            status="held",
+            created_at=NOW.replace(tzinfo=None),
+        )
+        session.add_all([entry, target, stop])
+        session.flush()
+        session.add(
+            Fill(
+                order_id=entry.id,
+                qty=18,
+                price=Decimal("108.51"),
+                filled_at=NOW.replace(tzinfo=None),
+            )
+        )
+        session.commit()
+
+        # First pass opens the row (as if the stream fill ran); the
+        # second pass — the reconcile a second later — must not open
+        # another.
+        assert executor._open_positions_from_fills(session) == 1
+        assert executor._open_positions_from_fills(session) == 0
+        session.commit()
+
+        decision_id = decision.id
+        order_id = entry.id
+
+    with session_factory() as session:
+        rows = session.execute(
+            select(Position).where(Position.symbol == "SHEL")
+        ).scalars().all()
+        assert len(rows) == 1
+        position = rows[0]
+        assert position.entry_decision_id == decision_id
+        assert position.entry_order_id == order_id
+        assert position.target_price == Decimal("110.78")
+        assert position.current_stop_price == Decimal("107.37")
+
+
+async def test_adopt_skips_recently_closed_entry_order_row(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """B4/SHEL 30 Oct: a flat reading closed the row during the settle
+    window; the broker still shows the shares. Adopting them must not
+    create a second row — the entry order's position still owns them."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"SHEL": Decimal("108.51")})
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        order = Order(
+            alpaca_order_id="shel-entry",
+            symbol="SHEL",
+            side="buy",
+            order_type="market",
+            leg="entry",
+            qty=18,
+            status="filled",
+            created_at=NOW.replace(tzinfo=None),
+            filled_at=NOW.replace(tzinfo=None),
+        )
+        session.add(order)
+        session.flush()
+        session.add(
+            Position(
+                symbol="SHEL",
+                origin="agent",
+                entry_order_id=order.id,
+                qty=18,
+                avg_entry_price=Decimal("108.51"),
+                initial_stop=Decimal("107.37"),
+                current_stop_price=Decimal("107.37"),
+                target_price=Decimal("110.78"),
+                opened_at=NOW.replace(tzinfo=None),
+                closed_at=NOW.replace(tzinfo=None),
+                exit_reason="broker_close",
+            )
+        )
+        session.commit()
+
+        bp = BrokerPosition(
+            symbol="SHEL",
+            qty=18,
+            avg_entry_price=Decimal("108.51"),
+            current_price=Decimal("108.51"),
+            market_value=None,
+        )
+        placed = await executor._adopt_position(
+            session, bp, ReconcileReport(), []
+        )
+        assert placed == Decimal(0)
+
+    with session_factory() as session:
+        assert (
+            session.execute(
+                select(func.count())
+                .select_from(Position)
+                .where(Position.symbol == "SHEL")
+            ).scalar_one()
+            == 1
+        )
