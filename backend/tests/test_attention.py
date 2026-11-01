@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import app.readiness.service as readiness
 import pytest
@@ -23,19 +24,20 @@ from app.log_index import LogIndexHandler
 from app.notifications.service import NotificationService
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 
-def _attention(client: TestClient) -> dict:
+def _attention(client: TestClient) -> dict[str, Any]:
     r = client.get("/api/attention")
     assert r.status_code == 200
-    return r.json()
+    return cast("dict[str, Any]", r.json())
 
 
-def _kinds(payload: dict) -> list[str]:
+def _kinds(payload: dict[str, Any]) -> list[str]:
     return [i["kind"] for i in payload["items"]]
 
 
-def _cycle_decision(session) -> Decision:
+def _cycle_decision(session: Session) -> Decision:
     cycle = Cycle(kind="cycle", scheduled_time=datetime(2026, 10, 15, 18, 46), status="done")
     session.add(cycle)
     session.flush()
@@ -91,7 +93,7 @@ def test_banner_ack_leaves_when_acknowledged(client: TestClient) -> None:
 
 
 def test_episode_leaves_when_it_clears(client: TestClient) -> None:
-    app = client.app
+    app = cast(Any, client.app)
     state = getattr(app.state, "exec_state", None)
     assert state is not None
     state.live_calls_failing_since = datetime(2026, 10, 15, 18, 46)
@@ -136,10 +138,11 @@ def test_approval_leaves_when_resolved(client: TestClient) -> None:
 
 
 def test_email_failing_leaves_when_a_send_succeeds(client: TestClient) -> None:
-    notifier = getattr(client.app.state, "notification_service", None)
+    app = cast(Any, client.app)
+    notifier = getattr(app.state, "notification_service", None)
     if notifier is None:  # the service may not start in this mode
         notifier = SimpleNamespace(email_failures=0, smtp_status=lambda: {})
-        client.app.state.notification_service = notifier
+        app.state.notification_service = notifier
 
     def set_failures(n: int) -> None:
         if isinstance(notifier, NotificationService):
@@ -173,10 +176,11 @@ def test_errors_leave_when_reviewed(
     monkeypatch.setattr(readiness, "index_path", lambda _cfg: handler.db_path)
     # build_attention uses the calendar store; WeekdayCalendar is the
     # fallback and app.state.calendar_store exists on a real boot.
-    if getattr(client.app.state, "calendar_store", None) is None:
+    app = cast(Any, client.app)
+    if getattr(app.state, "calendar_store", None) is None:
         from app.market.calendar import WeekdayCalendarProvider
 
-        client.app.state.calendar_store = WeekdayCalendarProvider()
+        app.state.calendar_store = WeekdayCalendarProvider()
     payload = _attention(client)
     assert "errors" in _kinds(payload)
     item = next(i for i in payload["items"] if i["kind"] == "errors")
@@ -229,7 +233,7 @@ def test_settings_leave_when_applied(client: TestClient) -> None:
 
 
 def test_order_follows_the_spec(client: TestClient) -> None:
-    app = client.app
+    app = cast(Any, client.app)
     state = app.state.exec_state
     state.stream_degraded_until = datetime(2999, 1, 1)
     state.stream_degraded_since = datetime(2026, 10, 15, 18, 46)
