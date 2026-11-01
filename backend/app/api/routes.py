@@ -2446,15 +2446,29 @@ def _settings_form(config: object) -> dict[str, object]:
     }
 
 
-def _prompt_options() -> list[dict[str, str]]:
-    out = []
+def _prompt_options() -> dict[str, list[dict[str, str]]]:
+    """Selectable prompt versions per family: decision prompts plus the
+    review-task prompts each contract allows (docs/SPEC.md, Settings —
+    Reviews)."""
+    out: dict[str, list[dict[str, str]]] = {"decision": []}
     for path in sorted(PROMPTS_DIR.glob("decision.*.md")):
         version = path.stem
         try:
             prompt = load_prompt(version)
         except (OSError, PromptError):
             continue
-        out.append({"version": version, "hash": prompt.short_hash})
+        out["decision"].append({"version": version, "hash": prompt.short_hash})
+    from app.reviews.service import ReviewService
+
+    for task, versions in ReviewService._REVIEW_CONTRACTS.items():
+        rows = []
+        for version in sorted(versions):
+            try:
+                prompt = load_prompt(version)
+            except (OSError, PromptError):
+                continue
+            rows.append({"version": version, "hash": prompt.short_hash})
+        out[task] = rows
     return out
 
 
@@ -4276,9 +4290,10 @@ def _feed_reason(decision: Decision) -> str | None:
         if decision.no_call_reason in (None, "rules"):
             return "pre-filter"
         detail = str(validation.get("error") or "").strip()
-        if decision.prompt_version == "decision.v3" and detail:
+        if decision.prompt_version in ("decision.v3", "decision.v4") and detail:
             # v3: "no_options · room: L7 1h swing high 0.31 ATR above
-            # the limit (min 1.0)" (docs/SPEC.md, Decision v3).
+            # the limit (min 1.0)" (docs/SPEC.md, Decision v3);
+            # v4: "checks · checks_gate: trend_1h=mixed".
             return f"{decision.no_call_reason} · {detail}"
         return str(
             detail or decision.no_call_reason
@@ -4287,6 +4302,9 @@ def _feed_reason(decision: Decision) -> str | None:
         gates = decision.gates_result or {}
         return f"blocked: {gates.get('blocked_by', 'gate')}"
     if validation.get("changed_by_code"):
+        if str(validation.get("reason") or "") == "flip_flop":
+            # v4: "skip · flip_flop" (docs/SPEC.md, Decision v4 — Feed).
+            return "flip_flop"
         failed = next(
             (
                 c
