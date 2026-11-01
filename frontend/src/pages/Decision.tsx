@@ -391,7 +391,8 @@ function Reasoning({ decision }: { decision: DecisionDetail }) {
     ? (decision.input_snapshot?.headlines as Headline[])
     : [];
   const news = (output?.news_used ?? [])
-    .map((id) => {
+    .map((n) => {
+      const id = typeof n === 'string' ? n : n.id;
       const found = headlines.find((h) => h.id === id);
       return found
         ? `“${found.title}” · ${found.source} · ${nyTime(found.time)}`
@@ -885,6 +886,18 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                   }}
                 >
                   {o.id}
+                  {o.stop_group ? (
+                    <span
+                      title="Options sharing a stop share a group"
+                      style={{
+                        marginLeft: '6px',
+                        fontSize: 'var(--sa-text-xs, 11px)',
+                        color: 'var(--sa-text-muted)',
+                      }}
+                    >
+                      {o.stop_group}
+                    </span>
+                  ) : null}
                 </td>
                 <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
                   <div style={{ fontFamily: MONO }}>{o.stop.toFixed(2)}</div>
@@ -926,6 +939,301 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
             .map((r) => `${r.id} — ${r.reason}`)
             .join('; ')}`,
         )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// decision.v4: previous decision + since, v4 conflicts, the held-thesis check
+// (design/screens/DecisionV4.dc.html, DecisionV4Held.dc.html)
+
+interface V4ConflictObj {
+  text: string;
+  outweighed_by: string | null;
+}
+
+interface V4Headline {
+  id?: string;
+  time?: string;
+  source?: string;
+  title?: string;
+  about_symbol?: boolean;
+  new?: boolean;
+}
+
+interface V4Previous {
+  time?: string | null;
+  action?: string | null;
+  option_id?: string | null;
+  best_option_id?: string | null;
+  confidence?: number | null;
+  conflicts?: string[];
+  price?: number | null;
+  since?: {
+    price_move_atr?: number | null;
+    checks_changed?: string[];
+    new_headlines?: string[];
+    new_levels_within_1_atr?: string[];
+  };
+}
+
+function _v4Previous(decision: DecisionDetail): V4Previous | null {
+  const raw = decision.input_snapshot?.previous_decision;
+  return raw && typeof raw === 'object' ? (raw as V4Previous) : null;
+}
+
+function _v4Conflicts(decision: DecisionDetail): V4ConflictObj[] {
+  return (decision.model_output?.conflicts ?? []).map((c) =>
+    typeof c === 'string' ? { text: c, outweighed_by: null } : c,
+  );
+}
+
+function _v4NewsUsed(decision: DecisionDetail): { id: string; effect: string }[] {
+  return (decision.model_output?.news_used ?? []).map((n) =>
+    typeof n === 'string' ? { id: n, effect: '' } : n,
+  );
+}
+
+function _sinceText(since: NonNullable<V4Previous['since']>): string[] {
+  const parts: string[] = [];
+  if (since.price_move_atr != null) {
+    parts.push(`price moved ${Number(since.price_move_atr).toFixed(2)} ATR`);
+  }
+  parts.push(
+    since.checks_changed && since.checks_changed.length > 0
+      ? `checks changed: ${since.checks_changed.join('; ')}`
+      : 'checks the same',
+  );
+  parts.push(
+    since.new_headlines && since.new_headlines.length > 0
+      ? `new headlines: ${since.new_headlines.join(', ')}`
+      : 'no new headlines',
+  );
+  parts.push(
+    since.new_levels_within_1_atr && since.new_levels_within_1_atr.length > 0
+      ? `new levels within 1 ATR: ${since.new_levels_within_1_atr.join(', ')}`
+      : 'no new levels within 1 ATR',
+  );
+  return parts;
+}
+
+function V4PreviousDecision({ decision }: { decision: DecisionDetail }) {
+  const prev = _v4Previous(decision);
+  if (prev === null) return null;
+  return (
+    <Section
+      label="Previous decision"
+      right="the model's last answer on this symbol, this session"
+    >
+      <div
+        style={{
+          fontFamily: MONO,
+          fontSize: 'var(--sa-text-md)',
+          color: 'var(--sa-text-2)',
+        }}
+      >
+        {(prev.action ?? '—').toUpperCase()}
+        {prev.time ? ` at ${nyTime(prev.time)}` : ''}
+        {prev.option_id ? ` · option ${prev.option_id}` : ''}
+        {prev.best_option_id ? ` · best option ${prev.best_option_id}` : ''}
+        {prev.confidence != null
+          ? ` · confidence ${Number(prev.confidence).toFixed(2)}`
+          : ''}
+      </div>
+      {(prev.conflicts ?? []).length > 0 && (
+        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          conflicts: {(prev.conflicts ?? []).join(' · ')}
+        </div>
+      )}
+      {prev.since && (
+        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          Since: {_sinceText(prev.since).join(' · ')}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function V4Reasoning({ decision }: { decision: DecisionDetail }) {
+  const output = decision.model_output;
+  const validation = decision.validation_result;
+  const conflicts = _v4Conflicts(decision);
+  const flags = output?.data_flags ?? [];
+  const thesis = output?.thesis ?? '';
+  const whatChanged = output?.what_changed;
+  const levelsUsed = output?.levels_used ?? [];
+  const written = validation?.code_written;
+  return (
+    <Section label="Agent reasoning" right="conflicts first, then the decision">
+      {conflicts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {conflicts.map((c) => (
+            <Chip
+              key={c.text}
+              variant={c.outweighed_by ? 'warning' : 'negative'}
+            >
+              Conflict: {c.text}
+              {c.outweighed_by
+                ? ` — outweighed by ${c.outweighed_by}`
+                : ' — unresolved'}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {flags.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {flags.map((flag) => (
+            <Chip key={flag} variant="negative">
+              Data flag: {flag.replace(/_/g, ' ')}
+            </Chip>
+          ))}
+        </div>
+      )}
+      {thesis ? (
+        <p
+          style={{
+            margin: 0,
+            fontSize: 'var(--sa-text-md)',
+            color: 'var(--sa-text-2)',
+            lineHeight: 1.55,
+          }}
+        >
+          {thesis}
+        </p>
+      ) : (
+        muted('No model reasoning recorded.')
+      )}
+      {whatChanged && (
+        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          What changed (model): <span style={{ color: 'var(--sa-text-2)' }}>{whatChanged}</span>
+        </div>
+      )}
+      {written && (
+        <div
+          style={{
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+            fontFamily: MONO,
+          }}
+        >
+          {written}
+        </div>
+      )}
+      {levelsUsed.length > 0 && (
+        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          Levels used: {levelsUsed.join(', ')}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function V4Headlines({ decision }: { decision: DecisionDetail }) {
+  const raw = decision.input_snapshot?.headlines;
+  const headlines: V4Headline[] = Array.isArray(raw) ? (raw as V4Headline[]) : [];
+  if (headlines.length === 0) return null;
+  const effects = new Map(_v4NewsUsed(decision).map((n) => [n.id, n.effect]));
+  const about = headlines.filter((h) => h.about_symbol).length;
+  return (
+    <Section label="Headlines" right={`${headlines.length} · ${about} about ${decision.symbol}`}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        {headlines.map((h) => {
+          const effect = h.id ? effects.get(h.id) : undefined;
+          return (
+            <div key={h.id ?? h.title} style={{ minWidth: 0 }}>
+              <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+                {h.title}
+              </span>
+              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                {' '}
+                · {h.time ? nyTime(h.time) : '—'}
+                {h.about_symbol ? ` · about ${decision.symbol}` : ''}
+                {h.new === false ? ' · seen before' : ''}
+              </span>
+              {effect ? (
+                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  cited: &ldquo;{effect}&rdquo;
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function V4Thesis({ decision }: { decision: DecisionDetail }) {
+  const pos = _v3Position(decision);
+  const atEntry = pos?.checks_at_entry;
+  const now = _v3Checks(decision);
+  const session = decision.input_snapshot?.session as
+    | { minutes_left?: number | null }
+    | undefined;
+  if (pos === null) return null;
+  const rows: { name: string; at: string; current: string; adverse: boolean }[] = (
+    ['trend_1h', 'trend_daily', 'regime_trend', 'momentum'] as const
+  ).map((name) => {
+    const at = atEntry?.[name] ?? '—';
+    const cur = now?.[name] ?? '—';
+    const adverse =
+      at !== '—' &&
+      cur !== '—' &&
+      ((at === 'up' && cur !== 'up') ||
+        (at === 'mixed' && cur === 'down') ||
+        (at === 'strong' && cur !== 'strong') ||
+        (at === 'mixed' && cur === 'weak'));
+    return { name, at, current: cur, adverse };
+  });
+  const heldBits = [
+    pos.held_session_hours != null
+      ? `${Number(pos.held_session_hours).toFixed(1)} session hours`
+      : null,
+    pos.sessions_held != null ? `${pos.sessions_held} session${pos.sessions_held === 1 ? '' : 's'} held` : null,
+    session?.minutes_left != null ? `${session.minutes_left} min left` : null,
+  ].filter(Boolean);
+  return (
+    <Section
+      label="Does the entry thesis still hold?"
+      right={
+        pos.thesis_holds === true
+          ? 'yes — checked by code'
+          : pos.thesis_holds === false
+            ? 'no — 2+ checks turned adverse'
+            : 'entry checks unknown'
+      }
+    >
+      {heldBits.length > 0 && (
+        <div
+          style={{
+            fontFamily: MONO,
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+          }}
+        >
+          {heldBits.join(' · ')}
+        </div>
+      )}
+      {atEntry && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {rows.map((r) => (
+            <div
+              key={r.name}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: 'var(--sa-text-sm)',
+                color: r.adverse ? 'var(--sa-negative-text)' : 'var(--sa-text-muted)',
+              }}
+            >
+              <span>{r.name.replace(/_/g, ' ')}</span>
+              <span style={{ fontFamily: MONO }}>
+                at entry {r.at} → now {r.current}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </Section>
   );
 }
@@ -1111,10 +1419,14 @@ function V3StopOptions({ decision }: { decision: DecisionDetail }) {
 function V3Reasoning({ decision }: { decision: DecisionDetail }) {
   const output = decision.model_output;
   const validation = decision.validation_result;
-  const conflicts = output?.conflicts ?? [];
+  const conflicts = (output?.conflicts ?? []).filter(
+    (c): c is string => typeof c === 'string',
+  );
   const flags = output?.data_flags ?? [];
   const thesis = output?.thesis ?? '';
-  const news = output?.news_used ?? [];
+  const news = (output?.news_used ?? []).filter(
+    (n): n is string => typeof n === 'string',
+  );
   const levelsUsed = output?.levels_used ?? [];
   const written = validation?.code_written;
   return (
@@ -1841,7 +2153,23 @@ export default function Decision() {
                     color: 'var(--sa-text-muted)',
                   }}
                 >
-                  confidence
+                  <span
+                    title={
+                      decision.prompt_version === 'decision.v4'
+                        ? 'Enter: the chosen option reaching its target before its stop. On a skip: the best option\u2019s chance (best_option_id).'
+                        : undefined
+                    }
+                  >
+                    confidence
+                    {decision.prompt_version === 'decision.v4' &&
+                    (output?.option_id || output?.best_option_id)
+                      ? ` · option ${
+                          decision.final_action === 'enter'
+                            ? output?.option_id
+                            : output?.best_option_id
+                        }`
+                      : ''}
+                  </span>
                   <div
                     style={{
                       flex: 1,
@@ -1873,7 +2201,24 @@ export default function Decision() {
             </div>
           </div>
 
-          {decision.prompt_version === 'decision.v3' ? (
+          {decision.prompt_version === 'decision.v4' ? (
+            <>
+              <V4PreviousDecision decision={decision} />
+              <V3Checks decision={decision} />
+              {decision.context === 'held' && <V4Thesis decision={decision} />}
+              {decision.context === 'candidate' ? (
+                <V3OptionsTable decision={decision} />
+              ) : (
+                <V3StopOptions decision={decision} />
+              )}
+              <V2Levels decision={decision} />
+              <V4Headlines decision={decision} />
+              <V4Reasoning decision={decision} />
+              <V2Explanation decision={decision} />
+              <SafetyGates decision={decision} />
+              <SelectionBlock decision={decision} />
+            </>
+          ) : decision.prompt_version === 'decision.v3' ? (
             <>
               <V3Checks decision={decision} />
               <V3PositionFacts decision={decision} />

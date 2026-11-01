@@ -98,6 +98,18 @@ export interface DecisionsResponse {
   items: DecisionListItem[];
 }
 
+/** decision.v4: a conflict names what outweighs it (null = nothing). */
+export interface V4Conflict {
+  text: string;
+  outweighed_by: string | null;
+}
+
+/** decision.v4: a cited headline with its effect on the call. */
+export interface V4NewsUsed {
+  id: string;
+  effect: string;
+}
+
 export interface ModelOutput {
   symbol: string;
   action: string;
@@ -107,14 +119,19 @@ export interface ModelOutput {
   thesis: string;
   invalidation: string | null;
   risks: string[];
-  news_used: string[];
+  news_used: Array<string | V4NewsUsed>;
   /** decision.v2: the picked option id and the level ids it cites —
    * stop_price/target_price are absent on v2 rows. */
   option_id?: string | null;
   levels_used?: string[];
-  /** decision.v3: conflicts replace risks; data_flags is an enum list. */
-  conflicts?: string[];
+  /** decision.v3: conflicts replace risks; data_flags is an enum list.
+   * decision.v4: conflicts are {text, outweighed_by} objects. */
+  conflicts?: Array<string | V4Conflict>;
   data_flags?: string[];
+  /** decision.v4: the best offered option even on a skip, and what
+   * changed since the previous decision when the action differs. */
+  best_option_id?: string | null;
+  what_changed?: string | null;
 }
 
 export interface CodeCheck {
@@ -695,6 +712,7 @@ export interface SettingsForm {
     briefing_enabled: boolean;
     monthly_cost_cap_usd: number;
     models?: { weekly: string; briefing: string; verdict: string };
+    prompts?: { weekly: string; briefing: string; verdict: string };
   };
   readiness: {
     min_closed_trades: number;
@@ -769,7 +787,7 @@ export interface SettingsResponse {
   held_symbols: string[];
   priced_models?: string[];
   model_options?: ModelOption[];
-  prompt_options: { version: string; hash: string }[];
+  prompt_options: Record<string, { version: string; hash: string }[]>;
   schedule: {
     rows: ScheduleRow[];
     shifted_label: string | null;
@@ -1840,6 +1858,8 @@ export interface V2Option {
   levels_in_way: Array<string | { id: string; distance_atr: number | null }>;
   /** decision.v3: confidence at which the trade breaks even, 1/(1+rr). */
   breakeven_confidence?: number;
+  /** decision.v4: options sharing a stop share a group (S1, S2, …). */
+  stop_group?: string;
 }
 
 export interface V2StopOption {
@@ -1884,6 +1904,17 @@ export interface V3Position {
   neutral_probability?: number | null;
   levels_to_target?: Array<{ id: string; distance_atr: number | null }>;
   scheduled_exit?: string | null;
+  /** decision.v4: the checks the entry decision saw, whether the entry
+   * thesis still stands, and the regular-hours time held. */
+  checks_at_entry?: {
+    trend_1h?: string;
+    trend_daily?: string;
+    regime_trend?: string;
+    momentum?: string;
+  } | null;
+  thesis_holds?: boolean | null;
+  held_session_hours?: number | null;
+  sessions_held?: number | null;
 }
 
 export interface V2OptionsColumn {
