@@ -1681,8 +1681,11 @@ For storage, the drawer and verdict facts, `conflicts[].text` takes the place of
   - the anchor is the chosen option's `breakeven_confidence` (enter), the best option's (skip), or `neutral_probability` (held);
   - stored, counted on Readiness and Insights, and shown in the drawer.
 - **Path claim** (warning `unsupported_claim`, kind `path`): a sentence with "clear", "open", "easy" or "manageable" together with "path", "way" or "room", while the chosen option (or held: `levels_to_target`) has a level within 1 ATR.
-- **Unresolved conflict** (warning `unresolved_conflict`): an enter with a conflict whose `outweighed_by` is null. The decision stands; it is counted.
-- **Best option:** on a skip, `best_option_id` must be an offered option, otherwise the answer is invalid as today. Held answers must have it null.
+- **Unresolved conflict** (warning `unresolved_conflict`): an enter with a conflict whose `outweighed_by` is null. The decision stands; it is counted. Only enters get this warning; for held answers the prompt asks to list adverse checks and to weigh an exit, which the eval measures (`conflicts_on_adverse`), not this warning.
+- **Best option.** `best_option_id` never makes an answer invalid; it only feeds calibration.
+  - On an `enter`, code stores the chosen `option_id` as the best option. A different offered id from the model gets the warning `best_option_mismatch`.
+  - On a `skip`, it must be an offered option. If it is missing or not offered, the skip stands, the best option is stored as null with the warning `best_option_missing`, and the decision is left out of the skip calibration.
+  - On a held answer, a non-null value is ignored and stored as null.
 - **Claim check fix:** only a sentence that attributes a level to the stop or the target is checked against the stop's or target's level. A conflict such as "levels L2 and L1 in the way" is not a claim (bug B1 of 31 October).
 - **`checks_gate`** (strategy override, default off): when on, a candidate with `trend_1h` not up, `regime_trend` not up, or `trend_daily` down gets no model call, reason `no_call` · `checks`. Used by a shadow to test the code-enforced checklist against the model's judgement.
 
