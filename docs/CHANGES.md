@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-01 — Positions: one row per entry order
+
+- Root cause of the 30 Oct SHEL duplicate: the fills sync opened the row at 18:46:43, a stale flat reading closed it a second later while the fill was still settling, and the adopt path re-created the same 18 shares as `adopted` — no decision link, no target. Positions now carry `entry_order_id` (the broker entry order they were opened from) with a unique index; the fills pass checks it before inserting and the adopt path skips a symbol whose position row is open or was closed inside `fill_settle_seconds`.
+- Alembic `i1b2c3d4e5f6` backfills the link, merges duplicate rows sharing one entry order into the surviving open row, and restores the survivor's stop/target from the bracket legs. Applied to the local DB it repairs SHEL exactly as intended: one open row, entry decision 2909, target 110.78 (the bracket's target leg order 32 is live at Alpaca, status `new`).
+
 ## 2026-11-01 — Decision v4 (PR 34)
 
 - From the analysis of 31 October (`docs/analysis/2026-10-31-decision-v4-candidates.md`):
