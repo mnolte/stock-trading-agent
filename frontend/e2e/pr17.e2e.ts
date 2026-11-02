@@ -783,7 +783,7 @@ test('keyboard: dashboard, settings and strategies keep a visible focus ring', a
   // viewport the tab order is header + content only (no sidebar links), so
   // a still-loading dashboard would run out of focusables.
   await expect(
-    page.getByRole('link', { name: 'Positions, open Positions and orders' }),
+    page.getByRole('main').getByRole('link', { name: 'Positions & orders' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page).toHaveTitle(/Stock Trading Agent — Dashboard/);
   await expectVisibleFocus(page);
