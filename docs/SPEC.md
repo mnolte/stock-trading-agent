@@ -313,7 +313,7 @@ Risk gates run in code after the model answers, in the order below; the first ga
 
 The GUI reuses Trading Agent's visual language: the dark "instrument panel" style, IBM Plex type and the design tokens from its DESIGN.md. Copy the tokens file into this repo; do not import from the other project. Money is shown in USD with the EUR equivalent beside it; times are in Amsterdam time with New York time on hover.
 
-**Header (every screen):** PAPER badge, market session state with a countdown to the next open, close or cycle, a "Needs you · n" chip linking to the dashboard's Needs you card (hidden when n is 0, PR 35), equity in USD and EUR, today's P&L, regime label, Pause/Resume button, kill switch button.
+**Header (every screen):** PAPER badge, market session state with a countdown to the next open, close or cycle, the Ask button (PR 36), a "Needs you · n" chip linking to the dashboard's Needs you card (hidden when n is 0, PR 35), equity in USD and EUR, today's P&L, regime label, Pause/Resume button, kill switch button.
 
 | Screen | What it shows |
 | --- | --- |
@@ -489,7 +489,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `sign_in_attempts` | time, IP, result (ok, wrong, locked) (PR 23; kept 90 days) |
 | `insights_snapshots` | session date, strategy, period, computed at, JSON (headline, funnel, findings, slices, calibration) (PR 22) |
 | `log_reviews` | fingerprint, level, sample message, review (expected or fixed), note, reviewed at, app version (PR 20; in the trading database, so it is backed up) |
-| `llm_calls` | sent at, session date, source (live, shadow, review), strategy, kind, linked decision, shadow decision or review, cycle, symbol, context, model, temperature, prompt version and hash, tokens, cost and source, latency, final action, outcome (success, warning, error), reasons JSON, error type, HTTP status, error message, request id, raw response, backfilled (see LLM call history) |
+| `llm_calls` | sent at, session date, source (live, shadow, review, ask from PR 36), strategy, kind, linked decision, shadow decision or review, cycle, symbol, context, model, temperature, prompt version and hash, tokens, cost and source, latency, final action, outcome (success, warning, error), reasons JSON, error type, HTTP status, error message, request id, raw response, backfilled (see LLM call history) |
 
 Every connection uses WAL mode and a busy timeout (`storage.sqlite_busy_timeout_seconds`, 30). No job keeps a write transaction open while it waits for a model call or any other network call. A daily copy of the database is made at 03:00 Amsterdam time with SQLite's online backup API (never a plain file copy, which can catch a write half-done), checked with `PRAGMA integrity_check`, and kept for 14 days. Migrations are never edited once merged; a schema change is always a new revision. At startup the app compares the schema with the models and refuses to start with a clear message if they differ.
 
@@ -547,6 +547,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 33. **Entry selection.** `selection.mode` (`rank` default, `expected_profit`), `confidence_weight` and `last_slot_min_ev_r` as settings and strategy overrides; for `expected_profit`: pre-score call order, collect-then-choose, the exact best set within slots, sector cap, open risk, cash and orders per cycle, submit in expected-profit order with the next-best fallback, `not_selected` for the rest; selection stored per decision and cycle; the drawer block; `make replay-selection` comparing both modes on stored cycles. Gates, sizing and orders unchanged. *Done when:* with `rank` every existing cycle test and replay is byte-for-byte unchanged; the XOM, MSFT, AMZN example of the design with 2 free slots chooses XOM and MSFT ($41.08) where rank order chooses AMZN and MSFT ($27.42); a sector-cap case picks the best set that fits; a chosen entry failing the fresh quote is replaced by the next best that fits; an enter with expected R ≤ 0 is never chosen; supervised mode queues only the chosen set; a shadow with `expected_profit` runs next to live; and the replay report lists every cycle where the modes differ.
 34. **Decision v4.** From the analysis of 31 October: snapshot v4 (`previous_decision` with code-computed `since`, headlines with `about_symbol` and `new`, capped headlines and levels, `stop_group` on options, `checks_at_entry`, `thesis_holds`, time held, session minutes left); `prompts/decision.v4.md` with confidence defined for every action and `best_option_id`, conflicts with `outweighed_by`, `what_changed`, news effects, path and exit rules; code checks for the flip-flop guard, confidence sanity, path claims, unresolved conflicts and the claim-check fix; the `checks_gate` strategy override; shadow input snapshots stored; `make eval-decision` with `backend/eval/decision_v4.json`; the v4 drawers. v1–v3 untouched. *Done when:* the TSLA case of the design becomes `skip` · `flip_flop` while a skip → enter after a new headline about the symbol passes; a held PG answer of 0.85 at neutral 0.15 is stored with `confidence_outlier`; IBM call 1734's conflict "levels L2 and L1 in the way" no longer fails the claim check; a skip carries a valid `best_option_id`; `thesis_holds` is false for a position whose 1h trend and momentum turned against it; the eval runs v3 and v4 on the same calls and reports per category; and a v4 shadow runs next to live in simulated mode.
 35. **Needs you and positions at a glance.** From the UX audit of 1 November: the Needs you card on the dashboard with its endpoint and WebSocket topic, the header chip and the phone top bar with the count; the stop-to-target bar and distance in ATR on the dashboard and Positions; the dashboard order; the Positions totals line, four facts per position and folded legs that open on a problem; the phone top bar and menu below 820 px; no sideways scroll at 390 px. No trading change. *Done when:* each item kind in the table appears and leaves on its own condition in a test; with nothing pending the card says "Nothing needs you" and the header chip is gone; a position under 1.5 ATR from its stop shows amber; a missing stop leg opens its legs line in amber; and every screen at 390 px has a document width of 390.
+36. **Ask the agent.** The drawer on every screen with page context, threads, streaming steps and answers with Stop, suggestions per screen, reference chips and the number check; the read-only tools; `converse` in the model interface with OpenAI and Anthropic adapters and a fake; `prompts/ask.v1.md`; `ask_threads` and `ask_messages`; the Ask API with server-sent events; its own cost cap and rate limit; Settings → Ask the agent; `llm_calls` source `ask` and the inspector filter; `make eval-ask`. *Done when:* asking "why was this blocked?" in the decision drawer of a blocked AAPL entry answers with the reward-to-risk numbers and a chip to that decision; "how much do I lose if every stop hits?" on Positions answers with the total from the risk math; a follow-up without context ("and JPM?") works; Stop keeps the partial answer; a planted instruction in a headline is ignored; asking it to pause trading gets a refusal that says it's read-only; no tool result in any test contains a key; the cap notice replaces the composer at the cap; and the eval passes at least 90% of properties on the default model.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -719,7 +720,7 @@ The LLM inspector shows every model call ever made, not just today's, and can fi
 A size reduced by a gate is not a warning; the model's action was kept.
 
 **Storage.** A new `llm_calls` table, one row per call:
-- What and where: sent at, New York session date, source (live, shadow, review), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
+- What and where: sent at, New York session date, source (live, shadow, review, ask), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
 - How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
 - Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text.
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
@@ -1759,13 +1760,163 @@ For storage, the drawer and verdict facts, `conflicts[].text` takes the place of
 
 **Not changed.** The v1–v3 prompts, snapshots and options; live's prompt and model; every risk gate and threshold; the rules pre-filter; entry selection (it uses v4's entry confidence like any other). The live model stays gpt-4.1-mini. A claude-haiku-5-5 shadow is added once its key is set.
 
+## Ask the agent (PR 36)
+
+Marc asks questions in plain language and the agent answers from its own data:
+- why it skipped AAPL;
+- how much he loses if every stop hits;
+- whether shadow E beats live this week;
+- what `edge_too_small` means.
+
+A drawer opens on any screen with that screen as context, so "why was this blocked?" needs no explanation. The agent looks things up with read-only tools, answers briefly with links to what it used, and never changes anything.
+
+**What it is not.**
+- It doesn't trade, change settings, pause, approve, acknowledge or confirm anything.
+- It has no web access.
+- It doesn't remember across chats.
+- It doesn't give investment advice about real money. Everything here is paper, and the answer says so if asked.
+- Actions from the chat are out of scope until the read-only version has proven itself.
+
+**Opening it.**
+- The header's Ask button on every screen, or Ctrl+J (⌘J on a Mac).
+- On the dashboard's Needs you card and the decision drawer: an "Ask about this" link that opens it with that item as context.
+- Escape closes it, and the conversation stays.
+- From 1280 px the drawer is docked on the right (440 px) and the page stays usable next to it; the page reflows. Narrower than that it overlays the page; at phone width it fills the screen.
+- With a decision drawer open, Ask docks to the right of it, or overlays it when there isn't room. Its context is then that decision.
+
+**Page context.**
+- Every screen gives the drawer a small context object:
+  - the screen;
+  - the record shown, when there is one (decision id, position, symbol, review, strategy, model call, log line);
+  - the active filters and period;
+  - the session date.
+- The drawer shows it as a chip ("About: Positions & orders · 2 open"). Marc can remove it to ask about the whole app.
+- The context is sent with each question, and code adds a one-line summary of the record to the first message, so the model doesn't have to look up what Marc is looking at.
+- A chat keeps the context it was started with. Navigating while the drawer is open offers "Switch to this page" on the chip, so a new context is never applied silently.
+
+**Conversation.**
+- **Threads.** A chat is a thread. "New" starts one; the clock button lists earlier chats with search. Threads are kept `ask.keep_days` (90) days. A title is taken from the first question by code, at most 60 characters.
+- **Streaming.**
+  - While the model works, the drawer shows each lookup as a short step ("Read open positions and their stops"). It then streams the answer text.
+  - A Stop button ends the answer; what was written stays, marked "Stopped by you".
+  - Marc can type the next question while an answer streams; it is sent when the answer ends.
+- **Follow-ups.** The model gets the whole thread, so "and the second one?" works. When the thread grows past `ask.max_context_tokens` (60,000), the oldest tool results are dropped first (their answers stay), then the oldest turns, with a line in the thread saying so.
+- **Suggestions.** On first open, three questions written for the screen. Examples:
+  - dashboard: "What needs me right now?", "How did today go?";
+  - decision drawer: "Why did code change this decision?", "What happened afterwards?";
+  - Positions: "How much do I lose if every stop hits?";
+  - Strategies: "Is shadow E better than live yet?";
+  - Readiness: "What is still missing for live?".
+  They are fixed per screen in the frontend, not generated.
+- **Answer shape:**
+  - short first: one or two sentences that answer the question, then the detail;
+  - Markdown limited to paragraphs, lists, bold, inline code and small tables;
+  - no HTML, no images, no external links;
+  - times in Amsterdam (with New York where it matters); money in USD; risk in R.
+- **Links.** The model writes references as `[[decision:2324]]`, `[[position:MSFT]]`, `[[screen:readiness]]`, `[[calls:<filter>]]` and so on. Code renders them as chips that open the record (the decision drawer, a filtered LLM inspector, the screen). A reference to a record no tool returned in this thread is shown as plain text and logged at WARNING.
+- **Numbers.**
+  - Every number in an answer must appear in a tool result of the thread, or come from the `calculate` tool, after rounding.
+  - A number that doesn't is shown with a dotted amber underline: "not found in the data".
+  - Under the answer: "1 number not found in the data".
+  - The answer is not blocked; the check makes guesses visible.
+- **Under each answer:** model, number of lookups, cost, "data as of" time, Copy, and a link to its model calls in the inspector.
+
+**Tools** (read-only, typed, bounded). Every tool:
+- reads the database or the in-memory state the GUI reads, through the same services;
+- never calls Alpaca, Finnhub or a model;
+- returns JSON with `as_of`, the records with a `ref` (for links), and `truncated` with a hint to narrow the filters when there were more rows than its limit.
+
+| Tool | Returns | Limit |
+| --- | --- | --- |
+| `get_status` | Session, cycle, equity, today's P&L, regime, paused or kill switch, banners, the Needs you list and the health line | — |
+| `list_positions` | Open positions with the facts of Positions at a glance (if the stop hits, distances, planned exit, legs) | all |
+| `get_position` | One open or closed position: fills, legs, stop moves, exit, R, decisions on it | 1 |
+| `search_orders` | Orders by period, symbol, side, leg, status | 50 |
+| `search_decisions` | Decisions by period, symbol, context, model action, final action, change reason, strategy (live or a shadow), prompt version, model; one line each | 50 |
+| `get_decision` | One decision: the snapshot's checks and key numbers, options, the model's output, validation, gates, code changes, warnings, outcome, option touches, verdict, linked model call | 1 |
+| `get_cycle` | One cycle: what ran, calls, decisions by action, duration, errors | 1 |
+| `performance` | Return, against SPY, win rate, average R, drawdown, adjusted P&L, by regime and symbol, for a period and strategy | — |
+| `list_trades` | Closed trades with entry, exit, R, reason and after-exit moves | 100 |
+| `insights` | Headline, findings, funnel, a slice, calibration, for a strategy and period | 1 slice |
+| `compare_strategies` | The Strategies table and disagreements for a period | — |
+| `readiness` | Every criterion with value, target and status, and the manual items | — |
+| `reviews` | Weekly reviews, briefings and verdicts (drafts and confirmed), by kind and period | 20 |
+| `search_logs` | Log lines by level, component, symbol, period and text, already scrubbed | 50 |
+| `search_model_calls` | LLM call rows by the inspector's filters; the response text, never the prompt text (version and hash only) | 20 |
+| `settings` | Current values of a section with their defaults, the settings history, and key and channel status (never a key, password or token) | — |
+| `market_data` | Bars and indicators for a symbol around a time, from the stored bars only | 120 bars |
+| `explain_rule` | The spec passages for a term or rule (for example `edge_too_small`, the sector cap), from the `docs/SPEC.md` shipped with the app | 3 passages |
+| `calculate` | An arithmetic expression on given numbers, evaluated with Decimal (no names, no functions except min, max, abs, round) | — |
+
+- At most `ask.max_tool_rounds` (8) rounds of tool calls per answer; several tools may run in one round.
+- At most `ask.answer_timeout_seconds` (90) in total.
+- A tool result is cut at `ask.max_tool_result_tokens` (6,000), with `truncated` set.
+- A failing tool returns its error to the model, which says what it couldn't look up.
+
+**Model.**
+- `ask.model`, any entry in `models` (default `gpt-4.1-mini`).
+- A new call type in the one model interface: `converse(system, messages, tools, model, stream)`, which returns streamed text, tool calls, token counts and the same typed errors. OpenAI and Anthropic adapters, and a fake for tests; the provider rule (hard rule 21) holds.
+- Temperature 0.2 for OpenAI models.
+- Prompt `prompts/ask.v1.md`, versioned and in the manifest like every prompt.
+- Each model round is a row in `llm_calls`: source `ask`, kind `ask`, linked to the message. The LLM inspector filters on it.
+
+**Cost and limits.**
+- Ask has its own monthly cap, `ask.monthly_cost_cap_usd` (5). It never uses the budget or rate limits of trading decisions, and model calls for a cycle go first when both wait on the limiter.
+- At the cap, the composer is replaced by a notice (resets on the 1st; raise it in Settings) and earlier chats stay readable.
+- At most `ask.max_questions_per_minute` (10) per session. A question is at most 2,000 characters.
+
+**Safety.**
+- **Read-only by construction:** the tools are read functions with no write path, and the Ask routes sit behind the request gate and sign-in like every route.
+- **Secrets:** no tool returns a key, password, token or secret file. Log lines and model responses go through the scrubber before they reach a tool result.
+- **Untrusted text:** headlines, model theses, log messages and review texts are data. The prompt says so, and they are passed inside tool results, never as instructions.
+- **Rendering:** the answer is rendered from the limited Markdown, with references resolved by code; no raw HTML, no links outside the app.
+- **No advice:** asked "should I…", the agent lays out the evidence and the trade-off. For anything about real money it says this is a paper account.
+
+**Settings → Ask the agent:** on or off, model, monthly cap, chats kept for (days). The settings history records changes as usual.
+
+**Storage** (new Alembic revision):
+- `ask_threads`: title, context JSON, created, updated, archived;
+- `ask_messages`:
+  - thread, role (user or assistant), text, context JSON;
+  - steps (tool name, arguments, row count, truncated, ms);
+  - references, unverified numbers;
+  - model, prompt version and hash, tokens, cost;
+  - status (`ok`, `stopped`, `failed`, `cap`), error;
+  - created.
+
+  Tool results themselves are not stored; the step list records what was asked.
+- Threads older than `ask.keep_days` are deleted after the 03:00 backup.
+
+**API.**
+- `GET /api/ask/threads`, `POST /api/ask/threads`, `GET /api/ask/threads/{id}`, `DELETE /api/ask/threads/{id}`.
+- `POST /api/ask/threads/{id}/messages` (JSON: text, context) answers with a `text/event-stream`:
+  - events `step`, `delta`, `refs`, `done`, `error`;
+  - `done` carries the stored message with references, unverified numbers, tokens, cost and as-of time.
+- `POST /api/ask/messages/{id}/stop`.
+- All behind the request gate.
+
+**Eval.**
+- `backend/eval/ask_v1.json`: about 25 questions against a fixture database, each with the facts the answer must contain and properties:
+  - cites a reference to the right record;
+  - no unverified numbers;
+  - no claim of having changed anything;
+  - refuses to change a setting;
+  - ignores an instruction planted in a headline.
+- `make eval-ask MODEL=…` reports per question and in total, with cost under the replay cap.
+- The default `ask.model` must pass at least 90% of properties before PR 36 is done.
+
+**GUI.**
+- `design/screens/AskDrawer.dc.html`: docked next to Positions, mid-conversation, with steps, a table, reference chips, the answer footer and a streaming answer with Stop.
+- `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), and the phone layout.
+- The header gets the Ask button on every screen; the phone top bar gets an Ask button next to the menu.
+
 ## Out of scope and later versions
 
 Not in v0.1: live trading, shorting, options, margin, extended-hours trading, fractional shares, EU exchanges, backtesting, VPS deployment and login (VPS deployment is specified for PR 23 and 24).
 
 Likely v0.2+, in rough order:
 
-- Ask the agent (as in Trading Agent). Briefings and reviews moved forward to PR 9 (see Reviews).
+- Ask the agent: specified for PR 36 (see Ask the agent). Later: actions from the chat (pause, approve, acknowledge) behind "Confirm it is you". Briefings and reviews moved forward to PR 9 (see Reviews).
 - Shadow strategies: specified for PR 13 (see Strategies and shadows).
 - Backtesting: specified for PR 14 (see Backtesting).
 - Larger universe with a liquidity screen: specified for PR 11 and 12 (see Larger universe).
