@@ -148,6 +148,102 @@ class OpenAIAdapter:
             parsed=parsed,
         )
 
+    async def _converse_responses(
+        self,
+        *,
+        system: str,
+        messages: list[ConverseMessage],
+        tools: list[ConverseTool],
+        model: str,
+        stream: bool,
+    ) -> Any:
+        """One converse round via the Responses API (function tools).
+
+        Required for models whose tool calls are not served by chat
+        completions (gpt-6.1-sol). Same event contract as converse().
+        """
+        timeout = model_timeout_seconds(self._config, model)
+        started = time.monotonic()
+        wire_tools = [
+            {
+                "type": "function",
+                "name": t.name,
+                "description": t.description,
+                "parameters": t.schema,
+            }
+            for t in tools
+        ]
+        try:
+            response_stream = await self._client.responses.create(
+                model=model,
+                instructions=system,
+                input=cast(Any, _responses_input(messages)),
+                tools=cast(Any, wire_tools) if wire_tools else cast(Any, None),
+                stream=True,
+                timeout=timeout,
+            )
+        except Exception as exc:  # noqa: BLE001
+            yield ConverseEvent(
+                kind="done",
+                result=_converse_error(model, exc, started, self.provider),
+            )
+            return
+        text_parts: list[str] = []
+        calls: list[ToolCall] = []
+        usage: Any = None
+        try:
+            async for event in response_stream:
+                etype = getattr(event, "type", "")
+                if etype == "response.output_text.delta":
+                    delta = getattr(event, "delta", "")
+                    if delta:
+                        text_parts.append(delta)
+                        if stream:
+                            yield ConverseEvent(kind="delta", delta=delta)
+                elif etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if getattr(item, "type", "") == "function_call":
+                        try:
+                            args = json.loads(
+                                getattr(item, "arguments", "") or "{}"
+                            )
+                        except json.JSONDecodeError:
+                            args = {}
+                        calls.append(
+                            ToolCall(
+                                id=getattr(item, "call_id", "") or "",
+                                name=getattr(item, "name", "") or "",
+                                arguments=args
+                                if isinstance(args, dict)
+                                else {},
+                            )
+                        )
+                elif etype == "response.completed":
+                    usage = getattr(
+                        getattr(event, "response", None), "usage", None
+                    )
+        except Exception as exc:  # noqa: BLE001
+            yield ConverseEvent(
+                kind="done",
+                result=_converse_error(model, exc, started, self.provider),
+            )
+            return
+        details = getattr(usage, "input_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
+        yield ConverseEvent(
+            kind="done",
+            result=ConverseResult(
+                text="".join(text_parts),
+                tool_calls=tuple(calls),
+                model=model,
+                tokens_in=getattr(usage, "input_tokens", None),
+                tokens_out=getattr(usage, "output_tokens", None),
+                cached_tokens_in=cached,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                provider=self.provider,
+            ),
+        )
+
     async def converse(
         self,
         *,
@@ -163,8 +259,23 @@ class OpenAIAdapter:
         ``done`` event carrying the ConverseResult (tool calls included).
         OpenAI's automatic prompt caching applies to the stable prefix —
         no explicit marker is sent. One try, never retried.
+
+        Models flagged ``api: responses`` in the models list (OpenAI
+        requires the Responses API for tool calls on them, e.g.
+        gpt-6.1-sol) take the Responses path; everything else uses chat
+        completions.
         """
         use_model = model or self.default_model
+        if _uses_responses_api(self._config, use_model):
+            async for event in self._converse_responses(
+                system=system,
+                messages=messages,
+                tools=tools,
+                model=use_model,
+                stream=stream,
+            ):
+                yield event
+            return
         timeout = model_timeout_seconds(self._config, use_model)
         started = time.monotonic()
         wire_messages = _wire_messages(system, messages)
@@ -268,6 +379,56 @@ class OpenAIAdapter:
                 provider=self.provider,
             ),
         )
+
+
+def _uses_responses_api(config: AppConfig, model: str) -> bool:
+    """``models.<id>.api == "responses"`` — the provider requires the
+    Responses API (tool calls are chat-completions-only otherwise)."""
+    from app.llm.models import models_table
+
+    entry = models_table(config).get(model) or {}
+    return entry.get("api") == "responses"
+
+
+def _responses_input(messages: list[ConverseMessage]) -> list[dict[str, Any]]:
+    """Provider-agnostic turns → Responses ``input`` items."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.role == "assistant":
+            if m.text:
+                out.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": m.text}],
+                    }
+                )
+            out.extend(
+                {
+                    "type": "function_call",
+                    "call_id": c.id,
+                    "name": c.name,
+                    "arguments": json.dumps(c.arguments),
+                }
+                for c in m.tool_calls
+            )
+        elif m.role == "tool":
+            out.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": m.tool_call_id,
+                    "output": m.text,
+                }
+            )
+        else:
+            out.append(
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": m.text}],
+                }
+            )
+    return out
 
 
 def _wire_messages(system: str, messages: list[ConverseMessage]) -> list[dict[str, Any]]:

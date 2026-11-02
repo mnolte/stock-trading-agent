@@ -230,7 +230,7 @@ ask:                            # PR 36, Ask the agent
 models:                         # PR 29; the only list of models. Prices in USD per million tokens: check the providers' current prices
   gpt-4o-mini:       {provider: openai,    input: 0.15, output: 0.60,  cutoff: "2023-10-31"}
   gpt-4.1-mini:      {provider: openai,    input: 0.40, output: 1.60,  cutoff: "2024-06-01"}
-  gpt-6.1-sol:       {provider: openai,    input: 2.00, output: 10.00, cutoff: "2026-04-30", cached_input: 0.10}
+  gpt-6.1-sol:       {provider: openai,    input: 2.00, output: 10.00, cutoff: "2026-04-30", cached_input: 0.10, api: responses}   # tool calls need the Responses API
   claude-haiku-5-5:  {provider: anthropic, input: 0.10, output: 0.50,  cutoff: "2026-06-30", effort: low, cached_input: 0.01, cache_write: 0.125}   # Anthropic lists Haiku "from" this price: check
   claude-sonnet-5-5: {provider: anthropic, input: 2.00, output: 10.00, cutoff: "2026-06-30", effort: low, cached_input: 0.20, cache_write: 2.50}
 # model_prices, backtest.model_cutoffs and reviews.model (before PR 29) are read for one release with a warning

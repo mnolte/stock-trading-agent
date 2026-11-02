@@ -191,6 +191,39 @@ def test_calculate_tool_result(session_factory) -> None:
         assert err is None and Decimal(result["result"]) == Decimal(5)
 
 
+def test_responses_api_flag_and_wire_mapping() -> None:
+    """gpt-6.1-sol routes to the Responses API; the wire shape is right."""
+    from app.llm.base import ConverseMessage, ToolCall
+    from app.llm.providers.openai import _responses_input, _uses_responses_api
+
+    assert _uses_responses_api(get_config(), "gpt-6.1-sol")
+    assert not _uses_responses_api(get_config(), "gpt-4o-mini")
+    items = _responses_input(
+        [
+            ConverseMessage(role="user", text="hi"),
+            ConverseMessage(
+                role="assistant",
+                text="let me look",
+                tool_calls=(ToolCall(id="c1", name="get_status", arguments={"a": 1}),),
+            ),
+            ConverseMessage(role="tool", tool_call_id="c1", text="{}"),
+        ]
+    )
+    assert items[0]["content"][0]["type"] == "input_text"
+    assert items[1]["content"][0]["type"] == "output_text"
+    assert items[2] == {
+        "type": "function_call",
+        "call_id": "c1",
+        "name": "get_status",
+        "arguments": '{"a": 1}',
+    }
+    assert items[3] == {
+        "type": "function_call_output",
+        "call_id": "c1",
+        "output": "{}",
+    }
+
+
 # ---------------------------------------------------------------------
 # number check + refs
 
