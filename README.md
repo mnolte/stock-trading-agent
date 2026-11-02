@@ -69,6 +69,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `risk.*` | Position sizing, portfolio and daily loss limits |
 | `performance.*` | Slippage and cost assumptions for measured results |
 | `reviews.*` | Weekly review, briefing and verdict models, times and caps |
+| `ask.*` | Ask the agent: on/off, model, monthly and per-answer cost caps, retention, context and tool limits, question rate limit, standing instructions |
 | `notifications.*` | Email alerts, heartbeat and quiet hours |
 | `models.*` | The priced model table — the only models that may be picked |
 | `shadows.*` | Shadow strategies and their monthly cost cap |
