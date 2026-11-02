@@ -30,6 +30,7 @@ class ConfigLike(Protocol):
 
     def get(self, *keys: str, default: Any = None) -> Any: ...
 
+
 logger = logging.getLogger(__name__)
 
 PROVIDERS = ("openai", "anthropic")
@@ -154,9 +155,7 @@ def named_models(config: ConfigLike, session: Session | None = None) -> list[tup
         from app.db.models import Strategy
 
         for strategy in session.execute(
-            select(Strategy).where(
-                Strategy.status == "active", Strategy.kind == "llm"
-            )
+            select(Strategy).where(Strategy.status == "active", Strategy.kind == "llm")
         ).scalars():
             out.append((f"Shadow {strategy.name!r}", str(strategy.model)))
     return out
@@ -171,29 +170,19 @@ def check_models(config: ConfigLike, session: Session | None = None) -> None:
     table = models_table(config)
     for name, entry in table.items():
         if str(entry.get("provider")) not in PROVIDERS:
-            raise ValueError(
-                f"models.{name}: provider must be one of {', '.join(PROVIDERS)}"
-            )
+            raise ValueError(f"models.{name}: provider must be one of {', '.join(PROVIDERS)}")
         if entry.get("input") is None or entry.get("output") is None:
-            raise ValueError(
-                f"models.{name}: input and output prices are required"
-            )
+            raise ValueError(f"models.{name}: input and output prices are required")
         if entry.get("effort") is not None and str(entry["effort"]) not in EFFORTS:
-            raise ValueError(
-                f"models.{name}: effort must be one of {', '.join(EFFORTS)}"
-            )
+            raise ValueError(f"models.{name}: effort must be one of {', '.join(EFFORTS)}")
         if entry.get("cutoff") is not None:
             try:
                 date.fromisoformat(str(entry["cutoff"]))
             except ValueError:
-                raise ValueError(
-                    f"models.{name}: cutoff must be an ISO date"
-                ) from None
+                raise ValueError(f"models.{name}: cutoff must be an ISO date") from None
     for what, model in named_models(config, session):
         if not known_model(config, model):
-            raise UnknownModelError(
-                f"{what} model {model!r} is not in the models list"
-            )
+            raise UnknownModelError(f"{what} model {model!r} is not in the models list")
 
 
 def check_models_at_startup(config: ConfigLike, session: Session) -> None:
@@ -201,9 +190,7 @@ def check_models_at_startup(config: ConfigLike, session: Session) -> None:
     check_models(config, session)
 
 
-def model_price(
-    prices: dict[str, Any] | None, model: str
-) -> tuple[Decimal, Decimal] | None:
+def model_price(prices: dict[str, Any] | None, model: str) -> tuple[Decimal, Decimal] | None:
     """(input, output) USD per million tokens for ``model``, or None."""
     entry = (prices or {}).get(model)
     if not isinstance(entry, dict):

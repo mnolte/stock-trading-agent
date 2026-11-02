@@ -26,7 +26,14 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 from app.decide.output import DECISION_JSON_SCHEMA
-from app.llm.base import ModelResponse
+from app.llm.base import (
+    ConverseEvent,
+    ConverseMessage,
+    ConverseResult,
+    ConverseTool,
+    ModelResponse,
+    ToolCall,
+)
 from app.llm.models import model_effort, model_timeout_seconds
 
 if TYPE_CHECKING:
@@ -64,6 +71,7 @@ def anthropic_safe_schema(schema: dict[str, Any]) -> dict[str, Any]:
     itself is never mutated. ``additionalProperties`` survives only as
     ``false``.
     """
+
     def walk(node: Any) -> Any:
         if isinstance(node, dict):
             out: dict[str, Any] = {}
@@ -101,7 +109,7 @@ def _error_type(exc: Exception) -> str | None:
 
 
 def _classify(exc: Exception) -> str:
-    """"timeout" or "api_error" for the llm_calls row (docs/SPEC.md)."""
+    """ "timeout" or "api_error" for the llm_calls row (docs/SPEC.md)."""
     from anthropic import APITimeoutError
 
     if isinstance(exc, APITimeoutError | TimeoutError):
@@ -148,9 +156,7 @@ class AnthropicAdapter:
         use_model = model or self.default_model
         effort = model_effort(self._config, use_model)
         timeout = model_timeout_seconds(self._config, use_model)
-        max_tokens = int(
-            self._config.get("decision", "max_output_tokens", default=2048)
-        )
+        max_tokens = int(self._config.get("decision", "max_output_tokens", default=2048))
         started = time.monotonic()
         try:
             response = await self._client.messages.with_raw_response.create(
@@ -188,9 +194,7 @@ class AnthropicAdapter:
             )
         usage = message.usage
         # Only the final text is kept — thinking is billed but never stored.
-        raw = "".join(
-            block.text for block in message.content if block.type == "text"
-        )
+        raw = "".join(block.text for block in message.content if block.type == "text")
         refused = message.stop_reason == "refusal"
         error: str | None = None
         error_type: str | None = None
@@ -218,6 +222,173 @@ class AnthropicAdapter:
             provider=self.provider,
             parsed=parsed,
         )
+
+    async def converse(
+        self,
+        *,
+        system: str,
+        messages: list[ConverseMessage],
+        tools: list[ConverseTool],
+        model: str | None = None,
+        stream: bool = True,
+    ) -> Any:
+        """One converse round via the Messages API with tools (PR 36).
+
+        The system prompt and the last tool definition carry
+        ``cache_control`` so the stable prefix is served from the
+        provider's cache; cache reads and writes are reported separately
+        for pricing. Yields ``delta`` events then one ``done``.
+        """
+        use_model = model or self.default_model
+        timeout = model_timeout_seconds(self._config, use_model)
+        max_tokens = int(self._config.get("ask", "max_output_tokens", default=4096))
+        wire_tools = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": anthropic_safe_schema(t.schema),
+            }
+            for t in tools
+        ]
+        if wire_tools:
+            wire_tools[-1]["cache_control"] = {"type": "ephemeral"}
+        started = time.monotonic()
+        try:
+            async with self._client.messages.stream(
+                model=use_model,
+                max_tokens=max_tokens,
+                system=[
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=cast(Any, _wire_messages(messages)),
+                tools=cast(Any, wire_tools),
+                output_config=cast(Any, {"effort": model_effort(self._config, use_model)}),
+                timeout=timeout,
+            ) as stream_resp:
+                text_parts: list[str] = []
+                async for event in stream_resp:
+                    event_any: Any = event
+                    etype = getattr(event_any, "type", "")
+                    delta = getattr(event_any, "delta", None)
+                    if (
+                        etype == "content_block_delta"
+                        and getattr(delta, "type", "") == "text_delta"
+                    ):
+                        delta_text = getattr(delta, "text", None)
+                        if isinstance(delta_text, str):
+                            text_parts.append(delta_text)
+                            if stream:
+                                yield ConverseEvent(
+                                    kind="delta", delta=delta_text
+                                )
+                message = await stream_resp.get_final_message()
+        except Exception as exc:  # noqa: BLE001
+            yield ConverseEvent(
+                kind="done",
+                result=ConverseResult(
+                    text="",
+                    tool_calls=(),
+                    model=use_model,
+                    tokens_in=None,
+                    tokens_out=None,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                    error=str(exc),
+                    error_type=_classify(exc),
+                    http_status=getattr(exc, "status_code", None),
+                    error_code=_error_type(exc),
+                    request_id=getattr(exc, "request_id", None),
+                    provider=self.provider,
+                ),
+            )
+            return
+        usage = message.usage
+        calls = tuple(
+            ToolCall(
+                id=str(getattr(block, "id", "")),
+                name=str(getattr(block, "name", "")),
+                arguments=cast(
+                    dict[str, Any],
+                    getattr(block, "input", None) or {},
+                ),
+            )
+            for block in message.content
+            if getattr(block, "type", "") == "tool_use"
+        )
+        raw = "".join(
+            getattr(block, "text", "")
+            for block in message.content
+            if getattr(block, "type", "") == "text"
+        ) or "".join(
+            text_parts
+        )
+        refused = message.stop_reason == "refusal"
+        truncated = message.stop_reason == "max_tokens"
+        error = error_type = None
+        if refused:
+            error, error_type = "model refused", "refusal"
+        elif truncated:
+            error, error_type = "truncated", "invalid_output"
+        cached = getattr(usage, "cache_read_input_tokens", 0) or 0
+        written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        plain_in = getattr(usage, "input_tokens", 0) or 0
+        yield ConverseEvent(
+            kind="done",
+            result=ConverseResult(
+                text=raw,
+                tool_calls=calls,
+                model=use_model,
+                tokens_in=plain_in + cached + written if usage else None,
+                tokens_out=getattr(usage, "output_tokens", None) if usage else None,
+                cached_tokens_in=cached,
+                cache_write_tokens_in=written,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                error=error,
+                error_type=error_type,
+                request_id=getattr(message, "id", None),
+                refused=refused,
+                provider=self.provider,
+            ),
+        )
+
+
+def _wire_messages(messages: list[ConverseMessage]) -> list[dict[str, Any]]:
+    """Provider-agnostic turns → Anthropic content-block messages."""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        if m.role == "assistant":
+            content: list[dict[str, Any]] = []
+            if m.text:
+                content.append({"type": "text", "text": m.text})
+            content.extend(
+                {
+                    "type": "tool_use",
+                    "id": c.id,
+                    "name": c.name,
+                    "input": c.arguments,
+                }
+                for c in m.tool_calls
+            )
+            out.append({"role": "assistant", "content": content})
+        elif m.role == "tool":
+            out.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": m.tool_call_id,
+                            "content": m.text,
+                        }
+                    ],
+                }
+            )
+        else:
+            out.append({"role": "user", "content": m.text})
+    return out
 
 
 async def test_key(key: str) -> tuple[bool, str | None]:

@@ -17,7 +17,14 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from app.llm.base import ModelResponse
+from app.llm.base import (
+    ConverseEvent,
+    ConverseMessage,
+    ConverseResult,
+    ConverseTool,
+    ModelResponse,
+    ToolCall,
+)
 
 # A test/simulated review handler answers from system prompt + payload.
 FakeHandler = Callable[[str, str], str]
@@ -29,9 +36,7 @@ def default_review_reply(system: str, user: str) -> str:
     from app.reviews.templates import plain_content
 
     payload = json.loads(user)
-    return json.dumps(
-        plain_content(str(payload.get("kind", "weekly")), payload.get("facts", {}))
-    )
+    return json.dumps(plain_content(str(payload.get("kind", "weekly")), payload.get("facts", {})))
 
 
 def _try_parse(raw: str) -> Any:
@@ -66,6 +71,13 @@ class FakeModelClient:
         # When a config is given the fake reports the model's real
         # provider (a simulated Claude shadow records "anthropic").
         self._config = config
+        # Ask-the-agent script (PR 36): a list of rounds, each
+        # {"tools": [{"name", "arguments"?}]?, "text": str,
+        #  "cached_in"?: int, "tokens_in"?: int, "tokens_out"?: int,
+        #  "error"?: str, "error_type"?: str}. When unset, a single
+        #  default round answers with a short canned text.
+        self.converse_script: list[dict[str, Any]] | None = None
+        self.converse_calls: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # decision answers
@@ -148,9 +160,7 @@ class FakeModelClient:
                 "option_id": chosen["id"],
                 "confidence": 0.62,
                 "levels_used": [
-                    lv
-                    for lv in (chosen.get("stop_level"), chosen.get("target_level"))
-                    if lv
+                    lv for lv in (chosen.get("stop_level"), chosen.get("target_level")) if lv
                 ],
             }
         return {**base, "action": "skip", "option_id": None, "confidence": 0.4}
@@ -210,8 +220,7 @@ class FakeModelClient:
                 model=use_model,
                 tokens_in=None,
                 tokens_out=None,
-                latency_ms=int(override.get("latency_ms")
-                               or (time.monotonic() - started) * 1000),
+                latency_ms=int(override.get("latency_ms") or (time.monotonic() - started) * 1000),
                 error=None if refused else override.get("error", "fake error"),
                 error_type=override.get("error_type"),
                 http_status=int(status) if status is not None else None,
@@ -244,6 +253,89 @@ class FakeModelClient:
             latency_ms=int((time.monotonic() - started) * 1000) or 1,
             parsed=_try_parse(raw),
             provider=provider,
+        )
+
+    async def converse(
+        self,
+        *,
+        system: str,
+        messages: list[ConverseMessage],
+        tools: list[ConverseTool],
+        model: str | None = None,
+        stream: bool = True,
+    ) -> Any:
+        """Play the next scripted round (docs/SPEC.md → Ask the agent).
+
+        Each round emits the round's tool calls in its ``done`` result
+        and streams ``text`` as deltas; the script indexes by the number
+        of calls already made. Usage is deterministic from message sizes
+        unless the round overrides it; ``cached_in`` exercises the
+        cached-prefix pricing.
+        """
+        started = time.monotonic()
+        use_model = model or self.model
+        provider = "fake"
+        if self._config is not None:
+            from app.llm.models import model_provider
+
+            provider = model_provider(self._config, use_model)
+        round_no = len(self.converse_calls)
+        self.converse_calls.append(
+            {
+                "round": round_no,
+                "system": system,
+                "messages": messages,
+                "tools": [t.name for t in tools],
+                "model": use_model,
+            }
+        )
+        script = self.converse_script or []
+        spec = script[min(round_no, len(script) - 1)] if script else {}
+        if spec.get("error"):
+            yield ConverseEvent(
+                kind="done",
+                result=ConverseResult(
+                    text="",
+                    tool_calls=(),
+                    model=use_model,
+                    tokens_in=None,
+                    tokens_out=None,
+                    latency_ms=int((time.monotonic() - started) * 1000) or 1,
+                    error=str(spec.get("error")),
+                    error_type=spec.get("error_type"),
+                    http_status=spec.get("http_status"),
+                    provider=provider,
+                ),
+            )
+            return
+        text = str(
+            spec.get("text", "" if spec.get("tools") else "I couldn't look that up.")
+        )
+        if stream:
+            for piece in text.split(" "):
+                yield ConverseEvent(kind="delta", delta=piece + " ")
+        calls = tuple(
+            ToolCall(
+                id=f"fake_call_{round_no}_{i}",
+                name=str(t.get("name", "")),
+                arguments=dict(t.get("arguments") or {}),
+            )
+            for i, t in enumerate(spec.get("tools") or [])
+        )
+        total_in = len(system) // 4 + sum(len(m.text) // 4 for m in messages)
+        yield ConverseEvent(
+            kind="done",
+            result=ConverseResult(
+                text=text,
+                tool_calls=calls,
+                model=use_model,
+                tokens_in=int(spec.get("tokens_in", total_in or 1)),
+                tokens_out=int(spec.get("tokens_out", len(text) // 4 or 1)),
+                cached_tokens_in=spec.get("cached_in"),
+                cache_write_tokens_in=spec.get("cache_write_in"),
+                latency_ms=int((time.monotonic() - started) * 1000) or 1,
+                provider=provider,
+            ),
         )
 
 

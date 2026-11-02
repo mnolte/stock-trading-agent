@@ -13,7 +13,12 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from app.llm.base import ModelClient, ModelResponse
+from app.llm.base import (
+    ConverseMessage,
+    ConverseTool,
+    ModelClient,
+    ModelResponse,
+)
 from app.llm.fake import FakeModelClient
 from app.llm.models import PROVIDER_KEY, model_provider
 from app.secrets_service import MISSING_KEY
@@ -26,9 +31,7 @@ logger = logging.getLogger(__name__)
 KeyFor = Callable[[str], "str | None"]
 
 
-def make_adapter(
-    provider: str, config: AppConfig, api_key: str
-) -> ModelClient:
+def make_adapter(provider: str, config: AppConfig, api_key: str) -> ModelClient:
     """The one adapter for a provider; lazily imports its SDK module."""
     if provider == "anthropic":
         from app.llm.providers.anthropic import AnthropicAdapter
@@ -106,6 +109,27 @@ class ProviderClients:
             temperature=temperature,
         )
 
+    async def converse(
+        self,
+        *,
+        system: str,
+        messages: list[ConverseMessage],
+        tools: list[ConverseTool],
+        model: str | None = None,
+        stream: bool = True,
+    ) -> Any:
+        """Route the converse round to the model's provider adapter."""
+        use_model = model or self.default_model
+        adapter = self._adapter(model_provider(self._config, use_model))
+        async for event in adapter.converse(
+            system=system,
+            messages=messages,
+            tools=tools,
+            model=use_model,
+            stream=stream,
+        ):
+            yield event
+
 
 def secrets_key_for(secrets: Any) -> KeyFor:
     """``provider → stored key`` from a SecretsStore (None = not set)."""
@@ -131,6 +155,4 @@ def make_model_clients(
     """
     if config.env.mode == "simulated":
         return FakeModelClient(config=config)
-    return ProviderClients(
-        config, key_for=secrets_key_for(secrets), default_model=default_model
-    )
+    return ProviderClients(config, key_for=secrets_key_for(secrets), default_model=default_model)
