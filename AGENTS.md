@@ -29,6 +29,8 @@ make test        # pytest with sockets blocked, vitest, playwright e2e when brow
 
 `make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both with a graceful shutdown. `make logs-reindex` rebuilds the log index from the log files. `make create-user` creates or resets the single account (server only). `deploy/` holds provision, deploy and restore scripts (see `docs/DEPLOY.md`); never run them from a PR. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
 
+For isolated decision-drawer browser checks, run `cd frontend && E2E_DRAWER_ONLY=1 pnpm exec playwright test e2e/decision-drawer.e2e.ts`. This starts only Vite; the tests mock all API calls and the WebSocket. Add `E2E_SHOTS=1` to capture temporary desktop and phone screenshots.
+
 ## Hard rules
 
 1. **Paper only.** Create the Alpaca trading client with `paper=True`. The live base URL must not appear anywhere in the repo; a test checks this. Refuse to start if the account is not a paper account.

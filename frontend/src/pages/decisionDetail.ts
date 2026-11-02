@@ -8,7 +8,7 @@ import type {
 } from '../types/api';
 import { actionLabel } from '../components/decisionFormat';
 
-export type GateState = 'pass' | 'fail' | 'reduced';
+export type GateState = 'pass' | 'fail' | 'reduced' | 'warning';
 
 export interface GateRow {
   name: string;
@@ -34,8 +34,10 @@ export function gateRows(decision: DecisionDetail): GateRow[] {
   for (const check of decision.validation_result?.checks ?? []) {
     rows.push({
       name: check.name,
-      detail: check.value ?? check.detail ?? '',
-      state: check.passed ? 'pass' : 'fail',
+      detail: [...new Set([check.value, check.detail].filter(Boolean))].join(' · '),
+      state: check.passed ? 'pass' :
+        ['Explanation check', 'Claim checks', 'Confidence sanity', 'Conflicts resolved'].includes(check.name)
+          ? 'warning' : 'fail',
     });
   }
   const gates = (decision.gates_result ?? {}) as GatesResult;
@@ -91,7 +93,7 @@ export function selectionGateRow(decision: DecisionDetail): GateRow | null {
   const where = pos >= 0 ? ` · ${ordinal(pos + 1)} of ${rows.length}` : '';
   return {
     name: 'Selection · expected profit',
-    detail: `$${money(sel.expected_profit)}${where} · ${
+    detail: `${money(sel.expected_profit) === '—' ? '—' : `$${money(sel.expected_profit)}`}${where} · ${
       sel.chosen ? 'selected' : 'not selected'
     }`,
     state: sel.chosen ? 'pass' : 'reduced',
@@ -118,8 +120,9 @@ export interface SelectionCycleBlock {
 }
 
 function money(value: string | null | undefined): string {
+  if (value == null || value.trim() === '') return '—';
   const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(2) : '—';
+  return Number.isFinite(n) ? `${n < 0 ? '−' : ''}${Math.abs(n).toFixed(2)}` : '—';
 }
 
 /** The "Selection in this cycle" block for the v2/v3 drawers. */
@@ -156,13 +159,19 @@ export function selectionCycleBlock(
   };
 }
 
+export function checkTurnedAdverse(name: string, before: string, current: string): boolean {
+  return name === 'momentum'
+    ? (before === 'strong' && ['mixed', 'weak'].includes(current)) || (before === 'mixed' && current === 'weak')
+    : (before === 'up' && ['mixed', 'down'].includes(current)) || (before === 'mixed' && current === 'down');
+}
+
 export function num(value: unknown): number | null {
   return typeof value === 'number' && !Number.isNaN(value) ? value : null;
 }
 
 export function signedPct(value: number | null): string {
   if (value === null) return '—';
-  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+  return `${value < 0 ? '−' : '+'}${Math.abs(value).toFixed(2)}%`;
 }
 
 export function relPct(a: number | null, b: number | null): string {
@@ -210,7 +219,10 @@ export function sipBarEnd(cycleTime: string): string {
     hour12: false,
   });
   const [h, m] = ny.split(':').map(Number);
-  return `${String(h).padStart(2, '0')}:${m >= 30 ? '30' : '00'}`;
+  // Session bars end on the :30 boundary; before :30 the last closed bar
+  // ended at the previous hour's :30.
+  const hour = m >= 30 ? h : (h + 23) % 24;
+  return `${String(hour).padStart(2, '0')}:30`;
 }
 
 export function earningsChipLabel(earnings: DecisionEarnings | null): string {
@@ -256,27 +268,43 @@ function seconds(iso: string): string {
 }
 
 /** The footer's order-status line (design: "Automatic · bracket sent …"). */
-export function orderStatusText(decision: DecisionDetail): string {
-  const mode = decision.execution_mode === 'supervised' ? 'Supervised' : 'Automatic';
+export function orderStatusText(decision: DecisionDetail, backtest = false): string {
+  const mode = backtest ? 'Backtest' : decision.execution_mode === 'supervised' ? 'Supervised' : 'Automatic';
+  const broker = backtest ? 'in backtest' : 'at Alpaca';
+  const filled = (order: NonNullable<DecisionDetail['orders']>[number]): string | null => {
+    const qty = order.fills.reduce((total, fill) => total + fill.qty, 0);
+    if (!qty) return null;
+    const price = order.filled_avg_price != null ? Number(order.filled_avg_price)
+      : order.fills.reduce((total, fill) => total + Number(fill.price) * fill.qty, 0) / qty;
+    const last = order.filled_at ?? order.fills.reduce((latest, fill) =>
+      new Date(fill.filled_at) > new Date(latest) ? fill.filled_at : latest, order.fills[0].filled_at);
+    return `filled ${qty}${qty < order.qty ? ` of ${order.qty}` : ''} @ ${price.toFixed(2)} at ${seconds(last)}`;
+  };
   const orders = decision.orders ?? [];
   const entry = orders.find((o) => o.leg === 'entry');
   const approval = decision.approval;
+  const exit = orders.filter((order) => order.leg === 'exit').pop();
+  if (exit && (!entry || decision.final_action === 'exit')) {
+    return `${mode} · exit ${exit.status} ${broker} · ${filled(exit) ?? `${exit.qty} sh · sent ${seconds(exit.created_at)}`}`;
+  }
   if (entry) {
     const parts = [`${mode} · bracket sent ${seconds(entry.created_at)}`];
-    const fill = entry.fills[0];
-    if (fill) {
-      parts.push(`filled ${fill.qty} @ ${fill.price} at ${seconds(fill.filled_at)}`);
-    } else {
-      parts.push(`entry ${entry.status}`);
-    }
+    const fill = filled(entry);
+    if (fill) parts.push(fill);
+    parts.push(`entry ${entry.status}`);
     const open = (leg: string) =>
       orders.some((o) => o.leg === leg && OPEN_LIKE.includes(o.status));
     if (open('stop') && open('target')) {
-      parts.push('stop + target open at Alpaca');
+      parts.push(`stop + target open ${broker}`);
     } else if (open('stop')) {
-      parts.push('stop open at Alpaca');
+      parts.push(`stop open ${broker}`);
     }
     return parts.join(' · ');
+  }
+  const other = orders.filter((order) => order.leg !== 'entry' && order.leg !== 'exit').pop();
+  if (other) {
+    // e.g. a tighten decision records only its replacement stop leg.
+    return `${mode} · ${other.leg} ${other.status} ${broker} · ${filled(other) ?? `${other.qty} sh · sent ${seconds(other.created_at)}`}`;
   }
   if (approval) {
     return `${mode} · approval ${approval.status}${
@@ -286,5 +314,5 @@ export function orderStatusText(decision: DecisionDetail): string {
   if (decision.final_action === 'no_call') {
     return 'No order — no model call';
   }
-  return `No order — ${actionLabel(decision.final_action).toLowerCase()}`;
+  return `${['exit', 'tighten_stop'].includes(decision.final_action) ? 'No order recorded' : 'No order'} — ${actionLabel(decision.final_action).toLowerCase()}`;
 }

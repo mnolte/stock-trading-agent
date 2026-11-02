@@ -461,6 +461,18 @@ def _r_multiple(
     return f"{(price - entry) / risk:+.2f}"
 
 
+def _outcome_stop(
+    position: Position | None, snapshot: dict[str, object], trade: dict[str, object]
+) -> Decimal | None:
+    if position is not None:
+        return position.initial_stop
+    held = snapshot.get("position")
+    if isinstance(held, dict):
+        initial = held.get("initial_stop")
+        return Decimal(str(initial)) if isinstance(initial, int | float) else None
+    return Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
+
+
 def _trade_block(
     position: Position | None,
     orders: Sequence[Order],
@@ -468,6 +480,7 @@ def _trade_block(
     approval: Approval | None,
     output: dict[str, object],
     snapshot: dict[str, object],
+    options: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """The levels the decision traded at, for the tiles and R multiples.
 
@@ -511,6 +524,33 @@ def _trade_block(
         stop = Decimal(str(output["stop_price"]))
     if target is None and isinstance(output.get("target_price"), int | float):
         target = Decimal(str(output["target_price"]))
+    held = snapshot.get("position")
+    if isinstance(held, dict):
+        if entry is None and isinstance(held.get("entry"), int | float):
+            entry = Decimal(str(held["entry"]))
+        if stop is None and isinstance(held.get("stop"), int | float):
+            stop = Decimal(str(held["stop"]))
+        if target is None and isinstance(held.get("target"), int | float):
+            target = Decimal(str(held["target"]))
+        if qty is None and isinstance(held.get("qty"), int):
+            qty = held["qty"]
+    offered = (options or {}).get("options", snapshot.get("options", []))
+    option_id = output.get("option_id") or output.get("best_option_id")
+    if isinstance(offered, list):
+        chosen = next(
+            (o for o in offered if isinstance(o, dict) and o.get("id") == option_id),
+            None,
+        )
+        if chosen is not None:
+            if stop is None and isinstance(chosen.get("stop"), int | float):
+                stop = Decimal(str(chosen["stop"]))
+            if target is None and isinstance(chosen.get("target"), int | float):
+                target = Decimal(str(chosen["target"]))
+    constraints = snapshot.get("constraints")
+    if entry is None and isinstance(constraints, dict):
+        limit = constraints.get("entry_limit")
+        if isinstance(limit, int | float):
+            entry = Decimal(str(limit))
     if entry is None and isinstance(snapshot.get("price"), int | float):
         entry = Decimal(str(snapshot["price"]))
     if position is None:
@@ -535,6 +575,8 @@ def _trade_block(
 @router.get("/decisions/{decision_id}")
 def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     """One stored decision with its prompt, output, checks and raw response."""
+    if not 0 < decision_id < 2**63:
+        raise HTTPException(status_code=422, detail="invalid decision id")
     with get_session_maker()() as session:
         row = session.execute(
             select(Decision, Cycle.scheduled_time)
@@ -597,10 +639,10 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
     trade = _trade_block(
-        position_row, order_rows, fills, approval_row, output, snapshot
+        position_row, order_rows, fills, approval_row, output, snapshot, decision.options
     )
     entry = Decimal(trade["entry"]) if isinstance(trade["entry"], str) else None
-    stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
+    stop = _outcome_stop(position_row, snapshot, trade)
     try:
         prompt_text = load_prompt(decision.prompt_version).text
     except (OSError, PromptError):

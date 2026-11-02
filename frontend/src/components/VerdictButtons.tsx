@@ -8,7 +8,7 @@ const VERDICT_CHOICES: { value: VerdictValue; label: string }[] = [
 
 function buttonStyle(active: boolean): React.CSSProperties {
   return {
-    height: '36px',
+    minHeight: 'var(--sa-control-height)',
     padding: '0 10px',
     borderRadius: 'var(--sa-radius-sm)',
     border: `1px solid ${active ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
@@ -26,9 +26,11 @@ function buttonStyle(active: boolean): React.CSSProperties {
 export function VerdictButtons({
   current,
   onPick,
+  disabled = false,
 }: {
   current: VerdictValue;
   onPick: (v: VerdictValue) => void;
+  disabled?: boolean;
 }) {
   return (
     <div style={{ display: 'flex', gap: '6px' }}>
@@ -36,6 +38,7 @@ export function VerdictButtons({
         <button
           key={c.value}
           type="button"
+          disabled={disabled}
           aria-pressed={c.value === current}
           onClick={() => onPick(c.value)}
           style={buttonStyle(c.value === current)}

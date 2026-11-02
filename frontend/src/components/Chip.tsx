@@ -9,15 +9,18 @@ const styles: Record<ChipVariant, { bg: string; border: string; color: string }>
   accent: { bg: 'var(--sa-accent-bg)', border: 'var(--sa-accent-border)', color: 'var(--sa-accent)' },
 };
 
-export function Chip({ variant, children }: { variant: ChipVariant; children: React.ReactNode }) {
+export function Chip({ variant, children, wrap = false }: { variant: ChipVariant; children: React.ReactNode; wrap?: boolean }) {
   const s = styles[variant];
   return (
     <span
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        height: '24px',
-        padding: '0 8px',
+        height: wrap ? 'auto' : '24px',
+        minHeight: '24px',
+        maxWidth: wrap ? '100%' : undefined,
+        boxSizing: wrap ? 'border-box' : undefined,
+        padding: wrap ? 'var(--sa-space-1) var(--sa-space-2)' : '0 8px',
         borderRadius: 'var(--sa-radius-sm)',
         background: s.bg,
         border: `1px solid ${s.border}`,
@@ -25,7 +28,8 @@ export function Chip({ variant, children }: { variant: ChipVariant; children: Re
         fontFamily: 'var(--sa-font-mono)',
         fontSize: 'var(--sa-text-sm)',
         fontWeight: 500,
-        whiteSpace: 'nowrap',
+        whiteSpace: wrap ? 'normal' : 'nowrap',
+        overflowWrap: wrap ? 'anywhere' : undefined,
       }}
     >
       {children}

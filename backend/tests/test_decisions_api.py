@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+import pytest
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, LlmCall, Outcome
 from app.market.clock import UTC
@@ -372,6 +373,74 @@ def test_dashboard_latest_decision_skip_box(client: TestClient) -> None:
         "value": "249.25 / 255.80",
         "tone": 0,
     }
+
+
+@pytest.mark.parametrize("current_stop", ["95", "98", "100", "102"])
+def test_drawer_outcomes_keep_initial_risk(client: TestClient, current_stop: str) -> None:
+    from decimal import Decimal
+
+    from app.db.models import Position
+
+    decision_id = _seed_decision()
+    with get_session_maker()() as session:
+        session.add(Position(
+            symbol="MSFT", qty=10, entry_decision_id=decision_id,
+            avg_entry_price=Decimal("100"), initial_stop=Decimal("95"),
+            current_stop_price=Decimal(current_stop), target_price=Decimal("110"),
+            opened_at=datetime(2026, 10, 15, 16, 46),
+        ))
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision_id)
+        ).scalar_one()
+        outcome.price_1h = Decimal("105")
+        session.commit()
+    body = client.get(f"/api/decisions/{decision_id}").json()
+    assert Decimal(body["trade"]["stop"]) == Decimal(current_stop)
+    assert body["outcome"]["r_1h"] == "+1.00"
+
+
+def test_option_based_drawer_levels() -> None:
+    from app.api.routes import _trade_block
+
+    options: dict[str, object] = {"options": [{"id": "A", "stop": 95, "target": 110}]}
+    for action in ("enter", "skip"):
+        trade = _trade_block(
+            None, [], {}, None,
+            {"action": action, "option_id": "A" if action == "enter" else None,
+             "best_option_id": "A"},
+            {"price": 99, "constraints": {"entry_limit": 100}}, options,
+        )
+        assert trade["entry"] == "100"
+        assert trade["stop"] == "95"
+        assert trade["target"] == "110"
+    missing = _trade_block(
+        None, [], {}, None, {"action": "skip", "best_option_id": "Z"},
+        {"price": 99}, options,
+    )
+    assert missing["stop"] is None
+    assert missing["target"] is None
+
+
+def test_held_drawer_uses_snapshot_levels() -> None:
+    from app.api.routes import _trade_block
+
+    trade = _trade_block(None, [], {}, None, {"action": "hold"}, {
+        "price": 105,
+        "position": {"entry": 100, "stop": 98, "target": 110, "qty": 10},
+    })
+    assert trade == {"entry": "100", "stop": "98", "target": "110",
+                     "qty": 10, "status": "none"}
+
+
+@pytest.mark.parametrize("decision_id", [0, -1, 2**63, 10**100])
+def test_decision_ids_are_bounded(client: TestClient, decision_id: int) -> None:
+    assert client.get(f"/api/decisions/{decision_id}").status_code == 422
+    assert client.get(
+        f"/api/backtests/1/strategies/live/decisions/{decision_id}"
+    ).status_code == 422
+    assert client.get(
+        f"/api/backtests/{decision_id}/strategies/live/decisions/1"
+    ).status_code == 422
 
 
 def test_decisions_cycle_time_is_utc(client: TestClient) -> None:

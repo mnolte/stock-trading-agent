@@ -580,10 +580,13 @@ def run_decision_detail(
 ) -> dict[str, Any]:
     """The same payload the live decision drawer renders, read from the
     run's own database."""
+    if not 0 < decision_id < 2**63 or not 0 < run_id < 2**63:
+        raise HTTPException(status_code=422, detail="invalid decision or run id")
     from app.api.routes import (
         _decision_earnings,
         _iso,
         _order_json,
+        _outcome_stop,
         _r_multiple,
         _trade_block,
     )
@@ -639,9 +642,11 @@ def run_decision_detail(
         earnings = _decision_earnings(session, decision, scheduled)
     output = decision.model_output or {}
     snapshot = decision.input_snapshot or {}
-    trade = _trade_block(position_row, order_rows, fills, approval_row, output, snapshot)
+    trade = _trade_block(
+        position_row, order_rows, fills, approval_row, output, snapshot, decision.options
+    )
     entry = Decimal(trade["entry"]) if isinstance(trade["entry"], str) else None
-    stop = Decimal(trade["stop"]) if isinstance(trade["stop"], str) else None
+    stop = _outcome_stop(position_row, snapshot, trade)
     try:
         prompt_text = load_prompt(decision.prompt_version).text
     except (OSError, PromptError):
