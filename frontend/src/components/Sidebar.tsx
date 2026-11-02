@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
+import { signOut } from '../api/auth';
+
 interface NavItem {
   to: string;
   label: string;
@@ -306,7 +308,7 @@ export function Sidebar({
           aria-label="Sign out"
           title="Signed in — sign out"
           onClick={() => {
-            void import('../api/auth').then((m) => m.signOut());
+            void signOut();
           }}
           style={{
             display: 'flex',

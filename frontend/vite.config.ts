@@ -6,7 +6,7 @@ import { defineConfig, loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   // The backend port comes from VITE_API_PORT (tests/scripts), else SA_PORT
   // in the repo-root .env — the same value the backend binds to — else 8000.
-  const root = loadEnv(mode, resolve(__dirname, '..'), '');
+  const root = loadEnv(mode, resolve(import.meta.dirname, '..'), '');
   const apiPort = process.env.VITE_API_PORT ?? root.SA_PORT ?? '8000';
   const proxy = {
     '/api': `http://127.0.0.1:${apiPort}`,

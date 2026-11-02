@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { post, errorMessages } from '../api/client';
-import type { ConfirmRequest } from '../api/auth';
+import type { ConfirmRequest } from '../api/confirm';
 import { DialogButton, Modal } from './Modal';
 
 /**

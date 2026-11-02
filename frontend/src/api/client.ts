@@ -1,4 +1,5 @@
 import { noteBackendAnswer } from './backend';
+import { requestConfirmation } from './confirm';
 import { pushApiToast } from './toasts';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -136,7 +137,6 @@ async function send(
     const { code } = await detailOf(response.clone());
     if (code === 'confirm_required') {
       // "Confirm it is you" — then repeat the request once (spec).
-      const { requestConfirmation } = await import('./auth');
       const ok = await requestConfirmation(actionName(path));
       if (ok) return send(method, path, body, true);
     }
