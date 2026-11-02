@@ -2,6 +2,22 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-01 — Ask the agent: notes and settings
+
+- `AskDrawer.dc.html`: "Save as note" in the answer footer, before Copy.
+- `AskStates.dc.html` (now 2000 px wide, five panels):
+  - Earlier chats has Chats | Notes tabs;
+  - a new **Notes** panel ("+ Write a note", three notes with date, source and references, Edit and Delete);
+  - the phone panel shows an answer that cites "Your note · 1 Nov" and checks it against today's numbers.
+- `Settings.dc.html`: an **Ask the agent** group under Reviews with:
+  - on/off;
+  - the model: Claude Sonnet 5.5 and GPT-6.1 Sol marked recommended, Haiku 5.5 and GPT-4.1 mini marked budget, with the price and cost per question in the help;
+  - the monthly cap ($15, with this month's spend, number of questions and average);
+  - max cost per answer ($0.25);
+  - keep chats;
+  - the Standing instructions textarea.
+- `AskDrawer` and `AskStates`: example costs at Sonnet 5.5 prices, and the cap notice at $15.
+
 ## 2026-11-01 — Ask the agent drawer
 
 - New `AskDrawer.dc.html` (PR 36). The drawer docked to the right of Positions mid-conversation. It shows:
