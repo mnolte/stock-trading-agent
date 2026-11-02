@@ -770,6 +770,14 @@ export interface SettingsForm {
     models?: { weekly: string; briefing: string; verdict: string };
     prompts?: { weekly: string; briefing: string; verdict: string };
   };
+  ask: {
+    enabled: boolean;
+    model: string;
+    monthly_cost_cap_usd: number;
+    max_cost_per_answer_usd: number;
+    keep_days: number;
+    instructions: string;
+  };
   readiness: {
     min_closed_trades: number;
     min_sessions: number;
@@ -1796,7 +1804,7 @@ export interface ReadinessResponse {
 // --- LLM call history (PR 18) --------------------------------------------
 
 export type LlmCallOutcome = 'success' | 'warning' | 'error';
-export type LlmCallSource = 'live' | 'shadow' | 'review';
+export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask';
 
 export interface LlmCallRow {
   id: number;

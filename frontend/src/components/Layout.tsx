@@ -20,6 +20,7 @@ import { documentTitle, pageTitle } from './documentTitle';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
+import { useAsk } from '../ask/AskContext';
 import { PhoneBar } from './PhoneBar';
 import { Sidebar } from './Sidebar';
 import { ConfirmYouDialog } from './ConfirmYouDialog';
@@ -47,6 +48,17 @@ export function Layout() {
   const authStatus = useAuthStatus();
   const backend = useBackendStatus();
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+  const ask = useAsk();
+  // Each screen tells Ask what it is (spec → Ask the agent → Context).
+  const screen = location.pathname === '/' ? 'dashboard' : location.pathname.split('/')[1];
+  useEffect(() => {
+    ask.register({
+      screen,
+      label: pageTitle(location.pathname),
+      route: location.pathname,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   // Not signed in while auth is required → the sign-in page; a session-
   // expired cookie change is picked up on the next API call anyway.
@@ -222,6 +234,7 @@ export function Layout() {
             title={pageTitle(location.pathname)}
             needsYou={attentionRes.data?.count ?? 0}
             onMenu={() => setMenuOpen((v) => !v)}
+            onAsk={ask.toggle}
             menuOpen={menuOpen}
           />
         )}
@@ -230,6 +243,7 @@ export function Layout() {
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
+          onAsk={ask.toggle}
           needsYou={needsYou}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>

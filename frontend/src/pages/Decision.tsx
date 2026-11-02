@@ -12,6 +12,7 @@ import { displayDayTime, displayTime, signed } from '../format';
 import { DialogButton } from '../components/Modal';
 import { SkeletonLines } from '../components/cardState';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
+import { useAsk } from '../ask/AskContext';
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
@@ -1949,6 +1950,7 @@ export default function Decision() {
   );
   const location = useLocation();
   const navigate = useNavigate();
+  const ask = useAsk();
   const requestKey = `${id}:${btRun ?? ''}:${btSlug ?? ''}`;
   const [result, setResult] = useState<{ key: string; decision: DecisionDetail | null; error: string | null; loading: boolean }>({
     key: requestKey, decision: null, error: null, loading: true,
@@ -2007,9 +2009,27 @@ export default function Decision() {
     void refresh().catch(() => undefined);
   });
   const stateHeader = (
-    <div style={{ padding: 'var(--sa-space-4)', display: 'flex', justifyContent: 'space-between' }}>
+    <div style={{ padding: 'var(--sa-space-4)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
       <h1 style={{ margin: 0, fontSize: 'var(--sa-text-xl)' }}>Decision detail</h1>
-      <DialogButton variant="cancel" onClick={close}>Close</DialogButton>
+      <div style={{ display: 'flex', gap: 'var(--sa-space-3)' }}>
+        {result.decision && (
+          <DialogButton
+            variant="cancel"
+            onClick={() =>
+              ask.openDrawer({
+                screen: 'decision',
+                label: `${result.decision!.symbol} decision`,
+                record_ref: `decision:${result.decision!.id}`,
+                summary: `${result.decision!.symbol} ${result.decision!.final_action}`,
+                route: location.pathname,
+              })
+            }
+          >
+            Ask about this
+          </DialogButton>
+        )}
+        <DialogButton variant="cancel" onClick={close}>Close</DialogButton>
+      </div>
     </div>
   );
 
