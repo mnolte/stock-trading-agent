@@ -2,6 +2,26 @@
 
 Newest first.
 
+## 2026-11-02 — Decision drawer correctness and accessibility fixes
+
+- Outcome R uses the position's initial stop, not its moving stop, in live and backtest decision details.
+- Option-based decisions resolve proposed stop and target from the chosen or best offered option. Held decisions retain their stored position levels.
+- The drawer ignores superseded requests, allows failed loads to be retried, and retains stale data when a refresh fails.
+- Keyboard focus stays inside the drawer and returns to the opener. Background content is inert while it is open.
+- V4 held decisions show position facts, neutral probability and scheduled exits. Confidence wording follows the decision context and model action.
+- Code-check details remain visible. Warning-only checks are distinct from failed gates. Tables scroll within the drawer, long conflicts wrap, and footer actions have full-size targets.
+- Verdict actions prevent duplicate submissions and show save or refresh failures.
+- A second pass fixes exit-order summaries and split-fill totals, keeps the price line visible outside the level range, and uses the current price for held decisions.
+- Backtest links never fall through to live decisions or link to live positions. Missing outcome data is not labelled complete. Decision and backtest decision IDs outside SQLite's positive integer range return 422.
+- Open drawers refetch on relevant live-update topics, reconnects and the existing disconnected polling fallback. Refresh failures retain the displayed decision and offer Retry. Focus returns inside when a rerender removes the focused control.
+- Thesis comparisons do not colour unavailable checks as adverse. The v4 thesis fact now counts momentum changing from mixed to weak, as specified; it remains a fact, not an exit gate.
+- New live-update subscribers cannot consume a debounced topic before already-mounted subscribers receive it. Updates with no subscribers remain available to later subscribers.
+- Held v2 drawers show the stored R-so-far when the richer v3 position block is absent. An empty held-stop list no longer claims the model was not asked. Position-size rows keep the "changed by code" marker visible.
+- The signal-stack label reports the last closed 1h bar for position-check times too (previous hour's :30), the selection block drops a stray last-row border, and missing money shows — instead of $—.
+- The footer reports replacement stop legs on tighten decisions instead of "No order recorded".
+- Headlines without an `about_symbol` flag no longer claim "not about" the symbol, and long level notes truncate instead of overflowing.
+- Option rows tolerate a missing `levels_in_way` field, and unknown earnings data shows "earnings unavailable" instead of disappearing.
+
 ## 2026-11-01 — Ask the agent: memory written by Marc, checked numbers
 
 - **Model:** Ask uses a stronger model than decisions. Recommended: `claude-sonnet-5-5` (default) and `gpt-6.1-sol`, both $2/$10 per million tokens. Budget: `claude-haiku-5-5`, `gpt-4.1-mini`. The eval picks the default between the two recommended. `gpt-6.1-sol` joins the models list with PR 36, after its price and cutoff are checked.
@@ -50,6 +70,7 @@ Newest first.
   - on Positions: a totals line, four facts per position, and Alpaca legs folded into a line that opens on a problem.
 - **Phone:** below 820 px a sticky top bar with the menu replaces the sidebar; no sideways scroll at 390 px.
 - Build plan item 35. Kickoff `docs/kickoffs/pr-35.md`. `gui.near_stop_atr` comes with PR 35 (rule 7).
+- Config: `gui.near_stop_atr: 1.5` added to `backend/config.example.yaml`.
 
 ## 2026-11-01 — Decision v4: best option and conflict checks clarified
 

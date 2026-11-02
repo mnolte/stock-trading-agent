@@ -17,6 +17,7 @@ export type Topic =
   | 'strategies'
   | 'backtests'
   | 'readiness'
+  | 'attention'
   | 'logs';
 
 export type LiveStatus = 'live' | 'paused';

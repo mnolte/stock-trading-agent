@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { HeaderState } from '../types/api';
 import { displayTime, nyTime } from '../format';
 import { Chip } from './Chip';
+import { NeedsChip } from './NeedsChip';
 import { regimeVariant } from './regimeChip';
 import { sessionLabel, sessionTail } from './sessionText';
 
@@ -31,6 +32,7 @@ export function Header({
   onPauseToggle,
   onMenu,
   menuOpen = false,
+  needsYou = 0,
 }: {
   state: HeaderState | null;
   title: string;
@@ -38,6 +40,9 @@ export function Header({
   onPauseToggle: () => void;
   onMenu?: () => void;
   menuOpen?: boolean;
+  /** Needs-you count for the header chip (0 hides it; hidden on the
+   * phone bar anyway — the caller passes 0 there too). */
+  needsYou?: number;
 }) {
   // Server-clock skew measured on each fresh header payload, so countdowns
   // ("next cycle · in 15 min") tick between refetches instead of staying
@@ -181,6 +186,7 @@ export function Header({
             <span style={{ color: 'var(--sa-text-muted)' }}>{tail}</span>
           </span>
         </div>
+        <NeedsChip count={needsYou} />
       </div>
 
       <div

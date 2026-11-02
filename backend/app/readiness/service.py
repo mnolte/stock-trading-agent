@@ -1063,6 +1063,54 @@ def evaluate(
     return criteria
 
 
+def unreviewed_error_fingerprints(
+    session: Session,
+    config: AppConfig,
+    calendar: CalendarProvider,
+    session_date: date,
+) -> dict[str, str] | None:
+    """Unreviewed ERROR fingerprints in the last 10 sessions → last ts.
+
+    The same set Readiness' "Errors in the log" criterion counts:
+    ``expected`` stays reviewed when it recurs, ``fixed`` becomes
+    unreviewed again once a newer line appears after the review. None
+    when the log index is unavailable. Also used by Needs you (PR 35).
+    """
+    import sqlite3
+
+    db_path = index_path(config)
+    if not index_available(db_path):
+        return None
+
+    start10 = _window_start(calendar, session_date, 10).isoformat()
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        error_fps = conn.execute(
+            "SELECT fingerprint, count(*), max(ts) FROM log_lines "
+            "WHERE level = 'ERROR' AND ts >= ? AND fingerprint IS NOT NULL "
+            "GROUP BY fingerprint",
+            (start10,),
+        ).fetchall()
+    # Latest review per fingerprint (reviews are append-only).
+    from app.db.models import LogReview
+
+    reviews: dict[str, tuple[str, datetime]] = {}
+    for fp, review, reviewed_at in session.execute(
+        select(
+            LogReview.fingerprint, LogReview.review, LogReview.reviewed_at
+        ).order_by(LogReview.reviewed_at)
+    ):
+        reviews[fp] = (review, reviewed_at)
+    unreviewed: dict[str, str] = {}
+    for fp, _n, last_ts in error_fps:
+        state = reviews.get(fp)
+        if state is None or (
+            state[0] == "fixed" and last_ts > _aware(state[1]).isoformat()
+        ):
+            # a Fixed problem that recurs is unreviewed again
+            unreviewed[str(fp)] = str(last_ts)
+    return unreviewed
+
+
 def _log_criteria(
     session: Session,
     calendar: CalendarProvider,
@@ -1089,15 +1137,15 @@ def _log_criteria(
     if not index_available(db_path):
         return unavailable
 
-    start10 = _window_start(calendar, session_date, 10).isoformat()
+    unreviewed_fps = unreviewed_error_fingerprints(
+        session, config, calendar, session_date
+    )
+    if unreviewed_fps is None:
+        return unavailable
+    unreviewed = len(unreviewed_fps)
+
     start20 = _window_start(calendar, session_date, 20).isoformat()
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
-        error_fps = conn.execute(
-            "SELECT fingerprint, count(*), max(ts) FROM log_lines "
-            "WHERE level = 'ERROR' AND ts >= ? AND fingerprint IS NOT NULL "
-            "GROUP BY fingerprint",
-            (start10,),
-        ).fetchall()
         critical_n = int(
             conn.execute(
                 "SELECT count(*) FROM log_lines WHERE level = 'CRITICAL' "
@@ -1105,23 +1153,6 @@ def _log_criteria(
                 (start20,),
             ).fetchone()[0]
         )
-    # Latest review per fingerprint (reviews are append-only).
-    from app.db.models import LogReview
-
-    reviews: dict[str, tuple[str, datetime]] = {}
-    for fp, review, reviewed_at in session.execute(
-        select(
-            LogReview.fingerprint, LogReview.review, LogReview.reviewed_at
-        ).order_by(LogReview.reviewed_at)
-    ):
-        reviews[fp] = (review, reviewed_at)
-    unreviewed = 0
-    for fp, _n, last_ts in error_fps:
-        state = reviews.get(fp)
-        if state is None:
-            unreviewed += 1
-        elif state[0] == "fixed" and last_ts > _aware(state[1]).isoformat():
-            unreviewed += 1  # a Fixed problem that recurs is unreviewed again
     return [
         _criterion(
             "log_errors",

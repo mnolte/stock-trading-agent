@@ -43,7 +43,7 @@ export default defineConfig({
       reuseExistingServer: true,
       timeout: preview ? 240_000 : 60_000,
     },
-  ],
+  ].filter((_, index) => process.env.E2E_DRAWER_ONLY !== '1' || index !== 0),
   projects: [
     { name: 'desktop', use: { viewport: { width: 1440, height: 900 } } },
     { name: 'mobile', use: { viewport: { width: 390, height: 844 } } },

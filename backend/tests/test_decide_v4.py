@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from app.config import AppConfig
 from app.data.models import CalendarDay
 from app.decide.output import (
@@ -294,6 +295,12 @@ def test_thesis_holds_false_on_two_adverse() -> None:
     now = {"trend_1h": "down", "trend_daily": "up",
            "regime_trend": "up", "momentum": "weak"}
     assert thesis_holds(at_entry, now) is False
+
+
+@pytest.mark.parametrize("trend, expected", [("up", True), ("mixed", False), ("down", False)])
+def test_thesis_holds_counts_mixed_to_weak_momentum(trend: str, expected: bool) -> None:
+    at_entry = {"trend_1h": "up", "momentum": "mixed"}
+    assert thesis_holds(at_entry, {"trend_1h": trend, "momentum": "weak"}) is expected
 
 
 def test_thesis_holds_true_on_one_adverse() -> None:

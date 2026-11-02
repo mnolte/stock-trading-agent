@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 
+import { StopTargetBar } from '../components/StopTargetBar';
 import { useLiveUpdates } from '../api/liveContext';
 import { getOrders, getPositions } from '../api/state';
 import { useApiResource } from '../api/useResource';
@@ -80,8 +82,23 @@ function LegRow({ leg }: { leg: PositionLeg }) {
   );
 }
 
-function PositionCard({ p }: { p: PositionRow }) {
+function Fact({ label, value, sub, color }: { label: string; value: string; sub: string; color?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <span style={{ fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>{label}</span>
+      <span style={{ ...mono, fontSize: 'var(--sa-text-base)', color: color ?? 'var(--sa-text)', whiteSpace: 'nowrap' }}>{value}</span>
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{sub}</span>
+    </div>
+  );
+}
+
+function PositionCard({ p, near }: { p: PositionRow; near: number }) {
+  const location = useLocation();
   const pnl = fmtPnl(p.unrealized_pnl);
+  const last = p.last_price != null ? Number(p.last_price) : null;
+  const closeStop = p.to_stop_atr != null && p.to_stop_atr < near;
+  const latest = p.latest_decision ?? null;
+  const legs = p.legs ?? [];
   return (
     <div
       style={{
@@ -91,15 +108,16 @@ function PositionCard({ p }: { p: PositionRow }) {
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--sa-space-2)',
+        minWidth: 0,
       }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--sa-space-3)' }}>
-        <span style={{ fontWeight: 600 }}>{p.symbol}</span>
+        <span style={{ fontWeight: 600, fontSize: 'var(--sa-text-lg)' }}>{p.symbol}</span>
         <span style={{ ...mono, color: 'var(--sa-text-2)' }}>
           {p.qty} sh @ {formatPrice(p.avg_entry_price)}
         </span>
-        {p.last_price && (
-          <span style={{ ...mono, color: 'var(--sa-text-muted)' }}>last {formatPrice(p.last_price)}</span>
+        {last !== null && (
+          <span style={{ ...mono, color: 'var(--sa-text-muted)' }}>last {formatPrice(p.last_price ?? null)}</span>
         )}
         <span style={{ ...mono, color: pnl.color }}>
           {pnl.text}
@@ -107,29 +125,86 @@ function PositionCard({ p }: { p: PositionRow }) {
             <span style={{ color: 'var(--sa-text-muted)' }}> · €{p.unrealized_pnl_eur.toFixed(2)}</span>
           )}
         </span>
-        {p.r_multiple != null && (
-          <span style={{ ...mono, color: 'var(--sa-text-muted)' }}>
-            {signed(p.r_multiple)}R
-          </span>
-        )}
-        {p.stop_distance_label && (
-          <Chip variant="neutral">{p.stop_distance_label}</Chip>
-        )}
+        <span style={{ ...mono, color: 'var(--sa-text-muted)' }}>
+          {p.locked_in ? 'stop above entry' : p.r_multiple != null ? `${signed(p.r_multiple)}R` : ''}
+        </span>
         {statusChips(p)}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          {p.opened_today
+            ? `opened today ${displayTime(p.opened_at)}`
+            : `opened ${displayDateTime(p.opened_at)}`}
+          {p.earnings_date && ` · next earnings ${p.earnings_date}`}
+        </span>
       </div>
-      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-        {p.opened_today
-          ? `opened today ${displayTime(p.opened_at)}`
-          : `opened ${displayDateTime(p.opened_at)}`}
-        {p.earnings_date && ` · next earnings ${p.earnings_date}`}
+      <StopTargetBar
+        stop={p.current_stop_price != null ? Number(p.current_stop_price) : null}
+        entry={Number(p.avg_entry_price)}
+        last={last}
+        target={p.target_price != null ? Number(p.target_price) : null}
+      />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--sa-space-3)' }}>
+        <Fact
+          label="If the stop hits"
+          value={p.if_stop_usd != null ? signedUsd(p.if_stop_usd) : '—'}
+          sub={`${p.if_stop_r != null ? `${signed(p.if_stop_r)}R` : '—'}${p.locked_in ? ' · locked in' : ''}`}
+          color={p.locked_in ? 'var(--sa-positive)' : 'var(--sa-negative-text)'}
+        />
+        <Fact
+          label="To the stop"
+          value={p.to_stop_pct != null ? `${p.to_stop_pct.toFixed(2)}%` : '—'}
+          sub={`${p.to_stop_atr != null ? `${p.to_stop_atr.toFixed(1)}` : '—'} ATR (1h)`}
+          color={closeStop ? 'var(--sa-warning-text)' : 'var(--sa-text)'}
+        />
+        <Fact
+          label="To the target"
+          value={p.to_target_pct != null ? `${p.to_target_pct.toFixed(2)}%` : '—'}
+          sub={`${p.to_target_atr != null ? `${p.to_target_atr.toFixed(1)}` : '—'} ATR${p.levels_to_target != null ? ` · ${p.levels_to_target} level${p.levels_to_target === 1 ? '' : 's'} in the way` : ''}`}
+        />
+        <Fact
+          label="Exit planned"
+          value={p.scheduled_exit ? p.scheduled_exit.replace('earnings exit ', '') : 'none'}
+          sub={p.scheduled_exit ? 'earnings exit' : 'stop or target at Alpaca'}
+        />
       </div>
-      <div style={{ overflowX: 'auto' }}>
-        <div style={{ minWidth: '460px' }}>
-          {(p.legs ?? []).map((leg) => (
-            <LegRow key={leg.id} leg={leg} />
-          ))}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        {p.scheduled_exit && (
+          <Chip variant="info">{p.scheduled_exit}</Chip>
+        )}
+        {p.stop_distance_label === 'stop above entry' && (
+          <Chip variant="neutral">stop above entry</Chip>
+        )}
+        <span style={{ flex: 1 }} />
+        {latest && (
+          <Link
+            to={`/decisions/${latest.id}`}
+            state={{ backgroundLocation: location }}
+            style={{ fontSize: 'var(--sa-text-md)' }}
+          >
+            Latest decision: {latest.action.toUpperCase()} {displayTime(latest.time)}
+            {latest.confidence != null ? ` · ${latest.confidence.toFixed(2)}` : ''} →
+          </Link>
+        )}
+      </div>
+      <details
+        open={p.legs_problem === true}
+        style={{
+          borderTop: '1px solid var(--sa-border)',
+          paddingTop: 'var(--sa-space-2)',
+          color: p.legs_problem ? 'var(--sa-warning-text)' : undefined,
+        }}
+      >
+        <summary style={{ cursor: 'pointer', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-md)', color: p.legs_problem ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
+          Orders at Alpaca · {p.legs_summary ?? `${legs.length} legs`}
+        </summary>
+        <div style={{ overflowX: 'auto' }}>
+          <div style={{ minWidth: '460px' }}>
+            {legs.map((leg) => (
+              <LegRow key={leg.id} leg={leg} />
+            ))}
+          </div>
         </div>
-      </div>
+      </details>
     </div>
   );
 }
@@ -241,6 +316,31 @@ export default function Positions() {
         {recon?.checked_at && ` · checked ${displayTime(recon.checked_at)}`}
       </div>
 
+      {positions?.totals && open.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', padding: '12px 16px', background: 'var(--sa-panel)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-lg)', fontSize: 'var(--sa-text-md)' }}>
+          <span><span style={{ color: 'var(--sa-text-muted)' }}>Unrealized</span>{' '}
+            <span style={{ ...mono, color: (positions.totals.unrealized_usd ?? 0) >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>{positions.totals.unrealized_usd != null ? signedUsd(positions.totals.unrealized_usd) : '—'}</span></span>
+          <span><span style={{ color: 'var(--sa-text-muted)' }}>If every stop hits</span>{' '}
+            <span style={{ ...mono, color: 'var(--sa-negative-text)' }}>{positions.totals.if_stops_usd != null ? signedUsd(positions.totals.if_stops_usd) : '—'}</span>{' '}
+            <span style={{ color: 'var(--sa-text-muted)' }}>· {positions.totals.if_stops_pct_equity != null ? `${Math.abs(positions.totals.if_stops_pct_equity).toFixed(2)}%` : '—'} of equity</span></span>
+          <span><span style={{ color: 'var(--sa-text-muted)' }}>Open risk</span>{' '}
+            <span style={mono}>{positions.totals.open_risk_pct != null ? `${positions.totals.open_risk_pct.toFixed(2)}%` : '—'} of {positions.totals.open_risk_cap_pct}%</span></span>
+          {positions.totals.unprotected > 0 && (
+            <span><span style={{ ...mono, color: 'var(--sa-negative-text)' }}>
+              {positions.totals.unprotected} without a stop
+            </span>{' '}
+            <span style={{ color: 'var(--sa-text-muted)' }}>· counted at full value in open risk</span></span>
+          )}
+          {positions.totals.closest && (
+            <span><span style={{ color: 'var(--sa-text-muted)' }}>Closest to its stop</span>{' '}
+              <span style={{ ...mono, color: positions.totals.closest.atr < Number(positions.near_stop_atr ?? 1.5) ? 'var(--sa-warning-text)' : 'var(--sa-text)' }}>
+                {positions.totals.closest.symbol} {positions.totals.closest.atr.toFixed(1)} ATR
+              </span>{' '}
+              <span style={{ color: 'var(--sa-text-muted)' }}>· amber under {positions.near_stop_atr ?? '1.5'} ATR</span></span>
+          )}
+        </div>
+      )}
+
       <Card label={`Open positions · ${open.length} of ${positions?.max_open_positions ?? '—'}`} busy={positionsRes.loading}>
         {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
         <CardBody
@@ -253,7 +353,7 @@ export default function Positions() {
             </div>
           }
         >
-          {() => <>{open.map((p) => <PositionCard key={p.id} p={p} />)}</>}
+          {() => <>{open.map((p) => <PositionCard key={p.id} p={p} near={Number(positions?.near_stop_atr ?? 1.5)} />)}</>}
         </CardBody>
       </Card>
 

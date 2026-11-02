@@ -322,7 +322,7 @@ async def test_failing_smtp_never_blocks_and_counts_to_banner(
         clock.advance(timedelta(minutes=31))  # past the repeat limit
         await service.drain()  # must not raise
     assert service.email_failures == 3
-    assert {"banners"} in published
+    assert any("banners" in topics for topics in published)
     for row in _rows(session_factory):
         assert row.channel_status.get("email") == "failed"
         assert PASSWORD not in (row.error or "")  # scrubbed

@@ -1,12 +1,16 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { Location } from 'react-router-dom';
 
 import { getBacktestDecision, getDecision, postVerdict } from '../api/state';
 import { ApiError } from '../api/client';
+import { useLiveUpdates } from '../api/liveContext';
 import { RecordNotFound } from '../components/errorPages';
 import { Chip } from '../components/Chip';
-import { displayDayTime, nyTime } from '../format';
+import { displayDayTime, displayTime, signed } from '../format';
+import { DialogButton } from '../components/Modal';
+import { SkeletonLines } from '../components/cardState';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
@@ -27,6 +31,8 @@ import {
 import { actionText } from './dashboardFeed';
 import {
   firstTouchLabel,
+  checkTurnedAdverse,
+  earningsChipLabel,
   gateRows,
   num,
   orderStatusText,
@@ -139,7 +145,7 @@ interface GatesResult {
 // ---------------------------------------------------------------------------
 // safety gates
 
-function gateStateColor(state: 'pass' | 'fail' | 'reduced'): string {
+function gateStateColor(state: 'pass' | 'fail' | 'reduced' | 'warning'): string {
   return state === 'pass'
     ? 'var(--sa-positive)'
     : state === 'fail'
@@ -229,7 +235,7 @@ function SelectionBlock({ decision }: { decision: DecisionDetail }) {
               padding: '7px 0',
               fontSize: 'var(--sa-text-md)',
               borderBottom:
-                i < block.rows.length ? '1px solid var(--sa-border)' : 'none',
+                i < block.rows.length - 1 ? '1px solid var(--sa-border)' : 'none',
             }}
           >
             <span style={{ color: 'var(--sa-text)' }}>
@@ -261,9 +267,9 @@ function SelectionBlock({ decision }: { decision: DecisionDetail }) {
         ))}
       </div>
       {muted(
-        `Selected: ${block.chosenSymbols.join(' + ') || '—'}, $${block.total}. ` +
+        `Selected: ${block.chosenSymbols.join(' + ') || '—'}, ${block.total === '—' ? '—' : `$${block.total}`}. ` +
           `Rank order would have taken ${block.rankSymbols.join(' + ') || '—'}, ` +
-          `$${block.rankTotal}.`,
+          `${block.rankTotal === '—' ? '—' : `$${block.rankTotal}`}.`,
       )}
     </Section>
   );
@@ -294,6 +300,7 @@ function SignalStack({ decision }: { decision: DecisionDetail }) {
     }
   }
   const earnings = decision.earnings;
+  if (earnings && !earnings.date) chips.push(earningsChipLabel(earnings));
   if (earnings?.date) {
     const date = new Date(`${earnings.date}T00:00:00Z`).toLocaleDateString(
       'en-GB',
@@ -395,8 +402,8 @@ function Reasoning({ decision }: { decision: DecisionDetail }) {
       const id = typeof n === 'string' ? n : n.id;
       const found = headlines.find((h) => h.id === id);
       return found
-        ? `“${found.title}” · ${found.source} · ${nyTime(found.time)}`
-        : id;
+        ? <span key={id} title={found.time ? formatNyTitle(found.time) : undefined}>“{found.title}” · {found.source} · {displayTime(found.time)}</span>
+        : <span key={id}>{id}</span>;
     })
     .filter(Boolean);
 
@@ -419,7 +426,7 @@ function Reasoning({ decision }: { decision: DecisionDetail }) {
       {output && output.risks.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {output.risks.map((risk) => (
-            <Chip key={risk} variant="warning">
+            <Chip key={risk} variant="warning" wrap>
               Risk: {risk}
             </Chip>
           ))}
@@ -427,7 +434,7 @@ function Reasoning({ decision }: { decision: DecisionDetail }) {
       )}
       {news.length > 0 && (
         <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          News used: <span style={{ color: 'var(--sa-text-2)' }}>{news.join(' · ')}</span>
+          News used: <span style={{ color: 'var(--sa-text-2)' }}>{news.map((item, index) => <Fragment key={item.key}>{index > 0 && ' · '}{item}</Fragment>)}</span>
         </div>
       )}
     </Section>
@@ -467,6 +474,7 @@ function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
   const chosen = decision.chosen_option;
   const merged = decision.options?.merged ?? [];
   if (options.length === 0 && stopOptions.length === 0) {
+    if (decision.context === 'held') return null;
     return (
       <Section label="Options offered" right="built by code — the model picks an id">
         {muted('No option met the stop band and R/R rules — the model was not asked.')}
@@ -479,7 +487,7 @@ function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflow: 'hidden',
+          overflowX: 'auto',
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -533,7 +541,7 @@ function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
                   <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
                   <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
                     {o.target_basis}
-                    {o.levels_in_way.length > 0
+                    {(o.levels_in_way ?? []).length > 0
                       ? ` · in the way ${o.levels_in_way.join(', ')}`
                       : ''}
                   </div>
@@ -583,7 +591,7 @@ function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
                     fontSize: 'var(--sa-text-sm)',
                   }}
                 >
-                  {o.r_at_stop != null ? `${o.r_at_stop.toFixed(2)}R` : '—'}
+                  {o.r_at_stop != null ? `${signed(o.r_at_stop)}R` : '—'}
                 </td>
               </tr>
             ))}
@@ -621,14 +629,20 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
   const levels = _v2Levels(decision);
   const notes = decision.options?.level_notes ?? {};
   const used = new Set(decision.model_output?.levels_used ?? []);
-  const limit = Number(
-    (decision.input_snapshot?.constraints as Record<string, unknown> | undefined)
-      ?.entry_limit,
-  );
+  const held = decision.context === 'held';
+  const rawLimit = held ? decision.input_snapshot?.price
+    : (decision.input_snapshot?.constraints as Record<string, unknown> | undefined)?.entry_limit;
+  const limit = typeof rawLimit === 'number' && Number.isFinite(rawLimit) ? rawLimit : null;
   if (levels.length === 0) return null;
-  const limitIdx = Number.isFinite(limit)
-    ? levels.findIndex((lv) => lv.price < limit)
-    : -1;
+  const firstBelow = limit === null ? -1 : levels.findIndex((lv) => lv.price < limit);
+  const limitIdx = limit === null ? -1 : firstBelow === -1 ? levels.length : firstBelow;
+  const priceLine = limit !== null && (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0',
+      borderBottom: '1px dashed var(--sa-accent)', fontSize: 'var(--sa-text-sm)',
+      color: 'var(--sa-accent)', fontFamily: MONO }}>
+      <span>{held ? 'price' : 'entry limit'}</span><span>{limit.toFixed(2)}</span>
+    </div>
+  );
   return (
     <Section label="Levels" right="nearest first on each side of the price">
       <div
@@ -640,22 +654,7 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
       >
         {levels.map((lv, i) => (
           <Fragment key={lv.id}>
-            {i === limitIdx && limitIdx > 0 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '7px 0',
-                  borderBottom: '1px dashed var(--sa-accent)',
-                  fontSize: 'var(--sa-text-sm)',
-                  color: 'var(--sa-accent)',
-                  fontFamily: MONO,
-                }}
-              >
-                <span>entry limit</span>
-                <span>{limit.toFixed(2)}</span>
-              </div>
-            )}
+            {i === limitIdx && priceLine}
             <div
               style={{
                 display: 'flex',
@@ -695,6 +694,10 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
                   fontSize: 'var(--sa-text-sm)',
                   color: 'var(--sa-text-muted)',
                   whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxWidth: '40%',
+                  flexShrink: 0,
                 }}
               >
                 {notes[lv.id] ?? ''}
@@ -702,6 +705,7 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
             </div>
           </Fragment>
         ))}
+        {limitIdx === levels.length && priceLine}
       </div>
     </Section>
   );
@@ -751,9 +755,7 @@ function _checkCard(
         style={{
           fontSize: 'var(--sa-text-sm)',
           color: 'var(--sa-text-muted)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          overflowWrap: 'anywhere',
         }}
       >
         {sub}
@@ -772,6 +774,10 @@ function _trendAccent(value?: string): string | undefined {
 function V3Checks({ decision }: { decision: DecisionDetail }) {
   const checks = _v3Checks(decision);
   if (checks === null) return null;
+  const previous = decision.prompt_version === 'decision.v4' ? _v4Previous(decision) : null;
+  const changes = previous?.since?.checks_changed ?? [];
+  const minRoom = Number((decision.input_snapshot?.constraints as Record<string, unknown> | undefined)?.min_room_atr);
+  const roomTooSmall = checks.room_atr != null && Number.isFinite(minRoom) && Number(checks.room_atr) < minRoom;
   const earnings = checks.earnings ?? {};
   const earningsText =
     earnings.days === null || earnings.days === undefined
@@ -786,6 +792,11 @@ function V3Checks({ decision }: { decision: DecisionDetail }) {
         }`;
   return (
     <Section label="Checks by code" right="facts the model was given">
+      {previous?.since && <div style={{ fontSize: 'var(--sa-text-sm)', overflowWrap: 'anywhere' }}>
+        Compared with previous cycle: {changes.length > 0
+          ? `${changes.join(' · ')}. No other recorded check changes.`
+          : 'no recorded check changes.'}
+      </div>}
       <div
         style={{
           display: 'grid',
@@ -805,8 +816,8 @@ function V3Checks({ decision }: { decision: DecisionDetail }) {
           checks.room_atr != null
             ? `${Number(checks.room_atr).toFixed(2)} ATR${checks.room_level ? ` · ${checks.room_level}` : ''}`
             : 'no level in the way',
-          'at least the minimum ATR above the limit',
-          checks.room_atr != null ? 'var(--sa-positive)' : 'var(--sa-text-muted)',
+          Number.isFinite(minRoom) ? `minimum ${minRoom} ATR${roomTooSmall ? ' · room too small' : ''}` : 'above the entry limit',
+          roomTooSmall ? 'var(--sa-warning-text)' : 'var(--sa-text-muted)',
         )}
         {_checkCard(
           'Momentum',
@@ -843,7 +854,7 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflow: 'hidden',
+          overflowX: 'auto',
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -910,12 +921,12 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                   <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
                   <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
                     {o.target_basis}
-                    {o.levels_in_way.length > 0
+                    {(o.levels_in_way ?? []).length > 0
                       ? ` · in the way ${_v3WayText(o.levels_in_way)}`
                       : ''}
                   </div>
                 </td>
-                <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
+                <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)', textAlign: 'right' }}>
                   {o.rr.toFixed(2)}
                 </td>
                 <td
@@ -997,7 +1008,7 @@ function _v4NewsUsed(decision: DecisionDetail): { id: string; effect: string }[]
 function _sinceText(since: NonNullable<V4Previous['since']>): string[] {
   const parts: string[] = [];
   if (since.price_move_atr != null) {
-    parts.push(`price moved ${Number(since.price_move_atr).toFixed(2)} ATR`);
+    parts.push(`price moved ${signed(Number(since.price_move_atr))} ATR`);
   }
   parts.push(
     since.checks_changed && since.checks_changed.length > 0
@@ -1033,7 +1044,7 @@ function V4PreviousDecision({ decision }: { decision: DecisionDetail }) {
         }}
       >
         {(prev.action ?? '—').toUpperCase()}
-        {prev.time ? ` at ${nyTime(prev.time)}` : ''}
+        {prev.time && <span title={formatNyTitle(prev.time)}> at {displayTime(prev.time)}</span>}
         {prev.option_id ? ` · option ${prev.option_id}` : ''}
         {prev.best_option_id ? ` · best option ${prev.best_option_id}` : ''}
         {prev.confidence != null
@@ -1068,15 +1079,12 @@ function V4Reasoning({ decision }: { decision: DecisionDetail }) {
       {conflicts.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {conflicts.map((c) => (
-            <Chip
-              key={c.text}
-              variant={c.outweighed_by ? 'warning' : 'negative'}
-            >
-              Conflict: {c.text}
+            <div key={c.text} style={{ width: '100%', overflowWrap: 'anywhere', fontSize: 'var(--sa-text-md)' }}>
+              <Chip variant="warning" wrap>Conflict: {c.text}</Chip>
               {c.outweighed_by
                 ? ` — outweighed by ${c.outweighed_by}`
-                : ' — unresolved'}
-            </Chip>
+                : ' — not outweighed'}
+            </div>
           ))}
         </div>
       )}
@@ -1146,8 +1154,9 @@ function V4Headlines({ decision }: { decision: DecisionDetail }) {
               </span>
               <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                 {' '}
-                · {h.time ? nyTime(h.time) : '—'}
-                {h.about_symbol ? ` · about ${decision.symbol}` : ''}
+                · <span title={h.time ? formatNyTitle(h.time) : undefined}>{displayTime(h.time)}</span>
+                {h.about_symbol === true ? ` · about ${decision.symbol}`
+                  : h.about_symbol === false ? ` · not about ${decision.symbol}` : ''}
                 {h.new === false ? ' · seen before' : ''}
               </span>
               {effect ? (
@@ -1176,13 +1185,7 @@ function V4Thesis({ decision }: { decision: DecisionDetail }) {
   ).map((name) => {
     const at = atEntry?.[name] ?? '—';
     const cur = now?.[name] ?? '—';
-    const adverse =
-      at !== '—' &&
-      cur !== '—' &&
-      ((at === 'up' && cur !== 'up') ||
-        (at === 'mixed' && cur === 'down') ||
-        (at === 'strong' && cur !== 'strong') ||
-        (at === 'mixed' && cur === 'weak'));
+    const adverse = checkTurnedAdverse(name, at, cur);
     return { name, at, current: cur, adverse };
   });
   const heldBits = [
@@ -1257,7 +1260,7 @@ function _factRow(label: string, value: string, sub?: string) {
       }}
     >
       <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>
-      <span style={{ textAlign: 'right' }}>
+      <span style={{ textAlign: 'right', minWidth: 0, overflowWrap: 'anywhere' }}>
         <span style={{ fontFamily: MONO, color: 'var(--sa-text)' }}>{value}</span>
         {sub && (
           <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
@@ -1286,7 +1289,7 @@ function V3PositionFacts({ decision }: { decision: DecisionDetail }) {
       >
         {_factRow(
           'R now',
-          pos.r_now != null ? `${pos.r_now >= 0 ? '+' : ''}${pos.r_now.toFixed(2)}R` : '—',
+          pos.r_now != null ? `${signed(pos.r_now)}R` : '—',
           pos.entry != null ? `entry ${pos.entry.toFixed(2)}` : undefined,
         )}
         {_factRow(
@@ -1345,7 +1348,7 @@ function V3StopOptions({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflow: 'hidden',
+          overflowX: 'auto',
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1397,11 +1400,11 @@ function V3StopOptions({ decision }: { decision: DecisionDetail }) {
                       {notOffered && o.drop_reason ? ` · not offered: ${o.drop_reason}` : ''}
                     </div>
                   </td>
-                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
+                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)', textAlign: 'right' }}>
                     {o.distance_atr != null ? o.distance_atr.toFixed(2) : '—'}
                   </td>
-                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)' }}>
-                    {o.locked_r != null ? `${o.locked_r.toFixed(2)}R` : '—'}
+                  <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)', textAlign: 'right' }}>
+                    {o.locked_r != null ? `${signed(o.locked_r)}R` : '—'}
                   </td>
                 </tr>
               );
@@ -1434,7 +1437,7 @@ function V3Reasoning({ decision }: { decision: DecisionDetail }) {
       {conflicts.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           {conflicts.map((conflict) => (
-            <Chip key={conflict} variant="warning">
+            <Chip key={conflict} variant="warning" wrap>
               Conflict: {conflict}
             </Chip>
           ))}
@@ -1549,7 +1552,9 @@ function LevelTile({
           fontSize: 'var(--sa-text-md)',
         }}
       >
-        {value ?? '—'}
+        {value !== null && ['Entry', 'Entry limit', 'Stop', 'Target'].includes(label)
+          ? Number(value).toFixed(2)
+          : value ?? '—'}
       </span>
     </div>
   );
@@ -1560,13 +1565,27 @@ function VerdictRow({
   onResolved,
 }: {
   decision: DecisionDetail;
-  onResolved: () => void;
+  onResolved: () => Promise<void>;
 }) {
   const verdict = decision.verdict;
+  const [pending, setPending] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saving = useRef(false);
   if (!decision.verdict_eligible) return null;
-  const pick = (value: VerdictValue) => {
-    if (!verdict) return;
-    postVerdict(verdict.id, value).then(onResolved).catch(console.error);
+  const pick = async (value: VerdictValue) => {
+    if (!verdict || saving.current) return;
+    saving.current = true;
+    setPending(true);
+    setSaveError(null);
+    try {
+      await postVerdict(verdict.id, value);
+      await onResolved();
+    } catch {
+      setSaveError('The verdict could not be saved or refreshed. Retry your choice.');
+    } finally {
+      saving.current = false;
+      setPending(false);
+    }
   };
   return (
     <div
@@ -1603,7 +1622,9 @@ function VerdictRow({
               {verdict.reason}
             </span>
           )}
-          <VerdictButtons current={verdict.verdict} onPick={pick} />
+          <VerdictButtons current={verdict.verdict} onPick={pick} disabled={pending} />
+          {pending && <span role="status">Saving verdict…</span>}
+          {saveError && <span role="alert">{saveError}</span>}
           {(verdict.model_action || verdict.thesis_check) && (
             <div
               style={{
@@ -1673,7 +1694,7 @@ function OutcomeSection({
   onVerdictResolved,
 }: {
   decision: DecisionDetail;
-  onVerdictResolved: () => void;
+  onVerdictResolved: () => Promise<void>;
 }) {
   const outcome = decision.outcome;
   const hasTrade = decision.trade !== null && decision.trade.status !== 'none';
@@ -1704,9 +1725,9 @@ function OutcomeSection({
   ];
   const touchLabel = firstTouchLabel(outcome?.first_touch);
   const soFar: string[] = [];
-  if (outcome?.best_r) soFar.push(`best ${outcome.best_r}R`);
+  if (outcome?.best_r) soFar.push(`best ${signed(Number(outcome.best_r))}R`);
   else if (outcome?.best_price) soFar.push(`best ${outcome.best_price}`);
-  if (outcome?.worst_r) soFar.push(`worst ${outcome.worst_r}R`);
+  if (outcome?.worst_r) soFar.push(`worst ${signed(Number(outcome.worst_r))}R`);
   else if (outcome?.worst_price) soFar.push(`worst ${outcome.worst_price}`);
   if (touchLabel) soFar.push(`first touch: ${touchLabel}`);
 
@@ -1715,8 +1736,9 @@ function OutcomeSection({
       label="Outcome"
       right={
         decision.next_outcome_due
-          ? `next result ${displayDayTime(decision.next_outcome_due)}`
-          : 'all results in'
+          ? <span title={formatNyTitle(decision.next_outcome_due)}>next result {displayDayTime(decision.next_outcome_due)}</span>
+          : outcome === null ? 'not recorded'
+            : tiles.every((tile) => tile.price !== null) ? 'all results in' : 'results pending'
       }
     >
       {outcome === null ? (
@@ -1762,18 +1784,18 @@ function OutcomeSection({
                   }}
                 >
                   {tile.price
-                    ? `${tile.price}${tile.r ? ` · ${tile.r}R` : ''}`
+                    ? `${Number(tile.price).toFixed(2)}${tile.r ? ` · ${signed(Number(tile.r))}R` : ''}`
                     : 'pending'}
                 </span>
                 {tile.at && (
                   <span
-                    title="Timestamp of the 5-minute bar the price was taken from"
+                    title={`Timestamp of the 5-minute bar · ${formatNyTitle(tile.at)}`}
                     style={{
                       fontSize: 'var(--sa-text-xs)',
                       color: 'var(--sa-text-muted)',
                     }}
                   >
-                    bar {nyTime(tile.at)} NY
+                    bar {displayTime(tile.at)}
                   </span>
                 )}
               </div>
@@ -1812,16 +1834,60 @@ function DrawerShell({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; });
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const siblings = Array.from(document.body.children)
+      .filter((node): node is HTMLElement => node instanceof HTMLElement && node !== overlayRef.current)
+      .map((node) => ({ node, inert: node.inert }));
+    const overflow = document.body.style.overflow;
+    siblings.forEach(({ node }) => { node.inert = true; });
+    document.body.style.overflow = 'hidden';
+    panel?.focus();
+    const observer = new MutationObserver(() => {
+      if (panel?.isConnected && !panel.contains(document.activeElement)) panel.focus();
+    });
+    if (panel) observer.observe(panel, { childList: true, subtree: true });
+    const onFocus = (e: FocusEvent) => {
+      if (e.target instanceof Node && !panel?.contains(e.target)) panel?.focus();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeRef.current();
+      }
+      if (e.key !== 'Tab' || !panel) return;
+      const controls = Array.from(panel.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((node) => node.getClientRects().length > 0);
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (!first || (e.shiftKey && (document.activeElement === first || document.activeElement === panel))) {
+        e.preventDefault();
+        (last ?? panel).focus();
+      } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panel)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('focusin', onFocus);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('focusin', onFocus);
+      siblings.forEach(({ node, inert }) => { node.inert = inert; });
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
 
-  return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100 }}>
+  return createPortal(
+    <div ref={overlayRef} style={{ position: 'fixed', inset: 0, zIndex: 100 }}>
       <div
         aria-hidden
         onClick={onClose}
@@ -1833,9 +1899,11 @@ function DrawerShell({
         }}
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={label}
+        tabIndex={-1}
         style={{
           position: 'absolute',
           top: 0,
@@ -1853,7 +1921,8 @@ function DrawerShell({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1866,17 +1935,33 @@ export default function Decision() {
   // A backtest decision lives in the run's own database: ?bt=<run>&s=<slug>.
   const btRun = searchParams.get('bt');
   const btSlug = searchParams.get('s');
+  const backtest = searchParams.has('bt') || searchParams.has('s');
   const fetchDecision = useCallback(
-    (decisionId: number) =>
-      btRun && btSlug
-        ? getBacktestDecision(Number(btRun), btSlug, decisionId)
-        : getDecision(decisionId),
-    [btRun, btSlug],
+    (decisionId: number) => {
+      if (!Number.isSafeInteger(decisionId) || decisionId < 1 ||
+          (backtest && (!btRun || !btSlug || !Number.isSafeInteger(Number(btRun)) || Number(btRun) < 1)))
+        return Promise.reject(new ApiError(422, 'Invalid decision link'));
+      return backtest
+        ? getBacktestDecision(Number(btRun), btSlug ?? '', decisionId)
+        : getDecision(decisionId);
+    },
+    [btRun, btSlug, backtest],
   );
   const location = useLocation();
   const navigate = useNavigate();
-  const [decision, setDecision] = useState<DecisionDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const requestKey = `${id}:${btRun ?? ''}:${btSlug ?? ''}`;
+  const [result, setResult] = useState<{ key: string; decision: DecisionDetail | null; error: string | null; loading: boolean }>({
+    key: requestKey, decision: null, error: null, loading: true,
+  });
+  const [retry, setRetry] = useState(0);
+  const requestSequence = useRef(0);
+  const activeKey = useRef<string | null>(null);
+  useEffect(() => {
+    activeKey.current = requestKey;
+    return () => { activeKey.current = null; };
+  }, [requestKey]);
+  const decision = result.key === requestKey ? result.decision : null;
+  const error = result.key === requestKey ? result.error : null;
 
   const background = (
     location.state as { backgroundLocation?: Location } | null
@@ -1889,22 +1974,51 @@ export default function Decision() {
     );
   }, [navigate, background]);
 
+  const refresh = useCallback(async () => {
+    if (activeKey.current !== requestKey) return;
+    const sequence = ++requestSequence.current;
+    setResult((previous) => ({
+      key: requestKey,
+      decision: previous.key === requestKey ? previous.decision : null,
+      error: previous.key === requestKey && previous.decision ? previous.error : null,
+      loading: true,
+    }));
+    try {
+      const next = await fetchDecision(Number(id));
+      if (sequence === requestSequence.current)
+        setResult({ key: requestKey, decision: next, error: null, loading: false });
+    } catch (e) {
+      if (sequence !== requestSequence.current) return;
+      setResult((previous) => ({
+        key: requestKey,
+        decision: previous.key === requestKey ? previous.decision : null,
+        error: e instanceof ApiError && e.status === 404 ? 'not_found'
+          : e instanceof ApiError && e.status === 422 ? 'invalid_request' : 'error',
+        loading: false,
+      }));
+      throw e;
+    }
+  }, [fetchDecision, id, requestKey]);
   useEffect(() => {
-    if (!id) return;
-    fetchDecision(Number(id))
-      .then(setDecision)
-      .catch((e: unknown) =>
-        setError(
-          e instanceof ApiError && e.status === 404 ? 'not_found' : 'error',
-        ),
-      );
-  }, [id, fetchDecision]);
+    void refresh().catch(() => undefined);
+    return () => { requestSequence.current += 1; };
+  }, [refresh, retry]);
+  useLiveUpdates(backtest ? ['backtests'] : ['decisions', 'orders', 'positions', 'approvals', 'reviews'], () => {
+    void refresh().catch(() => undefined);
+  });
+  const stateHeader = (
+    <div style={{ padding: 'var(--sa-space-4)', display: 'flex', justifyContent: 'space-between' }}>
+      <h1 style={{ margin: 0, fontSize: 'var(--sa-text-xl)' }}>Decision detail</h1>
+      <DialogButton variant="cancel" onClick={close}>Close</DialogButton>
+    </div>
+  );
 
   if (error === 'not_found') {
     // The record's not-found page (design: Errors → Not found · a record),
     // inside the drawer — the page behind it keeps working.
     return (
       <DrawerShell label="Decision detail" onClose={close}>
+        {stateHeader}
         <RecordNotFound
           what={`Decision ${id} doesn't exist`}
           why="Decisions are never deleted within a run."
@@ -1914,19 +2028,18 @@ export default function Decision() {
       </DrawerShell>
     );
   }
-  if (error) {
+  if (error && !decision) {
     return (
       <DrawerShell label="Decision detail" onClose={close}>
-        <div
+        {stateHeader}
+        <div role="alert"
           style={{
             padding: 'var(--sa-space-5) var(--sa-space-6)',
             color: 'var(--sa-text-muted)',
           }}
         >
-          The decision could not be loaded.{' '}
-          <Link to="/" style={{ color: 'var(--sa-accent)' }}>
-            Back to the dashboard
-          </Link>
+          <p>{error === 'invalid_request' ? 'The decision link is invalid.' : 'The decision could not be loaded.'}</p>
+          {error !== 'invalid_request' && <DialogButton variant="cancel" onClick={() => setRetry((value) => value + 1)}>Retry</DialogButton>}
         </div>
       </DrawerShell>
     );
@@ -1934,7 +2047,10 @@ export default function Decision() {
   if (!decision) {
     return (
       <DrawerShell label="Decision detail" onClose={close}>
-        {muted('Loading…')}
+        {stateHeader}
+        <div aria-busy="true" aria-label="Loading decision" style={{ padding: 'var(--sa-space-6)' }}>
+          <SkeletonLines />
+        </div>
       </DrawerShell>
     );
   }
@@ -1957,6 +2073,29 @@ export default function Decision() {
   const eurRate = decision.eur_usd_rate ? Number(decision.eur_usd_rate) : null;
   const eur = total !== null && eurRate ? total / eurRate : null;
   const confidence = output?.confidence ?? null;
+  const held = decision.context === 'held';
+  const position = _v3Position(decision);
+  const posRNow = position?.r_now ?? num(
+    held
+      ? (decision.input_snapshot?.position as { r_so_far?: unknown } | undefined)?.r_so_far
+      : null,
+  );
+  const selected = _v2Options(decision).find((option) =>
+    option.id === (output?.option_id ?? output?.best_option_id ?? decision.chosen_option));
+  const levelTiles = (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+      gap: 'var(--sa-space-2)', padding: 'var(--sa-space-4) 0' }}>
+      <LevelTile label={!held && decision.prompt_version !== 'decision.v1' ? 'Entry limit' : 'Entry'} value={trade?.entry ?? null} />
+      <LevelTile label="Stop" value={trade?.stop ?? null} accent="var(--sa-negative-text)" />
+      <LevelTile label="Target" value={trade?.target ?? null} accent="var(--sa-positive)" />
+      {decision.prompt_version === 'decision.v1' ? (
+        <LevelTile label="Invalidation · 1h close" value={output?.invalidation ?? null} />
+      ) : held ? (
+        <LevelTile label="R now" value={posRNow !== null ? `${signed(posRNow)}R` : null} />
+      ) : <LevelTile label={decision.prompt_version === 'decision.v2' ? 'R/R' : 'R/R · break-even'}
+        value={selected ? `${selected.rr.toFixed(2)}${selected.breakeven_confidence != null ? ` · ${selected.breakeven_confidence.toFixed(2)}` : ''}` : null} />}
+    </div>
+  );
 
   return (
     <DrawerShell label={`${decision.symbol} decision`} onClose={close}>
@@ -2007,6 +2146,7 @@ export default function Decision() {
               }}
             >
               <RegimeChip regime={regime} />
+              {backtest && <Chip variant="info">Backtest · no broker order</Chip>}
               <span
                 style={{
                   fontSize: 'var(--sa-text-sm)',
@@ -2056,6 +2196,7 @@ export default function Decision() {
 
         {/* body — scrolls between the pinned header and footer */}
         <div
+          aria-busy={result.loading}
           style={{
             padding: '0 var(--sa-space-6) var(--sa-space-6)',
             display: 'flex',
@@ -2109,8 +2250,9 @@ export default function Decision() {
                     fontSize: 'var(--sa-text-md)',
                   }}
                 >
-                  {trade.qty} sh @ {trade.entry}
+                  {trade.qty} sh @ {Number(trade.entry).toFixed(2)}
                   {hasOrder ? ' limit' : ''}
+                  {validation?.changed_by_code ? ' · changed by code' : ''}
                   {total !== null && (
                     <>
                       {' '}
@@ -2155,20 +2297,21 @@ export default function Decision() {
                 >
                   <span
                     title={
-                      decision.prompt_version === 'decision.v4'
-                        ? 'Enter: the chosen option reaching its target before its stop. On a skip: the best option\u2019s chance (best_option_id).'
-                        : undefined
+                      held
+                        ? 'Held: starts at the neutral probability and moves only for named facts. Not gated; kept out of entry calibration.'
+                        : decision.prompt_version === 'decision.v4'
+                          ? 'Enter: the chosen option reaching its target before its stop. On a skip: the best option\u2019s chance (best_option_id).'
+                          : undefined
                     }
                   >
                     confidence
-                    {decision.prompt_version === 'decision.v4' &&
-                    (output?.option_id || output?.best_option_id)
-                      ? ` · option ${
-                          decision.final_action === 'enter'
-                            ? output?.option_id
-                            : output?.best_option_id
-                        }`
-                      : ''}
+                    {held
+                      ? ` · target before ${output?.action === 'tighten_stop' ? 'new' : 'current'} stop`
+                      : decision.prompt_version === 'decision.v4'
+                        ? output?.action === 'skip'
+                          ? ` · best ${output.best_option_id ?? '—'}`
+                          : ` · option ${output?.option_id ?? '—'}`
+                        : ''}
                   </span>
                   <div
                     style={{
@@ -2201,11 +2344,25 @@ export default function Decision() {
             </div>
           </div>
 
+          {error && <div role="alert">
+            The decision could not be refreshed. Showing stale data.{' '}
+            <DialogButton variant="cancel" onClick={() => setRetry((value) => value + 1)}>Retry</DialogButton>
+          </div>}
+          {decision.prompt_version !== 'decision.v1' && levelTiles}
           {decision.prompt_version === 'decision.v4' ? (
             <>
-              <V4PreviousDecision decision={decision} />
-              <V3Checks decision={decision} />
-              {decision.context === 'held' && <V4Thesis decision={decision} />}
+              {held ? (
+                <>
+                  <V4Thesis decision={decision} />
+                  <V3PositionFacts decision={decision} />
+                  <V4PreviousDecision decision={decision} />
+                </>
+              ) : (
+                <>
+                  <V4PreviousDecision decision={decision} />
+                  <V3Checks decision={decision} />
+                </>
+              )}
               {decision.context === 'candidate' ? (
                 <V3OptionsTable decision={decision} />
               ) : (
@@ -2252,40 +2409,12 @@ export default function Decision() {
           )}
 
           {/* level tiles */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-              gap: 'var(--sa-space-2)',
-              padding: 'var(--sa-space-4) 0 0',
-              borderTop: '1px solid var(--sa-border)',
-            }}
-          >
-            <LevelTile label="Entry" value={trade?.entry ?? null} />
-            <LevelTile
-              label="Stop"
-              value={trade?.stop ?? null}
-              accent="var(--sa-negative-text)"
-            />
-            <LevelTile
-              label="Target"
-              value={trade?.target ?? null}
-              accent="var(--sa-positive)"
-            />
-            <LevelTile
-              label="Invalidation · 1h close"
-              value={output?.invalidation ?? null}
-            />
-          </div>
+          {decision.prompt_version === 'decision.v1' && levelTiles}
 
           <OutcomeSection
+            key={requestKey}
             decision={decision}
-            onVerdictResolved={() => {
-              if (id)
-                fetchDecision(Number(id))
-                  .then(setDecision)
-                  .catch(console.error);
-            }}
+            onVerdictResolved={refresh}
           />
         </div>
 
@@ -2305,16 +2434,19 @@ export default function Decision() {
               color: 'var(--sa-text-muted)',
             }}
           >
-            {orderStatusText(decision)}
+            <span title={(decision.orders ?? []).flatMap((order) => [
+              `${order.leg}: ${formatNyTitle(order.created_at)}`,
+              ...order.fills.map((fill) => `fill: ${formatNyTitle(fill.filled_at)}`),
+            ]).join(' · ')}>{orderStatusText(decision, backtest)}</span>
           </div>
-          <div style={{ display: 'flex', gap: 'var(--sa-space-4)' }}>
-            <Link to="/positions" style={{ color: 'var(--sa-accent)' }}>
-              Open position &amp; orders
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)' }}>
+            <Link to={backtest ? '/backtest' : '/positions'} style={{ color: 'var(--sa-accent)', minHeight: 'var(--sa-control-height)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 var(--sa-space-3)', border: '1px solid var(--sa-border-strong)', borderRadius: 'var(--sa-radius-md)' }}>
+              {backtest ? 'Back to backtest' : 'Open position & orders'}
             </Link>
-            {decision.llm_call_id !== null && (
+            {!backtest && decision.llm_call_id !== null && (
               <Link
                 to={`/inspector?call=${decision.llm_call_id}`}
-                style={{ color: 'var(--sa-accent)' }}
+                style={{ color: 'var(--sa-accent)', minHeight: 'var(--sa-control-height)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 var(--sa-space-3)', border: '1px solid var(--sa-border-strong)', borderRadius: 'var(--sa-radius-md)' }}
               >
                 Open model call
               </Link>

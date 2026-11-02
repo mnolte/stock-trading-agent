@@ -449,7 +449,9 @@ def thesis_holds(
         if not old or not new or old == UNAVAILABLE or new == UNAVAILABLE:
             continue
         comparable += 1
-        if str(new) in _ADVERSE.get(str(old), set()):
+        if str(new) in _ADVERSE.get(str(old), set()) or (
+            name == "momentum" and old == "mixed" and new == "weak"
+        ):
             adverse += 1
     if comparable < 2:
         # Too few entry checks survive to judge the thesis — say so

@@ -172,7 +172,7 @@ async def refresh_daily_data_and_signals(
     )
     await signals.refresh()
     if bus is not None:
-        bus.publish("watchlist", "header", "banners", "performance")
+        bus.publish("watchlist", "header", "banners", "performance", "attention")
 
 
 def run_readiness_tick(
@@ -457,7 +457,7 @@ async def run_universe_screen(
     """
     await service.run_screen()
     if bus is not None:
-        bus.publish("universe", "banners", "header")
+        bus.publish("universe", "banners", "header", "attention")
 
 
 async def run_scheduled_check(
@@ -477,7 +477,7 @@ async def run_scheduled_check(
         if ops is not None:
             await ping_heartbeat(ops)
     if bus is not None:
-        bus.publish("positions", "orders", "banners", "header", "performance")
+        bus.publish("positions", "orders", "banners", "header", "performance", "attention")
 
 
 async def ping_heartbeat(ops: Any) -> None:
@@ -1101,7 +1101,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         broker=broker,
         config=config,
         clock=clock,
-        notify=lambda: bus.publish("universe", "banners", "header"),
+        notify=lambda: bus.publish("universe", "banners", "header", "attention"),
     )
     await refresh_calendar_and_daily_data(
         calendar_store, market_data, sources, config, clock
@@ -1259,7 +1259,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
             session.commit()
         app.state.restart_resumed = decision.resume
-        bus.publish("banners", "header")
+        bus.publish("banners", "header", "attention")
 
     # A review missed while the app was down is written now with its
     # original date; a briefing older than its trading day is skipped.
@@ -1568,7 +1568,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 _signal.signal(_sig, _force)
         shutdown_manager.begin()
         logger.info("shutdown requested", extra={"event": "app.shutdown_requested"})
-        bus.publish("shutdown", "banners", "header")
+        bus.publish("shutdown", "banners", "header", "attention")
         scheduler.pause()
         heartbeat_task.cancel()
         await backtest_manager.shutdown()

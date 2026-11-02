@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  checkTurnedAdverse,
   earningsChipLabel,
   firstTouchLabel,
   gateRows,
@@ -9,6 +10,19 @@ import {
   sipBarEnd,
 } from './decisionDetail';
 import type { DecisionDetail } from '../types/api';
+
+it.each([
+  ['trend_1h', 'up', 'mixed', true],
+  ['trend_daily', 'mixed', 'down', true],
+  ['trend_1h', 'up', 'unavailable', false],
+  ['regime_trend', 'up', '—', false],
+  ['momentum', 'strong', 'unavailable', false],
+  ['momentum', 'mixed', 'weak', true],
+  ['momentum', 'strong', 'mixed', true],
+  ['momentum', 'weak', 'strong', false],
+] as const)('compares %s from %s to %s without treating unknowns as adverse', (name, before, current, adverse) => {
+  expect(checkTurnedAdverse(name, before, current)).toBe(adverse);
+});
 
 const detail = (over: Partial<DecisionDetail>): DecisionDetail =>
   ({
@@ -62,9 +76,24 @@ describe('gateRows', () => {
         },
       }),
     );
-    expect(rows[0]).toEqual({ name: 'Reward to risk ≥ 1.5', detail: '1.3', state: 'fail' });
+    expect(rows[0]).toEqual({ name: 'Reward to risk ≥ 1.5', detail: '1.3 · rr', state: 'fail' });
     expect(rows[1]).toEqual({ name: 'Confidence ≥ 0.55', detail: '0.64', state: 'pass' });
   });
+
+  it.each(['Explanation check', 'Claim checks', 'Confidence sanity', 'Conflicts resolved'])(
+    'distinguishes the non-blocking %s warning and keeps its detail', (name) => {
+      for (const passed of [true, false]) {
+        const decision = detail({});
+        decision.validation_result = {
+          valid: true, model_action: 'hold', final_action: 'hold', changed_by_code: false,
+          error: null, note: '', checks: [{ name, passed, value: '0.85', detail: 'anchor 0.15' }],
+        };
+        expect(gateRows(decision)[0]).toEqual({
+          name, detail: '0.85 · anchor 0.15', state: passed ? 'pass' : 'warning',
+        });
+      }
+    },
+  );
 
   it('marks sizing-limited gates as reduced, not plain pass', () => {
     const rows = gateRows(
@@ -181,6 +210,11 @@ describe('sipBarEnd', () => {
   it('floors the decision time to the :30 session grid in New York', () => {
     // 16:46 Amsterdam = 10:46 New York (October, EDT vs CEST).
     expect(sipBarEnd('2026-10-15T14:46:00+00:00')).toBe('10:30');
+    // Position checks at :01/:16 still report the last closed 1h bar,
+    // which ended at the previous hour's :30 — not a :00 boundary.
+    expect(sipBarEnd('2026-10-15T15:01:00+00:00')).toBe('10:30');
+    expect(sipBarEnd('2026-10-15T15:16:00+00:00')).toBe('10:30');
+    expect(sipBarEnd('2026-10-15T15:31:00+00:00')).toBe('11:30');
   });
 });
 
@@ -282,6 +316,39 @@ describe('orderStatusText', () => {
     expect(text).toContain('Automatic · bracket sent');
     expect(text).toContain('filled 4 @ 418.20');
     expect(text).toContain('stop + target open at Alpaca');
+  });
+
+  it('aggregates split fills and reports exits rather than claiming no order', () => {
+    const order = {
+      id: 1, leg: 'entry', qty: 4, status: 'filled', created_at: '2026-10-15T14:46:00Z',
+      filled_at: null, filled_avg_price: null,
+      fills: [
+        { qty: 1, price: '100', filled_at: '2026-10-15T14:47:00Z' },
+        { qty: 3, price: '102', filled_at: '2026-10-15T14:48:00Z' },
+      ],
+    } as NonNullable<DecisionDetail['orders']>[number];
+    expect(orderStatusText(detail({ orders: [order] }))).toContain('filled 4 @ 101.50');
+    const exit = { ...order, leg: 'exit' };
+    const text = orderStatusText(detail({ final_action: 'exit', orders: [exit] }));
+    expect(text).toContain('exit filled at Alpaca');
+    expect(text).not.toContain('No order');
+    expect(orderStatusText(detail({ orders: [exit] }), true)).toContain('exit filled in backtest');
+    expect(orderStatusText(detail({ orders: [exit] }), true)).not.toContain('Alpaca');
+    expect(orderStatusText(detail({ orders: [{ ...order, qty: 10, status: 'partially_filled' }] })))
+      .toContain('filled 4 of 10 @ 101.50');
+  });
+
+  it('describes a replacement stop leg instead of claiming no order', () => {
+    const stop = {
+      id: 2, alpaca_order_id: 's1', client_order_id: null, parent_alpaca_order_id: null,
+      symbol: 'MSFT', leg: 'stop' as const, side: 'sell' as const, type: 'stop' as const,
+      qty: 10, limit_price: null, stop_price: '102.40', status: 'new',
+      created_at: '2026-10-15T15:46:00Z', filled_at: null, filled_avg_price: null, fills: [],
+    };
+    const text = orderStatusText(detail({ final_action: 'tighten_stop', orders: [stop] }));
+    expect(text).toContain('stop new at Alpaca');
+    expect(text).toContain('10 sh');
+    expect(text).not.toContain('No order recorded');
   });
 
   it('describes a pending approval', () => {

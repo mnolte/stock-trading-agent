@@ -88,9 +88,10 @@ test('risk budget card shows meters, facts and hover rules', async ({
     )
   ).toBeVisible();
 
-  // The summary tiles sit in their own row: Positions, the model-call
-  // counter (calls against the day's cap) and Since start.
-  await expect(page.getByText('Positions', { exact: true })).toBeVisible();
+  // The summary tiles sit in their own row: the model-call
+  // counter (calls against the day's cap) and Since start. Open positions
+  // have their own card above.
+  await expect(page.getByRole('heading', { name: 'Open positions' })).toBeVisible();
   await expect(
     page.getByText('Model calls today', { exact: true })
   ).toBeVisible();

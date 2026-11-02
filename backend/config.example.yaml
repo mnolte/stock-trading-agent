@@ -56,6 +56,9 @@ schedule:
   bars_5m_keep_sessions: 120   # older 5-min bars deleted after the 03:00 backup
   cycle_duration_warn_minutes: 10
 
+gui:
+  near_stop_atr: 1.5          # positions closer to their stop than this turn amber (PR 35)
+
 api:
   broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
 

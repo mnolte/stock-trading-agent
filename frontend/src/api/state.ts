@@ -1,5 +1,6 @@
 import { get, post } from './client';
 import type {
+  AttentionResponse,
   LlmCallDetail,
   LlmCallsPage,
   LlmCallsSummary,
@@ -68,6 +69,10 @@ export function getDecision(id: number): Promise<DecisionDetail> {
 
 export function getBanners(): Promise<BannersResponse> {
   return get<BannersResponse>('/api/banners');
+}
+
+export function getAttention(): Promise<AttentionResponse> {
+  return get<AttentionResponse>('/api/attention');
 }
 
 export function getPositions(): Promise<PositionsResponse> {
