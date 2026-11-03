@@ -174,7 +174,7 @@ def test_tools_never_write(session_factory: sessionmaker[Session]) -> None:
 
 def test_tool_results_carry_no_secrets(session_factory: sessionmaker[Session]) -> None:
     """A planted fake key must never appear in any tool result."""
-    fake_key = "sk-test-SECRET-abcdef0123456789"
+    fake_key = "sk-fake-ask-0123456789abcdef"
     deps = _deps(session_factory)
     with session_factory() as s:
         cases: dict[str, dict[str, Any]] = {
