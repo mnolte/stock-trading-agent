@@ -311,6 +311,28 @@ def test_thesis_holds_true_on_one_adverse() -> None:
     assert thesis_holds(at_entry, now) is True
 
 
+def test_thesis_holds_sideways_counts_like_mixed() -> None:
+    """The KO case: the regime was sideways at entry and turned down, so
+    sideways → down is adverse; up → sideways is too (docs/SPEC.md,
+    Fixes of 3 November)."""
+    at_entry = {"trend_1h": "up", "trend_daily": "up",
+                "regime_trend": "sideways", "momentum": "strong"}
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "down", "momentum": "weak"}
+    assert thesis_holds(at_entry, now) is False
+
+    at_entry = {"trend_1h": "up", "trend_daily": "up",
+                "regime_trend": "up", "momentum": "strong"}
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "sideways", "momentum": "weak"}
+    assert thesis_holds(at_entry, now) is False
+
+    # One adverse turn alone still holds.
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "sideways", "momentum": "strong"}
+    assert thesis_holds(at_entry, now) is True
+
+
 # ----------------------------------------------------------------------
 # best_option_id — never invalidates (docs/SPEC.md, Decision v4)
 

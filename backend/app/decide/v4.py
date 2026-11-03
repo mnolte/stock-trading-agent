@@ -51,12 +51,17 @@ _CHANGED_NAMES = (*_CHECK_NAMES, "regime_volatility")
 
 # A check turned against the trade (docs/SPEC.md — thesis_holds):
 # up → mixed or down, mixed → down; momentum strong → mixed or weak,
-# mixed → weak.
+# mixed → weak. The regime's ``sideways`` counts like ``mixed``
+# (docs/SPEC.md, Fixes of 3 November).
 _ADVERSE = {
     "up": {"mixed", "down"},
     "mixed": {"down"},
     "strong": {"mixed", "weak"},
 }
+
+
+def _adverse_key(value: Any) -> str:
+    return "mixed" if str(value) == "sideways" else str(value)
 
 
 # ----------------------------------------------------------------------
@@ -449,8 +454,10 @@ def thesis_holds(
         if not old or not new or old == UNAVAILABLE or new == UNAVAILABLE:
             continue
         comparable += 1
-        if str(new) in _ADVERSE.get(str(old), set()) or (
-            name == "momentum" and old == "mixed" and new == "weak"
+        old_key = _adverse_key(old)
+        new_key = _adverse_key(new)
+        if new_key in _ADVERSE.get(old_key, set()) or (
+            name == "momentum" and old_key == "mixed" and new_key == "weak"
         ):
             adverse += 1
     if comparable < 2:
