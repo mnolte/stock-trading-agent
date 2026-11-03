@@ -50,6 +50,7 @@ from app.engine.state import record_event
 from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock
+from app.universe.names import clean_company_name
 
 UTC = ZoneInfo("UTC")
 SYMBOL_RE = re.compile(r"^[A-Z]{1,6}(\.[A-Z])?$")
@@ -91,6 +92,9 @@ class _ScreenMetrics:
     last_close: Decimal | None
     avg_dollar_volume: Decimal | None
     return_vs_spy: Decimal | None
+    # Alpaca's asset name — fills universe_pool.name for about_symbol
+    # (docs/SPEC.md, Fixes of 3 November); None for warming symbols.
+    name: str | None = None
 
 
 class UniverseService:
@@ -253,12 +257,13 @@ class UniverseService:
 
     async def _check_symbol_add(
         self, session: Session, symbol: str, sector: str
-    ) -> list[str]:
-        """The same checks as the fixed-universe symbol add, plus the cap."""
+    ) -> tuple[list[str], str | None]:
+        """The same checks as the fixed-universe symbol add, plus the cap —
+        and Alpaca's asset name for ``universe_pool.name``."""
         errors: list[str] = []
         if not SYMBOL_RE.match(symbol):
             errors.append(f"'{symbol}' is not a valid US stock or ETF symbol.")
-            return errors
+            return errors, None
         existing = session.execute(
             select(UniversePoolRow).where(
                 UniversePoolRow.symbol == symbol,
@@ -279,29 +284,34 @@ class UniverseService:
             )
         elif asset.asset_class != "us_equity":
             errors.append(f"{symbol}: {asset.asset_class} is not a US stock or ETF")
-        return errors
+        return errors, (asset.name if asset is not None else None)
 
     async def add_symbol(self, symbol: str, sector: str) -> UniversePoolRow:
         symbol = symbol.strip().upper()
         sector = sector.strip()
         now = self._clock.now()
         with self._sf() as session:
-            errors = await self._check_symbol_add(session, symbol, sector)
+            errors, asset_name = await self._check_symbol_add(
+                session, symbol, sector
+            )
             if errors:
                 raise PoolError(errors)
             row = session.execute(
                 select(UniversePoolRow).where(UniversePoolRow.symbol == symbol)
             ).scalar_one_or_none()
+            name = clean_company_name(asset_name)
             if row is None:
                 row = UniversePoolRow(
                     symbol=symbol,
                     sector=sector,
                     source="added",
+                    name=name,
                     added_at=now,
                 )
                 session.add(row)
             else:  # re-adding a removed row
                 row.sector = sector
+                row.name = name or row.name
                 row.removed_at = None
             try:
                 session.commit()
@@ -316,6 +326,7 @@ class UniverseService:
                 symbol=row.symbol,
                 sector=row.sector,
                 source=row.source,
+                name=row.name,
                 added_at=row.added_at,
                 removed_at=row.removed_at,
             )
@@ -366,7 +377,7 @@ class UniverseService:
             active = {r.symbol for r in self._active_pool(session)}
         # Broker checks run before any write transaction opens — no
         # network call while a write is pending (hard rule 13).
-        pending: list[tuple[int, str, str]] = []
+        pending: list[tuple[int, str, str, str | None]] = []
         for line_no, symbol, sector in rows:
             if symbol in active:
                 skipped += 1
@@ -392,16 +403,17 @@ class UniverseService:
                     "is not a US stock or ETF"
                 )
                 continue
-            pending.append((line_no, symbol, sector))
+            pending.append((line_no, symbol, sector, asset.name))
         if errors:
             raise PoolError(errors)
         with self._sf() as session:
-            for _line_no, symbol, sector in pending:
+            for _line_no, symbol, sector, asset_name in pending:
                 session.add(
                     UniversePoolRow(
                         symbol=symbol,
                         sector=sector,
                         source="import",
+                        name=clean_company_name(asset_name),
                         added_at=now,
                     )
                 )
@@ -833,6 +845,17 @@ class UniverseService:
                 r.rank = rank
             session.add_all(out_rows)
 
+            # Company names for about_symbol: refreshed from the asset
+            # record every screen — this is also the backfill for rows
+            # added before the column existed (docs/SPEC.md, Fixes of
+            # 3 November). A failed asset read keeps the stored name.
+            for row in pool:
+                cleaned = clean_company_name(metrics[row.symbol].name)
+                if cleaned is not None:
+                    pool_row = session.get(UniversePoolRow, row.id)
+                    if pool_row is not None:
+                        pool_row.name = cleaned
+
             funnel = _funnel_counts(out_rows)
             ev(
                 _log, logging.INFO, "universe.screen",
@@ -899,6 +922,7 @@ class UniverseService:
 
         asset_result = await self._broker.get_asset(symbol)
         asset = asset_result.data if asset_result.error is None else None
+        asset_name = asset.name if asset is not None else None
         if asset is None or not asset.tradable or asset.status != "active":
             checks["tradable"] = "fail"
             detail = (
@@ -936,6 +960,7 @@ class UniverseService:
                 last_close=last_close,
                 avg_dollar_volume=dv,
                 return_vs_spy=vs_spy,
+                name=asset_name,
             )
         return _ScreenMetrics(
             status="excluded",
@@ -944,6 +969,7 @@ class UniverseService:
             last_close=last_close,
             avg_dollar_volume=dv,
             return_vs_spy=vs_spy,
+            name=asset_name,
         )
 
     # ------------------------------------------------------------------

@@ -1121,3 +1121,152 @@ async def test_screen_done_today_skips_catch_up(
     await asyncio.sleep(0)
 
     assert service.run_screen.await_count == 0
+
+
+# ----------------------------------------------------------------------
+# pool company names (docs/SPEC.md, Fixes of 3 November)
+
+
+def test_clean_company_name() -> None:
+    from app.universe.names import clean_company_name
+
+    assert clean_company_name("The Coca-Cola Company") == "Coca-Cola"
+    assert clean_company_name("Home Depot, Inc. (The)") == "Home Depot"
+    assert clean_company_name("Apple Inc.") == "Apple"
+    assert clean_company_name("NVIDIA Corporation") == "NVIDIA"
+    assert clean_company_name("Microsoft Corp") == "Microsoft"
+    assert clean_company_name("JPMorgan Chase & Co.") == "JPMorgan Chase"
+    assert clean_company_name("Alphabet Inc. Class A") == "Alphabet"
+    assert clean_company_name("Berkshire Hathaway Inc. Class B") == (
+        "Berkshire Hathaway"
+    )
+    assert clean_company_name("Visa Inc. Class A") == "Visa"
+    assert clean_company_name("BP plc") == "BP"
+    assert clean_company_name("Unilever PLC") == "Unilever"
+    assert clean_company_name("Pearson plc") == "Pearson"
+    assert clean_company_name("Vale S.A.") == "Vale"
+    assert clean_company_name("Braskem S.A.") == "Braskem"
+    assert clean_company_name("ASML Holding N.V.") == "ASML"
+    assert clean_company_name("Loews Corporation") == "Loews"
+    assert clean_company_name("Synchrony Financial") == "Synchrony Financial"
+    # A name that is only a suffix keeps its raw form rather than
+    # emptying out.
+    assert clean_company_name("Inc") == "Inc"
+
+
+async def test_add_symbol_stores_cleaned_name(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path, [("AAPL", "Technology")])
+    service, _, broker, _ = make_service(session_factory, clock, calendar, config)
+    service.ensure_pool_loaded()
+    broker.asset_names["KO"] = "The Coca-Cola Company"
+
+    row = await service.add_symbol("KO", "Consumer Staples")
+    assert row.name == "Coca-Cola"
+    with session_factory() as session:
+        stored = session.execute(
+            select(UniversePoolRow).where(UniversePoolRow.symbol == "KO")
+        ).scalar_one()
+    assert stored.name == "Coca-Cola"
+
+
+async def test_import_csv_stores_names(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path, [("AAPL", "Technology")])
+    service, _, broker, _ = make_service(session_factory, clock, calendar, config)
+    service.ensure_pool_loaded()
+    broker.asset_names["PANW"] = "Palo Alto Networks, Inc."
+
+    added, _ = await service.import_csv("PANW,Technology\n")
+    assert added == ["PANW"]
+    with session_factory() as session:
+        row = session.execute(
+            select(UniversePoolRow).where(UniversePoolRow.symbol == "PANW")
+        ).scalar_one()
+    assert row.name == "Palo Alto Networks"
+
+
+async def test_screen_backfills_pool_names(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Seeded rows have no name until the daily screen fills them from
+    the broker's asset record — the backfill for the current pool."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("KO", "Consumer Staples")]
+    )
+    service, _, broker, _ = make_service(session_factory, clock, calendar, config)
+    service.ensure_pool_loaded()
+    with session_factory() as session:
+        assert session.execute(
+            select(UniversePoolRow.name).where(
+                UniversePoolRow.symbol == "KO"
+            )
+        ).scalar_one() is None
+    broker.asset_names.update(
+        {"AAPL": "Apple Inc.", "KO": "The Coca-Cola Company"}
+    )
+
+    result = await service.run_screen()
+    assert result.get("pool") == 2
+    with session_factory() as session:
+        names = dict(
+            session.execute(
+                select(UniversePoolRow.symbol, UniversePoolRow.name)
+            ).all()
+        )
+    assert names["AAPL"] == "Apple"
+    assert names["KO"] == "Coca-Cola"
+
+
+def test_symbol_names_pool_and_config_override(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Screened mode: pool names plus config overrides. Fixed mode:
+    config names only, like today."""
+    from app.decide.v4 import symbol_names
+
+    with session_factory() as session:
+        session.add(
+            UniversePoolRow(
+                symbol="KO",
+                sector="Consumer Staples",
+                source="default",
+                name="Coca-Cola",
+                added_at=datetime(2026, 10, 15, 12, 0),
+            )
+        )
+        session.add(
+            UniversePoolRow(
+                symbol="MSFT",
+                sector="Technology",
+                source="default",
+                name="Microsoft",
+                added_at=datetime(2026, 10, 15, 12, 0),
+            )
+        )
+        session.commit()
+
+        screened = AppConfig().overlay(
+            {"universe": {"mode": "screened", "names": {"MSFT": "MSFT Corp"}}}
+        )
+        names = symbol_names(screened, session)
+        # Pool names join the configured ones; config wins on conflicts.
+        assert names["KO"] == "Coca-Cola"
+        assert names["MSFT"] == "MSFT Corp"
+        assert names["AAPL"] == "Apple"  # the default config names stay
+
+        fixed = AppConfig().overlay({"universe": {"names": {"MSFT": "MSFT Corp"}}})
+        fixed_names = symbol_names(fixed, session)
+        assert "KO" not in fixed_names  # pool is screened-mode only
+        assert fixed_names["MSFT"] == "MSFT Corp"

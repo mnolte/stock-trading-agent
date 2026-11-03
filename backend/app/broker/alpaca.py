@@ -570,6 +570,7 @@ class AlpacaPaperBroker:
                     str(item.get("exchange")) if item.get("exchange") else None
                 ),
                 shortable=bool(item.get("shortable", False)),
+                name=str(item.get("name")) if item.get("name") else None,
             )
             return DataResult(data=asset, source="alpaca")
         except Exception as exc:  # noqa: BLE001

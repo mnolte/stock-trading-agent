@@ -352,6 +352,11 @@ class UniversePoolRow(Base):
     source: Mapped[str] = mapped_column(
         String(16), nullable=False
     )  # default | added | import
+    # Alpaca's asset name minus the corporate dressing — what
+    # ``about_symbol`` matches a headline against (cleaned at write by
+    # app.universe.names.clean_company_name; null until the add/screen
+    # path fills it).
+    name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     added_at: Mapped[datetime] = mapped_column(nullable=False)
     removed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

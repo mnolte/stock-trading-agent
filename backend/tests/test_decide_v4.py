@@ -623,6 +623,18 @@ def test_about_symbol() -> None:
     assert about_symbol("TSLA rises on deliveries", "TSLA", names) is True
 
 
+def test_about_symbol_with_pool_names() -> None:
+    """Pool names make the screened universe match like the fixed list:
+    the KO case and the RTX case (docs/SPEC.md, Fixes of 3 November)."""
+    names = {"KO": "Coca-Cola", "NVDA": "NVIDIA", "RTX": "RTX"}
+    assert about_symbol(
+        "Coca-Cola India Launches New Drink", "KO", names
+    ) is True
+    assert about_symbol(
+        "Nvidia RTX laptops get new models", "RTX", names
+    ) is False
+
+
 # ----------------------------------------------------------------------
 # the v4 snapshot builder
 

@@ -35,6 +35,7 @@ from app.decide.v3 import (
     v3_send_snapshot,
 )
 from app.market.clock import NY_TZ, UTC
+from app.universe.names import pool_names
 
 if TYPE_CHECKING:
     from app.market.calendar import CalendarProvider
@@ -114,18 +115,27 @@ def v4_config(config: AppConfig) -> V4Config:
     )
 
 
-def symbol_names(config: AppConfig) -> dict[str, str]:
-    """``universe.names``: the company name behind each ticker — what
-    ``about_symbol`` matches a headline against (docs/SPEC.md, Snapshot
-    v4 — the name from the pool or config)."""
+def symbol_names(config: AppConfig, session: Session | None = None) -> dict[str, str]:
+    """The company name behind each ticker — what ``about_symbol``
+    matches a headline against (docs/SPEC.md, Snapshot v4 — the name
+    from the pool or config). Screened mode reads ``universe_pool.name``
+    (Alpaca's asset name, cleaned); ``universe.names`` in config
+    overrides it. Fixed mode uses config as before."""
+    names: dict[str, str] = {}
+    if session is not None and str(
+        config.get("universe", "mode", default="fixed")
+    ) == "screened":
+        names.update(pool_names(session))
     raw = config.get("universe", "names", default=None)
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        str(symbol): str(name)
-        for symbol, name in raw.items()
-        if str(name).strip()
-    }
+    if isinstance(raw, dict):
+        names.update(
+            {
+                str(symbol): str(name)
+                for symbol, name in raw.items()
+                if str(name).strip()
+            }
+        )
+    return names
 
 
 # ----------------------------------------------------------------------
@@ -137,11 +147,12 @@ def about_symbol(title: str, symbol: str, names: dict[str, str]) -> bool:
 
     A title naming a *different* known company is not about this symbol
     even when the ticker appears in it — "Nvidia RTX laptops" is about
-    NVDA, not RTX.
+    NVDA, not RTX. A cleaned name identical to the ticker (RTX) matches
+    on the ticker path, which applies that same rejection.
     """
     low = title.lower()
     own = (names.get(symbol) or "").strip().lower()
-    if own and own in low:
+    if own and own != symbol.lower() and own in low:
         return True
     # One-character tickers match any standalone word ("a deal", "T
     # bonds") — they can only ever match on the company name above.
