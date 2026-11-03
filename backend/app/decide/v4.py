@@ -581,10 +581,14 @@ def _headlines_v4(
 
 def _stop_groups(options: list[dict[str, Any]]) -> None:
     """``stop_group`` S1, S2, … — options sharing a stop share a group
-    (docs/SPEC.md, Snapshot v4 — Options)."""
-    groups: dict[str, str] = {}
+    (docs/SPEC.md, Snapshot v4 — Options). The group keys on the Decimal
+    value: 101.70 and 101.7 are the same stop (docs/SPEC.md, Fixes of
+    3 November)."""
+    groups: dict[Any, str] = {}
     for option in options:
-        key = str(option.get("stop"))
+        key: Any = _dec_or_none(option.get("stop"))
+        if key is None:
+            key = str(option.get("stop"))
         if key not in groups:
             groups[key] = f"S{len(groups) + 1}"
         option["stop_group"] = groups[key]

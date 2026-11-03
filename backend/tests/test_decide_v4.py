@@ -786,6 +786,21 @@ def test_v4_stop_groups() -> None:
     assert len(set(groups)) == len({str(o["stop"]) for o in build.fields["options"]})
 
 
+def test_v4_stop_group_keys_on_decimal() -> None:
+    """101.70 and 101.7 are the same stop — the group keys on the Decimal
+    value, not the text form (docs/SPEC.md, Fixes of 3 November)."""
+    from app.decide.v4 import _stop_groups
+
+    options = [
+        {"id": "A", "stop": "101.70"},
+        {"id": "B", "stop": 101.7},
+        {"id": "C", "stop": Decimal("101.700")},
+        {"id": "D", "stop": "102.50"},
+    ]
+    _stop_groups(options)
+    assert [o["stop_group"] for o in options] == ["S1", "S1", "S1", "S2"]
+
+
 def test_v4_level_cap_keeps_option_and_stop_levels() -> None:
     config = AppConfig()
     stored = {
