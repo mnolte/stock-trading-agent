@@ -590,6 +590,17 @@ def _headlines_v4(
     return (own + rest)[: v4.max_headlines]
 
 
+def _earnings_status(earnings: dict[str, Any], base: dict[str, Any]) -> str:
+    """``none_in_window`` | ``scheduled`` | ``unavailable`` — never all
+    null without a status (docs/SPEC.md, Fixes of 3 November)."""
+    days = earnings.get("days")
+    if days == UNAVAILABLE or base.get("days_to_earnings") == UNAVAILABLE:
+        return "unavailable"
+    if earnings.get("date") is not None or days is not None:
+        return "scheduled"
+    return "none_in_window"
+
+
 def _stop_groups(options: list[dict[str, Any]]) -> None:
     """``stop_group`` S1, S2, … — options sharing a stop share a group
     (docs/SPEC.md, Snapshot v4 — Options). The group keys on the Decimal
@@ -655,6 +666,9 @@ def build_v4_fields(
     symbol = str(base.get("symbol") or "")
 
     fields["session"] = {"minutes_left": minutes_left(cycle_time_ny, calendar)}
+    earnings_block = (fields.get("checks") or {}).get("earnings")
+    if isinstance(earnings_block, dict):
+        earnings_block["status"] = _earnings_status(earnings_block, base)
     headlines = _headlines_v4(base, symbol, names or {}, previous, v4)
     fields["headlines"] = headlines
 

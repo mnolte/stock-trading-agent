@@ -813,6 +813,41 @@ def test_v4_stop_group_keys_on_decimal() -> None:
     assert [o["stop_group"] for o in options] == ["S1", "S1", "S1", "S2"]
 
 
+def test_v4_earnings_status() -> None:
+    """``checks.earnings.status`` is none_in_window, scheduled or
+    unavailable — never all null without a status (docs/SPEC.md, Fixes
+    of 3 November). The KO case was all null and meant none_in_window."""
+    config = AppConfig()
+
+    def _fields(base: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return build_v4_fields(
+            context="candidate", base=base, price=Decimal("100"),
+            reference=Decimal("100"), atr_1h=Decimal("1.0"),
+            indicators=indicators_from_snapshot("T", base),
+            regime=regime_from_snapshot(base, config), names={},
+            calendar=_calendar("2026-10-30"), config=config,
+            cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+            **kwargs,
+        ).fields
+
+    # The calendar answered and no report sits in the window.
+    earn = _fields(_base_snapshot())["checks"]["earnings"]
+    assert earn["status"] == "none_in_window"
+    assert earn["days"] is None and earn["date"] is None
+
+    # A report in the window.
+    earn = _fields(
+        _base_snapshot(), earnings=(date(2026, 11, 5), "before_open")
+    )["checks"]["earnings"]
+    assert earn["status"] == "scheduled"
+    assert earn["date"] == "2026-11-05"
+
+    # The source failed — never readable as "no news".
+    base = {**_base_snapshot(), "days_to_earnings": "unavailable"}
+    earn = _fields(base)["checks"]["earnings"]
+    assert earn["status"] == "unavailable"
+
+
 def test_v4_level_cap_keeps_option_and_stop_levels() -> None:
     config = AppConfig()
     stored = {
