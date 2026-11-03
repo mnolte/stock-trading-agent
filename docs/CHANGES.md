@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-03 — Warm-up: gaps at the source
+
+- From PR 100. One daily bar that never existed at the source (a halt, a feed gap) kept a symbol "Warming up: 259 of 260" forever.
+- **Adding a symbol → Gaps at the source:**
+  - up to `schedule.history_missing_tolerance` (3) sessions without a daily bar at the source count as loaded;
+  - only when the request succeeded and returned no bar, and never in the last 5 sessions;
+  - 5-minute history stays strict;
+  - forgiven sessions are shown on Universe and logged once.
+
 ## 2026-11-03 — Ask the agent: config defaults and the gpt-6.1-sol model (PR 36)
 
 - `config.example.yaml` gains the `ask` block: enabled, model `claude-sonnet-5-5`, $15 monthly cap, $0.25 per-answer cap, 90-day chat retention, 60k context tokens, 8 tool rounds, 6k tool-result tokens, 90s answer timeout, 10 questions per minute, 100 notes and empty standing instructions.

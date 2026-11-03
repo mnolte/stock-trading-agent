@@ -307,7 +307,13 @@ Risk gates run in code after the model answers, in the order below; the first ga
 
 **Reset paper account.** Alpaca's API can't restore the balance, so a reset has two steps. The Settings button turns the kill switch on, closes all positions and cancels all orders at Alpaca, records a `paper_reset` event, and tells Marc to reset the balance in the Alpaca dashboard. "Start new run" then checks that there are no positions or open orders and that equity equals the starting balance (`performance.starting_equity`, ±1%); if not, it says which check failed. A new run is stored in a `runs` table and restarts the SPY benchmark, the peak equity for the drawdown kill, the losing streak and the daily loss baseline. Earlier runs stay viewable in Performance and past decisions stay in the log. Trading resumes only through the normal kill-switch resume.
 
-**Adding a symbol.** Settings requires a sector from a fixed list (the 11 GICS sectors plus Index) when adding a symbol. The symbol must be an active, tradable US stock or ETF at Alpaca. A new symbol shows "Warming up" and gets no entries until its 260 daily bars and 60 sessions of 5-minute bars are loaded.
+**Adding a symbol.** Settings requires a sector from a fixed list (the 11 GICS sectors plus Index) when adding a symbol. The symbol must be an active, tradable US stock or ETF at Alpaca. A new symbol shows "Warming up" and gets no entries until its 260 daily bars and 60 sessions of 5-minute bars are loaded. **Gaps at the source.**
+- A session with no daily bar at the source (a trading halt, a feed gap) counts as loaded, up to `schedule.history_missing_tolerance` (3) such sessions in the 260.
+- It counts only when the request for that period succeeded and returned no bar. A failed or partial download never counts.
+- It never counts for the last 5 sessions: the prior-session levels, ATR and gap use them, and a symbol halted that recently waits.
+- 5-minute history has no tolerance: all 60 sessions must be there.
+- The Universe screen shows the forgiven sessions ("warmed · 1 daily bar missing at the source: Thu 12 Mar"), and the first time a session is forgiven it is logged at INFO.
+- With 0 the old rule applies.
 
 ## GUI
 
