@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -361,11 +361,18 @@ class OutcomeWorker:
         from the decision ("not_filled" otherwise); bars after the fill bar
         decide, and a bar touching both counts as a stop touch. The traded
         option uses the real fill and the stored ``first_touch``.
+
+        The limit is one value per decision: stored options carry no
+        per-option entry, so it comes from the snapshot's constraints or
+        an option's ``stop + risk`` (the stored risk is limit − stop).
         """
         if outcome.option_touches is not None:
             return True
         options_raw = (decision.options or {}).get("options", [])
         if not isinstance(options_raw, list) or not options_raw:
+            # No offered options → nothing to record; marking it done
+            # keeps the row out of the backfill scan.
+            outcome.option_touches = {}
             return True
         assert self.market_data is not None  # noqa: S101 - internal invariant
         if outcome.price_5sessions_at is None:
@@ -374,11 +381,20 @@ class OutcomeWorker:
         bars = self.market_data.get_5m_bars(decision.symbol, decision_time, end)
         if not bars:
             outcome.option_touches = {
-                str(o.get("id")): None
+                str(o.get("id") or o.get("option_id")): None
                 for o in options_raw
                 if isinstance(o, dict)
             }
             return False
+        snapshot = decision.input_snapshot
+        constraints = (
+            snapshot.get("constraints") if isinstance(snapshot, dict) else None
+        )
+        shared_limit = (
+            constraints.get("entry_limit")
+            if isinstance(constraints, dict)
+            else None
+        )
         # ``get_5m_bars`` returns bars in start order already.
         traded_id = decision.chosen_option
         touches: dict[str, object] = {}
@@ -386,35 +402,66 @@ class OutcomeWorker:
         for option in options_raw:
             if not isinstance(option, dict):
                 continue
-            oid = str(option.get("id"))
+            oid = str(option.get("id") or option.get("option_id"))
             if oid == traded_id and outcome.first_touch is not None:
                 touches[oid] = outcome.first_touch
                 continue
             entry = option.get("entry_limit", option.get("entry"))
             stop = option.get("stop")
             target = option.get("target")
-            if entry is None or stop is None or target is None:
+            try:
+                if entry is None:
+                    entry = shared_limit
+                if (
+                    entry is None
+                    and stop is not None
+                    and option.get("risk") is not None
+                ):
+                    entry = Decimal(str(stop)) + Decimal(str(option["risk"]))
+                limit = Decimal(str(entry)) if entry is not None else None
+                stop_d = Decimal(str(stop)) if stop is not None else None
+                target_d = (
+                    Decimal(str(target)) if target is not None else None
+                )
+            except InvalidOperation:
+                logger.warning(
+                    "option %s touch left null: unparseable price "
+                    "(decision %d)",
+                    oid,
+                    decision.id,
+                )
+                limit = stop_d = target_d = None
+            if (
+                limit is None
+                or stop_d is None
+                or target_d is None
+                or not limit.is_finite()
+                or not stop_d.is_finite()
+                or not target_d.is_finite()
+            ):
                 touches[oid] = None
                 all_filled = False
                 continue
-            limit = Decimal(str(entry))
             fill_index: int | None = None
             for index, bar in enumerate(bars):
                 if bar.start - decision_time > timedelta(minutes=10):
                     break
-                if bar.low <= limit <= bar.high or bar.low <= limit:
+                if bar.low <= limit:
                     fill_index = index
                     break
             if fill_index is None:
                 touches[oid] = "not_filled"
                 continue
             touch: str = _TOUCH_NEITHER
-            for bar in bars[fill_index:]:
+            # Only bars after the fill bar decide — a fill-bar touch of
+            # the stop or target does not count (docs/SPEC.md, Option
+            # outcomes: "After the fill bar, the first bar…").
+            for bar in bars[fill_index + 1 :]:
                 # A bar touching both counts as a stop touch.
-                if bar.low <= Decimal(str(stop)):
+                if bar.low <= stop_d:
                     touch = _TOUCH_STOP
                     break
-                if bar.high >= Decimal(str(target)):
+                if bar.high >= target_d:
                     touch = _TOUCH_TARGET
                     break
             touches[oid] = touch

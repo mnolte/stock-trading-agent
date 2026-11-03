@@ -172,6 +172,12 @@ def _numbers_in(result: Any, found: set[str]) -> None:
         return
     if isinstance(result, (int, float, Decimal)):
         found.add(str(result))
+    elif isinstance(result, str):
+        # Money and prices reach the model as strings (``_dec``); a string
+        # that parses as a number is a number in the data.
+        canon = _norm_num(result)
+        if canon is not None:
+            found.add(canon)
     elif isinstance(result, dict):
         for v in result.values():
             _numbers_in(v, found)
@@ -209,7 +215,8 @@ def check_numbers(text: str, known: set[str]) -> tuple[list[dict[str, Any]], lis
         if canon in known:
             checked.add(raw)
             continue
-        # Rounded matches: "-32.8" covers "-32.80".
+        # Rounded matches: "-32.8" covers "-32.80". Sign ignored: a
+        # loss in the data ("-24.15") verifies "24.15 loss" in the text.
         try:
             dec = Decimal(canon)
         except (InvalidOperation, ValueError):
@@ -220,7 +227,9 @@ def check_numbers(text: str, known: set[str]) -> tuple[list[dict[str, Any]], lis
                 kd = Decimal(k)
             except (InvalidOperation, ValueError):
                 continue
-            if kd == dec or kd.quantize(Decimal("0.1")) == dec.quantize(Decimal("0.1")):
+            if abs(kd) == abs(dec) or abs(kd).quantize(Decimal("0.1")) == abs(
+                dec
+            ).quantize(Decimal("0.1")):
                 hit = True
                 break
         if hit:

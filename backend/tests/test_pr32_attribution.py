@@ -390,6 +390,7 @@ async def test_verdict_execution_filled_and_not_filled(
             final_action="enter",
             option_id="A",
             options=[{"id": "A", "entry_limit": 100, "stop": 97, "target": 106}],
+            option_touches={"A": "target"},
             first_touch="target",
         )
         _seed_position(
@@ -443,6 +444,38 @@ async def test_model_cannot_change_the_label(
         assert verdict.prompt_version == "verdict.v2"
 
 
+async def test_due_verdict_waits_for_option_touches(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A decision with offered options isn't due until the worker has
+    recorded their touches — the 5-session result isn't complete."""
+    scheduled = _ny(date(2026, 10, 15))
+    with session_factory() as session:
+        decision = _seed_decision(
+            session,
+            scheduled,
+            symbol="AMZN",
+            model_action="skip",
+            options=[{"id": "A", "entry_limit": 100, "stop": 97, "target": 106}],
+            option_touches=None,
+        )
+        session.commit()
+    service = _service(
+        session_factory,
+        FakeClock(datetime(2026, 10, 22, 12, 0, tzinfo=UTC)),
+        client=FakeReviewClient(),
+    )
+    assert await service.write_due_verdicts() == 0
+
+    with session_factory() as session:
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision.id)
+        ).scalar_one()
+        outcome.option_touches = {"A": "target"}
+        session.commit()
+    assert await service.write_due_verdicts() == 1
+
+
 async def test_thesis_contradiction_and_number_check_fallback(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -459,6 +492,7 @@ async def test_thesis_contradiction_and_number_check_fallback(
             final_action="enter",
             option_id="A",
             options=[{"id": "A", "entry_limit": 100, "stop": 97, "target": 106}],
+            option_touches={"A": "stop"},
             first_touch="stop",
             thesis="daily trend up",
             indicators=True,  # trend_daily is "mixed" in this snapshot
@@ -506,6 +540,7 @@ async def test_thesis_contradiction_and_number_check_fallback(
             final_action="enter",
             option_id="A",
             options=[{"id": "A", "entry_limit": 100, "stop": 97, "target": 106}],
+            option_touches={"A": "target"},
             first_touch="target",
             thesis="daily trend up",
             indicators=True,
@@ -599,6 +634,7 @@ async def test_weekly_verdict_groups_and_sample(
             session, _ny(date(2026, 10, 14)), symbol="MA",
             model_action="enter", final_action="skip",
             option_id="B", options=[{"id": "B", "entry_limit": 1, "stop": 1, "target": 1}],
+            option_touches={"B": "stop"},
             change_reason="Reward to risk ≥ 1.5",
         )
         model_skip = _seed_decision(

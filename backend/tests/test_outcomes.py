@@ -818,6 +818,208 @@ async def test_equity_snapshot_carries_benchmark_and_fx(
     assert snapshot.eur_usd_rate == Decimal("1.12")  # FakeFXSource
 
 
+# ----------------------------------------------------------------------
+# option touches (docs/SPEC.md, Option outcomes)
+
+
+def _seed_option_decision(
+    session_factory: sessionmaker[Session],
+    scheduled_utc: datetime,
+    *,
+    options: list[dict[str, object]],
+    entry_limit: float | None = 420.0,
+) -> int:
+    """A candidate decision with v2+-shaped options: no per-option
+    entry — the limit lives in the snapshot's constraints."""
+    with session_factory() as session:
+        cycle = Cycle(
+            kind="cycle",
+            scheduled_time=_naive(scheduled_utc),
+            started_at=_naive(scheduled_utc),
+            finished_at=_naive(scheduled_utc + timedelta(minutes=1)),
+            status="done",
+        )
+        session.add(cycle)
+        session.flush()
+        snapshot: dict[str, object] = {"symbol": "MSFT", "price": 420.0}
+        if entry_limit is not None:
+            snapshot["constraints"] = {"entry_limit": entry_limit}
+        decision = Decision(
+            cycle_id=cycle.id,
+            symbol="MSFT",
+            context="candidate",
+            input_snapshot=snapshot,
+            rules_result={"status": "pass", "reason": None, "checks": []},
+            model_output={"action": "skip", "confidence": 0.6},
+            validation_result={
+                "valid": True,
+                "model_action": "skip",
+                "final_action": "skip",
+                "changed_by_code": False,
+            },
+            final_action="skip",
+            prompt_version="decision.v4",
+            prompt_hash="abc",
+            model="fake-decision",
+            options={"options_version": "v4", "options": options},
+        )
+        session.add(decision)
+        session.flush()
+        session.add(Outcome(decision_id=decision.id))
+        session.commit()
+        return decision.id
+
+
+async def test_option_touches_use_the_shared_entry_limit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Options carry no per-option entry: the snapshot's constraints
+    supply the limit the fill check measures (SPEC, Option outcomes)."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)  # Thu 10:46
+    target = datetime(2026, 10, 22, 14, 46, tzinfo=UTC)  # 5 sessions on
+    clock = FakeClock(target + DELAY)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        options=[
+            {"id": "A", "stop": 415.0, "target": 430.0, "rr": 3.0, "risk": 5.0},
+            {"id": "B", "stop": 418.0, "target": 435.0, "rr": 7.5, "risk": 2.0},
+            {"id": "C", "stop": 419.6, "target": 432.0, "rr": 30.0, "risk": 0.4},
+        ],
+    )
+    _seed_bars(
+        session_factory,
+        [
+            # Fill bar inside the 10-minute window: low reaches the 420
+            # limit — and dips under C's 419.6 stop, which must NOT count
+            # (only bars after the fill bar decide).
+            (datetime(2026, 10, 15, 14, 50, tzinfo=UTC), 421, 422, 419.5, 421),
+            # Later bar: reaches A's 430 target, never B's 418 stop or
+            # 435 target; stays above C's 419.6 stop and below its target.
+            (datetime(2026, 10, 15, 15, 30, tzinfo=UTC), 421, 431, 419.8, 430.5),
+            # Closed at the 5-session target so the fill runs this pass.
+            (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+
+    outcome = _outcome(session_factory, decision_id)
+    assert outcome.price_5sessions is not None
+    assert outcome.option_touches == {
+        "A": "target",
+        "B": "neither",
+        "C": "neither",
+    }
+
+
+async def test_option_touches_not_filled_past_the_window(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """No bar's low reaching the limit inside 10 minutes is not_filled —
+    a dip after the window does not count."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    target = datetime(2026, 10, 22, 14, 46, tzinfo=UTC)
+    clock = FakeClock(target + DELAY)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        options=[
+            {"id": "A", "stop": 415.0, "target": 430.0, "rr": 3.0, "risk": 5.0},
+        ],
+    )
+    _seed_bars(
+        session_factory,
+        [
+            # Inside the window the low stays above the 420 limit.
+            (datetime(2026, 10, 15, 14, 50, tzinfo=UTC), 421, 422, 420.5, 421),
+            # Past the window a low reaches the limit — too late.
+            (datetime(2026, 10, 15, 15, 0, tzinfo=UTC), 421, 422, 419, 420),
+            (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).option_touches == {
+        "A": "not_filled"
+    }
+
+
+async def test_option_touches_fall_back_to_stop_plus_risk(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Without a constraints limit, stop + stored risk (limit − stop per
+    share) still reconstructs the option's fill price."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    target = datetime(2026, 10, 22, 14, 46, tzinfo=UTC)
+    clock = FakeClock(target + DELAY)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        entry_limit=None,  # no constraints block at all
+        options=[
+            # risk 5.0 + stop 415.0 → the 420 limit.
+            {"id": "A", "stop": 415.0, "target": 430.0, "rr": 3.0, "risk": 5.0},
+        ],
+    )
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 14, 50, tzinfo=UTC), 421, 422, 419.5, 421),
+            (datetime(2026, 10, 15, 15, 30, tzinfo=UTC), 421, 431, 419, 430.5),
+            (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).option_touches == {
+        "A": "target"
+    }
+
+
+async def test_option_touches_null_without_a_limit(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """No per-option entry, no constraints limit and no risk: the touch
+    stays null — missing data, never a guessed fill."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    target = datetime(2026, 10, 22, 14, 46, tzinfo=UTC)
+    clock = FakeClock(target + DELAY)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        entry_limit=None,
+        options=[
+            {"id": "A", "stop": 415.0, "target": 430.0},
+        ],
+    )
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 14, 50, tzinfo=UTC), 421, 422, 419.5, 421),
+            (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
+        ],
+    )
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+
+    assert _outcome(session_factory, decision_id).option_touches == {"A": None}
+
+
 async def test_equity_snapshot_backfills_run_spy_close(
     session_factory: sessionmaker[Session],
 ) -> None:

@@ -2,6 +2,30 @@
 
 Newest first.
 
+## 2026-11-03 — Option outcomes: verdicts get their 5-session results back
+
+- `_fill_option_touches` read `entry_limit`/`entry` off each stored
+  option, but the v2/v3/v4 option column never carries one — every
+  recorded `option_touches` was all-null and every options-based verdict
+  drafted "mixed or unknown outcomes" / `unclear`. The limit is one
+  value per decision: it now comes from the snapshot's
+  `constraints.entry_limit`, falling back to an option's `stop + risk`
+  (the stored risk is limit − stop per share).
+- Migration `l2m3n4o5p6q7` clears the all-null touch dicts so the worker
+  recomputes them, and drops the draft verdicts written from them (42 on
+  the live data) so the scan rewrites them with real outcomes. Confirmed
+  verdicts keep Marc's call.
+- `verdict_facts` falls back to an option's stored `rr` when no
+  per-option entry exists to recompute it.
+- The verdict scan now waits for `option_touches` on decisions that
+  offered options — the 5-session result is not complete without them —
+  instead of drafting on missing touches; and the touch fill marks
+  no-option rows done (`{}`) and leaves a null touch with a warning on
+  unparseable prices rather than aborting the pass.
+- The touch scan now skips the fill bar itself, per the spec's "after
+  the fill bar": a bar that dips to the limit and to a stop in the same
+  five minutes no longer counts as a stop touch.
+
 ## 2026-11-03 — Decision v4 review; Decision v5 (PR 37)
 
 - Review of the v4 prompt and the KO call of 3 Nov 15:46 NY: `docs/analysis/2026-11-03-decision-v4-review.md`.
@@ -25,6 +49,17 @@ Newest first.
   - a Needs you item for an outlier overnight hold at a loss.
 - New prompt `backend/prompts/decision.v5.md`, not in the manifest until PR 37 wires it. Config blocks come with the code (rule 7).
 - Build plan item 37. Shadows to start after PR 37: F (v5), G (v4 + ev gate), H (no 10:46 entries).
+
+## 2026-11-03 — Ask: the number check sees tool-result strings and magnitudes
+
+- Tool results serialize every money and price field via `_dec` → `str`,
+  but `_numbers_in` only collected `int`/`float`/`Decimal` — so figures
+  like `if_stop_usd` never reached the known set and correct answers
+  were flagged "not found in the data". Strings that parse as numbers
+  now count.
+- The check also matches by magnitude: a loss stored as `"-24.15"`
+  verifies "USD 24.15 loss" in the answer text, rounded as before. The
+  check attests the number was in the data, not the sign of the claim.
 
 ## 2026-11-03 — Settings: the Ask section reaches the form
 
