@@ -123,9 +123,15 @@ def _bounded(rows: list[dict[str, Any]], limit: int, hint: str, deps: AskDeps) -
     return out
 
 
-def _period_bounds(period: str | None, days: int | None) -> tuple[datetime, datetime] | None:
+def _period_bounds(
+    period: str | None, days: int | None, deps: AskDeps | None = None
+) -> tuple[datetime, datetime] | None:
     """``"2026-10-20..2026-10-25"`` or ``days`` → naive-UTC [start, end)."""
-    today = datetime.now(UTC).date()
+    today = (
+        deps.clock.now().astimezone(UTC).date()
+        if deps is not None
+        else datetime.now(UTC).date()
+    )
     if days is not None:
         start = today - timedelta(days=max(0, min(days, 3650)))
         return datetime.combine(start, dtime.min), datetime.combine(
@@ -486,7 +492,9 @@ def list_positions(session: Session, deps: AskDeps, _args: Any) -> dict[str, Any
         if p.current_stop_price is not None:
             if_stops += p.qty * (p.current_stop_price - p.avg_entry_price)
     open_risk_usd = open_risk(
-        (p.qty, p.avg_entry_price, p.current_stop_price or Decimal(0)) for p in rows
+        (p.qty, p.avg_entry_price, p.current_stop_price)
+        for p in rows
+        if p.current_stop_price is not None
     )
     return {
         "as_of": _as_of(deps),
@@ -611,7 +619,7 @@ def search_orders(session: Session, deps: AskDeps, args: SearchOrdersArg) -> dic
         q = q.where(Order.leg == args.leg)
     if args.status:
         q = q.where(Order.status == args.status)
-    bounds = _period_bounds(args.period, args.days)
+    bounds = _period_bounds(args.period, args.days, deps)
     if bounds:
         q = q.where(Order.created_at >= bounds[0], Order.created_at < bounds[1])
     rows = (
@@ -661,7 +669,7 @@ def _decision_line(
 def search_decisions(session: Session, deps: AskDeps, args: SearchDecisionsArg) -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     cycle_times = {c.id: c.scheduled_time for c in session.execute(select(Cycle)).scalars().all()}
-    bounds = _period_bounds(args.period, args.days)
+    bounds = _period_bounds(args.period, args.days, deps)
 
     def want_strategy(strategy: str | None, is_shadow: bool, name: str | None) -> bool:
         if strategy is None:
@@ -1035,7 +1043,7 @@ def search_logs(session: Session, deps: AskDeps, args: LogsArg) -> dict[str, Any
         safe = args.text.replace('"', " ")[:200]
         conds.append("id IN (SELECT rowid FROM log_lines_fts WHERE log_lines_fts MATCH :match)")
         params["match"] = '"' + safe.replace(" ", '" "') + '"'
-    bounds = _period_bounds(args.period, args.days)
+    bounds = _period_bounds(args.period, args.days, deps)
     if bounds:
         conds.append("ts >= :start AND ts < :end")
         params["start"] = bounds[0].isoformat()
@@ -1080,7 +1088,7 @@ def search_model_calls(session: Session, deps: AskDeps, args: CallsArg) -> dict[
         q = q.where(LlmCall.outcome == args.outcome)
     if args.model:
         q = q.where(LlmCall.model == args.model)
-    bounds = _period_bounds(args.period, args.days)
+    bounds = _period_bounds(args.period, args.days, deps)
     if bounds:
         q = q.where(LlmCall.sent_at >= bounds[0], LlmCall.sent_at < bounds[1])
     rows = (

@@ -297,7 +297,6 @@ async def answer(
     error_text: str | None = None
     deadline = time.monotonic() + timeout
     tools_on = True
-    sent_at = clock.now()
 
     with session_factory() as session:
         thread_row = session.get(AskThread, thread_id)
@@ -384,7 +383,7 @@ async def answer(
                 error_type="api_error",
             )
         call_cost = converse_cost(result, config)
-        call_sent = _naive_utc(sent_at)
+        call_sent = _naive_utc(clock.now())
         # Record the round as an llm_calls row (same tx as nothing else —
         # the call already returned).
         with session_factory() as session:
