@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import AppConfig
 from app.data.models import Bar1h, Bar5m, DailyBar
-from app.db.models import Cycle, Decision, ShadowDecision
+from app.db.models import Cycle, Decision, ShadowDecision, UniversePoolRow
 from app.decide.snapshot import UNAVAILABLE
 from app.decide.v2inputs import V2Build
 from app.decide.v3 import (
@@ -35,7 +35,6 @@ from app.decide.v3 import (
     v3_send_snapshot,
 )
 from app.market.clock import NY_TZ, UTC
-from app.universe.names import pool_names
 
 if TYPE_CHECKING:
     from app.market.calendar import CalendarProvider
@@ -113,6 +112,23 @@ def v4_config(config: AppConfig) -> V4Config:
             config.get("decision", "v4", "checks_gate", default=False)
         ),
     )
+
+
+def pool_names(session: Session) -> dict[str, str]:
+    """``{symbol: cleaned name}`` for the active pool rows that have one —
+    the screened-mode source for ``about_symbol`` (docs/SPEC.md, Fixes
+    of 3 November). Lives here, not in ``app.universe``: importing that
+    package pulls in the broker client (the shadow-isolation rule)."""
+    return {
+        symbol: name
+        for symbol, name in session.execute(
+            select(UniversePoolRow.symbol, UniversePoolRow.name).where(
+                UniversePoolRow.removed_at.is_(None),
+                UniversePoolRow.name.is_not(None),
+            )
+        )
+        if name
+    }
 
 
 def symbol_names(config: AppConfig, session: Session | None = None) -> dict[str, str]:

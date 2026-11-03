@@ -3,19 +3,14 @@
 
 ``universe_pool.name`` holds Alpaca's asset name cleaned of corporate
 suffixes ("Inc", "Corp", "(The)", "Class A", …), so a headline can match
-the name people actually write. ``pool_names`` is the screened-mode
-source behind ``decide.v4.symbol_names``; ``universe.names`` in config
-overrides it.
+the name people actually write. ``decide.v4.pool_names`` reads it —
+kept there so the decide package never loads this package's service
+(the shadow-isolation rule).
 """
 
 from __future__ import annotations
 
 import re
-
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from app.db.models import UniversePoolRow
 
 # "(The)", "(Delaware)" and friends never carry the name.
 _PAREN = re.compile(r"\s*\([^)]*\)\s*")
@@ -54,17 +49,3 @@ def clean_company_name(raw: str | None) -> str | None:
         name = new
     name = _LEADING_THE.sub("", name).strip(" ,.")
     return name or raw.strip(" ,.")
-
-
-def pool_names(session: Session) -> dict[str, str]:
-    """``{symbol: cleaned name}`` for the active pool rows that have one."""
-    return {
-        symbol: name
-        for symbol, name in session.execute(
-            select(UniversePoolRow.symbol, UniversePoolRow.name).where(
-                UniversePoolRow.removed_at.is_(None),
-                UniversePoolRow.name.is_not(None),
-            )
-        )
-        if name
-    }
