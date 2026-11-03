@@ -5,7 +5,6 @@ import type { Location } from 'react-router-dom';
 import { LiveUpdatesProvider } from './api/live';
 import { useAuthStatus } from './api/auth';
 import { AskProvider } from './ask/AskContext';
-import { AskDrawer } from './ask/AskDrawer';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { RouteNotFound } from './components/errorPages';
@@ -103,7 +102,6 @@ function App() {
       <LiveUpdatesProvider>
         <AskProvider>
           <AppRoutes />
-          <AskDrawer />
         </AskProvider>
       </LiveUpdatesProvider>
     </BrowserRouter>
