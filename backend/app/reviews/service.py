@@ -793,6 +793,16 @@ class ReviewService:
             for decision, scheduled, outcome in rows:
                 if not verdict_eligible(decision):
                     continue
+                options = (decision.options or {}).get("options")
+                if (
+                    isinstance(options, list)
+                    and options
+                    and outcome.option_touches is None
+                ):
+                    # Option outcomes are recorded with the 5-session
+                    # result — wait for them rather than drafting on
+                    # missing touches (docs/SPEC.md, Option outcomes).
+                    continue
                 facts = verdict_facts(
                     session,
                     config=self.config,

@@ -1002,6 +1002,12 @@ def verdict_facts(
                 risk = Decimal(str(entry)) - Decimal(str(stop))
                 if risk > 0:
                     rr = float((Decimal(str(target)) - Decimal(str(entry))) / risk)
+            if rr is None:
+                # v2+ options carry no per-option entry but store the
+                # code-computed reward to risk.
+                stored_rr = option.get("rr")
+                if isinstance(stored_rr, int | float | Decimal):
+                    rr = float(stored_rr)
             touch = touches.get(str(oid)) if isinstance(touches, dict) else None
             options_facts.append({"option_id": oid, "rr": rr, "touch": touch})
     trade: dict[str, Any] | None = None
