@@ -75,7 +75,8 @@ def rsi(closes: Sequence[Decimal], period: int) -> Decimal | None:
         avg_gain = (avg_gain * (period - 1) + max(change, Decimal(0))) / Decimal(period)
         avg_loss = (avg_loss * (period - 1) + max(-change, Decimal(0))) / Decimal(period)
     if avg_loss == 0:
-        return Decimal(100)
+        # All gains reads 100; a flat series (0/0) is neutral, not "all gains".
+        return Decimal(100) if avg_gain > 0 else Decimal(50)
     rs = avg_gain / avg_loss
     return Decimal(100) - Decimal(100) / (Decimal(1) + rs)
 
@@ -118,7 +119,8 @@ def session_vwap(bars: Sequence[Ohlcv]) -> Decimal | None:
 
 
 def obv_trend(bars: Sequence[Ohlcv], lookback: int) -> str | None:
-    """OBV direction over the last ``lookback`` bar-to-bar moves: up/down/flat."""
+    """OBV direction: the sign of the OBV change across the last ``lookback``
+    bars (``lookback`` - 1 moves, so ``lookback`` + 1 bars are required)."""
     if lookback <= 0 or len(bars) < lookback + 1:
         return None
     obv = Decimal(0)

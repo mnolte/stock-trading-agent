@@ -39,7 +39,6 @@ from app.auth.passwords import (
     normalise_recovery_code,
     otpauth_uri,
     verify_password,
-    verify_totp,
     verify_totp_step,
 )
 from app.config import AppConfig
@@ -322,6 +321,11 @@ class AuthService:
                 raise AuthError(503, "unavailable", "Sign-in is not set up.")
             if not verify_password(user.password_hash, password):
                 raise self._failed(session, ip)
+        # Drop expired tickets while we're here so _pending can't grow.
+        now = self._now()
+        for key, ticket in list(self._pending.items()):
+            if ticket["expires"] <= now:  # type: ignore[operator]
+                self._drop_pending(key)
         token = new_pending_token()
         self._pending[hash_token(token)] = {
             "expires": self._now() + PENDING_TTL,
@@ -484,11 +488,20 @@ class AuthService:
             if row is None or user is None:
                 raise AuthError(401, "not_signed_in", "Sign in first.")
             ok = verify_password(user.password_hash, secret)
+            matched_step = -1
             if not ok:
-                ok = verify_totp(self._totp_secret(user), secret, now)
+                # Same once-per-step rule as sign-in: a code already used
+                # (here or at sign-in) is refused on replay.
+                ok, matched_step = verify_totp_step(
+                    self._totp_secret(user), secret, now
+                )
+                if ok and matched_step <= (user.last_totp_step or -1):
+                    ok = False
             if not ok:
                 self._session_failed(session, key, row.ip)
                 raise AuthError(401, "invalid_credentials", _WRONG)
+            if matched_step >= 0:
+                user.last_totp_step = matched_step
             self._confirm_failures.pop(key, None)
             minutes = int(self._config.get("auth", "confirm_minutes", default=5))
             row.confirmed_until = _naive_utc(now + timedelta(minutes=minutes))

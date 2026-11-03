@@ -18,7 +18,7 @@ requests to the app on 127.0.0.1 (CORS does not stop simple
   either header (curl, scripts) passes — browsers always send them on
   cross-site writes.
 - **Content type.** A write with a body must be ``application/json``
-  (415); the CSV import is the only endpoint allowed a multipart body.
+  (415).
 - **Size.** Bodies are capped at ``security.max_body_kb`` — the import at
   ``security.max_upload_kb`` — counted while reading, not after: 413
   ``too_large`` the moment the cap is crossed (or up front from a too-big
@@ -41,8 +41,8 @@ logger = logging.getLogger(__name__)
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "::1"})
 _SAFE_FETCH_SITES = frozenset({"same-origin", "none"})
-# The CSV import is the one endpoint that may carry a multipart body and
-# gets the larger upload cap (docs/SPEC.md → Request gate).
+# The CSV import sends its text as JSON but gets the larger upload cap
+# (docs/SPEC.md → Request gate).
 _UPLOAD_PATH = "/api/universe/import"
 
 
@@ -80,9 +80,13 @@ def _split_host(header: str) -> tuple[str, int | None]:
             return "", None
         name, rest = text[1:end], text[end + 1 :]
         port = rest[1:] if rest.startswith(":") else ""
+        if port and not port.isdigit():
+            return "", None  # a port is present but unreadable — reject
         return name, int(port) if port.isdigit() else None
     name, sep, port = text.rpartition(":")
     if sep and name:
+        if port and not port.isdigit():
+            return "", None
         return name, int(port) if port.isdigit() else None
     return text, None
 
@@ -244,13 +248,8 @@ class RequestGateMiddleware:
             ) * 1024
             has_body = bool(content_type) or (declared or 0) > 0 or chunked
             if has_body:
-                # Writes are JSON; only the CSV import takes multipart.
-                allowed_types = (
-                    ("application/json", "multipart/form-data")
-                    if path == _UPLOAD_PATH
-                    else ("application/json",)
-                )
-                if content_type not in allowed_types:
+                # Writes are JSON; the import's larger cap still applies.
+                if content_type != "application/json":
                     await _send_error(send, 415, "unsupported_media_type")
                     return
                 if declared is not None and declared > cap:

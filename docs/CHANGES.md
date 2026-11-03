@@ -2,6 +2,70 @@
 
 Newest first.
 
+## 2026-11-03 — Settings: the Ask section reaches the form
+
+- `GET /api/settings` never returned the `ask` section — `_settings_form`
+  listed every editable section except it (PR 36 wired the save path but
+  not the read path). The Ask rows rendered empty, and the first edit of
+  an Ask control crashed the page diffing `settings.ask` against a
+  section the response never sent. `reviews.prompts` was missing the
+  same way. The form now returns `ask.enabled`, `ask.model`,
+  `ask.monthly_cost_cap_usd`, `ask.max_cost_per_answer_usd`,
+  `ask.keep_days` and `ask.instructions` with the config-example
+  defaults, plus `reviews.prompts.<task>` with the review-service
+  defaults. A test walks every editable section against the form so a
+  third gap can't slip through.
+- The client-side settings diff tolerates a section present in the
+  edited form but missing from the saved tree — each leaf diffs against
+  `—` instead of throwing — and Ask changes label and badge correctly.
+
+## 2026-11-03 — Gaps at the source (SPEC §101)
+
+- `schedule.history_missing_tolerance` (3) now matches the spec: a
+  daily session counts as missing at the source only when the fetch for
+  that period succeeded and returned no bar — recorded in the new
+  `daily_source_gaps` table; a failed fetch writes no row, and a bar
+  that arrives later clears the mark. Never forgiven among the last 5
+  sessions (they feed prior-session levels, ATR and the gap check); 5m
+  coverage stays strict; `0` restores the old behaviour.
+- The Universe screen shows forgiven sessions — "warmed · 1 daily bar
+  missing at the source: Thu 12 Mar" — and each session is logged at
+  INFO the first time it is forgiven.
+
+## 2026-11-03 — Signals and indicators audit fixes
+
+- The order-time ATR is now the same ATR the snapshot computes: `indicators.atr_period` on `schedule.history_sessions` of complete 1h bars, instead of a `signals.` section that never existed over 5 sessions. Approve's fresh-quote gate and adopted-position stops can no longer disagree with the decision-time value just because they saw less history.
+- `config.example.yaml` gains the missing `indicators:` section — every indicator period that was only a code default (EMA 20/50, RSI 14, ATR 14, OBV 20, RS 20, SMA 50/200, 60-session ATR percentile) now lives in config, as every default from the spec must. `schedule.history_missing_tolerance` (3) lets sessions with no source bar (halts, feed gaps) count toward history warmup so a single missing day can never leave a symbol "Warming up" forever.
+- A missing `decision.stop_atr_min` in the active settings no longer crashes mid-order path; the fresh-quote gate uses the same default as the decision validator. Malformed numeric settings anywhere in the signal path fall back to their defaults and log a warning instead of aborting the cycle (`AppConfig.get_int` / `get_decimal`).
+- The market-regime volatility label now honours its documented behaviour: an ATR percentile is only computed over the full configured window, so a short SPY history reads `unknown` rather than mislabeling a partial window and wrongly triggering or skipping the Down+High entry block. The per-symbol daily ATR percentile follows the same rule.
+- Only complete 1h bars feed the indicators — the same rule the shock brake already applied. An incomplete bar means some of its 5-minute bars never arrived; it is dropped from EMA, RSI, ATR, OBV, level and signal-bar computation.
+- Relative strength vs SPY pairs closes by bar time instead of by index, so a data gap on either series can no longer slide one against the other.
+- The opening gap is only computed when the first cached 5m bar is the session-open bar, and "previous close" means the last session completed *before* today — after the close, today's own bar is no longer used as the gap base. The watchlist day change uses the same corrected base.
+- Crossed books (ask below bid) are no longer "plausible" quotes, and a trade stamped in the future reads `price_suspect` instead of passing freshness. A locked book stays plausible.
+- Alpaca daily bars take their session date from the timestamp's date part rather than a UTC→New York conversion that files a `T04:00:00Z` bar one day early in winter. Malformed bars (non-positive or non-finite prices, high < low, open/close outside the range, negative volume) are dropped and logged instead of reaching the indicator math.
+- A flat price series reads RSI 50 (neutral), not RSI 100.
+- `decision.options.max_options` above 6 is honoured up to 26 option ids (A–Z) instead of silently dropping the extras. Stop/target and v3 level merges re-check a level-based replacement against the remaining kept levels, so two kept levels can no longer sit inside the dedupe distance.
+- Stored input snapshots carry the exact indicator values (`indicators_precise`) for shadow rule re-evaluation; the block is stripped from every prompt version's send path. Shadow rules can no longer pass a boundary check the live evaluation failed on a rounded display value.
+- Level timestamps for daily swings, prior-session and session markers are New York-aware like the 1h swings; the session marker uses the New York date of the last 5m bar.
+- `rules.entry_cycles` is now evaluated on the live path too — the cycle in effect is the last scheduled cycle at or before evaluation time.
+- The "since open" shock-brake move only counts when the session-open bar itself is cached/complete; a later first bar no longer re-anchors the move mid-session.
+- `SignalService.is_last_cycle` delegates to `SessionClock` instead of duplicating it, and the watchlist's per-symbol last action is one batched query instead of one per symbol.
+- Leftovers of the retired day-trade rule are gone: the dead `exit_blocked_same_day` guard and stale comments that still described the rule as enforced (the `day_trades` table and `deferred_exit` column stay for history — migrations are never edited).
+
+## 2026-11-03 — Trading-path audit hardening
+
+- Approving an entry no longer evaluates the risk gates on a stale read snapshot: the approval's session commits before the network calls, so the gate context sees positions and orders committed after the request started.
+- A position check no longer sends a market sell when Alpaca confirms the symbol is flat; a confirmed-flat read returns early instead of falling back to the stored quantity. The stale flat-symbol cache no longer skips the fresh broker read.
+- Stop tightening picks the newest live stop leg instead of crashing the cycle when more than one open stop row exists.
+- Every broker order call — entries, exits, stop replaces, flatten sells, breach/OCO/protective and adopted stops — holds the shutdown order slot, so shutdown cannot cut a submission between send and store (hard rule 16).
+- The shock brake's since-open SPY move requires a fresh quote timestamp; a stale quote can no longer fabricate a market move. Paper reset confirms no orders remain open after `close_all_positions`, matching flatten's cancel-confirm discipline.
+- `get_open_orders` fails loudly at the 500-row page limit on both the open and closed queries instead of silently missing live stop legs. Fractional broker quantities are logged before truncation.
+- Read calls through the rate limiter retry only transient failures (timeouts, 5xx, 429); permanent 4xx errors surface at once.
+- "Confirm it is you" burns the TOTP step like sign-in does, so a used code cannot be replayed within the drift window. Expired pending sign-in tickets are pruned. Route coverage at startup uses the same guarded-path check as the session middleware.
+- The Host check rejects a non-numeric port, and `/api/universe/import` is JSON-only like every other write (the larger upload cap stays). Client-supplied reason and note text is stripped of control characters before it is stored or logged.
+- News statuses merge per cycle instead of being overwritten by later fetches, and a candidate that reaches a model call without prefetched headlines gets its own news fetch first.
+- Entry-option risk and reward-to-risk come from `trade_risk`, the one shared risk function. `client_order_id` clamps the instance segment to stay inside Alpaca's 48-character limit. Adding a symbol or importing a CSV that loses a concurrent-add race returns 422 instead of 500.
+
 ## 2026-11-03 — Warm-up: gaps at the source
 
 - From PR 100. One daily bar that never existed at the source (a halt, a feed gap) kept a symbol "Warming up: 259 of 260" forever.

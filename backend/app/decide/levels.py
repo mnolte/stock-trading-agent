@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from app.data.models import Bar1h, Bar5m, DailyBar
+from app.market.clock import NY_TZ
 from app.signals.indicators import session_vwap
 
 if TYPE_CHECKING:
@@ -64,9 +65,12 @@ def options_config(config: AppConfig) -> OptionsConfig:
     base = OptionsConfig()
 
     def dec(key: str, default: Decimal) -> Decimal:
-        return Decimal(
-            str(config.get("decision", "options", key, default=default))
-        )
+        try:
+            return Decimal(
+                str(config.get("decision", "options", key, default=default))
+            )
+        except ArithmeticError:
+            return default
 
     return OptionsConfig(
         swing_strength=int(
@@ -99,7 +103,7 @@ def options_config(config: AppConfig) -> OptionsConfig:
             base.target_r_multiples,
         ),
         dedupe_atr=dec("dedupe_atr", base.dedupe_atr),
-        max_stops=int(config.get("decision", "options", "max_stops", default=3)),
+        max_stops=config.get_int("decision", "options", "max_stops", default=3),
         max_options=int(
             config.get("decision", "options", "max_options", default=6)
         ),
@@ -168,7 +172,7 @@ def _swings(
         before = window[i - strength : i]
         after = window[i + 1 : i + 1 + strength]
         when = bar.start if isinstance(bar, Bar1h) else datetime.combine(
-            bar.date, datetime.min.time()
+            bar.date, datetime.min.time(), tzinfo=NY_TZ
         )
         if all(bar.high > b.high for b in before + after):
             highs.append(_Swing(bar.high, when, "swing_high"))
@@ -203,7 +207,7 @@ def find_levels(
             candidates.append((swing.price, swing.kind, tf, swing.time))
     prior = daily[-1] if daily else None
     if prior is not None:
-        when = datetime.combine(prior.date, datetime.min.time())
+        when = datetime.combine(prior.date, datetime.min.time(), tzinfo=NY_TZ)
         candidates += [
             (prior.high, "prior_session_high", "session", when),
             (prior.low, "prior_session_low", "session", when),
@@ -211,7 +215,9 @@ def find_levels(
         ]
     if today_5m:
         today = datetime.combine(
-            today_5m[-1].start.date(), datetime.min.time()
+            today_5m[-1].start.astimezone(NY_TZ).date(),
+            datetime.min.time(),
+            tzinfo=NY_TZ,
         )
         candidates += [
             (max(b.high for b in today_5m), "session_high", "session", today),

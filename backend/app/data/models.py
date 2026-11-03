@@ -72,8 +72,12 @@ class Quote:
             return "price_stale"
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=UTC)
-        if (now - ts).total_seconds() > max_age_seconds:
+        age = (now - ts).total_seconds()
+        if age > max_age_seconds:
             return "price_stale"
+        if age < -max_age_seconds:
+            # A trade stamped in the future is corrupt, not fresh.
+            return "price_suspect"
         if (
             bar_close is not None and bar_close.is_finite() and bar_close > 0
             and abs(self.last - bar_close) / bar_close * 100 > max_deviation_pct
@@ -90,6 +94,8 @@ class Quote:
             or not self.bid.is_finite() or self.bid <= 0
             or not self.ask.is_finite() or self.ask <= 0
             or not self.last.is_finite() or self.last <= 0
+            # A crossed book is a data error, not a tight spread.
+            or self.ask < self.bid
         ):
             return False
         return (

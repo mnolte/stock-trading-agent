@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -69,6 +70,15 @@ EMAIL_FAILURE_BANNER_AT = 3
 # Deliverable (non-app) channels, used by the quiet-hours summary union
 # and the test notification.
 _EXTERNAL = ("browser", "email")
+
+_LINE_BREAKS = re.compile(r"[\r\n]+")
+_CTRL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _one_line(value: str) -> str:
+    """The subject is one line on every channel — a CR/LF breaks the
+    email header, other control characters go."""
+    return _LINE_BREAKS.sub(" ", _CTRL_CHARS.sub("", value))
 
 
 class Notifier(Protocol):
@@ -262,7 +272,7 @@ class NotificationService:
         channels = (
             channels if channels is not None else self._channels(event, severity)
         ) & set(CHANNELS)
-        subject = f"{SUBJECT_PREFIX} {self._label(event)}: {line}"
+        subject = _one_line(f"{SUBJECT_PREFIX} {self._label(event)}: {line}")
         status: dict[str, str] = {}
         held_for_quiet = False
         if not critical and not force:

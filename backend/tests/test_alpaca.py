@@ -590,6 +590,36 @@ def test_parse_daily_bars() -> None:
     assert bars[0].close == Decimal("220.4")
 
 
+def test_parse_daily_bars_winter_timestamp() -> None:
+    # 04:00 UTC is the previous evening in New York during EST — the
+    # session date must come from the timestamp's date part, not a
+    # timezone conversion that would file the bar a day early.
+    raw = {
+        "AAPL": [
+            {"t": "2026-01-15T04:00:00Z", "o": 218.0, "h": 221.0,
+             "l": 217.5, "c": 220.4, "v": 5_000_000},
+        ]
+    }
+    bars = parse_daily_bars(raw, "AAPL")
+    assert bars[0].date == date(2026, 1, 15)
+
+
+def test_parse_bars_drops_malformed() -> None:
+    raw = {
+        "AAPL": [
+            {"t": "2026-10-15T13:30:00Z", "o": 220.0, "h": 219.0,
+             "l": 221.0, "c": 220.5, "v": 100},   # high < low
+            {"t": "2026-10-15T13:35:00Z", "o": 0, "h": 221.0,
+             "l": 219.0, "c": 220.5, "v": 100},   # non-positive open
+            {"t": "2026-10-15T13:40:00Z", "o": 220.0, "h": 221.0,
+             "l": 219.0, "c": 220.5, "v": 100},
+        ]
+    }
+    bars = parse_bars(raw, "AAPL")
+    assert len(bars) == 1
+    assert bars[0].open == Decimal("220.0")
+
+
 async def test_sip_bar_request_empty_when_range_too_recent() -> None:
     # A range fully inside the last 16 minutes becomes empty without a call.
     now = datetime(2026, 10, 15, 15, 0, tzinfo=UTC)

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from app.data.models import Bar1h, Bar5m, DailyBar
+from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
 from app.signals.indicators import (
     atr,
     atr_series,
@@ -61,31 +61,71 @@ def compute_snapshot(
     days_to_earnings: int | None,
     earnings_available: bool,
     config: AppConfig,
+    session: CalendarDay | None = None,
 ) -> IndicatorSnapshot:
-    ema_fast_p = int(config.get("indicators", "ema_fast", default=20))
-    ema_slow_p = int(config.get("indicators", "ema_slow", default=50))
-    rsi_p = int(config.get("indicators", "rsi_period", default=14))
-    atr_p = int(config.get("indicators", "atr_period", default=14))
-    obv_p = int(config.get("indicators", "obv_lookback", default=20))
-    rs_p = int(config.get("indicators", "rs_lookback", default=20))
-    sma_fast_p = int(config.get("indicators", "daily_sma_fast", default=50))
-    sma_slow_p = int(config.get("indicators", "daily_sma_slow", default=200))
-    percentile_sessions = int(
-        config.get("indicators", "atr_percentile_sessions", default=60)
+    """The per-symbol snapshot.
+
+    ``session`` is today's trading session; the opening gap is only computed
+    when the first cached 5m bar is the session-open bar (a later first bar
+    means the open is unknown, not gapped), and the previous close is the
+    last session completed *before* today — after the close, ``daily[-1]``
+    is today's own bar.
+    """
+    ema_fast_p = config.get_int("indicators", "ema_fast", default=20)
+    ema_slow_p = config.get_int("indicators", "ema_slow", default=50)
+    rsi_p = config.get_int("indicators", "rsi_period", default=14)
+    atr_p = config.get_int("indicators", "atr_period", default=14)
+    obv_p = config.get_int("indicators", "obv_lookback", default=20)
+    rs_p = config.get_int("indicators", "rs_lookback", default=20)
+    sma_fast_p = config.get_int("indicators", "daily_sma_fast", default=50)
+    sma_slow_p = config.get_int("indicators", "daily_sma_slow", default=200)
+    percentile_sessions = config.get_int(
+        "indicators", "atr_percentile_sessions", default=60
     )
 
     closes_1h = [b.close for b in bars_1h]
-    spy_closes_1h = [b.close for b in spy_1h]
     daily_closes = [b.close for b in daily]
 
     daily_atr = atr_series(daily, atr_p)
-    atr_window = daily_atr[-percentile_sessions:]
-    atr_pct = percentile_rank(atr_window, atr_window[-1]) if atr_window else None
+    # Same rule as the regime: the percentile needs its full window.
+    atr_pct = (
+        percentile_rank(daily_atr[-percentile_sessions:], daily_atr[-1])
+        if len(daily_atr) >= percentile_sessions
+        else None
+    )
 
-    prev_close = daily[-1].close if daily else None
+    # Relative strength: pair symbol and SPY closes on the same bar times —
+    # a data gap on either side must not slide one series against the other.
+    spy_by_start = {b.start: b.close for b in spy_1h}
+    matched = [
+        (b.close, spy_by_start[b.start])
+        for b in bars_1h
+        if b.start in spy_by_start
+    ]
+    rs = relative_strength_pct(
+        [pair[0] for pair in matched],
+        [pair[1] for pair in matched],
+        rs_p,
+    )
+
+    today_in_daily = (
+        session is not None and bool(daily) and daily[-1].date == session.date
+    )
+    prev_close = (
+        daily[-2].close
+        if today_in_daily and len(daily) >= 2
+        else None
+        if today_in_daily
+        else (daily[-1].close if daily else None)
+    )
     gap = (
         opening_gap_pct(today_5m[0].open, prev_close)
-        if today_5m and prev_close is not None
+        if (
+            today_5m
+            and prev_close is not None
+            and session is not None
+            and today_5m[0].start == session.open
+        )
         else None
     )
 
@@ -98,7 +138,7 @@ def compute_snapshot(
         atr_1h=atr(bars_1h, atr_p),
         session_vwap=session_vwap(today_5m),
         obv_trend=obv_trend(bars_1h, obv_p),
-        rs_vs_spy_pct=relative_strength_pct(closes_1h, spy_closes_1h, rs_p),
+        rs_vs_spy_pct=rs,
         daily_close=daily_closes[-1] if daily_closes else None,
         daily_sma_fast=sma(daily_closes, sma_fast_p),
         daily_sma_slow=sma(daily_closes, sma_slow_p),

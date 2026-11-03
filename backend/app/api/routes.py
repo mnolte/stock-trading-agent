@@ -927,7 +927,7 @@ async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, ob
         require_confirmed(request)
         result = await executor.flatten()
         return {"kill_switch": True, **result}
-    reason = str(body.get("reason") or "manual")
+    reason = _one_line(str(body.get("reason") or "manual"), 200)
     await executor.activate_kill_switch(reason=reason, automatic=False)
     return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
 
@@ -974,7 +974,7 @@ async def kill_switch_resume(
             status_code=422,
             detail=f"Resume needs the keys set and passing ({issue}).",
         )
-    reason = str(body.get("reason") or "")
+    reason = _one_line(str(body.get("reason") or ""), 200)
     try:
         await executor.resume(reason)
     except ValueError as exc:
@@ -1005,7 +1005,7 @@ def dismiss_event(
     """Dismiss one unresolved readiness error; a note is required."""
     from app.readiness.service import ReadinessError, dismiss_error
 
-    note = str(body.get("note") or "")
+    note = _one_line(str(body.get("note") or ""), 500)
     with get_session_maker()() as session:
         try:
             event = dismiss_error(
@@ -1214,7 +1214,7 @@ async def _broker_read(awaitable: Awaitable[Any]) -> Any:
 
 @router.get("/positions")
 async def positions(request: Request) -> dict[str, object]:
-    """Open positions with legs, marks, account and day-trade boxes."""
+    """Open positions with legs, marks, account and same-session counts."""
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today_ny = clock.now().astimezone(NY_TZ).date()
     market_data = getattr(request.app.state, "market_data", None)
@@ -2350,7 +2350,7 @@ def banners(request: Request) -> dict[str, object]:
                     streak += 1
                 else:
                     break
-            threshold = int(config.get("risk", "losing_streak", default=3))
+            threshold = config.get_int("risk", "losing_streak", default=3)
             if threshold > 0 and streak >= threshold:
                 factor = Decimal(
                     str(
@@ -2486,7 +2486,7 @@ def reject_approval(
 ) -> dict[str, object]:
     """Reject a pending approval; the reason is stored and shown."""
     executor = _executor(request)
-    reason = str((body or {}).get("reason") or "") or None
+    reason = _one_line(str((body or {}).get("reason") or ""), 200) or None
     if not executor.reject_approval(approval_id, reason):
         raise HTTPException(status_code=404, detail="approval is not pending")
     return {"rejected": True}
@@ -2518,6 +2518,8 @@ def _held_symbols() -> set[str]:
 
 def _settings_form(config: object) -> dict[str, object]:
     """Current effective values in the shape the settings form expects."""
+    from app.reviews.service import _LATEST_PROMPT
+
     get = config.get  # type: ignore[attr-defined]
     return {
         "execution": {
@@ -2657,6 +2659,29 @@ def _settings_form(config: object) -> dict[str, object]:
                 task: review_model(cast("AppConfig", config), task)
                 for task in REVIEW_TASKS
             },
+            "prompts": {
+                task: str(
+                    get(
+                        "reviews",
+                        "prompts",
+                        task,
+                        default=_LATEST_PROMPT.get(task, f"{task}.v1"),
+                    )
+                )
+                for task in REVIEW_TASKS
+            },
+        },
+        "ask": {
+            "enabled": get("ask", "enabled", default=True),
+            "model": get("ask", "model", default="claude-sonnet-5-5"),
+            "monthly_cost_cap_usd": get(
+                "ask", "monthly_cost_cap_usd", default=15
+            ),
+            "max_cost_per_answer_usd": get(
+                "ask", "max_cost_per_answer_usd", default=0.25
+            ),
+            "keep_days": get("ask", "keep_days", default=90),
+            "instructions": get("ask", "instructions", default=""),
         },
         "universe": {
             "mode": get("universe", "mode", default="fixed"),
@@ -5236,7 +5261,7 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
     from app.auth.guard import client_ip
 
     config = get_config()
-    limit = int(config.get("logging", "client_errors_per_minute", default=10))
+    limit = config.get_int("logging", "client_errors_per_minute", default=10)
     sender = client_ip(request, config)
     now = time.monotonic()
     bucket = [t for t in _client_error_times.get(sender, []) if now - t < 60]

@@ -88,6 +88,23 @@ class Bar1hState(Base):
     src_fingerprint: Mapped[str] = mapped_column(String(96), nullable=False)
 
 
+class DailySourceGap(Base):
+    """A daily session the source confirmed it has no bar for — a fetch
+    covering the period succeeded and returned no bar (SPEC, Adding a
+    symbol → "Gaps at the source"). Forgivable by the history warmup
+    under ``schedule.history_missing_tolerance``; a failed or partial
+    fetch writes no row."""
+
+    __tablename__ = "daily_source_gaps"
+    __table_args__ = (
+        UniqueConstraint("symbol", "session_date", name="uq_daily_gap_sym_sess"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_date: Mapped[date] = mapped_column(nullable=False)
+
+
 class Cycle(Base):
     """One decision cycle or position check."""
 
@@ -215,8 +232,8 @@ class Position(Base):
     initial_stop: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     current_stop_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     target_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    # A same-day exit decision deferred by the day-trade rule: {at, reason}.
-    # Shown on the position and included in the next session's first snapshot.
+    # Historical: exits deferred under the retired day-trade rule (PR 26).
+    # No longer written; kept so old positions keep their record.
     deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -283,7 +300,7 @@ class EquitySnapshot(Base):
 
 
 class DayTrade(Base):
-    """Pattern-day-trade record."""
+    """Pattern-day-trade record — retired rule, no longer written (PR 26)."""
 
     __tablename__ = "day_trades"
 
@@ -817,7 +834,7 @@ class Strategy(Base):
     Live is not a row: it is the strategy defined by the current settings
     version. ``overrides`` holds only the entry-rule and code-check keys a
     strategy may change (RSI range, minimum confidence, stop distance range,
-    minimum reward to risk); risk gates, sizing, the day-trade rule and
+    minimum reward to risk); risk gates, sizing, the re-entry rule and
     earnings handling are never overridable.
     """
 

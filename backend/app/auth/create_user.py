@@ -49,7 +49,7 @@ def create_or_reset_user(
     The plaintext TOTP secret and recovery codes exist only in this
     return value — callers print them once and drop them.
     """
-    minimum = int(config.get("auth", "min_password_length", default=14))
+    minimum = config.get_int("auth", "min_password_length", default=14)
     if len(password) < minimum:
         raise ValueError(f"password must be at least {minimum} characters")
 
@@ -58,7 +58,7 @@ def create_or_reset_user(
     fernet = _load_or_create_key(Path(config.env.sa_data_dir) / "secret.key")
     secret = new_totp_secret()
     codes = new_recovery_codes(
-        int(config.get("auth", "recovery_codes", default=10))
+        config.get_int("auth", "recovery_codes", default=10)
     )
     now = _naive_utc(clock.now())
 
@@ -100,7 +100,7 @@ def main() -> int:
     run_migrations()  # a fresh server has no tables yet
 
     username = input("Username [marc]: ").strip() or "marc"
-    minimum = int(config.get("auth", "min_password_length", default=14))
+    minimum = config.get_int("auth", "min_password_length", default=14)
     while True:
         password = getpass.getpass(
             f"Password (at least {minimum} characters): "

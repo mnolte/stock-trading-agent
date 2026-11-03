@@ -524,7 +524,7 @@ async def _run_sessions(
     session_clock = SessionClock(clock, config, bundles[0].calendar)
     screener_time = str(config.get("universe", "screen_time", default="08:10"))
     sh, sm = (int(p) for p in screener_time.split(":")[:2])
-    cap = Decimal(str(config.get("backtest", "monthly_cost_cap_usd", default=20)))
+    cap = config.get_decimal("backtest", "monthly_cost_cap_usd", default=20)
     total = len(days)
 
     for index, session_day in enumerate(days):
@@ -663,7 +663,7 @@ async def run_backtest(
 ) -> None:
     """Run the whole backtest; raises nothing — status lands on the row."""
     with contextlib.suppress(AttributeError, OSError):
-        os.nice(int(config.get("backtest", "process_nice", default=10)))
+        os.nice(config.get_int("backtest", "process_nice", default=10))
     wall = wall or RealClock()
     live_sf = live_sf or get_session_maker()
     clock = FakeClock(datetime(2020, 1, 1, tzinfo=NY_TZ))
@@ -691,8 +691,8 @@ async def run_backtest(
         # Signals at the start of the period need the same lookback the
         # live cache keeps, so the fill covers the period plus it.
         lookback = max(
-            int(config.get("schedule", "history_sessions", default=60)),
-            int(config.get("schedule", "daily_history_sessions", default=260)),
+            config.get_int("schedule", "history_sessions", default=60),
+            config.get_int("schedule", "daily_history_sessions", default=260),
         ) * 2
         fill_start = run.start - timedelta(days=lookback)
         limiter = _download_limiter(config)
@@ -910,7 +910,7 @@ def main() -> None:
         from app.data.finnhub import FinnhubEarningsSource
         from app.secrets_service import MISSING_KEY
 
-        rpm = int(config.get("backtest", "alpaca_calls_per_minute", default=40))
+        rpm = config.get_int("backtest", "alpaca_calls_per_minute", default=40)
         limiter = RateLimiter(RateLimitConfig(max_calls=rpm))
         key_id, secret = secrets.alpaca_pair()
         alpaca = AlpacaDataClient(

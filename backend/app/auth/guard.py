@@ -109,8 +109,10 @@ OPEN_PATHS = frozenset(
     }
 )
 
-# Prefixes the session middleware guards.
-_GUARDED_PREFIXES = ("/api", "/ws")
+def is_guarded_path(path: str) -> bool:
+    """The exact paths the session middleware guards — shared by the
+    startup coverage walk so the two can never disagree."""
+    return path.startswith("/api/") or path == "/api" or path.startswith("/ws")
 
 
 def check_route_coverage(app: object) -> None:
@@ -130,7 +132,7 @@ def check_route_coverage(app: object) -> None:
             route, "routes", None
         ) is not None:
             continue
-        if not path.startswith(_GUARDED_PREFIXES):
+        if not is_guarded_path(path):
             raise RuntimeError(
                 f"Refusing to start with SA_AUTH=required: route {path} "
                 "is not behind the session check. Move it under /api, add "

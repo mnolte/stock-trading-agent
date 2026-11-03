@@ -151,7 +151,7 @@ def evaluate_entry_gates(
         return block("entry_pending", "an entry order for this symbol is open")
     ok("already_held", "no open position or pending entry")
 
-    max_positions = int(config.get("risk", "max_open_positions", default=4))
+    max_positions = config.get_int("risk", "max_open_positions", default=4)
     open_count = len(ctx.open_positions) + len(ctx.working_entries)
     if open_count >= max_positions:
         return block(
@@ -160,7 +160,7 @@ def evaluate_entry_gates(
         )
     ok("max_open_positions", f"{open_count} of {max_positions}")
 
-    max_per_sector = int(config.get("risk", "max_per_sector", default=2))
+    max_per_sector = config.get_int("risk", "max_per_sector", default=2)
     sectors = ctx.sectors if ctx.sectors is not None else resolve_sectors(config)
     sector = sectors.get(ctx.symbol)
     if sector is not None:
@@ -176,7 +176,7 @@ def evaluate_entry_gates(
         return block("sector_unknown", f"sector unknown for {ctx.symbol}")
 
     # Daily loss limit: session P&L vs the previous close's equity.
-    daily_limit_pct = Decimal(str(config.get("risk", "daily_loss_limit_pct", default=2)))
+    daily_limit_pct = config.get_decimal("risk", "daily_loss_limit_pct", default=2)
     pnl_pct = session_pnl_pct(ctx.equity, ctx.last_equity)
     if ctx.daily_loss_hit or pnl_pct <= -daily_limit_pct:
         return block(
@@ -188,8 +188,8 @@ def evaluate_entry_gates(
     ok("daily_loss_limit", f"session P&L {_pct(pnl_pct)}%")
 
     # Shock brake: SPY down hard in the last hour or since the open.
-    shock_1h = Decimal(str(config.get("risk", "shock_brake_1h_pct", default=1.5)))
-    shock_session = Decimal(str(config.get("risk", "shock_brake_session_pct", default=2.5)))
+    shock_1h = config.get_decimal("risk", "shock_brake_1h_pct", default=1.5)
+    shock_session = config.get_decimal("risk", "shock_brake_session_pct", default=2.5)
     if ctx.shock_brake_1h or ctx.shock_brake_session:
         which = "last hour" if ctx.shock_brake_1h else "since the open"
         limit = shock_1h if ctx.shock_brake_1h else shock_session
@@ -197,7 +197,7 @@ def evaluate_entry_gates(
     ok("shock_brake", "SPY within limits")
 
     # Earnings blackout: earnings within the next N trading days.
-    blackout = int(config.get("risk", "earnings_blackout_days", default=3))
+    blackout = config.get_int("risk", "earnings_blackout_days", default=3)
     if not ctx.earnings_known:
         return block("earnings_blackout", "earnings calendar unavailable; entry blocked")
     if ctx.days_to_earnings is not None and ctx.days_to_earnings <= blackout:
@@ -223,7 +223,7 @@ def evaluate_entry_gates(
 
     # Drawdown kill: equity below peak by the configured pct turns the
     # kill switch on — the executor handles activation on this gate name.
-    kill_pct = Decimal(str(config.get("risk", "drawdown_kill_pct", default=8)))
+    kill_pct = config.get_decimal("risk", "drawdown_kill_pct", default=8)
     dd_pct = drawdown_pct(ctx.equity, ctx.peak_equity)
     if dd_pct >= kill_pct:
         return block(
@@ -233,7 +233,7 @@ def evaluate_entry_gates(
     ok("drawdown_kill", f"drawdown {_pct(dd_pct)}%")
 
     # Losing streak halves the risk budget; it never blocks by itself.
-    streak_len = int(config.get("risk", "losing_streak", default=3))
+    streak_len = config.get_int("risk", "losing_streak", default=3)
     factor = streak_risk_factor(ctx.losing_streak, config)
     checks.append(
         GateCheck(
@@ -303,7 +303,7 @@ def evaluate_entry_gates(
         )
 
     # Order sanity: single order vs equity, orders this cycle.
-    max_order_pct = Decimal(str(config.get("risk", "max_order_pct", default=25)))
+    max_order_pct = config.get_decimal("risk", "max_order_pct", default=25)
     order_value = entry * sizing.shares
     order_pct = order_value / ctx.equity * 100 if ctx.equity > 0 else Decimal(0)
     if order_pct > max_order_pct:
@@ -321,7 +321,7 @@ def evaluate_entry_gates(
             risk_factor=factor,
             checks=checks,
         )
-    max_orders = int(config.get("risk", "max_orders_per_cycle", default=6))
+    max_orders = config.get_int("risk", "max_orders_per_cycle", default=6)
     if ctx.orders_this_cycle >= max_orders:
         checks.append(
             GateCheck(

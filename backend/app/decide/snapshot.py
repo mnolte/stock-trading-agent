@@ -31,6 +31,19 @@ def _ny_iso(dt: datetime) -> str:
 
 UNAVAILABLE = "unavailable"
 
+# Stored on the decision row but never sent to the model (provenance and
+# exact values for shadow rule re-evaluation — the spec's "no duplicates").
+_INTERNAL_KEYS = frozenset({"indicators_precise"})
+
+
+def strip_internal(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The snapshot without stored-only keys — for send paths that don't
+    already strip provenance (v1/v2 and the eval/smoke tools)."""
+    return {
+        key: value for key, value in snapshot.items() if key not in _INTERNAL_KEYS
+    }
+
+
 # Swing points are local extremes over this many recent 1h bars.
 _SWING_LOOKBACK = 40
 _SWING_KEEP = 3
@@ -220,6 +233,26 @@ def build_input_snapshot(
             "atr_percentile": _pct(snapshot.daily_atr_percentile),
             "gap_pct": _pct(snapshot.opening_gap_pct),
             "close": _num(snapshot.daily_close, 2),
+        },
+        # Exact indicator values for shadow rule re-evaluation: the rounded
+        # display numbers above can flip a boundary check. Stored only —
+        # stripped from every prompt version's send path.
+        "indicators_precise": {
+            key: str(value)
+            for key, value in {
+                "ema20": snapshot.ema_fast,
+                "ema50": snapshot.ema_slow,
+                "rsi14": snapshot.rsi,
+                "atr14": snapshot.atr_1h,
+                "vwap": snapshot.session_vwap,
+                "rs_vs_spy_pct": snapshot.rs_vs_spy_pct,
+                "sma50": snapshot.daily_sma_fast,
+                "sma200": snapshot.daily_sma_slow,
+                "atr_percentile": snapshot.daily_atr_percentile,
+                "gap_pct": snapshot.opening_gap_pct,
+                "close": snapshot.daily_close,
+            }.items()
+            if value is not None
         },
         "levels": swing_levels(bars_1h),
         "position": _position_block(position, price),

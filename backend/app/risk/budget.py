@@ -118,27 +118,27 @@ def risk_budget(
     risk_usd = position_risk + working_risk
 
     equity = ctx.equity
-    open_risk_cap = Decimal(str(config.get("risk", "max_open_risk_pct", default=2.5)))
+    open_risk_cap = config.get_decimal("risk", "max_open_risk_pct", default=2.5)
     open_meter = None
     if equity > 0:
         used = risk_usd / equity * 100
         open_meter = Meter(used, open_risk_cap, meter_level(used, open_risk_cap))
 
-    daily_limit = Decimal(str(config.get("risk", "daily_loss_limit_pct", default=2)))
+    daily_limit = config.get_decimal("risk", "daily_loss_limit_pct", default=2)
     pnl = session_pnl_pct(equity, ctx.last_equity)
     daily_used = max(Decimal(0), -pnl)
 
-    kill_pct = Decimal(str(config.get("risk", "drawdown_kill_pct", default=8)))
+    kill_pct = config.get_decimal("risk", "drawdown_kill_pct", default=8)
     dd = drawdown_pct(equity, ctx.peak_equity)
 
-    max_positions = int(config.get("risk", "max_open_positions", default=4))
+    max_positions = config.get_int("risk", "max_open_positions", default=4)
     open_count = len(ctx.open_positions) + len(ctx.working_entries)
 
     factor = streak_risk_factor(ctx.losing_streak, config)
-    per_trade_pct = Decimal(str(config.get("risk", "risk_per_trade_pct", default=0.5))) * factor
+    per_trade_pct = config.get_decimal("risk", "risk_per_trade_pct", default=0.5) * factor
     per_trade_usd = equity * per_trade_pct / 100
     max_position_usd = (
-        equity * Decimal(str(config.get("risk", "max_position_pct", default=20))) / 100
+        equity * config.get_decimal("risk", "max_position_pct", default=20) / 100
     )
     risk_room = max(Decimal(0), equity * open_risk_cap / 100 - risk_usd)
     cash = (
@@ -158,7 +158,7 @@ def risk_budget(
     room = min(candidates.values())
     room_limited_by = next(name for name, count in candidates.items() if count == room)
 
-    sector_cap = int(config.get("risk", "max_per_sector", default=2))
+    sector_cap = config.get_int("risk", "max_per_sector", default=2)
     sector_map = ctx.sectors if ctx.sectors is not None else resolve_sectors(config)
     counts: dict[str, int] = {}
     for symbol in [p.symbol for p in ctx.open_positions] + [e.symbol for e in ctx.working_entries]:
@@ -178,10 +178,10 @@ def risk_budget(
         sectors=tuple(SectorUse(sector, count, sector_cap) for sector, count in counts.items()),
         risk_per_trade_pct=per_trade_pct,
         losing_streak=ctx.losing_streak,
-        losing_streak_len=int(config.get("risk", "losing_streak", default=3)),
+        losing_streak_len=config.get_int("risk", "losing_streak", default=3),
         losing_streak_factor=factor,
         shock_brake_on=ctx.shock_brake_1h or ctx.shock_brake_session,
-        shock_1h_limit_pct=Decimal(str(config.get("risk", "shock_brake_1h_pct", default=1.5))),
+        shock_1h_limit_pct=config.get_decimal("risk", "shock_brake_1h_pct", default=1.5),
         shock_session_limit_pct=Decimal(
             str(config.get("risk", "shock_brake_session_pct", default=2.5))
         ),

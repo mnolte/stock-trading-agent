@@ -60,7 +60,7 @@ def ny_date(dt: datetime) -> date:
 
 
 def slippage_pct(config: AppConfig) -> Decimal:
-    return Decimal(str(config.get("performance", "slippage_pct_per_side", default=0.05)))
+    return config.get_decimal("performance", "slippage_pct_per_side", default=0.05)
 
 
 def entry_cost(sp: ShadowPosition, slip: Decimal) -> Decimal:

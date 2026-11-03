@@ -24,6 +24,7 @@ from app.decide.levels import (
     OptionsConfig,
     _swings,
 )
+from app.risk.math import trade_risk
 
 if TYPE_CHECKING:
     pass
@@ -117,22 +118,34 @@ _MONTHS = (
 def _merge_stops(
     candidates: list[_Stop], within: Decimal
 ) -> tuple[list[_Stop], list[str]]:
-    """Merge stops closer than ``within``; a level-based stop wins."""
+    """Merge stops closer than ``within``; a level-based stop wins.
+
+    A level stop replacing an ATR stop is re-checked against the rest of
+    ``kept``: its own price may sit within ``within`` of another kept stop.
+    """
     kept: list[_Stop] = []
     merged: list[str] = []
-    for stop in sorted(candidates, key=lambda s: s.price, reverse=True):
-        hit = next(
-            (k for k in kept if abs(k.price - stop.price) <= within), None
-        )
-        if hit is None:
-            kept.append(stop)
-        elif stop.is_level and not hit.is_level:
-            kept[kept.index(hit)] = stop
-            merged.append(
-                f"{hit.basis} ({_money(hit.price)}) into {stop.basis}"
+    for cand in sorted(candidates, key=lambda s: s.price, reverse=True):
+        stop = cand
+        while True:
+            hit = next(
+                (k for k in kept if k is not stop and abs(k.price - stop.price) <= within),
+                None,
             )
-        else:
+            if hit is None:
+                if stop not in kept:
+                    kept.append(stop)
+                break
+            if stop.is_level and not hit.is_level:
+                # Level wins in place, then the winner is re-checked
+                # against the rest of ``kept``.
+                kept[kept.index(hit)] = stop
+                merged.append(
+                    f"{hit.basis} ({_money(hit.price)}) into {stop.basis}"
+                )
+                continue
             merged.append(f"{stop.basis} ({_money(stop.price)}) into {hit.basis}")
+            break
     return kept, merged
 
 
@@ -141,21 +154,27 @@ def _merge_targets(
 ) -> tuple[list[_Target], list[str]]:
     kept: list[_Target] = []
     merged: list[str] = []
-    for target in sorted(candidates, key=lambda t: t.price):
-        hit = next(
-            (k for k in kept if abs(k.price - target.price) <= within), None
-        )
-        if hit is None:
-            kept.append(target)
-        elif target.is_level and not hit.is_level:
-            kept[kept.index(hit)] = target
-            merged.append(
-                f"{hit.basis} ({_money(hit.price)}) into {target.basis}"
+    for cand in sorted(candidates, key=lambda t: t.price):
+        target = cand
+        while True:
+            hit = next(
+                (k for k in kept if k is not target and abs(k.price - target.price) <= within),
+                None,
             )
-        else:
+            if hit is None:
+                if target not in kept:
+                    kept.append(target)
+                break
+            if target.is_level and not hit.is_level:
+                kept[kept.index(hit)] = target
+                merged.append(
+                    f"{hit.basis} ({_money(hit.price)}) into {target.basis}"
+                )
+                continue
             merged.append(
                 f"{target.basis} ({_money(target.price)}) into {hit.basis}"
             )
+            break
     return kept, merged
 
 
@@ -230,7 +249,8 @@ def build_entry_options(
     merged = list(stop_merges)
     target_rejected = False
     for stop in kept_stops:
-        risk = limit - stop.price
+        # Risk math comes from the one shared function (risk/math.py).
+        risk = trade_risk(limit, stop.price).stop_distance
         if risk <= 0:
             continue
         targets: list[_Target] = []
@@ -238,8 +258,8 @@ def build_entry_options(
             if level.kind not in LEVEL_KINDS_HIGH or level.price <= limit:
                 continue
             lvl_target = level.price - cfg.level_buffer_atr * atr_1h
-            rr = (lvl_target - limit) / risk
-            if rr < cfg.min_reward_risk:
+            rr = trade_risk(limit, stop.price, lvl_target).reward_to_risk
+            if rr is None or rr < cfg.min_reward_risk:
                 target_rejected = True
                 continue
             targets.append(
@@ -247,8 +267,8 @@ def build_entry_options(
             )
         for r in cfg.target_r_multiples:
             r_target = limit + r * risk
-            rr = (r_target - limit) / risk
-            if rr < cfg.min_reward_risk:
+            rr = trade_risk(limit, stop.price, r_target).reward_to_risk
+            if rr is None or rr < cfg.min_reward_risk:
                 target_rejected = True
                 continue
             targets.append(_Target(r_target, None, f"{r.normalize()}R"))
@@ -258,7 +278,9 @@ def build_entry_options(
         merged += target_merges
         kept_targets.sort(key=lambda t: (t.price - limit) / risk)
         for target in kept_targets:
-            rr = (target.price - limit) / risk
+            rr = trade_risk(
+                limit, stop.price, target.price
+            ).reward_to_risk or Decimal(0)
             in_way = [
                 level.id
                 for level in levels
@@ -286,7 +308,7 @@ def build_entry_options(
     options.sort(key=lambda o: (-o.stop, o.rr))
     ordered: list[EntryOption] = []
     for letter, option in zip(
-        "ABCDEF", options[: cfg.max_options], strict=False
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ", options[: cfg.max_options], strict=False
     ):
         ordered.append(replace(option, id=letter))
 

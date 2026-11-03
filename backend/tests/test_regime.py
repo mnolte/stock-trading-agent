@@ -61,16 +61,17 @@ def test_regime_sideways_when_history_too_short_for_sma200() -> None:
 
 def test_regime_volatility_high() -> None:
     # Constant large ranges: the latest ATR tops its own history -> high.
-    bars = _days(60, 100, 0, "10")
+    # 80 sessions -> 66 ATR values, a full 60-session percentile window.
+    bars = _days(80, 100, 0, "10")
     regime = compute_regime(bars, AppConfig())
     assert regime.volatility == "high"
 
 
 def test_regime_volatility_low() -> None:
     # Recent quiet days after a volatile stretch -> current ATR ranks low.
-    bars = _days(40, 100, 0, "10") + [
+    bars = _days(55, 100, 0, "10") + [
         _daily(
-            date(2026, 1, 5) + timedelta(days=40 + i),
+            date(2026, 1, 5) + timedelta(days=55 + i),
             Decimal(140),
             Decimal(1),
         )
@@ -82,28 +83,38 @@ def test_regime_volatility_low() -> None:
 
 def test_regime_volatility_normal() -> None:
     # Volatile stretch, quiet stretch, then a moderate tail: the current ATR
-    # lands in the middle of its own history (percentile ~63 -> normal).
+    # lands in the middle of its own history -> normal.
     bars = (
-        _days(20, 100, 0, "4")
+        _days(25, 100, 0, "4")
         + [
             _daily(
-                date(2026, 1, 5) + timedelta(days=20 + i),
+                date(2026, 1, 5) + timedelta(days=25 + i),
                 Decimal(100),
                 Decimal("0.5"),
             )
-            for i in range(15)
+            for i in range(18)
         ]
         + [
             _daily(
-                date(2026, 1, 5) + timedelta(days=35 + i),
+                date(2026, 1, 5) + timedelta(days=43 + i),
                 Decimal(100),
                 Decimal(2),
             )
-            for i in range(25)
+            for i in range(32)
         ]
     )
     regime = compute_regime(bars, AppConfig())
     assert regime.volatility == "normal"
+
+
+def test_regime_volatility_unknown_on_short_history() -> None:
+    # 60 sessions -> 46 ATR values, short of the 60-session window: the
+    # docstring's rule applies — unknown, and never a Down+High block.
+    bars = _days(60, 100, 0, "10")
+    regime = compute_regime(bars, AppConfig())
+    assert regime.volatility == "unknown"
+    assert regime.atr_percentile is None
+    assert regime.blocks_entries is False
 
 
 def test_down_high_blocks_entries() -> None:

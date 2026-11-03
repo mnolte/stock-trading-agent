@@ -260,7 +260,7 @@ class ShutdownManager:
 
 def make_shutdown(config: AppConfig) -> tuple[ShutdownManager, RunLock]:
     """Build the manager + lock from config; wired up in the lifespan."""
-    grace = int(config.get("storage", "shutdown_grace_seconds", default=60))
+    grace = config.get_int("storage", "shutdown_grace_seconds", default=60)
     lock = RunLock(Path(config.env.sa_data_dir) / "run.lock")
     return ShutdownManager(grace), lock
 

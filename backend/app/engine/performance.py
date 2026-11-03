@@ -289,7 +289,7 @@ def compute_performance(
     slip_pct = Decimal(
         str(config.get("performance", "slippage_pct_per_side", default=0.05))
     )
-    kill_pct = Decimal(str(config.get("risk", "drawdown_kill_pct", default=8)))
+    kill_pct = config.get_decimal("risk", "drawdown_kill_pct", default=8)
 
     # ---- equity curve: last snapshot per New York session ----------------
     snap_query = (

@@ -205,7 +205,7 @@ def strategy_row(
             ShadowDecision.strategy_id == strategy.id, ShadowDecision.missed.is_(True)
         )
     ).scalar_one()
-    min_trades = int(config.get("shadows", "promote_min_closed_trades", default=20))
+    min_trades = config.get_int("shadows", "promote_min_closed_trades", default=20)
     promotable = (
         strategy.kind == "llm" and strategy.status != "archived" and len(closed) >= min_trades
     )
@@ -261,7 +261,7 @@ def live_adjusted_curve(
     Performance's adjusted total exactly (it also includes dividends)."""
     curve = perf.get("curve") or {}
     points = curve.get("points") or []
-    slip = Decimal(str(config.get("performance", "slippage_pct_per_side", default=0.05)))
+    slip = config.get_decimal("performance", "slippage_pct_per_side", default=0.05)
     fills = session.execute(
         select(Fill.filled_at, Fill.qty, Fill.price).where(Fill.filled_at >= run.started_at)
     ).all()

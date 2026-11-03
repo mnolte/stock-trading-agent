@@ -266,11 +266,11 @@ async def answer(
     config = deps.config
     clock = deps.clock
     model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
-    max_rounds = int(config.get("ask", "max_tool_rounds", default=8))
-    max_tool_tokens = int(config.get("ask", "max_tool_result_tokens", default=6000))
-    max_ctx = int(config.get("ask", "max_context_tokens", default=60000))
+    max_rounds = config.get_int("ask", "max_tool_rounds", default=8)
+    max_tool_tokens = config.get_int("ask", "max_tool_result_tokens", default=6000)
+    max_ctx = config.get_int("ask", "max_context_tokens", default=60000)
     timeout = float(config.get("ask", "answer_timeout_seconds", default=90))
-    per_cap = Decimal(str(config.get("ask", "max_cost_per_answer_usd", default=0.25)))
+    per_cap = config.get_decimal("ask", "max_cost_per_answer_usd", default=0.25)
     system = _system_prompt(config)
     prompt = cached_prompt(PROMPT_VERSION)
 

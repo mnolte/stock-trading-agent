@@ -26,7 +26,7 @@ from http.cookies import SimpleCookie
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.auth.guard import OPEN_PATHS, auth_required
+from app.auth.guard import OPEN_PATHS, auth_required, is_guarded_path
 from app.auth.service import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
 from app.config import get_config
 
@@ -97,7 +97,7 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
         path: str = scope.get("path", "")
-        guarded = path.startswith("/api/") or path == "/api" or path.startswith("/ws")
+        guarded = is_guarded_path(path)
         if not guarded or path in _OPEN_PATHS:
             await self.app(scope, receive, send)
             return

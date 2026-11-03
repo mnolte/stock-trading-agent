@@ -214,7 +214,7 @@ def estimate(
     ]
     n_sessions = len(sessions)
     cycles_per = len(config.get("schedule", "cycles", default=[]) or [])
-    max_calls = int(config.get("decision", "max_calls_per_cycle", default=10))
+    max_calls = config.get_int("decision", "max_calls_per_cycle", default=10)
 
     out = Estimate(
         sessions=n_sessions,
@@ -228,8 +228,8 @@ def estimate(
     # The worker fills the period plus the indicator lookback the live
     # cache keeps, so the estimate counts both ranges.
     lookback = max(
-        int(config.get("schedule", "history_sessions", default=60)),
-        int(config.get("schedule", "daily_history_sessions", default=260)),
+        config.get_int("schedule", "history_sessions", default=60),
+        config.get_int("schedule", "daily_history_sessions", default=260),
     ) * 2
     fill_sessions = _calendar_span(calendar, start - timedelta(days=lookback), end)
     missing_bars = 0
@@ -242,7 +242,7 @@ def estimate(
         calls += max(0, -(-len(missing_sessions) // 63))
     out.bars_to_download = missing_bars
     out.download_calls = calls
-    rpm = int(config.get("backtest", "alpaca_calls_per_minute", default=40))
+    rpm = config.get_int("backtest", "alpaca_calls_per_minute", default=40)
     out.download_minutes = -(-calls // rpm) if calls else 0
 
     # ---- per-strategy calls, hits, cost -----------------------------

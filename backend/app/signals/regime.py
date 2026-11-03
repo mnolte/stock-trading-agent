@@ -43,17 +43,17 @@ class MarketRegime:
 
 
 def compute_regime(spy_daily: list[DailyBar], config: AppConfig) -> MarketRegime:
-    sma_fast_period = int(config.get("indicators", "daily_sma_fast", default=50))
-    sma_slow_period = int(config.get("indicators", "daily_sma_slow", default=200))
-    atr_period = int(config.get("indicators", "atr_period", default=14))
-    percentile_sessions = int(
-        config.get("indicators", "atr_percentile_sessions", default=60)
+    sma_fast_period = config.get_int("indicators", "daily_sma_fast", default=50)
+    sma_slow_period = config.get_int("indicators", "daily_sma_slow", default=200)
+    atr_period = config.get_int("indicators", "atr_period", default=14)
+    percentile_sessions = config.get_int(
+        "indicators", "atr_percentile_sessions", default=60
     )
-    vol_low_below = Decimal(
-        str(config.get("regime", "vol_low_below_pct", default=30))
+    vol_low_below = config.get_decimal(
+        "regime", "vol_low_below_pct", default=Decimal(30)
     )
-    vol_high_above = Decimal(
-        str(config.get("regime", "vol_high_above_pct", default=70))
+    vol_high_above = config.get_decimal(
+        "regime", "vol_high_above_pct", default=Decimal(70)
     )
     blocked = set(config.get("regime", "block_entries_in", default=["down_high"]))
 
@@ -73,8 +73,13 @@ def compute_regime(spy_daily: list[DailyBar], config: AppConfig) -> MarketRegime
         trend = TREND_SIDEWAYS
 
     atr_values = atr_series(spy_daily, atr_period)
-    window = atr_values[-percentile_sessions:]
-    percentile = percentile_rank(window, window[-1]) if window else None
+    # The percentile needs the full configured window; a shorter history
+    # labels volatility "unknown" rather than ranking on partial data.
+    if len(atr_values) >= percentile_sessions:
+        window = atr_values[-percentile_sessions:]
+        percentile = percentile_rank(window, window[-1])
+    else:
+        percentile = None
 
     if percentile is None:
         volatility = VOL_UNKNOWN

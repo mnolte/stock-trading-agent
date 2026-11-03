@@ -222,14 +222,15 @@ class CycleRunner:
             now=now,
             max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
             bar_close=bar.close if bar is not None else None,
-            max_deviation_pct=Decimal(str(self.config.get("execution", "quote_max_deviation_pct"))),
+            max_deviation_pct=self.config.get_decimal(
+                "execution", "quote_max_deviation_pct", default=1.0
+            ),
         )
 
     async def _fetch_news(
         self, symbols: list[str], now: datetime, report: CycleReport
     ) -> dict[str, list[NewsItem]] | None:
         """Headlines for the symbols that get a model call; None on error."""
-        self._news_status: dict[str, str] = {}
         if not symbols:
             return {}
         news_result = await self.sources.news.fetch_news(
@@ -241,9 +242,16 @@ class CycleRunner:
         news: dict[str, list[NewsItem]] = {symbol: [] for symbol in symbols}
         for item in news_result.data:
             news.setdefault(item.symbol, []).append(item)
-        self._news_status = news_result.statuses or {
-            symbol: "complete" if news[symbol] else "empty" for symbol in symbols
-        }
+        # Merge, never replace: later top-up fetches (EP held/candidate
+        # batches, lazy per-symbol fetches) must not erase earlier
+        # statuses. _run resets the map once per cycle.
+        self._news_status.update(
+            news_result.statuses
+            or {
+                symbol: "complete" if news[symbol] else "empty"
+                for symbol in symbols
+            }
+        )
         incomplete = [
             s for s, status in self._news_status.items() if status in ("failed", "truncated")
         ]
@@ -288,7 +296,11 @@ class CycleRunner:
     def record_missing_cycles(self, reason: str) -> int:
         now = self.clock.now()
         today = now.astimezone(NY_TZ).date()
-        grace = timedelta(seconds=int(self.config.get("schedule", "misfire_grace_seconds")))
+        grace = timedelta(
+            seconds=self.config.get_int(
+                "schedule", "misfire_grace_seconds", default=120
+            )
+        )
         schedule = SessionClock(self.clock, self.config, self.calendar)
         count = 0
         with self._session_factory() as session:
@@ -490,6 +502,9 @@ class CycleRunner:
             report.errors.append("market not open")
             ev(logger, logging.INFO, "cycle.skipped", "market not open")
             return
+        # Per-cycle news statuses accumulate across the batch and lazy
+        # fetches (_fetch_news merges into this map).
+        self._news_status: dict[str, str] = {}
 
         # A full cycle starts here: pending approvals expire and saved
         # settings promote to active (docs/SPEC.md, Settings, Supervised).
@@ -813,6 +828,13 @@ class CycleRunner:
         from app.logging_config import ev
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
+        # A candidate outside the prefetched news set can still reach the
+        # model call (the call estimate doesn't know about checks/options
+        # no-calls) — fetch its headlines so it never calls blind.
+        if news_map is not None and context == "candidate" and item.symbol not in news_map:
+            extra = await self._fetch_news([item.symbol], now, report)
+            if extra:
+                news_map.update(extra)
         price_reason = self._price_reason(item.symbol, quote, now)
         price = (
             quote.last
@@ -1405,8 +1427,8 @@ class CycleRunner:
         weight = Decimal(
             str(self.config.get("selection", "confidence_weight", default=0.5))
         )
-        max_positions = int(self.config.get("risk", "max_open_positions", default=4))
-        max_orders = int(self.config.get("risk", "max_orders_per_cycle", default=6))
+        max_positions = self.config.get_int("risk", "max_open_positions", default=4)
+        max_orders = self.config.get_int("risk", "max_orders_per_cycle", default=6)
         sector_map = ctx.sectors or {}
         for c in collected:
             item = c["item"]
@@ -1497,7 +1519,7 @@ class CycleRunner:
         )
         budget = SelectionBudget(
             free_slots=max(0, free_slots),
-            sector_cap=int(self.config.get("risk", "max_per_sector", default=2)),
+            sector_cap=self.config.get_int("risk", "max_per_sector", default=2),
             sector_counts=sector_counts,
             open_risk_used=open_risk_used,
             open_risk_cap=_cap,

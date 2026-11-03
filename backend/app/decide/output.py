@@ -529,10 +529,12 @@ def validate_model_output(
     """Parse ``raw`` and run the spec's code checks for the given context."""
     allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
-    atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
-    atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
-    min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
-    min_r = Decimal(str(config.get("decision", "breakeven_min_r", default=1.0)))
+    atr_min = config.get_decimal("decision", "stop_atr_min", default=Decimal("1.5"))
+    atr_max = config.get_decimal("decision", "stop_atr_max", default=Decimal("4.0"))
+    min_rr = config.get_decimal(
+        "decision", "min_reward_risk", default=Decimal("1.5")
+    )
+    min_r = config.get_decimal("decision", "breakeven_min_r", default=Decimal("1.0"))
 
     if call_error is not None:
         return _invalid(context, f"model call failed: {call_error}")
@@ -664,7 +666,10 @@ def validate_model_output(
             ),
             value=_fmt(output.stop_price),
         )
-        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        margin = config.get_decimal(
+            "decision", "tighten_min_atr_below_price",
+            default=Decimal("0.25"),
+        )
         distance_ok = (
             price is not None and atr_1h is not None and atr_1h > 0
             and output.stop_price is not None
@@ -752,9 +757,11 @@ def validate_model_output_v2(
     """
     allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
-    atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
-    atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
-    min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
+    atr_min = config.get_decimal("decision", "stop_atr_min", default=Decimal("1.5"))
+    atr_max = config.get_decimal("decision", "stop_atr_max", default=Decimal("4.0"))
+    min_rr = config.get_decimal(
+        "decision", "min_reward_risk", default=Decimal("1.5")
+    )
 
     def invalid(error: str, output: ModelOutputV2 | None = None) -> ValidationResult:
         return ValidationResult(
@@ -908,9 +915,6 @@ def validate_model_output_v2(
         )
         checks.append(json_check)
         # The explanation check never changes the action (docs/SPEC.md).
-        passed = all(c.passed for c in checks[:-1]) and all(
-            c.passed for c in checks if c.name != "Explanation check"
-        )
         passed = all(
             c.passed for c in checks if c.name != "Explanation check"
         )
@@ -972,7 +976,10 @@ def validate_model_output_v2(
                 value=_fmt(new_stop),
             ),
         ]
-        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        margin = config.get_decimal(
+            "decision", "tighten_min_atr_below_price",
+            default=Decimal("0.25"),
+        )
         price = _decimal_or_none(snapshot.get("stop_reference_price"))
         distance_ok = (
             price is not None and atr_1h is not None and atr_1h > 0
@@ -1138,7 +1145,7 @@ def _code_written(
 
 
 def _claim_checks(
-    output: ModelOutputV3,
+    text_parts: list[str],
     *,
     context: str,
     snapshot: dict[str, Any],
@@ -1184,7 +1191,7 @@ def _claim_checks(
                     locked_r = (stop - entry) / risk
 
     bad: list[str] = []
-    for part in [output.thesis, *output.conflicts]:
+    for part in text_parts:
         for match in _SENTENCE_RE.finditer(part):
             sentence = match.group(0)
             ids = set(_LEVEL_ID_RE.findall(sentence))
@@ -1227,9 +1234,11 @@ def validate_model_output_v3(
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
     min_edge = float(config.get("decision", "v3", "min_edge", default=0.10))
     min_room = float(config.get("decision", "v3", "min_room_atr", default=1.0))
-    atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
-    atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
-    min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
+    atr_min = config.get_decimal("decision", "stop_atr_min", default=Decimal("1.5"))
+    atr_max = config.get_decimal("decision", "stop_atr_max", default=Decimal("4.0"))
+    min_rr = config.get_decimal(
+        "decision", "min_reward_risk", default=Decimal("1.5")
+    )
 
     def invalid(error: str, output: ModelOutputV3 | None = None) -> ValidationResult:
         return ValidationResult(
@@ -1272,7 +1281,10 @@ def validate_model_output_v3(
     ]
     chosen = _option_by_id(options, output.option_id)
     explanation = check_explanation_v3(output, snapshot, chosen)
-    claims = _claim_checks(output, context=context, snapshot=snapshot, chosen=chosen)
+    claims = _claim_checks(
+        [output.thesis, *output.conflicts],
+        context=context, snapshot=snapshot, chosen=chosen,
+    )
     claims_check = CodeCheck(
         "Claim checks",
         passed=claims.passed,
@@ -1475,7 +1487,10 @@ def validate_model_output_v3(
                 value=_fmt(new_stop),
             ),
         ]
-        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        margin = config.get_decimal(
+            "decision", "tighten_min_atr_below_price",
+            default=Decimal("0.25"),
+        )
         price = _decimal_or_none(snapshot.get("stop_reference_price"))
         distance_ok = (
             price is not None and atr_1h is not None and atr_1h > 0
@@ -1592,16 +1607,14 @@ def _claim_checks_v4(
     fails while the chosen option (held: ``levels_to_target``) has a
     level within 1 ATR. Never changes the decision.
     """
-    proxy = ModelOutputV3(
-        symbol=output.symbol,
-        conflicts=[c.text for c in output.conflicts]
-        + [c.outweighed_by for c in output.conflicts if c.outweighed_by],
-        thesis=output.thesis,
-        action=output.action,
-        confidence=output.confidence,
-        levels_used=output.levels_used,
+    base = _claim_checks(
+        [
+            output.thesis,
+            *(c.text for c in output.conflicts),
+            *(c.outweighed_by for c in output.conflicts if c.outweighed_by),
+        ],
+        context=context, snapshot=snapshot, chosen=chosen,
     )
-    base = _claim_checks(proxy, context=context, snapshot=snapshot, chosen=chosen)
     bad: list[str] = list(base.bad_ids)
     kinds: list[str] = ["level" if i.startswith("L") else i for i in base.bad_ids]
     kinds = ["locks_in" if k == "locks-in claim" else k for k in kinds]
@@ -1679,9 +1692,11 @@ def validate_model_output_v4(
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
     min_edge = float(config.get("decision", "v3", "min_edge", default=0.10))
     min_room = float(config.get("decision", "v3", "min_room_atr", default=1.0))
-    atr_min = Decimal(str(config.get("decision", "stop_atr_min", default=1.5)))
-    atr_max = Decimal(str(config.get("decision", "stop_atr_max", default=4.0)))
-    min_rr = Decimal(str(config.get("decision", "min_reward_risk", default=1.5)))
+    atr_min = config.get_decimal("decision", "stop_atr_min", default=Decimal("1.5"))
+    atr_max = config.get_decimal("decision", "stop_atr_max", default=Decimal("4.0"))
+    min_rr = config.get_decimal(
+        "decision", "min_reward_risk", default=Decimal("1.5")
+    )
     max_outlier = float(
         config.get("decision", "v4", "max_confidence_above_anchor", default=0.30)
     )
@@ -2048,7 +2063,10 @@ def validate_model_output_v4(
                 value=_fmt(new_stop),
             ),
         ]
-        margin = Decimal(str(config.get("decision", "tighten_min_atr_below_price")))
+        margin = config.get_decimal(
+            "decision", "tighten_min_atr_below_price",
+            default=Decimal("0.25"),
+        )
         price = _decimal_or_none(snapshot.get("stop_reference_price"))
         distance_ok = (
             price is not None and atr_1h is not None and atr_1h > 0

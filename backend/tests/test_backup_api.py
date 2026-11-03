@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,9 +49,15 @@ def _sign_in(client: TestClient, secret: str, confirm: bool = True) -> None:
     )
     assert r2.status_code == 200, r2.text
     if confirm:
+        # Confirm burns the TOTP step like sign-in: the same code cannot
+        # be replayed, so confirm uses the next step's code.
         r3 = client.post(
             "/api/auth/confirm",
-            json={"secret": totp_code(secret, clock.now())},
+            json={
+                "secret": totp_code(
+                    secret, clock.now() + timedelta(seconds=30)
+                )
+            },
             headers={
                 "X-CSRF-Token": client.cookies.get("sa_csrf") or ""
             },

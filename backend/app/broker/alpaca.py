@@ -104,8 +104,8 @@ def parse_order(item: Any) -> BrokerOrder:
         order_type=str(raw.get("type", raw.get("order_type", ""))),
         order_class=str(raw.get("order_class", "") or ""),
         status=str(raw.get("status", "")),
-        qty=int(Decimal(str(qty_raw))) if qty_raw is not None else 0,
-        filled_qty=int(Decimal(str(filled_qty_raw))) if filled_qty_raw else 0,
+        qty=_qty_int(qty_raw) if qty_raw is not None else 0,
+        filled_qty=_qty_int(filled_qty_raw) if filled_qty_raw else 0,
         filled_avg_price=_dec(raw.get("filled_avg_price")),
         limit_price=_dec(raw.get("limit_price")),
         stop_price=_dec(raw.get("stop_price")),
@@ -116,12 +116,26 @@ def parse_order(item: Any) -> BrokerOrder:
     )
 
 
+def _qty_int(value: Any) -> int:
+    """Whole-share quantity; a fractional part is logged, never dropped
+    silently."""
+    qty = Decimal(str(value))
+    whole = int(qty)
+    if qty != whole:
+        logger.warning(
+            "fractional quantity %s seen at the broker; truncating to %s",
+            qty,
+            whole,
+        )
+    return whole
+
+
 def parse_position(item: Any) -> BrokerPosition:
     raw = _raw(item)
     qty_raw = raw.get("qty")
     return BrokerPosition(
         symbol=str(raw.get("symbol", "")),
-        qty=int(Decimal(str(qty_raw))) if qty_raw is not None else 0,
+        qty=_qty_int(qty_raw) if qty_raw is not None else 0,
         avg_entry_price=Decimal(str(raw.get("avg_entry_price", "0"))),
         current_price=_dec(raw.get("current_price")),
         market_value=_dec(raw.get("market_value")),
@@ -148,11 +162,11 @@ def parse_trade_update(item: Any) -> TradeUpdateInfo:
     return TradeUpdateInfo(
         event=str(raw.get("event", "")),
         order=parse_order(raw.get("order", {})),
-        qty=int(Decimal(str(raw["qty"]))) if raw.get("qty") is not None else None,
+        qty=_qty_int(raw["qty"]) if raw.get("qty") is not None else None,
         price=_dec(raw.get("price")),
         timestamp=_ts(raw.get("timestamp")),
         position_qty=(
-            int(Decimal(str(raw["position_qty"])))
+            _qty_int(raw["position_qty"])
             if raw.get("position_qty") is not None
             else None
         ),
@@ -292,7 +306,14 @@ class AlpacaPaperBroker:
                     status=QueryOrderStatus.OPEN, nested=True, limit=500
                 ),
             )
-            orders = [parse_order(o) for o in (list(raw) if raw else [])]
+            raw_list = list(raw) if raw else []
+            if len(raw_list) >= 500:
+                return DataResult(
+                    data=[],
+                    error="open order list exceeded page limit",
+                    source="alpaca",
+                )
+            orders = [parse_order(o) for o in raw_list]
             # Alpaca's open filter never returns `held` orders, but a
             # bracket's stop leg stays `held` — and fully working — under
             # its filled parent. Recover live legs still riding under
@@ -303,9 +324,16 @@ class AlpacaPaperBroker:
                     status=QueryOrderStatus.CLOSED, nested=True, limit=500
                 ),
             )
+            closed_list = list(closed) if closed else []
+            if len(closed_list) >= 500:
+                return DataResult(
+                    data=[],
+                    error="closed order list exceeded page limit",
+                    source="alpaca",
+                )
             seen = {order.id for order in orders}
             seen.update(leg.id for order in orders for leg in order.legs)
-            for parent in [parse_order(o) for o in (list(closed) if closed else [])]:
+            for parent in [parse_order(o) for o in closed_list]:
                 for leg in parent.legs:
                     if leg.is_open and leg.id not in seen:
                         seen.add(leg.id)

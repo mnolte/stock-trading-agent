@@ -161,33 +161,44 @@ def merge_levels(levels: Sequence[Level], atr_1h: Decimal, merge_atr: Decimal) -
     if within <= 0 or not levels:
         return list(levels)
     out: list[Level] = []
-    for level in levels:
-        hit = next(
-            (k for k in out if abs(k.price - level.price) <= within), None
-        )
-        if hit is None:
-            out.append(level)
-            continue
-        kinds = list(dict.fromkeys([*(hit.kinds or [hit.kind]), level.kind]))
-        kinds.sort(key=lambda k: _KIND_RANK.get(k, 9))
-        if _KIND_RANK.get(level.kind, 9) < _KIND_RANK.get(hit.kind, 9):
-            out[out.index(hit)] = Level(
-                id=level.id,
-                price=level.price,
-                kind=level.kind,
-                timeframe=level.timeframe,
-                time=level.time,
-                kinds=tuple(kinds),
+    for cand in levels:
+        level = cand
+        while True:
+            hit = next(
+                (k for k in out if k is not level and abs(k.price - level.price) <= within),
+                None,
             )
-        else:
-            out[out.index(hit)] = Level(
-                id=hit.id,
-                price=hit.price,
-                kind=hit.kind,
-                timeframe=hit.timeframe,
-                time=hit.time,
-                kinds=tuple(kinds),
+            if hit is None:
+                if level not in out:
+                    out.append(level)
+                break
+            # The winner is re-checked against the rest of ``out``: its
+            # price may sit within ``within`` of another kept level.
+            kinds = list(
+                dict.fromkeys(
+                    [*(hit.kinds or [hit.kind]), *(level.kinds or [level.kind])]
+                )
             )
+            kinds.sort(key=lambda k: _KIND_RANK.get(k, 9))
+            idx = out.index(hit)
+            if _KIND_RANK.get(level.kind, 9) < _KIND_RANK.get(hit.kind, 9):
+                out[idx] = level = Level(
+                    id=level.id,
+                    price=level.price,
+                    kind=level.kind,
+                    timeframe=level.timeframe,
+                    time=level.time,
+                    kinds=tuple(kinds),
+                )
+            else:
+                out[idx] = level = Level(
+                    id=hit.id,
+                    price=hit.price,
+                    kind=hit.kind,
+                    timeframe=hit.timeframe,
+                    time=hit.time,
+                    kinds=tuple(kinds),
+                )
     return out
 
 
@@ -1240,6 +1251,8 @@ _STRIP_TOP = (
     "days_to_earnings",
     "signal_bar_time",
     "news_status",
+    # Stored for shadow rule evaluation, never sent to the model.
+    "indicators_precise",
 )
 _STRIP_QUOTE = (
     "last",

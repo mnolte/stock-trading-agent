@@ -38,6 +38,7 @@ from app.decide.output import (
     validate_model_output_v4,
 )
 from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
+from app.decide.snapshot import strip_internal
 from app.decide.v2inputs import V2Build
 from app.decide.v3 import v3_send_snapshot
 from app.decide.v4 import v4_send_snapshot
@@ -196,16 +197,14 @@ class DecisionService:
         on_response: Callable[[ModelResponse], None] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
-        user = json.dumps(
-            (
-                v4_send_snapshot(snapshot_json, self.config)
-                if self._spec.is_v4
-                else v3_send_snapshot(snapshot_json)
-                if self._spec.is_v3
-                else snapshot_json
-            ),
-            indent=2,
+        send_snapshot = (
+            v4_send_snapshot(snapshot_json, self.config)
+            if self._spec.is_v4
+            else v3_send_snapshot(snapshot_json)
+            if self._spec.is_v3
+            else strip_internal(snapshot_json)
         )
+        user = json.dumps(send_snapshot, indent=2)
         response: ModelResponse | None = None
         sent_at = None
         from_cache = False
@@ -346,14 +345,7 @@ class DecisionService:
         # v3 data flags: every flag is logged at WARNING and recorded as
         # an event in every context, so data bugs surface quickly
         # (docs/SPEC.md, Decision v3 — Data flags).
-        flags = (
-            list(validation.output.data_flags)
-            if isinstance(validation.output, ModelOutputV3)
-            else []
-        )
-        flags = list(
-            getattr(validation.output, "data_flags", None) or flags
-        )
+        flags = list(getattr(validation.output, "data_flags", None) or [])
         for flag in flags:
             ev(
                 logger, logging.WARNING, "model.data_flag",

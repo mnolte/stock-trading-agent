@@ -399,6 +399,7 @@ class MarketDataService:
                 )
 
         fetches = []
+        fetch_start: dict[str, date] = {}
         for symbol in wanted:
             if covered_counts.get(symbol, 0) == len(sessions):
                 missing: list[date] = []
@@ -409,6 +410,7 @@ class MarketDataService:
             # it even when the cache has a row for it.
             if end not in missing:
                 missing.append(end)
+            fetch_start[symbol] = min(missing)
             fetches.append(fetch(symbol, min(missing)))
 
         fetched = await asyncio.gather(*fetches)
@@ -420,6 +422,19 @@ class MarketDataService:
                 )
                 continue
             inserted = self.bars_cache.store_daily(result.data)
+            # A fetch that succeeded but returned no bar for a session in
+            # its range confirms a gap at the source (SPEC, Adding a
+            # symbol → "Gaps at the source"); a failed fetch writes none.
+            returned = {b.date for b in result.data}
+            self.bars_cache.clear_daily_gaps(symbol, returned)
+            self.bars_cache.record_daily_gaps(
+                symbol,
+                [
+                    s.date
+                    for s in sessions
+                    if s.date >= fetch_start[symbol] and s.date not in returned
+                ],
+            )
             results[symbol] = DataResult(data=inserted, source=result.source)
         return results
 

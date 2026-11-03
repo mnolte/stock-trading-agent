@@ -119,7 +119,7 @@ def offsite_backup(config: AppConfig, secrets: SecretsStore) -> None:
     repo = _repo(creds)
     data = Path(config.env.sa_data_dir)
     db = Path(config.env.sa_db_path)
-    keep_daily = int(config.get("ops", "offsite_backup", "keep_daily", default=30))
+    keep_daily = config.get_int("ops", "offsite_backup", "keep_daily", default=30)
     keep_weekly = int(
         config.get("ops", "offsite_backup", "keep_weekly", default=12)
     )

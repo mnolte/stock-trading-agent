@@ -70,7 +70,7 @@ def make_data_sources(
     key_id, secret = secrets.alpaca_pair() if secrets is not None else (None, None)
     finnhub_key = secrets.get("finnhub") if secrets is not None else None
 
-    max_calls = int(config.get("alpaca", "max_calls_per_minute", default=150))
+    max_calls = config.get_int("alpaca", "max_calls_per_minute", default=150)
     adjustment = str(config.get("schedule", "bar_adjustment", default="split"))
     limiter = RateLimiter(RateLimitConfig(max_calls=max_calls))
     # Missing keys are no reason to refuse startup: the app comes up
