@@ -139,7 +139,7 @@ async def _main(model: str, file: Path) -> int:
     # The eval model overrides ask.model for this run only (in place —
     # _active shares the yaml dict when no settings table exists).
     config.yaml.setdefault("ask", {})["model"] = model
-    from app.llm.clients import ProviderClients, secrets_key_for
+    from app.llm.clients import ProviderClients
     from app.secrets_service import read_env_keys
 
     env_keys = read_env_keys()
@@ -149,7 +149,7 @@ async def _main(model: str, file: Path) -> int:
             key_for=lambda name: env_keys.get(name),
             default_model=model,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"cannot create client for {model}: {exc}")
         return 2
     deps = AskDeps(
@@ -163,7 +163,7 @@ async def _main(model: str, file: Path) -> int:
     for q in questions:
         try:
             r = await _run_question(q, deps, clients, get_session_maker())
-        except Exception as exc:  # noqa: BLE001 - eval keeps going
+        except Exception as exc:  # noqa: BLE001  # noqa: BLE001 - eval keeps going
             r = {"q": q["q"], "error": str(exc), "passed": False}
         results.append(r)
         total_cost += Decimal(r.get("cost") or 0)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -15,13 +16,15 @@ from app.data.cache import _naive_utc
 from app.db.models import AskMessage, AskThread, LlmCall
 from app.llm.fake import FakeModelClient
 from app.market.clock import FakeClock
+from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def _clear_ask_rate() -> None:
+def _clear_ask_rate() -> Generator[None, None, None]:
     """The per-session question rate lives in a module-level deque."""
     import app.api.ask as ask_api
 
@@ -30,7 +33,7 @@ def _clear_ask_rate() -> None:
     ask_api._rate.clear()
 
 
-def _deps(session_factory, **over: Any) -> AskDeps:
+def _deps(session_factory: sessionmaker[Session], **over: Any) -> AskDeps:
     return AskDeps(
         config=get_config(),
         clock=FakeClock(NOW),
@@ -39,7 +42,7 @@ def _deps(session_factory, **over: Any) -> AskDeps:
     )
 
 
-def _thread(session_factory) -> tuple[AskThread, AskMessage]:
+def _thread(session_factory: sessionmaker[Session]) -> tuple[int, int]:
     with session_factory() as s:
         t = AskThread(
             title="New chat",
@@ -60,7 +63,13 @@ def _thread(session_factory) -> tuple[AskThread, AskMessage]:
         return t.id, m.id
 
 
-async def _run(client, deps, thread_id, message_id, question="q"):
+async def _run(
+    client: Any,
+    deps: AskDeps,
+    thread_id: int,
+    message_id: int,
+    question: str = "q",
+) -> list[Any]:
     return [
         ev
         async for ev in answer(
@@ -102,7 +111,7 @@ def test_calculate_whitelist() -> None:
 # tools
 
 
-def test_every_tool_bounded_on_hostile_args(session_factory) -> None:
+def test_every_tool_bounded_on_hostile_args(session_factory: sessionmaker[Session]) -> None:
     """Huge limits, injection strings and unknown ids still return valid data."""
     deps = _deps(session_factory)
     hostile: dict[str, dict[str, Any]] = {
@@ -134,7 +143,7 @@ def test_every_tool_bounded_on_hostile_args(session_factory) -> None:
             assert "as_of" in result, name
 
 
-def test_tools_never_write(session_factory) -> None:
+def test_tools_never_write(session_factory: sessionmaker[Session]) -> None:
     """Run every tool and check no row count changed in any table."""
     deps = _deps(session_factory)
     with session_factory() as s:
@@ -163,25 +172,26 @@ def test_tools_never_write(session_factory) -> None:
         assert before == after
 
 
-def test_tool_results_carry_no_secrets(session_factory) -> None:
+def test_tool_results_carry_no_secrets(session_factory: sessionmaker[Session]) -> None:
     """A planted fake key must never appear in any tool result."""
     fake_key = "sk-test-SECRET-abcdef0123456789"
     deps = _deps(session_factory)
     with session_factory() as s:
-        for name, args in {
+        cases: dict[str, dict[str, Any]] = {
             "get_status": {},
             "settings": {},
             "search_model_calls": {},
             "search_logs": {},
             "notes": {},
             "readiness": {},
-        }.items():
+        }
+        for name, args in cases.items():
             result, _ = run_tool(s, deps, name, args)
             blob = json.dumps(result, default=str)
             assert fake_key not in blob, name
 
 
-def test_calculate_tool_result(session_factory) -> None:
+def test_calculate_tool_result(session_factory: sessionmaker[Session]) -> None:
     deps = _deps(session_factory)
     with session_factory() as s:
         result, err = run_tool(s, deps, "calculate", {"expression": "100 * 0.05"})
@@ -250,7 +260,9 @@ def test_unknown_ref_becomes_plain() -> None:
 
 
 @pytest.mark.anyio
-async def test_scripted_answer_records_call_and_refs(session_factory) -> None:
+async def test_scripted_answer_records_call_and_refs(
+    session_factory: sessionmaker[Session],
+) -> None:
     deps = _deps(session_factory)
     thread, msg = _thread(session_factory)
     client = FakeModelClient()
@@ -274,7 +286,9 @@ async def test_scripted_answer_records_call_and_refs(session_factory) -> None:
 
 
 @pytest.mark.anyio
-async def test_unverified_number_stored_with_position(session_factory) -> None:
+async def test_unverified_number_stored_with_position(
+    session_factory: sessionmaker[Session],
+) -> None:
     deps = _deps(session_factory)
     thread, msg = _thread(session_factory)
     client = FakeModelClient()
@@ -290,16 +304,16 @@ async def test_unverified_number_stored_with_position(session_factory) -> None:
     assert not any(u["text"] == "4" for u in unverified)  # calculate result
     with session_factory() as s:
         stored = s.get(AskMessage, msg)
-        assert stored.unverified_numbers and stored.checked_numbers
+        assert stored and stored.unverified_numbers and stored.checked_numbers
 
 
 @pytest.mark.anyio
-async def test_stop_marks_partial_answer(session_factory) -> None:
+async def test_stop_marks_partial_answer(session_factory: sessionmaker[Session]) -> None:
     deps = _deps(session_factory)
     thread, msg = _thread(session_factory)
 
     class Slow(FakeModelClient):
-        async def converse(self, **kw):  # noqa: ANN202
+        async def converse(self, **kw: Any) -> Any:
             from app.ask.service import request_stop
             from app.llm.base import ConverseEvent, ConverseResult
 
@@ -321,11 +335,11 @@ async def test_stop_marks_partial_answer(session_factory) -> None:
     await _run(Slow(), deps, thread, msg)
     with session_factory() as s:
         stored = s.get(AskMessage, msg)
-        assert stored.status == "stopped"
+        assert stored and stored.status == "stopped"
 
 
 @pytest.mark.anyio
-async def test_model_error_fails_answer(session_factory) -> None:
+async def test_model_error_fails_answer(session_factory: sessionmaker[Session]) -> None:
     deps = _deps(session_factory)
     thread, msg = _thread(session_factory)
     client = FakeModelClient()
@@ -333,11 +347,12 @@ async def test_model_error_fails_answer(session_factory) -> None:
     events = await _run(client, deps, thread, msg)
     assert events[-1]["event"] == "error"
     with session_factory() as s:
-        assert s.get(AskMessage, msg).status == "failed"
+        stored = s.get(AskMessage, msg)
+        assert stored and stored.status == "failed"
 
 
 @pytest.mark.anyio
-async def test_follow_up_has_earlier_turns(session_factory) -> None:
+async def test_follow_up_has_earlier_turns(session_factory: sessionmaker[Session]) -> None:
     deps = _deps(session_factory)
     with session_factory() as s:
         t = AskThread(
@@ -387,7 +402,7 @@ async def test_follow_up_has_earlier_turns(session_factory) -> None:
 # API
 
 
-def test_threads_and_notes_api(client, session_factory) -> None:
+def test_threads_and_notes_api(client: TestClient, session_factory: sessionmaker[Session]) -> None:
     t = client.post(
         "/api/ask/threads",
         json={"context": {"screen": "positions", "label": "Positions"}},
@@ -415,7 +430,7 @@ def test_threads_and_notes_api(client, session_factory) -> None:
     assert any(x["id"] == n2["id"] for x in notes)
 
 
-def test_question_length_and_rate_limit(client) -> None:
+def test_question_length_and_rate_limit(client: TestClient) -> None:
     t = client.post("/api/ask/threads", json={}).json()
     too_long = client.post(
         f"/api/ask/threads/{t['id']}/messages", json={"text": "x" * 2001}
@@ -428,14 +443,14 @@ def test_question_length_and_rate_limit(client) -> None:
     assert 429 in hits
 
 
-def test_ask_status_endpoint(client) -> None:
+def test_ask_status_endpoint(client: TestClient) -> None:
     res = client.get("/api/ask/status")
     assert res.status_code == 200
     body = res.json()
     assert "enabled" in body
 
 
-def test_message_stream_shape(client) -> None:
+def test_message_stream_shape(client: TestClient) -> None:
     """POST /messages answers a text/event-stream (fake client in tests)."""
     t = client.post("/api/ask/threads", json={}).json()
     res = client.post(

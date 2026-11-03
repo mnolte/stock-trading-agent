@@ -97,6 +97,7 @@ def test_priced_models_and_require_price() -> None:
         "claude-sonnet-5-5",
         "gpt-4.1-mini",
         "gpt-4o-mini",
+        "gpt-6.1-sol",
     ]
     require_price(config, "gpt-4o-mini", "Live")
     with pytest.raises(UnpricedModelError, match="gpt-9"):
