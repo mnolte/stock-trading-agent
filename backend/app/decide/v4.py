@@ -191,11 +191,19 @@ class PreviousV4:
     checks: dict[str, Any] = field(default_factory=dict)
     headline_ids: frozenset[str] = frozenset()
     level_keys: frozenset[tuple[str, str, str, str]] = frozenset()
+    # What code did with the model's action and, when it changed it, the
+    # gate or check behind the change (docs/SPEC.md, Fixes of
+    # 3 November): a spread-blocked enter reads blocked · spread, not a
+    # position the model holds.
+    final_action: str | None = None
+    change_reason: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "time": _ny_iso(self.time) if self.time is not None else None,
             "action": self.action,
+            "final_action": self.final_action,
+            "change_reason": self.change_reason,
             "option_id": self.option_id,
             "best_option_id": self.best_option_id,
             "confidence": self.confidence,
@@ -264,10 +272,20 @@ def _previous_from_row(
             if key is not None
         )
     output = row.model_output or {}
+    validation = row.validation_result or {}
+    gates = row.gates_result or {}
+    action = validation.get("model_action") or (
+        str(output.get("action")) if output.get("action") else None
+    )
+    final = str(row.final_action) if row.final_action is not None else None
+    reason = (
+        gates.get("blocked_by") or validation.get("reason")
+        if action is not None and final is not None and final != action
+        else None
+    )
     return PreviousV4(
         time=scheduled,
-        action=(row.validation_result or {}).get("model_action")
-        or (str(output.get("action")) if output.get("action") else None),
+        action=action,
         option_id=row.chosen_option
         or (str(output.get("option_id")) if output.get("option_id") else None),
         best_option_id=(
@@ -283,6 +301,8 @@ def _previous_from_row(
         checks=checks,
         headline_ids=headline_ids,
         level_keys=level_keys,
+        final_action=final,
+        change_reason=str(reason) if reason is not None else None,
     )
 
 
@@ -299,15 +319,18 @@ def previous_decision_v4(
     *,
     symbol: str,
     day_ny: Any,
+    context: str,
     strategy_id: int | None = None,
     before: datetime | None = None,
 ) -> PreviousV4 | None:
     """The model's last decision on ``symbol`` in the New York session
     ``day_ny`` — live rows for live, the strategy's rows for a shadow
-    (docs/SPEC.md, Decision v4 — previous_decision). ``no_call`` and
-    missed shadow rows are not model decisions and don't count.
-    ``before`` bounds the search to cycles scheduled earlier (eval and
-    replays must not look ahead)."""
+    (docs/SPEC.md, Decision v4 — previous_decision). Only rows of the
+    same ``context`` count: a held decision never inherits the candidate
+    enter that opened the position (docs/SPEC.md, Fixes of 3 November).
+    ``no_call`` and missed shadow rows are not model decisions and don't
+    count. ``before`` bounds the search to cycles scheduled earlier
+    (eval and replays must not look ahead)."""
     window = _session_window(day_ny)
     if window is None:
         return None
@@ -325,6 +348,7 @@ def previous_decision_v4(
                 Cycle.scheduled_time >= start,
                 Cycle.scheduled_time < end,
                 Decision.symbol == symbol,
+                Decision.context == context,
                 Decision.no_call_reason.is_(None),
             )
             .order_by(Cycle.scheduled_time.desc(), Decision.id.desc())
@@ -339,6 +363,7 @@ def previous_decision_v4(
                 Cycle.scheduled_time >= start,
                 Cycle.scheduled_time < end,
                 ShadowDecision.symbol == symbol,
+                ShadowDecision.context == context,
                 ShadowDecision.strategy_id == strategy_id,
                 ShadowDecision.no_call_reason.is_(None),
                 ShadowDecision.missed.is_(False),

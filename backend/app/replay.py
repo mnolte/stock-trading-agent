@@ -510,6 +510,7 @@ async def replay(
                         qsession,
                         symbol=symbol,
                         day_ny=scheduled.replace(tzinfo=UTC).astimezone(NY_TZ),
+                        context=decision.context,
                         before=scheduled,
                     )
         if status != NOT_REPLAYABLE:

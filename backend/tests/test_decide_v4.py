@@ -466,6 +466,151 @@ def test_claim_checks_cover_every_conflict_and_resolution() -> None:
 
 
 # ----------------------------------------------------------------------
+# previous_decision_v4 — same context, final action and change reason
+
+
+def _cycle_and_decision(
+    session: Any,
+    *,
+    context: str = "candidate",
+    final_action: str = "enter",
+    model_action: str | None = "enter",
+    blocked_by: str | None = None,
+    validation_reason: str | None = None,
+    scheduled: datetime = datetime(2026, 11, 3, 18, 46),
+) -> None:
+    """One live decision row at ``scheduled`` (naive UTC, 13:46 NY)."""
+    from app.db.models import Cycle, Decision
+
+    cycle = Cycle(kind="cycle", scheduled_time=scheduled, status="done")
+    session.add(cycle)
+    session.flush()
+    session.add(
+        Decision(
+            cycle_id=cycle.id,
+            symbol="KO",
+            context=context,
+            input_snapshot={
+                "price": "94.66",
+                "checks": {"regime_trend": "sideways"},
+                "headlines": [],
+                "levels": [],
+            },
+            model_output=(
+                {"action": model_action, "confidence": 0.7}
+                if model_action
+                else None
+            ),
+            validation_result=(
+                {
+                    "model_action": model_action,
+                    "final_action": final_action,
+                    "reason": validation_reason,
+                }
+                if model_action
+                else None
+            ),
+            gates_result=(
+                {"allowed": False, "blocked_by": blocked_by}
+                if blocked_by
+                else {"allowed": True}
+            ),
+            final_action=final_action,
+            prompt_version="decision.v4",
+            prompt_hash="x",
+            model="fake",
+        )
+    )
+    session.commit()
+
+
+def test_previous_decision_same_context_only(
+    session_factory: Any,
+) -> None:
+    """After a filled entry the first held decision sees no previous —
+    the candidate enter belongs to the other context (docs/SPEC.md,
+    Fixes of 3 November)."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(session, context="candidate", final_action="enter")
+        day = datetime(2026, 11, 3, 15, 0, tzinfo=NY_TZ)
+        assert (
+            previous_decision_v4(session, symbol="KO", day_ny=day, context="held")
+            is None
+        )
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None and prev.action == "enter"
+
+
+def test_previous_decision_final_action_and_change_reason(
+    session_factory: Any,
+) -> None:
+    """A spread-blocked enter reads action enter · final blocked ·
+    reason spread — not a position the model holds."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(
+            session, final_action="blocked", blocked_by="spread"
+        )
+        day = datetime(2026, 11, 3, 15, 0, tzinfo=NY_TZ)
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None
+        assert prev.action == "enter"
+        assert prev.final_action == "blocked"
+        assert prev.change_reason == "spread"
+        out = prev.to_json()
+        assert out["final_action"] == "blocked"
+        assert out["change_reason"] == "spread"
+
+
+def test_previous_decision_change_reason_from_validation(
+    session_factory: Any,
+) -> None:
+    """A check-changed action carries the check's reason; an unchanged
+    action carries none."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(
+            session,
+            final_action="skip",
+            validation_reason="edge_too_small",
+        )
+        _cycle_and_decision(
+            session,
+            final_action="enter",
+            scheduled=datetime(2026, 11, 3, 19, 46),
+        )
+        day = datetime(2026, 11, 3, 16, 0, tzinfo=NY_TZ)
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None
+        # The newest candidate row is the plain enter.
+        assert prev.final_action == "enter"
+        assert prev.change_reason is None
+        prev_before = previous_decision_v4(
+            session,
+            symbol="KO",
+            day_ny=day,
+            context="candidate",
+            before=datetime(2026, 11, 3, 19, 0),
+        )
+        assert prev_before is not None
+        assert prev_before.final_action == "skip"
+        assert prev_before.change_reason == "edge_too_small"
+
+
+# ----------------------------------------------------------------------
 # about_symbol
 
 

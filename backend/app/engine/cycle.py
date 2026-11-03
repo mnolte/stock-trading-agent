@@ -905,6 +905,7 @@ class CycleRunner:
                     session,
                     symbol=item.symbol,
                     day_ny=scheduled_ny,
+                    context=context,
                     before=scheduled_ny,
                 ),
                 entry_checks=(

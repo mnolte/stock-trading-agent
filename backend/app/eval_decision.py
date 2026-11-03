@@ -347,6 +347,7 @@ def _rebuild_input(
                 symbol=symbol,
                 day_ny=scheduled.astimezone(NY_TZ).date()
                 if scheduled.tzinfo else scheduled,
+                context=context,
                 strategy_id=strategy_id,
                 before=scheduled,
             ),
