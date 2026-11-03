@@ -495,9 +495,12 @@ class SignalService:
                 price = todays[-1].close
                 # Day change vs the close before today's session: after the
                 # close, daily[-1] is today's own bar.
+                today_in_daily = bool(daily) and daily[-1].date == today
                 base = (
                     daily[-2].close
-                    if len(daily) >= 2 and daily[-1].date == today
+                    if today_in_daily and len(daily) >= 2
+                    else None
+                    if today_in_daily
                     else (daily[-1].close if daily else None)
                 )
             else:

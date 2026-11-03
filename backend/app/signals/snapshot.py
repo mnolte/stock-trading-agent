@@ -108,13 +108,14 @@ def compute_snapshot(
         rs_p,
     )
 
+    today_in_daily = (
+        session is not None and bool(daily) and daily[-1].date == session.date
+    )
     prev_close = (
         daily[-2].close
-        if (
-            session is not None
-            and len(daily) >= 2
-            and daily[-1].date == session.date
-        )
+        if today_in_daily and len(daily) >= 2
+        else None
+        if today_in_daily
         else (daily[-1].close if daily else None)
     )
     gap = (
