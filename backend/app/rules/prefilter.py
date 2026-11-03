@@ -63,7 +63,7 @@ def evaluate_entry_rules(
         config.get("rules", "require_daily_above_sma50", default=True)
     )
     require_ema = bool(config.get("rules", "require_ema20_above_ema50", default=True))
-    blackout_days = int(config.get("risk", "earnings_blackout_days", default=3))
+    blackout_days = config.get_int("risk", "earnings_blackout_days", default=3)
     block_last_cycle = bool(
         config.get("schedule", "last_cycle_no_entries", default=True)
     )

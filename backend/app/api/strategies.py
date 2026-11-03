@@ -70,7 +70,7 @@ def short_name(name: str) -> str:
 
 
 def promotion_payload(config: AppConfig, strategy: Strategy, closed: int) -> dict[str, Any]:
-    needed = int(config.get("shadows", "promote_min_closed_trades", default=20))
+    needed = config.get_int("shadows", "promote_min_closed_trades", default=20)
     allowed = strategy.kind == "llm" and strategy.status != "archived" and closed >= needed
     changes = promotion_changes(config, strategy)
     lines = [
@@ -136,7 +136,7 @@ def strategies(request: Request) -> dict[str, Any]:
             row["short"] = short_name(strategy.name)
             row["disagreements"] = disagreements(session, strategy, run, short=row["short"])
         spend = runner.monthly_spend(session) if runner is not None else Decimal(0)
-        cap = Decimal(str(config.get("shadows", "monthly_cost_cap_usd", default=5)))
+        cap = config.get_decimal("shadows", "monthly_cost_cap_usd", default=5)
         used = slots_used(session)
         synthetic_entries = session.execute(
             select(func.count(ShadowPosition.id)).join(
@@ -157,7 +157,7 @@ def strategies(request: Request) -> dict[str, Any]:
         },
         "slots": {
             "used": used,
-            "max": int(config.get("shadows", "max_active", default=3)),
+            "max": config.get_int("shadows", "max_active", default=3),
         },
         "promote_min_closed_trades": int(
             config.get("shadows", "promote_min_closed_trades", default=20)

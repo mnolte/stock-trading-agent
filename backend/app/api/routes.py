@@ -2350,7 +2350,7 @@ def banners(request: Request) -> dict[str, object]:
                     streak += 1
                 else:
                     break
-            threshold = int(config.get("risk", "losing_streak", default=3))
+            threshold = config.get_int("risk", "losing_streak", default=3)
             if threshold > 0 and streak >= threshold:
                 factor = Decimal(
                     str(
@@ -5236,7 +5236,7 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
     from app.auth.guard import client_ip
 
     config = get_config()
-    limit = int(config.get("logging", "client_errors_per_minute", default=10))
+    limit = config.get_int("logging", "client_errors_per_minute", default=10)
     sender = client_ip(request, config)
     now = time.monotonic()
     bucket = [t for t in _client_error_times.get(sender, []) if now - t < 60]

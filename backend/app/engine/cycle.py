@@ -222,7 +222,9 @@ class CycleRunner:
             now=now,
             max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
             bar_close=bar.close if bar is not None else None,
-            max_deviation_pct=Decimal(str(self.config.get("execution", "quote_max_deviation_pct"))),
+            max_deviation_pct=self.config.get_decimal(
+                "execution", "quote_max_deviation_pct", default=1.0
+            ),
         )
 
     async def _fetch_news(
@@ -294,7 +296,11 @@ class CycleRunner:
     def record_missing_cycles(self, reason: str) -> int:
         now = self.clock.now()
         today = now.astimezone(NY_TZ).date()
-        grace = timedelta(seconds=int(self.config.get("schedule", "misfire_grace_seconds")))
+        grace = timedelta(
+            seconds=self.config.get_int(
+                "schedule", "misfire_grace_seconds", default=120
+            )
+        )
         schedule = SessionClock(self.clock, self.config, self.calendar)
         count = 0
         with self._session_factory() as session:
@@ -1421,8 +1427,8 @@ class CycleRunner:
         weight = Decimal(
             str(self.config.get("selection", "confidence_weight", default=0.5))
         )
-        max_positions = int(self.config.get("risk", "max_open_positions", default=4))
-        max_orders = int(self.config.get("risk", "max_orders_per_cycle", default=6))
+        max_positions = self.config.get_int("risk", "max_open_positions", default=4)
+        max_orders = self.config.get_int("risk", "max_orders_per_cycle", default=6)
         sector_map = ctx.sectors or {}
         for c in collected:
             item = c["item"]
@@ -1513,7 +1519,7 @@ class CycleRunner:
         )
         budget = SelectionBudget(
             free_slots=max(0, free_slots),
-            sector_cap=int(self.config.get("risk", "max_per_sector", default=2)),
+            sector_cap=self.config.get_int("risk", "max_per_sector", default=2),
             sector_counts=sector_counts,
             open_risk_used=open_risk_used,
             open_risk_cap=_cap,

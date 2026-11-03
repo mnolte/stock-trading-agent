@@ -97,7 +97,7 @@ def position_size(
     the max position size, the remaining open-risk budget and the cash.
     ``risk_factor`` shrinks the risk budget after a losing streak.
     """
-    risk_pct = Decimal(str(config.get("risk", "risk_per_trade_pct", default=0.5)))
+    risk_pct = config.get_decimal("risk", "risk_per_trade_pct", default=0.5)
     risk_pct = risk_pct * risk_factor
     max_position_pct = Decimal(
         str(config.get("risk", "max_position_pct", default=20))
@@ -198,7 +198,7 @@ def drawdown_pct(equity: Decimal, peak_equity: Decimal) -> Decimal:
 
 def streak_risk_factor(losing_streak: int, config: AppConfig) -> Decimal:
     """The losing-streak multiplier on the risk budget (1 under the limit)."""
-    streak_len = int(config.get("risk", "losing_streak", default=3))
+    streak_len = config.get_int("risk", "losing_streak", default=3)
     if streak_len > 0 and losing_streak >= streak_len:
         return Decimal(
             str(config.get("risk", "losing_streak_risk_factor", default=0.5))

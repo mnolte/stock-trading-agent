@@ -301,7 +301,7 @@ def validate_new_strategy(
     kind = str(body.get("kind") or "")
     if kind not in KINDS:
         errors.append("Kind: llm or rules_only")
-    max_active = int(config.get("shadows", "max_active", default=3))
+    max_active = config.get_int("shadows", "max_active", default=3)
     if slots_used(session) >= max_active:
         errors.append(f"All {max_active} shadow slots are in use; archive one first")
 

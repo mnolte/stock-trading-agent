@@ -146,11 +146,13 @@ class AppConfig:
             )
             return default
 
-    def get_decimal(self, *keys: str, default: Decimal) -> Decimal:
+    def get_decimal(
+        self, *keys: str, default: Decimal | int | float | str
+    ) -> Decimal:
         """``get`` as Decimal; a malformed value falls back to ``default``."""
         raw = self.get(*keys, default=None)
         if raw is None:
-            return default
+            return Decimal(str(default))
         try:
             return Decimal(str(raw))
         except ArithmeticError:
@@ -158,7 +160,7 @@ class AppConfig:
                 "config %s = %r is not a number; using %s",
                 ".".join(keys), raw, default,
             )
-            return default
+            return Decimal(str(default))
 
     # ------------------------------------------------------------------
     # versioned settings

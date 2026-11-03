@@ -299,7 +299,7 @@ def weekly_facts(
     ).scalar_one()
 
     # ---- skipped setups after 5 sessions -----------------------------------
-    flat_pct = Decimal(str(config.get("reviews", "skip_flat_pct", default=2)))
+    flat_pct = config.get_decimal("reviews", "skip_flat_pct", default=2)
     skip_rows = session.execute(
         select(Decision, Cycle.scheduled_time, Outcome)
         .join(Cycle, Decision.cycle_id == Cycle.id)
@@ -672,7 +672,7 @@ def banner_facts(
                         streak += 1
                     else:
                         break
-                threshold = int(config.get("risk", "losing_streak", default=3))
+                threshold = config.get_int("risk", "losing_streak", default=3)
                 if threshold > 0 and streak >= threshold:
                     items.append(
                         {
@@ -962,7 +962,7 @@ def verdict_facts(
     outcome: Outcome,
 ) -> dict[str, Any]:
     """Every fact for one decision's draft verdict."""
-    n_sessions = int(config.get("reviews", "verdict_after_sessions", default=5))
+    n_sessions = config.get_int("reviews", "verdict_after_sessions", default=5)
     flat_pct = float(config.get("reviews", "skip_flat_pct", default=2))
     price = (decision.input_snapshot or {}).get("price")
     pct: Decimal | None = None

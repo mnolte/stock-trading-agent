@@ -106,7 +106,7 @@ def ask_status(request: Request) -> dict[str, Any]:
 
 
 def _rate_check(request: Request, config: Any) -> None:
-    limit = int(config.get("ask", "max_questions_per_minute", default=10))
+    limit = config.get_int("ask", "max_questions_per_minute", default=10)
     from app.auth.guard import client_ip
 
     key = client_ip(request, config)
@@ -389,7 +389,7 @@ def create_note(request: Request, body: NoteBody) -> dict[str, Any]:
     config = get_config()
     with get_session_maker()() as session:
         count = session.execute(select(func.count(AskNote.id))).scalar_one()
-        if count >= int(config.get("ask", "max_notes", default=100)):
+        if count >= config.get_int("ask", "max_notes", default=100):
             raise ApiError(
                 422,
                 ErrorCode.INVALID,
@@ -466,7 +466,7 @@ def delete_note(request: Request, note_id: int) -> dict[str, Any]:
 
 def cleanup_threads(session: Any, clock: Any, config: Any) -> int:
     """Delete threads older than ask.keep_days; notes keep their text."""
-    days = int(config.get("ask", "keep_days", default=90))
+    days = config.get_int("ask", "keep_days", default=90)
     cutoff = _naive_utc(clock.now()) - __import__("datetime").timedelta(days=days)
     old = session.execute(select(AskThread.id).where(AskThread.updated_at < cutoff)).scalars().all()
     if not old:

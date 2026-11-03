@@ -563,18 +563,18 @@ def _cycle_report(
     budget = SelectionBudget(
         free_slots=max(
             0,
-            int(config.get("risk", "max_open_positions", default=4))
+            config.get_int("risk", "max_open_positions", default=4)
             - len(state["positions"])
             - len(state["working"]),
         ),
-        sector_cap=int(config.get("risk", "max_per_sector", default=2)),
+        sector_cap=config.get_int("risk", "max_per_sector", default=2),
         sector_counts=counts,
         open_risk_used=used_risk,
         open_risk_cap=state["equity"]
-        * Decimal(str(config.get("risk", "max_open_risk_pct", default=2.5)))
+        * config.get_decimal("risk", "max_open_risk_pct", default=2.5)
         / 100,
         cash=cash,
-        orders_left=int(config.get("risk", "max_orders_per_cycle", default=6)),
+        orders_left=config.get_int("risk", "max_orders_per_cycle", default=6),
         equity=state["equity"],
         last_slot_min_ev_r=(
             Decimal(str(v))

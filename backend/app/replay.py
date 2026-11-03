@@ -354,7 +354,7 @@ async def replay(
         model=use_model,
     )
     estimate_usd = (unit or Decimal(0)) * len(decisions)
-    threshold = Decimal(str(config.get("decision", "replay", "confirm_above_usd", default=2.0)))
+    threshold = config.get_decimal("decision", "replay", "confirm_above_usd", default=2.0)
     print(
         f"replay: {len(decisions)} snapshots, est. ${estimate_usd:.2f} "
         f"(prompt {prompt_version}, model {use_model})"
@@ -395,8 +395,8 @@ async def replay(
     rows: list[ReplayRow] = []
     rules_rows: list[ReplayRow] = []
     total_cost = Decimal(0)
-    stop_atr = Decimal(str(config.get("shadows", "rules_only", "stop_atr", default=2.0)))
-    target_r = Decimal(str(config.get("shadows", "rules_only", "target_r", default=2.0)))
+    stop_atr = config.get_decimal("shadows", "rules_only", "stop_atr", default=2.0)
+    target_r = config.get_decimal("shadows", "rules_only", "target_r", default=2.0)
     horizon_days = 5
 
     for decision, scheduled in decisions:

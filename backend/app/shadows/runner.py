@@ -364,7 +364,7 @@ class ShadowRunner:
         return Decimal(total or 0)
 
     def cost_cap(self) -> Decimal:
-        return Decimal(str(self.config.get("shadows", "monthly_cost_cap_usd", default=5)))
+        return self.config.get_decimal("shadows", "monthly_cost_cap_usd", default=5)
 
     def cap_reached(self, session: Session) -> bool:
         return self.monthly_spend(session) >= self.cost_cap()
@@ -541,7 +541,7 @@ class ShadowRunner:
         pending_symbols = {p.symbol for p in b.pending}
         last_cycle = self._session_clock().is_last_cycle(scheduled)
         earnings = next_earnings(session, list(held), scheduled)
-        max_calls = int(self.config.get("decision", "max_calls_per_cycle", default=10))
+        max_calls = self.config.get_int("decision", "max_calls_per_cycle", default=10)
         timeout = float(self.config.get("decision", "call_timeout_seconds", default=30))
 
         # Earnings exits are position management — they run even while the
@@ -1722,10 +1722,10 @@ class ShadowRunner:
             by_key[se.key] = {**c, "stop": stop, "target": target}
 
         # 5. The exact best set under the cycle's starting limits.
-        free_slots = int(self.config.get("risk", "max_open_positions", default=4)) - (
+        free_slots = self.config.get_int("risk", "max_open_positions", default=4) - (
             len(base_ctx.open_positions) + len(base_ctx.working_entries)
         )
-        max_orders = int(self.config.get("risk", "max_orders_per_cycle", default=6))
+        max_orders = self.config.get_int("risk", "max_orders_per_cycle", default=6)
         sector_counts: dict[str, int] = {}
         for symbol in [p.symbol for p in base_ctx.open_positions] + [
             e.symbol for e in base_ctx.working_entries
@@ -1736,11 +1736,11 @@ class ShadowRunner:
         floor_raw = cfg.get("selection", "last_slot_min_ev_r")
         budget = SelectionBudget(
             free_slots=max(0, free_slots),
-            sector_cap=int(self.config.get("risk", "max_per_sector", default=2)),
+            sector_cap=self.config.get_int("risk", "max_per_sector", default=2),
             sector_counts=sector_counts,
             open_risk_used=used_risk,
             open_risk_cap=base_ctx.equity
-            * Decimal(str(self.config.get("risk", "max_open_risk_pct", default=2.5)))
+            * self.config.get_decimal("risk", "max_open_risk_pct", default=2.5)
             / 100,
             cash=cash_left,
             orders_left=max(0, max_orders - int(state["orders"])),
@@ -1965,7 +1965,10 @@ class ShadowRunner:
             new_stop = (
                 rstop if rstop is not None else _dec(output.get("stop_price"))
             )
-            margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
+            margin = self.config.get_decimal(
+                "decision", "tighten_min_atr_below_price",
+                default=Decimal("0.25"),
+            )
             if price_failure is not None:
                 row.final_action = "hold"
                 row.gates_result = {"tighten_noop": True, "reason": price_failure}
@@ -2132,7 +2135,7 @@ class ShadowRunner:
                 "allowed": False, "blocked_by": "reference_missing", "quote": provenance,
             }
             return
-        minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
+        minimum = self.config.get_decimal("decision", "stop_atr_min", default=Decimal("1.5"))
         market_risk = trade_risk(reference, stop, target, ind.atr_1h) if (
             reference is not None and target is not None
         ) else None
@@ -2161,7 +2164,7 @@ class ShadowRunner:
         )
         ctx = replace(ctx, sectors=resolve_sectors(self.config, session))
         # Gates always run on live's config: they are never overridable.
-        offset = Decimal(str(self.config.get("execution", "entry_limit_offset_pct", default=0.05)))
+        offset = self.config.get_decimal("execution", "entry_limit_offset_pct", default=0.05)
         limit = cents(price * (1 + offset / 100))
         cfg = strategy_config(self.config, strategy)
         risk = trade_risk(limit, stop, target, ind.atr_1h) if target is not None else None
@@ -2183,7 +2186,7 @@ class ShadowRunner:
         if not result.allowed or result.sizing is None:
             row.final_action = "blocked"
             return
-        timeout = int(self.config.get("execution", "entry_timeout_minutes", default=10))
+        timeout = self.config.get_int("execution", "entry_timeout_minutes", default=10)
         sp = ShadowPosition(
             strategy_id=strategy.id,
             run_id=run.id,

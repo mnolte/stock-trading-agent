@@ -121,7 +121,7 @@ def run_migrations() -> None:
 
 
 def calendar_load_range(config: AppConfig, today: date) -> tuple[date, date]:
-    history_sessions = int(config.get("schedule", "history_sessions", default=60))
+    history_sessions = config.get_int("schedule", "history_sessions", default=60)
     daily_sessions = int(
         config.get("schedule", "daily_history_sessions", default=260)
     )
@@ -836,7 +836,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             else None
         )
     run_lock.acquire(
-        int(config.get("logging", "heartbeat_seconds", default=30))
+        config.get_int("logging", "heartbeat_seconds", default=30)
     )
     set_current(shutdown_manager)
     app.state.run_lock = run_lock
@@ -1196,7 +1196,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Repeated failures reach the same kill-switch threshold at startup
         # as they do at runtime (docs/SPEC.md, Risk management, Errors). The
         # reason names the newest failure — an interruption or a real error.
-        kill_after = int(config.get("risk", "failed_cycles_kill", default=3))
+        kill_after = config.get_int("risk", "failed_cycles_kill", default=3)
         if (
             exec_state.failed_cycles >= kill_after
             and not exec_state.kill_switch_on
