@@ -140,6 +140,25 @@ async def test_subject_format(
     assert sent.subject == row.subject
 
 
+async def test_subject_is_one_line(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    session_factory: SessionFactory,
+) -> None:
+    """A multi-line event line (e.g. an exception message) collapses into
+    one header line — CR/LF made EmailMessage raise and the send failed."""
+    await _configure_smtp(service, secrets)
+    mailer.sent.clear()
+    service.notify("kill_switch", "1 validation error\r\nconflicts: too long")
+    await service.drain()
+    (row,) = _rows(session_factory)
+    assert "\r" not in row.subject and "\n" not in row.subject
+    assert "1 validation error conflicts: too long" in row.subject
+    (sent,) = mailer.sent
+    assert sent.subject == row.subject
+
+
 async def test_app_channel_is_always_on(
     service: NotificationService,
     session_factory: SessionFactory,
