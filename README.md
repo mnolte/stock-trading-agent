@@ -63,6 +63,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop |
 | `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |
+| `indicators.*` | Indicator periods: EMA, RSI, ATR, OBV and RS lookbacks, daily SMAs, ATR-percentile window |
 | `regime.*` | Volatility bands that block entries |
 | `decision.*` | Model, temperature, prompt, confidence, levels and call limits |
 | `selection.*` | Entry selection: `selection.mode` (`rank` or `expected_profit`), `selection.confidence_weight`, `selection.last_slot_min_ev_r` |

@@ -362,10 +362,11 @@ class SignalService:
         } & {s.date for s in sessions}
         want_daily = min(needed_daily, len(completed))
         want_5m = min(needed_5m, len(started_sessions))
-        if (
-            len(daily) >= want_daily - missing_slack
-            and len(covered_sessions) >= want_5m - missing_slack
-        ):
+        # Slack forgives sessions whose daily bar never existed (halt,
+        # feed gap) — intraday coverage must still be complete.
+        if len(daily) >= want_daily - missing_slack and len(
+            covered_sessions
+        ) >= want_5m:
             return None
         return (
             f"Warming up: {len(daily)} of {needed_daily} daily bars · "
