@@ -106,6 +106,7 @@ def test_strategies_payload_and_promote_disabled_under_20(client: TestClient) ->
         "claude-sonnet-5-5",
         "gpt-4.1-mini",
         "gpt-4o-mini",
+        "gpt-6.1-sol",
     ]
 
     promotion = client.get(f"/api/strategies/{sid}/promotion").json()

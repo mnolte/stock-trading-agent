@@ -1,0 +1,4 @@
+# False-positive allowlist — one gitleaks fingerprint per line.
+# backend/tests/test_ask.py planted a fake key for the secrets-scrub
+# test; the literal was renamed later but the old commit still scans.
+6cc51b7ac2aefaada42f72d98bc80bccc640dff9:backend/tests/test_ask.py:generic-api-key:170

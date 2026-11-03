@@ -1,3 +1,4 @@
+import { useAsk } from '../ask/AskContext';
 import { Link } from 'react-router-dom';
 
 import type { AttentionItem, AttentionResponse } from '../types/api';
@@ -79,6 +80,7 @@ function HealthLine({ health }: { health: AttentionResponse['health'] }) {
  * "Nothing needs you" plus the always-on health line. */
 export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
   const data = res.data;
+  const ask = useAsk();
   const items = data?.items ?? [];
   return (
     <section
@@ -141,6 +143,32 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
                     <span style={{ color: 'var(--sa-text-muted)' }}>{item.detail}</span>
                   </span>
                 </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    ask.openDrawer({
+                      screen: 'dashboard',
+                      label: item.text,
+                      summary: `${item.text} — ${item.detail}`,
+                      route: item.link,
+                    })
+                  }
+                  style={{
+                    height: 36,
+                    padding: '0 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: 'var(--sa-radius-sm)',
+                    border: '1px solid var(--sa-border)',
+                    background: 'transparent',
+                    color: 'var(--sa-text-2)',
+                    fontSize: 'var(--sa-text-sm)',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Ask about this
+                </button>
                 <Link
                   to={item.link}
                   style={{

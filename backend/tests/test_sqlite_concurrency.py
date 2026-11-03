@@ -132,6 +132,10 @@ class LockProbeClient:
             model=model, temperature=temperature,
         )
 
+    async def converse(self, **kwargs: Any) -> Any:
+        return
+        yield
+
 
 async def test_shadow_runner_holds_no_write_lock_while_awaiting_a_model() -> None:
     from tests.test_shadows import _snap

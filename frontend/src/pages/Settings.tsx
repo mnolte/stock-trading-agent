@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
+import { getAskStatus } from '../api/ask';
+import type { AskStatus } from '../api/ask';
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
 import {
@@ -289,6 +291,7 @@ const SECTIONS = [
   { id: 'rules', label: 'Entry rules' },
   { id: 'earnings', label: 'Earnings' },
   { id: 'model', label: 'Model and reviews' },
+  { id: 'ask', label: 'Ask the agent' },
   { id: 'notify', label: 'Notifications' },
   { id: 'ready', label: 'Readiness' },
   { id: 'schedule', label: 'Schedule' },
@@ -309,6 +312,7 @@ const SEARCH_TEXT: Record<string, string> = {
   earnings: 'earnings blackout hold through report sell trading days',
   model:
     'model reviews decisions prompt temperature calls per cycle daily briefing review cost cap',
+  ask: 'ask the agent chat drawer model cost cap answer notes instructions',
   notify:
     'notifications alerts browser email smtp quiet hours repeat limit critical warnings trading reviews send test channels',
   ready:
@@ -322,6 +326,21 @@ const SEARCH_TEXT: Record<string, string> = {
 
 // ---------------------------------------------------------------------------
 // small building blocks
+
+function AskSpendLine() {
+  const [status, setStatus] = useState<AskStatus | null>(null);
+  useEffect(() => {
+    getAskStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+  if (!status?.spent_usd) return null;
+  return (
+    <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginBottom: 4 }}>
+      This month: ${Number(status.spent_usd).toFixed(2)} of ${status.cap_usd}
+      {status.questions ? ` · ${status.questions} questions` : ''}
+      {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}
+    </div>
+  );
+}
 
 function Section({
   id,
@@ -2586,6 +2605,97 @@ export default function Settings() {
           </Section>
 
           <Section
+            id="ask"
+            title="Ask the agent"
+            blurb="The read-only chat drawer: it answers from the app's own data and never changes anything. Its model and cost limits are separate from decisions."
+          >
+            <AskSpendLine />
+            {row('ask.enabled', {
+              id: 'ask-on',
+              label: 'Ask the agent',
+              help: 'When off, the Ask button stays but the composer is replaced by this notice.',
+              children: (
+                <Switch id="ask-on" on={s.ask?.enabled ?? true} onChange={(v) => patch('ask', 'enabled', v)} />
+              ),
+            })}
+            {row('ask.model', {
+              id: 'ask-model',
+              label: 'Model',
+              help: 'Recommended: claude-sonnet-5-5 or gpt-6.1-sol. Budget: claude-haiku-5-5 or gpt-4.1-mini.',
+              children: (
+                <select
+                  id="ask-model"
+                  value={s.ask?.model ?? ''}
+                  onChange={(e) => patch('ask', 'model', e.target.value)}
+                  style={selectStyle}
+                >
+                  {[s.ask?.model ?? '', ...(data.model_options ?? []).map((o) => o.id)]
+                    .filter((v, i, a) => v !== '' && a.indexOf(v) === i)
+                    .map((v) => {
+                      const opt = (data.model_options ?? []).find((o) => o.id === v);
+                      const tag =
+                        v === 'claude-sonnet-5-5' || v === 'gpt-6.1-sol'
+                          ? ' · recommended'
+                          : v === 'claude-haiku-5-5' || v === 'gpt-4.1-mini'
+                            ? ' · budget'
+                            : '';
+                      return (
+                        <option key={v} value={v} disabled={opt?.needs_key}>
+                          {opt
+                            ? `${opt.id} · ${providerLabel(opt.provider)}${tag}${opt.needs_key ? ` — needs the ${providerLabel(opt.provider)} key` : ''}`
+                            : v}
+                        </option>
+                      );
+                    })}
+                </select>
+              ),
+            })}
+            {row('ask.monthly_cost_cap_usd', {
+              id: 'ask-cap',
+              label: 'Monthly cost cap',
+              help: 'Over the cap, the composer is replaced by a notice until the 1st.',
+              children: (
+                <NumBox id="ask-cap" value={s.ask?.monthly_cost_cap_usd ?? 15} unit="$ / month" width={60} accent={'ask.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['ask.monthly_cost_cap_usd']} onChange={(v) => patch('ask', 'monthly_cost_cap_usd', v)} />
+              ),
+            })}
+            {row('ask.max_cost_per_answer_usd', {
+              id: 'ask-anscap',
+              label: 'Max cost per answer',
+              help: 'At the cap, the agent answers once more without looking anything else up.',
+              children: (
+                <NumBox id="ask-anscap" value={s.ask?.max_cost_per_answer_usd ?? 0.25} unit="$ / answer" width={60} accent={'ask.max_cost_per_answer_usd' in changed} invalid={!!fieldErrors['ask.max_cost_per_answer_usd']} onChange={(v) => patch('ask', 'max_cost_per_answer_usd', v)} />
+              ),
+            })}
+            {row('ask.keep_days', {
+              id: 'ask-keep',
+              label: 'Chats kept for',
+              help: 'Older chats are deleted after the daily backup; notes keep their text.',
+              children: (
+                <NumBox id="ask-keep" value={s.ask?.keep_days ?? 90} unit="days" width={60} accent={'ask.keep_days' in changed} invalid={!!fieldErrors['ask.keep_days']} onChange={(v) => patch('ask', 'keep_days', v)} />
+              ),
+            })}
+            <Row
+              label="Standing instructions"
+              help="How the agent answers — never what it may do. At most 1,000 characters."
+              changed={'ask.instructions' in changed}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                <textarea
+                  aria-label="Standing instructions"
+                  rows={3}
+                  value={s.ask?.instructions ?? ''}
+                  maxLength={1000}
+                  onChange={(e) => patch('ask', 'instructions', e.target.value)}
+                  style={{ ...selectStyle, resize: 'vertical', minHeight: 56 }}
+                />
+                <span style={{ fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)', alignSelf: 'flex-end' }}>
+                  {(s.ask?.instructions ?? '').length}/1,000
+                </span>
+              </div>
+            </Row>
+          </Section>
+
+          <Section
             id="notify"
             title="Notifications"
             right="browser · email"
@@ -2994,6 +3104,12 @@ const LABEL_OF: Record<string, string> = {
   'risk.drawdown_kill_pct': 'Drawdown kill',
   'risk.max_order_pct': 'Max single order',
   'risk.max_orders_per_cycle': 'Max orders per cycle',
+  'ask.enabled': 'Ask the agent',
+  'ask.model': 'Ask model',
+  'ask.monthly_cost_cap_usd': 'Ask monthly cap',
+  'ask.max_cost_per_answer_usd': 'Ask max cost per answer',
+  'ask.keep_days': 'Ask chats kept for',
+  'ask.instructions': 'Ask standing instructions',
   'reviews.briefing_enabled': 'Daily briefing',
   'reviews.monthly_cost_cap_usd': 'Review cost cap',
   'reviews.models.weekly': 'Weekly review model',

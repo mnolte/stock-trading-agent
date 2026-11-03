@@ -7,11 +7,13 @@ export function PhoneBar({
   title,
   needsYou,
   onMenu,
+  onAsk,
   menuOpen,
 }: {
   title: string;
   needsYou: number;
   onMenu: () => void;
+  onAsk?: () => void;
   menuOpen: boolean;
 }) {
   return (
@@ -63,6 +65,30 @@ export function PhoneBar({
         {title}
       </span>
       <NeedsChip count={needsYou} compact />
+      {onAsk && (
+        <button
+          type="button"
+          aria-label="Ask the agent"
+          onClick={onAsk}
+          style={{
+            width: 'var(--sa-control-height)',
+            height: 'var(--sa-control-height)',
+            flex: '0 0 var(--sa-control-height)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 'var(--sa-radius-md)',
+            border: '1px solid var(--sa-border-strong)',
+            background: 'var(--sa-raised)',
+            color: 'var(--sa-text)',
+            cursor: 'pointer',
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 20px' }}>
+            <path d="M4 5h16v11H9l-5 4z" />
+          </svg>
+        </button>
+      )}
       <button
         type="button"
         aria-label="Open menu"

@@ -103,6 +103,14 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "quiet_hours": ("quiet_hours", None, None),
         "events": ("notify_events", None, None),
     },
+    "ask": {
+        "enabled": ("bool", None, None),
+        "model": ("str", None, None),
+        "monthly_cost_cap_usd": ("number", 0, 1000),
+        "max_cost_per_answer_usd": ("number", 0, 100),
+        "keep_days": ("int", 1, 3650),
+        "instructions": ("instructions", None, None),
+    },
     "readiness": {
         # Thresholds only: the zero-tolerance criteria and the manual
         # items are fixed by the spec (docs/SPEC.md, Readiness).
@@ -193,6 +201,12 @@ LABELS: dict[tuple[str, str], str] = {
     ("notifications", "events"): "Notification channels",
     ("auth", "idle_hours"): "Sign out after inactivity",
     ("ops", "heartbeat_url"): "Heartbeat URL",
+    ("ask", "enabled"): "Ask the agent",
+    ("ask", "model"): "Ask model",
+    ("ask", "monthly_cost_cap_usd"): "Ask monthly cap",
+    ("ask", "max_cost_per_answer_usd"): "Ask max cost per answer",
+    ("ask", "keep_days"): "Ask chats kept for",
+    ("ask", "instructions"): "Ask standing instructions",
     ("readiness", "min_closed_trades"): "Readiness closed trades",
     ("readiness", "min_sessions"): "Readiness paper sessions",
     ("readiness", "max_drawdown_pct"): "Readiness max drawdown",
@@ -446,6 +460,13 @@ async def validate_settings(
                                 ]
                             ) from exc
                         out[key][task] = text
+                elif kind == "instructions":
+                    text = str(value)
+                    if len(text) > 1000:
+                        raise SettingsError(
+                            [f"{label}: at most 1,000 characters"]
+                        )
+                    out[key] = text
                 elif kind == "quiet_hours":
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":

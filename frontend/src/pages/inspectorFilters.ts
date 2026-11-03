@@ -21,6 +21,7 @@ export const SOURCES: { value: LlmCallSource; label: string }[] = [
   { value: 'live', label: 'Live decisions' },
   { value: 'shadow', label: 'Shadows' },
   { value: 'review', label: 'Reviews' },
+  { value: 'ask', label: 'Ask' },
 ];
 
 /** spec default: shadows stay off (they triple the volume). */

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 
 import { signOut } from '../api/auth';
+import { useAsk } from '../ask/AskContext';
 
 interface NavItem {
   to: string;
@@ -229,6 +230,7 @@ export function Sidebar({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const expanded = overlay ? true : !collapsed;
+  const ask = useAsk();
   const width = expanded ? 'var(--sa-sidebar-width)' : 'var(--sa-sidebar-collapsed)';
 
   const panel = (
@@ -284,6 +286,38 @@ export function Sidebar({
           </div>
         )}
       </div>
+
+      <button
+        type="button"
+        aria-label="Ask the agent (Ctrl+J)"
+        title="Ask the agent — reads the app's data, never changes anything (Ctrl+J)"
+        onClick={ask.toggle}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--sa-space-3)',
+          height: 'var(--sa-control-height)',
+          padding: expanded ? '0 var(--sa-space-4)' : '0 calc(var(--sa-sidebar-collapsed) / 2 - 9px)',
+          marginBottom: 'var(--sa-space-2)',
+          borderRadius: 'var(--sa-radius-md)',
+          border: '1px solid var(--sa-accent-border)',
+          background: 'var(--sa-accent-bg)',
+          color: 'var(--sa-accent)',
+          cursor: 'pointer',
+          fontSize: 'var(--sa-text-base)',
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          justifyContent: expanded ? 'flex-start' : 'center',
+          width: '100%',
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 18px' }}>
+          <path d="M4 5h16v11H9l-5 4z" />
+          <line x1="8" y1="9" x2="16" y2="9" />
+          <line x1="8" y1="12" x2="13" y2="12" />
+        </svg>
+        {expanded && <span>Ask the agent</span>}
+      </button>
 
       <nav aria-label="Main" style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
         <NavGroup label="Monitor" expanded={expanded} />

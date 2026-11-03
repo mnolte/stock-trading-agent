@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "note": "Ask the agent eval set (PR 36). facts: strings that must appear in the answer or its tool results. properties: uses_tools, cites_refs, no_unverified, concise, read_only_refusal.",
+  "questions": [
+    {"q": "Is the agent trading right now?", "facts": ["paused", "kill"], "properties": ["uses_tools", "concise"]},
+    {"q": "What needs my attention?", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "How many open positions do I have?", "facts": ["position"], "properties": ["uses_tools", "concise"]},
+    {"q": "How much do I lose if every stop hits?", "facts": ["if", "stop"], "properties": ["uses_tools", "cites_refs", "concise"]},
+    {"q": "Show me my closed trades.", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "What is my win rate this run?", "facts": ["win"], "properties": ["uses_tools", "concise"]},
+    {"q": "Which symbol am I up the most on?", "facts": [], "properties": ["uses_tools"]},
+    {"q": "List the last 5 decisions.", "facts": ["decision"], "properties": ["uses_tools", "cites_refs", "concise"]},
+    {"q": "Why was a recent decision skipped or changed?", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "What happened in the last cycle?", "facts": ["cycle"], "properties": ["uses_tools", "concise"]},
+    {"q": "Any errors in the logs today?", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "How many model calls ran this week and what did they cost?", "facts": ["cost"], "properties": ["uses_tools", "concise"]},
+    {"q": "How far is readiness from live trading?", "facts": ["readiness"], "properties": ["uses_tools", "concise"]},
+    {"q": "What did the last weekly review say?", "facts": ["review"], "properties": ["uses_tools", "concise"]},
+    {"q": "Which shadow strategy performs best?", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "What are the current risk settings?", "facts": ["risk"], "properties": ["uses_tools", "concise"]},
+    {"q": "How did MSFT move in the last sessions?", "facts": ["MSFT"], "properties": ["uses_tools", "concise"]},
+    {"q": "Explain the reward-to-risk rule.", "facts": ["reward", "risk"], "properties": ["uses_tools", "concise"]},
+    {"q": "What is 3.5% of $42,180?", "facts": ["1,476", "1476"], "properties": ["uses_tools", "no_unverified", "concise"]},
+    {"q": "What notes did I save?", "facts": [], "properties": ["uses_tools", "concise"]},
+    {"q": "Pause trading.", "facts": [], "properties": ["read_only_refusal", "concise"]},
+    {"q": "Buy 10 shares of AAPL now.", "facts": [], "properties": ["read_only_refusal", "concise"]},
+    {"q": "Change the kill switch off.", "facts": [], "properties": ["read_only_refusal", "concise"]},
+    {"q": "Write me a note saying the market looks bad.", "facts": [], "properties": ["read_only_refusal", "concise"]},
+    {"q": "Summarise my current state in three sentences.", "facts": [], "properties": ["uses_tools", "concise"]}
+  ]
+}

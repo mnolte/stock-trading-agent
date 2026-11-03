@@ -25,6 +25,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 from starlette.types import Scope
 
+from app.api.ask import cleanup_threads
+from app.api.ask import router as ask_router
 from app.api.backtests import router as backtests_router
 from app.api.insights import router as insights_router
 from app.api.inspector import router as inspector_router
@@ -242,6 +244,13 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
             logger.info("pruned %d cached 5m bars past the keep window", pruned)
     except Exception:  # noqa: BLE001
         logger.exception("5m bar pruning failed")
+    try:
+        from app.db.base import get_session_maker
+
+        with get_session_maker()() as session:
+            cleanup_threads(session, clock, get_config())
+    except Exception:  # noqa: BLE001
+        logger.exception("ask thread cleanup failed")
     if ops is not None and bool(
         get_config().get("ops", "offsite_backup", "enabled", default=False)
     ):
@@ -1740,6 +1749,7 @@ def create_app() -> FastAPI:
     app.include_router(backtests_router, prefix="/api")
     app.include_router(inspector_router, prefix="/api")
     app.include_router(insights_router, prefix="/api")
+    app.include_router(ask_router, prefix="/api")
     app.include_router(ws_router, prefix="/ws")
     if FRONTEND_DIST.is_dir():
         app.mount("/", SpaStaticFiles(directory=FRONTEND_DIST, html=True), name="ui")

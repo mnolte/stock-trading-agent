@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution readme-screens
+.PHONY: install install-backend install-frontend dev run run-backend run-frontend lint lint-backend lint-frontend logs-reindex create-user test test-backend test-slow test-frontend test-e2e smoke-data smoke-decision smoke-execution readme-screens eval-ask
 
 PYTHON := .venv/bin/python
 PIP := .venv/bin/pip
@@ -80,6 +80,9 @@ eval-decision: ## run the decision-eval set: make eval-decision PROMPTS=decision
 		$(if $(MODEL),--model $(MODEL),) $(if $(filter 1 true yes,$(YES)),--yes,)
 
 test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwright where present)
+
+eval-ask:
+	cd backend && ../.venv/bin/python -m app.eval_ask --model "$(MODEL)"
 
 test-backend:
 	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n $(TEST_WORKERS) --dist worksteal --durations=15

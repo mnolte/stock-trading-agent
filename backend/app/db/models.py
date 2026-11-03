@@ -627,6 +627,74 @@ class LlmCall(Base):
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # PR 36: source "ask" rows link to the chat message they answered.
+    ask_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ask_messages.id"), nullable=True
+    )
+
+
+class AskThread(Base):
+    """One Ask-the-agent chat (docs/SPEC.md → Ask the agent → Storage)."""
+
+    __tablename__ = "ask_threads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(64), nullable=False)
+    context: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
+    archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+
+class AskMessage(Base):
+    """One turn in an ask thread (user or assistant)."""
+
+    __tablename__ = "ask_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[int] = mapped_column(
+        ForeignKey("ask_threads.id"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    # [{tool, arguments, rows, truncated, ms, label}]
+    steps: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONOrNull, nullable=True)
+    references: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
+    # [{text, start, end}] — numbers not found in any tool result.
+    unverified_numbers: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
+    # The numbers this answer took from tool/calculate results, as shown.
+    checked_numbers: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    # ok | stopped | failed | cap
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ok")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class AskNote(Base):
+    """A note Marc saved from an answer or wrote himself (PR 36)."""
+
+    __tablename__ = "ask_notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    references: Mapped[list[str] | None] = mapped_column(JSONOrNull, nullable=True)
+    source_thread_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ask_threads.id"), nullable=True
+    )
+    source_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ask_messages.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
 class Notification(Base):

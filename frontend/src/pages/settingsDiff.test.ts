@@ -17,6 +17,14 @@ function base(): SettingsForm {
       last_slot_min_ev_r: null,
     },
     rules: { rsi_min: 40, rsi_max: 70 },
+    ask: {
+      enabled: true,
+      model: 'claude-sonnet-5-5',
+      monthly_cost_cap_usd: 15,
+      max_cost_per_answer_usd: 0.25,
+      keep_days: 90,
+      instructions: '',
+    },
     decision: {
       model: 'gpt-4o-mini',
       temperature: 0,

@@ -52,7 +52,7 @@ test('LLM inspector: filters, list and call details', async ({ page, request }, 
   // Keyboard walkthrough: Tab reaches a call row, Enter selects it.
   await page.goto('/inspector');
   await expect(rows.first()).toBeVisible();
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     await page.keyboard.press('Tab');
     const pressed = await page.evaluate(
       () => document.activeElement?.classList.contains('sa-row') ?? false,
