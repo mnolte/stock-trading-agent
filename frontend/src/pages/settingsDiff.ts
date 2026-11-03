@@ -38,6 +38,12 @@ const FIELD_LABELS: Record<string, string> = {
   'reviews.prompts.weekly': 'Weekly review prompt',
   'reviews.prompts.briefing': 'Daily briefing prompt',
   'reviews.prompts.verdict': 'Verdict prompt',
+  'ask.enabled': 'Ask the agent',
+  'ask.model': 'Ask model',
+  'ask.monthly_cost_cap_usd': 'Ask monthly cap',
+  'ask.max_cost_per_answer_usd': 'Ask max cost per answer',
+  'ask.keep_days': 'Ask chats kept for',
+  'ask.instructions': 'Ask standing instructions',
   'schedule.cycles': 'Cycle times',
   'notifications.repeat_limit_minutes': 'Repeat limit',
   'notifications.quiet_hours.start': 'Quiet hours from',
@@ -68,6 +74,7 @@ export interface DiffRow {
 }
 
 function fmtVal(value: unknown): string {
+  if (value === undefined) return '—';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   return String(value);
@@ -171,8 +178,8 @@ function screenLeafRows(
   map: Record<string, string> | null,
   rows: DiffRow[] | null,
 ): void {
-  const cur = current.universe.screen as Record<string, unknown>;
-  const next = edited.universe.screen as Record<string, unknown>;
+  const cur = (current.universe?.screen ?? {}) as Record<string, unknown>;
+  const next = (edited.universe?.screen ?? {}) as Record<string, unknown>;
   for (const key of new Set([...Object.keys(cur), ...Object.keys(next)])) {
     const path = `universe.screen.${key}`;
     if (fmtVal(cur[key]) === fmtVal(next[key])) continue;
@@ -224,7 +231,7 @@ export function diffSettings(
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
       if (path === 'universe.sectors') {
-        const cur = (current.universe.sectors ?? {}) as Record<string, string>;
+        const cur = (current.universe?.sectors ?? {}) as Record<string, string>;
         const next = value as Record<string, string>;
         for (const sym of new Set([...Object.keys(cur), ...Object.keys(next)])) {
           if (cur[sym] !== next[sym]) {
@@ -254,7 +261,7 @@ export function diffSettings(
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;
-      const old = (current[section] as Record<string, unknown>)[key];
+      const old = (current[section] as Record<string, unknown> | undefined)?.[key];
       if (fmtVal(old) !== fmtVal(value)) {
         rows.push({ label: FIELD_LABELS[path] ?? path, from: fmtPath(path, old), to: fmtPath(path, value) });
       }
@@ -277,7 +284,7 @@ export function diffMap(
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
       if (path === 'universe.sectors') {
-        const cur = (current.universe.sectors ?? {}) as Record<string, string>;
+        const cur = (current.universe?.sectors ?? {}) as Record<string, string>;
         const next = value as Record<string, string>;
         for (const sym of new Set([...Object.keys(cur), ...Object.keys(next)])) {
           if (cur[sym] !== next[sym]) map[`universe.sector.${sym}`] = cur[sym] ?? '—';
@@ -301,7 +308,7 @@ export function diffMap(
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;
-      const old = (current[section] as Record<string, unknown>)[key];
+      const old = (current[section] as Record<string, unknown> | undefined)?.[key];
       if (fmtVal(old) !== fmtVal(value)) map[path] = fmtPath(path, old);
     }
   }

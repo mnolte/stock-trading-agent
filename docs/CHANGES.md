@@ -2,6 +2,23 @@
 
 Newest first.
 
+## 2026-11-03 — Settings: the Ask section reaches the form
+
+- `GET /api/settings` never returned the `ask` section — `_settings_form`
+  listed every editable section except it (PR 36 wired the save path but
+  not the read path). The Ask rows rendered empty, and the first edit of
+  an Ask control crashed the page diffing `settings.ask` against a
+  section the response never sent. `reviews.prompts` was missing the
+  same way. The form now returns `ask.enabled`, `ask.model`,
+  `ask.monthly_cost_cap_usd`, `ask.max_cost_per_answer_usd`,
+  `ask.keep_days` and `ask.instructions` with the config-example
+  defaults, plus `reviews.prompts.<task>` with the review-service
+  defaults. A test walks every editable section against the form so a
+  third gap can't slip through.
+- The client-side settings diff tolerates a section present in the
+  edited form but missing from the saved tree — each leaf diffs against
+  `—` instead of throwing — and Ask changes label and badge correctly.
+
 ## 2026-11-03 — Gaps at the source (SPEC §101)
 
 - `schedule.history_missing_tolerance` (3) now matches the spec: a

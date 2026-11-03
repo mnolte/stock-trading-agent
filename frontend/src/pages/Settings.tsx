@@ -272,6 +272,12 @@ const SECTION_OF: Record<string, string> = {
   'reviews.models.weekly': 'model',
   'reviews.models.briefing': 'model',
   'reviews.models.verdict': 'model',
+  'ask.enabled': 'ask',
+  'ask.model': 'ask',
+  'ask.monthly_cost_cap_usd': 'ask',
+  'ask.max_cost_per_answer_usd': 'ask',
+  'ask.keep_days': 'ask',
+  'ask.instructions': 'ask',
   'readiness.min_closed_trades': 'ready',
   'auth.idle_hours': 'access',
   'readiness.min_sessions': 'ready',
@@ -1505,7 +1511,9 @@ export default function Settings() {
 
   const reset = (section: keyof SettingsForm, key: string) => {
     if (!data) return;
-    patch(section, key, (data.settings[section] as Record<string, unknown>)[key]);
+    const saved = (data.settings[section] as Record<string, unknown> | undefined)?.[key];
+    if (saved === undefined) return;
+    patch(section, key, saved);
   };
 
   const patchScreen = (key: string, value: unknown) => {

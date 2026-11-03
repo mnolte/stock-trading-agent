@@ -110,6 +110,25 @@ READ_ONLY_FORM_KEYS = {
 }
 
 
+def test_settings_form_covers_every_editable_section(client: TestClient) -> None:
+    """Every section ``validate_settings`` accepts must be in the form.
+
+    ``ask`` was editable on save but missing from ``_settings_form``: the
+    page still offered its controls, and an Ask edit crashed the diff on a
+    section the GET never sent. ``ops`` is intentionally absent — its
+    heartbeat URL is saved from the Server section, not the form tree.
+    """
+    from app.settings_service import EDITABLE
+
+    form = client.get("/api/settings").json()["settings"]
+    for section, keys in EDITABLE.items():
+        if section == "ops":
+            continue
+        assert section in form, f"{section}: editable but not in the form"
+        for key in keys:
+            assert key in form[section], f"{section}.{key}: not in the form"
+
+
 def test_every_settings_form_key_round_trips(client: TestClient) -> None:
     """Every key the Settings page can put in a save body must validate.
 

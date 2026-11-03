@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { diffSettings } from './settingsDiff';
+import { diffMap, diffSettings } from './settingsDiff';
 import type { SettingsForm } from '../types/api';
 
 function base(): SettingsForm {
@@ -165,6 +165,20 @@ describe('diffSettings', () => {
       from: '3 days',
       to: '5 days',
     });
+  });
+
+  it('diffs a section the saved settings never had', () => {
+    // A section added to the form after the saved tree (ask, PR 36):
+    // diffing must not crash on the missing section.
+    const current = base() as Partial<SettingsForm>;
+    delete current.ask;
+    const diffs = diffSettings(current as SettingsForm, base());
+    expect(diffs).toContainEqual({
+      label: 'Ask model',
+      from: '—',
+      to: 'claude-sonnet-5-5',
+    });
+    expect(diffMap(current as SettingsForm, base())['ask.model']).toBe('—');
   });
 
   it('reports review model changes as leaf diffs', () => {

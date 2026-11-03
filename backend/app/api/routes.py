@@ -2518,6 +2518,8 @@ def _held_symbols() -> set[str]:
 
 def _settings_form(config: object) -> dict[str, object]:
     """Current effective values in the shape the settings form expects."""
+    from app.reviews.service import _LATEST_PROMPT
+
     get = config.get  # type: ignore[attr-defined]
     return {
         "execution": {
@@ -2657,6 +2659,29 @@ def _settings_form(config: object) -> dict[str, object]:
                 task: review_model(cast("AppConfig", config), task)
                 for task in REVIEW_TASKS
             },
+            "prompts": {
+                task: str(
+                    get(
+                        "reviews",
+                        "prompts",
+                        task,
+                        default=_LATEST_PROMPT.get(task, f"{task}.v1"),
+                    )
+                )
+                for task in REVIEW_TASKS
+            },
+        },
+        "ask": {
+            "enabled": get("ask", "enabled", default=True),
+            "model": get("ask", "model", default="claude-sonnet-5-5"),
+            "monthly_cost_cap_usd": get(
+                "ask", "monthly_cost_cap_usd", default=15
+            ),
+            "max_cost_per_answer_usd": get(
+                "ask", "max_cost_per_answer_usd", default=0.25
+            ),
+            "keep_days": get("ask", "keep_days", default=90),
+            "instructions": get("ask", "instructions", default=""),
         },
         "universe": {
             "mode": get("universe", "mode", default="fixed"),
