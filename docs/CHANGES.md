@@ -2,6 +2,30 @@
 
 Newest first.
 
+## 2026-11-03 — Decision v4 review; Decision v5 (PR 37)
+
+- Review of the v4 prompt and the KO call of 3 Nov 15:46 NY: `docs/analysis/2026-11-03-decision-v4-review.md`.
+  - KO was held into the night at −0.62R with confidence 0.65 against a neutral probability of 0.12, its stop within a typical overnight gap.
+  - The entry was made in a sideways, high-volatility market against the prompt's trend rule.
+- **Decision v4 → Fixes of 3 November** (code, kickoff `fix-v4-2026-11-03.md`):
+  - sideways counts in `thesis_holds`;
+  - `previous_decision` from the same context, with the final action and reason;
+  - on-symbol headlines first;
+  - Decimal stop groups;
+  - company names from the pool for `about_symbol`;
+  - an earnings status;
+  - the LLM inspector shows the snapshot as sent;
+  - clearer last-bar labels.
+- New section **Decision v5** (PR 37, kickoff `pr-37.md`):
+  - the expected-value entry gate (`decision.entry_gate`, `decision.min_ev_r` 0.25, per-option `min_confidence`) replacing the 0.55 floor for v5;
+  - the trend gate in code;
+  - snapshot fields for the last cycle, the overnight gap, target distance, price since the signal bar, and a fifth thesis check;
+  - prompt v5 with a hold-or-exit rule from the neutral probability, an overnight rule, honest odds for far targets, "a skip is not free" and model-written fields as data;
+  - warnings `hold_below_breakeven` and a wider path claim;
+  - a Needs you item for an outlier overnight hold at a loss.
+- New prompt `backend/prompts/decision.v5.md`, not in the manifest until PR 37 wires it. Config blocks come with the code (rule 7).
+- Build plan item 37. Shadows to start after PR 37: F (v5), G (v4 + ev gate), H (no 10:46 entries).
+
 ## 2026-11-03 — Ask: the number check sees tool-result strings and magnitudes
 
 - Tool results serialize every money and price field via `_dec` → `str`,

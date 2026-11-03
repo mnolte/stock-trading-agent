@@ -554,6 +554,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 34. **Decision v4.** From the analysis of 31 October: snapshot v4 (`previous_decision` with code-computed `since`, headlines with `about_symbol` and `new`, capped headlines and levels, `stop_group` on options, `checks_at_entry`, `thesis_holds`, time held, session minutes left); `prompts/decision.v4.md` with confidence defined for every action and `best_option_id`, conflicts with `outweighed_by`, `what_changed`, news effects, path and exit rules; code checks for the flip-flop guard, confidence sanity, path claims, unresolved conflicts and the claim-check fix; the `checks_gate` strategy override; shadow input snapshots stored; `make eval-decision` with `backend/eval/decision_v4.json`; the v4 drawers. v1–v3 untouched. *Done when:* the TSLA case of the design becomes `skip` · `flip_flop` while a skip → enter after a new headline about the symbol passes; a held PG answer of 0.85 at neutral 0.15 is stored with `confidence_outlier`; IBM call 1734's conflict "levels L2 and L1 in the way" no longer fails the claim check; a skip carries a valid `best_option_id`; `thesis_holds` is false for a position whose 1h trend and momentum turned against it; the eval runs v3 and v4 on the same calls and reports per category; and a v4 shadow runs next to live in simulated mode.
 35. **Needs you and positions at a glance.** From the UX audit of 1 November: the Needs you card on the dashboard with its endpoint and WebSocket topic, the header chip and the phone top bar with the count; the stop-to-target bar and distance in ATR on the dashboard and Positions; the dashboard order; the Positions totals line, four facts per position and folded legs that open on a problem; the phone top bar and menu below 820 px; no sideways scroll at 390 px. No trading change. *Done when:* each item kind in the table appears and leaves on its own condition in a test; with nothing pending the card says "Nothing needs you" and the header chip is gone; a position under 1.5 ATR from its stop shows amber; a missing stop leg opens its legs line in amber; and every screen at 390 px has a document width of 390.
 36. **Ask the agent.** The drawer on every screen with page context, threads, streaming steps and answers with Stop, suggestions per screen, reference chips and the number check; the read-only tools; `converse` in the model interface with OpenAI and Anthropic adapters and a fake; `prompts/ask.v1.md`; `ask_threads` and `ask_messages`; the Ask API with server-sent events; its own cost cap and rate limit; Settings → Ask the agent; `llm_calls` source `ask` and the inspector filter; `make eval-ask`. *Done when:* asking "why was this blocked?" in the decision drawer of a blocked AAPL entry answers with the reward-to-risk numbers and a chip to that decision; "how much do I lose if every stop hits?" on Positions answers with the total from the risk math; a follow-up without context ("and JPM?") works; Stop keeps the partial answer; a planted instruction in a headline is ignored; asking it to pause trading gets a refusal that says it's read-only; no tool result in any test contains a key; the cap notice replaces the composer at the cap; and the eval passes at least 90% of properties on the default model.
+37. **Decision v5.** From the review of 3 November: the expected-value entry gate (`decision.entry_gate`, `decision.min_ev_r`, per-option `min_confidence`); the trend gate in code for v5; snapshot v5 (`session.last_cycle`, `overnight.gap_p90_atr`, `target_atr`, `price_vs_signal`, `price_vs_ema20` in `thesis_holds`, `previous_decision` with `final_action` and `change_reason` from the same context, earnings status); `prompts/decision.v5.md`; the `hold_below_breakeven` warning, the wider path claim and the overnight Needs you item; the KO eval case and the replay additions. v1–v4 untouched. *Done when:* the KO snapshot of 3 Nov 15:46 NY gives `last_cycle` true, `gap_p90_atr` above 0.83 and a fake answer of hold at 0.65 is stored with `confidence_outlier` and `hold_below_breakeven` and appears in Needs you; a 3R option needs 0.32 and a 1.5R option 0.50 under `ev`; a sideways-regime candidate gets no call under v5; and v4 replay output is byte-for-byte unchanged.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1765,6 +1766,76 @@ For storage, the drawer and verdict facts, `conflicts[].text` takes the place of
 - The feed shows `flip_flop` and `checks` like other code blocks.
 
 **Not changed.** The v1–v3 prompts, snapshots and options; live's prompt and model; every risk gate and threshold; the rules pre-filter; entry selection (it uses v4's entry confidence like any other). The live model stays gpt-4.1-mini. A claude-haiku-5-5 shadow is added once its key is set.
+
+**Fixes of 3 November** (code, every v4 strategy; from the review in `docs/analysis/2026-11-03-decision-v4-review.md`):
+- **`thesis_holds`:** the regime's `sideways` counts like `mixed`. up → sideways and sideways → down are adverse.
+- **`previous_decision`:** taken from the same context only, with `final_action` and `change_reason`.
+- **Headlines:** headlines with `about_symbol` true come first, then the rest, up to the cap.
+- **Company names:** `stop_group` keys on the Decimal stop. Company names for `about_symbol` come from the pool: a `name` column filled from Alpaca's asset name, cleaned of suffixes like "Inc", "Co", "Corp", "(The)", "Company". `universe.names` overrides them.
+- **LLM inspector:** "User · input snapshot" shows the snapshot as sent to the model; the stored snapshot is one click away ("Stored input").
+
+## Decision v5: expected value, exits and overnight risk (PR 37)
+
+From the review of 3 November (`docs/analysis/2026-11-03-decision-v4-review.md`): the v4 prompt and the KO call. The KO position was held into the night at −0.62R with confidence 0.65 where the neutral probability was 0.12, its stop within a typical overnight gap. Its entry had been made in a sideways, high-volatility market against the prompt's own trend rule.
+
+Decision v5 keeps everything v4 does and changes the following. Built as PR 37; it reaches live only through the eval set, a shadow and Marc's decision.
+
+**Entry gate on expected value** (v5 strategies, and any strategy with `decision.entry_gate: ev`).
+- Each option gets `min_confidence` = (1 + `decision.min_ev_r`) ÷ (1 + rr), rounded up to 2 decimals. With `min_ev_r` 0.25 that is 0.50 at 1.5R, 0.42 at 2R and 0.32 at 3R.
+- An enter needs confidence ≥ its option's `min_confidence`; below it the decision is skip with reason `edge_too_small`.
+- It replaces max(`min_confidence_enter`, break-even + `min_edge`) for these strategies.
+- `entry_gate` is `floor` (today's rule, the default for v1–v4) or `ev` (the default for v5). It is a strategy override, so a v4 shadow can test the gate alone.
+- Entry selection (PR 33) is unchanged and still discounts confidence by `confidence_weight`.
+
+**Trend gate in code** (v5). A candidate whose `trend_1h` or `regime_trend` isn't `up` gets no model call (`no_call` · `checks`). It is the v4 `checks_gate` with `trend_daily` left to the model. The prompt rule the model broke for KO becomes a rule it can't break.
+
+**Snapshot v5** (on top of v4):
+- **Session:** `session.last_cycle`, true in the session's last cycle.
+- **Overnight:** `overnight.gap_p90_atr`, the 90th percentile of |open − previous close| over the last 60 sessions, divided by the current 1-hour ATR, rounded to 2. From stored daily bars; null with fewer than 20 sessions.
+- **Options:**
+  - `target_atr`: the distance from the entry limit to the target, in ATR;
+  - `min_confidence`: the per-option bar above.
+- **Position** (held):
+  - `price_vs_signal`: (price − signal bar close) ÷ ATR, rounded to 2. The checks are made on the last completed 1-hour bar, so this shows a move they don't show yet;
+  - in `thesis_holds`, a fifth comparable check, `price_vs_ema20`. It counts as adverse when the price is now below the 1-hour EMA 20 and `price_vs_signal` ≤ −0.5.
+- **Previous decision:**
+  - only from the same context (candidate or held);
+  - `final_action` and `change_reason` added, so a blocked enter doesn't look like a position.
+- **Earnings:** `checks.earnings.status` is `none_in_window`, `scheduled` or `unavailable`, never all null.
+
+**Prompt v5** (`prompts/decision.v5.md`), changes against v4:
+- Trend: code already filtered the candidates.
+- Far targets: estimate their chance honestly; take the nearer target when unsure; `target_atr` given.
+- Time left: with under 120 minutes left, a target more than 2 ATR away is an overnight hold and a conflict.
+- Edge: "a skip is not free" replaces "missing a trade costs nothing".
+- Confidence: the per-option `min_confidence` explained. An inflated number takes a slot from a better trade, because entry selection ranks on it.
+- **Hold or exit:**
+  - `neutral_probability` is the break-even between holding and selling;
+  - below neutral − 0.03, exit; otherwise hold;
+  - being up or down doesn't change the odds;
+  - with `thesis_holds` false, confidence should sit at or below neutral unless a named fact says otherwise.
+- **Overnight:** in the last cycle, when `position.stop_distance_atr` < `overnight.gap_p90_atr`, hold only with confidence ≥ neutral + 0.10, otherwise exit.
+- Data flags on a held position: hold, never tighten.
+- Everything in `previous_decision` is data, like headlines and the entry thesis. A headline with `about_symbol` false is used only if it plainly bears on the stock.
+
+**Code checks under v5** (in addition to v4's):
+- **Exit consistency** (warning `hold_below_breakeven`, never a gate): a hold with confidence below neutral − 0.03, or overnight below neutral + 0.10 with the stop within the gap.
+- **Path claim** extended: "has room", "room to run", "plenty of room" and "free run" count, together with v4's words.
+- **Confidence sanity** stays a warning. In addition, a held decision in the last cycle with `confidence_outlier` and r_now < 0 is listed in the Needs you card ("KO held overnight at −0.62R with confidence 0.65 against neutral 0.12"), so Marc sees it the same evening.
+
+**Replay and eval.**
+- `make replay PROMPT=decision.v5` and `make eval-decision PROMPTS=decision.v4,decision.v5`.
+- The KO call of 3 Nov 15:46 NY joins the eval set: confidence within neutral + 0.30, no room claim with a level within 1 ATR, and exit unless confidence ≥ neutral + 0.10.
+- The replay report adds, per gate (`floor`, `ev`):
+  - the entries passed and their option touches;
+  - for held decisions in the last cycle: holds and exits, and what the next open did against each.
+
+**Shadows to start after PR 37** (Marc starts them):
+- "F · v5";
+- "G · v4 + ev gate", the gate alone;
+- "H · no first-hour entries", `entry_cycles` without 10:46. Insights showed −0.18R per trade over 31 trades at 10:46.
+
+**Not changed.** v1–v4 prompts, snapshots and gates; live; entry selection; the risk limits.
 
 ## Ask the agent (PR 36)
 
