@@ -215,8 +215,8 @@ class Position(Base):
     initial_stop: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     current_stop_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     target_price: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
-    # A same-day exit decision deferred by the day-trade rule: {at, reason}.
-    # Shown on the position and included in the next session's first snapshot.
+    # Historical: exits deferred under the retired day-trade rule (PR 26).
+    # No longer written; kept so old positions keep their record.
     deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -283,7 +283,7 @@ class EquitySnapshot(Base):
 
 
 class DayTrade(Base):
-    """Pattern-day-trade record."""
+    """Pattern-day-trade record — retired rule, no longer written (PR 26)."""
 
     __tablename__ = "day_trades"
 
@@ -817,7 +817,7 @@ class Strategy(Base):
     Live is not a row: it is the strategy defined by the current settings
     version. ``overrides`` holds only the entry-rule and code-check keys a
     strategy may change (RSI range, minimum confidence, stop distance range,
-    minimum reward to risk); risk gates, sizing, the day-trade rule and
+    minimum reward to risk); risk gates, sizing, the re-entry rule and
     earnings handling are never overridable.
     """
 

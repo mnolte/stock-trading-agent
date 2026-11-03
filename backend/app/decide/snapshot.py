@@ -221,6 +221,26 @@ def build_input_snapshot(
             "gap_pct": _pct(snapshot.opening_gap_pct),
             "close": _num(snapshot.daily_close, 2),
         },
+        # Exact indicator values for shadow rule re-evaluation: the rounded
+        # display numbers above can flip a boundary check. Stored only —
+        # stripped from every prompt version's send path.
+        "indicators_precise": {
+            key: str(value)
+            for key, value in {
+                "ema20": snapshot.ema_fast,
+                "ema50": snapshot.ema_slow,
+                "rsi14": snapshot.rsi,
+                "atr14": snapshot.atr_1h,
+                "vwap": snapshot.session_vwap,
+                "rs_vs_spy_pct": snapshot.rs_vs_spy_pct,
+                "sma50": snapshot.daily_sma_fast,
+                "sma200": snapshot.daily_sma_slow,
+                "atr_percentile": snapshot.daily_atr_percentile,
+                "gap_pct": snapshot.opening_gap_pct,
+                "close": snapshot.daily_close,
+            }.items()
+            if value is not None
+        },
         "levels": swing_levels(bars_1h),
         "position": _position_block(position, price),
         "days_to_earnings": days_to_earnings,

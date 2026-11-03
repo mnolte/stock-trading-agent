@@ -2,6 +2,26 @@
 
 Newest first.
 
+## 2026-11-03 — Signals and indicators audit fixes
+
+- The order-time ATR is now the same ATR the snapshot computes: `indicators.atr_period` on `schedule.history_sessions` of complete 1h bars, instead of a `signals.` section that never existed over 5 sessions. Approve's fresh-quote gate and adopted-position stops can no longer disagree with the decision-time value just because they saw less history.
+- `config.example.yaml` gains the missing `indicators:` section — every indicator period that was only a code default (EMA 20/50, RSI 14, ATR 14, OBV 20, RS 20, SMA 50/200, 60-session ATR percentile) now lives in config, as every default from the spec must. `schedule.history_missing_tolerance` (3) lets sessions with no source bar (halts, feed gaps) count toward history warmup so a single missing day can never leave a symbol "Warming up" forever.
+- A missing `decision.stop_atr_min` in the active settings no longer crashes mid-order path; the fresh-quote gate uses the same default as the decision validator. Malformed numeric settings anywhere in the signal path fall back to their defaults and log a warning instead of aborting the cycle (`AppConfig.get_int` / `get_decimal`).
+- The market-regime volatility label now honours its documented behaviour: an ATR percentile is only computed over the full configured window, so a short SPY history reads `unknown` rather than mislabeling a partial window and wrongly triggering or skipping the Down+High entry block. The per-symbol daily ATR percentile follows the same rule.
+- Only complete 1h bars feed the indicators — the same rule the shock brake already applied. An incomplete bar means some of its 5-minute bars never arrived; it is dropped from EMA, RSI, ATR, OBV, level and signal-bar computation.
+- Relative strength vs SPY pairs closes by bar time instead of by index, so a data gap on either series can no longer slide one against the other.
+- The opening gap is only computed when the first cached 5m bar is the session-open bar, and "previous close" means the last session completed *before* today — after the close, today's own bar is no longer used as the gap base. The watchlist day change uses the same corrected base.
+- Crossed books (ask below bid) are no longer "plausible" quotes, and a trade stamped in the future reads `price_suspect` instead of passing freshness. A locked book stays plausible.
+- Alpaca daily bars take their session date from the timestamp's date part rather than a UTC→New York conversion that files a `T04:00:00Z` bar one day early in winter. Malformed bars (non-positive or non-finite prices, high < low, open/close outside the range, negative volume) are dropped and logged instead of reaching the indicator math.
+- A flat price series reads RSI 50 (neutral), not RSI 100.
+- `decision.options.max_options` above 6 is honoured up to 26 option ids (A–Z) instead of silently dropping the extras. Stop/target and v3 level merges re-check a level-based replacement against the remaining kept levels, so two kept levels can no longer sit inside the dedupe distance.
+- Stored input snapshots carry the exact indicator values (`indicators_precise`) for shadow rule re-evaluation; the block is stripped from every prompt version's send path. Shadow rules can no longer pass a boundary check the live evaluation failed on a rounded display value.
+- Level timestamps for daily swings, prior-session and session markers are New York-aware like the 1h swings; the session marker uses the New York date of the last 5m bar.
+- `rules.entry_cycles` is now evaluated on the live path too — the cycle in effect is the last scheduled cycle at or before evaluation time.
+- The "since open" shock-brake move only counts when the session-open bar itself is cached/complete; a later first bar no longer re-anchors the move mid-session.
+- `SignalService.is_last_cycle` delegates to `SessionClock` instead of duplicating it, and the watchlist's per-symbol last action is one batched query instead of one per symbol.
+- Leftovers of the retired day-trade rule are gone: the dead `exit_blocked_same_day` guard and stale comments that still described the rule as enforced (the `day_trades` table and `deferred_exit` column stay for history — migrations are never edited).
+
 ## 2026-11-03 — Trading-path audit hardening
 
 - Approving an entry no longer evaluates the risk gates on a stale read snapshot: the approval's session commits before the network calls, so the gate context sees positions and orders committed after the request started.

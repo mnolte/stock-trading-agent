@@ -530,7 +530,7 @@ class FakeBroker:
         if symbol in self.reject_sells:
             return DataResult(
                 data=None,  # type: ignore[arg-type]
-                error="sale rejected (e.g. broker day-trade protection)",
+                error="sale rejected by broker",
                 source="fake",
             )
         self.orders[rec.id] = rec

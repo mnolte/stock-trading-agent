@@ -76,6 +76,12 @@ def test_rsi_smoothing_step_hand_checked() -> None:
     assert rsi(closes, 14) == expected
 
 
+def test_rsi_flat_series_is_neutral() -> None:
+    # A pinned price has 0/0 averages: neutral 50, not "all gains" 100.
+    flat = [Decimal(100)] * 20
+    assert rsi(flat, 14) == Decimal(50)
+
+
 def test_rsi_needs_period_plus_one() -> None:
     closes = [Decimal(100 + i) for i in range(14)]
     assert rsi(closes, 14) is None

@@ -52,6 +52,7 @@ schedule:
   misfire_grace_seconds: 120    # missed cycles are never run late
   history_sessions: 60          # 5-minute bars
   daily_history_sessions: 260   # daily bars: SMA 200 + 60-session ATR percentile
+  history_missing_tolerance: 3  # sessions the source has no bar for (halts, feed gaps) still count as warmed
   bar_adjustment: split
   bars_5m_keep_sessions: 120   # older 5-min bars deleted after the 03:00 backup
   cycle_duration_warn_minutes: 10
@@ -85,6 +86,17 @@ regime:
   vol_low_below_pct: 30
   vol_high_above_pct: 70
   block_entries_in: [down_high]
+
+indicators:                     # signal indicator periods (docs/SPEC.md, Indicators)
+  ema_fast: 20                  # 1h EMA fast
+  ema_slow: 50                  # 1h EMA slow
+  rsi_period: 14                # 1h RSI
+  atr_period: 14                # 1h and daily ATR
+  obv_lookback: 20              # 1h bars
+  rs_lookback: 20               # 1h bars vs SPY
+  daily_sma_fast: 50
+  daily_sma_slow: 200
+  atr_percentile_sessions: 60   # daily ATR percentile window
 
 decision:
   model: gpt-4o-mini            # live decisions; any entry in models, OpenAI or Anthropic

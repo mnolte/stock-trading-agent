@@ -156,9 +156,14 @@ class SignalService:
     def hourly_bars(
         self, symbol: str, sessions: list[CalendarDay], now: datetime
     ) -> list[Bar1h]:
-        """Closed session-aligned 1h bars for a symbol (bar end <= now)."""
+        """Closed, complete session-aligned 1h bars for a symbol.
+
+        An incomplete bar means some of its 5-minute bars never arrived —
+        real data was lost, not just untraded minutes — so it is dropped
+        from indicator inputs, the same rule the shock brake applies.
+        """
         bars = self.market_data.get_1h_bars_range(symbol, sessions)
-        return [b for b in bars if b.end <= now]
+        return [b for b in bars if b.complete and b.end <= now]
 
     def daily_bars(
         self, symbol: str, sessions: list[CalendarDay], now: datetime
@@ -182,7 +187,10 @@ class SignalService:
         return [
             r.to_bar5m()
             for r in rows
-            if min(r.start + BAR_5M, session.close) <= now
+            # The row query bounds on start <= close; a bar must start
+            # inside the session to count as one of today's bars.
+            if r.start < session.close
+            and min(r.start + BAR_5M, session.close) <= now
         ]
 
     def next_earnings(
@@ -210,7 +218,7 @@ class SignalService:
         bars_1h = [
             b
             for b in self.market_data.get_1h_bars_range(symbol, sessions)
-            if b.end <= now
+            if b.complete and b.end <= now
         ]
         daily = self.daily_bars(symbol, daily_sessions, now)
         todays = self.today_5m(symbol, today, now)
@@ -242,6 +250,7 @@ class SignalService:
             days_to_earnings=days_to_earnings,
             earnings_available=earnings_available,
             config=self.config,
+            session=self.calendar.session_for(today),
         )
 
     def snapshot(
@@ -317,13 +326,7 @@ class SignalService:
 
     def is_last_cycle(self, today: date, now: datetime) -> bool:
         """True once the session's last active cycle time has been reached."""
-        session = self.calendar.session_for(today)
-        if session is None:
-            return False
-        cycles = self.session_clock.active_cycles(session)
-        if not cycles:
-            return True
-        return now >= cycles[-1]
+        return self.session_clock.is_last_cycle(now)
 
     def _warming_detail(
         self,
@@ -338,13 +341,19 @@ class SignalService:
 
         A new symbol shows "Warming up" until its ``daily_history_sessions``
         daily bars and ``history_sessions`` sessions of 5-minute bars are in
-        the cache; while warming it gets no entries.
+        the cache; while warming it gets no entries. A few sessions the
+        source has no bar for at all (a full-day halt, a permanent feed gap)
+        must not keep a symbol warming forever —
+        ``schedule.history_missing_tolerance`` allows that many missing.
         """
-        needed_daily = int(
-            self.config.get("schedule", "daily_history_sessions", default=260)
+        needed_daily = self.config.get_int(
+            "schedule", "daily_history_sessions", default=260
         )
-        needed_5m = int(
-            self.config.get("schedule", "history_sessions", default=60)
+        needed_5m = self.config.get_int(
+            "schedule", "history_sessions", default=60
+        )
+        missing_slack = self.config.get_int(
+            "schedule", "history_missing_tolerance", default=3
         )
         started_sessions = [s for s in sessions if s.open <= now]
         completed = [s for s in daily_sessions if s.close <= now]
@@ -353,7 +362,10 @@ class SignalService:
         } & {s.date for s in sessions}
         want_daily = min(needed_daily, len(completed))
         want_5m = min(needed_5m, len(started_sessions))
-        if len(daily) >= want_daily and len(covered_sessions) >= want_5m:
+        if (
+            len(daily) >= want_daily - missing_slack
+            and len(covered_sessions) >= want_5m - missing_slack
+        ):
             return None
         return (
             f"Warming up: {len(daily)} of {needed_daily} daily bars · "
@@ -392,19 +404,24 @@ class SignalService:
 
     def _last_actions(self, symbols: list[str]) -> dict[str, tuple[str, datetime]]:
         """Most recent stored decision per symbol (action, scheduled time)."""
-        result: dict[str, tuple[str, datetime]] = {}
+        if not symbols:
+            return {}
+        latest_ids = (
+            select(func.max(Decision.id))
+            .where(Decision.symbol.in_(symbols))
+            .group_by(Decision.symbol)
+            .scalar_subquery()
+        )
         with self._session_factory() as session:
-            for symbol in symbols:
-                row = session.execute(
-                    select(Decision.final_action, Cycle.scheduled_time)
-                    .join(Cycle, Decision.cycle_id == Cycle.id)
-                    .where(Decision.symbol == symbol)
-                    .order_by(Decision.id.desc())
-                    .limit(1)
-                ).first()
-                if row is not None:
-                    result[symbol] = (row[0], row[1].replace(tzinfo=UTC))
-        return result
+            rows = session.execute(
+                select(Decision.symbol, Decision.final_action, Cycle.scheduled_time)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .where(Decision.id.in_(latest_ids))
+            ).all()
+        return {
+            symbol: (action, scheduled.replace(tzinfo=UTC))
+            for symbol, action, scheduled in rows
+        }
 
     def evaluate(self, now: datetime) -> Evaluation:
         """Snapshots, rules results and regime for the whole universe."""
@@ -421,6 +438,15 @@ class SignalService:
         earnings_status = self.market_data.latest_earnings
         earnings_ok = earnings_status is not None and earnings_status.error is None
         last_cycle = self.is_last_cycle(today, now.astimezone(NY_TZ))
+        # The cycle currently in effect (most recent scheduled cycle <= now),
+        # for the rules.entry_cycles strategy override.
+        session_today = self.calendar.session_for(today)
+        cycle_time: str | None = None
+        if session_today is not None:
+            active = self.session_clock.active_cycles(session_today)
+            current = [c for c in active if c <= now]
+            if current:
+                cycle_time = current[-1].strftime("%H:%M")
         ranks = {
             row.symbol: row.rank
             for row in self.market_data.screened_rows() or []
@@ -461,12 +487,19 @@ class SignalService:
                     open_entry_order=symbol in pending,
                     is_last_cycle=last_cycle,
                     config=self.config,
+                    cycle_time=cycle_time,
                 )
             price: Decimal | None
             base: Decimal | None
             if todays:
                 price = todays[-1].close
-                base = daily[-1].close if daily else None
+                # Day change vs the close before today's session: after the
+                # close, daily[-1] is today's own bar.
+                base = (
+                    daily[-2].close
+                    if len(daily) >= 2 and daily[-1].date == today
+                    else (daily[-1].close if daily else None)
+                )
             else:
                 price = daily[-1].close if daily else None
                 base = daily[-2].close if len(daily) >= 2 else None

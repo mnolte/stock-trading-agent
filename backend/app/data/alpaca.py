@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
@@ -31,6 +32,8 @@ from app.data.models import (
 )
 from app.data.rate_limiter import RateLimiter
 from app.market.clock import NY_TZ, UTC, Clock, RealClock
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -78,19 +81,43 @@ def parse_calendar(raw: list[Any]) -> list[CalendarDay]:
     return days
 
 
+def _ohlcv(bar: dict[str, Any]) -> tuple[Decimal, Decimal, Decimal, Decimal, int] | None:
+    """Validated (open, high, low, close, volume) or None on corrupt data.
+
+    A bar with non-finite or non-positive prices, high < low, an open or
+    close outside [low, high], or a negative volume is dropped — one bad
+    bar must not reach the indicator math downstream.
+    """
+    try:
+        o = Decimal(str(bar["o"]))
+        h = Decimal(str(bar["h"]))
+        lo = Decimal(str(bar["l"]))
+        c = Decimal(str(bar["c"]))
+        v = int(bar["v"])
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return None
+    prices = (o, h, lo, c)
+    if not all(p.is_finite() and p > 0 for p in prices):
+        return None
+    if h < lo or not (lo <= o <= h) or not (lo <= c <= h) or v < 0:
+        return None
+    return o, h, lo, c, v
+
+
 def parse_bars(raw: dict[str, Any], symbol: str) -> list[Bar5m]:
     """Alpaca /v2/stocks/{symbol}/bars response -> Bar5m list."""
     bars: list[Bar5m] = []
     for bar in raw.get(symbol, []):
+        ohlcv = _ohlcv(bar)
+        if ohlcv is None:
+            logger.warning("%s: dropped malformed 5m bar %r", symbol, bar)
+            continue
+        o, h, lo, c, v = ohlcv
         bars.append(
             Bar5m(
                 symbol=symbol,
                 start=_parse_timestamp(bar["t"]),
-                open=Decimal(str(bar["o"])),
-                high=Decimal(str(bar["h"])),
-                low=Decimal(str(bar["l"])),
-                close=Decimal(str(bar["c"])),
-                volume=int(bar["v"]),
+                open=o, high=h, low=lo, close=c, volume=v,
                 feed="sip",
             )
         )
@@ -98,18 +125,25 @@ def parse_bars(raw: dict[str, Any], symbol: str) -> list[Bar5m]:
 
 
 def parse_daily_bars(raw: dict[str, Any], symbol: str) -> list[DailyBar]:
-    """Alpaca daily bars response -> DailyBar list (date = NY session date)."""
+    """Alpaca daily bars response -> DailyBar list (date = NY session date).
+
+    The session date comes from the date part of Alpaca's timestamp, not
+    from a timezone conversion: a timestamp earlier than 05:00 UTC maps to
+    the previous New York evening, which would file the bar under the
+    wrong session in winter (EST).
+    """
     bars: list[DailyBar] = []
     for bar in raw.get(symbol, []):
+        ohlcv = _ohlcv(bar)
+        if ohlcv is None:
+            logger.warning("%s: dropped malformed daily bar %r", symbol, bar)
+            continue
+        o, h, lo, c, v = ohlcv
         bars.append(
             DailyBar(
                 symbol=symbol,
-                date=_parse_timestamp(bar["t"]).astimezone(NY_TZ).date(),
-                open=Decimal(str(bar["o"])),
-                high=Decimal(str(bar["h"])),
-                low=Decimal(str(bar["l"])),
-                close=Decimal(str(bar["c"])),
-                volume=int(bar["v"]),
+                date=date.fromisoformat(str(bar["t"])[:10]),
+                open=o, high=h, low=lo, close=c, volume=v,
             )
         )
     return bars

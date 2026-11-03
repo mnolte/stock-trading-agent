@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import logging
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -127,6 +129,36 @@ class AppConfig:
                 return default
             node = node[key]
         return node
+
+    def get_int(self, *keys: str, default: int) -> int:
+        """``get`` as int; a malformed value falls back to ``default``.
+
+        A bad saved setting must never crash the cycle: the threshold
+        falls back and the failure is logged (hard rule 15).
+        """
+        raw = self.get(*keys, default=default)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            logging.getLogger(__name__).warning(
+                "config %s = %r is not an int; using %s",
+                ".".join(keys), raw, default,
+            )
+            return default
+
+    def get_decimal(self, *keys: str, default: Decimal) -> Decimal:
+        """``get`` as Decimal; a malformed value falls back to ``default``."""
+        raw = self.get(*keys, default=None)
+        if raw is None:
+            return default
+        try:
+            return Decimal(str(raw))
+        except ArithmeticError:
+            logging.getLogger(__name__).warning(
+                "config %s = %r is not a number; using %s",
+                ".".join(keys), raw, default,
+            )
+            return default
 
     # ------------------------------------------------------------------
     # versioned settings

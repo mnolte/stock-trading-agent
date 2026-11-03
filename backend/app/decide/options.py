@@ -118,22 +118,29 @@ _MONTHS = (
 def _merge_stops(
     candidates: list[_Stop], within: Decimal
 ) -> tuple[list[_Stop], list[str]]:
-    """Merge stops closer than ``within``; a level-based stop wins."""
+    """Merge stops closer than ``within``; a level-based stop wins.
+
+    A level stop replacing an ATR stop is re-checked against the rest of
+    ``kept``: its own price may sit within ``within`` of another kept stop.
+    """
     kept: list[_Stop] = []
     merged: list[str] = []
     for stop in sorted(candidates, key=lambda s: s.price, reverse=True):
-        hit = next(
-            (k for k in kept if abs(k.price - stop.price) <= within), None
-        )
-        if hit is None:
-            kept.append(stop)
-        elif stop.is_level and not hit.is_level:
-            kept[kept.index(hit)] = stop
-            merged.append(
-                f"{hit.basis} ({_money(hit.price)}) into {stop.basis}"
+        while True:
+            hit = next(
+                (k for k in kept if abs(k.price - stop.price) <= within), None
             )
-        else:
+            if hit is None:
+                kept.append(stop)
+                break
+            if stop.is_level and not hit.is_level:
+                kept.remove(hit)
+                merged.append(
+                    f"{hit.basis} ({_money(hit.price)}) into {stop.basis}"
+                )
+                continue
             merged.append(f"{stop.basis} ({_money(stop.price)}) into {hit.basis}")
+            break
     return kept, merged
 
 
@@ -143,20 +150,23 @@ def _merge_targets(
     kept: list[_Target] = []
     merged: list[str] = []
     for target in sorted(candidates, key=lambda t: t.price):
-        hit = next(
-            (k for k in kept if abs(k.price - target.price) <= within), None
-        )
-        if hit is None:
-            kept.append(target)
-        elif target.is_level and not hit.is_level:
-            kept[kept.index(hit)] = target
-            merged.append(
-                f"{hit.basis} ({_money(hit.price)}) into {target.basis}"
+        while True:
+            hit = next(
+                (k for k in kept if abs(k.price - target.price) <= within), None
             )
-        else:
+            if hit is None:
+                kept.append(target)
+                break
+            if target.is_level and not hit.is_level:
+                kept.remove(hit)
+                merged.append(
+                    f"{hit.basis} ({_money(hit.price)}) into {target.basis}"
+                )
+                continue
             merged.append(
                 f"{target.basis} ({_money(target.price)}) into {hit.basis}"
             )
+            break
     return kept, merged
 
 
@@ -290,7 +300,7 @@ def build_entry_options(
     options.sort(key=lambda o: (-o.stop, o.rr))
     ordered: list[EntryOption] = []
     for letter, option in zip(
-        "ABCDEF", options[: cfg.max_options], strict=False
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ", options[: cfg.max_options], strict=False
     ):
         ordered.append(replace(option, id=letter))
 

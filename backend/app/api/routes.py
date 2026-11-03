@@ -1214,7 +1214,7 @@ async def _broker_read(awaitable: Awaitable[Any]) -> Any:
 
 @router.get("/positions")
 async def positions(request: Request) -> dict[str, object]:
-    """Open positions with legs, marks, account and day-trade boxes."""
+    """Open positions with legs, marks, account and same-session counts."""
     clock = getattr(request.app.state, "clock", None) or make_clock()
     today_ny = clock.now().astimezone(NY_TZ).date()
     market_data = getattr(request.app.state, "market_data", None)

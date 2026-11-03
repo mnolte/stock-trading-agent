@@ -127,23 +127,31 @@ def indicators_from_snapshot(symbol: str, snap: dict[str, Any]) -> IndicatorSnap
     """Rebuild the indicator values from a stored input snapshot."""
     h = snap.get("indicators_1h") or {}
     d = snap.get("indicators_daily") or {}
+    # Exact values stored alongside the rounded display numbers: prefer
+    # them so a rounded boundary value can't flip a rule vs live.
+    p = snap.get("indicators_precise") or {}
     dte = snap.get("days_to_earnings")
     obv = h.get("obv_trend")
+
+    def _pick(key: str, rounded: dict[str, Any]) -> Decimal | None:
+        exact = _dec(p.get(key))
+        return exact if exact is not None else _dec(rounded.get(key))
+
     return IndicatorSnapshot(
         symbol=symbol,
         price=_dec(snap.get("price")),
-        ema_fast=_dec(h.get("ema20")),
-        ema_slow=_dec(h.get("ema50")),
-        rsi=_dec(h.get("rsi14")),
-        atr_1h=_dec(h.get("atr14")),
-        session_vwap=_dec(h.get("vwap")),
+        ema_fast=_pick("ema20", h),
+        ema_slow=_pick("ema50", h),
+        rsi=_pick("rsi14", h),
+        atr_1h=_pick("atr14", h),
+        session_vwap=_pick("vwap", h),
         obv_trend=obv if isinstance(obv, str) and obv != UNAVAILABLE else None,
-        rs_vs_spy_pct=_dec(h.get("rs_vs_spy_pct")),
-        daily_close=_dec(d.get("close")),
-        daily_sma_fast=_dec(d.get("sma50")),
-        daily_sma_slow=_dec(d.get("sma200")),
-        daily_atr_percentile=_dec(d.get("atr_percentile")),
-        opening_gap_pct=_dec(d.get("gap_pct")),
+        rs_vs_spy_pct=_pick("rs_vs_spy_pct", h),
+        daily_close=_pick("close", d),
+        daily_sma_fast=_pick("sma50", d),
+        daily_sma_slow=_pick("sma200", d),
+        daily_atr_percentile=_pick("atr_percentile", d),
+        opening_gap_pct=_pick("gap_pct", d),
         days_to_earnings=dte if isinstance(dte, int) and not isinstance(dte, bool) else None,
         earnings_available=dte != UNAVAILABLE,
     )
@@ -645,7 +653,11 @@ class ShadowRunner:
                 if spec.is_v4
                 else v3_send_snapshot(snap_json)
                 if spec.is_v3
-                else snap_json,
+                else {
+                    key: value
+                    for key, value in snap_json.items()
+                    if key != "indicators_precise"
+                },
                 indent=2,
             )
             started = monotonic()

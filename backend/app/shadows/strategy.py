@@ -2,7 +2,7 @@
 
 A strategy is a kind (``llm`` or ``rules_only``), a prompt version, model
 and temperature, plus overrides of the entry rules and code checks. Risk
-gates, sizing, the day-trade rule and earnings handling are never
+gates, sizing, the re-entry rule and earnings handling are never
 overridable: a strategy runs the live functions on ``config.overlay(...)``
 with only the keys in ``OVERRIDE_KEYS`` changed. Live is the strategy
 defined by the current settings version — it has no row.
@@ -421,7 +421,7 @@ def validate_new_strategy(
                         continue
                     overrides[str(item)] = value
                     continue
-                # Risk gates, sizing, the day-trade rule and earnings
+                # Risk gates, sizing, the re-entry rule and earnings
                 # handling are never overridable.
                 errors.append(f"{item}: not overridable")
                 continue

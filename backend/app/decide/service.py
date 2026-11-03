@@ -196,16 +196,19 @@ class DecisionService:
         on_response: Callable[[ModelResponse], None] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
-        user = json.dumps(
-            (
-                v4_send_snapshot(snapshot_json, self.config)
-                if self._spec.is_v4
-                else v3_send_snapshot(snapshot_json)
-                if self._spec.is_v3
-                else snapshot_json
-            ),
-            indent=2,
+        send_snapshot = (
+            v4_send_snapshot(snapshot_json, self.config)
+            if self._spec.is_v4
+            else v3_send_snapshot(snapshot_json)
+            if self._spec.is_v3
+            else {
+                key: value
+                for key, value in snapshot_json.items()
+                # Stored for shadow rule evaluation, never sent to the model.
+                if key != "indicators_precise"
+            }
         )
+        user = json.dumps(send_snapshot, indent=2)
         response: ModelResponse | None = None
         sent_at = None
         from_cache = False

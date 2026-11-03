@@ -1,11 +1,10 @@
-"""Earnings handling and the day-trade exit rule, shared by live and shadows.
+"""Earnings handling, shared by live and shadows.
 
 docs/SPEC.md, Risk management: a held symbol that reports before the next
 session's close is exited in the last cycle the day before (an unknown time
 of day counts as before the open), unless "Hold through earnings" is on.
-Alpaca integration, PDT: the agent never closes a position on the day it
-opened it. Live cycles and shadow strategies both call these functions —
-the rules are never copied.
+Live cycles and shadow strategies both call these functions — the rules
+are never copied.
 """
 
 from __future__ import annotations
@@ -17,21 +16,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Earning
-from app.market.clock import NY_TZ, UTC
+from app.market.clock import NY_TZ
 
 if TYPE_CHECKING:
     from app.config import AppConfig
     from app.market.calendar import CalendarProvider
-
-
-def _ny_date(dt: datetime) -> date:
-    aware = dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-    return aware.astimezone(NY_TZ).date()
-
-
-def exit_blocked_same_day(opened_at: datetime, now: datetime) -> bool:
-    """The day-trade rule: no agent exit on the New York day of the entry."""
-    return _ny_date(opened_at) == _ny_date(now)
 
 
 def next_earnings(

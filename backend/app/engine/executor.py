@@ -122,9 +122,14 @@ def spy_session_moves(
     move_1h = (
         (last.close - last.open) / last.open * 100 if last.open > 0 else None
     )
+    # "Since open" only counts when the session-open bar itself is complete —
+    # a later first bar would re-anchor the move mid-session.
+    session = next((s for s in sessions if s.date == today), None)
     move_session = (
         (todays[-1].close - todays[0].open) / todays[0].open * 100
-        if todays[0].open > 0
+        if session is not None
+        and todays[0].start == session.open
+        and todays[0].open > 0
         else None
     )
     return move_1h, move_session
@@ -262,7 +267,13 @@ class Executor:
         todays_5m = self.market_data.get_5m_bars(
             "SPY", session.open, session.close
         )
-        session_open = todays_5m[0].open if todays_5m else None
+        # "Since open" only counts when the open bar itself is cached —
+        # a later first bar would re-anchor the move mid-session.
+        session_open = (
+            todays_5m[0].open
+            if todays_5m and todays_5m[0].start == session.open
+            else None
+        )
 
         quotes = await self.market_data.sources.quotes.fetch_quotes(["SPY"])
         quote = (
@@ -728,7 +739,7 @@ class Executor:
         if fail is not None:
             return quote, None, fail
         market_risk = trade_risk(reference, stop, target, atr_1h)
-        minimum = Decimal(str(self.config.get("decision", "stop_atr_min")))
+        minimum = Decimal(str(self.config.get("decision", "stop_atr_min", default=1.5)))
         if market_risk.atr_multiple is None or market_risk.atr_multiple < minimum:
             return quote, None, "stop_market_distance"
         # decision.v3: room is checked again from the final limit — a
@@ -2585,17 +2596,25 @@ class Executor:
         return Decimal(qty)
 
     def _atr_1h(self, symbol: str) -> Decimal | None:
+        """ATR(1h) on the same bars and period as the signal snapshot.
+
+        Approvals and adopted stops run the same ATR rule as the cycle —
+        same ``indicators.atr_period`` and the same history window, only
+        complete bars — so an order-time check can't disagree with the
+        decision-time value just because it saw less history.
+        """
         now = self.clock.now()
         today = now.astimezone(NY_TZ).date()
-        sessions = self.market_data.recent_sessions(today, 5)
+        count = self.config.get_int(
+            "schedule", "history_sessions", default=60
+        )
+        sessions = self.market_data.recent_sessions(today, count)
         bars = [
             b
             for b in self.market_data.get_1h_bars_range(symbol, sessions)
-            if b.end <= now
+            if b.complete and b.end <= now
         ]
-        if len(bars) < 15:
-            return None
-        period = int(self.config.get("signals", "atr_period", default=14))
+        period = self.config.get_int("indicators", "atr_period", default=14)
         return atr(bars, period)
 
     # ------------------------------------------------------------------
