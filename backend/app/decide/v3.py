@@ -161,18 +161,28 @@ def merge_levels(levels: Sequence[Level], atr_1h: Decimal, merge_atr: Decimal) -
     if within <= 0 or not levels:
         return list(levels)
     out: list[Level] = []
-    for level in levels:
-        hit = next(
-            (k for k in out if abs(k.price - level.price) <= within), None
-        )
-        while hit is not None:
-            kinds = list(dict.fromkeys([*(hit.kinds or [hit.kind]), level.kind]))
-            kinds.sort(key=lambda k: _KIND_RANK.get(k, 9))
+    for cand in levels:
+        level = cand
+        while True:
+            hit = next(
+                (k for k in out if k is not level and abs(k.price - level.price) <= within),
+                None,
+            )
+            if hit is None:
+                if level not in out:
+                    out.append(level)
+                break
             # The winner is re-checked against the rest of ``out``: its
             # price may sit within ``within`` of another kept level.
+            kinds = list(
+                dict.fromkeys(
+                    [*(hit.kinds or [hit.kind]), *(level.kinds or [level.kind])]
+                )
+            )
+            kinds.sort(key=lambda k: _KIND_RANK.get(k, 9))
+            idx = out.index(hit)
             if _KIND_RANK.get(level.kind, 9) < _KIND_RANK.get(hit.kind, 9):
-                out.remove(hit)
-                level = Level(
+                out[idx] = level = Level(
                     id=level.id,
                     price=level.price,
                     kind=level.kind,
@@ -181,7 +191,7 @@ def merge_levels(levels: Sequence[Level], atr_1h: Decimal, merge_atr: Decimal) -
                     kinds=tuple(kinds),
                 )
             else:
-                level = Level(
+                out[idx] = level = Level(
                     id=hit.id,
                     price=hit.price,
                     kind=hit.kind,
@@ -189,11 +199,6 @@ def merge_levels(levels: Sequence[Level], atr_1h: Decimal, merge_atr: Decimal) -
                     time=hit.time,
                     kinds=tuple(kinds),
                 )
-                out.remove(hit)
-            hit = next(
-                (k for k in out if abs(k.price - level.price) <= within), None
-            )
-        out.append(level)
     return out
 
 

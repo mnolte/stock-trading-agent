@@ -1135,7 +1135,7 @@ def _code_written(
 
 
 def _claim_checks(
-    output: ModelOutputV3,
+    text_parts: list[str],
     *,
     context: str,
     snapshot: dict[str, Any],
@@ -1181,7 +1181,7 @@ def _claim_checks(
                     locked_r = (stop - entry) / risk
 
     bad: list[str] = []
-    for part in [output.thesis, *output.conflicts]:
+    for part in text_parts:
         for match in _SENTENCE_RE.finditer(part):
             sentence = match.group(0)
             ids = set(_LEVEL_ID_RE.findall(sentence))
@@ -1269,7 +1269,10 @@ def validate_model_output_v3(
     ]
     chosen = _option_by_id(options, output.option_id)
     explanation = check_explanation_v3(output, snapshot, chosen)
-    claims = _claim_checks(output, context=context, snapshot=snapshot, chosen=chosen)
+    claims = _claim_checks(
+        [output.thesis, *output.conflicts],
+        context=context, snapshot=snapshot, chosen=chosen,
+    )
     claims_check = CodeCheck(
         "Claim checks",
         passed=claims.passed,
@@ -1589,16 +1592,14 @@ def _claim_checks_v4(
     fails while the chosen option (held: ``levels_to_target``) has a
     level within 1 ATR. Never changes the decision.
     """
-    proxy = ModelOutputV3(
-        symbol=output.symbol,
-        conflicts=[c.text for c in output.conflicts]
-        + [c.outweighed_by for c in output.conflicts if c.outweighed_by],
-        thesis=output.thesis,
-        action=output.action,
-        confidence=output.confidence,
-        levels_used=output.levels_used,
+    base = _claim_checks(
+        [
+            output.thesis,
+            *(c.text for c in output.conflicts),
+            *(c.outweighed_by for c in output.conflicts if c.outweighed_by),
+        ],
+        context=context, snapshot=snapshot, chosen=chosen,
     )
-    base = _claim_checks(proxy, context=context, snapshot=snapshot, chosen=chosen)
     bad: list[str] = list(base.bad_ids)
     kinds: list[str] = ["level" if i.startswith("L") else i for i in base.bad_ids]
     kinds = ["locks_in" if k == "locks-in claim" else k for k in kinds]

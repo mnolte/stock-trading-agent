@@ -109,7 +109,7 @@ def parse_bars(raw: dict[str, Any], symbol: str) -> list[Bar5m]:
     bars: list[Bar5m] = []
     for bar in raw.get(symbol, []):
         ohlcv = _ohlcv(bar)
-        if ohlcv is None:
+        if ohlcv is None or bar.get("t") is None:
             logger.warning("%s: dropped malformed 5m bar %r", symbol, bar)
             continue
         o, h, lo, c, v = ohlcv
@@ -135,7 +135,7 @@ def parse_daily_bars(raw: dict[str, Any], symbol: str) -> list[DailyBar]:
     bars: list[DailyBar] = []
     for bar in raw.get(symbol, []):
         ohlcv = _ohlcv(bar)
-        if ohlcv is None:
+        if ohlcv is None or bar.get("t") is None:
             logger.warning("%s: dropped malformed daily bar %r", symbol, bar)
             continue
         o, h, lo, c, v = ohlcv

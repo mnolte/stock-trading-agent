@@ -43,6 +43,7 @@ from app.decide.output import (
     validate_model_output_v4,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
+from app.decide.snapshot import strip_internal
 from app.decide.v2inputs import build_v2_fields, rebuild_bars
 from app.decide.v3 import HeldV3, build_v3_fields, v3_send_snapshot
 from app.decide.v4 import (
@@ -388,7 +389,7 @@ def _rebuild_input(
         config=config,
     )
     snap.update(built2.fields)
-    return snap
+    return strip_internal(snap)
 
 
 def _validate(

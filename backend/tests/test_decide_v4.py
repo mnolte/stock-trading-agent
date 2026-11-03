@@ -419,6 +419,30 @@ def test_levels_in_way_sentence_not_a_claim() -> None:
     assert v.claims is not None and v.claims.passed
 
 
+def test_claim_checks_cover_every_conflict_and_resolution() -> None:
+    """Five resolved conflicts feed ten strings to the claim check; the
+    old ModelOutputV3 proxy capped conflicts at five and the validation
+    error crashed the cycle instead of returning a result."""
+    snap = _snapshot()
+    resolved = [
+        {"text": f"conflict {i}", "outweighed_by": f"outweighed {i}"}
+        for i in range(5)
+    ]
+    v = _validate(
+        _v4(action="skip", best_option_id="A", conflicts=resolved), snap
+    )
+    assert v.final_action == "skip"
+    assert _check(v, "Claim checks").passed
+
+    resolved[4]["outweighed_by"] = "the stop sits under L9"
+    v = _validate(
+        _v4(action="skip", best_option_id="A", conflicts=resolved), snap
+    )
+    assert v.claims is not None and "L9" in v.claims.bad_ids
+    assert "level" in v.claims.kinds
+    assert not _check(v, "Claim checks").passed
+
+
 # ----------------------------------------------------------------------
 # about_symbol
 
