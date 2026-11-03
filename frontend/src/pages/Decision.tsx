@@ -13,6 +13,7 @@ import { DialogButton } from '../components/Modal';
 import { SkeletonLines } from '../components/cardState';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
 import { useAsk } from '../ask/AskContext';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
@@ -1835,6 +1836,11 @@ function DrawerShell({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  // An open Ask drawer docks at the right edge — this drawer docks to
+  // its left so both stay visible and usable (design: side by side).
+  const ask = useAsk();
+  const askDocked = useMediaQuery('(min-width: 1280px)');
+  const inset = ask.open && askDocked ? '0 440px 0 0' : '0';
   const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
@@ -1888,7 +1894,7 @@ function DrawerShell({
   }, []);
 
   return createPortal(
-    <div ref={overlayRef} style={{ position: 'fixed', inset: 0, zIndex: 100 }}>
+    <div ref={overlayRef} style={{ position: 'fixed', inset, zIndex: 100 }}>
       <div
         aria-hidden
         onClick={onClose}

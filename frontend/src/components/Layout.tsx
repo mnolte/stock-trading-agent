@@ -20,6 +20,7 @@ import { documentTitle, pageTitle } from './documentTitle';
 import { Header } from './Header';
 import { FlattenConfirmDialog, KillSwitchDialog, ResumeDialog } from './KillSwitchDialogs';
 import NotificationToasts from './NotificationToasts';
+import { AskDrawer } from '../ask/AskDrawer';
 import { useAsk } from '../ask/AskContext';
 import { PhoneBar } from './PhoneBar';
 import { Sidebar } from './Sidebar';
@@ -281,6 +282,7 @@ export function Layout() {
           )}
         </main>
       </div>
+      <AskDrawer />
       <NotificationToasts />
       <ApiErrorToasts />
 
