@@ -1140,7 +1140,9 @@ def test_warming_up_until_history_loaded(
     assert detail is None
 
 
-def _signals(session_factory: sessionmaker[Session], daily: int = 10):
+def _signals(
+    session_factory: sessionmaker[Session], daily: int = 10
+) -> SignalService:
     config = AppConfig()
     config.yaml["schedule"]["daily_history_sessions"] = daily
     config.yaml["schedule"]["history_sessions"] = 2

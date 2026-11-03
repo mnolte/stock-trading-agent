@@ -1058,7 +1058,7 @@ async def test_refresh_daily_records_source_gaps(
     ) == {gap_day}
 
     # A bar that arrives later clears its gap mark.
-    fake_sources.bars.fetch_daily_bars = original
+    fake_sources.bars.fetch_daily_bars = original  # type: ignore[method-assign]
     await service.refresh_daily(date(2026, 10, 15))
     assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == set()
 
