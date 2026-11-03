@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from sqlalchemy import select
-
 from app.ask.service import answer, check_numbers, resolve_refs
-from app.ask.tools import AskDeps, TOOLS, calculate, run_tool
+from app.ask.tools import TOOLS, AskDeps, calculate, run_tool
 from app.config import get_config
 from app.data.cache import _naive_utc
-from app.db.models import AskMessage, AskNote, AskThread, LlmCall
+from app.db.models import AskMessage, AskThread, LlmCall
 from app.llm.fake import FakeModelClient
 from app.market.clock import FakeClock
+from sqlalchemy import select
 
 NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
 
@@ -96,7 +94,7 @@ def test_calculate_whitelist() -> None:
         "min()",
         "foo(1)",
     ]:
-        with pytest.raises(Exception):
+        with pytest.raises((ValueError, SyntaxError)):
             calculate(bad)
 
 
@@ -168,7 +166,6 @@ def test_tools_never_write(session_factory) -> None:
 def test_tool_results_carry_no_secrets(session_factory) -> None:
     """A planted fake key must never appear in any tool result."""
     fake_key = "sk-test-SECRET-abcdef0123456789"
-    scrub_values = lambda: [fake_key]  # noqa: E731
     deps = _deps(session_factory)
     with session_factory() as s:
         for name, args in {
@@ -391,7 +388,10 @@ async def test_follow_up_has_earlier_turns(session_factory) -> None:
 
 
 def test_threads_and_notes_api(client, session_factory) -> None:
-    t = client.post("/api/ask/threads", json={"context": {"screen": "positions", "label": "Positions"}})
+    t = client.post(
+        "/api/ask/threads",
+        json={"context": {"screen": "positions", "label": "Positions"}},
+    )
     assert t.status_code == 200, t.text
     thread = t.json()
     assert client.get(f"/api/ask/threads/{thread['id']}").status_code == 200

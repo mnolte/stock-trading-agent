@@ -6,6 +6,8 @@ async function mockBackground(page: Page, onSocket?: (socket: WebSocketRoute) =>
   await page.routeWebSocket('**/ws', onSocket ?? ((socket) => socket.close()));
   await page.route(/\/api\//, (route) => {
     const url = new URL(route.request().url());
+    // Vite serves modules under /src/api/ — only true API paths get mocked.
+    if (!url.pathname.startsWith('/api/')) return route.fallback();
     if (url.pathname === '/api/auth/status')
       return route.fulfill({ json: { required: false, signed_in: true } });
     if (url.pathname === '/api/ask/status')
@@ -44,6 +46,11 @@ async function mockBackground(page: Page, onSocket?: (socket: WebSocketRoute) =>
 test('Ctrl+J opens the drawer on Positions and a question streams', async ({ page }) => {
   await mockBackground(page);
   await page.goto('/');
+  // Wait for the app shell before the shortcut — the keydown listener
+  // is attached by React on mount, after goto resolves.
+  await expect(
+    page.getByRole('button', { name: 'Ask the agent' }).first(),
+  ).toBeVisible({ timeout: 30_000 });
   await page.keyboard.press('Control+j');
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();
@@ -51,6 +58,8 @@ test('Ctrl+J opens the drawer on Positions and a question streams', async ({ pag
 
   await page.keyboard.type('How much do I lose if every stop hits?');
   await page.keyboard.press('Enter');
+  await expect(drawer.getByText('Looked up 1 thing')).toBeVisible();
+  await drawer.getByText('Looked up 1 thing').click();
   await expect(drawer.getByText('Read open positions and their stops')).toBeVisible();
   await expect(drawer.getByText('No open positions.')).toBeVisible();
   await expect(drawer.getByRole('link', { name: 'MSFT position' })).toBeVisible();
@@ -64,6 +73,7 @@ test('phone width fills the screen without sideways scroll', async ({ page }) =>
   await page.setViewportSize({ width: 390, height: 780 });
   await page.goto('/');
   const askBtn = page.getByRole('button', { name: 'Ask the agent' }).first();
+  await expect(askBtn).toBeVisible({ timeout: 30_000 });
   await askBtn.click();
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();

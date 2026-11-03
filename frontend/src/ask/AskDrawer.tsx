@@ -575,6 +575,15 @@ function Conversation({
             {m.text ? (
               <AskMarkdown text={m.text} unverified={m.unverified_numbers ?? []} onNoteRef={onNoteRef} />
             ) : null}
+            {(m.references?.length ?? 0) > 0 && (
+              <div className="ask-refs">
+                {m.references!.map((r) => (
+                  <Link key={r} to={refLink(r).href} className="ask-ref">
+                    {refLink(r).label}
+                  </Link>
+                ))}
+              </div>
+            )}
             <div className="ask-footer">
               {m.status === 'stopped' && <span>Stopped by you · </span>}
               {m.status === 'failed' && <span className="ask-err">Failed · </span>}
