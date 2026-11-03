@@ -49,6 +49,15 @@ Newest first.
 - News statuses merge per cycle instead of being overwritten by later fetches, and a candidate that reaches a model call without prefetched headlines gets its own news fetch first.
 - Entry-option risk and reward-to-risk come from `trade_risk`, the one shared risk function. `client_order_id` clamps the instance segment to stay inside Alpaca's 48-character limit. Adding a symbol or importing a CSV that loses a concurrent-add race returns 422 instead of 500.
 
+## 2026-11-03 — Warm-up: gaps at the source
+
+- From PR 100. One daily bar that never existed at the source (a halt, a feed gap) kept a symbol "Warming up: 259 of 260" forever.
+- **Adding a symbol → Gaps at the source:**
+  - up to `schedule.history_missing_tolerance` (3) sessions without a daily bar at the source count as loaded;
+  - only when the request succeeded and returned no bar, and never in the last 5 sessions;
+  - 5-minute history stays strict;
+  - forgiven sessions are shown on Universe and logged once.
+
 ## 2026-11-03 — Ask the agent: config defaults and the gpt-6.1-sol model (PR 36)
 
 - `config.example.yaml` gains the `ask` block: enabled, model `claude-sonnet-5-5`, $15 monthly cap, $0.25 per-answer cap, 90-day chat retention, 60k context tokens, 8 tool rounds, 6k tool-result tokens, 90s answer timeout, 10 questions per minute, 100 notes and empty standing instructions.
