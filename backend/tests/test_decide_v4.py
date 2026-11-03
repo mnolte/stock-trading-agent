@@ -695,8 +695,8 @@ def test_v4_build_previous_decision_and_since() -> None:
     assert heads["h2"]["new"] is True
     assert heads["h1"]["about_symbol"] is True
     assert heads["h2"]["about_symbol"] is False
-    # newest first
-    assert [h["id"] for h in build.fields["headlines"]] == ["h2", "h1"]
+    # about_symbol first (newest first), then the rest
+    assert [h["id"] for h in build.fields["headlines"]] == ["h1", "h2"]
     assert build.fields["session"]["minutes_left"] == 120
     assert build.options_column["options_version"] == "v4"
 
@@ -719,6 +719,54 @@ def test_v4_headline_cap_newest_first() -> None:
     )
     assert len(build.fields["headlines"]) == 12
     assert build.fields["headlines"][0]["id"] == "n19"
+
+
+def test_v4_headlines_about_symbol_first() -> None:
+    """Market noise can't push the company's own news out: headlines
+    about the symbol lead (newest first), then the rest, up to the cap
+    (docs/SPEC.md, Fixes of 3 November)."""
+    config = AppConfig()
+    heads = [
+        # Older than every market headline but about T — must lead.
+        {"id": "own1", "time": "2026-10-30T08:00:00-04:00",
+         "source": "X", "title": "Tesla beats"},
+        {"id": "own2", "time": "2026-10-30T07:00:00-04:00",
+         "source": "X", "title": "Tesla expands"},
+        *[
+            {"id": f"m{i}", "time": f"2026-10-30T1{i}:00:00-04:00",
+             "source": "X", "title": f"market {i}"}
+            for i in range(6)
+        ],
+    ]
+    base = {**_base_snapshot(), "headlines": heads}
+    build = build_v4_fields(
+        context="candidate", base=base, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base),
+        regime=regime_from_snapshot(base, config),
+        names={"T": "Tesla"},
+        calendar=_calendar("2026-10-30"), config=config,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    ids = [h["id"] for h in build.fields["headlines"]]
+    assert ids[:2] == ["own1", "own2"]  # about_symbol, newest first
+    assert ids[2] == "m5"             # then the rest, newest first
+
+    # About-symbol headlines alone can fill the cap.
+    config_small = AppConfig().overlay({"decision": {"v4": {"max_headlines": 3}}})
+    base2 = {**_base_snapshot(), "headlines": heads}
+    build2 = build_v4_fields(
+        context="candidate", base=base2, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base2),
+        regime=regime_from_snapshot(base2, config_small),
+        names={"T": "Tesla"},
+        calendar=_calendar("2026-10-30"), config=config_small,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    assert [h["id"] for h in build2.fields["headlines"]] == [
+        "own1", "own2", "m5",
+    ]
 
 
 def test_v4_stop_groups() -> None:

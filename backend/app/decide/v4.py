@@ -549,8 +549,9 @@ def _headlines_v4(
     previous: PreviousV4 | None,
     v4: V4Config,
 ) -> list[dict[str, Any]] | Any:
-    """Headlines with ``about_symbol`` and ``new``, newest first, capped
-    at ``max_headlines`` (docs/SPEC.md, Snapshot v4 — Headlines)."""
+    """Headlines with ``about_symbol`` and ``new``: ``about_symbol``
+    first (newest first), then the rest, capped at ``max_headlines``
+    (docs/SPEC.md, Snapshot v4 — Headlines)."""
     raw = base.get("headlines")
     if not isinstance(raw, list):
         return raw
@@ -570,7 +571,12 @@ def _headlines_v4(
         )
         out.append(entry)
     out.sort(key=lambda h: str(h.get("time") or ""), reverse=True)
-    return out[: v4.max_headlines]
+    # Headlines about the symbol lead (newest first), then the rest —
+    # market noise can't push the company's own news out (docs/SPEC.md,
+    # Fixes of 3 November).
+    own = [h for h in out if h.get("about_symbol")]
+    rest = [h for h in out if not h.get("about_symbol")]
+    return (own + rest)[: v4.max_headlines]
 
 
 def _stop_groups(options: list[dict[str, Any]]) -> None:
