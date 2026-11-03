@@ -373,7 +373,7 @@ class SignalService:
         )
 
     def _sessions_for(self, today: date) -> list[CalendarDay]:
-        count = int(self.config.get("schedule", "history_sessions", default=60))
+        count = self.config.get_int("schedule", "history_sessions", default=60)
         return self.market_data.recent_sessions(today, count)
 
     def _daily_sessions_for(self, today: date) -> list[CalendarDay]:

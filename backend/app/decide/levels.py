@@ -103,7 +103,7 @@ def options_config(config: AppConfig) -> OptionsConfig:
             base.target_r_multiples,
         ),
         dedupe_atr=dec("dedupe_atr", base.dedupe_atr),
-        max_stops=int(config.get("decision", "options", "max_stops", default=3)),
+        max_stops=config.get_int("decision", "options", "max_stops", default=3),
         max_options=int(
             config.get("decision", "options", "max_options", default=6)
         ),
