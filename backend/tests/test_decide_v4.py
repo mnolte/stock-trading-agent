@@ -803,7 +803,7 @@ def test_v4_stop_group_keys_on_decimal() -> None:
     value, not the text form (docs/SPEC.md, Fixes of 3 November)."""
     from app.decide.v4 import _stop_groups
 
-    options = [
+    options: list[dict[str, Any]] = [
         {"id": "A", "stop": "101.70"},
         {"id": "B", "stop": 101.7},
         {"id": "C", "stop": Decimal("101.700")},
