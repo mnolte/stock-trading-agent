@@ -39,7 +39,6 @@ from app.llm.base import (
     ConverseResult,
     ModelClient,
     ModelResponse,
-    ToolCall,
     converse_cost,
 )
 from app.secrets_service import scrub
@@ -127,17 +126,10 @@ def _history(messages: list[AskMessage], max_tokens: int) -> tuple[list[Converse
         if m.role == "user":
             out.append(ConverseMessage(role="user", text=m.text))
         else:
-            calls = tuple(
-                ToolCall(
-                    id=s.get("call_id", f"c{i}"),
-                    name=s.get("tool", ""),
-                    arguments=s.get("arguments") or {},
-                )
-                for i, s in enumerate(m.steps or [])
-                if s.get("tool")
-            )
-            out.append(ConverseMessage(role="assistant", text=m.text, tool_calls=calls))
-            # Tool results are not stored; they are not re-sent.
+            # Tool calls and results are not replayed: results are never
+            # stored, and an unpaired tool_use is rejected by Anthropic.
+            # The assistant text still carries the answer's own facts.
+            out.append(ConverseMessage(role="assistant", text=m.text))
 
     # Total estimate: text only (tool results never enter).
     def total() -> int:
@@ -348,6 +340,7 @@ async def answer(
                 )
             )
         round_no += 1
+        round_sent = clock.now()
         result: ConverseResult | None = None
         try:
             async for event in client.converse(
@@ -383,7 +376,7 @@ async def answer(
                 error_type="api_error",
             )
         call_cost = converse_cost(result, config)
-        call_sent = _naive_utc(clock.now())
+        call_sent = _naive_utc(round_sent)
         # Record the round as an llm_calls row (same tx as nothing else —
         # the call already returned).
         with session_factory() as session:
@@ -476,7 +469,8 @@ async def answer(
 
     text = "".join(text_parts).strip()
     display, used_refs, _unknown = resolve_refs(text, seen_refs)
-    unverified, checked = check_numbers(display, known_numbers) if display else ([], [])
+    checkable = _REF_RE.sub(lambda m: " " * len(m.group(0)), display) if display else ""
+    unverified, checked = check_numbers(checkable, known_numbers) if display else ([], [])
     status = "ok"
     if stopped:
         status = "stopped"

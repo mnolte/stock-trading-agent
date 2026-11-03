@@ -261,6 +261,7 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
                 return StreamingResponse(
                     _cap_stream(msg.id, status["reason"]),
                     media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
             raise ApiError(
                 422, ErrorCode.INVALID, fields=[{"name": "ask", "message": status["reason"]}]
@@ -316,7 +317,11 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
             logger.exception("ask answer failed")
             yield 'event: error\ndata: {"message": "the answer failed"}\n\n'
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _cap_stream(message_id: int, reason: str | None) -> AsyncIterator[str]:
