@@ -204,7 +204,9 @@ class Executor:
         self.state.account = account
         self.state.account_fetched_at = self.clock.now()
         self.state.reset_session_if_new_day()
-        limit = Decimal(str(self.config.get("risk", "daily_loss_limit_pct", default=2)))
+        limit = self.config.get_decimal(
+            "risk", "daily_loss_limit_pct", default=Decimal("2")
+        )
         pnl_pct = session_pnl_pct(account.equity, account.last_equity)
         if pnl_pct <= -limit and not self.state.daily_loss_hit:
             with self._session_factory() as session:
@@ -739,7 +741,9 @@ class Executor:
         if fail is not None:
             return quote, None, fail
         market_risk = trade_risk(reference, stop, target, atr_1h)
-        minimum = Decimal(str(self.config.get("decision", "stop_atr_min", default=1.5)))
+        minimum = self.config.get_decimal(
+            "decision", "stop_atr_min", default=Decimal("1.5")
+        )
         if market_risk.atr_multiple is None or market_risk.atr_multiple < minimum:
             return quote, None, "stop_market_distance"
         # decision.v3: room is checked again from the final limit — a
@@ -3100,7 +3104,10 @@ class Executor:
                         str(self.config.get("execution", "quote_max_deviation_pct"))
                     ),
                 )
-        margin = Decimal(str(self.config.get("decision", "tighten_min_atr_below_price")))
+        margin = self.config.get_decimal(
+            "decision", "tighten_min_atr_below_price",
+            default=Decimal("0.25"),
+        )
         if reason is None:
             reason = (
                 "reference_missing" if reference is None or atr_1h is None
