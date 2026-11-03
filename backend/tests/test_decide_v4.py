@@ -813,6 +813,38 @@ def test_v4_stop_group_keys_on_decimal() -> None:
     assert [o["stop_group"] for o in options] == ["S1", "S1", "S1", "S2"]
 
 
+def test_v4_last_bar_labels_say_5m() -> None:
+    """The stored snapshot's last-bar keys say which bar they are —
+    last_5m_close / last_5m_time — so they can't read as the signal
+    bar's close (docs/SPEC.md, Fixes of 3 November)."""
+    config = AppConfig()
+    base = {
+        **_base_snapshot(),
+        "last_bar_close": "94.895",
+        "last_bar_time": "2026-10-30T15:45:00+00:00",
+        "quote": {"last": "94.66", "last_bar_time": "2026-10-30T15:45:00+00:00"},
+    }
+    build_v4_fields(
+        context="candidate", base=base, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base),
+        regime=regime_from_snapshot(base, config), names={},
+        calendar=_calendar("2026-10-30"), config=config,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    assert base["last_5m_close"] == "94.895"
+    assert base["last_5m_time"] == "2026-10-30T15:45:00+00:00"
+    assert "last_bar_close" not in base
+    assert "last_bar_time" not in base
+    assert base["quote"]["last_5m_time"] == "2026-10-30T15:45:00+00:00"
+    assert "last_bar_time" not in base["quote"]
+    # Provenance still never reaches the model.
+    sent = v4_send_snapshot(base, config)
+    assert "last_5m_close" not in sent and "last_bar_close" not in sent
+    assert "last_5m_time" not in sent and "last_bar_time" not in sent
+    assert "last_5m_time" not in sent["quote"]
+
+
 def test_v4_earnings_status() -> None:
     """``checks.earnings.status`` is none_in_window, scheduled or
     unavailable — never all null without a status (docs/SPEC.md, Fixes

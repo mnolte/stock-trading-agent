@@ -1248,6 +1248,8 @@ _STRIP_TOP = (
     "stop_reference_price",
     "last_bar_close",
     "last_bar_time",
+    "last_5m_close",
+    "last_5m_time",
     "days_to_earnings",
     "signal_bar_time",
     "news_status",
@@ -1261,6 +1263,7 @@ _STRIP_QUOTE = (
     "feed",
     "fetched_at",
     "last_bar_time",
+    "last_5m_time",
     "signal_bar_time",
 )
 

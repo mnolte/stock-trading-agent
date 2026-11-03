@@ -117,6 +117,12 @@ ClientFactory = Callable[[Strategy], DecisionClient]
 # stored snapshot → the inputs the live rule functions take
 
 
+def _bar_key(snapshot: dict[str, Any], kind: str) -> object:
+    """The 5-minute-bar provenance: v4 rows store ``last_5m_*``, older
+    rows ``last_bar_*`` (docs/SPEC.md, Fixes of 3 November)."""
+    return snapshot.get(f"last_5m_{kind}", snapshot.get(f"last_bar_{kind}"))
+
+
 def _dec(value: object) -> Decimal | None:
     if isinstance(value, bool) or not isinstance(value, int | float | str):
         return None
@@ -907,7 +913,7 @@ class ShadowRunner:
                 str(self.config.get("execution", "quote_max_deviation_pct"))
             )
             reference = quote.stop_reference(
-                _dec(snap_json.get("last_bar_close")),
+                _dec(_bar_key(snap_json, "close")),
                 indicators_from_snapshot(d.symbol, snap_json).atr_1h, entry=False,
                 max_deviation_pct=dev_pct,
             ) if quote is not None and price_failure is None else None
@@ -1145,7 +1151,7 @@ class ShadowRunner:
                                 d.symbol, snap_json
                             ).atr_1h
                             ref_v2 = quote.stop_reference(
-                                _dec(snap_json.get("last_bar_close")),
+                                _dec(_bar_key(snap_json, "close")),
                                 atr_v2,
                                 entry=True,
                                 max_deviation_pct=dev_pct,
@@ -1449,7 +1455,7 @@ class ShadowRunner:
             if spec.uses_options:
                 atr_v2 = indicators_from_snapshot(d.symbol, snap_json).atr_1h
                 ref_v2 = quote.stop_reference(
-                    _dec(snap_json.get("last_bar_close")),
+                    _dec(_bar_key(snap_json, "close")),
                     atr_v2,
                     entry=True,
                     max_deviation_pct=dev_pct,
@@ -2037,8 +2043,8 @@ class ShadowRunner:
             except ValueError:
                 return None
 
-        bar = _dec(snapshot.get("last_bar_close"))
-        bar_time = timestamp(snapshot.get("last_bar_time"))
+        bar = _dec(_bar_key(snapshot, "close"))
+        bar_time = timestamp(_bar_key(snapshot, "time"))
         raw = snapshot.get("quote")
         synthetic = not isinstance(raw, dict) or raw.get("synthetic") is True
         if synthetic:
@@ -2127,7 +2133,7 @@ class ShadowRunner:
                     "allowed": False, "blocked_by": "spread", "quote": provenance,
                 }
                 return
-        bar_time_str = d.snapshot.get("last_bar_time")
+        bar_time_str = _bar_key(d.snapshot, "time")
         bar_time = None
         try:
             bar_time = (
@@ -2138,7 +2144,7 @@ class ShadowRunner:
             bar_time = None
         price = quote.last
         reference = quote.stop_reference(
-            _dec(d.snapshot.get("last_bar_close")), ind.atr_1h, entry=True,
+            _dec(_bar_key(d.snapshot, "close")), ind.atr_1h, entry=True,
             max_deviation_pct=dev_pct,
         )
         if bar_time is None or bar_time + timedelta(minutes=5) > at or reference is None:

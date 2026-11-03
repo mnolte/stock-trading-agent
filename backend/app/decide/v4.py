@@ -643,7 +643,20 @@ def build_v4_fields(
     ``previous`` is the model's last decision on the symbol this session
     (``previous_decision_v4``); ``entry_checks`` the entry decision's
     checks (``checks_at_entry``) for held positions.
+
+    ``base`` is the dict the decision row stores; the 5-minute-bar
+    provenance is renamed in place (``last_bar_*`` → ``last_5m_*``) so
+    it can't read as the signal bar's close (docs/SPEC.md, Fixes of
+    3 November).
     """
+    if "last_bar_close" in base:
+        base["last_5m_close"] = base.pop("last_bar_close")
+    if "last_bar_time" in base:
+        base["last_5m_time"] = base.pop("last_bar_time")
+    base_quote = base.get("quote")
+    if isinstance(base_quote, dict) and "last_bar_time" in base_quote:
+        base_quote["last_5m_time"] = base_quote.pop("last_bar_time")
+
     v3 = build_v3_fields(
         context=context,
         base=base,
