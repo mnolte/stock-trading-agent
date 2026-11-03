@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-11-03 — Ask: the number check sees tool-result strings and magnitudes
+
+- Tool results serialize every money and price field via `_dec` → `str`,
+  but `_numbers_in` only collected `int`/`float`/`Decimal` — so figures
+  like `if_stop_usd` never reached the known set and correct answers
+  were flagged "not found in the data". Strings that parse as numbers
+  now count.
+- The check also matches by magnitude: a loss stored as `"-24.15"`
+  verifies "USD 24.15 loss" in the answer text, rounded as before. The
+  check attests the number was in the data, not the sign of the claim.
+
 ## 2026-11-03 — Settings: the Ask section reaches the form
 
 - `GET /api/settings` never returned the `ask` section — `_settings_form`

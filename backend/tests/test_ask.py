@@ -13,7 +13,7 @@ from app.ask.service import answer, check_numbers, resolve_refs
 from app.ask.tools import TOOLS, AskDeps, calculate, run_tool
 from app.config import get_config
 from app.data.cache import _naive_utc
-from app.db.models import AskMessage, AskThread, LlmCall
+from app.db.models import AskMessage, AskThread, LlmCall, Position
 from app.llm.fake import FakeModelClient
 from app.market.clock import FakeClock
 from fastapi.testclient import TestClient
@@ -246,6 +246,31 @@ def test_number_check_flags_missing() -> None:
     assert "42.50" in checked
 
 
+def test_number_check_covers_string_and_signed_data() -> None:
+    """Money reaches the model as strings (``_dec``); a loss quoted as a
+    magnitude ("24.15 loss") verifies against "-24.15" in the data."""
+    unverified, checked = check_numbers(
+        "You lose $24.15 on KO and $47.63 in total; invented $999.",
+        {"-24.15", "-47.63"},
+    )
+    texts = [u["text"] for u in unverified]
+    assert "999" in texts
+    assert "24.15" in checked and "47.63" in checked
+
+
+def test_numbers_in_collects_numeric_strings() -> None:
+    """Tool results serialize money via ``_dec`` → strings; those count too."""
+    from app.ask.service import _numbers_in
+
+    found: set[str] = set()
+    _numbers_in(
+        {"price": "-24.15", "sym": "KO", "rows": ["1,234.50", "x"], "qty": 21},
+        found,
+    )
+    assert "-24.15" in found and "1234.5" in found and "21" in found
+    assert "KO" not in found and "x" not in found
+
+
 def test_unknown_ref_becomes_plain() -> None:
     text, used, unknown = resolve_refs(
         "See [[decision:12]] and [[decision:99]].", {"decision:12"}
@@ -305,6 +330,38 @@ async def test_unverified_number_stored_with_position(
     with session_factory() as s:
         stored = s.get(AskMessage, msg)
         assert stored and stored.unverified_numbers and stored.checked_numbers
+
+
+@pytest.mark.anyio
+async def test_position_loss_magnitude_verifies(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """`if_stop_usd` arrives as the string "-24.15"; "lose $24.15" checks."""
+    with session_factory() as s:
+        s.add(
+            Position(
+                symbol="KO",
+                qty=21,
+                avg_entry_price=Decimal("95.37"),
+                current_stop_price=Decimal("94.22"),
+                opened_at=datetime(2026, 10, 14, 14, 0),
+            )
+        )
+        s.commit()
+    deps = _deps(session_factory)
+    thread, msg = _thread(session_factory)
+    client = FakeModelClient()
+    client.converse_script = [
+        {"tools": [{"name": "list_positions", "arguments": {}}]},
+        {"text": "If the KO stop fills you lose $24.15 from entry."},
+    ]
+    events = await _run(client, deps, thread, msg)
+    done = events[-1]["data"]
+    assert done["status"] == "ok"
+    assert not done["unverified_numbers"]
+    with session_factory() as s:
+        stored = s.get(AskMessage, msg)
+        assert stored and stored.checked_numbers and "24.15" in stored.checked_numbers
 
 
 @pytest.mark.anyio
