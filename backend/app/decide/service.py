@@ -346,14 +346,7 @@ class DecisionService:
         # v3 data flags: every flag is logged at WARNING and recorded as
         # an event in every context, so data bugs surface quickly
         # (docs/SPEC.md, Decision v3 — Data flags).
-        flags = (
-            list(validation.output.data_flags)
-            if isinstance(validation.output, ModelOutputV3)
-            else []
-        )
-        flags = list(
-            getattr(validation.output, "data_flags", None) or flags
-        )
+        flags = list(getattr(validation.output, "data_flags", None) or [])
         for flag in flags:
             ev(
                 logger, logging.WARNING, "model.data_flag",

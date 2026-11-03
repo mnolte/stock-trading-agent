@@ -61,7 +61,12 @@ class RateLimiter:
         *args: object,
         **kwargs: object,
     ) -> T:
-        """Run a synchronous SDK read call under the rate limit, retrying on failure."""
+        """Run a synchronous SDK read call under the rate limit.
+
+        Only transient failures are retried — timeouts, connection
+        errors and 5xx/429 responses. A permanent 4xx (bad request,
+        404, auth) surfaces at once.
+        """
         last_error: Exception | None = None
         for attempt in range(self.config.max_retries + 1):
             async with self.call_slot():
@@ -69,6 +74,15 @@ class RateLimiter:
                     return await asyncio.to_thread(fn, *args, **kwargs)
                 except Exception as exc:  # noqa: BLE001
                     last_error = exc
+                    status = getattr(exc, "status_code", None) or getattr(
+                        exc, "code", None
+                    )
+                    if (
+                        isinstance(status, int)
+                        and 400 <= status < 500
+                        and status != 429
+                    ):
+                        raise
                     if attempt == self.config.max_retries:
                         raise
                     delay = self.config.backoff_base_seconds * (2**attempt)

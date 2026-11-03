@@ -36,6 +36,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
@@ -302,7 +303,14 @@ class UniverseService:
             else:  # re-adding a removed row
                 row.sector = sector
                 row.removed_at = None
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # The symbol check ran on a snapshot; a concurrent add
+                # committed in between → 422, never 500.
+                raise PoolError(
+                    [f"{symbol} is already in the pool."]
+                ) from None
             session.refresh(row)
             out = UniversePoolRow(
                 symbol=row.symbol,
@@ -398,7 +406,13 @@ class UniverseService:
                     )
                 )
                 added.append(symbol)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                raise PoolError(
+                    ["a symbol was added to the pool while importing — "
+                     "import rejected"]
+                ) from None
         if added:
             self._ping()
         return added, skipped

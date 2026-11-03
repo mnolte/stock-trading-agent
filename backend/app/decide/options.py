@@ -24,6 +24,7 @@ from app.decide.levels import (
     OptionsConfig,
     _swings,
 )
+from app.risk.math import trade_risk
 
 if TYPE_CHECKING:
     pass
@@ -230,7 +231,8 @@ def build_entry_options(
     merged = list(stop_merges)
     target_rejected = False
     for stop in kept_stops:
-        risk = limit - stop.price
+        # Risk math comes from the one shared function (risk/math.py).
+        risk = trade_risk(limit, stop.price).stop_distance
         if risk <= 0:
             continue
         targets: list[_Target] = []
@@ -238,8 +240,8 @@ def build_entry_options(
             if level.kind not in LEVEL_KINDS_HIGH or level.price <= limit:
                 continue
             lvl_target = level.price - cfg.level_buffer_atr * atr_1h
-            rr = (lvl_target - limit) / risk
-            if rr < cfg.min_reward_risk:
+            rr = trade_risk(limit, stop.price, lvl_target).reward_to_risk
+            if rr is None or rr < cfg.min_reward_risk:
                 target_rejected = True
                 continue
             targets.append(
@@ -247,8 +249,8 @@ def build_entry_options(
             )
         for r in cfg.target_r_multiples:
             r_target = limit + r * risk
-            rr = (r_target - limit) / risk
-            if rr < cfg.min_reward_risk:
+            rr = trade_risk(limit, stop.price, r_target).reward_to_risk
+            if rr is None or rr < cfg.min_reward_risk:
                 target_rejected = True
                 continue
             targets.append(_Target(r_target, None, f"{r.normalize()}R"))
@@ -258,7 +260,9 @@ def build_entry_options(
         merged += target_merges
         kept_targets.sort(key=lambda t: (t.price - limit) / risk)
         for target in kept_targets:
-            rr = (target.price - limit) / risk
+            rr = trade_risk(
+                limit, stop.price, target.price
+            ).reward_to_risk or Decimal(0)
             in_way = [
                 level.id
                 for level in levels

@@ -229,7 +229,6 @@ class CycleRunner:
         self, symbols: list[str], now: datetime, report: CycleReport
     ) -> dict[str, list[NewsItem]] | None:
         """Headlines for the symbols that get a model call; None on error."""
-        self._news_status: dict[str, str] = {}
         if not symbols:
             return {}
         news_result = await self.sources.news.fetch_news(
@@ -241,9 +240,16 @@ class CycleRunner:
         news: dict[str, list[NewsItem]] = {symbol: [] for symbol in symbols}
         for item in news_result.data:
             news.setdefault(item.symbol, []).append(item)
-        self._news_status = news_result.statuses or {
-            symbol: "complete" if news[symbol] else "empty" for symbol in symbols
-        }
+        # Merge, never replace: later top-up fetches (EP held/candidate
+        # batches, lazy per-symbol fetches) must not erase earlier
+        # statuses. _run resets the map once per cycle.
+        self._news_status.update(
+            news_result.statuses
+            or {
+                symbol: "complete" if news[symbol] else "empty"
+                for symbol in symbols
+            }
+        )
         incomplete = [
             s for s, status in self._news_status.items() if status in ("failed", "truncated")
         ]
@@ -490,6 +496,9 @@ class CycleRunner:
             report.errors.append("market not open")
             ev(logger, logging.INFO, "cycle.skipped", "market not open")
             return
+        # Per-cycle news statuses accumulate across the batch and lazy
+        # fetches (_fetch_news merges into this map).
+        self._news_status: dict[str, str] = {}
 
         # A full cycle starts here: pending approvals expire and saved
         # settings promote to active (docs/SPEC.md, Settings, Supervised).
@@ -813,6 +822,13 @@ class CycleRunner:
         from app.logging_config import ev
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
+        # A candidate outside the prefetched news set can still reach the
+        # model call (the call estimate doesn't know about checks/options
+        # no-calls) — fetch its headlines so it never calls blind.
+        if news_map is not None and context == "candidate" and item.symbol not in news_map:
+            extra = await self._fetch_news([item.symbol], now, report)
+            if extra:
+                news_map.update(extra)
         price_reason = self._price_reason(item.symbol, quote, now)
         price = (
             quote.last

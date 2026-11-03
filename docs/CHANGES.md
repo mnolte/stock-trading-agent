@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-03 — Trading-path audit hardening
+
+- Approving an entry no longer evaluates the risk gates on a stale read snapshot: the approval's session commits before the network calls, so the gate context sees positions and orders committed after the request started.
+- A position check no longer sends a market sell when Alpaca confirms the symbol is flat; a confirmed-flat read returns early instead of falling back to the stored quantity. The stale flat-symbol cache no longer skips the fresh broker read.
+- Stop tightening picks the newest live stop leg instead of crashing the cycle when more than one open stop row exists.
+- Every broker order call — entries, exits, stop replaces, flatten sells, breach/OCO/protective and adopted stops — holds the shutdown order slot, so shutdown cannot cut a submission between send and store (hard rule 16).
+- The shock brake's since-open SPY move requires a fresh quote timestamp; a stale quote can no longer fabricate a market move. Paper reset confirms no orders remain open after `close_all_positions`, matching flatten's cancel-confirm discipline.
+- `get_open_orders` fails loudly at the 500-row page limit on both the open and closed queries instead of silently missing live stop legs. Fractional broker quantities are logged before truncation.
+- Read calls through the rate limiter retry only transient failures (timeouts, 5xx, 429); permanent 4xx errors surface at once.
+- "Confirm it is you" burns the TOTP step like sign-in does, so a used code cannot be replayed within the drift window. Expired pending sign-in tickets are pruned. Route coverage at startup uses the same guarded-path check as the session middleware.
+- The Host check rejects a non-numeric port, and `/api/universe/import` is JSON-only like every other write (the larger upload cap stays). Client-supplied reason and note text is stripped of control characters before it is stored or logged.
+- News statuses merge per cycle instead of being overwritten by later fetches, and a candidate that reaches a model call without prefetched headlines gets its own news fetch first.
+- Entry-option risk and reward-to-risk come from `trade_risk`, the one shared risk function. `client_order_id` clamps the instance segment to stay inside Alpaca's 48-character limit. Adding a symbol or importing a CSV that loses a concurrent-add race returns 422 instead of 500.
+
 ## 2026-11-03 — Ask the agent: config defaults and the gpt-6.1-sol model (PR 36)
 
 - `config.example.yaml` gains the `ask` block: enabled, model `claude-sonnet-5-5`, $15 monthly cap, $0.25 per-answer cap, 90-day chat retention, 60k context tokens, 8 tool rounds, 6k tool-result tokens, 90s answer timeout, 10 questions per minute, 100 notes and empty standing instructions.

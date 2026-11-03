@@ -908,9 +908,6 @@ def validate_model_output_v2(
         )
         checks.append(json_check)
         # The explanation check never changes the action (docs/SPEC.md).
-        passed = all(c.passed for c in checks[:-1]) and all(
-            c.passed for c in checks if c.name != "Explanation check"
-        )
         passed = all(
             c.passed for c in checks if c.name != "Explanation check"
         )

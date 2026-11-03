@@ -270,9 +270,28 @@ class Executor:
             if quotes.error is None and quotes.data
             else None
         )
+        # Freshness anchor: the quote's newest timestamp — a stale quote
+        # object must not fabricate a session move, but a fresh quote
+        # whose last trade is old is still the market's latest price.
+        quote_ts = (
+            (quote.trade_timestamp or quote.timestamp)
+            if quote is not None
+            else None
+        )
+        if quote_ts is not None and quote_ts.tzinfo is None:
+            quote_ts = quote_ts.replace(tzinfo=UTC)
+        quote_fresh = (
+            quote_ts is not None
+            and (now - quote_ts).total_seconds()
+            <= float(
+                self.config.get("execution", "quote_max_age_seconds")
+            )
+        )
+        # A stale SPY last trade must not fabricate a session move.
         move_session = (
             (quote.last - session_open) / session_open * 100
             if quote is not None
+            and quote_fresh
             and quote.last.is_finite()
             and quote.last > 0
             and session_open is not None
@@ -481,12 +500,13 @@ class Executor:
                         session.commit()
                     continue
                 self._orders_this_cycle += 1
-                result = await self.broker.submit_market_sell(
-                    symbol=pos.symbol,
-                    qty=pos.qty,
-                    market_on_open=not regular_hours,
-                    client_order_id=self._client_id("exit", 0, pos.symbol),
-                )
+                with self._order_slot():
+                    result = await self.broker.submit_market_sell(
+                        symbol=pos.symbol,
+                        qty=pos.qty,
+                        market_on_open=not regular_hours,
+                        client_order_id=self._client_id("exit", 0, pos.symbol),
+                    )
                 if result.error is not None or result.data is None:
                     errors.append(f"{pos.symbol}: {result.error}")
                     rejected.append(pos.symbol)
@@ -738,6 +758,11 @@ class Executor:
                 return {"ok": False, "error": "approval is not pending"}
             if self.state.paused:
                 return {"ok": False, "error": "new entries are paused"}
+            # Release the read snapshot before the network awaits: the
+            # gate context below must see positions/orders committed
+            # after this request started, not the snapshot pinned by the
+            # approval read.
+            session.commit()
 
             decision = session.get(Decision, approval.decision_id)
             # All risk gates again with fresh equity + the fresh ask.
@@ -854,25 +879,15 @@ class Executor:
                 "entry", approval.decision_id, approval.symbol
             )
             session.commit()
-            # Guard the submit→store window: shutdown's grace wait holds
-            # until this slot closes, so an accepted answer is never lost
-            # between the broker call and its DB row (hard rule 16).
-            import contextlib
-
-            from app.shutdown import current as _shutdown_current
-
-            _stack = contextlib.ExitStack()
-            _mgr = _shutdown_current()
-            if _mgr is not None:
-                _stack.enter_context(_mgr.order_slot())
-            submitted = await self.broker.submit_bracket_entry(
-                symbol=approval.symbol,
-                qty=qty,
-                limit_price=limit,
-                stop_price=approval.stop_price,
-                target_price=approval.target_price,
-                client_order_id=client_id,
-            )
+            with self._order_slot():
+                submitted = await self.broker.submit_bracket_entry(
+                    symbol=approval.symbol,
+                    qty=qty,
+                    limit_price=limit,
+                    stop_price=approval.stop_price,
+                    target_price=approval.target_price,
+                    client_order_id=client_id,
+                )
             if submitted.error is not None or submitted.data is None:
                 ev(
                     log_orders, logging.ERROR, "orders.submit_failed",
@@ -902,7 +917,6 @@ class Executor:
                     },
                 )
                 session.commit()
-                _stack.close()
                 self._notify({"approvals", "decisions", "banners", "attention"})
                 return {
                     "ok": False,
@@ -922,7 +936,6 @@ class Executor:
             approval.limit_price = limit
             self._resolve_approval(approval, "approved", None)
             session.commit()
-            _stack.close()
         self._notify({"approvals", "decisions", "positions", "orders", "header", "attention"})
         return {"ok": True}
 
@@ -941,6 +954,24 @@ class Executor:
             errors.append(str(result.error))
         else:
             closed = [o.symbol for o in (result.data or [])]
+        # Same confirm discipline as flatten(): nothing is declared
+        # closed while a live order may still sit at the broker.
+        still_open = await self.broker.get_open_orders()
+        if still_open.error is not None:
+            errors.append(
+                f"could not confirm cancels: {still_open.error}"
+            )
+        else:
+            remaining = [
+                o.symbol
+                for o in still_open.data
+                if o.is_open or any(leg.is_open for leg in o.legs)
+            ]
+            if remaining:
+                errors.append(
+                    "orders still open after close_all: "
+                    + ", ".join(sorted(set(remaining)))
+                )
         with self._session_factory() as session:
             record_event(
                 session,
@@ -1082,6 +1113,25 @@ class Executor:
 
     # ------------------------------------------------------------------
     # order rows
+
+    @staticmethod
+    def _order_slot() -> Any:
+        """Guard one submit→store window against shutdown (hard rule 16).
+
+        Returns a context manager holding the shutdown manager's order
+        slot when one is wired up, else a no-op — every broker order call
+        goes through it so an accepted answer is never lost between the
+        send and its DB row.
+        """
+        import contextlib
+
+        from app.shutdown import current as _shutdown_current
+
+        stack = contextlib.ExitStack()
+        mgr = _shutdown_current()
+        if mgr is not None:
+            stack.enter_context(mgr.order_slot())
+        return stack
 
     def _client_id(self, kind: str, ref_id: int, symbol: str) -> str:
         self._order_seq += 1
@@ -2224,14 +2274,15 @@ class Executor:
         session.commit()
         placed: Decimal | None = Decimal(0)
         if not covered:
-            result = await self.broker.submit_stop_order(
-                symbol=bp.symbol,
-                qty=bp.qty,
-                stop_price=stop,
-                client_order_id=self._client_id(
-                    "stop", position.id, bp.symbol
-                ),
-            )
+            with self._order_slot():
+                result = await self.broker.submit_stop_order(
+                    symbol=bp.symbol,
+                    qty=bp.qty,
+                    stop_price=stop,
+                    client_order_id=self._client_id(
+                        "stop", position.id, bp.symbol
+                    ),
+                )
             if result.error is not None or result.data is None:
                 placed = None
                 report.errors.append(
@@ -2351,14 +2402,15 @@ class Executor:
             today = self.calendar.session_for(ny_now.date())
             moo = today is None or not (today.open <= ny_now <= today.close)
             session.commit()
-            result = await self.broker.submit_market_sell(
-                symbol=position.symbol,
-                qty=qty,
-                market_on_open=moo,
-                client_order_id=self._client_id(
-                    "breach", position.id, position.symbol
-                ),
-            )
+            with self._order_slot():
+                result = await self.broker.submit_market_sell(
+                    symbol=position.symbol,
+                    qty=qty,
+                    market_on_open=moo,
+                    client_order_id=self._client_id(
+                        "breach", position.id, position.symbol
+                    ),
+                )
             if result.error is not None or result.data is None:
                 report.errors.append(
                     f"stop_breached {position.symbol}: {result.error}"
@@ -2429,27 +2481,28 @@ class Executor:
                         )
             session.commit()
             target = position.target_price or stop
-            result = await self.broker.submit_oco_exit(
-                symbol=position.symbol,
-                qty=qty,
-                limit_price=target,
-                stop_price=stop,
-                client_order_id=self._client_id(
-                    "stop", position.id, position.symbol
-                ),
-            )
-            repaired_by = "oco"
-            if result.error is not None or result.data is None:
-                # Protection comes before the target: the stop alone.
-                result = await self.broker.submit_stop_order(
+            with self._order_slot():
+                result = await self.broker.submit_oco_exit(
                     symbol=position.symbol,
                     qty=qty,
+                    limit_price=target,
                     stop_price=stop,
                     client_order_id=self._client_id(
                         "stop", position.id, position.symbol
                     ),
                 )
-                repaired_by = "stop"
+                repaired_by = "oco"
+                if result.error is not None or result.data is None:
+                    # Protection comes before the target: the stop alone.
+                    result = await self.broker.submit_stop_order(
+                        symbol=position.symbol,
+                        qty=qty,
+                        stop_price=stop,
+                        client_order_id=self._client_id(
+                            "stop", position.id, position.symbol
+                        ),
+                    )
+                    repaired_by = "stop"
             if result.error is not None or result.data is None:
                 report.errors.append(
                     f"protective stop {position.symbol}: {result.error}"
@@ -2491,12 +2544,15 @@ class Executor:
             return Decimal(qty)
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
-        result = await self.broker.submit_stop_order(
-            symbol=position.symbol,
-            qty=qty,
-            stop_price=stop,
-            client_order_id=self._client_id("stop", position.id, position.symbol),
-        )
+        with self._order_slot():
+            result = await self.broker.submit_stop_order(
+                symbol=position.symbol,
+                qty=qty,
+                stop_price=stop,
+                client_order_id=self._client_id(
+                    "stop", position.id, position.symbol
+                ),
+            )
         if result.error is not None or result.data is None:
             report.errors.append(
                 f"protective stop {position.symbol}: {result.error}"
@@ -2910,14 +2966,15 @@ class Executor:
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
         session.commit()  # hard rule 13
-        submitted = await self.broker.submit_bracket_entry(
-            symbol=decision.symbol,
-            qty=qty,
-            limit_price=fresh_limit,
-            stop_price=_cents(Decimal(str(stop))),
-            target_price=_cents(Decimal(str(target))),
-            client_order_id=client_id,
-        )
+        with self._order_slot():
+            submitted = await self.broker.submit_bracket_entry(
+                symbol=decision.symbol,
+                qty=qty,
+                limit_price=fresh_limit,
+                stop_price=_cents(Decimal(str(stop))),
+                target_price=_cents(Decimal(str(target))),
+                client_order_id=client_id,
+            )
         if submitted.error is not None or submitted.data is None:
             # Never resent: reconciliation decides what Alpaca did.
             recovered = await self.broker.get_order_by_client_id(client_id)
@@ -2973,14 +3030,17 @@ class Executor:
                 "reason": "new stop is not above the current stop",
             }
             return
+        # More than one live stop row can exist while a protective-stop
+        # repair or a replace is in flight — take the newest instead of
+        # crashing on scalar_one_or_none.
         stop_row = session.execute(
             select(Order).where(
                 Order.symbol == position.symbol,
                 Order.side == "sell",
                 Order.leg == "stop",
                 Order.status.in_(OPEN_ORDER_STATUSES),
-            )
-        ).scalar_one_or_none()
+            ).order_by(Order.id.desc()).limit(1)
+        ).scalars().first()
         if stop_row is None:
             decision.gates_result = {
                 "tighten_noop": True,
@@ -3056,9 +3116,10 @@ class Executor:
                 decision.validation_result = validation
             session.flush()
             return
-        result = await self.broker.replace_stop(
-            stop_row.alpaca_order_id, stop_price=_cents(new_stop)
-        )
+        with self._order_slot():
+            result = await self.broker.replace_stop(
+                stop_row.alpaca_order_id, stop_price=_cents(new_stop)
+            )
         if result.error is not None or result.data is None:
             # Never resent; reconciliation will repair or alert.
             record_event(
@@ -3228,14 +3289,14 @@ class Executor:
         # right before the send. Falling back to the stored qty is only
         # allowed while the broker guard is confirmed — without it the
         # exit waits for a confirmed qty (retried at the next check).
-        if position.symbol in self._flat_symbols:
-            # Already found flat this pass — nothing left to sell.
-            return
         confirmed = await self.broker.get_position(position.symbol)
         if confirmed.error is None and (
             confirmed.data is None or confirmed.data.qty <= 0
         ):
+            # Confirmed flat at the broker — nothing left to sell; the
+            # stored-qty fallback below is only for a failed read.
             self._flat_symbols.add(position.symbol)
+            return
         if confirmed.error is None and confirmed.data is not None:
             sell_qty = min(position.qty, confirmed.data.qty)
         elif self.state.broker_guard_confirmed:
@@ -3252,12 +3313,15 @@ class Executor:
             return
         if sell_qty <= 0:
             return
-        sold = await self.broker.submit_market_sell(
-            symbol=position.symbol,
-            qty=sell_qty,
-            market_on_open=not regular_hours,
-            client_order_id=self._client_id("exit", position.id, position.symbol),
-        )
+        with self._order_slot():
+            sold = await self.broker.submit_market_sell(
+                symbol=position.symbol,
+                qty=sell_qty,
+                market_on_open=not regular_hours,
+                client_order_id=self._client_id(
+                    "exit", position.id, position.symbol
+                ),
+            )
         if sold.error is not None or sold.data is None:
             record_event(
                 session,

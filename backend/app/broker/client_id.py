@@ -29,7 +29,9 @@ def client_order_id(instance: str, kind: str, *parts: object) -> str:
     """
     if kind not in KINDS:
         raise ValueError(f"unknown client order id kind: {kind!r}")
-    inst = _INSTANCE_SAFE.sub("", str(instance))
+    # Alpaca caps client_order_id at 48 chars; the instance is the only
+    # unbounded segment, so it is clamped to keep the whole id in range.
+    inst = _INSTANCE_SAFE.sub("", str(instance))[:10]
     segments = ["sa", inst, kind] if inst else ["sa", kind]
     segments.extend(str(p) for p in parts)
     return "-".join(segments)

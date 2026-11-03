@@ -927,7 +927,7 @@ async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, ob
         require_confirmed(request)
         result = await executor.flatten()
         return {"kill_switch": True, **result}
-    reason = str(body.get("reason") or "manual")
+    reason = _one_line(str(body.get("reason") or "manual"), 200)
     await executor.activate_kill_switch(reason=reason, automatic=False)
     return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
 
@@ -974,7 +974,7 @@ async def kill_switch_resume(
             status_code=422,
             detail=f"Resume needs the keys set and passing ({issue}).",
         )
-    reason = str(body.get("reason") or "")
+    reason = _one_line(str(body.get("reason") or ""), 200)
     try:
         await executor.resume(reason)
     except ValueError as exc:
@@ -1005,7 +1005,7 @@ def dismiss_event(
     """Dismiss one unresolved readiness error; a note is required."""
     from app.readiness.service import ReadinessError, dismiss_error
 
-    note = str(body.get("note") or "")
+    note = _one_line(str(body.get("note") or ""), 500)
     with get_session_maker()() as session:
         try:
             event = dismiss_error(
@@ -2486,7 +2486,7 @@ def reject_approval(
 ) -> dict[str, object]:
     """Reject a pending approval; the reason is stored and shown."""
     executor = _executor(request)
-    reason = str((body or {}).get("reason") or "") or None
+    reason = _one_line(str((body or {}).get("reason") or ""), 200) or None
     if not executor.reject_approval(approval_id, reason):
         raise HTTPException(status_code=404, detail="approval is not pending")
     return {"rejected": True}
