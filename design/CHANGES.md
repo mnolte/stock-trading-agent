@@ -2,6 +2,16 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-03 — Decision v5 held drawer
+
+- New `DecisionV5Held.dc.html` (PR 37), built on the KO call of 3 Nov at 15:46 NY. It shows:
+  - the **Hold or exit** block: the exit bar, the overnight bar, the model's number;
+  - position rows: price since the signal bar, session left (last cycle), overnight gap p90 against the stop distance;
+  - the fifth thesis check, price against EMA 20;
+  - the Exit consistency gate.
+- A note on the drawer compares it with the live v4 answer on the same snapshot.
+- v5 candidates reuse `DecisionV4.dc.html`, with per-option `min_confidence` and `target_atr` in the options table.
+
 ## 2026-11-01 — Ask the agent: notes and settings
 
 - `AskDrawer.dc.html`: "Save as note" in the answer footer, before Copy.
