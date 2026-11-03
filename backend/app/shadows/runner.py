@@ -653,14 +653,14 @@ class ShadowRunner:
             # Never hold a database write transaction across an await: live
             # jobs run on the same event loop and must always get the lock.
             session.commit()
-            sent = json.dumps(
+            sent_snap = (
                 v4_send_snapshot(snap_json, cfg)
                 if spec.is_v4
                 else v3_send_snapshot(snap_json)
                 if spec.is_v3
-                else strip_internal(snap_json),
-                indent=2,
+                else strip_internal(snap_json)
             )
+            sent = json.dumps(sent_snap, indent=2)
             started = monotonic()
             try:
                 response = await asyncio.wait_for(
@@ -832,6 +832,7 @@ class ShadowRunner:
                     sent_at=sent_at,
                     response=response,
                     input_snapshot=snap_json,
+                    sent_input=sent_snap,
                     model_action=validation.model_action,
                     final_action=row.final_action,
                     output_invalid=not validation.valid
@@ -1924,6 +1925,7 @@ class ShadowRunner:
             return
         prompt = cached_prompt(str(strategy.prompt_version))
         cfg = strategy_config(self.config, strategy)
+        spec = _spec(strategy)
         session.add(
             build_llm_call(
                 source="shadow",
@@ -1939,6 +1941,13 @@ class ShadowRunner:
                     error_type="timeout",
                 ),
                 input_snapshot=snap_json,
+                sent_input=(
+                    v4_send_snapshot(snap_json, cfg)
+                    if spec.is_v4
+                    else v3_send_snapshot(snap_json)
+                    if spec.is_v3
+                    else strip_internal(snap_json)
+                ),
                 final_action="no_call",
                 cycle_id=cycle.id,
                 shadow_decision_id=missed_id,

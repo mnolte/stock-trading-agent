@@ -649,6 +649,13 @@ class LlmCall(Base):
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The input snapshot exactly as sent to the model — the stripped
+    # send copy for v3/v4 decision calls, null on rows written before
+    # the column existed (the inspector rebuilds those with the same
+    # strip function) and on non-decision kinds.
+    sent_input: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
     # PR 36: source "ask" rows link to the chat message they answered.
     ask_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("ask_messages.id"), nullable=True

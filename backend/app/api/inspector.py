@@ -35,6 +35,7 @@ from sqlalchemy import String, asc, cast, desc, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import (
     Cycle,
@@ -45,7 +46,15 @@ from app.db.models import (
     Strategy,
     Verdict,
 )
-from app.decide.prompt import PromptError, cached_prompt
+from app.decide.prompt import (
+    PromptError,
+    UnknownPromptVersion,
+    cached_prompt,
+    prompt_spec,
+)
+from app.decide.snapshot import strip_internal
+from app.decide.v3 import v3_send_snapshot
+from app.decide.v4 import v4_send_snapshot
 
 router = APIRouter()
 
@@ -473,9 +482,16 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
                 system = prompt.text
             else:
                 prompt_mismatch = True
+        stored = _stored_payload(session, call)
         body["prompt"] = {
             "system": system,
-            "user": _user_part(session, call),
+            # "User · input snapshot" is the snapshot as sent — the
+            # stripped copy stored on the call (sent_input), rebuilt
+            # with the same strip function for older rows; the stored
+            # snapshot sits behind "Stored input" (docs/SPEC.md, Fixes
+            # of 3 November).
+            "user": _sent_part(call, stored),
+            "stored": json.dumps(stored, indent=2) if stored is not None else None,
             "stored_hash": call.prompt_hash,
             "mismatch": prompt_mismatch,
         }
@@ -485,8 +501,9 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
     return body
 
 
-def _user_part(session: Session, call: LlmCall) -> str | None:
-    """The user message, from the linked row's stored input."""
+def _stored_payload(session: Session, call: LlmCall) -> dict[str, Any] | None:
+    """The linked row's stored input — decision snapshot or review/verdict
+    facts — exactly as it sits on the row."""
     payload: dict[str, Any] | None = None
     if call.decision_id is not None and call.source == "live":
         decision = session.get(Decision, call.decision_id)
@@ -508,7 +525,33 @@ def _user_part(session: Session, call: LlmCall) -> str | None:
             payload = {"kind": "verdict", "facts": verdict.facts}
         if payload is None:
             payload = {"kind": "verdict", "facts": None}
-    return json.dumps(payload, indent=2) if payload is not None else None
+    return payload
+
+
+def _sent_part(call: LlmCall, stored: dict[str, Any] | None) -> str | None:
+    """The user message as sent: ``sent_input`` when the call row kept it,
+    else the stored snapshot re-stripped with the prompt version's own
+    send function — the path for rows written before the column existed
+    (docs/SPEC.md, Fixes of 3 November). Non-decision calls sent their
+    payload verbatim, so sent == stored."""
+    sent: dict[str, Any] | None = call.sent_input
+    if sent is None and stored is not None and (
+        call.decision_id is not None or call.shadow_decision_id is not None
+    ):
+        try:
+            spec = prompt_spec(str(call.prompt_version or ""))
+        except UnknownPromptVersion:
+            sent = strip_internal(stored)
+        else:
+            if spec.is_v4:
+                sent = v4_send_snapshot(stored, get_config())
+            elif spec.is_v3:
+                sent = v3_send_snapshot(stored)
+            else:
+                sent = strip_internal(stored)
+    if sent is None:
+        sent = stored
+    return json.dumps(sent, indent=2) if sent is not None else None
 
 
 def _result_text(session: Session, call: LlmCall) -> tuple[str, str | None]:

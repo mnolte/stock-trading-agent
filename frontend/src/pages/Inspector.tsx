@@ -852,6 +852,14 @@ function CallDetails({
           {detail.source === 'review' ? 'User · facts computed by code' : 'User · input snapshot'}
         </div>
         <MonoPre>{detail.prompt.user ?? '—'}</MonoPre>
+        {detail.prompt.stored !== null && detail.prompt.stored !== detail.prompt.user && (
+          <details style={{ fontSize: 'var(--sa-text-sm)' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--sa-text-muted)' }}>
+              Stored input
+            </summary>
+            <MonoPre>{detail.prompt.stored}</MonoPre>
+          </details>
+        )}
       </section>
       {detail.raw_response !== null && (
         <section
