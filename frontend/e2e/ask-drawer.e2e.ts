@@ -43,10 +43,7 @@ async function mockBackground(page: Page, onSocket?: (socket: WebSocketRoute) =>
 
 test('Ctrl+J opens the drawer on Positions and a question streams', async ({ page }) => {
   await mockBackground(page);
-  await page.route('**/api/positions', (route) =>
-    route.fulfill({ json: { open: [], closed: [], totals: {}, as_of: '2026-10-15T14:00:00Z' } }),
-  );
-  await page.goto('/positions');
+  await page.goto('/');
   await page.keyboard.press('Control+j');
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();
@@ -66,7 +63,7 @@ test('phone width fills the screen without sideways scroll', async ({ page }) =>
   await mockBackground(page);
   await page.setViewportSize({ width: 390, height: 780 });
   await page.goto('/');
-  const askBtn = page.getByRole('button', { name: 'Ask the agent' });
+  const askBtn = page.getByRole('button', { name: 'Ask the agent' }).first();
   await askBtn.click();
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();

@@ -652,7 +652,9 @@ function CallDetails({
       ? 'Live decision'
       : detail.source === 'shadow'
         ? `Shadow · ${detail.strategy ?? '—'}`
-        : 'Review';
+        : detail.source === 'ask'
+          ? 'Ask the agent'
+          : 'Review';
   const price = (() => {
     try {
       const snap = JSON.parse(detail.prompt.user ?? 'null') as { price?: number } | null;
