@@ -125,16 +125,21 @@ def _merge_stops(
     """
     kept: list[_Stop] = []
     merged: list[str] = []
-    for stop in sorted(candidates, key=lambda s: s.price, reverse=True):
+    for cand in sorted(candidates, key=lambda s: s.price, reverse=True):
+        stop = cand
         while True:
             hit = next(
-                (k for k in kept if abs(k.price - stop.price) <= within), None
+                (k for k in kept if k is not stop and abs(k.price - stop.price) <= within),
+                None,
             )
             if hit is None:
-                kept.append(stop)
+                if stop not in kept:
+                    kept.append(stop)
                 break
             if stop.is_level and not hit.is_level:
-                kept.remove(hit)
+                # Level wins in place, then the winner is re-checked
+                # against the rest of ``kept``.
+                kept[kept.index(hit)] = stop
                 merged.append(
                     f"{hit.basis} ({_money(hit.price)}) into {stop.basis}"
                 )
@@ -149,16 +154,19 @@ def _merge_targets(
 ) -> tuple[list[_Target], list[str]]:
     kept: list[_Target] = []
     merged: list[str] = []
-    for target in sorted(candidates, key=lambda t: t.price):
+    for cand in sorted(candidates, key=lambda t: t.price):
+        target = cand
         while True:
             hit = next(
-                (k for k in kept if abs(k.price - target.price) <= within), None
+                (k for k in kept if k is not target and abs(k.price - target.price) <= within),
+                None,
             )
             if hit is None:
-                kept.append(target)
+                if target not in kept:
+                    kept.append(target)
                 break
             if target.is_level and not hit.is_level:
-                kept.remove(hit)
+                kept[kept.index(hit)] = target
                 merged.append(
                     f"{hit.basis} ({_money(hit.price)}) into {target.basis}"
                 )

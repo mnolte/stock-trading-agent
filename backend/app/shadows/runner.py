@@ -53,7 +53,12 @@ from app.decide.service import (
     rules_result_json,
     validation_result_json,
 )
-from app.decide.snapshot import UNAVAILABLE, _position_block, entry_invalidation
+from app.decide.snapshot import (
+    UNAVAILABLE,
+    _position_block,
+    entry_invalidation,
+    strip_internal,
+)
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields, rebuild_bars
 from app.decide.v3 import HeldV3, build_v3_fields, stop_basis_info, v3_send_snapshot
 from app.decide.v4 import (
@@ -653,11 +658,7 @@ class ShadowRunner:
                 if spec.is_v4
                 else v3_send_snapshot(snap_json)
                 if spec.is_v3
-                else {
-                    key: value
-                    for key, value in snap_json.items()
-                    if key != "indicators_precise"
-                },
+                else strip_internal(snap_json),
                 indent=2,
             )
             started = monotonic()

@@ -31,6 +31,19 @@ def _ny_iso(dt: datetime) -> str:
 
 UNAVAILABLE = "unavailable"
 
+# Stored on the decision row but never sent to the model (provenance and
+# exact values for shadow rule re-evaluation — the spec's "no duplicates").
+_INTERNAL_KEYS = frozenset({"indicators_precise"})
+
+
+def strip_internal(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """The snapshot without stored-only keys — for send paths that don't
+    already strip provenance (v1/v2 and the eval/smoke tools)."""
+    return {
+        key: value for key, value in snapshot.items() if key not in _INTERNAL_KEYS
+    }
+
+
 # Swing points are local extremes over this many recent 1h bars.
 _SWING_LOOKBACK = 40
 _SWING_KEEP = 3

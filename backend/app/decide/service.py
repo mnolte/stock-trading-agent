@@ -38,6 +38,7 @@ from app.decide.output import (
     validate_model_output_v4,
 )
 from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
+from app.decide.snapshot import strip_internal
 from app.decide.v2inputs import V2Build
 from app.decide.v3 import v3_send_snapshot
 from app.decide.v4 import v4_send_snapshot
@@ -201,12 +202,7 @@ class DecisionService:
             if self._spec.is_v4
             else v3_send_snapshot(snapshot_json)
             if self._spec.is_v3
-            else {
-                key: value
-                for key, value in snapshot_json.items()
-                # Stored for shadow rule evaluation, never sent to the model.
-                if key != "indicators_precise"
-            }
+            else strip_internal(snapshot_json)
         )
         user = json.dumps(send_snapshot, indent=2)
         response: ModelResponse | None = None

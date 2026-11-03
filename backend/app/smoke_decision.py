@@ -39,7 +39,7 @@ from app.db.models import Position
 from app.decide.client import DecisionClient, token_cost
 from app.decide.output import ValidationResult, validate_model_output
 from app.decide.prompt import cached_prompt
-from app.decide.snapshot import build_input_snapshot
+from app.decide.snapshot import build_input_snapshot, strip_internal
 from app.llm.clients import make_model_clients
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, Clock, make_clock
@@ -193,7 +193,8 @@ async def run(
         str(config.get("decision", "prompt", default="decision.v1"))
     )
     response = await client.complete(
-        system=prompt.text, user=json.dumps(inputs.snapshot_json, indent=2)
+        system=prompt.text,
+        user=json.dumps(strip_internal(inputs.snapshot_json), indent=2),
     )
     validation = validate_model_output(
         response.raw,
