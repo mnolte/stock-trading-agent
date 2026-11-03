@@ -5,6 +5,7 @@ regime and per-symbol rules results for the watchlist and the cycle runner.
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -29,6 +30,8 @@ from app.rules.prefilter import (
 from app.signals.indicators import opening_gap_pct
 from app.signals.regime import MarketRegime, compute_regime
 from app.signals.snapshot import IndicatorSnapshot, compute_snapshot
+
+logger = logging.getLogger(__name__)
 
 BAR_5M = timedelta(minutes=5)
 
@@ -127,6 +130,9 @@ class SignalService:
         # backtest worker); their snapshots get earnings_available=False so
         # the rules block entries for exactly those symbols.
         self.earnings_missing: set[str] = set()
+        # Source gaps already logged at INFO (SPEC, "Gaps at the source"
+        # logs the first time a session is forgiven).
+        self._forgiven_gaps: dict[str, set[date]] = {}
         # The stored snapshot the GUI serves; refreshed at startup, after each
         # cycle and after each daily refresh — never recomputed per request.
         self._latest: Watchlist | None = None
@@ -362,9 +368,32 @@ class SignalService:
         } & {s.date for s in sessions}
         want_daily = min(needed_daily, len(completed))
         want_5m = min(needed_5m, len(started_sessions))
-        # Slack forgives sessions whose daily bar never existed (halt,
-        # feed gap) — intraday coverage must still be complete.
-        if len(daily) >= want_daily - missing_slack and len(
+        # Forgiveness is limited to sessions the source confirmed it has
+        # no daily bar for (a successful fetch returned nothing), and
+        # never among the last 5 — those feed prior-session levels, ATR
+        # and the gap check (SPEC, Adding a symbol → "Gaps at the
+        # source"). Intraday coverage stays strict.
+        daily_dates = {b.date for b in daily}
+        session_dates = {s.date for s in daily_sessions}
+        recent = {s.date for s in daily_sessions[-5:]}
+        gaps = self.market_data.bars_cache.daily_gap_dates(
+            symbol, session_dates
+        )
+        forgivable = (session_dates - daily_dates) & (gaps - recent)
+        if forgivable:
+            seen = self._forgiven_gaps.setdefault(symbol, set())
+            new = forgivable - seen
+            if new:
+                logger.info(
+                    "%s: daily bar missing at the source: %s",
+                    symbol,
+                    ", ".join(
+                        d.strftime("%a %d %b") for d in sorted(new)
+                    ),
+                )
+                seen.update(new)
+        forgiven = min(len(forgivable), missing_slack)
+        if len(daily) >= want_daily - forgiven and len(
             covered_sessions
         ) >= want_5m:
             return None

@@ -483,18 +483,43 @@ class UniverseService:
             want_5m=min(self._history_sessions(), len(started)),
         )
 
+    def _history_tolerance(self) -> int:
+        raw = self._schedule_cfg().get("history_missing_tolerance")
+        return 3 if raw is None else int(raw)
+
     @staticmethod
     def _history_loaded(
-        daily_count: int, covered_count: int, windows: _HistoryWindows
+        daily_count: int,
+        covered_count: int,
+        windows: _HistoryWindows,
+        gaps: set[date] | None = None,
+        tolerance: int = 0,
     ) -> tuple[bool, str]:
+        # Sessions the source confirmed it has no daily bar for are
+        # forgivable up to the tolerance — never among the last 5, they
+        # feed prior-session levels, ATR and the gap check (SPEC,
+        # Adding a symbol → "Gaps at the source").
+        session_dates = {s.date for s in windows.completed}
+        recent = {s.date for s in windows.completed[-5:]}
+        forgivable = sorted((gaps or set()) & session_dates - recent)
+        forgiven = min(len(forgivable), tolerance)
         loaded = (
-            daily_count >= windows.want_daily
+            daily_count + forgiven >= windows.want_daily
             and covered_count >= windows.want_5m
         )
-        detail = (
-            f"{daily_count} of {windows.want_daily} daily bars · "
-            f"{covered_count} of {windows.want_5m} sessions"
-        )
+        if loaded and forgiven:
+            shown = forgivable[:forgiven]
+            n = len(shown)
+            dates = ", ".join(d.strftime("%a %d %b") for d in shown)
+            detail = (
+                f"warmed · {n} daily bar{'s' if n != 1 else ''} "
+                f"missing at the source: {dates}"
+            )
+        else:
+            detail = (
+                f"{daily_count} of {windows.want_daily} daily bars · "
+                f"{covered_count} of {windows.want_5m} sessions"
+            )
         return loaded, detail
 
     def _history_detail(
@@ -511,7 +536,13 @@ class UniverseService:
         covered = self._market_data.bars_cache.covered_session_dates(
             symbol, windows.started
         )
-        return self._history_loaded(len(daily_bars), len(covered), windows)
+        gaps = self._market_data.bars_cache.daily_gap_dates(
+            symbol, {s.date for s in windows.completed}
+        )
+        return self._history_loaded(
+            len(daily_bars), len(covered), windows, gaps,
+            self._history_tolerance(),
+        )
 
     def _warming_details(
         self, symbols: list[str], now: datetime
@@ -528,9 +559,17 @@ class UniverseService:
         covered = self._market_data.bars_cache.covered_session_counts(
             symbols, windows.started
         )
+        gaps = self._market_data.bars_cache.daily_gap_dates_many(
+            symbols, {s.date for s in windows.completed}
+        )
+        tolerance = self._history_tolerance()
         return {
             symbol: self._history_loaded(
-                daily.get(symbol, 0), covered.get(symbol, 0), windows
+                daily.get(symbol, 0),
+                covered.get(symbol, 0),
+                windows,
+                gaps.get(symbol, set()),
+                tolerance,
             )
             for symbol in symbols
         }
@@ -966,12 +1005,14 @@ class UniverseService:
             if row is None:
                 loaded, detail = warming[entry.symbol]
                 # Not screened yet — never "eligible" off a screen row.
+                # A symbol warmed via forgiven source gaps keeps the gap
+                # note instead of the generic ready line.
                 status = "warming_up"
                 check = {
                     "failed_check": None if loaded else "history",
-                    "detail": "ready — enters at the next screen"
-                    if loaded
-                    else detail,
+                    "detail": detail
+                    if detail.startswith("warmed ·") or not loaded
+                    else "ready — enters at the next screen",
                 }
             else:
                 status = row.status

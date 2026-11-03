@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-11-03 — Gaps at the source (SPEC §101)
+
+- `schedule.history_missing_tolerance` (3) now matches the spec: a
+  daily session counts as missing at the source only when the fetch for
+  that period succeeded and returned no bar — recorded in the new
+  `daily_source_gaps` table; a failed fetch writes no row, and a bar
+  that arrives later clears the mark. Never forgiven among the last 5
+  sessions (they feed prior-session levels, ATR and the gap check); 5m
+  coverage stays strict; `0` restores the old behaviour.
+- The Universe screen shows forgiven sessions — "warmed · 1 daily bar
+  missing at the source: Thu 12 Mar" — and each session is logged at
+  INFO the first time it is forgiven.
+
 ## 2026-11-03 — Signals and indicators audit fixes
 
 - The order-time ATR is now the same ATR the snapshot computes: `indicators.atr_period` on `schedule.history_sessions` of complete 1h bars, instead of a `signals.` section that never existed over 5 sessions. Approve's fresh-quote gate and adopted-position stops can no longer disagree with the decision-time value just because they saw less history.

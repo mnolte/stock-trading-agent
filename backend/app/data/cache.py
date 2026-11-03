@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import batched
@@ -15,6 +16,7 @@ from app.db.models import Bar1d as Bar1dRow
 from app.db.models import Bar1h as Bar1hRow
 from app.db.models import Bar1hState as Bar1hStateRow
 from app.db.models import Bar5m as Bar5mRow
+from app.db.models import DailySourceGap as DailySourceGapRow
 
 UTC = ZoneInfo("UTC")
 NY_TZ = ZoneInfo("America/New_York")
@@ -319,6 +321,85 @@ class BarCache:
             if day in wanted:
                 counts[symbol] += 1
         return counts
+
+    def record_daily_gaps(self, symbol: str, gaps: Iterable[date]) -> None:
+        """Mark sessions the source confirmed it has no daily bar for —
+        called only after a successful fetch for the period."""
+        dates = list(dict.fromkeys(gaps))
+        if not dates:
+            return
+        with self._session_factory() as session:
+            existing = set(
+                session.execute(
+                    select(DailySourceGapRow.session_date).where(
+                        DailySourceGapRow.symbol == symbol,
+                        DailySourceGapRow.session_date.in_(dates),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            new = [d for d in dates if d not in existing]
+            if new:
+                session.execute(
+                    insert(DailySourceGapRow),
+                    [{"symbol": symbol, "session_date": d} for d in new],
+                )
+            session.commit()
+
+    def clear_daily_gaps(self, symbol: str, dates: Iterable[date]) -> None:
+        """Drop gap marks for sessions whose bar a later fetch returned."""
+        days = list(dates)
+        if not days:
+            return
+        with self._session_factory() as session:
+            session.execute(
+                delete(DailySourceGapRow).where(
+                    DailySourceGapRow.symbol == symbol,
+                    DailySourceGapRow.session_date.in_(days),
+                )
+            )
+            session.commit()
+
+    def daily_gap_dates(self, symbol: str, wanted: set[date]) -> set[date]:
+        """Source-confirmed missing daily sessions for a symbol."""
+        if not wanted:
+            return set()
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(DailySourceGapRow.session_date).where(
+                        DailySourceGapRow.symbol == symbol,
+                        DailySourceGapRow.session_date >= min(wanted),
+                        DailySourceGapRow.session_date <= max(wanted),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return set(rows) & wanted
+
+    def daily_gap_dates_many(
+        self, symbols: list[str], wanted: set[date]
+    ) -> dict[str, set[date]]:
+        """The batched twin of ``daily_gap_dates`` for the universe screen."""
+        out: dict[str, set[date]] = {s: set() for s in symbols}
+        if not symbols or not wanted:
+            return out
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(
+                    DailySourceGapRow.symbol, DailySourceGapRow.session_date
+                ).where(
+                    DailySourceGapRow.symbol.in_(symbols),
+                    DailySourceGapRow.session_date >= min(wanted),
+                    DailySourceGapRow.session_date <= max(wanted),
+                )
+            ).all()
+        for symbol, day in rows:
+            if day in wanted:
+                out.setdefault(symbol, set()).add(day)
+        return out
 
     def get_daily(self, symbol: str, start: date, end: date) -> list[DailyBar]:
         """Return cached daily bars for a symbol in [start, end], by date."""

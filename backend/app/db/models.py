@@ -88,6 +88,23 @@ class Bar1hState(Base):
     src_fingerprint: Mapped[str] = mapped_column(String(96), nullable=False)
 
 
+class DailySourceGap(Base):
+    """A daily session the source confirmed it has no bar for — a fetch
+    covering the period succeeded and returned no bar (SPEC, Adding a
+    symbol → "Gaps at the source"). Forgivable by the history warmup
+    under ``schedule.history_missing_tolerance``; a failed or partial
+    fetch writes no row."""
+
+    __tablename__ = "daily_source_gaps"
+    __table_args__ = (
+        UniqueConstraint("symbol", "session_date", name="uq_daily_gap_sym_sess"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(16), nullable=False)
+    session_date: Mapped[date] = mapped_column(nullable=False)
+
+
 class Cycle(Base):
     """One decision cycle or position check."""
 

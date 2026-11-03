@@ -1140,6 +1140,93 @@ def test_warming_up_until_history_loaded(
     assert detail is None
 
 
+def _signals(session_factory: sessionmaker[Session], daily: int = 10):
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = daily
+    config.yaml["schedule"]["history_sessions"] = 2
+    executor = _executor(
+        session_factory, FakeBroker(FakeClock(NOW)), config=config
+    )
+    return executor.signals
+
+
+def test_source_gaps_forgiven_up_to_tolerance(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Three confirmed source gaps warm the symbol; four don't."""
+    signals = _signals(session_factory)
+    now = NOW
+    days = _session_days(10, now)
+    cache = signals.market_data.bars_cache
+    hourly = _hour_bars(days)
+
+    cache.record_daily_gaps("NFLX", [d.date for d in days[:3]])
+    detail = signals._warming_detail(
+        "NFLX", hourly, _daily_bars(days[3:]), days, days, now
+    )
+    assert detail is None
+
+    # Four confirmed gaps exceed the tolerance: the 4th missing session
+    # is a real hole and the symbol stays warming.
+    cache.record_daily_gaps("NFLX", [days[3].date])
+    detail = signals._warming_detail(
+        "NFLX", hourly, _daily_bars(days[5:]), days, days, now
+    )
+    assert detail is not None and "Warming up" in detail
+
+
+def test_gap_in_last_five_sessions_never_forgiven(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The last 5 sessions feed levels, ATR and the gap check — a source
+    gap there never counts toward the tolerance."""
+    signals = _signals(session_factory)
+    now = NOW
+    days = _session_days(10, now)
+    signals.market_data.bars_cache.record_daily_gaps(
+        "NFLX", [days[8].date]
+    )
+    detail = signals._warming_detail(
+        "NFLX", _hour_bars(days), _daily_bars(days[:8]), days, days, now
+    )
+    assert detail is not None and "Warming up" in detail
+
+
+def test_gap_tolerance_zero_restores_strict_warming(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """history_missing_tolerance=0 keeps the original strict behaviour:
+    the same fixture warms at the default tolerance but not at 0."""
+    config = AppConfig()
+    config.yaml["schedule"]["daily_history_sessions"] = 10
+    config.yaml["schedule"]["history_sessions"] = 2
+    executor = _executor(
+        session_factory, FakeBroker(FakeClock(NOW)), config=config
+    )
+    signals = executor.signals
+    now = NOW
+    days = _session_days(10, now)
+    cache = signals.market_data.bars_cache
+    cache.record_daily_gaps("NFLX", [days[0].date])
+    hourly = _hour_bars(days)
+    daily = _daily_bars(days[1:9])
+    assert (
+        signals._warming_detail("NFLX", hourly, daily, days, days, now)
+        is None
+    )
+
+    config.yaml["schedule"]["history_missing_tolerance"] = 0
+    executor = _executor(
+        session_factory, FakeBroker(FakeClock(NOW)), config=config
+    )
+    signals = executor.signals
+    signals.market_data.bars_cache.record_daily_gaps("NFLX", [days[0].date])
+    detail = signals._warming_detail(
+        "NFLX", hourly, daily, days, days, now
+    )
+    assert detail is not None and "Warming up" in detail
+
+
 # ----------------------------------------------------------------------
 # WebSocket update bus
 
