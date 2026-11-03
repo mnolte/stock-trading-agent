@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-03 — Ask the agent: config defaults and the gpt-6.1-sol model (PR 36)
+
+- `config.example.yaml` gains the `ask` block: enabled, model `claude-sonnet-5-5`, $15 monthly cap, $0.25 per-answer cap, 90-day chat retention, 60k context tokens, 8 tool rounds, 6k tool-result tokens, 90s answer timeout, 10 questions per minute, 100 notes and empty standing instructions.
+- `gpt-6.1-sol` joins the models list at $2.00 input / $10.00 output per million tokens with $0.10 cached input, cutoff 2026-04-30 and `api: responses` (OpenAI requires the Responses API for its tool calls). Claude models gain `cached_input` prices for prompt-cache accounting.
+
 ## 2026-11-02 — Decision drawer correctness and accessibility fixes
 
 - Outcome R uses the position's initial stop, not its moving stop, in live and backtest decision details.
