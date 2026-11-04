@@ -1926,6 +1926,12 @@ export interface V2Option {
   breakeven_confidence?: number;
   /** decision.v4: options sharing a stop share a group (S1, S2, …). */
   stop_group?: string;
+  /** decision.v5: per-option ev gate bar, target distance in ATR and
+   * the comparable-options base rate. */
+  min_confidence?: number | null;
+  target_atr?: number | null;
+  base_rate?: number | null;
+  base_n?: number | null;
 }
 
 export interface V2StopOption {
@@ -1981,6 +1987,10 @@ export interface V3Position {
   thesis_holds?: boolean | null;
   held_session_hours?: number | null;
   sessions_held?: number | null;
+  /** decision.v5: the price against the signal bar's close and the
+   * 1-hour EMA 20, both in ATR (the fifth thesis check). */
+  price_vs_signal?: number | null;
+  price_vs_ema20?: string | null;
 }
 
 export interface V2OptionsColumn {

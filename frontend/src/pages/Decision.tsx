@@ -717,6 +717,11 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
 // decision.v3: checks by code, room and break-even
 // (design/screens/DecisionV3.dc.html, DecisionV3Held.dc.html)
 
+// decision.v5 renders the decision.v4 drawer — same schema and layout
+// (docs/SPEC.md, Decision v5 — the output schema is v4's).
+const _isV4Plus = (version: string | null | undefined): boolean =>
+  version === 'decision.v4' || version === 'decision.v5';
+
 function _v3Checks(decision: DecisionDetail): V3Checks | null {
   const checks = decision.input_snapshot?.checks;
   return checks && typeof checks === 'object' ? (checks as V3Checks) : null;
@@ -776,7 +781,7 @@ function _trendAccent(value?: string): string | undefined {
 function V3Checks({ decision }: { decision: DecisionDetail }) {
   const checks = _v3Checks(decision);
   if (checks === null) return null;
-  const previous = decision.prompt_version === 'decision.v4' ? _v4Previous(decision) : null;
+  const previous = _isV4Plus(decision.prompt_version) ? _v4Previous(decision) : null;
   const changes = previous?.since?.checks_changed ?? [];
   const minRoom = Number((decision.input_snapshot?.constraints as Record<string, unknown> | undefined)?.min_room_atr);
   const roomTooSmall = checks.room_atr != null && Number.isFinite(minRoom) && Number(checks.room_atr) < minRoom;
@@ -847,6 +852,14 @@ function _v3WayText(levels_in_way: V2Option['levels_in_way']): string {
 function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
   const options = _v2Options(decision);
   const chosen = decision.chosen_option;
+  // decision.v5: options carry target_atr and min_confidence; v3/v4
+  // options don't, and their drawer stays unchanged (docs/SPEC.md).
+  const v5Cols = options.some(
+    (o) => o.min_confidence != null || o.target_atr != null,
+  );
+  const headers = v5Cols
+    ? ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even', 'Min conf', 'Target ATR']
+    : ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even'];
   return (
     <Section
       label="Options offered"
@@ -862,7 +875,7 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
-              {['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even'].map(
+              {headers.map(
                 (h) => (
                   <th
                     key={h}
@@ -941,6 +954,32 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                 >
                   {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
                 </td>
+                {v5Cols && (
+                  <>
+                    <td
+                      style={{
+                        padding: '8px 10px',
+                        fontFamily: MONO,
+                        fontSize: 'var(--sa-text-sm)',
+                        textAlign: 'right',
+                        color: 'var(--sa-text-2)',
+                      }}
+                    >
+                      {o.min_confidence != null ? o.min_confidence.toFixed(2) : '—'}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 10px',
+                        fontFamily: MONO,
+                        fontSize: 'var(--sa-text-sm)',
+                        textAlign: 'right',
+                        color: 'var(--sa-text-2)',
+                      }}
+                    >
+                      {o.target_atr != null ? `${o.target_atr.toFixed(2)}` : '—'}
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1190,6 +1229,21 @@ function V4Thesis({ decision }: { decision: DecisionDetail }) {
     const adverse = checkTurnedAdverse(name, at, cur);
     return { name, at, current: cur, adverse };
   });
+  // decision.v5: a fifth comparable check — the price against the
+  // 1-hour EMA 20; adverse when below with price_vs_signal ≤ −0.5 ATR.
+  if (pos.price_vs_ema20 != null) {
+    const vsSignal = pos.price_vs_signal;
+    const adverse =
+      pos.price_vs_ema20 === 'below' &&
+      vsSignal != null &&
+      Number(vsSignal) <= -0.5;
+    rows.push({
+      name: 'Price vs EMA 20',
+      at: '—',
+      current: `${pos.price_vs_ema20}${vsSignal != null ? ` · ${signed(vsSignal)} ATR` : ''}`,
+      adverse,
+    });
+  }
   const heldBits = [
     pos.held_session_hours != null
       ? `${Number(pos.held_session_hours).toFixed(1)} session hours`
@@ -1311,6 +1365,12 @@ function V3PositionFacts({ decision }: { decision: DecisionDetail }) {
             ? `target before stop with no edge: ${sd.toFixed(2)} ÷ (${sd.toFixed(2)} + ${td.toFixed(2)})`
             : undefined,
         )}
+        {pos.price_vs_signal != null &&
+          _factRow(
+            'Price since the signal bar',
+            `${signed(pos.price_vs_signal)} ATR`,
+            'negative is against the trade',
+          )}
         {_factRow(
           'Levels to target',
           (pos.levels_to_target ?? [])
@@ -2325,7 +2385,7 @@ export default function Decision() {
                     title={
                       held
                         ? 'Held: starts at the neutral probability and moves only for named facts. Not gated; kept out of entry calibration.'
-                        : decision.prompt_version === 'decision.v4'
+                        : _isV4Plus(decision.prompt_version)
                           ? 'Enter: the chosen option reaching its target before its stop. On a skip: the best option\u2019s chance (best_option_id).'
                           : undefined
                     }
@@ -2333,7 +2393,7 @@ export default function Decision() {
                     confidence
                     {held
                       ? ` · target before ${output?.action === 'tighten_stop' ? 'new' : 'current'} stop`
-                      : decision.prompt_version === 'decision.v4'
+                      : _isV4Plus(decision.prompt_version)
                         ? output?.action === 'skip'
                           ? ` · best ${output.best_option_id ?? '—'}`
                           : ` · option ${output?.option_id ?? '—'}`
@@ -2375,7 +2435,7 @@ export default function Decision() {
             <DialogButton variant="cancel" onClick={() => setRetry((value) => value + 1)}>Retry</DialogButton>
           </div>}
           {decision.prompt_version !== 'decision.v1' && levelTiles}
-          {decision.prompt_version === 'decision.v4' ? (
+          {_isV4Plus(decision.prompt_version) ? (
             <>
               {held ? (
                 <>
