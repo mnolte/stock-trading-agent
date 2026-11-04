@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-04 — [038] Naming convention for work items
+
+- Every feature, fix, analysis or ops change with a kickoff is a **work item** `NNN-type-slug`, for example `099-fix-ko-overnight-exit`.
+  - One three-digit sequence for all types, continuing the build plan: 001–037 are build plan items 1–37.
+  - Types: `feat`, `fix`, `analysis`, `ops`, `spec`.
+- The name is used for kickoff files, `spec/NNN-slug` and `type/NNN-slug` branches, `[NNN] type: Title` PR titles, commits, `docs/screenshots/NNN/` and changelog headings.
+- **Register:** `docs/work-items.md` defines the format and lists every item with its kickoff, spec PRs, build PRs and status. It is not spec-owned, so Devin can update the build columns.
+- `docs/README.md` rules 4, 9 and 10, `AGENTS.md` → How to work, `CLAUDE.md` and the PR template follow it. Existing kickoffs keep their names.
+- The convention itself is item 038 (`spec`).
+
 ## 2026-11-04 — Decision v5: the code
 
 The v5 build (`docs/kickoffs/pr-37.md`) lands behind the version

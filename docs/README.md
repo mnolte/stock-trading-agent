@@ -7,12 +7,13 @@
 1. **The spec wins on behaviour, the design on look.** `design/DESIGN.md` explains the design files. Differences go under "Design differences" in the PR description.
 2. **Ask, don't guess.** Anything unclear that changes behaviour (a threshold, an order type, what happens on an error) is a question in the PR, not a decision in code.
 3. **Thresholds live in config.** Every number in the spec has a key in `backend/config.example.yaml`. Code reads config; it never repeats the number.
-4. **One build step per PR.** Use the map below for which spec sections a step needs.
+4. **One work item per PR.** Use the map below for which spec sections a build plan item needs; newer items name their sections in the kickoff.
 5. **Prompts are versioned.** `backend/prompts/decision.v1.md` is never edited after use; a change is a new file.
 6. **Changes are logged.** Behaviour changes get a dated entry in `docs/CHANGES.md`, newest first.
 7. **The example config is the end state.** `backend/config.example.yaml` in the spec package can hold blocks for PRs that aren't built yet; they are marked with their PR number. Copy only the blocks for the PR you are building, and never leave main depending on config keys whose code isn't merged: the app must boot from `main` with its own example config at every commit.
 8. **Spec changes are labelled.** A pull request that touches a spec file (the list is in `.github/spec-paths.txt`: the spec, the agent rules, prompts, the example config and env, the design) carries the label `spec change`, and CI fails without it. Spec and design changes also need their changelog entry (`docs/CHANGES.md`, `design/CHANGES.md`). Copying a config block for the PR being built counts as a spec change too: it makes the config contract visible in review.
-9. **Spec work arrives as pull requests.** Claude makes spec and design changes on a `spec/…` branch and opens a pull request with the `spec change` label; Marc reviews and merges it. Each build step's kickoff is a file in `docs/kickoffs/` (`pr-<n>.md`), so Devin is started with one line: "Build docs/kickoffs/pr-<n>.md." The root `README.md` is Devin's; spec PRs don't touch it.
+9. **Spec work arrives as pull requests.** Claude makes spec and design changes on a `spec/NNN-slug` branch and opens a pull request with the `spec change` label; Marc reviews and merges it. Each item's kickoff is a file in `docs/kickoffs/`, so Devin is started with one line: "Build docs/kickoffs/NNN-type-slug.md." The root `README.md` is Devin's; spec PRs don't touch it.
+10. **Work items have a number and a name.** Every feature, fix, analysis or ops change with a kickoff is a work item `NNN-type-slug` (for example `099-fix-ko-overnight-exit`). The number is used in branches, PR titles, commits, screenshots and changelog headings. `docs/work-items.md` defines the format and holds the register. Items 001–037 are build plan items 1–37; "PR n" in older spec text means item n, not GitHub PR #n.
 
 ## Which sections each PR needs
 

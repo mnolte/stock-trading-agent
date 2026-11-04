@@ -1,6 +1,10 @@
+<!-- Title: [NNN] type: Title (docs/work-items.md). Branch: type/NNN-slug. -->
+
 ## Summary
 
-<!-- What was built: the build step and the pieces, in a few bullets. -->
+<!-- Work item: NNN-type-slug (kickoff docs/kickoffs/NNN-type-slug.md). What was built, in a few bullets. -->
+
+Work item: 
 
 ## Spec files changed
 
