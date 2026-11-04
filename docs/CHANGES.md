@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-04 — [040] EP shadow gate_detail crash
+
+An `UnboundLocalError` in `ShadowRunner._decide_candidates_ep` killed
+the whole `shadows-cycle-N` background task: `gate_detail` was only
+assigned inside the v5 trend-gate and v4 checks-gate branches but read
+right after them, so any EP-mode shadow whose dispatch ran neither
+branch crashed (issue #110; introduced by `dca92ba`). That is every
+v2/v3 shadow on `selection_mode: expected_profit`, plus v4 with
+`checks_gate` off (the default) and v5 with `trend_gate: false` —
+the remaining strategies and candidates of the cycle got no rows.
+The variable is now initialised before the dispatch, matching the
+parallel block in `_decide`, and the gate branches are covered for
+both the firing case (`no_call · checks`) and the model-call case.
+
 ## 2026-11-04 — [039] Protective stop repair
 
 The KO incident of 4 November: a held decision to exit 21 shares ran
