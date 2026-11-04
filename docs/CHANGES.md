@@ -2,6 +2,38 @@
 
 Newest first.
 
+## 2026-11-04 — [039] Protective stop repair
+
+The KO incident of 4 November: a held decision to exit 21 shares ran
+at the same moment as a settle-triggered reconcile. The protective
+repair saw the agent's own market sell as an orphaned holder, cancelled
+it mid-fill (14 of 21 sold), then sent the replacement OCO and the
+fallback stop for the stale qty — both rejected, two critical alerts.
+After the partial exit, every later check skipped the remaining 7
+shares for good: recorded sell fills (14) already exceeded the
+remaining qty (7), so "sell fills already cover" fired on every pass.
+
+- A fresh market sell is an exit in flight, not a holder: the repair
+  defers and lets it finish; the next pass fixes whatever remains.
+  A market sell older than `execution.fill_settle_seconds` is stuck
+  and is cancelled like any other holder.
+- "Sell fills already cover" now compares fills to the position's
+  full original size (entry order qty, else `qty + exit_filled_qty`)
+  instead of the remaining qty — a partial exit no longer disarms
+  protection for the remainder.
+- A confirmed cancel is not a released hold: after the holder legs
+  die, the repair polls the position until `qty_available` — a new
+  `BrokerPosition` field — frees the shares before sending the OCO;
+  the free qty is confirmed again before the fallback stop, and every
+  sell the repair sends is capped at what Alpaca reports free.
+- A live stop covering only part of the position is a holder too:
+  it no longer reads as covered; it is cancelled and replaced by an
+  OCO for the full size. Cancels dedupe on the parent order so a
+  nested leg is killed through its parent.
+- The fake broker now models `held_for_orders` and `qty_available`
+  (cancel cascade to legs included), with `hold_release_lag` and
+  `enforce_available` knobs so tests replay the real rejection.
+
 ## 2026-11-04 — Verdict outcome line shows the profit or loss
 
 The outcome line on a verdict carried no number for every call that

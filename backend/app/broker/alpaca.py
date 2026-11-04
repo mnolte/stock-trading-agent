@@ -133,12 +133,14 @@ def _qty_int(value: Any) -> int:
 def parse_position(item: Any) -> BrokerPosition:
     raw = _raw(item)
     qty_raw = raw.get("qty")
+    avail_raw = raw.get("qty_available")
     return BrokerPosition(
         symbol=str(raw.get("symbol", "")),
         qty=_qty_int(qty_raw) if qty_raw is not None else 0,
         avg_entry_price=Decimal(str(raw.get("avg_entry_price", "0"))),
         current_price=_dec(raw.get("current_price")),
         market_value=_dec(raw.get("market_value")),
+        qty_available=_qty_int(avail_raw) if avail_raw is not None else None,
     )
 
 

@@ -2339,12 +2339,13 @@ class Executor:
         """A known position has no live stop: repair per spec and alert.
 
         Confirm first (fresh position and open orders for the symbol),
-        then, in order: nothing when flat or already sold, a market sale
-        when the stored stop is breached, the orphaned-leg OCO repair
-        when a sibling order holds the shares, else a plain gtc stop —
-        every sell capped at the confirmed qty (docs/SPEC.md, Protective
-        stops). Returns the protected/sold qty, or None on a failed
-        write.
+        then, in order: nothing when flat, already sold in full or a
+        market sell is still executing the exit, a market sale when the
+        stored stop is breached, the orphaned-leg OCO repair once the
+        broker releases the cancelled holders' shares, else a plain gtc
+        stop — every sell capped at the qty Alpaca reports free right
+        before it is sent (docs/SPEC.md, Protective stops). Returns the
+        protected/sold qty, or None on a failed write.
         """
         # Confirm first: the symbol's position and open orders straight
         # from the broker, never the state this reconcile fetched. A
@@ -2365,16 +2366,46 @@ class Executor:
             # the next pass; remember it so nothing asks again this pass.
             self._flat_symbols.add(position.symbol)
             return Decimal(0)
-        live_sells: list[BrokerOrder] = []
+        # Each live sell leg paired with the id that cancels it: for a
+        # nested leg that is the parent order, for a standalone order
+        # the order itself.
+        live_sells: list[tuple[BrokerOrder, str]] = []
         for order in orders_r.data or []:
             for leg in (order, *order.legs):
                 if leg.is_open and leg.side == "sell" and leg.symbol == position.symbol:
-                    live_sells.append(leg)
-        if any(o.order_type in ("stop", "stop_limit") for o in live_sells):
-            return Decimal(0)  # a live stop appeared on the fresh read
+                    live_sells.append((leg, order.id))
         # Never sell more than is held (and a position already sold in
         # full is exiting, not uncovered).
         qty = min(position.qty, confirmed.qty)
+        covered = sum(
+            leg.qty
+            for leg, _ in live_sells
+            if leg.order_type in ("stop", "stop_limit")
+        )
+        if covered >= qty:
+            return Decimal(0)  # a live stop appeared on the fresh read
+        # A fresh market sell is an exit already executing — its fills
+        # are landing right now. Cancelling it mid-fill truncates the
+        # exit and can leave a remainder with no legs at all (KO,
+        # 4 Nov). Let it run; the next pass repairs whatever remains.
+        settle = timedelta(seconds=self._fill_settle_seconds())
+        now = self.clock.now()
+
+        def in_flight(leg: BrokerOrder) -> bool:
+            return (
+                leg.order_type == "market"
+                and leg.created_at is not None
+                and now - leg.created_at <= settle
+            )
+
+        if any(in_flight(leg) for leg, _ in live_sells):
+            ev(
+                log_reconcile, logging.INFO, "reconcile.exit_in_flight",
+                f"{position.symbol}: market sell still working — "
+                "protective repair deferred to the next pass",
+                symbol=position.symbol,
+            )
+            return Decimal(0)
         sold = session.execute(
             select(func.coalesce(func.sum(Fill.qty), 0))
             .join(Order, Fill.order_id == Order.id)
@@ -2384,14 +2415,30 @@ class Executor:
                 Fill.filled_at >= position.opened_at,
             )
         ).scalar_one()
-        if int(sold) >= qty:
+        # Sell fills only cover the position when they cover its full
+        # original size: after a partial exit the remainder still needs
+        # a stop (KO, 4 Nov — 14 of 21 sold, the checks skipped the
+        # remaining 7 forever because 14 already covered them).
+        original = position.qty + position.exit_filled_qty
+        if position.entry_order_id is not None:
+            entry_qty = session.execute(
+                select(Order.qty).where(Order.id == position.entry_order_id)
+            ).scalar_one_or_none()
+            if entry_qty is not None:
+                original = max(original, int(entry_qty))
+        if int(sold) >= original:
             ev(
                 log_reconcile, logging.INFO, "reconcile.protective_skip",
                 f"{position.symbol}: sell fills already cover "
-                f"{qty} — nothing sent",
+                f"{original} — nothing sent",
                 symbol=position.symbol,
             )
             return Decimal(0)
+        # No order may ask for more than Alpaca frees: live sells hold
+        # shares and fills can land between the confirm and the send
+        # (KO, 4 Nov — 21 requested while 7 were free). qty_available
+        # is the broker's own count.
+        available = self._free_qty(confirmed)
         stop = position.current_stop_price
         if stop is None:
             fallback = Decimal(
@@ -2410,6 +2457,16 @@ class Executor:
             position.current_stop_price = stop
         current = confirmed.current_price
         if current is not None and stop >= current:
+            sell_qty = min(qty, available)
+            if sell_qty <= 0:
+                ev(
+                    log_reconcile, logging.WARNING,
+                    "reconcile.no_free_qty",
+                    f"{position.symbol}: stop breached but no shares free "
+                    "— live orders hold them; retried next pass",
+                    symbol=position.symbol,
+                )
+                return Decimal(0)
             # The stored stop is at or above the market: the level was
             # already breached, so the repair is the market sale itself
             # (MOO outside the session) — the only sale a check may make.
@@ -2420,7 +2477,7 @@ class Executor:
             with self._order_slot():
                 result = await self.broker.submit_market_sell(
                     symbol=position.symbol,
-                    qty=qty,
+                    qty=sell_qty,
                     market_on_open=moo,
                     client_order_id=self._client_id(
                         "breach", position.id, position.symbol
@@ -2448,30 +2505,33 @@ class Executor:
                 details={
                     "symbol": position.symbol,
                     "action": "stop_breached",
-                    "qty": qty,
+                    "qty": sell_qty,
                     "stop": str(stop),
                     "market": str(current),
                 },
                 affects="order",
             )
-            return Decimal(qty)
+            return Decimal(sell_qty)
         if position.initial_stop is None:
             position.initial_stop = stop
-        # Orphaned stop leg while a sibling sell order (the target) holds
-        # the shares: a new stop would be rejected for insufficient qty.
-        # Cancel the sibling, confirm, then an OCO exit — or the stop
-        # alone when the OCO is refused. Protection before the target.
-        holders = [
-            o for o in live_sells if o.order_type not in ("stop", "stop_limit")
-        ]
+        # Orphaned stop leg while sibling sell orders hold the shares: a
+        # new stop would be rejected for insufficient qty. Cancel every
+        # live non-market sell — the orphaned target and any stop that
+        # covers less than the position — once per parent order, confirm
+        # the broker released the hold, then an OCO exit — or the stop
+        # alone when the OCO is refused — for the quantity that is
+        # actually free. Protection before the target.
+        holders = {
+            cancel_id for leg, cancel_id in live_sells if not in_flight(leg)
+        }
         if holders:
             unprotected_since = self.clock.now()
-            for leg in holders:
-                ok, final, error = await self._ensure_dead(leg.id)
+            for cancel_id in holders:
+                ok, final, error = await self._ensure_dead(cancel_id)
                 if not ok:
                     report.errors.append(
                         f"orphan repair {position.symbol}: cancel "
-                        f"{leg.id}: {error or 'still live'}"
+                        f"{cancel_id}: {error or 'still live'}"
                     )
                     record_event(
                         session,
@@ -2486,7 +2546,7 @@ class Executor:
                     )
                     return None
                 row = session.execute(
-                    select(Order).where(Order.alpaca_order_id == leg.id)
+                    select(Order).where(Order.alpaca_order_id == cancel_id)
                 ).scalar_one_or_none()
                 if row is not None and final is not None:
                     row.status = final.status
@@ -2495,11 +2555,47 @@ class Executor:
                             final.updated_at or self.clock.now()
                         )
             session.commit()
+            # A confirmed cancel is not a released hold: Alpaca keeps
+            # held_for_orders for a moment and queued fills can still
+            # land in it (KO, 4 Nov — the OCO hit available 0, then the
+            # fallback stop asked for shares a partial fill had sold).
+            # Re-confirm before any sell goes out.
+            fresh, read_error = await self._await_released(position.symbol)
+            if read_error is not None:
+                report.errors.append(
+                    f"orphan repair {position.symbol}: {read_error}"
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="protective_stop_failed",
+                    details={
+                        "symbol": position.symbol,
+                        "error": read_error,
+                    },
+                    affects="order",
+                )
+                return None
+            if fresh is None:
+                # The cancelled sells had already filled the position.
+                self._flat_symbols.add(position.symbol)
+                return Decimal(0)
+            sell_qty = min(qty, fresh.qty, self._free_qty(fresh))
+            if sell_qty <= 0:
+                ev(
+                    log_reconcile, logging.WARNING,
+                    "reconcile.held_unreleased",
+                    f"{position.symbol}: shares still held after the "
+                    "cancels confirmed — retried next pass",
+                    symbol=position.symbol,
+                )
+                return Decimal(0)
             target = position.target_price or stop
             with self._order_slot():
                 result = await self.broker.submit_oco_exit(
                     symbol=position.symbol,
-                    qty=qty,
+                    qty=sell_qty,
                     limit_price=target,
                     stop_price=stop,
                     client_order_id=self._client_id(
@@ -2508,10 +2604,45 @@ class Executor:
                 )
                 repaired_by = "oco"
                 if result.error is not None or result.data is None:
-                    # Protection comes before the target: the stop alone.
+                    # Protection comes before the target: the stop
+                    # alone — for the freshly confirmed qty, since the
+                    # OCO round-trip gave queued fills time to land.
+                    again = await self.broker.get_position(position.symbol)
+                    if again.error is not None:
+                        report.errors.append(
+                            f"protective check {position.symbol}: "
+                            f"{again.error}"
+                        )
+                        record_event(
+                            session,
+                            self.clock,
+                            level="critical",
+                            event_type="protective_stop_failed",
+                            details={
+                                "symbol": position.symbol,
+                                "error": again.error,
+                            },
+                            affects="order",
+                        )
+                        return None
+                    if again.data is None or again.data.qty <= 0:
+                        self._flat_symbols.add(position.symbol)
+                        return Decimal(0)
+                    sell_qty = min(
+                        sell_qty, again.data.qty, self._free_qty(again.data)
+                    )
+                    if sell_qty <= 0:
+                        ev(
+                            log_reconcile, logging.WARNING,
+                            "reconcile.held_unreleased",
+                            f"{position.symbol}: shares still held after "
+                            "the cancels confirmed — retried next pass",
+                            symbol=position.symbol,
+                        )
+                        return Decimal(0)
                     result = await self.broker.submit_stop_order(
                         symbol=position.symbol,
-                        qty=qty,
+                        qty=sell_qty,
                         stop_price=stop,
                         client_order_id=self._client_id(
                             "stop", position.id, position.symbol
@@ -2548,7 +2679,7 @@ class Executor:
                 event_type="protective_stop",
                 details={
                     "symbol": position.symbol,
-                    "qty": qty,
+                    "qty": sell_qty,
                     "stop": str(stop),
                     "repaired_by": repaired_by,
                     "gap_seconds": round(gap, 3),
@@ -2556,13 +2687,23 @@ class Executor:
                 affects="order",
             )
             report.protective_stops.append(position.symbol)
-            return Decimal(qty)
+            return Decimal(sell_qty)
+        sell_qty = min(qty, available)
+        if sell_qty <= 0:
+            ev(
+                log_reconcile, logging.WARNING,
+                "reconcile.no_free_qty",
+                f"{position.symbol}: no free shares for the protective "
+                "stop — live orders hold them; retried next pass",
+                symbol=position.symbol,
+            )
+            return Decimal(0)
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
         with self._order_slot():
             result = await self.broker.submit_stop_order(
                 symbol=position.symbol,
-                qty=qty,
+                qty=sell_qty,
                 stop_price=stop,
                 client_order_id=self._client_id(
                     "stop", position.id, position.symbol
@@ -2593,11 +2734,46 @@ class Executor:
             event_type="protective_stop",
             details={
                 "symbol": position.symbol,
-                "qty": qty,
+                "qty": sell_qty,
                 "stop": str(stop),
             },
         )
-        return Decimal(qty)
+        return Decimal(sell_qty)
+
+    @staticmethod
+    def _free_qty(position: BrokerPosition) -> int:
+        """Shares the broker reports free to sell; qty when unreported."""
+        return (
+            position.qty_available
+            if position.qty_available is not None
+            else position.qty
+        )
+
+    async def _await_released(
+        self, symbol: str
+    ) -> tuple[BrokerPosition | None, str | None]:
+        """Poll the position until Alpaca frees the held shares.
+
+        A confirmed cancel is not a released hold: ``held_for_orders``
+        keeps the shares for a moment and queued fills can still land
+        in it. Returns ``(position, None)`` — the caller checks
+        ``qty_available`` — ``(None, None)`` when the position went
+        flat, ``(None, error)`` on a read failure.
+        """
+        pos: BrokerPosition | None = None
+        attempts = max(2, self._fill_settle_seconds() // 2)
+        for attempt in range(attempts):
+            pos_r = await self.broker.get_position(symbol)
+            if pos_r.error is not None:
+                return None, pos_r.error
+            pos = pos_r.data
+            if pos is None or pos.qty <= 0:
+                return None, None
+            if self._free_qty(pos) > 0:
+                return pos, None
+            if attempt + 1 < attempts:
+                await asyncio.sleep(0.5)
+        return pos, None
 
     def _atr_1h(self, symbol: str) -> Decimal | None:
         """ATR(1h) on the same bars and period as the signal snapshot.

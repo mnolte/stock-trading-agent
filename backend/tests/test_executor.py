@@ -956,6 +956,274 @@ async def test_protective_sell_capped_at_confirmed_qty(
     assert stops[0].qty == 2
 
 
+async def test_in_flight_exit_sell_defers_protective_repair(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """KO, 4 Nov: the repair ran while the agent's own market exit was
+    mid-fill — it cancelled the sell, truncating the exit at 14 of 21
+    and leaving the remainder legless. A fresh market sell is an exit
+    in flight: the repair defers instead of touching it."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.positions["KO"] = _PosRec(qty=21, avg_entry_price=Decimal("95.37"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="exit-1", client_order_id=None, symbol="KO", side="sell",
+        order_type="market", order_class="", status="new", qty=21,
+        filled_qty=0, filled_avg_price=None, limit_price=None,
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == []
+    assert rec.status == "new"  # the in-flight exit was not cancelled
+    assert broker.submit_calls == 0
+    with session_factory() as session:
+        assert not _events(session, "protective_stop_failed")
+
+
+async def test_stale_market_sell_is_cancelled_and_repaired(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A market sell older than the settle window is stuck, not in
+    flight — the repair cancels it like any other holder and replaces
+    it with an OCO covering the position."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.positions["KO"] = _PosRec(qty=21, avg_entry_price=Decimal("95.37"))
+    rec = _OrderRec(
+        id="exit-old", client_order_id=None, symbol="KO", side="sell",
+        order_type="market", order_class="", status="new", qty=21,
+        filled_qty=0, filled_avg_price=None, limit_price=None,
+        stop_price=None,
+        created_at=NOW - timedelta(seconds=30),
+        updated_at=NOW - timedelta(seconds=30),
+        filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["KO"]
+    assert rec.status == "canceled"
+    oco = [o for o in broker.orders.values() if o.order_class == "oco"]
+    assert len(oco) == 1
+    assert oco[0].qty == 21
+
+
+async def test_partial_exit_remainder_gets_protective_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """KO, 4 Nov: a market exit filled 14 of 21 and the remaining 7
+    stayed unprotected — every check skipped the repair because the
+    recorded sell fills already exceeded the remaining qty. Sell fills
+    only cover a position sold in full; the remainder gets its stop."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.positions["KO"] = _PosRec(qty=7, avg_entry_price=Decimal("95.37"))
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        entry = Order(
+            alpaca_order_id="entry-KO",
+            symbol="KO", side="buy", order_type="limit", leg="entry",
+            qty=21, limit_price=Decimal("95.42"), status="filled",
+            created_at=YESTERDAY, filled_at=YESTERDAY,
+        )
+        session.add(entry)
+        session.flush()
+        position = _open_position(
+            session, "KO", qty=7, entry="95.37", stop="94.22"
+        )
+        position.entry_order_id = entry.id
+        position.exit_filled_qty = 14
+        sell = Order(
+            alpaca_order_id="exit-KO",
+            symbol="KO", side="sell", order_type="market", leg="exit",
+            qty=21, status="canceled",
+            created_at=YESTERDAY, filled_at=YESTERDAY,
+        )
+        session.add(sell)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=sell.id, qty=14, price=Decimal("95.48"),
+                filled_at=YESTERDAY,
+            )
+        )
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["KO"]
+    stops = [o for o in broker.orders.values() if o.order_type == "stop"]
+    assert len(stops) == 1
+    assert stops[0].qty == 7
+    assert stops[0].stop_price == Decimal("94.22")
+    with session_factory() as session:
+        assert not _events(session, "protective_stop_failed")
+
+
+async def test_orphan_repair_waits_for_held_release(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """KO, 4 Nov: a confirmed cancel is not a released hold — the OCO
+    was rejected available 0 while Alpaca still counted the cancelled
+    target's shares. The repair waits for the broker to free them
+    before it sends."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.hold_release_lag["KO"] = 2
+    broker.positions["KO"] = _PosRec(qty=21, avg_entry_price=Decimal("95.37"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="tgt-1", client_order_id=None, symbol="KO", side="sell",
+        order_type="limit", order_class="", status="new", qty=21,
+        filled_qty=0, filled_avg_price=None, limit_price=Decimal("97.84"),
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["KO"]
+    assert rec.status == "canceled"
+    oco = [o for o in broker.orders.values() if o.order_class == "oco"]
+    assert len(oco) == 1
+    assert oco[0].qty == 21
+    with session_factory() as session:
+        assert not _events(session, "protective_stop_failed")
+
+
+async def test_oco_fallback_reconfirms_the_free_qty(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The OCO is refused and a queued fill lands during the attempt —
+    the stop alone goes out for the freshly confirmed free qty, not
+    the size read before the cancels (KO, 4 Nov: 21 asked, 7 free)."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.reject_oco.add("KO")
+    broker.positions["KO"] = _PosRec(qty=21, avg_entry_price=Decimal("95.37"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="tgt-1", client_order_id=None, symbol="KO", side="sell",
+        order_type="limit", order_class="", status="new", qty=21,
+        filled_qty=0, filled_avg_price=None, limit_price=Decimal("97.84"),
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    real_oco = broker.submit_oco_exit
+
+    async def shrink_on_oco(
+        *, symbol: str, qty: int, limit_price: Decimal,
+        stop_price: Decimal, client_order_id: str,
+    ) -> DataResult[BrokerOrder]:
+        # A fill queued before the cancel lands during the OCO call.
+        broker.positions["KO"].qty = 7
+        return await real_oco(
+            symbol=symbol, qty=qty, limit_price=limit_price,
+            stop_price=stop_price, client_order_id=client_order_id,
+        )
+
+    broker.submit_oco_exit = shrink_on_oco  # type: ignore[method-assign]
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["KO"]
+    stops = [o for o in broker.orders.values() if o.order_type == "stop"]
+    assert len(stops) == 1
+    assert stops[0].qty == 7  # not the stale 21 — Alpaca would reject it
+    with session_factory() as session:
+        assert not _events(session, "protective_stop_failed")
+
+
+async def test_insufficient_stop_cover_gets_oco_repair(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A live stop covering only part of the position leaves the rest
+    unprotected: it is a holder like the orphaned target — cancelled,
+    then an OCO covers the whole position."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.enforce_available = True
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="stop-part", client_order_id=None, symbol="MSFT", side="sell",
+        order_type="stop", order_class="", status="new", qty=2,
+        filled_qty=0, filled_avg_price=None, limit_price=None,
+        stop_price=Decimal("410"), created_at=now, updated_at=now,
+        filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["MSFT"]
+    assert rec.status == "canceled"
+    oco = [o for o in broker.orders.values() if o.order_class == "oco"]
+    assert len(oco) == 1
+    assert oco[0].qty == 4
+
+
+async def test_never_released_hold_defers_to_next_pass(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The cancelled order's hold never frees inside the settle window:
+    no order goes out on a guess, the failure stays quiet — the next
+    check retries the whole repair."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.hold_release_lag["KO"] = 99
+    broker.positions["KO"] = _PosRec(qty=21, avg_entry_price=Decimal("95.37"))
+    now = broker._now()
+    rec = _OrderRec(
+        id="tgt-1", client_order_id=None, symbol="KO", side="sell",
+        order_type="limit", order_class="", status="new", qty=21,
+        filled_qty=0, filled_avg_price=None, limit_price=Decimal("97.84"),
+        stop_price=None, created_at=now, updated_at=now, filled_at=None,
+    )
+    broker.orders[rec.id] = rec
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == []
+    assert rec.status == "canceled"
+    assert not [o for o in broker.orders.values() if o.order_class == "oco"]
+
+
 # ----------------------------------------------------------------------
 # entries
 
