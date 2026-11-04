@@ -2,6 +2,28 @@
 
 Newest first.
 
+## 2026-11-04 — Decision v5: the code
+
+The v5 build (`docs/kickoffs/pr-37.md`) lands behind the version
+gates: v1–v4 keep their behaviour; a `decision.v5` strategy or prompt
+version takes the v5 path.
+
+- `config.example.yaml` gains `decision.entry_gate` (`floor`,
+  today; `ev` is the v5 default via the strategy override),
+  `decision.min_ev_r` (0.25) and the `decision.v5.*` block
+  (`exit_margin` 0.03, `overnight_margin` 0.10, `gap_sessions` 60,
+  `long_target_minutes` 120, `trend_gate` true, `max_rr` 3.0,
+  `base_rate_sessions` 60, `base_rate_min_n` 30).
+- The expected-value entry gate gives each option `min_confidence`
+  = (1 + min_ev_r) ÷ (1 + rr); the trend gate stops v5 candidates
+  before the model when `trend_1h` or `regime_trend` isn't `up`;
+  removed and blocked options get counterfactual touches; snapshot v5
+  adds `session.last_cycle`, `overnight.gap_p90_atr`, `target_atr`,
+  `price_vs_signal`, `price_vs_ema20` and the earnings status; the
+  `hold_below_breakeven` warning, the wider path claim and the
+  overnight Needs you item land; replay and eval rebuild and validate
+  v5; the drawer shows the new fields.
+
 ## 2026-11-04 — Decision v5: fewer missed trades and fewer losing entries
 
 - From a second review of v4 against the data of 31 October, focused on missed opportunities and losing entries.
