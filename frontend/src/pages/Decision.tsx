@@ -20,6 +20,7 @@ import {
   modelCallText,
   thesisCheckChip,
   verdictLabel,
+  verdictOutcomeText,
   verdictVariant,
 } from './reviewsFormat';
 import {
@@ -1687,7 +1688,7 @@ function VerdictRow({
           <VerdictButtons current={verdict.verdict} onPick={pick} disabled={pending} />
           {pending && <span role="status">Saving verdict…</span>}
           {saveError && <span role="alert">{saveError}</span>}
-          {(verdict.model_action || verdict.thesis_check) && (
+          {(verdict.outcome || verdict.model_action || verdict.thesis_check) && (
             <div
               style={{
                 flexBasis: '100%',
@@ -1699,6 +1700,14 @@ function VerdictRow({
                 color: 'var(--sa-text-muted)',
               }}
             >
+              {verdict.outcome && (
+                <span>
+                  Outcome:{' '}
+                  <span style={{ color: 'var(--sa-text-2)' }}>
+                    {verdictOutcomeText(verdict.outcome)}
+                  </span>
+                </span>
+              )}
               {verdict.model_action && (
                 <span>
                   model{' '}

@@ -2,15 +2,35 @@
 
 Newest first.
 
+## 2026-11-04 — Verdict outcome line shows the profit or loss
+
+The outcome line on a verdict carried no number for every call that
+offered options — all current drafts are skips with options, so a row
+read "A, B, C: stops first or never filled" with nothing on what the
+call made or lost. The stored `pct_5sessions` fact now ends every
+options-based line ("… · −10.5% after 5 sessions"), and a real trade's
+dollar P&L sits next to its R ("filled · stop first · −1.0R ·
+−$152.30"; an open trade gets the 5-session move instead). The
+decision drawer's verdict block now renders the same outcome line the
+Reviews row shows, per the spec's "shows the same".
+
+## 2026-11-04 — Number check: identifiers are not figures
+
+The verdict number check failed every model text that named a
+timeframe or a level: "1-hour trend" and "L7" produced literals with
+no matching fact, so 92 of 277 verdict.v2 calls fell back to the plain
+template — every one a false positive, no invented figure among them.
+The check now masks identifier-shaped text before scanning: letter-led
+ids ("L7", "EMA20", "v2"), hyphenated duration labels ("1-hour",
+"5-session") and attached time abbreviations ("1h", "30min").
+Space-separated counts ("5 sessions", "option 1") and ranges ("1-2%")
+stay checkable; the decision explanation check uses the same mask.
+Draft verdicts already written as templates are unchanged; dropping
+them rewrites them on the next verdict scan.
+
 ## 2026-11-04 — [038] Naming convention for work items
 
-- Every feature, fix, analysis or ops change with a kickoff is a **work item** `NNN-type-slug`, for example `099-fix-ko-overnight-exit`.
-  - One three-digit sequence for all types, continuing the build plan: 001–037 are build plan items 1–37.
-  - Types: `feat`, `fix`, `analysis`, `ops`, `spec`.
-- The name is used for kickoff files, `spec/NNN-slug` and `type/NNN-slug` branches, `[NNN] type: Title` PR titles, commits, `docs/screenshots/NNN/` and changelog headings.
-- **Register:** `docs/work-items.md` defines the format and lists every item with its kickoff, spec PRs, build PRs and status. It is not spec-owned, so Devin can update the build columns.
-- `docs/README.md` rules 4, 9 and 10, `AGENTS.md` → How to work, `CLAUDE.md` and the PR template follow it. Existing kickoffs keep their names.
-- The convention itself is item 038 (`spec`).
+
 
 ## 2026-11-04 — Decision v5: the code
 

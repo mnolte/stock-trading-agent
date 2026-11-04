@@ -28,9 +28,20 @@ _DATE_SHAPES = re.compile(
     rf"|(?:{_MONTHS})\s+\d{{1,2}}(?:,?\s*\d{{4}})?"
 )
 
+# Identifier-shaped text is masked too: letters next to digits make a
+# name, not a figure — level and indicator ids ("L7", "S2", "EMA20"),
+# timeframe labels ("1-hour", "1h", "30min") and version names ("v2").
+# Space-separated counts ("5 sessions", "option 1") and ranges ("1-2%")
+# stay checkable.
+_IDENTIFIERS = re.compile(
+    r"[A-Za-z]+\d[\w.-]*"
+    r"|\d[\w.,]*-(?:hours?|hrs?|h|minutes?|mins?|sessions?|days?|weeks?|months?|years?)\b"
+    r"|\d+(?:h|hrs?|hours?|mins?|minutes?)\b"
+)
 
-def _mask_dates(text: str) -> str:
-    return _DATE_SHAPES.sub(" ", text)
+
+def _mask(text: str) -> str:
+    return _IDENTIFIERS.sub(" ", _DATE_SHAPES.sub(" ", text))
 
 
 def _precision(literal: str) -> int:
@@ -40,7 +51,7 @@ def _precision(literal: str) -> int:
 def extract_numbers(text: str) -> list[Decimal]:
     """Every numeric literal in ``text``, commas and sign ignored."""
     out: list[Decimal] = []
-    for match in _SEGMENT.finditer(_mask_dates(text)):
+    for match in _SEGMENT.finditer(_mask(text)):
         out.append(Decimal(match.group(0).replace(",", "")))
     return out
 
@@ -68,7 +79,7 @@ def bad_numbers(text: str, facts: object) -> list[str]:
     """Numeric literals in ``text`` that match no given fact after rounding."""
     allowed = list(fact_values(facts))
     bad: list[str] = []
-    for match in _SEGMENT.finditer(_mask_dates(text)):
+    for match in _SEGMENT.finditer(_mask(text)):
         literal = match.group(0)
         n = Decimal(literal.replace(",", ""))
         tolerance = Decimal(1).scaleb(-_precision(literal)) / 2

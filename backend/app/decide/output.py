@@ -344,10 +344,10 @@ def _decimal_tokens(text: str) -> list[str]:
 
     Dates and times are masked out; whole numbers are skipped by spec.
     """
-    from app.reviews.numbercheck import _SEGMENT, _mask_dates
+    from app.reviews.numbercheck import _SEGMENT, _mask
 
     out: list[str] = []
-    for match in _SEGMENT.finditer(_mask_dates(text)):
+    for match in _SEGMENT.finditer(_mask(text)):
         literal = match.group(0)
         if "." in literal:
             out.append(literal)
