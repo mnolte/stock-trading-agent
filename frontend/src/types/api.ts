@@ -1887,6 +1887,8 @@ export interface LlmCallDetail extends LlmCallRow {
   prompt: {
     system: string | null;
     user: string | null;
+    /** The stored input snapshot, before the send-path strip. */
+    stored: string | null;
     stored_hash: string | null;
     mismatch: boolean;
   };

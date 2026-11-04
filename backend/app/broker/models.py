@@ -90,6 +90,9 @@ class BrokerAsset:
     asset_class: str  # us_equity | crypto | ...
     exchange: str | None
     shortable: bool
+    # Alpaca's company/asset name — feeds universe_pool.name for
+    # about_symbol (docs/SPEC.md, Fixes of 3 November).
+    name: str | None = None
 
 
 @dataclass(frozen=True)

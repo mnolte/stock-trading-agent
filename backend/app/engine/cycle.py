@@ -905,6 +905,7 @@ class CycleRunner:
                     session,
                     symbol=item.symbol,
                     day_ny=scheduled_ny,
+                    context=context,
                     before=scheduled_ny,
                 ),
                 entry_checks=(
@@ -912,7 +913,7 @@ class CycleRunner:
                     if context == "held"
                     else None
                 ),
-                names=symbol_names(self.config),
+                names=symbol_names(self.config, session),
                 calendar=self.calendar,
                 config=self.config,
                 cycle_time_ny=scheduled_ny,

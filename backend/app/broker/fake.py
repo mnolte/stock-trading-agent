@@ -94,6 +94,8 @@ class FakeBroker:
         self.untradable: set[str] = set()
         # get_asset finds these but reports tradable=False / wrong class.
         self.non_tradable: set[str] = set()
+        # get_asset reports these company names (Alpaca's asset name).
+        self.asset_names: dict[str, str] = {}
         self._stream_started = False
 
     # ------------------------------------------------------------------
@@ -683,6 +685,7 @@ class FakeBroker:
                 asset_class="us_equity",
                 exchange="NASDAQ",
                 shortable=False,
+                name=self.asset_names.get(symbol),
             ),
             source="fake",
         )

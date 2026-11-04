@@ -352,6 +352,11 @@ class UniversePoolRow(Base):
     source: Mapped[str] = mapped_column(
         String(16), nullable=False
     )  # default | added | import
+    # Alpaca's asset name minus the corporate dressing — what
+    # ``about_symbol`` matches a headline against (cleaned at write by
+    # app.universe.names.clean_company_name; null until the add/screen
+    # path fills it).
+    name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     added_at: Mapped[datetime] = mapped_column(nullable=False)
     removed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
@@ -644,6 +649,13 @@ class LlmCall(Base):
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The input snapshot exactly as sent to the model — the stripped
+    # send copy for v3/v4 decision calls, null on rows written before
+    # the column existed (the inspector rebuilds those with the same
+    # strip function) and on non-decision kinds.
+    sent_input: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
     # PR 36: source "ask" rows link to the chat message they answered.
     ask_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("ask_messages.id"), nullable=True

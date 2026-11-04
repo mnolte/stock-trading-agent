@@ -117,6 +117,12 @@ ClientFactory = Callable[[Strategy], DecisionClient]
 # stored snapshot → the inputs the live rule functions take
 
 
+def _bar_key(snapshot: dict[str, Any], kind: str) -> object:
+    """The 5-minute-bar provenance: v4 rows store ``last_5m_*``, older
+    rows ``last_bar_*`` (docs/SPEC.md, Fixes of 3 November)."""
+    return snapshot.get(f"last_5m_{kind}", snapshot.get(f"last_bar_{kind}"))
+
+
 def _dec(value: object) -> Decimal | None:
     if isinstance(value, bool) or not isinstance(value, int | float | str):
         return None
@@ -653,14 +659,14 @@ class ShadowRunner:
             # Never hold a database write transaction across an await: live
             # jobs run on the same event loop and must always get the lock.
             session.commit()
-            sent = json.dumps(
+            sent_snap = (
                 v4_send_snapshot(snap_json, cfg)
                 if spec.is_v4
                 else v3_send_snapshot(snap_json)
                 if spec.is_v3
-                else strip_internal(snap_json),
-                indent=2,
+                else strip_internal(snap_json)
             )
+            sent = json.dumps(sent_snap, indent=2)
             started = monotonic()
             try:
                 response = await asyncio.wait_for(
@@ -832,6 +838,7 @@ class ShadowRunner:
                     sent_at=sent_at,
                     response=response,
                     input_snapshot=snap_json,
+                    sent_input=sent_snap,
                     model_action=validation.model_action,
                     final_action=row.final_action,
                     output_invalid=not validation.valid
@@ -906,7 +913,7 @@ class ShadowRunner:
                 str(self.config.get("execution", "quote_max_deviation_pct"))
             )
             reference = quote.stop_reference(
-                _dec(snap_json.get("last_bar_close")),
+                _dec(_bar_key(snap_json, "close")),
                 indicators_from_snapshot(d.symbol, snap_json).atr_1h, entry=False,
                 max_deviation_pct=dev_pct,
             ) if quote is not None and price_failure is None else None
@@ -959,11 +966,12 @@ class ShadowRunner:
                         session,
                         symbol=d.symbol,
                         day_ny=scheduled,
+                        context="held",
                         strategy_id=strategy.id,
                         before=scheduled,
                     ),
                     entry_checks=checks_at_entry(entry),
-                    names=symbol_names(cfg),
+                    names=symbol_names(cfg, session),
                     calendar=self.calendar,
                     config=cfg,
                     cycle_time_ny=scheduled,
@@ -1143,7 +1151,7 @@ class ShadowRunner:
                                 d.symbol, snap_json
                             ).atr_1h
                             ref_v2 = quote.stop_reference(
-                                _dec(snap_json.get("last_bar_close")),
+                                _dec(_bar_key(snap_json, "close")),
                                 atr_v2,
                                 entry=True,
                                 max_deviation_pct=dev_pct,
@@ -1174,10 +1182,11 @@ class ShadowRunner:
                                         session,
                                         symbol=d.symbol,
                                         day_ny=scheduled,
+                                        context="candidate",
                                         strategy_id=strategy.id,
                                         before=scheduled,
                                     ),
-                                    names=symbol_names(cfg),
+                                    names=symbol_names(cfg, session),
                                     calendar=self.calendar,
                                     config=cfg,
                                     cycle_time_ny=scheduled,
@@ -1446,7 +1455,7 @@ class ShadowRunner:
             if spec.uses_options:
                 atr_v2 = indicators_from_snapshot(d.symbol, snap_json).atr_1h
                 ref_v2 = quote.stop_reference(
-                    _dec(snap_json.get("last_bar_close")),
+                    _dec(_bar_key(snap_json, "close")),
                     atr_v2,
                     entry=True,
                     max_deviation_pct=dev_pct,
@@ -1475,10 +1484,11 @@ class ShadowRunner:
                             session,
                             symbol=d.symbol,
                             day_ny=scheduled,
+                            context="candidate",
                             strategy_id=strategy.id,
                             before=scheduled,
                         ),
-                        names=symbol_names(cfg),
+                        names=symbol_names(cfg, session),
                         calendar=self.calendar,
                         config=cfg,
                         cycle_time_ny=scheduled,
@@ -1921,6 +1931,7 @@ class ShadowRunner:
             return
         prompt = cached_prompt(str(strategy.prompt_version))
         cfg = strategy_config(self.config, strategy)
+        spec = _spec(strategy)
         session.add(
             build_llm_call(
                 source="shadow",
@@ -1936,6 +1947,13 @@ class ShadowRunner:
                     error_type="timeout",
                 ),
                 input_snapshot=snap_json,
+                sent_input=(
+                    v4_send_snapshot(snap_json, cfg)
+                    if spec.is_v4
+                    else v3_send_snapshot(snap_json)
+                    if spec.is_v3
+                    else strip_internal(snap_json)
+                ),
                 final_action="no_call",
                 cycle_id=cycle.id,
                 shadow_decision_id=missed_id,
@@ -2025,8 +2043,8 @@ class ShadowRunner:
             except ValueError:
                 return None
 
-        bar = _dec(snapshot.get("last_bar_close"))
-        bar_time = timestamp(snapshot.get("last_bar_time"))
+        bar = _dec(_bar_key(snapshot, "close"))
+        bar_time = timestamp(_bar_key(snapshot, "time"))
         raw = snapshot.get("quote")
         synthetic = not isinstance(raw, dict) or raw.get("synthetic") is True
         if synthetic:
@@ -2115,7 +2133,7 @@ class ShadowRunner:
                     "allowed": False, "blocked_by": "spread", "quote": provenance,
                 }
                 return
-        bar_time_str = d.snapshot.get("last_bar_time")
+        bar_time_str = _bar_key(d.snapshot, "time")
         bar_time = None
         try:
             bar_time = (
@@ -2126,7 +2144,7 @@ class ShadowRunner:
             bar_time = None
         price = quote.last
         reference = quote.stop_reference(
-            _dec(d.snapshot.get("last_bar_close")), ind.atr_1h, entry=True,
+            _dec(_bar_key(d.snapshot, "close")), ind.atr_1h, entry=True,
             max_deviation_pct=dev_pct,
         )
         if bar_time is None or bar_time + timedelta(minutes=5) > at or reference is None:

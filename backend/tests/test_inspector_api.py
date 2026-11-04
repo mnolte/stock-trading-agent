@@ -338,6 +338,78 @@ class TestDetail:
         assert data["prompt"]["system"] is None
         assert data["prompt"]["stored_hash"] == "stored-hash"
 
+    def test_user_shows_sent_snapshot_stored_behind_stored_input(
+        self, client: TestClient, seeded: dict[str, Any]
+    ) -> None:
+        """v4 rows written before sent_input existed rebuild the sent
+        copy with the same strip function — no indicators_precise, no
+        level L16 (docs/SPEC.md, Fixes of 3 November)."""
+        snapshot = {
+            "symbol": "KO", "price": "94.66",
+            "indicators_precise": {"atr14": "0.1234567890123456789012345678"},
+            "levels": [
+                {"id": "L1", "distance_atr": 1.0},
+                {"id": "L16", "distance_atr": 9.0},
+            ],
+        }
+        with get_session_maker()() as session:
+            decision = Decision(
+                cycle_id=seeded["cycle_id"], symbol="KO", context="held",
+                input_snapshot=snapshot,
+                final_action="hold", prompt_version="decision.v4",
+                prompt_hash="x", model="fake-decision",
+            )
+            session.add(decision)
+            session.flush()
+            call = _call(
+                session, decision_id=decision.id, symbol="KO",
+                context="held", prompt_version="decision.v4",
+                prompt_hash="x", final_action="hold",
+            )
+            session.flush()
+            call_id = call.id
+            session.commit()
+        data = client.get(f"/api/llm-calls/{call_id}").json()
+        assert "indicators_precise" not in data["prompt"]["user"]
+        assert "L16" not in data["prompt"]["user"]
+        # The stored snapshot stays one click away, untouched.
+        assert "indicators_precise" in data["prompt"]["stored"]
+        assert "L16" in data["prompt"]["stored"]
+
+    def test_sent_input_stored_on_the_call_row(
+        self, client: TestClient, seeded: dict[str, Any]
+    ) -> None:
+        """Calls written after the change carry their send copy on the
+        row — no rebuild needed."""
+        with get_session_maker()() as session:
+            decision = Decision(
+                cycle_id=seeded["cycle_id"], symbol="KO", context="held",
+                input_snapshot={"symbol": "KO", "indicators_precise": {}},
+                final_action="hold", prompt_version="decision.v4",
+                prompt_hash="x", model="fake-decision",
+            )
+            session.add(decision)
+            session.flush()
+            call = _call(
+                session, decision_id=decision.id, symbol="KO",
+                context="held", prompt_version="decision.v4",
+                prompt_hash="x", final_action="hold",
+                sent_input={"symbol": "KO", "sent": True},
+            )
+            session.flush()
+            call_id = call.id
+            session.commit()
+        data = client.get(f"/api/llm-calls/{call_id}").json()
+        assert '"sent": true' in data["prompt"]["user"]
+        assert "indicators_precise" in data["prompt"]["stored"]
+
+    def test_review_user_and_stored_are_the_same(
+        self, client: TestClient, seeded: dict[str, Any]
+    ) -> None:
+        data = client.get(f"/api/llm-calls/{seeded['call_ids'][4]}").json()
+        # A review call's facts go verbatim — no strip applies.
+        assert data["prompt"]["user"] == data["prompt"]["stored"]
+
     def test_error_block_instead_of_raw_response(
         self, client: TestClient, seeded: dict[str, Any]
     ) -> None:

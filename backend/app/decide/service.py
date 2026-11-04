@@ -386,6 +386,7 @@ class DecisionService:
             cached=from_cache,
             sent_at=sent_at,
             v2=v2,
+            send_snapshot=send_snapshot,
         )
         return decision
 
@@ -443,6 +444,7 @@ class DecisionService:
         cached: bool = False,
         sent_at: datetime | None = None,
         v2: V2Build | None = None,
+        send_snapshot: dict[str, Any] | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -508,6 +510,7 @@ class DecisionService:
                     sent_at=sent_at or _naive_utc(self._clock.now()),
                     response=response,
                     input_snapshot=snapshot_json,
+                    sent_input=send_snapshot,
                     model_action=validation.model_action,
                     final_action=final_action,
                     output_invalid=not validation.valid

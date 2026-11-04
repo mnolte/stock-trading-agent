@@ -2,6 +2,34 @@
 
 Newest first.
 
+## 2026-11-04 — Decision v4: the code fixes of 3 November
+
+From the v4 review (`docs/analysis/2026-11-03-decision-v4-review.md`,
+kickoff `fix-v4-2026-11-03.md`), all code — no prompt or threshold
+changes:
+
+- `thesis_holds`: the regime's `sideways` counts like `mixed`, so
+  up → sideways and sideways → down are adverse (the KO entry case).
+- `previous_decision` now comes only from the same context (candidate
+  or held) and carries `final_action` and `change_reason` — a
+  spread-blocked enter reads blocked · spread, not a held position.
+- Headlines with `about_symbol` lead the capped list (newest first),
+  then the rest — market noise can't push a company's own news out.
+- `stop_group` keys on the Decimal stop: 101.70 and 101.7 share a group.
+- `universe_pool.name` (new column): Alpaca's asset name cleaned of
+  corporate suffixes, filled on add/import and refreshed at each daily
+  screen (which backfills existing rows). Screened-mode `about_symbol`
+  matches pool names with `universe.names` overriding; fixed mode is
+  unchanged.
+- `checks.earnings.status`: `none_in_window`, `scheduled` or
+  `unavailable` — never all null without a status.
+- `llm_calls.sent_input` (new column): the snapshot exactly as sent.
+  "User · input snapshot" shows it, rebuilt with the same strip
+  function for older rows; the stored snapshot sits behind
+  "Stored input".
+- The 5-minute-bar provenance stores as `last_5m_close`/`last_5m_time`,
+  so it can't read as the signal bar's close; v1–v3 rows untouched.
+
 ## 2026-11-03 — Option outcomes: verdicts get their 5-session results back
 
 - `_fill_option_touches` read `entry_limit`/`entry` off each stored

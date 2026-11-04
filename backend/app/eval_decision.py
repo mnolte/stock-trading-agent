@@ -347,11 +347,12 @@ def _rebuild_input(
                 symbol=symbol,
                 day_ny=scheduled.astimezone(NY_TZ).date()
                 if scheduled.tzinfo else scheduled,
+                context=context,
                 strategy_id=strategy_id,
                 before=scheduled,
             ),
             entry_checks=entry_checks,
-            names=symbol_names(config),
+            names=symbol_names(config, session),
             calendar=calendar,
             config=config,
             cycle_time_ny=scheduled.astimezone(NY_TZ) if scheduled.tzinfo else scheduled,

@@ -55,6 +55,7 @@ def build_llm_call(
     sent_at: datetime,
     response: ModelResponse,
     input_snapshot: dict[str, Any] | None = None,
+    sent_input: dict[str, Any] | None = None,
     model_action: str | None = None,
     final_action: str | None = None,
     output_invalid: bool = False,
@@ -136,6 +137,7 @@ def build_llm_call(
         # refused response still keeps its raw text for the audit.
         raw_response=response.raw if response.error is None else None,
         backfilled=False,
+        sent_input=sent_input,
     )
 
 

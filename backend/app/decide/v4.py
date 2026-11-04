@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.config import AppConfig
 from app.data.models import Bar1h, Bar5m, DailyBar
-from app.db.models import Cycle, Decision, ShadowDecision
+from app.db.models import Cycle, Decision, ShadowDecision, UniversePoolRow
 from app.decide.snapshot import UNAVAILABLE
 from app.decide.v2inputs import V2Build
 from app.decide.v3 import (
@@ -51,12 +51,17 @@ _CHANGED_NAMES = (*_CHECK_NAMES, "regime_volatility")
 
 # A check turned against the trade (docs/SPEC.md — thesis_holds):
 # up → mixed or down, mixed → down; momentum strong → mixed or weak,
-# mixed → weak.
+# mixed → weak. The regime's ``sideways`` counts like ``mixed``
+# (docs/SPEC.md, Fixes of 3 November).
 _ADVERSE = {
     "up": {"mixed", "down"},
     "mixed": {"down"},
     "strong": {"mixed", "weak"},
 }
+
+
+def _adverse_key(value: Any) -> str:
+    return "mixed" if str(value) == "sideways" else str(value)
 
 
 # ----------------------------------------------------------------------
@@ -109,18 +114,44 @@ def v4_config(config: AppConfig) -> V4Config:
     )
 
 
-def symbol_names(config: AppConfig) -> dict[str, str]:
-    """``universe.names``: the company name behind each ticker — what
-    ``about_symbol`` matches a headline against (docs/SPEC.md, Snapshot
-    v4 — the name from the pool or config)."""
-    raw = config.get("universe", "names", default=None)
-    if not isinstance(raw, dict):
-        return {}
+def pool_names(session: Session) -> dict[str, str]:
+    """``{symbol: cleaned name}`` for the active pool rows that have one —
+    the screened-mode source for ``about_symbol`` (docs/SPEC.md, Fixes
+    of 3 November). Lives here, not in ``app.universe``: importing that
+    package pulls in the broker client (the shadow-isolation rule)."""
     return {
-        str(symbol): str(name)
-        for symbol, name in raw.items()
-        if str(name).strip()
+        symbol: name
+        for symbol, name in session.execute(
+            select(UniversePoolRow.symbol, UniversePoolRow.name).where(
+                UniversePoolRow.removed_at.is_(None),
+                UniversePoolRow.name.is_not(None),
+            )
+        )
+        if name
     }
+
+
+def symbol_names(config: AppConfig, session: Session | None = None) -> dict[str, str]:
+    """The company name behind each ticker — what ``about_symbol``
+    matches a headline against (docs/SPEC.md, Snapshot v4 — the name
+    from the pool or config). Screened mode reads ``universe_pool.name``
+    (Alpaca's asset name, cleaned); ``universe.names`` in config
+    overrides it. Fixed mode uses config as before."""
+    names: dict[str, str] = {}
+    if session is not None and str(
+        config.get("universe", "mode", default="fixed")
+    ) == "screened":
+        names.update(pool_names(session))
+    raw = config.get("universe", "names", default=None)
+    if isinstance(raw, dict):
+        names.update(
+            {
+                str(symbol): str(name)
+                for symbol, name in raw.items()
+                if str(name).strip()
+            }
+        )
+    return names
 
 
 # ----------------------------------------------------------------------
@@ -132,11 +163,12 @@ def about_symbol(title: str, symbol: str, names: dict[str, str]) -> bool:
 
     A title naming a *different* known company is not about this symbol
     even when the ticker appears in it — "Nvidia RTX laptops" is about
-    NVDA, not RTX.
+    NVDA, not RTX. A cleaned name identical to the ticker (RTX) matches
+    on the ticker path, which applies that same rejection.
     """
     low = title.lower()
     own = (names.get(symbol) or "").strip().lower()
-    if own and own in low:
+    if own and own != symbol.lower() and own in low:
         return True
     # One-character tickers match any standalone word ("a deal", "T
     # bonds") — they can only ever match on the company name above.
@@ -186,11 +218,19 @@ class PreviousV4:
     checks: dict[str, Any] = field(default_factory=dict)
     headline_ids: frozenset[str] = frozenset()
     level_keys: frozenset[tuple[str, str, str, str]] = frozenset()
+    # What code did with the model's action and, when it changed it, the
+    # gate or check behind the change (docs/SPEC.md, Fixes of
+    # 3 November): a spread-blocked enter reads blocked · spread, not a
+    # position the model holds.
+    final_action: str | None = None
+    change_reason: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         return {
             "time": _ny_iso(self.time) if self.time is not None else None,
             "action": self.action,
+            "final_action": self.final_action,
+            "change_reason": self.change_reason,
             "option_id": self.option_id,
             "best_option_id": self.best_option_id,
             "confidence": self.confidence,
@@ -259,10 +299,20 @@ def _previous_from_row(
             if key is not None
         )
     output = row.model_output or {}
+    validation = row.validation_result or {}
+    gates = row.gates_result or {}
+    action = validation.get("model_action") or (
+        str(output.get("action")) if output.get("action") else None
+    )
+    final = str(row.final_action) if row.final_action is not None else None
+    reason = (
+        gates.get("blocked_by") or validation.get("reason")
+        if action is not None and final is not None and final != action
+        else None
+    )
     return PreviousV4(
         time=scheduled,
-        action=(row.validation_result or {}).get("model_action")
-        or (str(output.get("action")) if output.get("action") else None),
+        action=action,
         option_id=row.chosen_option
         or (str(output.get("option_id")) if output.get("option_id") else None),
         best_option_id=(
@@ -278,6 +328,8 @@ def _previous_from_row(
         checks=checks,
         headline_ids=headline_ids,
         level_keys=level_keys,
+        final_action=final,
+        change_reason=str(reason) if reason is not None else None,
     )
 
 
@@ -294,15 +346,18 @@ def previous_decision_v4(
     *,
     symbol: str,
     day_ny: Any,
+    context: str,
     strategy_id: int | None = None,
     before: datetime | None = None,
 ) -> PreviousV4 | None:
     """The model's last decision on ``symbol`` in the New York session
     ``day_ny`` — live rows for live, the strategy's rows for a shadow
-    (docs/SPEC.md, Decision v4 — previous_decision). ``no_call`` and
-    missed shadow rows are not model decisions and don't count.
-    ``before`` bounds the search to cycles scheduled earlier (eval and
-    replays must not look ahead)."""
+    (docs/SPEC.md, Decision v4 — previous_decision). Only rows of the
+    same ``context`` count: a held decision never inherits the candidate
+    enter that opened the position (docs/SPEC.md, Fixes of 3 November).
+    ``no_call`` and missed shadow rows are not model decisions and don't
+    count. ``before`` bounds the search to cycles scheduled earlier
+    (eval and replays must not look ahead)."""
     window = _session_window(day_ny)
     if window is None:
         return None
@@ -320,6 +375,7 @@ def previous_decision_v4(
                 Cycle.scheduled_time >= start,
                 Cycle.scheduled_time < end,
                 Decision.symbol == symbol,
+                Decision.context == context,
                 Decision.no_call_reason.is_(None),
             )
             .order_by(Cycle.scheduled_time.desc(), Decision.id.desc())
@@ -334,6 +390,7 @@ def previous_decision_v4(
                 Cycle.scheduled_time >= start,
                 Cycle.scheduled_time < end,
                 ShadowDecision.symbol == symbol,
+                ShadowDecision.context == context,
                 ShadowDecision.strategy_id == strategy_id,
                 ShadowDecision.no_call_reason.is_(None),
                 ShadowDecision.missed.is_(False),
@@ -449,8 +506,10 @@ def thesis_holds(
         if not old or not new or old == UNAVAILABLE or new == UNAVAILABLE:
             continue
         comparable += 1
-        if str(new) in _ADVERSE.get(str(old), set()) or (
-            name == "momentum" and old == "mixed" and new == "weak"
+        old_key = _adverse_key(old)
+        new_key = _adverse_key(new)
+        if new_key in _ADVERSE.get(old_key, set()) or (
+            name == "momentum" and old_key == "mixed" and new_key == "weak"
         ):
             adverse += 1
     if comparable < 2:
@@ -517,8 +576,9 @@ def _headlines_v4(
     previous: PreviousV4 | None,
     v4: V4Config,
 ) -> list[dict[str, Any]] | Any:
-    """Headlines with ``about_symbol`` and ``new``, newest first, capped
-    at ``max_headlines`` (docs/SPEC.md, Snapshot v4 — Headlines)."""
+    """Headlines with ``about_symbol`` and ``new``: ``about_symbol``
+    first (newest first), then the rest, capped at ``max_headlines``
+    (docs/SPEC.md, Snapshot v4 — Headlines)."""
     raw = base.get("headlines")
     if not isinstance(raw, list):
         return raw
@@ -538,15 +598,35 @@ def _headlines_v4(
         )
         out.append(entry)
     out.sort(key=lambda h: str(h.get("time") or ""), reverse=True)
-    return out[: v4.max_headlines]
+    # Headlines about the symbol lead (newest first), then the rest —
+    # market noise can't push the company's own news out (docs/SPEC.md,
+    # Fixes of 3 November).
+    own = [h for h in out if h.get("about_symbol")]
+    rest = [h for h in out if not h.get("about_symbol")]
+    return (own + rest)[: v4.max_headlines]
+
+
+def _earnings_status(earnings: dict[str, Any], base: dict[str, Any]) -> str:
+    """``none_in_window`` | ``scheduled`` | ``unavailable`` — never all
+    null without a status (docs/SPEC.md, Fixes of 3 November)."""
+    days = earnings.get("days")
+    if days == UNAVAILABLE or base.get("days_to_earnings") == UNAVAILABLE:
+        return "unavailable"
+    if earnings.get("date") is not None or days is not None:
+        return "scheduled"
+    return "none_in_window"
 
 
 def _stop_groups(options: list[dict[str, Any]]) -> None:
     """``stop_group`` S1, S2, … — options sharing a stop share a group
-    (docs/SPEC.md, Snapshot v4 — Options)."""
-    groups: dict[str, str] = {}
+    (docs/SPEC.md, Snapshot v4 — Options). The group keys on the Decimal
+    value: 101.70 and 101.7 are the same stop (docs/SPEC.md, Fixes of
+    3 November)."""
+    groups: dict[Any, str] = {}
     for option in options:
-        key = str(option.get("stop"))
+        key: Any = _dec_or_none(option.get("stop"))
+        if key is None:
+            key = str(option.get("stop"))
         if key not in groups:
             groups[key] = f"S{len(groups) + 1}"
         option["stop_group"] = groups[key]
@@ -579,7 +659,20 @@ def build_v4_fields(
     ``previous`` is the model's last decision on the symbol this session
     (``previous_decision_v4``); ``entry_checks`` the entry decision's
     checks (``checks_at_entry``) for held positions.
+
+    ``base`` is the dict the decision row stores; the 5-minute-bar
+    provenance is renamed in place (``last_bar_*`` → ``last_5m_*``) so
+    it can't read as the signal bar's close (docs/SPEC.md, Fixes of
+    3 November).
     """
+    if "last_bar_close" in base:
+        base["last_5m_close"] = base.pop("last_bar_close")
+    if "last_bar_time" in base:
+        base["last_5m_time"] = base.pop("last_bar_time")
+    base_quote = base.get("quote")
+    if isinstance(base_quote, dict) and "last_bar_time" in base_quote:
+        base_quote["last_5m_time"] = base_quote.pop("last_bar_time")
+
     v3 = build_v3_fields(
         context=context,
         base=base,
@@ -602,6 +695,9 @@ def build_v4_fields(
     symbol = str(base.get("symbol") or "")
 
     fields["session"] = {"minutes_left": minutes_left(cycle_time_ny, calendar)}
+    earnings_block = (fields.get("checks") or {}).get("earnings")
+    if isinstance(earnings_block, dict):
+        earnings_block["status"] = _earnings_status(earnings_block, base)
     headlines = _headlines_v4(base, symbol, names or {}, previous, v4)
     fields["headlines"] = headlines
 

@@ -311,6 +311,28 @@ def test_thesis_holds_true_on_one_adverse() -> None:
     assert thesis_holds(at_entry, now) is True
 
 
+def test_thesis_holds_sideways_counts_like_mixed() -> None:
+    """The KO case: the regime was sideways at entry and turned down, so
+    sideways → down is adverse; up → sideways is too (docs/SPEC.md,
+    Fixes of 3 November)."""
+    at_entry = {"trend_1h": "up", "trend_daily": "up",
+                "regime_trend": "sideways", "momentum": "strong"}
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "down", "momentum": "weak"}
+    assert thesis_holds(at_entry, now) is False
+
+    at_entry = {"trend_1h": "up", "trend_daily": "up",
+                "regime_trend": "up", "momentum": "strong"}
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "sideways", "momentum": "weak"}
+    assert thesis_holds(at_entry, now) is False
+
+    # One adverse turn alone still holds.
+    now = {"trend_1h": "up", "trend_daily": "up",
+           "regime_trend": "sideways", "momentum": "strong"}
+    assert thesis_holds(at_entry, now) is True
+
+
 # ----------------------------------------------------------------------
 # best_option_id — never invalidates (docs/SPEC.md, Decision v4)
 
@@ -444,6 +466,151 @@ def test_claim_checks_cover_every_conflict_and_resolution() -> None:
 
 
 # ----------------------------------------------------------------------
+# previous_decision_v4 — same context, final action and change reason
+
+
+def _cycle_and_decision(
+    session: Any,
+    *,
+    context: str = "candidate",
+    final_action: str = "enter",
+    model_action: str | None = "enter",
+    blocked_by: str | None = None,
+    validation_reason: str | None = None,
+    scheduled: datetime = datetime(2026, 11, 3, 18, 46),
+) -> None:
+    """One live decision row at ``scheduled`` (naive UTC, 13:46 NY)."""
+    from app.db.models import Cycle, Decision
+
+    cycle = Cycle(kind="cycle", scheduled_time=scheduled, status="done")
+    session.add(cycle)
+    session.flush()
+    session.add(
+        Decision(
+            cycle_id=cycle.id,
+            symbol="KO",
+            context=context,
+            input_snapshot={
+                "price": "94.66",
+                "checks": {"regime_trend": "sideways"},
+                "headlines": [],
+                "levels": [],
+            },
+            model_output=(
+                {"action": model_action, "confidence": 0.7}
+                if model_action
+                else None
+            ),
+            validation_result=(
+                {
+                    "model_action": model_action,
+                    "final_action": final_action,
+                    "reason": validation_reason,
+                }
+                if model_action
+                else None
+            ),
+            gates_result=(
+                {"allowed": False, "blocked_by": blocked_by}
+                if blocked_by
+                else {"allowed": True}
+            ),
+            final_action=final_action,
+            prompt_version="decision.v4",
+            prompt_hash="x",
+            model="fake",
+        )
+    )
+    session.commit()
+
+
+def test_previous_decision_same_context_only(
+    session_factory: Any,
+) -> None:
+    """After a filled entry the first held decision sees no previous —
+    the candidate enter belongs to the other context (docs/SPEC.md,
+    Fixes of 3 November)."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(session, context="candidate", final_action="enter")
+        day = datetime(2026, 11, 3, 15, 0, tzinfo=NY_TZ)
+        assert (
+            previous_decision_v4(session, symbol="KO", day_ny=day, context="held")
+            is None
+        )
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None and prev.action == "enter"
+
+
+def test_previous_decision_final_action_and_change_reason(
+    session_factory: Any,
+) -> None:
+    """A spread-blocked enter reads action enter · final blocked ·
+    reason spread — not a position the model holds."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(
+            session, final_action="blocked", blocked_by="spread"
+        )
+        day = datetime(2026, 11, 3, 15, 0, tzinfo=NY_TZ)
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None
+        assert prev.action == "enter"
+        assert prev.final_action == "blocked"
+        assert prev.change_reason == "spread"
+        out = prev.to_json()
+        assert out["final_action"] == "blocked"
+        assert out["change_reason"] == "spread"
+
+
+def test_previous_decision_change_reason_from_validation(
+    session_factory: Any,
+) -> None:
+    """A check-changed action carries the check's reason; an unchanged
+    action carries none."""
+    from app.decide.v4 import previous_decision_v4
+    from app.market.clock import NY_TZ
+
+    with session_factory() as session:
+        _cycle_and_decision(
+            session,
+            final_action="skip",
+            validation_reason="edge_too_small",
+        )
+        _cycle_and_decision(
+            session,
+            final_action="enter",
+            scheduled=datetime(2026, 11, 3, 19, 46),
+        )
+        day = datetime(2026, 11, 3, 16, 0, tzinfo=NY_TZ)
+        prev = previous_decision_v4(
+            session, symbol="KO", day_ny=day, context="candidate"
+        )
+        assert prev is not None
+        # The newest candidate row is the plain enter.
+        assert prev.final_action == "enter"
+        assert prev.change_reason is None
+        prev_before = previous_decision_v4(
+            session,
+            symbol="KO",
+            day_ny=day,
+            context="candidate",
+            before=datetime(2026, 11, 3, 19, 0),
+        )
+        assert prev_before is not None
+        assert prev_before.final_action == "skip"
+        assert prev_before.change_reason == "edge_too_small"
+
+
+# ----------------------------------------------------------------------
 # about_symbol
 
 
@@ -454,6 +621,18 @@ def test_about_symbol() -> None:
     assert about_symbol("Tesla Q3 deliveries beat estimates", "TSLA", names) is True
     assert about_symbol("Market closes higher", "TSLA", names) is False
     assert about_symbol("TSLA rises on deliveries", "TSLA", names) is True
+
+
+def test_about_symbol_with_pool_names() -> None:
+    """Pool names make the screened universe match like the fixed list:
+    the KO case and the RTX case (docs/SPEC.md, Fixes of 3 November)."""
+    names = {"KO": "Coca-Cola", "NVDA": "NVIDIA", "RTX": "RTX"}
+    assert about_symbol(
+        "Coca-Cola India Launches New Drink", "KO", names
+    ) is True
+    assert about_symbol(
+        "Nvidia RTX laptops get new models", "RTX", names
+    ) is False
 
 
 # ----------------------------------------------------------------------
@@ -528,8 +707,8 @@ def test_v4_build_previous_decision_and_since() -> None:
     assert heads["h2"]["new"] is True
     assert heads["h1"]["about_symbol"] is True
     assert heads["h2"]["about_symbol"] is False
-    # newest first
-    assert [h["id"] for h in build.fields["headlines"]] == ["h2", "h1"]
+    # about_symbol first (newest first), then the rest
+    assert [h["id"] for h in build.fields["headlines"]] == ["h1", "h2"]
     assert build.fields["session"]["minutes_left"] == 120
     assert build.options_column["options_version"] == "v4"
 
@@ -554,6 +733,54 @@ def test_v4_headline_cap_newest_first() -> None:
     assert build.fields["headlines"][0]["id"] == "n19"
 
 
+def test_v4_headlines_about_symbol_first() -> None:
+    """Market noise can't push the company's own news out: headlines
+    about the symbol lead (newest first), then the rest, up to the cap
+    (docs/SPEC.md, Fixes of 3 November)."""
+    config = AppConfig()
+    heads = [
+        # Older than every market headline but about T — must lead.
+        {"id": "own1", "time": "2026-10-30T08:00:00-04:00",
+         "source": "X", "title": "Tesla beats"},
+        {"id": "own2", "time": "2026-10-30T07:00:00-04:00",
+         "source": "X", "title": "Tesla expands"},
+        *[
+            {"id": f"m{i}", "time": f"2026-10-30T1{i}:00:00-04:00",
+             "source": "X", "title": f"market {i}"}
+            for i in range(6)
+        ],
+    ]
+    base = {**_base_snapshot(), "headlines": heads}
+    build = build_v4_fields(
+        context="candidate", base=base, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base),
+        regime=regime_from_snapshot(base, config),
+        names={"T": "Tesla"},
+        calendar=_calendar("2026-10-30"), config=config,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    ids = [h["id"] for h in build.fields["headlines"]]
+    assert ids[:2] == ["own1", "own2"]  # about_symbol, newest first
+    assert ids[2] == "m5"             # then the rest, newest first
+
+    # About-symbol headlines alone can fill the cap.
+    config_small = AppConfig().overlay({"decision": {"v4": {"max_headlines": 3}}})
+    base2 = {**_base_snapshot(), "headlines": heads}
+    build2 = build_v4_fields(
+        context="candidate", base=base2, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base2),
+        regime=regime_from_snapshot(base2, config_small),
+        names={"T": "Tesla"},
+        calendar=_calendar("2026-10-30"), config=config_small,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    assert [h["id"] for h in build2.fields["headlines"]] == [
+        "own1", "own2", "m5",
+    ]
+
+
 def test_v4_stop_groups() -> None:
     config = AppConfig()
     base = _base_snapshot()
@@ -569,6 +796,88 @@ def test_v4_stop_groups() -> None:
         assert "stop_group" in opt
     groups = [o["stop_group"] for o in build.fields["options"]]
     assert len(set(groups)) == len({str(o["stop"]) for o in build.fields["options"]})
+
+
+def test_v4_stop_group_keys_on_decimal() -> None:
+    """101.70 and 101.7 are the same stop — the group keys on the Decimal
+    value, not the text form (docs/SPEC.md, Fixes of 3 November)."""
+    from app.decide.v4 import _stop_groups
+
+    options: list[dict[str, Any]] = [
+        {"id": "A", "stop": "101.70"},
+        {"id": "B", "stop": 101.7},
+        {"id": "C", "stop": Decimal("101.700")},
+        {"id": "D", "stop": "102.50"},
+    ]
+    _stop_groups(options)
+    assert [o["stop_group"] for o in options] == ["S1", "S1", "S1", "S2"]
+
+
+def test_v4_last_bar_labels_say_5m() -> None:
+    """The stored snapshot's last-bar keys say which bar they are —
+    last_5m_close / last_5m_time — so they can't read as the signal
+    bar's close (docs/SPEC.md, Fixes of 3 November)."""
+    config = AppConfig()
+    base = {
+        **_base_snapshot(),
+        "last_bar_close": "94.895",
+        "last_bar_time": "2026-10-30T15:45:00+00:00",
+        "quote": {"last": "94.66", "last_bar_time": "2026-10-30T15:45:00+00:00"},
+    }
+    build_v4_fields(
+        context="candidate", base=base, price=Decimal("100"),
+        reference=Decimal("100"), atr_1h=Decimal("1.0"),
+        indicators=indicators_from_snapshot("T", base),
+        regime=regime_from_snapshot(base, config), names={},
+        calendar=_calendar("2026-10-30"), config=config,
+        cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+    )
+    assert base["last_5m_close"] == "94.895"
+    assert base["last_5m_time"] == "2026-10-30T15:45:00+00:00"
+    assert "last_bar_close" not in base
+    assert "last_bar_time" not in base
+    assert base["quote"]["last_5m_time"] == "2026-10-30T15:45:00+00:00"
+    assert "last_bar_time" not in base["quote"]
+    # Provenance still never reaches the model.
+    sent = v4_send_snapshot(base, config)
+    assert "last_5m_close" not in sent and "last_bar_close" not in sent
+    assert "last_5m_time" not in sent and "last_bar_time" not in sent
+    assert "last_5m_time" not in sent["quote"]
+
+
+def test_v4_earnings_status() -> None:
+    """``checks.earnings.status`` is none_in_window, scheduled or
+    unavailable — never all null without a status (docs/SPEC.md, Fixes
+    of 3 November). The KO case was all null and meant none_in_window."""
+    config = AppConfig()
+
+    def _fields(base: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        return build_v4_fields(
+            context="candidate", base=base, price=Decimal("100"),
+            reference=Decimal("100"), atr_1h=Decimal("1.0"),
+            indicators=indicators_from_snapshot("T", base),
+            regime=regime_from_snapshot(base, config), names={},
+            calendar=_calendar("2026-10-30"), config=config,
+            cycle_time_ny=datetime(2026, 10, 30, 18, 0, tzinfo=UTC),
+            **kwargs,
+        ).fields
+
+    # The calendar answered and no report sits in the window.
+    earn = _fields(_base_snapshot())["checks"]["earnings"]
+    assert earn["status"] == "none_in_window"
+    assert earn["days"] is None and earn["date"] is None
+
+    # A report in the window.
+    earn = _fields(
+        _base_snapshot(), earnings=(date(2026, 11, 5), "before_open")
+    )["checks"]["earnings"]
+    assert earn["status"] == "scheduled"
+    assert earn["date"] == "2026-11-05"
+
+    # The source failed — never readable as "no news".
+    base = {**_base_snapshot(), "days_to_earnings": "unavailable"}
+    earn = _fields(base)["checks"]["earnings"]
+    assert earn["status"] == "unavailable"
 
 
 def test_v4_level_cap_keeps_option_and_stop_levels() -> None:
