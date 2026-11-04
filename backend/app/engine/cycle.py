@@ -37,6 +37,7 @@ from app.decide.v4 import (
     symbol_names,
     v4_config,
 )
+from app.decide.v5 import build_v5_fields, trend_gate_detail, v5_config
 from app.engine.executor import Executor
 from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
@@ -272,6 +273,100 @@ class CycleRunner:
     ) -> dict[str, tuple[date, str]]:
         """Next earnings (date, time_of_day) per symbol, today or later."""
         return next_earnings(session, symbols, now)
+
+    def _counterfactual_build(
+        self,
+        session: Session,
+        item: SymbolEval,
+        snapshot_json: dict[str, Any],
+        *,
+        context: str,
+        evaluation: Any,
+        scheduled_ny: datetime,
+        last_cycle: bool,
+        now: datetime,
+    ) -> V2Build | None:
+        """Options for a candidate code stopped before the model — never
+        offered, only measured (docs/SPEC.md, Decision v5 —
+        Counterfactual touches)."""
+        if context != "candidate" or not self.decide.spec.uses_options:
+            return None
+        bar = self.market_data.bars_cache.latest(
+            item.symbol, now - timedelta(minutes=5)
+        )
+        price = item.price if item.price is not None else (
+            bar.close if bar is not None else None
+        )
+        atr_1h = item.snapshot.atr_1h
+        if price is None or atr_1h is None or atr_1h <= 0:
+            return None
+        reference = min(price, bar.close) if bar is not None else price
+        built: V2Build
+        if self.decide.spec.is_v5:
+            built = build_v5_fields(
+                context="candidate",
+                base=snapshot_json,
+                price=price,
+                reference=reference,
+                atr_1h=atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                names=symbol_names(self.config, session),
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
+                last_cycle=last_cycle,
+                db_session=session,
+            )
+        elif self.decide.spec.is_v4:
+            built = build_v4_fields(
+                context="candidate",
+                base=snapshot_json,
+                price=price,
+                reference=reference,
+                atr_1h=atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                names=symbol_names(self.config, session),
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
+            )
+        elif self.decide.spec.is_v3:
+            built = build_v3_fields(
+                context="candidate",
+                base=snapshot_json,
+                price=price,
+                reference=reference,
+                atr_1h=atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
+            )
+        else:
+            built = build_v2_fields(
+                context="candidate",
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                price=price,
+                reference=reference,
+                atr_1h=atr_1h,
+                config=self.config,
+            )
+        snapshot_json.update(built.fields)
+        return built
 
     def _earnings_exit_due(
         self,
@@ -686,6 +781,16 @@ class CycleRunner:
                     item.symbol, now - timedelta(minutes=5),
                 ),
             )
+            v2 = self._counterfactual_build(
+                session,
+                item,
+                snapshot_json,
+                context=context,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                last_cycle=last_cycle,
+                now=now,
+            )
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,
@@ -699,6 +804,7 @@ class CycleRunner:
                     if held and position is not None and position.pending_ack
                     else f"rules: {item.rules.status}"
                 ),
+                v2=v2,
             )
             report.decisions.append(decision.id)
         # Hard rule 13: the recorded no_call decisions are durable before
@@ -875,8 +981,69 @@ class CycleRunner:
         )
         snapshot_json["last_bar_close"] = str(bar.close) if bar else None
         snapshot_json["last_bar_time"] = bar.start.isoformat() if bar else None
+        # Counterfactual touches (PR 37): a candidate stopped by the
+        # price checks still gets options built — on a bar-close
+        # reference when the quote gave none — so the outcome job can
+        # measure what the price check removed. The stored
+        # stop_reference_price stays the truth (null).
+        build_reference = reference
+        if (
+            build_reference is None
+            and context == "candidate"
+            and (price if price is not None else item.price) is not None
+        ):
+            anchor = price if price is not None else item.price
+            assert anchor is not None  # noqa: S101 - checked above
+            build_reference = (
+                min(anchor, bar.close) if bar is not None else anchor
+            )
         v2: V2Build | None = None
-        if self.decide.spec.is_v4:
+        if self.decide.spec.is_v5:
+            entry_decision = (
+                session.get(Decision, position.entry_decision_id)
+                if context == "held"
+                and position is not None
+                and position.entry_decision_id is not None
+                else None
+            )
+            v2 = build_v5_fields(
+                context=context,
+                base=snapshot_json,
+                price=price if price is not None else item.price,
+                reference=build_reference,
+                atr_1h=item.snapshot.atr_1h,
+                indicators=item.snapshot,
+                regime=evaluation.regime,
+                bars_1h=item.bars_1h,
+                daily=item.daily,
+                today_5m=item.today_5m,
+                earnings=earnings.get(item.symbol),
+                held=(
+                    held_v3(position, entry_decision, earnings.get(item.symbol))
+                    if context == "held" and position is not None
+                    else None
+                ),
+                previous=previous_decision_v4(
+                    session,
+                    symbol=item.symbol,
+                    day_ny=scheduled_ny,
+                    context=context,
+                    before=scheduled_ny,
+                ),
+                entry_checks=(
+                    checks_at_entry(entry_decision)
+                    if context == "held"
+                    else None
+                ),
+                names=symbol_names(self.config, session),
+                calendar=self.calendar,
+                config=self.config,
+                cycle_time_ny=scheduled_ny,
+                last_cycle=last_cycle,
+                db_session=session,
+            )
+            snapshot_json.update(v2.fields)
+        elif self.decide.spec.is_v4:
             entry_decision = (
                 session.get(Decision, position.entry_decision_id)
                 if context == "held"
@@ -974,28 +1141,36 @@ class CycleRunner:
         checks_blocked: str | None = None
         if (
             context == "candidate"
-            and self.decide.spec.is_v4
             and v2 is not None
             and v2.fields["options"]
-            and v4_config(self.config).checks_gate
         ):
-            snap_checks = v2.fields.get("checks") or {}
-            failing = [
-                name
-                for name, bad in (
-                    ("trend_1h", snap_checks.get("trend_1h") != "up"),
-                    ("regime_trend", snap_checks.get("regime_trend") != "up"),
-                    ("trend_daily", snap_checks.get("trend_daily") == "down"),
-                )
-                if bad
-            ]
-            if failing:
-                checks_blocked = (
-                    "checks_gate: "
-                    + ", ".join(
-                        f"{name}={snap_checks.get(name)}" for name in failing
+            if self.decide.spec.is_v5 and v5_config(self.config).trend_gate:
+                # The v5 trend gate: the v4 checks_gate minus
+                # trend_daily, which stays a model call (docs/SPEC.md,
+                # Decision v5 — Trend gate in code).
+                checks_blocked = trend_gate_detail(v2.fields)
+            elif (
+                self.decide.spec.is_v4
+                and not self.decide.spec.is_v5
+                and v4_config(self.config).checks_gate
+            ):
+                snap_checks = v2.fields.get("checks") or {}
+                failing = [
+                    name
+                    for name, bad in (
+                        ("trend_1h", snap_checks.get("trend_1h") != "up"),
+                        ("regime_trend", snap_checks.get("regime_trend") != "up"),
+                        ("trend_daily", snap_checks.get("trend_daily") == "down"),
                     )
-                )
+                    if bad
+                ]
+                if failing:
+                    checks_blocked = (
+                        "checks_gate: "
+                        + ", ".join(
+                            f"{name}={snap_checks.get(name)}" for name in failing
+                        )
+                    )
         if checks_blocked is not None:
             decision = self.decide.record_no_call(
                 session,
@@ -1006,6 +1181,28 @@ class CycleRunner:
                 rules=item.rules,
                 reason="checks",
                 detail=checks_blocked,
+                v2=v2,
+            )
+        elif (
+            context == "candidate"
+            and price_reason is not None
+        ):
+            # An unusable market price means no new entries this
+            # cycle — and no model call, so the cap slot stays free
+            # for the next one. Held positions are always reviewed.
+            # The built options go with the row as counterfactuals
+            # (docs/SPEC.md, Decision v5 — Counterfactual touches).
+            ev(logger, logging.WARNING, "cycle.price_blocked",
+               f"{item.symbol}: {price_reason}", symbol=item.symbol)
+            decision = self.decide.record_no_call(
+                session,
+                cycle_id=cycle_id,
+                symbol=item.symbol,
+                context=context,
+                snapshot_json=snapshot_json,
+                rules=item.rules,
+                reason=price_reason,
+                detail=price_reason,
                 v2=v2,
             )
         elif (
@@ -1027,22 +1224,6 @@ class CycleRunner:
                 reason="no_options",
                 detail=v2.reason or "no option met the rules",
                 v2=v2,
-            )
-        elif price_reason is not None and context == "candidate":
-            # An unusable market price means no new entries this
-            # cycle — and no model call, so the cap slot stays free
-            # for the next one. Held positions are always reviewed.
-            ev(logger, logging.WARNING, "cycle.price_blocked",
-               f"{item.symbol}: {price_reason}", symbol=item.symbol)
-            decision = self.decide.record_no_call(
-                session,
-                cycle_id=cycle_id,
-                symbol=item.symbol,
-                context=context,
-                snapshot_json=snapshot_json,
-                rules=item.rules,
-                reason=price_reason,
-                detail=price_reason,
             )
         else:
             report.calls += 1
