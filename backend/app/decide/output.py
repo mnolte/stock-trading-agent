@@ -1568,6 +1568,13 @@ def validate_model_output_v3(
 
 _PATH_WORD_RE = re.compile(r"\b(clear|open|easy|manageable)\b", re.IGNORECASE)
 _PATH_NOUN_RE = re.compile(r"\b(path|way|room)\b", re.IGNORECASE)
+# decision.v5 widens the path claim: "has room", "room to run",
+# "plenty of room" and "free run" count as claims too (docs/SPEC.md,
+# Decision v5 — Code checks).
+_PATH_V5_RE = re.compile(
+    r"\b(has|plenty\s+of)\s+room\b|\broom\s+to\s+run\b|\bfree\s+run\b",
+    re.IGNORECASE,
+)
 
 
 def _v4_text_parts(output: ModelOutputV4) -> list[str]:
@@ -1599,13 +1606,16 @@ def _claim_checks_v4(
     context: str,
     snapshot: dict[str, Any],
     chosen: dict[str, Any] | None,
+    v5: bool = False,
 ) -> ExplanationCheck:
     """The v4 claim checks (docs/SPEC.md, Decision v4 — Code checks).
 
     v3's locks-in and stop/target level checks, plus the path claim: a
     sentence calling the path "clear", "open", "easy" or "manageable"
     fails while the chosen option (held: ``levels_to_target``) has a
-    level within 1 ATR. Never changes the decision.
+    level within 1 ATR. decision.v5 widens the claim to "has room",
+    "room to run", "plenty of room" and "free run". Never changes the
+    decision.
     """
     base = _claim_checks(
         [
@@ -1640,7 +1650,10 @@ def _claim_checks_v4(
         for part in _v4_text_parts(output):
             for match in _SENTENCE_RE.finditer(part):
                 sentence = match.group(0)
-                if _PATH_WORD_RE.search(sentence) and _PATH_NOUN_RE.search(sentence):
+                if (
+                    _PATH_WORD_RE.search(sentence)
+                    and _PATH_NOUN_RE.search(sentence)
+                ) or (v5 and _PATH_V5_RE.search(sentence)):
                     bad.append("path claim")
                     kinds.append("path")
     seen: set[str] = set()
@@ -1679,6 +1692,7 @@ def validate_model_output_v4(
     current_stop: Decimal | None,
     call_error: str | None = None,
     config: AppConfig,
+    v5: bool = False,
 ) -> ValidationResult:
     """Parse a decision.v4 answer and run the v4 code checks.
 
@@ -1687,7 +1701,19 @@ def validate_model_output_v4(
     guard (``flip_flop``), confidence sanity (``confidence_outlier``),
     unresolved conflicts (``unresolved_conflict``) and path claims —
     these warn, never gate.
+
+    ``v5=True`` runs the same checks under decision.v5's contract: the
+    expected-value entry gate (``decision.entry_gate``, default ``ev``
+    for v5), the wider path claim and the ``hold_below_breakeven``
+    warning (docs/SPEC.md, Decision v5).
     """
+    from app.decide.v5 import (
+        entry_gate,
+        min_confidence_ev,
+        min_ev_r,
+        v5_config,
+    )
+
     allowed = CANDIDATE_ACTIONS if context == "candidate" else HELD_ACTIONS
     min_conf = float(config.get("decision", "min_confidence_enter", default=0.55))
     min_edge = float(config.get("decision", "v3", "min_edge", default=0.10))
@@ -1703,6 +1729,9 @@ def validate_model_output_v4(
     flip_min = float(
         config.get("decision", "v4", "flip_min_move_atr", default=0.5)
     )
+    gate = entry_gate(config, v5=v5)
+    ev_r = min_ev_r(config)
+    v5_cfg = v5_config(config) if v5 else None
 
     def invalid(error: str, output: ModelOutputV4 | None = None) -> ValidationResult:
         return ValidationResult(
@@ -1766,7 +1795,9 @@ def validate_model_output_v4(
         output.best_option_id = None
 
     explanation = check_explanation_v4(output, snapshot, chosen)
-    claims = _claim_checks_v4(output, context=context, snapshot=snapshot, chosen=chosen)
+    claims = _claim_checks_v4(
+        output, context=context, snapshot=snapshot, chosen=chosen, v5=v5
+    )
     claims_check = CodeCheck(
         "Claim checks",
         passed=claims.passed,
@@ -1846,6 +1877,33 @@ def validate_model_output_v4(
             )
     elif best_missing:
         warnings.append("best_option_missing")
+    if v5 and context == "held" and output.action == "hold" and v5_cfg is not None:
+        # Exit consistency (docs/SPEC.md, Decision v5 — Code checks): a
+        # hold below neutral − exit_margin, or overnight below neutral +
+        # overnight_margin with the stop inside a typical gap, is the
+        # hold_below_breakeven warning — never a gate.
+        position = snapshot.get("position") or {}
+        neutral = _decimal_or_none(position.get("neutral_probability"))
+        gap = _decimal_or_none(
+            (snapshot.get("overnight") or {}).get("gap_p90_atr")
+        )
+        stop_dist = _decimal_or_none(position.get("stop_distance_atr"))
+        conf = Decimal(str(output.confidence))
+        if neutral is not None and (
+            conf < neutral - v5_cfg.exit_margin
+            or (
+                bool((snapshot.get("session") or {}).get("last_cycle"))
+                and gap is not None
+                and stop_dist is not None
+                and stop_dist < gap
+                and conf < neutral + v5_cfg.overnight_margin
+            )
+            or (
+                position.get("thesis_holds") is False
+                and conf > neutral
+            )
+        ):
+            warnings.append("hold_below_breakeven")
     confidence_check = CodeCheck(
         "Confidence sanity",
         passed="confidence_outlier" not in warnings,
@@ -1945,19 +2003,44 @@ def validate_model_output_v4(
             )
         )
         breakeven = _decimal_or_none(chosen.get("breakeven_confidence"))
-        required = max(min_conf, float(breakeven or 0) + min_edge)
-        checks.append(
-            CodeCheck(
-                f"Confidence ≥ max({_fmt(Decimal(str(min_conf)))}, "
-                f"break-even + {_fmt(Decimal(str(min_edge)))})",
-                passed=output.confidence >= required,
-                detail=(
-                    f"{output.confidence} ≥ max({_fmt(Decimal(str(min_conf)))}, "
-                    f"{_fmt(Decimal(str(required)))})"
-                ),
-                value=_fmt(_decimal_or_none(output.confidence)),
+        if gate == "ev":
+            # The ev gate: per-option min_confidence =
+            # (1 + min_ev_r) / (1 + rr), rounded up to 2 (docs/SPEC.md,
+            # Decision v5 — Entry gate on expected value). The stored
+            # field wins when present (v5 snapshots); v4+ev rows compute
+            # it from the option's rr.
+            rr_dec = _decimal_or_none(chosen.get("rr"))
+            required_dec = _decimal_or_none(chosen.get("min_confidence"))
+            if required_dec is None:
+                required_dec = min_confidence_ev(rr_dec, ev_r)
+            required = float(required_dec) if required_dec is not None else None
+            checks.append(
+                CodeCheck(
+                    f"Confidence ≥ min_confidence {_fmt(required_dec)} "
+                    f"(ev ≥ {_fmt(ev_r)}R)",
+                    passed=required is not None and output.confidence >= required,
+                    detail=(
+                        f"{output.confidence} ≥ {_fmt(required_dec)}"
+                        if required_dec is not None
+                        else "no min_confidence"
+                    ),
+                    value=_fmt(_decimal_or_none(output.confidence)),
+                )
             )
-        )
+        else:
+            required = max(min_conf, float(breakeven or 0) + min_edge)
+            checks.append(
+                CodeCheck(
+                    f"Confidence ≥ max({_fmt(Decimal(str(min_conf)))}, "
+                    f"break-even + {_fmt(Decimal(str(min_edge)))})",
+                    passed=output.confidence >= required,
+                    detail=(
+                        f"{output.confidence} ≥ max({_fmt(Decimal(str(min_conf)))}, "
+                        f"{_fmt(Decimal(str(required)))})"
+                    ),
+                    value=_fmt(_decimal_or_none(output.confidence)),
+                )
+            )
         checks.append(confidence_check)
         checks.append(unresolved_check)
         # Flip-flop guard (docs/SPEC.md, Decision v4 — Code checks): a
@@ -2144,6 +2227,33 @@ def validate_model_output_v4(
         final_action=output.action, checks=checks, note="Valid",
         explanation=explanation, claims=claims,
         warnings=warnings, confidence_anchor=anchor_f,
+    )
+
+
+def validate_model_output_v5(
+    raw: str | None,
+    *,
+    symbol: str,
+    context: str,
+    snapshot: dict[str, Any],
+    atr_1h: Decimal | None,
+    current_stop: Decimal | None,
+    call_error: str | None = None,
+    config: AppConfig,
+) -> ValidationResult:
+    """decision.v5: the v4 schema and checks plus the expected-value
+    entry gate (default), the wider path claim and
+    ``hold_below_breakeven`` (docs/SPEC.md, Decision v5 — Code checks)."""
+    return validate_model_output_v4(
+        raw,
+        symbol=symbol,
+        context=context,
+        snapshot=snapshot,
+        atr_1h=atr_1h,
+        current_stop=current_stop,
+        call_error=call_error,
+        config=config,
+        v5=True,
     )
 
 

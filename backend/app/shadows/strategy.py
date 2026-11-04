@@ -66,6 +66,13 @@ OVERRIDE_V3: dict[str, tuple[str, ...]] = {
 OVERRIDE_V4: dict[str, tuple[str, ...]] = {
     "checks_gate": ("decision", "v4", "checks_gate"),
 }
+# Decision v5 (PR 37): ``entry_gate`` picks floor or the expected-value
+# gate per strategy; ``trend_gate`` controls whether a candidate
+# without trend_1h and regime up gets no model call.
+OVERRIDE_V5: dict[str, tuple[str, ...]] = {
+    "entry_gate": ("decision", "entry_gate"),
+    "trend_gate": ("decision", "v5", "trend_gate"),
+}
 # Entry selection (PR 33): a shadow can test expected_profit next to
 # live. ``last_slot_min_ev_r`` may be overridden to None (off).
 OVERRIDE_SELECTION: dict[str, tuple[str, ...]] = {
@@ -121,7 +128,13 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
             value = getattr(strategy, attr)
             if value is not None:
                 tree.setdefault(section, {})[key] = value
-    for name, value in (strategy.overrides or {}).items():
+    # decision.v5 defaults to the expected-value gate (docs/SPEC.md,
+    # Decision v5 — entry_gate is floor for v1–v4, ev for v5). An
+    # explicit strategy override still wins.
+    overrides = strategy.overrides or {}
+    if strategy.prompt_version == "decision.v5" and "entry_gate" not in overrides:
+        tree.setdefault("decision", {})["entry_gate"] = "ev"
+    for name, value in overrides.items():
         if name == "entry_cycles" and isinstance(value, list) and value:
             tree.setdefault("rules", {})["entry_cycles"] = value
             continue
@@ -142,6 +155,10 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
         v4 = OVERRIDE_V4.get(name)
         if v4 is not None and value is not None:
             _tree_set(tree, v4, value)
+            continue
+        v5 = OVERRIDE_V5.get(name)
+        if v5 is not None and value is not None:
+            _tree_set(tree, v5, value)
     return tree
 
 
@@ -231,7 +248,7 @@ def differences(config: AppConfig, strategy: Strategy) -> dict[str, Any]:
                 "shadow": _fmt(shadow_value),
             }
         )
-    for name, path in OVERRIDE_V4.items():
+    for name, path in OVERRIDE_V4.items() | OVERRIDE_V5.items():
         if strategy.overrides is None or name not in (strategy.overrides or {}):
             continue
         live_value = config.get(*path)
@@ -417,6 +434,24 @@ def validate_new_strategy(
                     if not isinstance(value, bool):
                         errors.append(
                             "decision.v4.checks_gate: must be true or false"
+                        )
+                        continue
+                    overrides[str(item)] = value
+                    continue
+                v5_path = OVERRIDE_V5.get(str(item))
+                if v5_path is not None:
+                    if kind == "rules_only":
+                        continue
+                    label = ".".join(v5_path)
+                    if item == "entry_gate":
+                        if value not in ("floor", "ev"):
+                            errors.append(
+                                f"{label}: must be floor or ev"
+                            )
+                            continue
+                    elif not isinstance(value, bool):
+                        errors.append(
+                            f"{label}: must be true or false"
                         )
                         continue
                     overrides[str(item)] = value
