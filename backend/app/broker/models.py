@@ -52,6 +52,9 @@ class BrokerPosition:
     avg_entry_price: Decimal
     current_price: Decimal | None
     market_value: Decimal | None
+    # Shares free to sell: qty minus what open sell orders hold
+    # (Alpaca's held_for_orders). None when the broker doesn't report it.
+    qty_available: int | None = None
 
 
 @dataclass(frozen=True)

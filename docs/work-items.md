@@ -85,6 +85,7 @@ The examples use 099 as a made-up number.
 | 036 | feat | Ask the agent | `pr-36.md` | #91, #92 | #98, #99 | merged |
 | 037 | feat | Decision v5 | `pr-37.md` | #103, #105 | #106 | merged |
 | 038 | spec | Naming convention for work items | — | #107 | — | planned |
+| 039 | fix | Protective stop repair | — | — | #111 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
 

@@ -13,6 +13,7 @@ without a resend.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -96,6 +97,12 @@ class FakeBroker:
         self.non_tradable: set[str] = set()
         # get_asset reports these company names (Alpaca's asset name).
         self.asset_names: dict[str, str] = {}
+        # Position reads report qty_available = 0 this many more times —
+        # Alpaca's held_for_orders release lag after a cancel (KO, 4 Nov).
+        self.hold_release_lag: dict[str, int] = {}
+        # Sell submits check the available qty like Alpaca does and get
+        # the same "insufficient qty" rejection when it's short.
+        self.enforce_available = False
         self._stream_started = False
 
     # ------------------------------------------------------------------
@@ -134,6 +141,81 @@ class FakeBroker:
             mark = self.prices.get(symbol, pos.avg_entry_price)
             value += mark * pos.qty
         return value
+
+    def _held(self, symbol: str) -> int:
+        """Shares live sell orders hold — Alpaca's held_for_orders.
+
+        An order and its legs hold the same shares once: a bracket's
+        stop and target are alternatives for one lot, and an OCO parent
+        with its legs is one order. Group by the top order and take the
+        largest open remainder per group.
+        """
+        groups: dict[str, int] = {}
+        for rec in self.orders.values():
+            if (
+                rec.symbol != symbol
+                or rec.side != "sell"
+                or rec.status not in OPEN_ORDER_STATUSES
+                # A `held` leg belongs to an unfilled parent — no
+                # shares to hold yet.
+                or rec.status == "held"
+            ):
+                continue
+            key = rec.parent_id or rec.id
+            groups[key] = max(
+                groups.get(key, 0), rec.qty - rec.filled_qty
+            )
+        return sum(groups.values())
+
+    def _available(self, symbol: str, qty: int) -> int:
+        """Shares free to sell right now (qty − held), floored at 0."""
+        return max(0, qty - self._held(symbol))
+
+    def _read_available(self, symbol: str, qty: int) -> int:
+        """Available qty on a position read, honouring hold_release_lag."""
+        lag = self.hold_release_lag.get(symbol, 0)
+        if lag > 0:
+            self.hold_release_lag[symbol] = lag - 1
+            return 0
+        return self._available(symbol, qty)
+
+    def _insufficient_qty(
+        self, symbol: str, qty: int
+    ) -> DataResult[BrokerOrder] | None:
+        """Alpaca's rejection when a sell asks for more than is free."""
+        if not self.enforce_available:
+            return None
+        pos = self.positions.get(symbol)
+        existing = pos.qty if pos is not None else 0
+        held = self._held(symbol)
+        available = max(0, existing - held)
+        if qty <= available:
+            return None
+        related = [
+            rec.id
+            for rec in self.orders.values()
+            if rec.symbol == symbol
+            and rec.side == "sell"
+            and rec.status in OPEN_ORDER_STATUSES
+            and rec.status != "held"
+        ]
+        error = json.dumps(
+            {
+                "available": str(available),
+                "code": 40310000,
+                "existing_qty": str(existing),
+                "held_for_orders": str(held),
+                "message": (
+                    "insufficient qty available for order "
+                    f"(requested: {qty}, available: {available})"
+                ),
+                "related_orders": related,
+                "symbol": symbol,
+            }
+        )
+        return DataResult(
+            data=None, error=error, source="fake"  # type: ignore[arg-type]
+        )
 
     def _duplicate_client_id(self, client_order_id: str) -> bool:
         # Alpaca enforces client_order_id uniqueness account-wide,
@@ -237,6 +319,7 @@ class FakeBroker:
                     market_value=(
                         self.prices.get(symbol, pos.avg_entry_price) * pos.qty
                     ),
+                    qty_available=self._available(symbol, pos.qty),
                 )
                 for symbol, pos in self.positions.items()
             ],
@@ -260,6 +343,7 @@ class FakeBroker:
                 avg_entry_price=pos.avg_entry_price,
                 current_price=self.prices.get(symbol),
                 market_value=self.prices.get(symbol, pos.avg_entry_price) * pos.qty,
+                qty_available=self._read_available(symbol, pos.qty),
             ),
             source="fake",
         )
@@ -408,6 +492,9 @@ class FakeBroker:
                 error="client_order_id must be unique",
                 source="fake",
             )
+        rejected = self._insufficient_qty(symbol, qty)
+        if rejected is not None:
+            return rejected
         now = self._now()
         rec = _OrderRec(
             id=self._next_id(),
@@ -449,6 +536,9 @@ class FakeBroker:
                 error="client_order_id must be unique",
                 source="fake",
             )
+        rejected = self._insufficient_qty(symbol, qty)
+        if rejected is not None:
+            return rejected
         now = self._now()
         parent = _OrderRec(
             id=self._next_id(),
@@ -510,6 +600,9 @@ class FakeBroker:
                 error="client_order_id must be unique",
                 source="fake",
             )
+        rejected = self._insufficient_qty(symbol, qty)
+        if rejected is not None:
+            return rejected
         now = self._now()
         rec = _OrderRec(
             id=self._next_id(),
@@ -600,6 +693,25 @@ class FakeBroker:
         if not self.cancel_stuck:
             rec.status = "canceled"
             rec.updated_at = self._now()
+            # Cancelling a parent cancels its legs; a leg going dead
+            # with no working sibling ends the parent (Alpaca OCO).
+            for leg_id in rec.legs:
+                leg = self.orders[leg_id]
+                if leg.status in OPEN_ORDER_STATUSES:
+                    leg.status = "canceled"
+                    leg.updated_at = self._now()
+            if rec.parent_id is not None:
+                parent = self.orders.get(rec.parent_id)
+                if parent is not None:
+                    # OCO legs are siblings: one dying cancels the rest,
+                    # and the parent ends with no leg left working.
+                    for sib_id in parent.legs:
+                        sib = self.orders[sib_id]
+                        if sib.id != rec.id and sib.status in OPEN_ORDER_STATUSES:
+                            sib.status = "canceled"
+                            sib.updated_at = self._now()
+                    parent.status = "canceled"
+                    parent.updated_at = self._now()
             await self._emit(rec, "canceled")
         return DataResult(data=None, source="fake")
 
