@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-11-04 — Verdict outcome line shows the profit or loss
+
+The outcome line on a verdict carried no number for every call that
+offered options — all current drafts are skips with options, so a row
+read "A, B, C: stops first or never filled" with nothing on what the
+call made or lost. The stored `pct_5sessions` fact now ends every
+options-based line ("… · −10.5% after 5 sessions"), and a real trade's
+dollar P&L sits next to its R ("filled · stop first · −1.0R ·
+−$152.30"; an open trade gets the 5-session move instead). The
+decision drawer's verdict block now renders the same outcome line the
+Reviews row shows, per the spec's "shows the same".
+
 ## 2026-11-04 — Number check: identifiers are not figures
 
 The verdict number check failed every model text that named a

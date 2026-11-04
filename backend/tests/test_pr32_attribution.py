@@ -851,7 +851,10 @@ def test_verdicts_api_carries_call_change_and_thesis(
     assert item["changed_by_code"] is True
     assert item["change_reason"] == "Reward to risk ≥ 1.5"
     assert item["change_text"] is not None
-    assert item["outcome"] == "option B reached its target first"
+    assert (
+        item["outcome"]
+        == "option B reached its target first · +1.0% after 5 sessions"
+    )
     assert item["label_by_code"] is True
     assert item["thesis_check"] == "contradicts"
     assert item["contradiction"] is not None
@@ -901,6 +904,96 @@ def test_verdicts_api_v1_row_has_no_thesis(client: TestClient) -> None:
     assert item["thesis_check"] is None
     assert item["label_by_code"] is False
     assert "+3.0% after 5 sessions" in (item["outcome"] or "")
+
+
+def test_verdicts_api_options_outcome_carries_5session_move(
+    client: TestClient,
+) -> None:
+    """A skip whose options all hit their stops: the touch text and the
+    5-session move both show on the outcome line."""
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        decision = _seed_decision(
+            session,
+            _ny(date(2026, 10, 15)),
+            symbol="XOM",
+            model_action="skip",
+            final_action="skip",
+            price=420.0,
+            price_5sessions="415.00",
+            options=[{"id": "A"}, {"id": "B"}],
+            option_touches={"A": "stop", "B": "stop"},
+        )
+        session.add(
+            Verdict(
+                decision_id=decision.id,
+                verdict="good_call",
+                reason="Model skipped; every option hit its stop.",
+                source="draft",
+                draft_source="model",
+                created_at=datetime(2026, 10, 22, 12, 0),
+                updated_at=datetime(2026, 10, 22, 12, 0),
+            )
+        )
+        session.commit()
+
+    items = client.get("/api/verdicts?status=draft").json()["items"]
+    item = next(i for i in items if i["symbol"] == "XOM")
+    assert (
+        item["outcome"]
+        == "A, B: stops first or never filled · -1.2% after 5 sessions"
+    )
+
+
+def test_verdicts_api_trade_outcome_carries_dollar_pnl(
+    client: TestClient,
+) -> None:
+    """A closed trade shows its R and its dollar P&L on the outcome line."""
+    from app.db.base import get_session_maker
+
+    with get_session_maker()() as session:
+        decision = _seed_decision(
+            session,
+            _ny(date(2026, 10, 15)),
+            symbol="CAT",
+            model_action="enter",
+            final_action="enter",
+            option_id="A",
+            price=100.0,
+            price_5sessions="106.00",
+            options=[{"id": "A", "entry": 100, "stop": 97, "target": 106}],
+            option_touches={"A": "target"},
+            first_touch="target",
+        )
+        decision.model_output = {
+            **(decision.model_output or {}),
+            "stop_price": 97.0,
+        }
+        _seed_position(
+            session,
+            decision,
+            opened=_naive(_ny(date(2026, 10, 15))),
+            closed=_naive(_ny(date(2026, 10, 20))),
+            pnl="45.00",
+            exit_reason="target",
+        )
+        session.add(
+            Verdict(
+                decision_id=decision.id,
+                verdict="good_call",
+                reason="Model entered on A; the target was reached.",
+                source="draft",
+                draft_source="model",
+                created_at=datetime(2026, 10, 22, 12, 0),
+                updated_at=datetime(2026, 10, 22, 12, 0),
+            )
+        )
+        session.commit()
+
+    items = client.get("/api/verdicts?status=draft").json()["items"]
+    item = next(i for i in items if i["symbol"] == "CAT")
+    assert item["outcome"] == "filled · target first · +1.5R · +$45.00"
 
 
 # ----------------------------------------------------------------------

@@ -4927,12 +4927,19 @@ def _verdict_outcome(
 ) -> str | None:
     """The one-line outcome next to a draft verdict (design Reviews:
     "option B reached its target first", "filled · stop first · −1.0R",
-    "A, B, C: none reached stop or target")."""
+    "A, B, C: none reached stop or target"). The 5-session move (or the
+    trade's own P&L) always ends the line so the verdict shows what the
+    call made or lost."""
     n = facts.get("sessions", 5)
     trade = facts.get("trade")
     action = facts.get("model_action") or facts.get("final_action")
     options = [o for o in facts.get("options") or [] if isinstance(o, dict)]
     option_id = facts.get("option_id")
+    pct = facts.get("pct_5sessions")
+    move = f"{float(pct):+.1f}% after {n} sessions" if pct is not None else None
+
+    def with_move(text: str) -> str:
+        return f"{text} · {move}" if move is not None else text
 
     if action == "enter":
         if trade is not None:
@@ -4943,8 +4950,16 @@ def _verdict_outcome(
             r = trade.get("r")
             if r is not None:
                 bits.append(f"{float(r):+.1f}R")
-            elif trade.get("open"):
+            pnl = trade.get("pnl_usd")
+            if pnl is not None:
+                bits.append(
+                    f"{'+' if float(pnl) >= 0 else '-'}"
+                    f"${abs(float(pnl)):,.2f}"
+                )
+            if trade.get("open"):
                 bits.append("still open")
+                if move is not None:
+                    bits.append(move)
             return " · ".join(bits)
         chosen = next(
             (
@@ -4958,37 +4973,36 @@ def _verdict_outcome(
         touch = chosen.get("touch") if chosen is not None else None
         label = f"option {option_id}" if option_id is not None else "the entry"
         if touch in ("target", "stop"):
-            return f"{label} reached its {touch} first"
+            return with_move(f"{label} reached its {touch} first")
         if touch == "not_filled":
-            return f"{label} never filled"
+            return with_move(f"{label} never filled")
         if touch == "neither":
-            return f"{label}: neither stop nor target in {n} sessions"
+            return with_move(f"{label}: neither stop nor target in {n} sessions")
         if facts.get("execution") == "not_sent":
-            return "never sent — blocked by code"
+            return with_move("never sent — blocked by code")
         if facts.get("execution") == "not_filled":
-            return "the order never filled"
-        return f"{label}: outcome unknown"
+            return with_move("the order never filled")
+        return with_move(f"{label}: outcome unknown")
 
     if options:
         touches = [o.get("touch") for o in options]
         ids = ", ".join(str(o.get("option_id")) for o in options)
         targets = sum(1 for t in touches if t == "target")
         if targets:
-            return (
+            return with_move(
                 f"{targets} of {len(touches)} option"
                 f"{'s' if len(touches) != 1 else ''} reached a target first"
             )
         if all(t == "neither" for t in touches):
-            return f"{ids}: none reached stop or target"
+            return with_move(f"{ids}: none reached stop or target")
         if all(t in ("stop", "not_filled") for t in touches):
-            return f"{ids}: stops first or never filled"
-        return f"{ids}: mixed or unknown outcomes"
+            return with_move(f"{ids}: stops first or never filled")
+        return with_move(f"{ids}: mixed or unknown outcomes")
 
-    pct = facts.get("pct_5sessions")
     if pct is None:
         return None
     suffix = " · open" if trade is not None and trade.get("open") else ""
-    return f"{float(pct):+.1f}% after {n} sessions{suffix}"
+    return f"{move}{suffix}"
 
 
 def _decision_call(
