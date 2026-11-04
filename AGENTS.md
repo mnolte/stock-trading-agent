@@ -11,7 +11,13 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 
 ## How to work
 
-- One build step per PR, in the order of `docs/SPEC.md` → Build plan. Don't start the next step in the same PR.
+- One work item per PR. Don't start the next item in the same PR.
+- **Names** (`docs/work-items.md`):
+  - branch `type/NNN-slug` (for example `fix/099-ko-overnight-exit`);
+  - PR title `[NNN] type: Title`;
+  - commits start with `[NNN]`;
+  - screenshots in `docs/screenshots/NNN/`.
+  Take the number and name from the kickoff's file name. When you open or merge the PR, update the item's row in `docs/work-items.md` (build PR and status).
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.
 - Every behaviour change updates `docs/SPEC.md` (only when asked to) and adds an entry to `docs/CHANGES.md`.
@@ -68,5 +74,5 @@ For isolated decision-drawer browser checks, run `cd frontend && E2E_DRAWER_ONLY
 - Add shorting, options, margin, fractional shares or extended-hours trading.
 - Use Alpaca's clock-hour bars for signals; build session-aligned 1h bars from 5-minute bars.
 - Edit `docs/SPEC.md` or the design files on your own initiative.
-- Write anything into `design/`. PR screenshots go in `docs/screenshots/pr-<n>/`.
+- Write anything into `design/`. PR screenshots go in `docs/screenshots/NNN/` (`docs/screenshots/pr-<n>/` for items up to 037).
 - Mark a step done while tests fail or are skipped.
