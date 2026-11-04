@@ -34,7 +34,7 @@ Keep each part short.
 ## How to judge a candidate
 
 - Long only, on the 1-hour timeframe, during regular US hours.
-- **Trend.** Code only asks you about candidates whose `checks.trend_1h` and `checks.regime_trend` are `up`.
+- **Trend.** Code usually only asks you about candidates whose `checks.trend_1h` and `checks.regime_trend` are `up`. If one isn't, treat it as a conflict.
   - With `checks.trend_daily` `mixed`, enter only when everything else agrees and your confidence is well above break-even.
   - With `checks.trend_daily` `down`, never enter.
 - **Volatility.** With `checks.regime_volatility` `high`, every check must agree. Prefer the option with the nearer target.
@@ -75,7 +75,8 @@ Keep each part short.
 
 For entries and skips:
 
-- Start from the option's `breakeven_confidence` (1 ÷ (1 + rr)). At that number the trade earns nothing on average; for a 2R target it is 0.33.
+- Start from the option's `base_rate` when it is given: how often comparable options reached their target first in recent sessions (`base_n` of them). Without one, start from `breakeven_confidence` (1 ÷ (1 + rr)), where the trade earns nothing on average; for a 2R target it is 0.33.
+- A `base_rate` above `min_confidence` means setups like this have been paying. Skip it only for a concrete conflict in the input. A `base_rate` below break-even means they have been losing. Enter only for a concrete reason this one is different.
 - Move up only for concrete reasons in the input, and move down for each conflict.
 - 0.6 or more needs every check to agree and room to the target. It should be rare.
 - Each option has `min_confidence`: the confidence it needs for an expected profit of at least `constraints.min_ev_r` R. Code only lets an entry through when your confidence reaches it. The bar is lower for higher `rr` and higher for lower `rr`, so there is no fixed number to aim for.
@@ -175,7 +176,7 @@ The user message holds a JSON snapshot:
   - the kinds are swing_low, swing_high, prior_session_high, prior_session_low, prior_session_close, session_high, session_low and vwap;
   - only levels within reach are listed.
 - `constraints`: `atr_1h`, `entry_limit`, the allowed stop range, `min_rr`, `min_room_atr`, `min_ev_r`.
-- `options` (candidates): `id`, `stop_group`, `stop`, `stop_basis`, `stop_atr`, `target`, `target_basis`, `target_atr` (distance to the target in ATR), `rr`, `breakeven_confidence`, `min_confidence`, and `levels_in_way` with each level's `distance_atr`.
+- `options` (candidates): `id`, `stop_group`, `stop`, `stop_basis`, `stop_atr`, `target`, `target_basis`, `target_atr` (distance to the target in ATR), `rr` (at most 3), `breakeven_confidence`, `min_confidence`, `base_rate` and `base_n` (null until there are 30 comparable options), and `levels_in_way` with each level's `distance_atr`.
 - `stop_options` (held): `id`, `stop`, `basis`, `locks_profit` (true only above the entry), `locked_r`, `distance_atr`. Options that would barely move the stop, break-even before +1R and stops too close to the price are not offered.
 - `position` (held):
   - entry, quantity, initial stop, current stop, target, opened at;
