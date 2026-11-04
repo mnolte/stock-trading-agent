@@ -86,6 +86,7 @@ The examples use 099 as a made-up number.
 | 037 | feat | Decision v5 | `pr-37.md` | #103, #105 | #106 | merged |
 | 038 | spec | Naming convention for work items | — | #107 | — | planned |
 | 039 | fix | Protective stop repair | — | — | #111, #112 | building |
+| 040 | fix | EP shadow gate_detail crash | — | — | — | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
 

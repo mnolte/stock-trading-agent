@@ -137,14 +137,15 @@ def _strategy(
     sf: sessionmaker[Session],
     name: str,
     kind: str = "llm",
-    overrides: dict[str, float] | None = None,
+    overrides: dict[str, Any] | None = None,
     status: str = "active",
+    prompt_version: str = "decision.v1",
 ) -> int:
     with sf() as session:
         s = Strategy(
             name=name,
             kind=kind,
-            prompt_version="decision.v1" if kind == "llm" else None,
+            prompt_version=prompt_version if kind == "llm" else None,
             model="gpt-4o-mini" if kind == "llm" else None,
             temperature=0.0 if kind == "llm" else None,
             overrides=overrides,
@@ -520,6 +521,115 @@ async def test_shadow_sizes_on_final_limit_not_snapshot_ask(sf: sessionmaker[Ses
     sizing = gates["sizing"]
     assert isinstance(sizing, dict)
     assert sizing["shares"] == position.qty
+
+
+# ----------------------------------------------------------------------
+# expected_profit selection mode (docs/SPEC.md, Entry selection)
+
+
+# A valid decision.v4/v5 answer: conflicts are {text, outweighed_by}
+# objects and best_option_id names the picked option.
+_V4_ENTER: dict[str, Any] = {
+    "symbol": "MSFT",
+    "conflicts": [],
+    "data_flags": [],
+    "thesis": "MSFT: trend continuation.",
+    "what_changed": None,
+    "action": "enter",
+    "option_id": "A",
+    "best_option_id": "A",
+    "confidence": 0.7,
+    "levels_used": [],
+    "news_used": [],
+}
+
+
+@pytest.mark.parametrize(
+    ("prompt_version", "overrides", "response"),
+    [
+        ("decision.v2", {"selection_mode": "expected_profit"}, None),
+        ("decision.v3", {"selection_mode": "expected_profit"}, None),
+        # checks_gate defaults to false: no gate branch runs.
+        ("decision.v4", {"selection_mode": "expected_profit"}, _V4_ENTER),
+        (
+            "decision.v5",
+            {"selection_mode": "expected_profit", "trend_gate": False},
+            _V4_ENTER,
+        ),
+    ],
+)
+async def test_ep_shadow_reaches_the_model_when_no_gate_applies(
+    sf: sessionmaker[Session],
+    prompt_version: str,
+    overrides: dict[str, Any],
+    response: dict[str, Any] | None,
+) -> None:
+    """Issue #110 regression: ``gate_detail`` was only bound inside the
+    v4/v5 gate branches, so an EP-mode candidate with options crashed
+    the whole shadow cycle whenever no branch ran."""
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT", price=102))])
+    name = f"EP · {prompt_version}"
+    sid = _strategy(sf, name, overrides=overrides, prompt_version=prompt_version)
+    report = await _runner(
+        sf,
+        FakeClock(CYCLE + timedelta(minutes=1)),
+        clients={
+            name: FakeDecisionClient(
+                enter_symbols={"MSFT"},
+                responses=(
+                    {"MSFT": json.dumps(response)} if response is not None else {}
+                ),
+            )
+        },
+    ).after_cycle(cycle_id)
+    row = _rows(sf, sid)["MSFT"]
+    assert report.strategies[0].calls == 1
+    assert row.final_action == "enter"
+    assert row.model_output is not None
+    assert (row.selection or {}).get("mode") == "expected_profit"
+    (position,) = _positions(sf, sid)
+    assert position.status == "pending"
+
+
+@pytest.mark.parametrize(
+    ("prompt_version", "overrides", "detail"),
+    [
+        (
+            "decision.v4",
+            {"selection_mode": "expected_profit", "checks_gate": True},
+            "checks_gate: trend_1h=mixed",
+        ),
+        (
+            "decision.v5",
+            {"selection_mode": "expected_profit"},
+            "trend_gate: trend_1h=mixed",
+        ),
+    ],
+)
+async def test_ep_shadow_gate_blocks_the_model_call(
+    sf: sessionmaker[Session],
+    prompt_version: str,
+    overrides: dict[str, Any],
+    detail: str,
+) -> None:
+    """The checks/trend gates fire in EP mode too: a failing candidate
+    gets ``no_call · checks`` and no model call (docs/SPEC.md, Decision
+    v4 — checks_gate; Decision v5 — Trend gate)."""
+    # The default snap's EMAs (price 100 under ema20 101) make trend_1h
+    # "mixed" while regime_trend and trend_daily stay "up".
+    cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
+    name = f"EP gate · {prompt_version}"
+    sid = _strategy(sf, name, overrides=overrides, prompt_version=prompt_version)
+    report = await _runner(
+        sf,
+        FakeClock(CYCLE + timedelta(minutes=1)),
+        clients={name: FakeDecisionClient(enter_symbols={"MSFT"})},
+    ).after_cycle(cycle_id)
+    row = _rows(sf, sid)["MSFT"]
+    assert row.final_action == "no_call"
+    assert row.no_call_reason == "checks"
+    assert (row.validation_result or {}).get("error") == detail
+    assert report.strategies[0].calls == 0
 
 
 async def test_rules_only_baseline_stop_two_atr_target_two_r(sf: sessionmaker[Session]) -> None:
@@ -987,7 +1097,7 @@ async def test_entry_cycles_override_blocks_entries_in_excluded_cycles(
     """PR 22: entry_cycles limits the cycles a shadow may enter in — an
     excluded cycle fails the rules before any model call."""
     cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
-    sid = _strategy(sf, "C · No 10:46", overrides={"entry_cycles": ["11:46"]})  # type: ignore[dict-item]
+    sid = _strategy(sf, "C · No 10:46", overrides={"entry_cycles": ["11:46"]})
     runner = _runner(
         sf,
         FakeClock(CYCLE + timedelta(minutes=1)),
@@ -1007,7 +1117,7 @@ async def test_entry_cycles_override_allows_listed_cycle(
     sf: sessionmaker[Session],
 ) -> None:
     cycle_id = _seed(sf, [("MSFT", "skip", None, _snap("MSFT"))])
-    sid = _strategy(sf, "C · 10:46 only", overrides={"entry_cycles": ["10:46"]})  # type: ignore[dict-item]
+    sid = _strategy(sf, "C · 10:46 only", overrides={"entry_cycles": ["10:46"]})
     runner = _runner(
         sf,
         FakeClock(CYCLE + timedelta(minutes=1)),
