@@ -1076,6 +1076,60 @@ async def test_partial_exit_remainder_gets_protective_stop(
         assert not _events(session, "protective_stop_failed")
 
 
+async def test_adopted_position_partial_sell_still_gets_stop(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """No entry order to compare against: an adopted position whose
+    shares shrank without a recorded exit fill (a foreign sale, or a
+    fill the stream never delivered) has the unexplained shrink
+    counted in exit_filled_qty when the broker sync runs — so the
+    cover check still repairs the remainder instead of skipping it."""
+    clock = FakeClock(NOW)
+    broker = FakeBroker(clock, prices={"KO": Decimal("95")})
+    broker.enforce_available = True
+    broker.positions["KO"] = _PosRec(qty=7, avg_entry_price=Decimal("95.37"))
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        # Adopted row: no entry order, and the sell fill was recorded
+        # without the stream's exit_filled_qty bookkeeping.
+        position = _open_position(
+            session, "KO", qty=21, entry="95.37", stop="94.22",
+            origin="adopted",
+        )
+        position.exit_filled_qty = 0
+        sell = Order(
+            alpaca_order_id="exit-KO",
+            symbol="KO", side="sell", order_type="market", leg="exit",
+            qty=21, status="canceled",
+            created_at=YESTERDAY, filled_at=YESTERDAY,
+        )
+        session.add(sell)
+        session.flush()
+        session.add(
+            Fill(
+                order_id=sell.id, qty=14, price=Decimal("95.48"),
+                filled_at=YESTERDAY,
+            )
+        )
+        session.commit()
+
+    report = await executor.reconcile()
+
+    assert report.protective_stops == ["KO"]
+    stops = [o for o in broker.orders.values() if o.order_type == "stop"]
+    assert len(stops) == 1
+    assert stops[0].qty == 7
+    with session_factory() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "KO")
+        ).scalar_one()
+        # The unexplained broker-side shrink counted toward the
+        # original size — that's what kept the cover check honest.
+        assert position.qty == 7
+        assert position.exit_filled_qty == 14
+        assert not _events(session, "protective_stop_failed")
+
+
 async def test_orphan_repair_waits_for_held_release(
     session_factory: sessionmaker[Session],
 ) -> None:

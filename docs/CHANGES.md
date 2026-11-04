@@ -33,6 +33,12 @@ remaining qty (7), so "sell fills already cover" fired on every pass.
 - The fake broker now models `held_for_orders` and `qty_available`
   (cancel cascade to legs included), with `hold_release_lag` and
   `enforce_available` knobs so tests replay the real rejection.
+- Follow-up: when the broker-qty sync shrinks a position by more than
+  recorded exit fills explain, the unexplained shrink now counts in
+  `exit_filled_qty` too — `qty + exit_filled_qty` is the original size
+  for every position, including adopted ones with no entry order, so
+  the cover check can't under-count after a foreign sale or a fill the
+  stream never delivered.
 
 ## 2026-11-04 — Verdict outcome line shows the profit or loss
 

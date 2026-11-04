@@ -1730,6 +1730,17 @@ class Executor:
                             {"kind": "qty_mismatch", "symbol": position.symbol,
                              "broker_qty": bp.qty, "db_qty": position.qty}, position,
                         )
+                        if bp.qty < position.qty:
+                            # Shares left the position no recorded exit
+                            # fill explains (a foreign sale, a fill the
+                            # stream never delivered). Count them as
+                            # applied sells so qty + exit_filled_qty
+                            # stays the original size — the protective
+                            # cover check depends on it for positions
+                            # with no entry order to compare against.
+                            position.exit_filled_qty += (
+                                position.qty - bp.qty
+                            )
                         position.qty = bp.qty
                         position.avg_entry_price = bp.avg_entry_price
             # Sell-side stops already open at the broker, per symbol.
