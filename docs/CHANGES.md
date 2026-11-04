@@ -2,6 +2,22 @@
 
 Newest first.
 
+## 2026-11-04 — Decision v5: fewer missed trades and fewer losing entries
+
+- From a second review of v4 against the data of 31 October, focused on missed opportunities and losing entries.
+- **Counterfactual touches** (every strategy):
+  - removed options are stored in full;
+  - candidates stopped by the rules pre-filter, the trend gate or the price checks get options built without a model call;
+  - all of them get option touches;
+  - Insights and replays show "What each filter removed".
+  Today the room filter and the pre-filter can't be judged at all.
+- **v5 additions:**
+  - per-option `base_rate`, the recent target-first rate of comparable options shrunk toward break-even, as the starting point for confidence;
+  - `max_rr` 3.0, since far targets reached their target first about 5% of the time;
+  - the trend gate becomes a strategy override, since one week of data went against it.
+- **Correction:** shadow H "no first-hour entries" was based on the Insights design's sample data (−0.18R over 31 trades at 10:46), not the run. It is replaced by "H · RSI ≤ 60": 7% target-first at RSI 60–70 against 23–24% below.
+- `prompts/decision.v5.md` (not yet used) updated for base rates and the softer trend wording; the PR 37 kickoff updated.
+
 ## 2026-11-04 — Decision v4: the code fixes of 3 November
 
 From the v4 review (`docs/analysis/2026-11-03-decision-v4-review.md`,

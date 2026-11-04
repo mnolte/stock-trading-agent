@@ -1787,14 +1787,35 @@ Decision v5 keeps everything v4 does and changes the following. Built as PR 37; 
 - `entry_gate` is `floor` (today's rule, the default for v1–v4) or `ev` (the default for v5). It is a strategy override, so a v4 shadow can test the gate alone.
 - Entry selection (PR 33) is unchanged and still discounts confidence by `confidence_weight`.
 
-**Trend gate in code** (v5). A candidate whose `trend_1h` or `regime_trend` isn't `up` gets no model call (`no_call` · `checks`). It is the v4 `checks_gate` with `trend_daily` left to the model. The prompt rule the model broke for KO becomes a rule it can't break.
+**Trend gate in code** (v5).
+- A candidate whose `trend_1h` or `regime_trend` isn't `up` gets no model call (`no_call` · `checks`). It is the v4 `checks_gate` with `trend_daily` left to the model. The prompt rule the model broke for KO becomes a rule it can't break.
+- `decision.v5.trend_gate` (default true) is a strategy override, because the one week of data so far went the other way: `trend_1h` up 14% target-first against mixed 24%. The counterfactual touches below measure what the gate removes.
+
+**Counterfactual touches** (every strategy, from PR 37). Missed opportunities can't be measured today: options removed by the room filter are stored as an id and a reason only, and candidates stopped by the rules pre-filter or a gate get no options at all.
+- Removed options are stored in full (stop, target, rr, basis, reason).
+- For every candidate stopped before the model by the rules pre-filter, the trend gate or the price checks, code builds the options anyway, with no model call. It stores them with the reason that stopped the candidate.
+- All of these get option touches like offered options.
+- Insights and the replay report gain "What each filter removed": per filter (each rules check, room, trend gate, the ev gate, spread, slots), the count, how many options reached the target first or the stop first, and the R they would have made.
+- Code-only and cheap: bars are already stored. Shadows and backtests do the same.
+
+**Base rates per option** (v5).
+- Each offered option gets `base_rate` and `base_n`: how often comparable options reached their target first in the last `decision.v5.base_rate_sessions` (60) sessions.
+- Comparable means the same rr bucket (≤ 2, 2–3), regime volatility and momentum. Only decided touches count (target or stop); offered and counterfactual options both count.
+- The rate is shrunk toward the option's break-even: (n × rate + 30 × break-even) ÷ (n + 30). It is shown only from `base_n` ≥ 30, and null before that.
+- The prompt starts confidence from `base_rate` when it is there, instead of from break-even. That is the main fix for both kinds of error: the model no longer has to guess a starting point, so honest setups pass the ev gate (fewer missed trades), and setups that have been losing start below their bar (fewer bad entries).
+
+**Far targets capped** (v5).
+- `decision.v5.max_rr` (3.0): options with a higher reward to risk are not built for v5.
+- On 31 October, options above 3R reached their target first about 5% of the time, against about 24% at 1.5–2R, and the model's only bad option choices were far targets.
+- The counterfactual touches keep measuring them.
 
 **Snapshot v5** (on top of v4):
 - **Session:** `session.last_cycle`, true in the session's last cycle.
 - **Overnight:** `overnight.gap_p90_atr`, the 90th percentile of |open − previous close| over the last 60 sessions, divided by the current 1-hour ATR, rounded to 2. From stored daily bars; null with fewer than 20 sessions.
 - **Options:**
   - `target_atr`: the distance from the entry limit to the target, in ATR;
-  - `min_confidence`: the per-option bar above.
+  - `min_confidence`: the per-option bar above;
+  - `base_rate` and `base_n` (see Base rates).
 - **Position** (held):
   - `price_vs_signal`: (price − signal bar close) ÷ ATR, rounded to 2. The checks are made on the last completed 1-hour bar, so this shows a move they don't show yet;
   - in `thesis_holds`, a fifth comparable check, `price_vs_ema20`. It counts as adverse when the price is now below the 1-hour EMA 20 and `price_vs_signal` ≤ −0.5.
@@ -1833,7 +1854,9 @@ Decision v5 keeps everything v4 does and changes the following. Built as PR 37; 
 **Shadows to start after PR 37** (Marc starts them):
 - "F · v5";
 - "G · v4 + ev gate", the gate alone;
-- "H · no first-hour entries", `entry_cycles` without 10:46. Insights showed −0.18R per trade over 31 trades at 10:46.
+- "H · RSI ≤ 60": the rules override `rsi_max` 60. In the analysis of 31 October, options at RSI 60–70 reached their target first 7% of the time, against 23–24% below 60 (n = 2,268 options, one week).
+
+*Correction (4 Nov):* an earlier version of this list proposed "no first-hour entries" on a figure (−0.18R over 31 trades at 10:46) that came from the Insights design's sample data, not from the run. The run's own data (31 Oct) shows no first-hour problem: 18% at 10:46, the lowest is 11:46 at 11%, which is too thin to act on.
 
 **Not changed.** v1–v4 prompts, snapshots and gates; live; entry selection; the risk limits.
 
