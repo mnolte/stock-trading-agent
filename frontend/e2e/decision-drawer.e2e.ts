@@ -21,7 +21,7 @@ function detail(id = 9001, version = 'decision.v4', context = 'held') {
       price: 105, constraints: { entry_limit: 100, min_room_atr: 1 },
       regime: { trend: 'up', volatility: 'normal' },
       checks: { trend_1h: 'up', trend_daily: 'up', regime_trend: 'up', momentum: 'weak' },
-      session: { minutes_left: 74 },
+      session: { minutes_left: 74, ...(version === 'decision.v5' ? { last_cycle: false } : {}) },
       position: context === 'held' ? {
         entry: 100, stop: 98, target: 110, r_now: 1, stop_distance_atr: 2,
         target_distance_atr: 3, neutral_probability: 0.4, levels_to_target: [],
@@ -29,6 +29,7 @@ function detail(id = 9001, version = 'decision.v4', context = 'held') {
         scheduled_exit: 'earnings exit next session', held_session_hours: 9.5,
         sessions_held: 2, thesis_holds: true,
         checks_at_entry: { trend_1h: 'up', trend_daily: 'up', regime_trend: 'up', momentum: 'strong' },
+        ...(version === 'decision.v5' ? { price_vs_signal: -0.48, price_vs_ema20: 'below' } : {}),
       } : null,
       previous_decision: {
         action: 'hold', confidence: 0.4, time: '2026-10-15T13:46:00Z',
@@ -46,6 +47,7 @@ function detail(id = 9001, version = 'decision.v4', context = 'held') {
       stop_basis: 'A recorded swing low below the entry price', stop_atr: 2,
       target_basis: 'A recorded swing high above the entry price',
       levels_in_way: [], breakeven_confidence: 0.17,
+      ...(version === 'decision.v5' ? { min_confidence: 0.21, target_atr: 10, base_rate: null, base_n: 12 } : {}),
     }] }, chosen_option: null,
     outcome: null, next_outcome_due: null, verdict: null, verdict_eligible: false,
     verdict_due: null, llm_call_id: null, orders: [], approval: null, eur_usd_rate: null,
@@ -69,7 +71,7 @@ async function navigate(page: Page, url: string) {
   }, url);
 }
 
-for (const version of ['decision.v1', 'decision.v2', 'decision.v3', 'decision.v4']) {
+for (const version of ['decision.v1', 'decision.v2', 'decision.v3', 'decision.v4', 'decision.v5']) {
   for (const context of ['candidate', 'held']) {
     test(`${version} ${context}: layout and keyboard containment`, async ({ page }, info) => {
       await mockBackground(page);
@@ -83,15 +85,23 @@ for (const version of ['decision.v1', 'decision.v2', 'decision.v3', 'decision.v4
       await page.keyboard.press('Tab');
       await expect(drawer.getByRole('button', { name: 'Close', exact: true })).toBeFocused();
       expect(await page.locator('#root').evaluate((node) => (node as HTMLElement).inert)).toBe(true);
-      if (context === 'held' && ['decision.v3', 'decision.v4'].includes(version)) {
+      if (context === 'held' && ['decision.v3', 'decision.v4', 'decision.v5'].includes(version)) {
         await expect(drawer.getByRole('heading', { name: 'Position', exact: true })).toBeVisible();
         await expect(drawer.getByText('earnings exit next session')).toBeVisible();
         await expect(drawer.getByText('Neutral probability', { exact: true })).toBeVisible();
       }
-      if (version === 'decision.v4') {
+      if (['decision.v4', 'decision.v5'].includes(version)) {
         if (context === 'candidate') await expect(drawer.getByText(/Compared with previous cycle:/)).toBeVisible();
         await expect(drawer.getByText('0.4 · anchor 0.4 · pass')).toBeVisible();
         if (context === 'held') await expect(drawer.getByText('confidence · target before current stop')).toBeVisible();
+      }
+      if (version === 'decision.v5' && context === 'held') {
+        await expect(drawer.getByText('Price vs EMA 20')).toBeVisible();
+        await expect(drawer.getByText('Price since the signal bar')).toBeVisible();
+      }
+      if (version === 'decision.v5' && context === 'candidate') {
+        await expect(drawer.getByText('Min conf')).toBeVisible();
+        await expect(drawer.getByText('Target ATR')).toBeVisible();
       }
       expect(await drawer.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
       const body = drawer.locator('div').filter({ has: page.getByRole('heading', { name: 'Agent reasoning', exact: true }) });

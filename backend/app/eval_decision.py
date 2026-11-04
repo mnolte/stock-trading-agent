@@ -41,6 +41,7 @@ from app.decide.output import (
     validate_model_output_v2,
     validate_model_output_v3,
     validate_model_output_v4,
+    validate_model_output_v5,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.snapshot import strip_internal
@@ -53,6 +54,7 @@ from app.decide.v4 import (
     symbol_names,
     v4_send_snapshot,
 )
+from app.decide.v5 import build_v5_fields, last_cycle_for
 from app.llm.base import ModelResponse
 from app.market.calendar import StaticCalendarProvider
 from app.market.clock import NY_TZ
@@ -167,6 +169,17 @@ def _conflicts_resolved(_snap: Any, output: Any, _validation: ValidationResult) 
     return True
 
 
+def _overnight_exit(
+    s: dict[str, Any], o: Any, _v: Any
+) -> bool:
+    position = s.get("position") or {}
+    neutral = position.get("neutral_probability")
+    return getattr(o, "action", None) == "exit" or (
+        neutral is not None
+        and getattr(o, "confidence", 0) >= float(neutral) + 0.10
+    )
+
+
 PREDICATES: dict[str, Callable[[dict[str, Any], Any, ValidationResult], bool]] = {
     "valid_output": lambda s, o, v: v.valid,
     "valid_option": lambda s, o, v: (
@@ -222,6 +235,10 @@ PREDICATES: dict[str, Callable[[dict[str, Any], Any, ValidationResult], bool]] =
         for n in (getattr(o, "news_used", []) or [])
     ),
     "sound_answer": lambda s, o, v: v.valid and not v.warnings,
+    # decision.v5 (docs/SPEC.md — the KO case): in the last cycle with
+    # the stop inside a typical gap, exit unless confidence ≥ neutral +
+    # overnight_margin.
+    "overnight_exit": _overnight_exit,
 }
 
 
@@ -329,7 +346,8 @@ def _rebuild_input(
                     )
             entry_checks = checks_at_entry(entry_dec) or None
     if spec.is_v4:
-        built: Any = build_v4_fields(
+        _build: Any = build_v5_fields if spec.is_v5 else build_v4_fields
+        built: Any = _build(
             context=context,
             base=snap,
             price=price,
@@ -356,6 +374,21 @@ def _rebuild_input(
             calendar=calendar,
             config=config,
             cycle_time_ny=scheduled.astimezone(NY_TZ) if scheduled.tzinfo else scheduled,
+            **(
+                {
+                    "last_cycle": last_cycle_for(
+                        config,
+                        calendar,
+                        scheduled.astimezone(NY_TZ)
+                        if scheduled.tzinfo
+                        else scheduled,
+                    ),
+                    "db_session": session,
+                    "strategy_id": strategy_id,
+                }
+                if spec.is_v5
+                else {}
+            ),
         )
         snap.update(built.fields)
         return v4_send_snapshot(snap, config)
@@ -406,6 +439,12 @@ def _validate(
     config: AppConfig,
 ) -> ValidationResult:
     spec = prompt_spec(prompt_version)
+    if spec.is_v5:
+        return validate_model_output_v5(
+            raw, symbol=symbol, context=context, snapshot=snapshot,
+            atr_1h=atr_1h, current_stop=current_stop,
+            call_error=call_error, config=config,
+        )
     if spec.is_v4:
         return validate_model_output_v4(
             raw, symbol=symbol, context=context, snapshot=snapshot,

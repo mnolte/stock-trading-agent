@@ -103,6 +103,8 @@ decision:
   temperature: 0                # OpenAI models only; Claude models use the effort in models
   prompt: decision.v1
   min_confidence_enter: 0.55
+  entry_gate: floor             # floor (v1–v4 today) | ev; strategy override; v5 defaults to ev
+  min_ev_r: 0.25                # ev gate: min_confidence = (1 + min_ev_r) / (1 + rr), rounded up to 2
   stop_atr_min: 1.5
   stop_atr_max: 4.0
   min_reward_risk: 1.5
@@ -137,6 +139,15 @@ decision:
     flip_min_move_atr: 0.5      # flip-flop guard: a smaller move counts as unchanged
     max_confidence_above_anchor: 0.30  # confidence_outlier warning threshold
     checks_gate: false          # strategy override: code-enforced checklist, no model call
+  v5:                           # PR 37, decision.v5 strategies only
+    exit_margin: 0.03           # exit below neutral − this
+    overnight_margin: 0.10      # overnight with the stop inside the gap: hold only from neutral + this
+    gap_sessions: 60            # overnight.gap_p90_atr window; null below 20 sessions
+    long_target_minutes: 120    # with fewer minutes left, a target over 2 ATR is an overnight hold
+    trend_gate: true            # strategy override; candidates without trend_1h and regime up get no call
+    max_rr: 3.0                 # v5 builds no option above this
+    base_rate_sessions: 60      # window for per-option base rates
+    base_rate_min_n: 30         # base_rate shown from this many comparable decided options
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 

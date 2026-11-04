@@ -36,6 +36,7 @@ from app.decide.output import (
     validate_model_output_v2,
     validate_model_output_v3,
     validate_model_output_v4,
+    validate_model_output_v5,
 )
 from app.decide.prompt import Prompt, PromptSpec, cached_prompt, prompt_spec
 from app.decide.snapshot import strip_internal
@@ -290,7 +291,18 @@ class DecisionService:
                     tokens_in=response.tokens_in,
                     tokens_out=response.tokens_out,
                 )
-        if self._spec.is_v4:
+        if self._spec.is_v5:
+            validation = validate_model_output_v5(
+                response.raw,
+                symbol=symbol,
+                context=context,
+                snapshot=snapshot_json,
+                atr_1h=atr_1h,
+                current_stop=current_stop,
+                call_error=response.error,
+                config=self.config,
+            )
+        elif self._spec.is_v4:
             validation = validate_model_output_v4(
                 response.raw,
                 symbol=symbol,
@@ -406,6 +418,21 @@ class DecisionService:
         """Store a decision row when code blocked the call before it happened."""
         if reason not in NO_CALL_REASONS:
             raise ValueError(f"unknown no_call reason {reason!r}")
+        if (
+            v2 is not None
+            and context == "candidate"
+            and (v2.fields.get("options") or v2.fields.get("stop_options"))
+        ):
+            # Counterfactual options (docs/SPEC.md, Decision v5 — the
+            # options a candidate lost carry the reason that stopped
+            # it, so "what each filter removed" can attribute them.
+            column = dict(v2.options_column)
+            column["counterfactual_reason"] = detail or reason
+            v2 = V2Build(
+                fields=v2.fields,
+                options_column=column,
+                reason=v2.reason,
+            )
         validation = ValidationResult(
             valid=False,
             output=None,

@@ -128,6 +128,16 @@ class InsightsTrade:
 
 
 @dataclass(frozen=True)
+class InsightsFilterOption:
+    """One option a code filter removed (docs/SPEC.md, Decision v5 —
+    Counterfactual touches)."""
+
+    filter: str  # the check or gate that removed it
+    touch: str | None  # target | stop | neither | not_filled | None
+    r_made: Decimal | None  # the R it would have made
+
+
+@dataclass(frozen=True)
 class InsightsSkip:
     """One model skip on a candidate, scored with the rules-only geometry."""
 
@@ -1199,6 +1209,7 @@ def compute_insights(
     decisions: Sequence[InsightsDecision],
     skips: Sequence[InsightsSkip],
     orders: Sequence[InsightsOrder],
+    filter_removed: Sequence[InsightsFilterOption] = (),
     *,
     equity_daily: Sequence[EquityDay],
     spy_daily: Sequence[DailyBar],
@@ -1374,6 +1385,25 @@ def compute_insights(
         else {"na": "rules only has no model confidence"}
     )
 
+    # ---- what each filter removed (docs/SPEC.md, Decision v5) ----
+    filters_out: list[dict[str, Any]] = []
+    by_filter: dict[str, list[InsightsFilterOption]] = {}
+    for rec in filter_removed:
+        by_filter.setdefault(rec.filter, []).append(rec)
+    for name, group in sorted(by_filter.items()):
+        target = sum(1 for r in group if r.touch == "target")
+        stop = sum(1 for r in group if r.touch == "stop")
+        rs = [r.r_made for r in group if r.r_made is not None]
+        filters_out.append(
+            {
+                "filter": name,
+                "count": len(group),
+                "target_first": target,
+                "stop_first": stop,
+                "r_made": _q2(sum(rs, Decimal(0))) if rs else None,
+            }
+        )
+
     return {
         "trades": closed,
         "headline": headline,
@@ -1384,4 +1414,5 @@ def compute_insights(
         "calibration": calibration,
         "execution": execution,
         "overnight": overnight,
+        "filters_removed": filters_out,
     }

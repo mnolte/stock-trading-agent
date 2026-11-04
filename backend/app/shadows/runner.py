@@ -46,6 +46,7 @@ from app.decide.output import (
     validate_model_output_v2,
     validate_model_output_v3,
     validate_model_output_v4,
+    validate_model_output_v5,
 )
 from app.decide.prompt import PromptSpec, cached_prompt, prompt_spec
 from app.decide.service import (
@@ -68,6 +69,12 @@ from app.decide.v4 import (
     symbol_names,
     v4_config,
     v4_send_snapshot,
+)
+from app.decide.v5 import (
+    build_v5_fields,
+    last_cycle_for,
+    trend_gate_detail,
+    v5_config,
 )
 from app.engine.selection import (
     ScoredEntry,
@@ -714,7 +721,18 @@ class ShadowRunner:
                     tokens_out=response.tokens_out,
                 )
             ind = indicators_from_snapshot(d.symbol, d.snapshot)
-            if spec.is_v4:
+            if spec.is_v5:
+                validation = validate_model_output_v5(
+                    response.raw,
+                    symbol=d.symbol,
+                    context=context,
+                    snapshot=snap_json,
+                    atr_1h=ind.atr_1h,
+                    current_stop=current_stop,
+                    call_error=response.error,
+                    config=cfg,
+                )
+            elif spec.is_v4:
                 validation = validate_model_output_v4(
                     response.raw,
                     symbol=d.symbol,
@@ -930,7 +948,8 @@ class ShadowRunner:
                     d.symbol, scheduled, calendar=self.calendar,
                     bars_reader=self._bars,
                 )
-                v2_held = build_v4_fields(
+                _build = build_v5_fields if _spec(strategy).is_v5 else build_v4_fields
+                v2_held = _build(
                     context="held",
                     base=snap_json,
                     price=price,
@@ -975,6 +994,18 @@ class ShadowRunner:
                     calendar=self.calendar,
                     config=cfg,
                     cycle_time_ny=scheduled,
+                    **cast(
+                        "dict[str, Any]",
+                        {
+                            "last_cycle": last_cycle_for(
+                                cfg, self.calendar, scheduled
+                            ),
+                            "db_session": session,
+                            "strategy_id": strategy.id,
+                        }
+                        if _spec(strategy).is_v5
+                        else {},
+                    ),
                 )
                 snap_json.update(v2_held.fields)
             elif llm and is_v3:
@@ -1164,7 +1195,12 @@ class ShadowRunner:
                                 bars_reader=self._bars,
                             )
                             if _spec(strategy).is_v4:
-                                v2_cand = build_v4_fields(
+                                _cbuild = (
+                                    build_v5_fields
+                                    if _spec(strategy).is_v5
+                                    else build_v4_fields
+                                )
+                                v2_cand = _cbuild(
                                     context="candidate",
                                     base=snap_json,
                                     price=price,
@@ -1190,6 +1226,18 @@ class ShadowRunner:
                                     calendar=self.calendar,
                                     config=cfg,
                                     cycle_time_ny=scheduled,
+                                    **cast(
+                                        "dict[str, Any]",
+                                        {
+                                            "last_cycle": last_cycle_for(
+                                                cfg, self.calendar, scheduled
+                                            ),
+                                            "db_session": session,
+                                            "strategy_id": strategy.id,
+                                        }
+                                        if _spec(strategy).is_v5
+                                        else {},
+                                    ),
                                 )
                             elif _spec(strategy).is_v3:
                                 v2_cand = build_v3_fields(
@@ -1251,12 +1299,24 @@ class ShadowRunner:
                             continue
                         gate_detail: str | None = None
                         if (
-                            _spec(strategy).is_v4
-                            and v2_cand is not None
+                            v2_cand is not None
                             and v2_cand.fields["options"]
-                            and v4_config(cfg).checks_gate
                         ):
-                            gate_detail = _checks_gate_detail(v2_cand.fields)
+                            if (
+                                _spec(strategy).is_v5
+                                and v5_config(cfg).trend_gate
+                            ):
+                                gate_detail = trend_gate_detail(
+                                    v2_cand.fields
+                                )
+                            elif (
+                                _spec(strategy).is_v4
+                                and not _spec(strategy).is_v5
+                                and v4_config(cfg).checks_gate
+                            ):
+                                gate_detail = _checks_gate_detail(
+                                    v2_cand.fields
+                                )
                         if gate_detail is not None and v2_cand is not None:
                             row = self._row(
                                 strategy, cycle, d, "candidate",
@@ -1468,7 +1528,8 @@ class ShadowRunner:
                     bars_reader=self._bars,
                 )
                 if spec.is_v4:
-                    v2_cand = build_v4_fields(
+                    _ebuild = build_v5_fields if spec.is_v5 else build_v4_fields
+                    v2_cand = _ebuild(
                         context="candidate",
                         base=snap_json,
                         price=price,
@@ -1492,6 +1553,18 @@ class ShadowRunner:
                         calendar=self.calendar,
                         config=cfg,
                         cycle_time_ny=scheduled,
+                        **cast(
+                            "dict[str, Any]",
+                            {
+                                "last_cycle": last_cycle_for(
+                                    cfg, self.calendar, scheduled
+                                ),
+                                "db_session": session,
+                                "strategy_id": strategy.id,
+                            }
+                            if spec.is_v5
+                            else {},
+                        ),
                     )
                 elif spec.is_v3:
                     v2_cand = build_v3_fields(
@@ -1548,9 +1621,19 @@ class ShadowRunner:
                     session.flush()
                     sr.decisions += 1
                     continue
-                if spec.is_v4 and v4_config(cfg).checks_gate:
+                if (
+                    spec.is_v5
+                    and v5_config(cfg).trend_gate
+                    and v2_cand.fields["options"]
+                ):
+                    gate_detail = trend_gate_detail(v2_cand.fields)
+                elif (
+                    spec.is_v4
+                    and not spec.is_v5
+                    and v4_config(cfg).checks_gate
+                ):
                     gate_detail = _checks_gate_detail(v2_cand.fields)
-                    if gate_detail is not None:
+                if gate_detail is not None:
                         row = self._row(
                             strategy, cycle, d, "candidate",
                             final_action="no_call",

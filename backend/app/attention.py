@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -22,8 +22,12 @@ from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import (
     Approval,
+    Cycle,
+    Decision,
     Event,
     SettingsVersion,
+    ShadowDecision,
+    Strategy,
     Verdict,
 )
 from app.log_index import index_path
@@ -37,6 +41,16 @@ if TYPE_CHECKING:
     from fastapi import Request
 
 logger = logging.getLogger(__name__)
+
+
+def _naive(dt: datetime) -> datetime:
+    return dt.astimezone(UTC).replace(tzinfo=None)
+
+
+def _dec(value: Any) -> Any:
+    from decimal import Decimal
+
+    return Decimal(str(value)) if value is not None else None
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -316,6 +330,84 @@ def build_attention(request: Request) -> dict[str, Any]:
                     max(unreviewed.values()),
                 )
             )
+
+        # 5b. A held decision in the last cycle with confidence_outlier
+        #     and r_now < 0 (docs/SPEC.md, Decision v5 — Code checks):
+        #     KO held overnight at −0.62R with confidence 0.65 against
+        #     neutral 0.12 is the example.
+        ny_session = calendar.session_for(today_ny)
+        last_cycles = (
+            SessionClock(clock, config, calendar).active_cycles(ny_session)
+            if ny_session is not None
+            else []
+        )
+        if last_cycles:
+            last_cycle_utc = _naive(last_cycles[-1].astimezone(UTC))
+            held_rows: list[tuple[Decision | ShadowDecision, str | None]] = [
+                (d, None)
+                for d in session.execute(
+                    select(Decision)
+                    .join(Cycle, Decision.cycle_id == Cycle.id)
+                    .where(
+                        Decision.context == "held",
+                        Cycle.scheduled_time == last_cycle_utc,
+                    )
+                ).scalars()
+            ]
+            for shadow in session.execute(
+                select(ShadowDecision)
+                .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
+                .where(
+                    ShadowDecision.context == "held",
+                    ShadowDecision.missed.is_(False),
+                    Cycle.scheduled_time == last_cycle_utc,
+                )
+            ).scalars():
+                strategy = session.get(Strategy, shadow.strategy_id)
+                held_rows.append(
+                    (shadow, strategy.name if strategy is not None else None)
+                )
+            for row, strategy_name in held_rows:
+                validation = (
+                    row.validation_result
+                    if isinstance(row.validation_result, dict)
+                    else {}
+                )
+                snapshot = (
+                    row.input_snapshot
+                    if isinstance(row.input_snapshot, dict)
+                    else {}
+                )
+                warnings = (
+                    cast("list[Any]", validation.get("warnings") or [])
+                )
+                position = cast(
+                    "dict[str, Any]", snapshot.get("position") or {}
+                )
+                r_now = _dec(position.get("r_now"))
+                neutral = _dec(position.get("neutral_probability"))
+                conf = _dec(validation.get("confidence"))
+                if "confidence_outlier" not in warnings or (
+                    r_now is not None and r_now >= 0
+                ):
+                    continue
+                who = f"{strategy_name} · " if strategy_name else ""
+                items.append(
+                    _item(
+                        "decision",
+                        "warning",
+                        f"{who}{row.symbol} held overnight at a loss.",
+                        f"r_now {float(r_now):+.2f} · confidence "
+                        f"{float(conf):.2f} against neutral "
+                        f"{float(neutral):.2f} — above the exit bar."
+                        if r_now is not None and conf is not None
+                        and neutral is not None
+                        else "confidence_outlier on a losing hold.",
+                        "Open the inspector",
+                        "/inspector",
+                        last_cycles[-1].astimezone(UTC),
+                    )
+                )
 
         # 6. Verdicts to confirm.
         verdicts = session.execute(

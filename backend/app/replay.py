@@ -53,6 +53,7 @@ from app.decide.output import (
     validate_model_output_v2,
     validate_model_output_v3,
     validate_model_output_v4,
+    validate_model_output_v5,
 )
 from app.decide.prompt import cached_prompt, prompt_spec
 from app.decide.v2inputs import (
@@ -74,6 +75,7 @@ from app.decide.v4 import (
     symbol_names,
     v4_send_snapshot,
 )
+from app.decide.v5 import build_v5_fields, last_cycle_for
 from app.llm.clients import make_model_clients
 from app.llm.models import model_provider
 from app.market.calendar import StaticCalendarProvider
@@ -520,7 +522,10 @@ async def replay(
                     regime_from_snapshot,
                 )
 
-                v2 = build_v4_fields(
+                _rbuild = (
+                    build_v5_fields if spec.is_v5 else build_v4_fields
+                )
+                v2 = _rbuild(
                     context=decision.context,
                     base=snap,
                     price=price,
@@ -539,6 +544,20 @@ async def replay(
                     calendar=sessions_provider,
                     config=config,
                     cycle_time_ny=scheduled.replace(tzinfo=UTC),
+                    **cast(
+                        "dict[str, Any]",
+                        {
+                            "last_cycle": last_cycle_for(
+                                config,
+                                sessions_provider,
+                                scheduled.replace(tzinfo=UTC),
+                            ),
+                            "db_session": qsession,
+                            "strategy_id": None,
+                        }
+                        if spec.is_v5
+                        else {},
+                    ),
                 )
             elif spec.is_v3:
                 from app.shadows.runner import (
@@ -619,7 +638,22 @@ async def replay(
             if cost is not None:
                 total_cost += cost
             validation: ValidationResult
-            if spec.is_v4:
+            if spec.is_v5:
+                validation = validate_model_output_v5(
+                    response.raw,
+                    symbol=symbol,
+                    context=decision.context,
+                    snapshot=snap,
+                    atr_1h=atr_1h,
+                    current_stop=(
+                        _dec((snap.get("position") or {}).get("current_stop"))
+                        if decision.context == "held"
+                        else None
+                    ),
+                    call_error=response.error,
+                    config=config,
+                )
+            elif spec.is_v4:
                 validation = validate_model_output_v4(
                     response.raw,
                     symbol=symbol,
@@ -925,6 +959,16 @@ async def replay(
     with (root / "rules_only.jsonl").open("w") as fh:
         for row in rules_rows:
             fh.write(json.dumps(row.to_json()) + "\n")
+    v5_lines: list[str] = []
+    if prompt_version == "decision.v5":
+        v5_lines = _v5_report_lines(
+            rows,
+            decisions,
+            sf,
+            config,
+            sessions_provider,
+            cache,
+        )
     report = _report(
         replay_id,
         prompt_version,
@@ -936,6 +980,7 @@ async def replay(
         rules_rows,
         estimate_usd,
         total_cost,
+        v5_lines=v5_lines,
     )
     (root / "report.md").write_text(report)
     (root / "meta.json").write_text(
@@ -1014,6 +1059,7 @@ def _report(
     rules_rows: list[ReplayRow],
     estimate: Decimal,
     cost: Decimal,
+    v5_lines: list[str] | None = None,
 ) -> str:
     replayed = [r for r in rows if r.status == REPLAYED]
     approx = [r for r in rows if r.status == REPLAYED_APPROX]
@@ -1193,7 +1239,189 @@ def _report(
     ]
     if prompt == "decision.v3":
         out += _v3_report_lines(rows)
+    if v5_lines:
+        out += v5_lines
     return "\n".join(out)
+
+
+def _v5_report_lines(
+    rows: list[ReplayRow],
+    decisions: Sequence[Any],
+    sf: sessionmaker[Session],
+    config: AppConfig,
+    sessions_provider: Any,
+    cache: BarCache,
+) -> list[str]:
+    """The decision.v5 report additions (docs/SPEC.md, Decision v5 —
+    Replays): what each entry gate passed and its touches, last-cycle
+    holds/exits against the next open, and what each filter removed."""
+    from app.decide.v5 import entry_gate, min_confidence_ev, min_ev_r
+    from app.insights.service import _filter_removed_rows
+
+    lines: list[str] = ["## decision.v5", ""]
+    replayed = [r for r in rows if r.status != NOT_REPLAYABLE]
+    detailed = [r for r in replayed if r.detail is not None]
+
+    # --- the entry gates: per gate, entries passed and their touches.
+    ev_r = min_ev_r(config)
+    min_conf = float(
+        config.get("decision", "min_confidence_enter", default=0.55)
+    )
+    min_edge = float(
+        config.get("decision", "v3", "min_edge", default=0.10)
+    )
+    entered = [
+        r for r in detailed
+        if r.context == "candidate"
+        and r.model_action == "enter"
+        and _det(r).get("confidence") is not None
+        and (_det(r).get("chosen") or {})
+    ]
+    for gate in ("floor", "ev"):
+        passed: list[ReplayRow] = []
+        for r in entered:
+            chosen = _det(r)["chosen"]
+            conf = float(_det(r)["confidence"])
+            required: float | None
+            if gate == "floor":
+                be = chosen.get("breakeven_confidence")
+                required = max(
+                    min_conf, float(be if be is not None else 0) + min_edge
+                )
+            else:
+                req_dec = chosen.get("min_confidence")
+                if req_dec is None:
+                    req_dec = min_confidence_ev(
+                        Decimal(str(chosen.get("rr")))
+                        if chosen.get("rr") is not None
+                        else None,
+                        ev_r,
+                    )
+                required = float(req_dec) if req_dec is not None else None
+            if required is not None and conf >= required:
+                passed.append(r)
+        touches = [
+            r.score.touched for r in passed if r.score is not None
+        ]
+        lines.append(
+            f"- {gate} gate: {len(passed)} of {len(entered)} model"
+            f" entries passed"
+            + (
+                f" — target {touches.count('target')},"
+                f" stop {touches.count('stop')},"
+                f" neither {len(passed) - touches.count('target') - touches.count('stop')}"
+                if passed
+                else ""
+            )
+            + (" · active gate" if gate == entry_gate(config, v5=True) else "")
+        )
+
+    # --- last-cycle held decisions against the next open.
+    last_cycle_held = [
+        r
+        for r in detailed
+        if r.context == "held"
+        and last_cycle_for(
+            config, sessions_provider, r.at.astimezone(NY_TZ)
+        )
+    ]
+    by_id = {d.id: d for d in decisions}
+    for r in last_cycle_held:
+        stored = by_id.get(r.decision_id)
+        position = (
+            (stored.input_snapshot or {}).get("position")
+            if stored is not None
+            else None
+        ) or {}
+        stop = position.get("current_stop")
+        price = (
+            (stored.input_snapshot or {}).get("price")
+            if stored is not None
+            else None
+        )
+        day = r.at.astimezone(NY_TZ).date()
+        next_session = next(
+            (
+                s
+                for s in (
+                    sessions_provider.session_for(day + timedelta(days=n))
+                    for n in range(1, 15)
+                )
+                if s is not None
+            ),
+            None,
+        )
+        gap_text = "no next session"
+        if next_session is not None and price is not None:
+            bars = cache.get(
+                r.symbol,
+                next_session.open - timedelta(minutes=5),
+                next_session.open + timedelta(hours=1),
+            )
+            bars = [b for b in bars if b.start >= next_session.open]
+            if bars:
+                move = (
+                    (bars[0].open - Decimal(str(price)))
+                    / Decimal(str(price))
+                    * 100
+                )
+                verdict = ""
+                if stop is not None:
+                    verdict = (
+                        " — open below stop"
+                        if bars[0].open < Decimal(str(stop))
+                        else ""
+                    )
+                gap_text = f"next open {move:+.2f}%{verdict}"
+        lines.append(
+            f"- last cycle #{r.decision_id} {r.symbol}:"
+            f" {r.final_action} — {gap_text}"
+        )
+    if not last_cycle_held:
+        lines.append("- last cycle: no held decisions")
+
+    # --- what each filter removed.
+    ids = [d.id for d in decisions]
+    with sf() as session:
+        outcomes = {
+            o.decision_id: o
+            for o in session.execute(
+                select(Outcome).where(Outcome.decision_id.in_(ids or {0}))
+            ).scalars()
+        }
+    by_filter: dict[str, dict[str, Any]] = {}
+    for d in decisions:
+        outcome = outcomes.get(d.id)
+        for rec in _filter_removed_rows(
+            d,
+            (outcome.option_touches if outcome else None),
+            (outcome.price_5sessions if outcome else None),
+        ):
+            slot = by_filter.setdefault(
+                rec.filter, {"count": 0, "target": 0, "stop": 0, "rs": []}
+            )
+            slot["count"] += 1
+            if rec.touch == "target":
+                slot["target"] += 1
+            elif rec.touch == "stop":
+                slot["stop"] += 1
+            if rec.r_made is not None:
+                slot["rs"].append(rec.r_made)
+    lines.append("- what each filter removed:")
+    if not by_filter:
+        lines.append("  - nothing recorded")
+    for name, slot in sorted(by_filter.items()):
+        total_r = (
+            f"{float(sum(slot['rs'], Decimal(0))):+.2f}R"
+            if slot["rs"]
+            else "—"
+        )
+        lines.append(
+            f"  - {name}: {slot['count']} · target first {slot['target']}"
+            f" · stop first {slot['stop']} · {total_r}"
+        )
+    lines.append("")
+    return lines
 
 
 def _det(row: ReplayRow) -> dict[str, Any]:

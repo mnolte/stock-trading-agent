@@ -59,15 +59,19 @@ class PromptSpec:
     version: str
     json_schema: dict[str, object]  # OpenAI strict JSON schema
     uses_options: bool = False  # decision.v2+: code-built options
-    builder: str = "v1"  # "v2" | "v3" | "v4" snapshot builder
+    builder: str = "v1"  # "v2" | "v3" | "v4" | "v5" snapshot builder
 
     @property
     def is_v3(self) -> bool:
-        return self.builder in ("v3", "v4")
+        return self.builder in ("v3", "v4", "v5")
 
     @property
     def is_v4(self) -> bool:
-        return self.builder == "v4"
+        return self.builder in ("v4", "v5")
+
+    @property
+    def is_v5(self) -> bool:
+        return self.builder == "v5"
 
 
 class UnknownPromptVersion(ValueError):
@@ -90,6 +94,12 @@ def prompt_spec(version: str) -> PromptSpec:
         DECISION_V4_JSON_SCHEMA,
     )
 
+    if version == "decision.v5":
+        # decision.v5 answers in the v4 schema (docs/SPEC.md, Decision
+        # v5 — Output schema); the builder and code checks differ.
+        return PromptSpec(
+            version, DECISION_V4_JSON_SCHEMA, uses_options=True, builder="v5"
+        )
     if version == "decision.v4":
         return PromptSpec(
             version, DECISION_V4_JSON_SCHEMA, uses_options=True, builder="v4"

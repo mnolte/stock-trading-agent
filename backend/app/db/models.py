@@ -921,6 +921,9 @@ class ShadowDecision(Base):
     chosen_option: Mapped[str | None] = mapped_column(String(8), nullable=True)
     explanation_check: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     options_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Counterfactual touches (PR 37): option id -> first of stop/target
+    # touched, same semantics as outcomes.option_touches.
+    option_touches: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
     # Only for a symbol live made no decision on (held by shadows only):
     # the snapshot live's cycle built for it.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
