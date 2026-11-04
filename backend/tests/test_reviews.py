@@ -465,6 +465,21 @@ def test_number_check_ignores_clock_times() -> None:
     assert bad_numbers("Written at 10:00, +1.49% return.", {"return_pct": 1.49}) == []
 
 
+def test_number_check_ignores_identifiers() -> None:
+    """Timeframe labels, level ids and version names are not figures —
+    "1-hour", "1h", "L7", "EMA20" carry no checkable number."""
+    text = "Sideways 1-hour trend, EMA20 flat, low room at L7 on the 1h."
+    assert bad_numbers(text, {}) == []
+
+
+def test_number_check_keeps_counts_and_ranges() -> None:
+    """Space-separated counts, option numbers and ranges stay checkable."""
+    assert bad_numbers("over 5 sessions", {"sessions": 5}) == []
+    assert bad_numbers("over 4 sessions", {"sessions": 5}) == ["4"]
+    assert bad_numbers("option 1 was best", {"sessions": 5}) == ["1"]
+    assert bad_numbers("gain of 7-9%", {"sessions": 5}) == ["7", "9"]
+
+
 # ----------------------------------------------------------------------
 # fallbacks: every reason → plain template + logged event
 
