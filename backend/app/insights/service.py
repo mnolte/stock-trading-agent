@@ -52,6 +52,7 @@ from app.insights.compute import (
     DailyBar,
     EquityDay,
     InsightsDecision,
+    InsightsFilterOption,
     InsightsOrder,
     InsightsSkip,
     InsightsTrade,
@@ -219,6 +220,181 @@ def _gate(row: Decision | ShadowDecision) -> str | None:
     gates = row.gates_result or {}
     gate = gates.get("blocked_by")
     return str(gate) if gate else None
+
+
+def _removed_label(reason: str) -> str:
+    """The filter a removed option belongs to (docs/SPEC.md, Decision
+    v5 — What each filter removed)."""
+    if reason.startswith("room"):
+        return "room"
+    if "cap" in reason:
+        return "rr cap"
+    return reason
+
+
+def _rules_filter(rules: dict[str, Any] | None) -> str:
+    """The first failing rules check name of a rules-stopped row."""
+    for check in (rules or {}).get("checks") or []:
+        if isinstance(check, dict) and not check.get("passed"):
+            return str(check.get("name") or "rules")
+    return "rules"
+
+
+def _counterfactual_label(
+    row: Decision | ShadowDecision, column: dict[str, Any]
+) -> str:
+    """The code check that stopped a candidate before the model —
+    ``counterfactual_reason`` when present, else the no_call reason."""
+    reason = str(
+        column.get("counterfactual_reason") or row.no_call_reason or ""
+    )
+    if row.no_call_reason == "rules" or reason.startswith("rules"):
+        return _rules_filter(row.rules_result)
+    if reason.startswith("trend_gate"):
+        return "trend gate"
+    if reason.startswith("checks"):
+        return "checks gate"
+    if (row.no_call_reason or "").startswith("price"):
+        return "price checks"
+    return reason or "unknown"
+
+
+def _r_made(
+    touch: str | None,
+    option: dict[str, Any],
+    price_5sessions: Decimal | None,
+    shared_limit: Decimal | None,
+) -> Decimal | None:
+    """The R an option would have made (docs/SPEC.md, Decision v5 —
+    What each filter removed)."""
+    rr = _dec(option.get("rr"))
+    if touch == "target":
+        return rr
+    if touch == "stop":
+        return Decimal("-1")
+    if touch == "not_filled":
+        return Decimal(0)
+    if touch != "neither" or price_5sessions is None:
+        return None
+    stop = _dec(option.get("stop"))
+    entry = shared_limit or _dec(option.get("entry_limit"))
+    if entry is None and stop is not None and option.get("risk") is not None:
+        risk = _dec(option["risk"])
+        entry = stop + risk if risk is not None else None
+    if entry is None or stop is None or entry <= stop:
+        return None
+    made = _dec(price_5sessions - entry)
+    return made / (entry - stop) if made is not None else None
+
+
+def _filter_removed_rows(
+    row: Decision | ShadowDecision,
+    touches: dict[str, Any] | None,
+    price_5sessions: Decimal | None,
+) -> list[InsightsFilterOption]:
+    """Every option a code filter removed on this row, with its touch —
+    removed-by-filter options and counterfactual options on no-call
+    rows (docs/SPEC.md, Decision v5 — What each filter removed)."""
+    column = row.options or {}
+    out: list[InsightsFilterOption] = []
+    snapshot = (
+        row.input_snapshot if isinstance(row.input_snapshot, dict) else {}
+    )
+    raw_constraints = snapshot.get("constraints")
+    constraints = (
+        raw_constraints if isinstance(raw_constraints, dict) else {}
+    )
+    shared_limit = _dec(constraints.get("entry_limit"))
+    touches = touches or {}
+
+    def _opt_touch(option: dict[str, Any]) -> str | None:
+        touch = touches.get(str(option.get("id") or ""))
+        return str(touch) if touch is not None else None
+
+    def _opt_r(option: dict[str, Any]) -> Decimal | None:
+        return _r_made(
+            _opt_touch(option), option, price_5sessions, shared_limit
+        )
+
+    # Options individually removed by the room or rr-cap filters.
+    removed_entries = column.get("removed")
+    if not isinstance(removed_entries, list):
+        removed_entries = []
+    for option in removed_entries:
+        if not isinstance(option, dict):
+            continue
+        out.append(
+            InsightsFilterOption(
+                filter=_removed_label(str(option.get("reason") or "removed")),
+                touch=_opt_touch(option),
+                r_made=_opt_r(option),
+            )
+        )
+
+    # Options built for a candidate code stopped before the model
+    # (rules, trend gate, price checks — all of them, never offered).
+    if row.context == "candidate" and row.no_call_reason is not None:
+        raw_options = column.get("options")
+        options: list[Any] = (
+            raw_options if isinstance(raw_options, list) else []
+        )
+        if options and row.no_call_reason != "no_options":
+            label = _counterfactual_label(row, column)
+            for option in options:
+                if not isinstance(option, dict):
+                    continue
+                out.append(
+                    InsightsFilterOption(
+                        filter=label,
+                        touch=_opt_touch(option),
+                        r_made=_opt_r(option),
+                    )
+                )
+
+    # The option code turned down after the model called: the
+    # confidence gate (edge_too_small), spread and slots.
+    if row.context == "candidate":
+        reason = (row.validation_result or {}).get("reason")
+        if reason == "edge_too_small" and row.chosen_option:
+            raw = column.get("options")
+            option = next(
+                (
+                    o
+                    for o in (raw if isinstance(raw, list) else [])
+                    if isinstance(o, dict)
+                    and str(o.get("id")) == str(row.chosen_option)
+                ),
+                None,
+            )
+            if option is not None:
+                out.append(
+                    InsightsFilterOption(
+                        filter="confidence gate",
+                        touch=_opt_touch(option),
+                        r_made=_opt_r(option),
+                    )
+                )
+        gate = _gate(row)
+        if gate in ("spread", "slots") and row.chosen_option:
+            raw = column.get("options")
+            option = next(
+                (
+                    o
+                    for o in (raw if isinstance(raw, list) else [])
+                    if isinstance(o, dict)
+                    and str(o.get("id")) == str(row.chosen_option)
+                ),
+                None,
+            )
+            if option is not None:
+                out.append(
+                    InsightsFilterOption(
+                        filter=gate,
+                        touch=_opt_touch(option),
+                        r_made=_opt_r(option),
+                    )
+                )
+    return out
 
 
 def _skip_dims(
@@ -698,11 +874,25 @@ def _live_inputs(
         _dec(summary.get("adjusted_pct")) if not perf.get("empty") else None
     )
 
+    # What each filter removed (docs/SPEC.md, Decision v5): removed and
+    # counterfactual options with their touches.
+    filter_removed: list[InsightsFilterOption] = []
+    for d, _scheduled in dec_rows:
+        outcome = outcomes.get(d.id)
+        filter_removed.extend(
+            _filter_removed_rows(
+                d,
+                (outcome.option_touches if outcome else None),
+                (outcome.price_5sessions if outcome else None),
+            )
+        )
+
     return {
         "trades": trades,
         "decisions": decisions,
         "skips": skips,
         "orders": iorders,
+        "filter_removed": filter_removed,
         "equity_daily": list(by_day.values()),
         "spy_daily": spy_daily_cache,
         "return_pct": return_pct,
@@ -1050,11 +1240,19 @@ def _shadow_inputs(
         )
     ).scalar_one()
 
+    # What each filter removed (docs/SPEC.md, Decision v5).
+    filter_removed: list[InsightsFilterOption] = []
+    for d, _scheduled in dec_rows:
+        filter_removed.extend(
+            _filter_removed_rows(d, d.option_touches, None)
+        )
+
     return {
         "trades": trades,
         "decisions": decisions,
         "skips": skips,
         "orders": iorders,
+        "filter_removed": filter_removed,
         "equity_daily": equity_days,
         "spy_daily": spy_daily_cache,
         "return_pct": return_pct,
@@ -1125,6 +1323,7 @@ def compute_snapshot(
         inputs["decisions"],
         inputs["skips"],
         inputs["orders"],
+        filter_removed=inputs.get("filter_removed") or (),
         equity_daily=inputs["equity_daily"],
         spy_daily=inputs["spy_daily"],
         daily_bars_for=lambda s: _daily_bars(session, s),

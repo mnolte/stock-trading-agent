@@ -417,8 +417,10 @@ def apply_room_filter(
 ) -> tuple[list[EntryOption], list[dict[str, Any]], str | None]:
     """Remove options without room; returns (kept, removed, reason).
 
-    ``removed`` carries {id, reason} for storage; ``reason`` is the
-    no_options detail when nothing is left.
+    ``removed`` carries the full option JSON plus its reason (docs/
+    SPEC.md, Decision v5 — counterfactual options are stored in full so
+    the outcome job can measure what the filter removed); ``reason`` is
+    the no_options detail when nothing is left.
     """
     kept: list[EntryOption] = []
     removed: list[dict[str, Any]] = []
@@ -430,7 +432,10 @@ def apply_room_filter(
             continue
         level, distance = blocked
         opt_reason = room_failure_reason(level, distance, v3.min_room_atr)
-        removed.append({"id": option.id, "reason": opt_reason})
+        removed.append(
+            option_json_v3(option, levels, limit, atr_1h)
+            | {"reason": opt_reason}
+        )
         reasons.append(opt_reason)
     reason = reasons[0] if not kept and reasons else None
     return kept, removed, reason

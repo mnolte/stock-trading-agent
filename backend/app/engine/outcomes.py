@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -39,6 +40,7 @@ from app.db.models import (
     Outcome,
     Position,
     Run,
+    ShadowDecision,
 )
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
@@ -339,6 +341,34 @@ class OutcomeWorker:
             )
         session.flush()
 
+        # Shadow decisions: the same counterfactual touches on their own
+        # column (docs/SPEC.md, Decision v5). A row fills once its
+        # 5-session window passed the SIP delay; missing bars stay null.
+        shadow_stale = session.execute(
+            select(ShadowDecision, Cycle.scheduled_time)
+            .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
+            .where(
+                ShadowDecision.option_touches.is_(None),
+                ShadowDecision.options.is_not(None),
+            )
+        ).all()
+        sf_filled = 0
+        for srow, scheduled in shadow_stale:
+            decision_time = _aware_utc(scheduled)
+            targets = self._targets(decision_time)
+            five = next(
+                (t for f, _a, t in targets if f == "price_5sessions"), None
+            )
+            if five is None or now < five + self._delay:
+                continue
+            if self._fill_shadow_touches(srow, decision_time, five):
+                sf_filled += 1
+        if sf_filled:
+            logger.info(
+                "shadow option-touches backfill: %d rows filled", sf_filled
+            )
+        session.flush()
+
         for position in session.execute(
             select(Position).where(Position.entry_decision_id.is_not(None))
         ).scalars():
@@ -368,8 +398,17 @@ class OutcomeWorker:
         """
         if outcome.option_touches is not None:
             return True
-        options_raw = (decision.options or {}).get("options", [])
-        if not isinstance(options_raw, list) or not options_raw:
+        column = decision.options or {}
+        # Offered and removed options both get a verdict — the
+        # counterfactual touches (docs/SPEC.md, Decision v5) measure
+        # what each filter removed. Old-format removed entries carry
+        # only {id, reason} and stay null.
+        options_raw: list[dict[str, Any]] = []
+        for key in ("options", "removed"):
+            entries = column.get(key)
+            if isinstance(entries, list):
+                options_raw += [o for o in entries if isinstance(o, dict)]
+        if not options_raw:
             # No offered options → nothing to record; marking it done
             # keeps the row out of the backfill scan.
             outcome.option_touches = {}
@@ -400,8 +439,6 @@ class OutcomeWorker:
         touches: dict[str, object] = {}
         all_filled = True
         for option in options_raw:
-            if not isinstance(option, dict):
-                continue
             oid = str(option.get("id") or option.get("option_id"))
             if oid == traded_id and outcome.first_touch is not None:
                 touches[oid] = outcome.first_touch
@@ -466,6 +503,75 @@ class OutcomeWorker:
                     break
             touches[oid] = touch
         outcome.option_touches = touches
+        return all_filled
+
+    def _fill_shadow_touches(
+        self,
+        row: ShadowDecision,
+        decision_time: datetime,
+        end: datetime,
+    ) -> bool:
+        """Counterfactual touches for one shadow decision — the same
+        bar scan as the live fill (docs/SPEC.md, Decision v5)."""
+        assert self.market_data is not None  # noqa: S101 - internal invariant
+        column = row.options or {}
+        raw: list[dict[str, Any]] = []
+        for key in ("options", "removed"):
+            entries = column.get(key)
+            if isinstance(entries, list):
+                raw += [o for o in entries if isinstance(o, dict)]
+        if not raw:
+            row.option_touches = {}
+            return True
+        bars = self.market_data.get_5m_bars(
+            row.symbol, decision_time, end + timedelta(minutes=5)
+        )
+        if not bars:
+            row.option_touches = {
+                str(o.get("id")): None for o in raw if o.get("id") is not None
+            }
+            return False
+        snapshot = row.input_snapshot or {}
+        constraints = snapshot.get("constraints") or {}
+        shared_limit = constraints.get("entry_limit")
+        touches: dict[str, object] = {}
+        all_filled = True
+        for option in raw:
+            oid = str(option.get("id"))
+            if option.get("id") is None:
+                continue
+            entry = shared_limit or option.get("entry_limit")
+            stop = option.get("stop")
+            target = option.get("target")
+            if entry is None and stop is not None and option.get("risk") is not None:
+                entry = Decimal(str(stop)) + Decimal(str(option["risk"]))
+            limit = Decimal(str(entry)) if entry is not None else None
+            stop_d = Decimal(str(stop)) if stop is not None else None
+            target_d = Decimal(str(target)) if target is not None else None
+            if limit is None or stop_d is None or target_d is None:
+                touches[oid] = None
+                all_filled = False
+                continue
+            fill_index: int | None = None
+            for index, bar in enumerate(bars):
+                if bar.start - decision_time > timedelta(minutes=10):
+                    break
+                if bar.low <= limit:
+                    fill_index = index
+                    break
+            if fill_index is None:
+                touches[oid] = "not_filled"
+                continue
+            touch = _TOUCH_NEITHER
+            for bar in bars[fill_index + 1 :]:
+                if bar.low <= stop_d:
+                    touch = _TOUCH_STOP
+                    break
+                if bar.high >= target_d:
+                    touch = _TOUCH_TARGET
+                    break
+            touches[oid] = touch
+        row.option_touches = touches
         return all_filled
 
     def _update_best_worst(
