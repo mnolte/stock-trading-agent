@@ -234,7 +234,7 @@ def test_csrf_required_on_writes(app_auth: Any) -> None:
 
 def test_every_route_requires_a_session(app_auth: Any) -> None:
     app, _secret, _codes = app_auth
-    from app.auth.guard import OPEN_PATHS
+    from app.auth.guard import OPEN_PATHS, iter_flat_routes
 
     # The open set is exactly /healthz + the sign-in endpoints — drift in
     # either place fails this test.
@@ -245,21 +245,24 @@ def test_every_route_requires_a_session(app_auth: Any) -> None:
         "/api/auth/code",
         "/api/auth/status",
     }
+    checked = 0
     with TestClient(app, base_url="https://testserver") as client:
-        for route in app.routes:
-            path = getattr(route, "path", "")
-            methods = getattr(route, "methods", None) or {"GET"}
+        for path, methods, _route in iter_flat_routes(app):
             if not path.startswith("/api"):
                 continue
             if path in open_paths:
                 continue
-            for method in methods - {"HEAD", "OPTIONS"}:
+            for method in (methods or {"GET"}) - {"HEAD", "OPTIONS"}:
                 response = client.request(method, path)
+                checked += 1
                 assert response.status_code == 401, (
                     f"{method} {path} answered {response.status_code}"
                 )
                 body = response.json()
                 assert body["error"]["code"] in ("not_signed_in",), body
+    # The walk must actually reach the API surface — lazy included
+    # routers without a .path made it a no-op once before.
+    assert checked > 30
 
 
 def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
@@ -491,6 +494,29 @@ def test_startup_route_walk_refuses_unguarded_route() -> None:
     bad = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     bad.get("/healthz")(lambda: {"ok": True})
     bad.get("/internal/debug")(lambda: {})
+    with pytest.raises(RuntimeError, match="not behind the session check"):
+        check_route_coverage(bad)
+
+
+def test_startup_route_walk_reaches_lazy_included_routers() -> None:
+    """Routers added via include_router stay lazy in this FastAPI
+    version — the coverage walk must expand them or it sees nothing."""
+    from app.auth.guard import check_route_coverage
+    from fastapi import APIRouter, FastAPI
+
+    ok = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    ok.get("/healthz")(lambda: {"ok": True})
+    router = APIRouter()
+    router.get("/anything")(lambda: {})
+    ok.include_router(router, prefix="/api")
+    check_route_coverage(ok)  # /api router is guarded — passes
+
+    bad = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    bad.get("/healthz")(lambda: {"ok": True})
+    internal = APIRouter()
+    internal.get("/debug")(lambda: {})
+    internal.include_router(APIRouter())
+    bad.include_router(internal, prefix="/internal")
     with pytest.raises(RuntimeError, match="not behind the session check"):
         check_route_coverage(bad)
 

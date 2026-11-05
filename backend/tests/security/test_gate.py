@@ -49,8 +49,8 @@ def test_bodiless_cross_origin_post_refused(client: TestClient) -> None:
 
 
 def test_fetch_metadata_alone_refuses(client: TestClient) -> None:
-    """Sec-Fetch-Site cross-site without an Origin header is still a
-    cross-site write."""
+    """Sec-Fetch-Site same-site without an Origin header is still a
+    cross-site write (only same-origin/none pass)."""
     r = client.post("/api/pause", headers={"Sec-Fetch-Site": "same-site"})
     assert r.status_code == 403
     assert r.json()["error"]["code"] == "origin_refused"
