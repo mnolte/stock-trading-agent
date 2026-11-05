@@ -17,7 +17,7 @@ from app.db.models import AskMessage, AskThread, LlmCall, Position
 from app.llm.fake import FakeModelClient
 from app.market.clock import FakeClock
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, text as sqla_text
 from sqlalchemy.orm import Session, sessionmaker
 
 NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
@@ -159,7 +159,7 @@ def test_tools_never_write(session_factory: sessionmaker[Session]) -> None:
             "settings_versions",
         ):
             before[table] = s.execute(
-                __import__("sqlalchemy").text(f"SELECT COUNT(*) FROM {table}")
+                sqla_text(f"SELECT COUNT(*) FROM {table}")
             ).scalar_one()
         for name in TOOLS:
             run_tool(s, deps, name, {})
@@ -167,15 +167,21 @@ def test_tools_never_write(session_factory: sessionmaker[Session]) -> None:
         after = {}
         for table in before:
             after[table] = s.execute(
-                __import__("sqlalchemy").text(f"SELECT COUNT(*) FROM {table}")
+                sqla_text(f"SELECT COUNT(*) FROM {table}")
             ).scalar_one()
         assert before == after
 
 
 def test_tool_results_carry_no_secrets(session_factory: sessionmaker[Session]) -> None:
-    """A planted fake key must never appear in any tool result."""
+    """A key stored in the secrets table must never appear in any tool
+    result — the API is write-only for keys (hard rule 9)."""
+    from app.secrets_service import SecretsStore
+
     fake_key = "sk-fake-ask-0123456789abcdef"
-    deps = _deps(session_factory)
+    store = SecretsStore(get_config(), FakeClock(NOW), session_factory)
+    store.save("openai", fake_key, test_result="ok", test_detail=f"key {fake_key} verified")
+    assert store.get("openai") == fake_key  # planted for real
+    deps = _deps(session_factory, secrets=store)
     with session_factory() as s:
         cases: dict[str, dict[str, Any]] = {
             "get_status": {},
@@ -189,6 +195,24 @@ def test_tool_results_carry_no_secrets(session_factory: sessionmaker[Session]) -
             result, _ = run_tool(s, deps, name, args)
             blob = json.dumps(result, default=str)
             assert fake_key not in blob, name
+    # The key must also be in the scrub set the answer loop applies to
+    # tool output before it reaches the model.
+    assert fake_key in store.scrub_values()
+
+
+def test_answer_scrubs_a_leaking_tool_result(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """If a tool result ever contains a stored key, the answer loop's
+    scrub pass (app/ask/service.py) strips it before the model sees it."""
+    from app.secrets_service import SecretsStore, scrub
+
+    fake_key = "sk-fake-ask-0123456789abcdef"
+    store = SecretsStore(get_config(), FakeClock(NOW), session_factory)
+    store.save("openai", fake_key)
+    leaked = json.dumps({"detail": f"token {fake_key} rejected"})
+    cleaned = scrub(leaked, store.scrub_values())
+    assert fake_key not in cleaned
 
 
 def test_calculate_tool_result(session_factory: sessionmaker[Session]) -> None:

@@ -403,7 +403,14 @@ def test_pending_ticket_rules(app_auth: Any) -> None:
         code = totp_code(secret, app.state.clock.now())
         r = client.post("/api/auth/code", json={"code": code})
         assert r.status_code == 200
-        assert "sa_pending" not in r.headers.get("set-cookie", "") or True
+        # The single-use ticket is dropped: the response clears the
+        # pending cookie and the jar no longer holds it.
+        set_cookies = r.headers.get_list("set-cookie")
+        assert any(
+            "sa_pending" in h and ("Max-Age=0" in h or 'sa_pending=""' in h)
+            for h in set_cookies
+        ), set_cookies
+        assert client.cookies.get("sa_pending") is None
 
 
 def test_totp_step_cannot_be_reused(app_auth: Any) -> None:

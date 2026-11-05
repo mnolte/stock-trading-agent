@@ -33,6 +33,7 @@ from app.decide.v3 import (
     room_check,
     room_recheck_failure,
     scheduled_exit_text,
+    v3_config,
     v3_send_snapshot,
 )
 from app.market.calendar import StaticCalendarProvider
@@ -394,12 +395,12 @@ def test_order_time_room_recheck() -> None:
     # A fresh limit at 100.0 leaves 0.9 ATR (< 1.0) → room failure.
     reason = room_recheck_failure(
         levels, Decimal("100.0"), Decimal("1.0"),
-        __import__("app.decide.v3", fromlist=["v3_config"]).v3_config(cfg),
+        v3_config(cfg),
     )
     assert reason is not None and reason.startswith("room:")
     ok = room_recheck_failure(
         levels, Decimal("99.8"), Decimal("1.0"),
-        __import__("app.decide.v3", fromlist=["v3_config"]).v3_config(cfg),
+        v3_config(cfg),
     )
     assert ok is None
 

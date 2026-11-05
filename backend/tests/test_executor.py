@@ -2612,7 +2612,7 @@ async def test_flatten_never_refuses_same_day_positions(
 
     assert result["sold"] == ["MSFT"]
     assert (await broker.get_positions()).data == []
-    # The sale counted as a day trade — a warning goes into the event.
+    # Day-trade warnings are retired with the PDT rule — none in the event.
     with session_factory() as session:
         events = _events(session, "flatten")
         assert events[0].details is not None

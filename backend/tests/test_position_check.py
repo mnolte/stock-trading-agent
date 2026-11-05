@@ -105,7 +105,9 @@ async def test_check_places_protective_stop_for_uncovered_position(
 
     # The unknown position was adopted with a protective stop.
     assert report.mismatches == 1
-    assert broker.orders
+    (order,) = broker.orders.values()
+    assert order.side == "sell" and order.order_type == "stop"
+    assert order.symbol == "MSFT" and order.qty == 4
 
 
 async def test_failed_checks_alert_at_threshold(

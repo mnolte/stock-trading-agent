@@ -189,7 +189,7 @@ def test_replay_spent_usd_reads_meta(tmp_path: Path) -> None:
     (rdir / "meta.json").write_text(
         json.dumps({"cost_usd": 0.42, "created_at": datetime.now(UTC).isoformat()})
     )
-    total = replay_spent_usd(tmp_path, datetime.now(UTC) - __import__("datetime").timedelta(days=1))
+    total = replay_spent_usd(tmp_path, datetime.now(UTC) - timedelta(days=1))
     assert total == Decimal("0.42")
 
 

@@ -237,7 +237,7 @@ def test_overnight_split_counts_the_gap() -> None:
     # nights: Tue 101−102 = −1; Wed 98−103 = −5 → overnight −6
     # in session: Mon 102−100 = +2; Tue 103−101 = +2; Wed 99−98 = +1 → +5
     assert o["overnight_usd"] == "-6.00"
-    assert o["in_session_usd"] == "+5.00" or o["in_session_usd"] == "5.00"
+    assert o["in_session_usd"] == "5.00"
     assert o["nights"] == 2
     assert o["gapped_against"] == 2
     assert o["largest_gap"]["r"] == "-0.50"  # −5 / risk 10

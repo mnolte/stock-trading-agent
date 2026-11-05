@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -329,7 +329,7 @@ def _daily_bars(n: int, gap: Decimal = Decimal("0.4")) -> list[DailyBar]:
         bars.append(
             DailyBar(
                 symbol="T",
-                date=date(2026, 1, 1) + __import__("datetime").timedelta(days=i),
+                date=date(2026, 1, 1) + timedelta(days=i),
                 open=open_,
                 close=close,
                 high=open_ + Decimal("0.6"),
@@ -356,12 +356,84 @@ def test_gap_p90_atr_value() -> None:
 # base rates
 
 
-def test_base_rate_shrinkage_formula() -> None:
-    """n 30, rate 0.50, break-even 0.33 → (30×0.50 + 30×0.33)/60 ≈ 0.42
+def test_base_rate_shrinkage_formula(session_factory: Any) -> None:
+    """n 30, rate 0.50, break-even ≈ 0.33 (rr 2.0) → shrunk ≈ 0.42 —
+    computed by the real base_rates over seeded rows
     (docs/kickoffs/pr-37.md)."""
-    n, rate, be = Decimal(30), Decimal("0.50"), Decimal("0.33")
-    shrunk = (n * rate + 30 * be) / (n + 30)
-    assert shrunk.quantize(Decimal("0.01")) == Decimal("0.42")
+    from app.db.models import Cycle, Decision, Outcome
+
+    from tests.test_outcomes import _naive
+
+    scheduled = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    options = [
+        {"id": f"o{i}", "rr": "2.0", "stop": "98", "target": "104", "entry": "100"}
+        for i in range(30)
+    ]
+    touches = {
+        f"o{i}": "target" if i % 2 == 0 else "stop" for i in range(30)
+    }
+    # A second decision in a different regime: must not count toward the
+    # comparable set.
+    other_touches = {f"x{i}": "target" for i in range(5)}
+    other_options = [
+        {"id": f"x{i}", "rr": "2.0", "stop": "98", "target": "104", "entry": "100"}
+        for i in range(5)
+    ]
+    with session_factory() as session:
+        for opts, tchs, checks in (
+            (
+                options,
+                touches,
+                {"regime_volatility": "normal", "momentum": "strong"},
+            ),
+            (
+                other_options,
+                other_touches,
+                {"regime_volatility": "high", "momentum": "strong"},
+            ),
+        ):
+            cycle = Cycle(
+                kind="cycle",
+                scheduled_time=_naive(scheduled),
+                started_at=_naive(scheduled),
+                finished_at=_naive(scheduled),
+                status="done",
+            )
+            session.add(cycle)
+            session.flush()
+            decision = Decision(
+                cycle_id=cycle.id,
+                symbol="MSFT",
+                context="candidate",
+                input_snapshot={"symbol": "MSFT", "checks": checks},
+                rules_result={"status": "pass"},
+                model_output={"action": "skip"},
+                validation_result={"valid": True, "final_action": "skip"},
+                final_action="skip",
+                prompt_version="decision.v5",
+                prompt_hash="abc",
+                model="fake-decision",
+                options={"options": opts, "removed": []},
+            )
+            session.add(decision)
+            session.flush()
+            session.add(Outcome(decision_id=decision.id, option_touches=tchs))
+        session.commit()
+
+        out = base_rates(
+            session,
+            options=[
+                {"id": "new_same_bucket", "rr": "2.0"},
+                {"id": "new_other_bucket", "rr": "3.0"},
+            ],
+            regime_volatility="normal",
+            momentum="strong",
+            v5=v5_config(AppConfig()),
+            day_ny=datetime(2026, 10, 22, tzinfo=UTC),
+        )
+    assert out["new_same_bucket"] == (0.42, 30)
+    # No comparable touches in the other bucket: below min_n → no rate.
+    assert out["new_other_bucket"] == (None, 0)
 
 
 def test_min_ev_r_from_config() -> None:
@@ -573,10 +645,7 @@ def test_last_cycle_for_last_active_cycle() -> None:
     )
     cal = _calendar("2026-11-03")
     last = last_cycle_for(
-        config, cal, datetime(2026, 11, 3, 15, 46, tzinfo=UTC).astimezone(
-            __import__("zoneinfo").ZoneInfo("America/New_York")
-        )
-        if False else datetime.fromisoformat("2026-11-03T15:46:00-04:00")
+        config, cal, datetime.fromisoformat("2026-11-03T15:46:00-04:00")
     )
     assert last is True
     earlier = last_cycle_for(
@@ -656,7 +725,7 @@ def _seed_counterfactual_decision(
             kind="cycle",
             scheduled_time=_naive(scheduled_utc),
             started_at=_naive(scheduled_utc),
-            finished_at=_naive(scheduled_utc + __import__("datetime").timedelta(minutes=1)),
+            finished_at=_naive(scheduled_utc + timedelta(minutes=1)),
             status="done",
         )
         session.add(cycle)
