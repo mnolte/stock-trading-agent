@@ -103,7 +103,9 @@ class RunLock:
             return LockCheck("stale", pid, last_seen)
         if pid == os.getpid():
             return LockCheck("live", pid, last_seen)
-        if not _pid_alive(pid):
+        if not isinstance(pid, int) or pid <= 0 or not _pid_alive(pid):
+            # A heartbeat-only lock (pid never written or lost) holds a
+            # bogus pid — never let it refuse a legitimate start.
             return LockCheck("stale", pid, last_seen)
         # A live pid is the holder only while the lock is fresh. Pids get
         # recycled, so an old lock can name a pid that now belongs to an
