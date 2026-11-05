@@ -244,7 +244,6 @@ export function Layout() {
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
-          onAsk={ask.toggle}
           needsYou={needsYou}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
