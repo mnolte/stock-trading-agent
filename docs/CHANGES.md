@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-05 — [041] Stale header numbers
+
+The header's equity and today figures come from the executor's cached
+account snapshot, which only `refresh_account` updates. The position
+check and the decision cycle both refresh it *after* reconciliation has
+already pushed `header` to the GUI, so the debounced header refetch
+raced the broker read and often served the previous snapshot — the
+figures lagged until a page refresh while the rest of the page updated.
+`update_session_brakes` now pushes `header` once the refreshed snapshot
+is stored. The push lives there and not inside `refresh_account` because
+the risk-budget endpoint calls `refresh_account` while its card
+refreshes on `header` updates — a push there would refetch the card in a
+loop.
+
 ## 2026-11-04 — [040] EP shadow gate_detail crash
 
 An `UnboundLocalError` in `ShadowRunner._decide_candidates_ep` killed

@@ -74,6 +74,7 @@ def _executor(
     config: AppConfig | None = None,
     sources: DataSources | None = None,
     reference_bar: bool = True,
+    notify: Any = None,
 ) -> Executor:
     clock = clock or FakeClock(NOW)
     config = config or AppConfig()
@@ -92,6 +93,7 @@ def _executor(
         clock=clock,
         state=ExecutionState(clock=clock),
         session_factory=session_factory,
+        notify=notify,
     )
     if reference_bar:
         for symbol, price in (broker.prices or {"MSFT": Decimal("420.10")}).items():
@@ -2784,6 +2786,33 @@ async def test_drawdown_kill_turns_the_switch_on(
         events = _events(session, "kill_switch")
         assert events[0].details is not None
         assert events[0].details["automatic"] is True
+
+
+async def test_session_brakes_push_header_after_account_refresh(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The header's equity figures come from the refreshed snapshot, so
+    the GUI must refetch after it — reconcile's push predates it."""
+    sent: list[set[str]] = []
+    broker = FakeBroker(FakeClock(NOW), cash=Decimal("10000"))
+    executor = _executor(session_factory, broker, notify=sent.append)
+
+    await executor.update_session_brakes()
+
+    assert {"header"} in sent
+
+
+async def test_session_brakes_skip_header_push_when_account_read_fails(
+    session_factory: sessionmaker[Session],
+) -> None:
+    sent: list[set[str]] = []
+    broker = FakeBroker(FakeClock(NOW), cash=Decimal("10000"))
+    executor = _executor(session_factory, broker, notify=sent.append)
+    broker.fail_reads = True
+
+    await executor.update_session_brakes()
+
+    assert {"header"} not in sent
 
 
 @pytest.mark.parametrize(
