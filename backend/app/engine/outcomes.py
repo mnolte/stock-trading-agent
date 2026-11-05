@@ -560,8 +560,14 @@ class OutcomeWorker:
             return False  # bars missing — stay NULL, retry next pass
         end = _aware_utc(price_bar.start) + timedelta(minutes=5)
         snapshot = row.input_snapshot or {}
-        constraints = snapshot.get("constraints") or {}
-        shared_limit = constraints.get("entry_limit")
+        constraints = (
+            snapshot.get("constraints") if isinstance(snapshot, dict) else None
+        )
+        shared_limit = (
+            constraints.get("entry_limit")
+            if isinstance(constraints, dict)
+            else None
+        )
         touches = self._option_touches(
             raw,
             symbol=row.symbol,
