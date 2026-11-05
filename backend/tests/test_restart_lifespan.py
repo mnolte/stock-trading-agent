@@ -95,9 +95,7 @@ def _first_boot_then_resume_marker() -> None:
 
 
 def test_clean_running_boot_resumes(auth_boot: None, tmp_path: Path) -> None:
-    seed_user(NOW)
     _first_boot_then_resume_marker()
-    # 30 s for the pending-ticket step: use a recovery-code-free sign-in
     with _boot() as client:
         app = cast(FastAPI, client.app)
         assert app.state.exec_state.paused is False
@@ -113,17 +111,32 @@ def test_clean_running_boot_resumes(auth_boot: None, tmp_path: Path) -> None:
         assert "restarted_resumed" in events
 
 
+# app/restart.py decide_restart: the one reason each saboteur must cause.
+REASONS = {
+    "unclean": "the previous shutdown was not clean",
+    "kill_switch": "the kill switch is on",
+    "mismatch": "reconciliation found differences",
+    "guard": "the broker guard is unconfirmed",
+}
+
+
 def _paused_boot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, saboteur: str
 ) -> None:
-    seed_user(NOW)
     _first_boot_then_resume_marker()
     if saboteur == "unclean":
         # a lock from a different boot = the previous run died
         lock = tmp_path / "data" / "run.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
+        # Same fields RunLock._payload/heartbeat write (app/shutdown.py).
         lock.write_text(
-            json.dumps({"pid": 999999999, "boot_id": "other-boot", "heartbeat": 0})
+            json.dumps({
+                "pid": 999999999,
+                "boot_id": "other-boot",
+                "started_at": 0,
+                "heartbeat_seconds": 30,
+                "heartbeat_at": 0,
+            })
         )
     elif saboteur == "kill_switch":
         _insert_event("kill_switch", {"on": True, "reason": "test"})
@@ -154,6 +167,8 @@ def _paused_boot(
         assert app.state.exec_state.paused is True, saboteur
         paused_rows = _events("restart_paused")
         assert paused_rows, f"restart_paused event missing ({saboteur})"
+        details = paused_rows[0].details or {}
+        assert details.get("reasons") == [REASONS[saboteur]], details
         secret, _codes = seed_user(NOW)
         sign_in(client, secret, advance=False)
         kinds = {b["kind"] for b in _banners(client)}

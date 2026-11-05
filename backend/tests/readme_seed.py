@@ -55,14 +55,27 @@ def _ny_open(day: date, minutes: int = 0) -> datetime:
     return datetime(day.year, day.month, day.day, 13, 30) + timedelta(minutes=minutes)
 
 
-def _cycle(session: Any, day: date, idx: int) -> Any:
+def _cycle_time(day: date, slot: int) -> datetime:
+    """Naive UTC of the ``slot``-th configured cycle on ``day`` — seeded
+    cycles sit on the live schedule (tests/test_seed_shapes.py)."""
+    from app.config import get_config
+    from app.market.clock import NY_TZ
+
+    cycles = get_config().get("schedule", "cycles")
+    hh, mm = (int(part) for part in str(cycles[slot]).split(":"))
+    at = datetime(day.year, day.month, day.day, hh, mm, tzinfo=NY_TZ)
+    return at.astimezone(UTC).replace(tzinfo=None)
+
+
+def _cycle(session: Any, day: date, slot: int) -> Any:
     from app.db.models import Cycle
 
+    at = _cycle_time(day, slot)
     c = Cycle(
         kind="cycle",
-        scheduled_time=_ny_open(day, 76 + idx),
-        started_at=_ny_open(day, 76 + idx),
-        finished_at=_ny_open(day, 78 + idx),
+        scheduled_time=at,
+        started_at=at,
+        finished_at=at + timedelta(minutes=2),
         duration_seconds=120.0,
         status="done",
     )
@@ -134,10 +147,17 @@ def _decision(
                 "blocked_by": None,
                 "risk_factor": "1.00",
                 "sizing": {"shares": 0, "limited_by": None},
+                # Live gate names (app/risk/gates.py), never retired ones.
                 "checks": [
-                    {"name": "Risk per trade", "passed": True, "detail": "0.5% of equity"},
-                    {"name": "Max position", "passed": True, "detail": "under 20%"},
-                    {"name": "Cash", "passed": True, "detail": "cash covers order"},
+                    {"name": "kill_switch", "passed": True, "detail": "off"},
+                    {"name": "paused", "passed": True, "detail": "entries active"},
+                    {"name": "max_open_positions", "passed": True, "detail": "1 of 4"},
+                    {"name": "daily_loss_limit", "passed": True, "detail": "session P&L 0.00%"},
+                    {
+                        "name": "position_size",
+                        "passed": True,
+                        "detail": "6 shares, limited by risk_per_trade",
+                    },
                 ],
             }
             if entry
@@ -324,10 +344,15 @@ def main() -> None:
         equity = STARTING_EQUITY
         spy = STARTING_EQUITY
         first_decisions: list[Any] = []
-        for i, (symbol, e, s, t, day_i, close_off, reason) in enumerate(TRADES):
+        # One cycle per (day, slot): a day's trades take the first slots,
+        # its skip slot 3 and the rules no_call slot 4.
+        trades_on: dict[int, int] = {}
+        for symbol, e, s, t, day_i, close_off, reason in TRADES:
             day = TRADE_DAYS[day_i]
             close_day = TRADE_DAYS[min(day_i + close_off, len(TRADE_DAYS) - 1)]
-            c = _cycle(session, day, i)
+            slot = trades_on.get(day_i, 0)
+            trades_on[day_i] = slot + 1
+            c = _cycle(session, day, slot)
             entry, stop, target = Decimal(e), Decimal(s), Decimal(t)
             d = _decision(
                 session, c, symbol, "enter", 0.62,
@@ -343,12 +368,12 @@ def main() -> None:
 
         for symbol, _action, conf, day_i in SKIPS:
             day = TRADE_DAYS[day_i]
-            c = _cycle(session, day, 20 + day_i)
+            c = _cycle(session, day, 3)
             d = _decision(session, c, symbol, "skip", float(conf), entry=False)
             _llm_call(session, d, day)
 
         # One rules-fail no_call (no model call, no llm_calls row).
-        c = _cycle(session, TRADE_DAYS[5], 40)
+        c = _cycle(session, TRADE_DAYS[5], 4)
         d = Decision(
             cycle_id=c.id,
             symbol="QQQ",

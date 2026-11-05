@@ -3,8 +3,11 @@
 - Every ruff rule catches a sample (E722, BLE001, S110, TRY400, TRY203).
 - No bare ``asyncio.create_task`` outside ``app.spawn`` (and the
   websocket fan-out, which manages its own wait pair).
-- An exception in a task, a thread, a scheduler job, an API route and
-  the frontend endpoint each lands in the log with an error_id.
+- An exception in a task, a thread and a scheduler job lands in the log
+  (the scheduler job end to end: an indexed ERROR line with an error_id).
+- Covered elsewhere: an API route's 500 carries an error_id in the log
+  (test_api_errors.py) and the frontend endpoint lands at ERROR in the
+  index (test_log_index.py::test_client_log_endpoint).
 """
 
 from __future__ import annotations
@@ -15,10 +18,15 @@ import re
 import subprocess
 import sys
 import threading
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from app.spawn import install_global_hooks, spawn
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -148,3 +156,53 @@ def test_thread_hook_logs() -> None:
         loop.close()
         target.removeHandler(handler)
         sys.excepthook, threading.excepthook = old_sys_hook, old_thread_hook
+
+
+def test_scheduler_job_failure_is_indexed_with_error_id(client: TestClient) -> None:
+    """A job that raises reaches the EVENT_JOB_ERROR listener in the app
+    lifespan and lands in the log index at ERROR with an error_id —
+    never only on APScheduler's own stderr."""
+    import queue
+
+    from app.logging_config import get_pipeline
+
+    app = cast(FastAPI, client.app)
+    scheduler: Any = app.state.scheduler
+    handler = app.state.log_index_handler
+    assert handler is not None
+
+    def boom() -> None:
+        raise RuntimeError("scheduled job exploded")
+
+    # Test-side wall clock (not engine code): run the job right away.
+    scheduler.add_job(
+        boom,
+        "date",
+        run_date=datetime.now(scheduler.timezone) + timedelta(milliseconds=50),
+        id="test-boom-job",
+        misfire_grace_time=60,
+    )
+    pipeline = get_pipeline()
+    deadline = time.monotonic() + 10
+    rows: list[dict[str, Any]] = []
+    while not rows and time.monotonic() < deadline:
+        # Drain the queue ourselves: the listener thread can starve under
+        # parallel load; either path writes to the same handler.
+        if pipeline is not None:
+            while True:
+                try:
+                    record = pipeline.queue.get_nowait()
+                except queue.Empty:
+                    break
+                pipeline.listener.handle(record)
+        handler.flush()
+        lines = client.get("/api/logs?levels=ERROR").json()["lines"]
+        rows = [
+            line for line in lines
+            if "scheduler job test-boom-job failed" in line["message"]
+        ]
+        if not rows:
+            time.sleep(0.05)
+    assert rows, "a failed scheduler job must reach the log index"
+    assert rows[0]["level"] == "ERROR"
+    assert str(rows[0]["error_id"]).startswith("e-")

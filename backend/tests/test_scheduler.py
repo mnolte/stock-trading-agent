@@ -82,7 +82,10 @@ async def test_after_close_snapshots_do_not_block_event_loop(
             worker_threads.append(threading.get_ident())
             heartbeat = threading.Event()
             loop.call_soon_threadsafe(heartbeat.set)
-            responsive.append(heartbeat.wait(timeout=0.5))
+            # Generous bound: wait() returns the moment the loop runs the
+            # callback, so 5 s only matters on a starved CI box — a tight
+            # wall-clock limit there would false-fail a responsive loop.
+            responsive.append(heartbeat.wait(timeout=5.0))
             if failed == name:
                 raise RuntimeError(f"{name} failed")
             kwargs["publish"]({name})

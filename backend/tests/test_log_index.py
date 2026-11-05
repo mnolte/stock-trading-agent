@@ -75,7 +75,10 @@ def test_index_failure_keeps_file_logging(tmp_path: Path) -> None:
     handler = LogIndexHandler(db, file_fallback=fallback)
     handler.emit(_rec("still logged"))
     handler.flush()
-    assert handler._conn is None or handler._buffer == []
+    # The failed batch is dropped (never retried into a broken index) and
+    # the half-open connection is closed so the next flush reconnects.
+    assert handler._buffer == []
+    assert handler._conn is None
     assert fallback_lines, "index failure must reach the file handler"
 
 
@@ -179,6 +182,44 @@ def test_logs_api_paging_and_filters(client: TestClient) -> None:
     # Search (FTS).
     found = client.get("/api/logs?levels=WARNING&search=line")
     assert len(found.json()["lines"]) == 5
+    assert client.get("/api/logs?cursor=abc").status_code == 422
+
+
+# api_logs returns the id of the first row *not* shown as next_cursor and
+# then filters ``id < cursor``, so every page boundary drops one line.
+# Strict: the day routes.py hands out the last shown id this XPASSes and
+# fails, forcing the marker off.
+@pytest.mark.xfail(strict=True, reason="api_logs next_cursor skips a line per page")
+def test_logs_api_keyset_page_two(client: TestClient) -> None:
+    """Page 2 starts right after page 1's last line — nothing skipped,
+    nothing repeated — and the last page has no cursor."""
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    for i in range(5):
+        handler.emit(_rec(f"line {i}", logging.WARNING))
+    handler.flush()
+    page1 = client.get("/api/logs?levels=WARNING&limit=2").json()
+    assert [line["message"] for line in page1["lines"]] == ["line 4", "line 3"]
+    assert page1["next_cursor"] is not None
+    page2 = client.get(
+        f"/api/logs?levels=WARNING&limit=2&cursor={page1['next_cursor']}"
+    ).json()
+    assert [line["message"] for line in page2["lines"]] == ["line 2", "line 1"]
+    page3 = client.get(
+        f"/api/logs?levels=WARNING&limit=2&cursor={page2['next_cursor']}"
+    ).json()
+    assert [line["message"] for line in page3["lines"]] == ["line 0"]
+    assert page3["next_cursor"] is None
+
+
+def test_logs_api_limit_is_clamped_to_200(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    for i in range(205):
+        handler.emit(_rec(f"bulk {i}", logging.WARNING))
+    handler.flush()
+    data = client.get("/api/logs?levels=WARNING&limit=500").json()
+    assert len(data["lines"]) == 200
+    assert data["next_cursor"] is not None
+    assert len(client.get("/api/logs?levels=WARNING&limit=0").json()["lines"]) == 1
 
 
 def test_logs_api_summary_and_around(client: TestClient) -> None:
@@ -249,7 +290,7 @@ def test_client_log_rate_limit(client: TestClient) -> None:
             "/api/logs/client",
             json={"message": "spam", "tab_id": "t-spam"},
         )
-    assert resp.json()["logged"] is False or resp.json()["rate_limited"]
+    assert resp.json() == {"logged": False, "rate_limited": True}
 
 
 async def test_new_error_notification_once_per_fingerprint(
