@@ -5494,7 +5494,7 @@ def api_logs(request: Request) -> dict[str, object]:
     lines = [_log_row(r) for r in rows[:limit]]
     return {
         "lines": lines,
-        "next_cursor": rows[limit][0] if len(rows) > limit else None,
+        "next_cursor": rows[limit - 1][0] if len(rows) > limit else None,
         "index_available": True,
     }
 

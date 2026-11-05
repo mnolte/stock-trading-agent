@@ -185,11 +185,6 @@ def test_logs_api_paging_and_filters(client: TestClient) -> None:
     assert client.get("/api/logs?cursor=abc").status_code == 422
 
 
-# api_logs returns the id of the first row *not* shown as next_cursor and
-# then filters ``id < cursor``, so every page boundary drops one line.
-# Strict: the day routes.py hands out the last shown id this XPASSes and
-# fails, forcing the marker off.
-@pytest.mark.xfail(strict=True, reason="api_logs next_cursor skips a line per page")
 def test_logs_api_keyset_page_two(client: TestClient) -> None:
     """Page 2 starts right after page 1's last line — nothing skipped,
     nothing repeated — and the last page has no cursor."""
