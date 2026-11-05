@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-05 — [042] Backend test audit fixes
+
+- The startup route-coverage walk (`app/auth/guard.py`) now expands lazily included routers — under this FastAPI version it previously saw none of the API surface, so a router included outside `/api` would have shipped unguarded without the check firing. The session-walk test asserts it actually checked routes.
+- `POST /api/auth/totp` no longer 500s: the reset read `user.username` after the session closed.
+- `client_order_id` refuses an instance id that collides with an order-kind word (such ids parsed as the pre-instance shape and disabled foreign-instance detection).
+- `EnvSettings` honours `SA_ENV_FILE`, so a repo-root `.env` no longer feeds test configs.
+- Test suite: implemented the empty shadow same-day-exit test; the secrets and base-rate tests now exercise real code; the deploy market-hours guard test runs the script's own functions; gate boundary, `require_confirmed`, auth-endpoint, upload-cap, WebSocket fetch-metadata, `protective_stop_failed`, `wait_for_work`, rule-13 calendar, instance-clamp and session-clock/DST coverage added; naive/aware datetime bugs and drifted seed rows fixed; Argon2 hashing is cheap in tests and the bounded-inputs sweep is ~7× faster.
+
 ## 2026-11-05 — [041] Stale header numbers
 
 The header's equity and today figures come from the executor's cached
