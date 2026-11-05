@@ -760,7 +760,7 @@ def test_estimate_cost_cap_refusal_and_warning(tmp_path: Path) -> None:
                 status="done",
                 cost_usd=Decimal("20.00"),
                 run_dir=str(tmp_path / "run-old"),
-                finished_at=_naive_utc(datetime.now()),
+                finished_at=_naive_utc(datetime(2024, 6, 11)),
                 created_at=_naive_utc(datetime(2024, 6, 10)),
             )
         )
