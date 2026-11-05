@@ -662,15 +662,16 @@ class OutcomeWorker:
         ).scalar_one_or_none()
         if outcome is None:
             return False
-        if closed is not None and closed + self._delay < now:
-            # The window is fixed after the close; give late bars one delay
-            # to arrive, then stop rewriting the row.
-            if (
-                outcome.best_price is not None
-                and outcome.worst_price is not None
-                and outcome.first_touch is not None
-            ):
-                return False
+        # The window is fixed after the close; give late bars one delay
+        # to arrive, then stop rewriting the row.
+        if (
+            closed is not None
+            and closed + self._delay < now
+            and outcome.best_price is not None
+            and outcome.worst_price is not None
+            and outcome.first_touch is not None
+        ):
+            return False
         extremes = self.market_data.bars_cache.get_extremes(
             position.symbol, opened, end
         )
