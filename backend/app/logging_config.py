@@ -153,9 +153,12 @@ class SecretScrubFilter(logging.Filter):
             try:
                 import traceback
 
-                exc_info = record.exc_info
-                if not isinstance(exc_info, tuple):
-                    exc_info = sys.exc_info()
+                raw: object = record.exc_info
+                exc_info = (
+                    raw
+                    if isinstance(raw, tuple) and len(raw) == 3
+                    else sys.exc_info()
+                )
                 if exc_info[0] is not None:
                     record.exc_text = _scrub_text(
                         "".join(traceback.format_exception(*exc_info)),

@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,12 +24,32 @@ from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.shadows.runner import ShadowRunner
 from sqlalchemy import func, select, text
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
 
 def _naive(dt: datetime) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None)
+
+
+@pytest.mark.parametrize("iteration", range(2))
+def test_scratch_schema_copy_is_empty_isolated_and_uses_production_pragmas(
+    session_factory: sessionmaker[Session], empty_db_template: Path, iteration: int,
+) -> None:
+    with session_factory() as session:
+        assert session.execute(text("PRAGMA journal_mode")).scalar_one() == "wal"
+        assert session.execute(text("PRAGMA busy_timeout")).scalar_one() == 30000
+        assert session.execute(text("PRAGMA temp_store")).scalar_one() == 2
+        assert session.execute(text("PRAGMA mmap_size")).scalar_one() == 268435456
+        assert session.execute(text("PRAGMA cache_size")).scalar_one() == -64000
+        for table in Base.metadata.sorted_tables:
+            assert session.execute(select(func.count()).select_from(table)).scalar_one() == 0
+        session.add(Run(started_at=datetime(2026, 10, 15), starting_equity=Decimal(iteration)))
+        session.commit()
+        assert session.execute(select(func.count(Run.id))).scalar_one() == 1
+    with sqlite3.connect(empty_db_template) as template:
+        assert template.execute("SELECT count(*) FROM runs").fetchone() == (0,)
 
 
 def test_engine_uses_wal_and_busy_timeout() -> None:

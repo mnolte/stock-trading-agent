@@ -272,21 +272,37 @@ def _fast_password_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(scope="session")
+def empty_db_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("empty-schema") / "template.db"
+    engine = create_engine(f"sqlite:///{path}")
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+    return path
+
+
 @pytest.fixture
-def session_factory(tmp_path: Path) -> Generator[sessionmaker[Session], None, None]:
+def session_factory(
+    tmp_path: Path, empty_db_template: Path,
+) -> Generator[sessionmaker[Session], None, None]:
     """A scratch database with the production engine's pragmas (WAL,
     busy timeout, mmap) so tests see the same concurrency semantics —
     but none of the template's seeded market data."""
+    db_path = tmp_path / "test.db"
+    shutil.copyfile(empty_db_template, db_path)
     engine = configure_sqlite(
         create_engine(
-            f"sqlite:///{tmp_path / 'test.db'}",
+            f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False, "timeout": 30},
         ),
         busy_timeout_seconds=30,
     )
-    Base.metadata.create_all(engine)
-    yield sessionmaker(bind=engine, autoflush=False, autocommit=False)
-    engine.dispose()
+    try:
+        yield sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture

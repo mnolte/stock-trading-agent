@@ -7,7 +7,7 @@ from itertools import batched
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import bindparam, delete, func, insert, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
@@ -118,23 +118,27 @@ class BarCache:
             # Existing rows get refreshed too — SIP revises bars and the
             # newest session is refetched while it is still forming; an
             # insert-only store would keep the stale row forever.
-            for b, sym, start in keyed:
-                if (sym, start) in existing:
-                    session.execute(
-                        update(Bar5mRow)
-                        .where(
-                            Bar5mRow.symbol == sym,
-                            Bar5mRow.start == start,
-                        )
-                        .values(
-                            open=b.open,
-                            high=b.high,
-                            low=b.low,
-                            close=b.close,
-                            volume=b.volume,
-                            feed=b.feed,
-                        )
+            revisions = [
+                {
+                    "_symbol": sym, "_start": start,
+                    "open": b.open, "high": b.high, "low": b.low,
+                    "close": b.close, "volume": b.volume, "feed": b.feed,
+                }
+                for b, sym, start in keyed
+                if (sym, start) in existing
+            ]
+            if revisions:
+                session.connection().execute(
+                    update(Bar5mRow)
+                    .where(
+                        Bar5mRow.symbol == bindparam("_symbol"),
+                        Bar5mRow.start == bindparam("_start"),
                     )
+                    .values(**{name: bindparam(name) for name in (
+                        "open", "high", "low", "close", "volume", "feed",
+                    )}),
+                    revisions,
+                )
             session.commit()
             return len(new_rows)
 
@@ -216,22 +220,27 @@ class BarCache:
             ]
             if new_rows:
                 session.execute(insert(Bar1dRow), new_rows)
-            for b in bars:
-                if (b.symbol, b.date) in existing:
-                    session.execute(
-                        update(Bar1dRow)
-                        .where(
-                            Bar1dRow.symbol == b.symbol,
-                            Bar1dRow.date == b.date,
-                        )
-                        .values(
-                            open=b.open,
-                            high=b.high,
-                            low=b.low,
-                            close=b.close,
-                            volume=b.volume,
-                        )
+            revisions = [
+                {
+                    "_symbol": b.symbol, "_date": b.date,
+                    "open": b.open, "high": b.high, "low": b.low,
+                    "close": b.close, "volume": b.volume,
+                }
+                for b in bars
+                if (b.symbol, b.date) in existing
+            ]
+            if revisions:
+                session.connection().execute(
+                    update(Bar1dRow)
+                    .where(
+                        Bar1dRow.symbol == bindparam("_symbol"),
+                        Bar1dRow.date == bindparam("_date"),
                     )
+                    .values(**{name: bindparam(name) for name in (
+                        "open", "high", "low", "close", "volume",
+                    )}),
+                    revisions,
+                )
             session.commit()
             return len(new_rows)
 
