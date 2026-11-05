@@ -783,7 +783,9 @@ class ReviewService:
                 .where(
                     Outcome.price_5sessions.is_not(None),
                     Verdict.id.is_(None),
-                    Decision.final_action.in_(("enter", "skip")),
+                    # "blocked" too: a model enter code blocked is still
+                    # judged as an enter — verdict_eligible decides.
+                    Decision.final_action.in_(("enter", "skip", "blocked")),
                     Decision.no_call_reason.is_(None),
                 )
                 .order_by(Cycle.scheduled_time)
