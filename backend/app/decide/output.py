@@ -1607,6 +1607,7 @@ def _claim_checks_v4(
     snapshot: dict[str, Any],
     chosen: dict[str, Any] | None,
     v5: bool = False,
+    near_atr: Decimal = Decimal(1),
 ) -> ExplanationCheck:
     """The v4 claim checks (docs/SPEC.md, Decision v4 — Code checks).
 
@@ -1634,7 +1635,7 @@ def _claim_checks_v4(
         if chosen is not None:
             near = any(
                 _decimal_or_none(lv.get("distance_atr")) is not None
-                and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
+                and abs(_decimal_or_none(lv.get("distance_atr"))) <= near_atr  # type: ignore[arg-type]
                 for lv in (chosen.get("levels_in_way") or [])
                 if isinstance(lv, dict)
             )
@@ -1642,7 +1643,7 @@ def _claim_checks_v4(
         position = snapshot.get("position") or {}
         near = any(
             _decimal_or_none(lv.get("distance_atr")) is not None
-            and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
+            and abs(_decimal_or_none(lv.get("distance_atr"))) <= near_atr  # type: ignore[arg-type]
             for lv in (position.get("levels_to_target") or [])
             if isinstance(lv, dict)
         )
@@ -1796,7 +1797,10 @@ def validate_model_output_v4(
 
     explanation = check_explanation_v4(output, snapshot, chosen)
     claims = _claim_checks_v4(
-        output, context=context, snapshot=snapshot, chosen=chosen, v5=v5
+        output, context=context, snapshot=snapshot, chosen=chosen, v5=v5,
+        near_atr=config.get_decimal(
+            "decision", "v4", "near_level_atr", default=Decimal(1)
+        ),
     )
     claims_check = CodeCheck(
         "Claim checks",
@@ -2048,7 +2052,7 @@ def validate_model_output_v4(
         # becomes skip · flip_flop. An enter → skip is never blocked.
         prev = snapshot.get("previous_decision") or {}
         since = prev.get("since") or {}
-        move = since.get("price_move_atr")
+        move = _decimal_or_none(since.get("price_move_atr"))
         new_symbol_headline = any(
             h.get("new") and h.get("about_symbol")
             for h in (snapshot.get("headlines") or [])
@@ -2058,7 +2062,7 @@ def validate_model_output_v4(
             isinstance(prev, dict)
             and prev.get("action") == "skip"
             and move is not None
-            and abs(float(move)) < flip_min
+            and abs(move) < flip_min
             and not since.get("checks_changed")
             and not new_symbol_headline
             and not since.get("new_levels_within_1_atr")
@@ -2276,9 +2280,11 @@ def decision_trade_prices(
         )
     if chosen_option is None or not options:
         return None, None
+    raw_options = options.get("options")
+    raw_stops = options.get("stop_options")
     pool = [
-        *(options.get("options") or []),
-        *(options.get("stop_options") or []),
+        *(raw_options if isinstance(raw_options, list) else []),
+        *(raw_stops if isinstance(raw_stops, list) else []),
     ]
     chosen = _option_by_id(pool, chosen_option)
     if chosen is None:

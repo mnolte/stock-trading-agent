@@ -364,7 +364,7 @@ def gate_context(
         orders_this_cycle=orders_this_cycle,
         daily_loss_hit=any(
             ny_date(t) == today and session_pnl_pct(e, last_equity) <= -Decimal(str(
-                config.get("risk", "daily_loss_limit_pct")
+                config.get("risk", "daily_loss_limit_pct", default=2.0)
             )) for t, e in eq_rows
         ),
     )

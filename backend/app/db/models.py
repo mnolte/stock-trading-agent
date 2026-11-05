@@ -173,7 +173,9 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    alpaca_order_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    alpaca_order_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, index=True, unique=True
+    )
     # Orders carry our client id from before submit, so a timed-out write can
     # still be found by reconciliation instead of resent.
     client_order_id: Mapped[str | None] = mapped_column(

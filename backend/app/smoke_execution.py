@@ -131,7 +131,11 @@ class ReadOnlyBroker:
         return DataResult(data=None, error=BLOCKED, source="read-only")  # type: ignore[arg-type]
 
     async def replace_stop(
-        self, order_id: str, *, stop_price: Decimal
+        self,
+        order_id: str,
+        *,
+        stop_price: Decimal,
+        client_order_id: str | None = None,
     ) -> DataResult[BrokerOrder]:
         return DataResult(data=None, error=BLOCKED, source="read-only")  # type: ignore[arg-type]
 

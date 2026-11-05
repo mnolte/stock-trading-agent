@@ -57,8 +57,8 @@ def evaluate_entry_rules(
     config: AppConfig,
     cycle_time: str | None = None,
 ) -> RulesResult:
-    rsi_min = config.get("rules", "rsi_min", default=40)
-    rsi_max = config.get("rules", "rsi_max", default=70)
+    rsi_min = config.get_int("rules", "rsi_min", default=40)
+    rsi_max = config.get_int("rules", "rsi_max", default=70)
     require_above_sma = bool(
         config.get("rules", "require_daily_above_sma50", default=True)
     )

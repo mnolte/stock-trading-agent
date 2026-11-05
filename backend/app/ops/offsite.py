@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -86,7 +87,14 @@ def _restic_env(creds: OffsiteCredentials) -> dict[str, str]:
     return env
 
 
+_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
+
+
 def _repo(creds: OffsiteCredentials) -> str:
+    # The bucket name becomes part of the repo URL — anything outside
+    # the S3 name shape could reshape where credentials are sent.
+    if not _BUCKET_RE.fullmatch(creds.bucket):
+        raise ValueError(f"invalid backup bucket name {creds.bucket!r}")
     return f"s3:{creds.endpoint}/{creds.bucket}"
 
 
@@ -128,7 +136,12 @@ def offsite_backup(config: AppConfig, secrets: SecretsStore) -> None:
     if init.returncode != 0 and b"already initialized" not in init.stderr:
         last = init.stderr.decode("utf-8", "replace").strip().splitlines()
         raise OffsiteError(f"restic init failed: {last[-1] if last else 'error'}")
-    paths = [str(db)]
+    # Back up the verified daily copy, not the live WAL database — a
+    # plain copy of the live file can be torn and misses WAL contents.
+    # Fall back to the live path only before the first backup exists.
+    backups_dir = db.parent / "backups"
+    copies = sorted(backups_dir.glob(f"{db.name}.*")) if backups_dir.is_dir() else []
+    paths = [str(copies[-1] if copies else db)]
     secret_key = data / "secret.key"
     if secret_key.exists():
         paths.append(str(secret_key))
@@ -161,10 +174,15 @@ def restore_latest(
         ),
         "restic restore",
     )
-    candidates = list(target.rglob("stock-agent.db"))
+    name = Path(config.env.sa_db_path).name
+    # New snapshots hold the dated daily copy (name.YYYY-MM-DD); older
+    # ones hold the live path itself.
+    candidates = sorted(target.rglob(f"{name}.*"))
     if not candidates:
-        raise OffsiteError("restored snapshot has no stock-agent.db")
-    return candidates[0]
+        candidates = sorted(target.rglob(name))
+    if not candidates:
+        raise OffsiteError(f"restored snapshot has no {name}")
+    return candidates[-1]
 
 
 def main() -> None:

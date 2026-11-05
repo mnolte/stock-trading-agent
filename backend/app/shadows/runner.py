@@ -30,14 +30,23 @@ from time import monotonic
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
 from app.data.cache import BarCache, _naive_utc
 from app.data.models import Quote
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, Position, Run, ShadowDecision, ShadowPosition, Strategy
+from app.db.models import (
+    Cycle,
+    Decision,
+    LlmCall,
+    Position,
+    Run,
+    ShadowDecision,
+    ShadowPosition,
+    Strategy,
+)
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
@@ -453,17 +462,51 @@ class ShadowRunner:
                         bars=self._bars,
                         config=self.config,
                     )
-                    await self._decide(
-                        session,
-                        strategy,
-                        cycle,
-                        run,
-                        scheduled,
-                        live,
-                        deadline,
-                        sr,
-                        extra_snapshots or {},
-                    )
+                    try:
+                        await self._decide(
+                            session,
+                            strategy,
+                            cycle,
+                            run,
+                            scheduled,
+                            live,
+                            deadline,
+                            sr,
+                            extra_snapshots or {},
+                        )
+                    except Exception:  # noqa: BLE001
+                        # A mid-strategy failure leaves partial rows
+                        # committed — and `done > 0` would then skip this
+                        # strategy forever, the undecided symbols neither
+                        # retried nor marked. Roll the partial rows back
+                        # so the next cycle pass retries the whole set.
+                        logger.exception(
+                            "shadow decide failed for strategy %s cycle %s",
+                            strategy.id, cycle_id,
+                        )
+                        session.rollback()
+                        # llm_calls committed with the partial decisions
+                        # would dangle — drop the cycle's calls with them.
+                        stale_ids = select(ShadowDecision.id).where(
+                            ShadowDecision.strategy_id == strategy.id,
+                            ShadowDecision.cycle_id == cycle_id,
+                        )
+                        # Null the link, don't delete the call — those
+                        # requests were real and cost real money; the
+                        # audit and monthly spend stay correct.
+                        session.execute(
+                            update(LlmCall)
+                            .where(LlmCall.shadow_decision_id.in_(stale_ids))
+                            .values(shadow_decision_id=None)
+                        )
+                        session.execute(
+                            delete(ShadowDecision).where(
+                                ShadowDecision.strategy_id == strategy.id,
+                                ShadowDecision.cycle_id == cycle_id,
+                            )
+                        )
+                        session.commit()
+                        continue
                     write_equity(
                         session,
                         strategy_id=strategy.id,
@@ -704,7 +747,7 @@ class ShadowRunner:
                 self._llm_cache.store(
                     model=str(strategy.model),
                     temperature=float(
-                        cfg.get("decision", "temperature", default=0.2)
+                        cfg.get("decision", "temperature", default=0)
                     ),
                     provider=_provider,
                     effort=(
@@ -810,8 +853,16 @@ class ShadowRunner:
                 cycle,
                 d,
                 context,
-                final_action="no_call" if response.error else validation.final_action,
-                no_call_reason="model_error" if response.error else None,
+                final_action=(
+                    "no_call"
+                    if response.error or response.refused
+                    else validation.final_action
+                ),
+                no_call_reason=(
+                    "model_error"
+                    if response.error or response.refused
+                    else None
+                ),
                 rules=rules,
                 position=snap_json.get("position"),
             )
@@ -879,7 +930,7 @@ class ShadowRunner:
                     context=context,
                     model=str(strategy.model),
                     temperature=float(
-                        cfg.get("decision", "temperature", default=0.2)
+                        cfg.get("decision", "temperature", default=0)
                     ),
                     prompt_version=prompt.version,
                     prompt_hash=prompt.sha256,
@@ -2045,7 +2096,7 @@ class ShadowRunner:
                 symbol=d.symbol,
                 context=context,
                 model=str(strategy.model),
-                temperature=float(cfg.get("decision", "temperature", default=0.2)),
+                temperature=float(cfg.get("decision", "temperature", default=0)),
                 prompt_version=prompt.version,
                 prompt_hash=prompt.sha256,
                 scrub_values=self._secrets,
@@ -2272,10 +2323,12 @@ class ShadowRunner:
         risk = trade_risk(limit, stop, target, ind.atr_1h) if target is not None else None
         if (
             risk is None or not risk.valid or risk.atr_multiple is None
-            or risk.atr_multiple < Decimal(str(cfg.get("decision", "stop_atr_min")))
-            or risk.atr_multiple > Decimal(str(cfg.get("decision", "stop_atr_max")))
+            or risk.atr_multiple < Decimal(str(cfg.get("decision", "stop_atr_min", default=1.5)))
+            or risk.atr_multiple > Decimal(str(cfg.get("decision", "stop_atr_max", default=4.0)))
             or risk.reward_to_risk is None
-            or risk.reward_to_risk < Decimal(str(cfg.get("decision", "min_reward_risk")))
+            or risk.reward_to_risk < Decimal(
+                str(cfg.get("decision", "min_reward_risk", default=1.5))
+            )
         ):
             row.final_action = "blocked"
             row.gates_result = {

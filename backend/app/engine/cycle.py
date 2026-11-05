@@ -221,7 +221,11 @@ class CycleRunner:
         bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
         return quote.price_reason(
             now=now,
-            max_age_seconds=float(self.config.get("execution", "quote_max_age_seconds")),
+            max_age_seconds=float(
+                self.config.get_decimal(
+                    "execution", "quote_max_age_seconds", default=60
+                )
+            ),
             bar_close=bar.close if bar is not None else None,
             max_deviation_pct=self.config.get_decimal(
                 "execution", "quote_max_deviation_pct", default=1.0
@@ -449,7 +453,13 @@ class CycleRunner:
                     await self._run(session, cycle.id, scheduled_ny, now, report)
                 except Exception as exc:  # noqa: BLE001
                     report.status = "error"
-                    report.errors.append(str(exc))
+                    from app.logging_config import (
+                        _all_secrets,
+                        _scrub_text,
+                    )
+                    report.errors.append(
+                        _scrub_text(str(exc), _all_secrets())
+                    )
                     logger.exception(
                         "Cycle %s failed at %s: %s",
                         report.cycle_id,
@@ -477,7 +487,14 @@ class CycleRunner:
                             )
                     except Exception as exc:
                         report.status = "error"
-                        report.errors.append(str(exc))
+                        from app.logging_config import (
+                            _all_secrets,
+                            _scrub_text,
+                        )
+
+                        report.errors.append(
+                            _scrub_text(str(exc), _all_secrets())
+                        )
                         logger.exception("cycle %s outcomes failed", report.cycle_id)
                         session.rollback()
                         stored = session.get(Cycle, report.cycle_id)
@@ -497,7 +514,7 @@ class CycleRunner:
                 # banner — at scale the screen, fetches and model calls add up
                 # (docs/SPEC.md, Cycles at scale).
                 warn_minutes = float(
-                    self.config.get(
+                    self.config.get_int(
                         "schedule", "cycle_duration_warn_minutes", default=10
                     )
                 )
@@ -557,9 +574,7 @@ class CycleRunner:
         state = self.executor.state
         if report.status == "error":
             state.failed_cycles += 1
-            kill_after = int(
-                self.config.get("risk", "failed_cycles_kill", default=3)
-            )
+            kill_after = self.config.get_int("risk", "failed_cycles_kill", default=3)
             if (
                 state.failed_cycles >= kill_after
                 and not state.kill_switch_on
@@ -697,8 +712,8 @@ class CycleRunner:
         quotes = await self._fetch_quotes(
             [item.symbol for item in reviews], report
         )
-        max_calls = int(
-            self.config.get("decision", "max_calls_per_cycle", default=10)
+        max_calls = self.config.get_int(
+            "decision", "max_calls_per_cycle", default=10
         )
         ep_mode = (
             str(self.config.get("selection", "mode", default="rank"))
@@ -947,8 +962,8 @@ class CycleRunner:
             if quote is not None and price_reason is None
             else None
         )
-        dev_pct = Decimal(
-            str(self.config.get("execution", "quote_max_deviation_pct"))
+        dev_pct = self.config.get_decimal(
+            "execution", "quote_max_deviation_pct", default=Decimal(1)
         )
         snapshot_json = build_input_snapshot(
             symbol=item.symbol,
@@ -976,6 +991,33 @@ class CycleRunner:
             entry=context == "candidate",
             max_deviation_pct=dev_pct,
         ) if quote else None
+        if context == "held" and reference is not None:
+            # A stale or suspect price blocks the tighten before the
+            # model is asked: no stop options, null stop_reference_price
+            # (docs/SPEC.md, Market price). The tighten check uses the
+            # looser 300s age, not the entry's 60s.
+            tighten_reason = (
+                quote.price_reason(
+                    now=now,
+                    max_age_seconds=float(
+                        self.config.get_decimal(
+                            "execution",
+                            "tighten_quote_max_age_seconds",
+                            default=300,
+                        )
+                    ),
+                    bar_close=bar.close if bar is not None else None,
+                    max_deviation_pct=dev_pct,
+                )
+                if quote is not None
+                else "price_stale"
+            )
+            if tighten_reason is not None:
+                reference = None
+                snapshot_json["stop_options_reason"] = (
+                    f"{tighten_reason.replace('_', ' ')}: "
+                    "no stop moves this cycle"
+                )
         snapshot_json["stop_reference_price"] = (
             str(reference) if reference is not None else None
         )
@@ -1055,7 +1097,7 @@ class CycleRunner:
                 context=context,
                 base=snapshot_json,
                 price=price if price is not None else item.price,
-                reference=reference,
+                reference=build_reference,
                 atr_1h=item.snapshot.atr_1h,
                 indicators=item.snapshot,
                 regime=evaluation.regime,
@@ -1098,7 +1140,7 @@ class CycleRunner:
                 context=context,
                 base=snapshot_json,
                 price=price if price is not None else item.price,
-                reference=reference,
+                reference=build_reference,
                 atr_1h=item.snapshot.atr_1h,
                 indicators=item.snapshot,
                 regime=evaluation.regime,
@@ -1123,7 +1165,7 @@ class CycleRunner:
                 daily=item.daily,
                 today_5m=item.today_5m,
                 price=price if price is not None else item.price,
-                reference=reference,
+                reference=build_reference,
                 atr_1h=item.snapshot.atr_1h,
                 config=self.config,
                 held=(
@@ -1518,19 +1560,26 @@ class CycleRunner:
                 p["item"].symbol,
             )
         )
-        budget_left = max(0, max_calls - report.calls)
-        called_pre = prepared[:budget_left]
-        capped = prepared[budget_left:]
+        # The cap counts real model calls only (spec, Entry selection):
+        # a candidate that ends without a call — no options, a price
+        # check, the trend gate — uses no slot and the walk goes on.
+        capped: list[dict[str, Any]] = []
+        callable_pre: list[tuple[int, dict[str, Any]]] = []
+        for i, p in enumerate(prepared):
+            if report.calls >= max_calls:
+                capped.append(p)
+            else:
+                callable_pre.append((i, p))
 
-        # News for the candidate symbols actually called.
+        # News for every symbol that might still be called.
         news_map = await self._fetch_news(
-            sorted({p["item"].symbol for p in called_pre}), now, report
+            sorted({p["item"].symbol for _i, p in callable_pre}), now, report
         )
 
         # 3. Collect: every candidate answer first, nothing submitted.
         collected: list[dict[str, Any]] = []
         position_of: dict[int, int] = {}
-        for i, p in enumerate(called_pre):
+        for i, p in callable_pre:
             item = p["item"]
             decision = await self._decide_item(
                 session,
@@ -1606,8 +1655,8 @@ class CycleRunner:
         # starting state, then expected R x dollars at risk.
         scored: list[ScoredEntry] = []
         by_key: dict[str, dict[str, Any]] = {}
-        weight = Decimal(
-            str(self.config.get("selection", "confidence_weight", default=0.5))
+        weight = self.config.get_decimal(
+            "selection", "confidence_weight", default=Decimal("0.5")
         )
         max_positions = self.config.get_int("risk", "max_open_positions", default=4)
         max_orders = self.config.get_int("risk", "max_orders_per_cycle", default=6)

@@ -13,6 +13,7 @@ write commits immediately (hard rule 13 — no lock held across I/O).
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -23,6 +24,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.data.cache import _naive_utc
 from app.db.models import LLMCache
 from app.market.clock import Clock
+
+logger = logging.getLogger(__name__)
 
 
 def input_hash(user: str) -> str:
@@ -46,6 +49,7 @@ class LLMCacheStore:
         *,
         model: str,
         temperature: float | None = None,
+        prompt_version: str,
         prompt_hash: str,
         user: str,
         provider: str = "openai",
@@ -57,9 +61,12 @@ class LLMCacheStore:
                 select(LLMCache).where(
                     LLMCache.provider == provider,
                     LLMCache.model == model,
-                    LLMCache.effort.is_(None) if effort is None
-                    else LLMCache.effort == effort,
+                    LLMCache.effort.is_(None) if effort is None else LLMCache.effort == effort,
                     LLMCache.temperature == (temperature or 0),
+                    # prompt_version joins the key: two prompt files can
+                    # share a hash (identical text) while promising a
+                    # different contract — never replay across versions.
+                    LLMCache.prompt_version == prompt_version,
                     LLMCache.prompt_hash == prompt_hash,
                     LLMCache.input_hash == input_hash(user),
                 )
@@ -109,7 +116,15 @@ class LLMCacheStore:
             try:
                 session.commit()
             except IntegrityError:
+                # A racing caller stored the same key first — the row is
+                # identical, so dropping ours is safe but not silent.
                 session.rollback()
+                logger.debug(
+                    "llm_cache store skipped: duplicate key (%s %s %s)",
+                    provider,
+                    model,
+                    prompt_version,
+                )
 
 
 def cache_hit_count(
@@ -131,8 +146,7 @@ def cache_hit_count(
             select(func.count(LLMCache.id)).where(
                 LLMCache.provider == provider,
                 LLMCache.model == model,
-                LLMCache.effort.is_(None) if effort is None
-                else LLMCache.effort == effort,
+                LLMCache.effort.is_(None) if effort is None else LLMCache.effort == effort,
                 LLMCache.temperature == temperature,
                 LLMCache.prompt_hash == prompt_hash,
                 LLMCache.cycle_time >= _naive_utc(start),

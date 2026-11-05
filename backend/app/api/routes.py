@@ -140,6 +140,7 @@ def _regime_label(request: Request) -> str:
     try:
         return signals.regime(signals.clock.now()).label
     except Exception:  # noqa: BLE001
+        logger.exception("regime read failed")
         return "unavailable"
 
 
@@ -408,7 +409,12 @@ def list_decisions(
     filters = [Cycle.scheduled_time >= start_utc, Cycle.scheduled_time < end_utc]
     if cycle is not None:
         try:
-            cycle_at = datetime.fromisoformat(cycle).astimezone(UTC).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(cycle)
+            cycle_at = (
+                parsed.replace(tzinfo=UTC)
+                if parsed.tzinfo is None
+                else parsed.astimezone(UTC)
+            ).replace(tzinfo=None)
         except ValueError:
             raise HTTPException(status_code=422, detail="bad cycle timestamp") from None
         filters = [Cycle.scheduled_time == cycle_at]
@@ -614,7 +620,10 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             select(Verdict).where(Verdict.decision_id == decision_id)
         ).scalar_one_or_none()
         llm_call_id = session.execute(
-            select(LlmCall.id).where(LlmCall.decision_id == decision_id)
+            select(LlmCall.id)
+            .where(LlmCall.decision_id == decision_id)
+            .order_by(LlmCall.id)
+            .limit(1)
         ).scalar_one_or_none()
         earnings = _decision_earnings(session, decision, scheduled)
         # Entry selection (PR 33): the cycle's record plus every scored
@@ -908,7 +917,7 @@ def _keys_issue(request: Request) -> str | None:
     for what, (model, provider) in uses.items():
         if not store.provider_ok(provider):
             needed.setdefault(provider, []).append(
-                f"{what.capitalize()} use{'s' if what == 'live decisions' else 's'} "
+                f"{what.capitalize()} use{'s' if not what.endswith('s') else ''} "
                 f"{model}: add the {provider_label(provider)} key or choose another model"
             )
     for provider in sorted(needed):
@@ -1042,7 +1051,7 @@ def readiness_manual(
 
     item = str(body.get("item") or "")
     done = body.get("done")
-    note = str(body.get("note") or "")
+    note = _one_line(str(body.get("note") or ""), 500)
     with get_session_maker()() as session:
         try:
             row = set_manual_item(
@@ -1250,13 +1259,23 @@ async def positions(request: Request) -> dict[str, object]:
         legs = {p.id: _position_legs(session, p) for p in open_rows}
         earnings_next = session.execute(
             select(Earning.symbol, func.min(Earning.date))
-            .where(Earning.symbol.in_([p.symbol for p in open_rows] or [""]))
+            .where(
+                Earning.symbol.in_([p.symbol for p in open_rows] or [""]),
+                # Past reports stay in the table — the "next" date is
+                # the earliest one still ahead.
+                Earning.date >= datetime.combine(today_ny, dtime.min),
+            )
             .group_by(Earning.symbol)
         ).all()
         earnings_map = {symbol: d.date() for symbol, d in earnings_next}
         closed_today = session.execute(
             select(Position)
-            .where(Position.closed_at.is_not(None))
+            .where(
+                Position.closed_at.is_not(None),
+                Position.closed_at >= datetime.combine(
+                    today_ny, dtime.min, tzinfo=NY_TZ
+                ).astimezone(UTC).replace(tzinfo=None),
+            )
             .order_by(Position.closed_at.desc())
         ).scalars().all()
         closed_today = [
@@ -3957,6 +3976,10 @@ def _briefing_card(
 @router.get("/dashboard")
 def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
+    from app.settings_service import SYMBOL_RE
+
+    if symbol is not None and not SYMBOL_RE.fullmatch(symbol.upper()):
+        raise HTTPException(status_code=422, detail="invalid symbol")
     config = get_config()
     clock = getattr(request.app.state, "clock", None) or make_clock()
     state = getattr(request.app.state, "exec_state", None)
@@ -4594,6 +4617,10 @@ def _feed_reason(decision: Decision) -> str | None:
 @router.get("/chart/{symbol}")
 def chart(request: Request, symbol: str) -> dict[str, object]:
     """Session-aligned 1h candles + VWAP + EMAs + level lines for the chart."""
+    from app.settings_service import SYMBOL_RE
+
+    if not SYMBOL_RE.fullmatch(symbol.upper()):
+        raise HTTPException(status_code=422, detail="invalid symbol")
     clock = getattr(request.app.state, "clock", None) or make_clock()
     now = clock.now()
     market_data = getattr(request.app.state, "market_data", None)
@@ -5062,14 +5089,17 @@ def verdicts_list(request: Request, status: str = "draft") -> dict[str, object]:
             .join(Decision, Verdict.decision_id == Decision.id)
             .join(Cycle, Decision.cycle_id == Cycle.id)
             .outerjoin(Outcome, Outcome.decision_id == Decision.id)
-            .order_by(Verdict.id)
         )
         if status == "draft":
-            query = query.where(Verdict.source == "draft")
+            query = query.where(Verdict.source == "draft").order_by(
+                Verdict.id
+            )
         elif status == "confirmed":
             query = query.where(Verdict.source == "marc").order_by(
                 Verdict.updated_at.desc()
             )
+        else:
+            query = query.order_by(Verdict.id)
         rows = session.execute(query.limit(100)).all()
         items = []
         for verdict, decision, scheduled, outcome in rows:
@@ -5518,13 +5548,13 @@ def api_logs_export(request: Request) -> Response:
                 f"SELECT {_COLS} FROM log_lines {where} ORDER BY id LIMIT {cap + 1}",  # noqa: S608 - whitelisted column list, params bound
                 args,
             )
-            count = 0
-            for row in rows:
-                if count >= cap:
+            truncated = False
+            for count, row in enumerate(rows, 1):
+                if count > cap:
+                    truncated = True
                     break
-                count += 1
                 yield json.dumps(_log_row(row), default=str) + "\n"
-            if count >= cap and rows.fetchone() is not None:
+            if truncated:
                 yield json.dumps({"note": f"export capped at {cap} rows"}) + "\n"
         finally:
             conn.close()

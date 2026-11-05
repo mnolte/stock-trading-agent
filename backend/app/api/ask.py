@@ -117,6 +117,10 @@ def _rate_check(request: Request, config: Any) -> None:
     if len(q) >= limit:
         raise ApiError(429, ErrorCode.RATE_LIMITED, retry_after=int(60 - (now - q[0])) or 1)
     q.append(now)
+    # Keep the map bounded: sweep emptied buckets when it grows.
+    if len(_rate) > 1000:
+        for k in [k for k, d in _rate.items() if not d or now - d[-1] > 60]:
+            del _rate[k]
 
 
 def _thread_json(row: AskThread, count: int | None = None) -> dict[str, Any]:

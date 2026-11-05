@@ -38,7 +38,9 @@ def session_date(sent_at: datetime) -> date:
     Calls outside market hours — the Saturday weekly review, a verdict
     after the close — belong to the New York date they were sent.
     """
-    return sent_at.replace(tzinfo=UTC).astimezone(NY_TZ).date()
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=UTC)
+    return sent_at.astimezone(NY_TZ).date()
 
 
 def _scrubbed(message: str | None, scrub_values: ScrubValues | None) -> str | None:

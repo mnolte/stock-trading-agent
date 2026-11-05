@@ -1,4 +1,5 @@
 import sqlite3
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +65,56 @@ def test_bar_cache_duplicate_batches_are_idempotent(session_factory: sessionmake
     assert cache.store_daily([daily]) == 0
 
 
+def test_bar_cache_batches_revisions_without_changing_other_rows(
+    session_factory: sessionmaker[Session],
+) -> None:
+    cache = BarCache(session_factory)
+    at = datetime(2026, 10, 22, 15, tzinfo=UTC)
+    bars = [
+        Bar5m(symbol, at + timedelta(minutes=5 * i), Decimal("100"), Decimal("101"),
+              Decimal("99"), Decimal("100"), 10, "sip")
+        for symbol in ("AAA", "BBB") for i in range(3)
+    ]
+    assert cache.store(bars) == 6
+    revisions = [replace(b, close=Decimal("100.25"), volume=20, feed="revised")
+                 for b in bars[:2]]
+    latest = replace(revisions[0], open=Decimal("99.5"), high=Decimal("102"),
+                     low=Decimal("98"), close=Decimal("100.5"), volume=30)
+    new = replace(bars[2], start=at + timedelta(minutes=15))
+    engine = session_factory.kw["bind"]
+    updates: list[bool] = []
+
+    def record_update(
+        conn: Any, cursor: Any, statement: str, parameters: Any,
+        context: Any, executemany: bool,
+    ) -> None:
+        if statement.startswith("UPDATE "):
+            updates.append(executemany)
+
+    event.listen(engine, "before_cursor_execute", record_update)
+    try:
+        assert cache.store([*revisions, new, latest]) == 1
+        assert cache.get("AAA", at, new.start) == [latest, revisions[1], bars[2], new]
+        assert cache.get("BBB", at, new.start) == bars[3:]
+        assert updates == [True]
+        updates.clear()
+        daily = [DailyBar(b.symbol, at.date() + timedelta(days=i), b.open, b.high,
+                          b.low, b.close, b.volume) for i, b in enumerate(bars)]
+        assert cache.store_daily(daily) == 6
+        revised_daily = [replace(b, close=Decimal("100.25"), volume=20) for b in daily[:2]]
+        latest_daily = replace(revised_daily[0], open=Decimal("99.5"), high=Decimal("102"),
+                               low=Decimal("98"), close=Decimal("100.5"), volume=30)
+        new_daily = replace(daily[2], date=at.date() + timedelta(days=6))
+        assert cache.store_daily([*revised_daily, new_daily, latest_daily]) == 1
+        assert cache.get_daily("AAA", at.date(), new_daily.date) == [
+            latest_daily, revised_daily[1], daily[2], new_daily,
+        ]
+        assert cache.get_daily("BBB", at.date(), new_daily.date) == daily[3:]
+        assert updates == [True]
+    finally:
+        event.remove(engine, "before_cursor_execute", record_update)
+
+
 def test_large_bar_cache_batch_respects_sqlite_variable_limit(tmp_path: Path) -> None:
     engine = create_engine(f"sqlite:///{tmp_path / 'large.db'}")
 
@@ -81,6 +132,7 @@ def test_large_bar_cache_batch_respects_sqlite_variable_limit(tmp_path: Path) ->
     daily = [DailyBar("WMT", (at + timedelta(days=i)).date(), Decimal("100"), Decimal("101"),
                       Decimal("99"), Decimal("100"), 10) for i in range(2000)]
     assert cache.store_daily(daily) == 2000
+    assert cache.store_daily(daily) == 0
     engine.dispose()
 
 

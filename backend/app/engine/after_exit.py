@@ -194,22 +194,29 @@ class AfterExitWorker:
     # bars
 
     async def _bars(
-        self, row: _PendingRow
-    ) -> tuple[list[tuple[Bar5m, bool]] | None, str | None]:
-        """Bars for the window, ``(bar, split_adjusted)`` pairs.
+        self, row: _PendingRow, actions: Sequence[CorporateAction]
+    ) -> tuple[list[Bar5m] | None, str | None]:
+        """Bars for the window on one consistent price basis.
 
-        ``split_adjusted`` marks bars that came back from a fresh fetch:
-        the bar source asks Alpaca for split-adjusted data, so those are
-        already in post-split terms while cached bars predate any later
-        split. ``None`` + error string on a failed fetch.
+        Every Alpaca bar fetch returns data split-adjusted to the fetch
+        day, and the cache does not record when each bar was stored — so
+        when a split falls inside or after the window a cached bar may
+        already be adjusted and dividing it again would double-adjust.
+        Any split after the window's first day therefore forces a fresh
+        fetch for the whole window; otherwise the cached bars' basis
+        cannot matter (no split to adjust for). ``None`` + error string
+        on a failed fetch.
         """
         cached = self.market_data.get_5m_bars(row.symbol, row.start, row.end)
         covered = self.market_data.bars_cache.covered_session_dates(
             row.symbol, row.sessions
         )
         wanted = {s.date for s in row.sessions}
-        if covered >= wanted:
-            return [(b, False) for b in cached], None
+        must_fetch = split_factor_after(
+            actions, row.symbol, row.sessions[0].date
+        ) > 1
+        if covered >= wanted and not must_fetch:
+            return cached, None
         if self.sources is None:
             return None, "no bar source"
         fetched = await self.sources.bars.fetch_5m_bars(
@@ -218,16 +225,20 @@ class AfterExitWorker:
         if fetched.error is not None:
             return None, fetched.error
         fresh = session_bars(fetched.data or [], row.sessions)
-        if not fresh and not cached:
+        if not fresh and (must_fetch or not cached):
+            # On must_fetch the cached bars' basis is unknowable, so an
+            # empty fetch is a real failure (retry, then unavailable) —
+            # not a "pending" that retries forever.
             return None, "no bars returned"
         self.market_data.bars_cache.store(fresh)
-        # Union by bar start: fetched bars win (they are split-adjusted;
-        # a cached bar at the same start would be the stale unadjusted one).
-        by_start: dict[datetime, tuple[Bar5m, bool]] = {
-            b.start: (b, False) for b in cached
-        }
+        # Union by bar start: fetched bars win. With must_fetch the
+        # union starts empty — a cached bar whose basis is unknown is
+        # never mixed into a window that needs a uniform basis.
+        by_start: dict[datetime, Bar5m] = (
+            {} if must_fetch else {b.start: b for b in cached}
+        )
         for bar in fresh:
-            by_start[bar.start] = (bar, True)
+            by_start[bar.start] = bar
         return [by_start[k] for k in sorted(by_start)], None
 
     # ------------------------------------------------------------------
@@ -255,7 +266,7 @@ class AfterExitWorker:
         actions: list[CorporateAction],
     ) -> str:
         """Compute and store one position; returns done | pending | failed | unavailable."""
-        bars, error = await self._bars(row)
+        bars, error = await self._bars(row, actions)
         if bars is None:
             if self._record_failure(row.position_id):
                 logger.warning(
@@ -274,28 +285,8 @@ class AfterExitWorker:
         if not bars:
             return "pending"
 
-        def adjusted(bar: Bar5m, fetched: bool) -> Bar5m:
-            if fetched:
-                return bar  # the bar source already applied the split
-            factor = split_factor_after(
-                actions, row.symbol, bar.start.astimezone(NY_TZ).date()
-            )
-            if factor == 1:
-                return bar
-            return Bar5m(
-                symbol=bar.symbol,
-                start=bar.start,
-                open=bar.open / factor,
-                high=bar.high / factor,
-                low=bar.low / factor,
-                close=bar.close / factor,
-                volume=bar.volume,
-                feed=bar.feed,
-            )
-
-        window = [adjusted(b, f) for b, f in bars]
-        best = max(window, key=lambda b: b.high)
-        close = max(window, key=lambda b: b.start)
+        best = max(bars, key=lambda b: b.high)
+        close = max(bars, key=lambda b: b.start)
         with self._session_factory() as session:
             position = session.get(Position, row.position_id)
             if position is None or position.after_exit_status != "pending":
@@ -329,7 +320,6 @@ class AfterExitWorker:
                     )
                 ).scalars()
             )
-        report.pending = 0
         for row in due:
             # Fetch and compute outside any write transaction; each row is
             # stored in its own short one (hard rule 13).

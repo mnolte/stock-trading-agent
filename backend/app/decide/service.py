@@ -23,7 +23,6 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
-from app.decide.levels import OPTIONS_VERSION
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     NO_CALL_REASONS,
@@ -50,7 +49,7 @@ from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
 
-logger = logging.getLogger("app.model.openai")
+logger = logging.getLogger("app.model")
 
 # Final action recorded when no usable model answer exists (no call made,
 # or the call failed). ``no_call_reason`` says why: rules, call_cap,
@@ -221,6 +220,7 @@ class DecisionService:
             hit = self._cache.lookup(
                 model=_model,
                 temperature=_temperature,
+                prompt_version=self._prompt.version,
                 prompt_hash=self._prompt.sha256,
                 user=user,
                 provider=_provider,
@@ -519,7 +519,11 @@ class DecisionService:
                  if validation.claims is not None else {})
                 or None
             ),
-            options_version=OPTIONS_VERSION if v2 is not None else None,
+            options_version=(
+                v2.options_column.get("options_version")
+                if v2 is not None
+                else None
+            ),
         )
         session.add(decision)
         session.flush()

@@ -283,7 +283,7 @@ def _r_made(
         entry = stop + risk if risk is not None else None
     if entry is None or stop is None or entry <= stop:
         return None
-    made = _dec(price_5sessions - entry)
+    made = price_5sessions - entry
     return made / (entry - stop) if made is not None else None
 
 
@@ -527,7 +527,13 @@ def _live_inputs(
     outcomes = {
         o.decision_id: o
         for o in session.execute(
-            select(Outcome).where(Outcome.decision_id.in_(decision_ids or {0}))
+            select(Outcome).where(
+                # Covers entry decisions of closed positions AND every
+                # decision row — removed-option touches need them all.
+                Outcome.decision_id.in_(
+                    (decision_ids | {d.id for d, _ in dec_rows}) or {0}
+                )
+            )
         ).scalars()
     }
     dividends_rows = session.execute(

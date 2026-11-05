@@ -120,7 +120,9 @@ class OpsService:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(url)
-            return response.status_code < 500
+            # 4xx is a miss too — a wrong URL returning 404 must not
+            # read as a live heartbeat.
+            return response.status_code < 400
         except httpx.HTTPError:
             return False
 
@@ -308,7 +310,9 @@ class OpsService:
                 if (self._clock.now() - ran_at).days > stale_days:
                     restore_test = {**restore_test, "level": "warning"}
             except (TypeError, ValueError):
-                pass
+                logger.warning(
+                    "unparseable restore_test.at %r — ignored", ran
+                )
         result = {
             "local": {
                 "latest": latest.name if latest else None,

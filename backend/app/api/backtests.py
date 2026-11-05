@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import sqlite3
 import threading
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -229,7 +230,17 @@ async def _estimate(request: Request, body: RunRequest) -> tuple[Estimate, list[
     store = _store(request)
     calendar = _calendar(request, body.start, body.end)
     if hasattr(calendar, "load"):
-        await calendar.load(body.start, body.end)
+        # The worker also fills the indicator lookback — load the same
+        # span so the estimate's session list matches what downloads.
+        lookback = max(
+            get_config().get_int("schedule", "history_sessions", default=60),
+            get_config().get_int(
+                "schedule", "daily_history_sessions", default=260
+            ),
+        ) * 2
+        await calendar.load(
+            body.start - timedelta(days=lookback), body.end
+        )
     symbols = _universe_symbols(request, body.universe_mode)
     return (
         estimate(
@@ -465,11 +476,10 @@ _MIGRATE_LOCK = threading.Lock()
 
 
 def _alembic_version(path: Path) -> str | None:
-    row = (
+    with contextlib.closing(
         sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        .execute("SELECT version_num FROM alembic_version")
-        .fetchone()
-    )
+    ) as conn:
+        row = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     return str(row[0]) if row else None
 
 
@@ -527,7 +537,7 @@ def run_trades(request: Request, run_id: int, slug: str) -> dict[str, Any]:
     sf = _strategy_sf(request, run_id, slug)
     with sf() as session:
         rows = session.execute(
-            select(Position).order_by(Position.opened_at)
+            select(Position).order_by(Position.opened_at).limit(5000)
         ).scalars().all()
     return {
         "trades": [
@@ -557,6 +567,7 @@ def run_decisions(request: Request, run_id: int, slug: str) -> dict[str, Any]:
             select(Decision, Cycle.scheduled_time)
             .join(Cycle, Decision.cycle_id == Cycle.id)
             .order_by(Cycle.scheduled_time, Decision.id)
+            .limit(20000)
         ).all()
     return {
         "items": [

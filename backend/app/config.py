@@ -65,6 +65,20 @@ class EnvSettings(BaseSettings):
         """Whitespace and case are not significant: ' Required ' = required."""
         return value.strip().lower() if isinstance(value, str) else value
 
+    @field_validator("sa_instance_id", mode="before")
+    @classmethod
+    def _safe_instance_id(cls, value: object) -> object:
+        """An instance named like an order kind (entry|stop|target|exit|
+        breach) would break client-order-id parsing: our own ids would
+        read as the pre-instance format and exits would misattribute."""
+        from app.broker.client_id import KINDS, safe_instance
+
+        if isinstance(value, str) and safe_instance(value).lower() in KINDS:
+            raise ValueError(
+                f"SA_INSTANCE_ID {value!r} collides with an order kind"
+            )
+        return value
+
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge ``override`` onto ``base``.

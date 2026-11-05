@@ -394,6 +394,7 @@ def get_status(session: Session, deps: AskDeps, _args: Any) -> dict[str, Any]:
         try:
             regime = deps.signals.regime(deps.clock.now()).label
         except Exception:  # noqa: BLE001
+            logger.exception("regime read failed")
             regime = "unavailable"
     request = type("R", (), {"app": type("A", (), {"state": _state_ns(deps)})()})()
     attention = build_attention(request)
@@ -898,7 +899,7 @@ def list_trades(session: Session, deps: AskDeps, args: TradesArg) -> dict[str, A
         q = q.where(Position.symbol == args.symbol.upper())
     if args.days:
         q = q.where(
-            Position.closed_at >= datetime.now(UTC).replace(tzinfo=None) - timedelta(days=args.days)
+            Position.closed_at >= deps.clock.now().replace(tzinfo=None) - timedelta(days=args.days)
         )
     rows = (
         session.execute(q.order_by(Position.closed_at.desc()).limit(args.limit + 1)).scalars().all()
@@ -988,7 +989,7 @@ def reviews(session: Session, deps: AskDeps, args: ReviewsArg) -> dict[str, Any]
         q = q.where(Review.kind == args.kind)
     if args.days:
         q = q.where(
-            Review.created_at >= datetime.now(UTC).replace(tzinfo=None) - timedelta(days=args.days)
+            Review.created_at >= deps.clock.now().replace(tzinfo=None) - timedelta(days=args.days)
         )
     for r in (
         session.execute(q.order_by(Review.created_at.desc()).limit(args.limit)).scalars().all()

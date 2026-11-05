@@ -144,6 +144,33 @@ class SecretScrubFilter(logging.Filter):
             record.args = ()
         if record.exc_text:
             record.exc_text = _scrub_text(record.exc_text, secrets)
+        if record.exc_info:
+            # Handlers format exc_info lazily *after* filters run — the
+            # console sink would emit the raw traceback (rule 9). Render
+            # it here, scrub it, and clear exc_info so every formatter
+            # uses the scrubbed exc_text instead. exc_info can also be
+            # True (resolve via sys.exc_info) or a degenerate tuple.
+            try:
+                import traceback
+
+                raw: object = record.exc_info
+                exc_info = (
+                    raw
+                    if isinstance(raw, tuple) and len(raw) == 3
+                    else sys.exc_info()
+                )
+                if exc_info[0] is not None:
+                    record.exc_text = _scrub_text(
+                        "".join(traceback.format_exception(*exc_info)),
+                        secrets,
+                    )
+            except Exception as render_exc:  # noqa: BLE001 - never break logging
+                # A log filter must not log (recursion) — stderr only.
+                print(
+                    f"log scrub: traceback render failed: {render_exc}",
+                    file=sys.stderr,
+                )
+            record.exc_info = None
         # A formatted-but-not-yet-cached exception: scrub the rendered
         # args too when they sit on the record itself.
         return True
@@ -507,7 +534,10 @@ def setup_backtest_logging(run_id: int) -> LogPipeline:
     pipeline.file_handler.baseFilename = str(
         Path(base).parent / f"backtest-{run_id}.log"
     )
+    old_stream = pipeline.file_handler.stream
     pipeline.file_handler.stream = pipeline.file_handler._open()
+    if old_stream is not None:
+        old_stream.close()
     return pipeline
 
 

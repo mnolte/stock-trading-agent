@@ -260,6 +260,9 @@ def prune_index(db_path: Path, keep_days: int) -> int:
     ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     with sqlite3.connect(db_path) as conn:
         cur = conn.execute("DELETE FROM log_lines WHERE ts < ?", (cutoff,))
+        # External-content FTS rows don't cascade — the deleted rowids
+        # dangle and the index grows forever. Rebuild it.
+        conn.execute("INSERT INTO log_lines_fts(log_lines_fts) VALUES('rebuild')")
         conn.commit()
         return cur.rowcount
 

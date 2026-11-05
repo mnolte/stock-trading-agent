@@ -139,6 +139,7 @@ decision:
     flip_min_move_atr: 0.5      # flip-flop guard: a smaller move counts as unchanged
     max_confidence_above_anchor: 0.30  # confidence_outlier warning threshold
     checks_gate: false          # strategy override: code-enforced checklist, no model call
+    near_level_atr: 1.0         # "near a level" distance for since/paths — prompts pin it; change = new prompt version
   v5:                           # PR 37, decision.v5 strategies only
     exit_margin: 0.03           # exit below neutral − this
     overnight_margin: 0.10      # overnight with the stop inside the gap: hold only from neutral + this
@@ -148,6 +149,7 @@ decision:
     max_rr: 3.0                 # v5 builds no option above this
     base_rate_sessions: 60      # window for per-option base rates
     base_rate_min_n: 30         # base_rate shown from this many comparable decided options
+    price_vs_signal_adverse_atr: 0.5  # price_vs_signal this far below zero + below EMA20 = adverse (thesis_holds)
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 

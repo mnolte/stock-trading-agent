@@ -7,6 +7,7 @@ against — they are stored on the review row alongside the text.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -43,6 +44,8 @@ from app.market.clock import Clock
 from app.signals.service import SignalService
 
 UTC = ZoneInfo("UTC")
+
+logger = logging.getLogger(__name__)
 
 # Event types that surface as action-needed banners on the dashboard.
 _BANNER_EVENTS = (
@@ -326,7 +329,7 @@ def weekly_facts(
         price = (decision.input_snapshot or {}).get("price")
         if outcome.price_5sessions is None or not isinstance(
             price, int | float
-        ):
+        ) or not price:
             pending += 1
             continue
         pct = (outcome.price_5sessions - Decimal(str(price))) / Decimal(
@@ -339,7 +342,9 @@ def weekly_facts(
         else:
             flat += 1
         confidence = (decision.model_output or {}).get("confidence")
-        if biggest_miss is None or pct > Decimal(str(biggest_miss["pct"])):
+        if pct > flat_pct and (
+            biggest_miss is None or pct > Decimal(str(biggest_miss["pct"]))
+        ):
             biggest_miss = {
                 "symbol": decision.symbol,
                 "date": _aware(scheduled).astimezone(NY_TZ).date().isoformat(),
@@ -590,6 +595,7 @@ def _insights_facts(session: Session, *, monday: date, friday: date) -> dict[str
 
         return findings_changes(session, since=monday, until=friday)
     except Exception:  # noqa: BLE001
+        logger.exception("insights facts failed; briefing runs without them")
         return {"new": [], "stopped": []}
 
 
@@ -778,6 +784,7 @@ def briefing_facts(
         try:
             regime = signals.regime(now).label
         except Exception:  # noqa: BLE001
+            logger.exception("regime read failed; briefing runs without it")
             regime = None
 
     # ---- yesterday's result ---------------------------------------------------
@@ -966,7 +973,11 @@ def verdict_facts(
     flat_pct = float(config.get("reviews", "skip_flat_pct", default=2))
     price = (decision.input_snapshot or {}).get("price")
     pct: Decimal | None = None
-    if isinstance(price, int | float) and outcome.price_5sessions is not None:
+    if (
+        isinstance(price, int | float)
+        and price
+        and outcome.price_5sessions is not None
+    ):
         pct = (
             (outcome.price_5sessions - Decimal(str(price)))
             / Decimal(str(price))

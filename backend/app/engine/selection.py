@@ -121,7 +121,11 @@ def _eval_set(
     if (
         budget.last_slot_min_ev_r is not None
         and len(subset) == budget.free_slots
-        and min(e.expected_r for e in subset) < budget.last_slot_min_ev_r
+        # Submission order is descending expected profit — the floor
+        # binds the member taking the last slot, the set's lowest-
+        # profit member (docs/SPEC.md, Selection).
+        and min(subset, key=lambda e: e.expected_profit).expected_r
+        < budget.last_slot_min_ev_r
     ):
         return None
     cash = budget.cash
@@ -187,43 +191,53 @@ def choose(
 
     # The rank-order comparison: the same entries, walked best rank
     # first, each taken when it still fits — today's behaviour.
-    rank_cash = budget.cash
-    rank_risk = budget.open_risk_used
-    rank_sectors: dict[str, int] = dict(budget.sector_counts)
-    rank_total = Decimal(0)
-    rank_keys: list[str] = []
-    slots = 0
-    for entry in sorted(pool, key=_rank_key):
-        if slots >= budget.free_slots or slots >= budget.orders_left:
-            break
-        if entry.sector is None:
-            continue
-        if rank_sectors.get(entry.sector, 0) >= budget.sector_cap:
-            continue
-        if (
-            budget.last_slot_min_ev_r is not None
-            and slots == budget.free_slots - 1
-            and entry.expected_r < budget.last_slot_min_ev_r
-        ):
-            continue
-        sizing = position_size(
-            budget.equity,
-            entry.entry,
-            entry.stop,
-            cash=rank_cash,
-            current_open_risk=rank_risk,
-            config=config,
-            risk_factor=risk_factor,
-        )
-        if sizing.shares < 1:
-            continue
-        risk = entry.entry - entry.stop
-        rank_risk += sizing.shares * risk
-        rank_cash -= sizing.shares * entry.entry
-        rank_sectors[entry.sector] = rank_sectors.get(entry.sector, 0) + 1
-        slots += 1
-        rank_keys.append(entry.key)
-        rank_total += entry.expected_r * sizing.shares * risk
+    def rank_walk(
+        candidates: list[ScoredEntry],
+    ) -> tuple[Decimal, list[str], list[ScoredEntry]]:
+        rank_cash = budget.cash
+        rank_risk = budget.open_risk_used
+        rank_sectors: dict[str, int] = dict(budget.sector_counts)
+        total = Decimal(0)
+        keys: list[str] = []
+        taken: list[ScoredEntry] = []
+        for entry in sorted(candidates, key=_rank_key):
+            if len(taken) >= budget.free_slots or len(taken) >= budget.orders_left:
+                break
+            if entry.sector is None:
+                continue
+            if rank_sectors.get(entry.sector, 0) >= budget.sector_cap:
+                continue
+            if (
+                budget.last_slot_min_ev_r is not None
+                and len(taken) == budget.free_slots - 1
+                and entry.expected_r < budget.last_slot_min_ev_r
+            ):
+                continue
+            sizing = position_size(
+                budget.equity,
+                entry.entry,
+                entry.stop,
+                cash=rank_cash,
+                current_open_risk=rank_risk,
+                config=config,
+                risk_factor=risk_factor,
+            )
+            if sizing.shares < 1:
+                continue
+            risk = entry.entry - entry.stop
+            rank_risk += sizing.shares * risk
+            rank_cash -= sizing.shares * entry.entry
+            rank_sectors[entry.sector] = rank_sectors.get(entry.sector, 0) + 1
+            taken.append(entry)
+            keys.append(entry.key)
+            total += entry.expected_r * sizing.shares * risk
+        return total, keys, taken
+
+    # The floor binds the entry landing in the last free slot — the
+    # walk's own guard at slots == free_slots-1 does exactly that, and
+    # the optimal search checks the same member (the set's last
+    # submission = its lowest-profit member).
+    rank_total, rank_keys, _taken = rank_walk(pool)
 
     chosen = (
         tuple(sorted(best_subset, key=lambda e: -e.expected_profit))

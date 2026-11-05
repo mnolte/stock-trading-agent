@@ -30,7 +30,6 @@ export function Header({
   title,
   onKillSwitch,
   onPauseToggle,
-  onAsk,
   onMenu,
   menuOpen = false,
   needsYou = 0,
@@ -39,7 +38,6 @@ export function Header({
   title: string;
   onKillSwitch: () => void;
   onPauseToggle: () => void;
-  onAsk?: () => void;
   onMenu?: () => void;
   menuOpen?: boolean;
   /** Needs-you count for the header chip (0 hides it; hidden on the
@@ -269,35 +267,6 @@ export function Header({
           </span>
           <Chip variant={regimeVariant(state?.regime)}>{state?.regime ?? '—'}</Chip>
         </div>
-
-        {onAsk && (
-          <button
-            type="button"
-            onClick={onAsk}
-            title="Ask the agent — it reads the app's data, never changes anything (Ctrl+J)"
-            aria-label="Ask the agent (Ctrl+J)"
-            style={{
-              height: 'var(--sa-control-height)',
-              padding: '0 var(--sa-space-4)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 'var(--sa-space-3)',
-              borderRadius: 'var(--sa-radius-md)',
-              border: '1px solid var(--sa-border-strong)',
-              background: 'var(--sa-raised)',
-              color: 'var(--sa-text)',
-              fontSize: 'var(--sa-text-base)',
-              fontWeight: 500,
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 5h16v11H9l-5 4z" />
-            </svg>
-            <span>Ask</span>
-          </button>
-        )}
 
         <button
           type="button"

@@ -119,7 +119,9 @@ def briefing_status(facts: dict[str, Any]) -> str:
         rows = facts.get(key)
         if not isinstance(rows, list):
             return "unavailable"
-        return ", ".join(str(row.get(field, "")) for row in rows) or "none"
+        return ", ".join(
+            str(row.get(field, "")).replace("_", " ") for row in rows
+        ) or "none"
 
     return (
         f"Positions: {names('positions', 'symbol')}. "
