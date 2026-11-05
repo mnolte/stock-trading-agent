@@ -19,6 +19,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
@@ -190,6 +191,11 @@ class Executor:
         # later steps must not ask Alpaca for the same 404 again.
         self._flat_symbols: set[str] = set()
         self._reconcile_lock = asyncio.Lock()
+        # Approval ids with an approve() call in flight: the pending
+        # check and the order send are many awaits apart, so a second
+        # request for the same approval is refused instead of double
+        # submitting.
+        self._approvals_in_flight: set[int] = set()
         # Set by main: closes every shadow's virtual positions on flatten.
         self.on_flatten: Callable[[], object] = lambda: None
 
@@ -676,6 +682,11 @@ class Executor:
     def _resolve_approval(
         self, approval: Approval, status: str, reason: str | None
     ) -> None:
+        # A resolved approval stays resolved: expire_pending or a reject
+        # that landed while this call was in flight is never overwritten
+        # back to a live outcome.
+        if approval.status != "pending":
+            return
         approval.status = status
         approval.reason = reason
         approval.resolved_at = _naive_utc(self.clock.now())
@@ -810,6 +821,15 @@ class Executor:
         """
         if self.state.kill_switch_on:
             return {"ok": False, "error": "kill switch is on"}
+        if approval_id in self._approvals_in_flight:
+            return {"ok": False, "error": "approval is already being processed"}
+        self._approvals_in_flight.add(approval_id)
+        try:
+            return await self._approve(approval_id)
+        finally:
+            self._approvals_in_flight.discard(approval_id)
+
+    async def _approve(self, approval_id: int) -> dict[str, object]:
         with self._session_factory() as session:
             approval = session.get(Approval, approval_id)
             if approval is None or approval.status != "pending":
@@ -937,6 +957,17 @@ class Executor:
                 "entry", approval.decision_id, approval.symbol
             )
             session.commit()
+            # Re-check after the awaited checks: expire_pending or a
+            # reject can land while the account, earnings and quote
+            # fetches run — never send an order for a resolved approval.
+            session.refresh(approval)
+            if approval.status != "pending":
+                session.commit()
+                self._notify({"approvals", "decisions", "attention"})
+                return {
+                    "ok": False,
+                    "error": f"approval is {approval.status}",
+                }
             with self._order_slot():
                 submitted = await self.broker.submit_bracket_entry(
                     symbol=approval.symbol,
@@ -955,9 +986,30 @@ class Executor:
                 # Never resent; reconciliation decides what Alpaca did.
                 recovered = await self.broker.get_order_by_client_id(client_id)
                 if recovered.error is None and recovered.data is not None:
+                    # The broker did accept it — the order is live, so
+                    # the approval is approved, not rejected.
                     self._store_broker_order(
                         session, recovered.data, approval.decision_id
                     )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="order_recovered",
+                        details={
+                            "symbol": approval.symbol,
+                            "client_order_id": client_id,
+                        },
+                    )
+                    approval.qty = qty
+                    approval.limit_price = limit
+                    self._resolve_approval(approval, "approved", None)
+                    session.commit()
+                    self._notify(
+                        {"approvals", "decisions", "positions", "orders",
+                         "banners", "attention"}
+                    )
+                    return {"ok": True, "recovered": True}
                 self._resolve_approval(
                     approval,
                     "rejected",
@@ -1279,8 +1331,7 @@ class Executor:
         row = session.execute(
             select(Order).where(Order.alpaca_order_id == order.id)
         ).scalar_one_or_none()
-        was_open = row is not None and row.status in OPEN_ORDER_STATUSES
-        was_known = row is not None
+        fresh = False
         if row is None:
             row = Order(
                 alpaca_order_id=order.id,
@@ -1296,10 +1347,28 @@ class Executor:
                 stop_price=order.stop_price,
                 status=order.status,
                 created_at=_naive_utc(order.created_at or self.clock.now()),
+                submitted_at=_naive_utc(
+                    order.created_at or self.clock.now()
+                ),
             )
-            session.add(row)
-            session.flush()
-        else:
+            try:
+                with session.begin_nested():
+                    session.add(row)
+                    session.flush()
+            except IntegrityError:
+                # A racing writer — the submit path vs reconcile or a
+                # trade update on the shared loop — stored this broker
+                # order between our select and the insert. Take their
+                # row; without the unique index this used to grow a
+                # duplicate that crashed every later reconcile.
+                row = session.execute(
+                    select(Order).where(Order.alpaca_order_id == order.id)
+                ).scalar_one()
+            else:
+                fresh = True
+        was_open = row.status in OPEN_ORDER_STATUSES
+        was_known = not fresh
+        if not fresh:
             row.status = order.status
             if order.filled_at is not None:
                 row.filled_at = _naive_utc(order.filled_at)
@@ -1307,6 +1376,10 @@ class Executor:
                 # First seen flat (a released leg), now nested under its
                 # parent — restore the link.
                 row.parent_alpaca_order_id = parent.id
+            if row.submitted_at is None:
+                row.submitted_at = _naive_utc(
+                    order.created_at or self.clock.now()
+                )
         if order.status not in OPEN_ORDER_STATUSES and row.active_until is None:
             row.active_until = _naive_utc(order.updated_at or self.clock.now())
         if order.filled_qty > 0 and order.filled_avg_price is not None:
@@ -2238,7 +2311,15 @@ class Executor:
         position.realized_pnl_raw = raw
         position.realized_pnl_adjusted = adjusted
         position.exit_reason = exit_reason
-        position.closed_at = _naive_utc(self.clock.now())
+        # The trade ended at its exit fill, not when this pass noticed:
+        # best/worst tracking, the after-exit window and the same-day
+        # re-entry gate all key off closed_at. Detection time is the
+        # fallback only when no fill explains the close.
+        position.closed_at = (
+            fills[0][0].filled_at
+            if fills
+            else _naive_utc(self.clock.now())
+        )
         # Keep qty at the closed size: Performance shows the shares traded.
         if explained:
             position.qty = qty_closed
