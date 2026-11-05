@@ -5629,8 +5629,10 @@ def server_status(request: Request) -> dict[str, object]:
             started_at = None
     import os
 
+    from app.db.backup import dated_backups
+
     db = Path(config.env.sa_db_path)
-    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    backups = sorted(dated_backups(db.parent / "backups", db.name))
     return {
         "version": request.app.version,
         "image_tag": os.environ.get("SA_VERSION", ""),
@@ -5679,8 +5681,10 @@ def server_backup_download(request: Request) -> Response:
     if get_config().env.sa_auth != "required":
         raise HTTPException(status_code=404, detail="not on a VPS")
     require_confirmed(request)
+    from app.db.backup import dated_backups
+
     db = Path(get_config().env.sa_db_path)
-    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    backups = sorted(dated_backups(db.parent / "backups", db.name))
     if not backups:
         raise HTTPException(status_code=404, detail="no backup yet")
     latest = backups[-1]

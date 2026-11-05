@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.db.backup import dated_backups
 from app.ops.urls import UrlRejected, validate_public_https_url
 
 if TYPE_CHECKING:
@@ -140,7 +141,7 @@ def offsite_backup(config: AppConfig, secrets: SecretsStore) -> None:
     # plain copy of the live file can be torn and misses WAL contents.
     # Fall back to the live path only before the first backup exists.
     backups_dir = db.parent / "backups"
-    copies = sorted(backups_dir.glob(f"{db.name}.*")) if backups_dir.is_dir() else []
+    copies = sorted(dated_backups(backups_dir, db.name))
     paths = [str(copies[-1] if copies else db)]
     secret_key = data / "secret.key"
     if secret_key.exists():
