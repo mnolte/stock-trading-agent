@@ -50,15 +50,32 @@ _REF_RE = re.compile(r"\[\[([a-z_]+:[^\[\]|]+)\]\]")
 _NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*%?")
 _CONTEXT_BUDGET_RATIO = 0.9
 
-# Stop flags keyed by ask_messages.id → set by POST .../stop.
-_stops: set[int] = set()
+# Stop flags keyed by ask_messages.id → set by POST .../stop. Each flag
+# carries a monotonic expiry: a flag whose generator died before reading
+# it (client disconnect mid-answer) must not linger forever, and the map
+# itself is bounded for the same reason.
+_STOP_TTL_SECONDS = 600.0
+_STOP_MAX = 10_000
+_stops: dict[int, float] = {}
 
 
 def request_stop(message_id: int) -> bool:
-    if message_id in _stops:
-        return True
-    _stops.add(message_id)
+    _prune_stops()
+    _stops[message_id] = time.monotonic() + _STOP_TTL_SECONDS
+    if len(_stops) > _STOP_MAX:
+        _stops.pop(next(iter(_stops)))  # the oldest flag
     return True
+
+
+def _stop_requested(message_id: int) -> bool:
+    _prune_stops()
+    return message_id in _stops
+
+
+def _prune_stops() -> None:
+    now = time.monotonic()
+    for key in [k for k, expiry in _stops.items() if expiry <= now]:
+        del _stops[key]
 
 
 def monthly_spend(session: Session, config: Any, clock: Any) -> Decimal:
@@ -332,7 +349,7 @@ async def answer(
 
     round_no = 0
     while True:
-        if message_id in _stops:
+        if _stop_requested(message_id):
             stopped = True
             break
         if time.monotonic() > deadline:
@@ -366,7 +383,7 @@ async def answer(
                     yield {"event": "delta", "data": {"text": event.delta}}
                 elif event.kind == "done":
                     result = event.result
-                if message_id in _stops:
+                if _stop_requested(message_id):
                     stopped = True
                     break
         except Exception as exc:  # noqa: BLE001
@@ -471,8 +488,8 @@ async def answer(
                         text=_tool_result_text(tool_result, max_tool_tokens),
                     )
                 )
-        if len(steps) >= max_rounds * 4 or message_id in _stops:
-            stopped = message_id in _stops
+        if len(steps) >= max_rounds * 4 or _stop_requested(message_id):
+            stopped = _stop_requested(message_id)
             if stopped:
                 break
 
@@ -508,7 +525,7 @@ async def answer(
             if thread_row is not None:
                 thread_row.updated_at = _naive_utc(clock.now())
             session.commit()
-    _stops.discard(message_id)
+    _stops.pop(message_id, None)
     if status == "failed":
         yield {
             "event": "error",
