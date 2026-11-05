@@ -87,6 +87,7 @@ The examples use 099 as a made-up number.
 | 038 | spec | Naming convention for work items | — | #107 | — | planned |
 | 039 | fix | Protective stop repair | — | — | #111, #112 | building |
 | 040 | fix | EP shadow gate_detail crash | — | — | #113 | building |
+| 041 | fix | Stale header numbers | — | — | — | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
 

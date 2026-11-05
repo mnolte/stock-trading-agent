@@ -236,6 +236,10 @@ class Executor:
         self.state.reset_session_if_new_day()
         account = await self.refresh_account()
         if account is not None:
+            # The header's equity and today figures come from this
+            # snapshot; reconcile's push went out before the refresh,
+            # so tell the GUI again now.
+            self._notify({"header"})
             kill_pct = Decimal(
                 str(self.config.get("risk", "drawdown_kill_pct", default=8))
             )
