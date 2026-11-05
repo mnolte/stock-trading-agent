@@ -803,6 +803,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     install_global_hooks(asyncio.get_running_loop())
     config = get_config()
+    # The decision.v4 prompt pins "1 ATR" in words — a different
+    # near_level_atr disagrees with it and needs a new prompt version
+    # (docs/SPEC.md, Snapshot v4).
+    if config.get_decimal(
+        "decision", "v4", "near_level_atr", default=Decimal(1)
+    ) != Decimal(1):
+        logger.warning(
+            "decision.v4.near_level_atr is %s but the v4 prompt says "
+            "'1 ATR' — change needs a new prompt version",
+            config.get("decision", "v4", "near_level_atr"),
+        )
 
     from app.auth.guard import check_auth_guard
     from app.shutdown import (

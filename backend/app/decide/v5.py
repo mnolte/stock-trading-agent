@@ -54,6 +54,7 @@ class V5Config:
     max_rr: Decimal = Decimal("3.0")
     base_rate_sessions: int = 60
     base_rate_min_n: int = 30
+    price_vs_signal_adverse_atr: Decimal = Decimal("0.5")
 
 
 def _dec(value: Any, default: Decimal) -> Decimal:
@@ -103,6 +104,13 @@ def v5_config(config: AppConfig) -> V5Config:
         base_rate_min_n=_int(
             get("decision", "v5", "base_rate_min_n", default=None),
             base.base_rate_min_n,
+        ),
+        price_vs_signal_adverse_atr=_dec(
+            get(
+                "decision", "v5", "price_vs_signal_adverse_atr",
+                default=None,
+            ),
+            base.price_vs_signal_adverse_atr,
         ),
     )
 
@@ -418,6 +426,7 @@ def thesis_holds_v5(
     *,
     vs_ema20: str | None,
     price_vs_signal: Decimal | None,
+    adverse_atr: Decimal = Decimal("0.5"),
 ) -> bool | None:
     """v4's ``thesis_holds`` with a fifth comparable check,
     ``price_vs_ema20``: adverse when the price is below the 1-hour EMA 20
@@ -444,7 +453,7 @@ def thesis_holds_v5(
         if (
             vs_ema20 == "below"
             and price_vs_signal is not None
-            and price_vs_signal <= Decimal("-0.5")
+            and price_vs_signal <= -adverse_atr
         ):
             adverse += 1
     if comparable < 2:
@@ -638,6 +647,7 @@ def build_v5_fields(
             fields.get("checks") or {},
             vs_ema20=vs_ema20,
             price_vs_signal=vs_signal,
+            adverse_atr=v5.price_vs_signal_adverse_atr,
         )
 
     return V5Build(fields=fields, options_column=column, reason=v4.reason)

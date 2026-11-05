@@ -1607,6 +1607,7 @@ def _claim_checks_v4(
     snapshot: dict[str, Any],
     chosen: dict[str, Any] | None,
     v5: bool = False,
+    near_atr: Decimal = Decimal(1),
 ) -> ExplanationCheck:
     """The v4 claim checks (docs/SPEC.md, Decision v4 — Code checks).
 
@@ -1634,7 +1635,7 @@ def _claim_checks_v4(
         if chosen is not None:
             near = any(
                 _decimal_or_none(lv.get("distance_atr")) is not None
-                and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
+                and abs(_decimal_or_none(lv.get("distance_atr"))) <= near_atr  # type: ignore[arg-type]
                 for lv in (chosen.get("levels_in_way") or [])
                 if isinstance(lv, dict)
             )
@@ -1642,7 +1643,7 @@ def _claim_checks_v4(
         position = snapshot.get("position") or {}
         near = any(
             _decimal_or_none(lv.get("distance_atr")) is not None
-            and abs(_decimal_or_none(lv.get("distance_atr"))) <= 1  # type: ignore[arg-type]
+            and abs(_decimal_or_none(lv.get("distance_atr"))) <= near_atr  # type: ignore[arg-type]
             for lv in (position.get("levels_to_target") or [])
             if isinstance(lv, dict)
         )
@@ -1796,7 +1797,10 @@ def validate_model_output_v4(
 
     explanation = check_explanation_v4(output, snapshot, chosen)
     claims = _claim_checks_v4(
-        output, context=context, snapshot=snapshot, chosen=chosen, v5=v5
+        output, context=context, snapshot=snapshot, chosen=chosen, v5=v5,
+        near_atr=config.get_decimal(
+            "decision", "v4", "near_level_atr", default=Decimal(1)
+        ),
     )
     claims_check = CodeCheck(
         "Claim checks",
