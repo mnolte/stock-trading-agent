@@ -114,7 +114,7 @@ class SessionClock:
         for cycle in sorted(self.cycle_times):
             cycle_dt = datetime.combine(session.date, cycle, tzinfo=self.market_tz)
             bar_close = cycle_dt - self.BAR_DELAY
-            if bar_close < session.close and session.open <= cycle_dt <= session.close:
+            if bar_close <= session.close and session.open <= cycle_dt <= session.close:
                 result.append(cycle_dt)
         return result
 
@@ -219,7 +219,8 @@ class SessionClock:
 
     def _display_time(self, now: datetime) -> str:
         display_now = self.clock.to_zone(now, self.display_tz)
-        return display_now.strftime("%A %d %B · %H:%M Amsterdam")
+        label = str(self.display_tz).split("/")[-1].replace("_", " ")
+        return display_now.strftime(f"%A %d %B · %H:%M {label}")
 
 
 def make_clock(config: AppConfig | None = None) -> Clock:

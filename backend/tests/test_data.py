@@ -1109,8 +1109,30 @@ async def test_refresh_daily_records_source_gaps(
         },
     ) == {gap_day}
 
-    # A bar that arrives later clears its gap mark.
+    # Recorded gaps count as loaded — a routine refresh only asks for the
+    # still-forming newest session, not the confirmed gap again.
     fake_sources.bars.fetch_daily_bars = original  # type: ignore[method-assign]
+    starts: list[date] = []
+
+    async def spy(symbol: str, start: date, end: date) -> DataResult[list[DailyBar]]:
+        starts.append(start)
+        return await original(symbol, start, end)
+
+    fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
+    await service.refresh_daily(date(2026, 10, 15))
+    assert starts == [date(2026, 10, 15)] * len(starts)
+    assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == {gap_day}
+
+    # A gap day lying inside a fetched range still clears its mark when
+    # the bar arrives: drop an earlier cached session so the request
+    # spans the gap.
+    from app.db.models import Bar1d as Bar1dRow
+
+    with session_factory() as session:
+        session.execute(
+            delete(Bar1dRow).where(Bar1dRow.date == date(2026, 10, 9))
+        )
+        session.commit()
     await service.refresh_daily(date(2026, 10, 15))
     assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == set()
 
