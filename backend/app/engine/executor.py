@@ -2285,6 +2285,21 @@ class Executor:
         # still that order's position — the fills pass owns it. Adopting
         # it again would create a duplicate row without its decision
         # and target (SHEL, 30 Oct).
+        if bp.qty <= 0:
+            # A short or empty broker row can never be covered by a
+            # sell stop — surface it instead of adopting it silently.
+            self._mismatch(
+                session,
+                report,
+                f"{bp.symbol}: broker position qty {bp.qty} "
+                "is not adoptable",
+                {
+                    "kind": "negative_position",
+                    "symbol": bp.symbol,
+                    "qty": bp.qty,
+                },
+            )
+            return Decimal(0)
         settle_start = _naive_utc(self.clock.now()) - timedelta(
             seconds=self._fill_settle_seconds()
         )
@@ -2414,12 +2429,39 @@ class Executor:
                 f"protective check {position.symbol}: {pos_r.error}"
             )
             return None
+        if orders_r.error is not None:
+            # Unconfirmed order state is not "no live sells": placing a
+            # stop now could duplicate one it can't see or collide with
+            # a market sell still working. Fail, don't guess.
+            report.errors.append(
+                f"protective check {position.symbol}: {orders_r.error}"
+            )
+            return None
         confirmed = pos_r.data
-        if confirmed is None or confirmed.qty <= 0:
+        if confirmed is None or confirmed.qty == 0:
             # Flat at the broker — nothing to protect. The row closes on
             # the next pass; remember it so nothing asks again this pass.
             self._flat_symbols.add(position.symbol)
             return Decimal(0)
+        if confirmed.qty < 0:
+            # A short can never be protected by a sell stop — surface it
+            # instead of pretending coverage exists.
+            report.errors.append(
+                f"protective check {position.symbol}: negative qty "
+                f"{confirmed.qty} at the broker"
+            )
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="protective_stop_failed",
+                details={
+                    "symbol": position.symbol,
+                    "error": f"negative qty {confirmed.qty} at the broker",
+                },
+                affects="order",
+            )
+            return None
         # Each live sell leg paired with the id that cancels it: for a
         # nested leg that is the parent order, for a standalone order
         # the order itself.
@@ -2608,6 +2650,24 @@ class Executor:
                         row.active_until = _naive_utc(
                             final.updated_at or self.clock.now()
                         )
+                # A confirmed-dead parent takes its nested legs down with
+                # it: mark the leg rows terminal too, else they read as
+                # live until the next order refresh (~15 min).
+                if final is None or (
+                    not final.is_open and final.status != "filled"
+                ):
+                    for leg_row in session.execute(
+                        select(Order).where(
+                            Order.parent_alpaca_order_id == cancel_id
+                        )
+                    ).scalars():
+                        if leg_row.status in OPEN_ORDER_STATUSES:
+                            leg_row.status = "canceled"
+                            if leg_row.active_until is None:
+                                leg_row.active_until = _naive_utc(
+                                    (final.updated_at if final else None)
+                                    or self.clock.now()
+                                )
             session.commit()
             # A confirmed cancel is not a released hold: Alpaca keeps
             # held_for_orders for a moment and queued fills can still
