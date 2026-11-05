@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app.config import AppConfig
 from app.market.clock import UTC, FakeClock, SessionClock
@@ -70,3 +70,63 @@ def test_simulated_mode_uses_fake_clock() -> None:
     config.env.mode = "simulated"
     clock = make_clock(config)
     assert isinstance(clock, FakeClock)
+
+
+def test_session_cycles_follow_ny_offset_across_dst() -> None:
+    """The week US winter time starts (Nov 2 2026): the same 10:46 NY
+    cycle is 14:46 UTC under EDT and 15:46 UTC under EST — the schedule
+    follows America/New_York, never a fixed offset (hard rule 5)."""
+    from app.data.models import CalendarDay
+    from app.market.calendar import StaticCalendarProvider
+    from app.market.clock import NY_TZ
+
+    days = [
+        CalendarDay(
+            date=d,
+            open=datetime(d.year, d.month, d.day, 9, 30, tzinfo=NY_TZ),
+            close=datetime(d.year, d.month, d.day, 16, 0, tzinfo=NY_TZ),
+        )
+        for d in (date(2026, 10, 30), date(2026, 11, 2))
+    ]
+    for session, expect_utc in zip(days, (14, 15)):
+        config = AppConfig().overlay(
+            {"schedule": {"cycles": ["10:46"], "position_checks": []}}
+        )
+        clock = SessionClock(
+            FakeClock(
+                datetime(
+                    session.date.year, session.date.month, session.date.day,
+                    15, 0, tzinfo=UTC,
+                )
+            ),
+            config,
+            calendar=StaticCalendarProvider([session]),
+        )
+        (cycle,) = clock.active_cycles(session)
+        assert cycle.tzinfo is not None
+        assert cycle.astimezone(UTC).hour == expect_utc
+        assert cycle.astimezone(NY_TZ).hour == 10 and cycle.astimezone(NY_TZ).minute == 46
+
+
+def test_session_clock_at_exact_open_and_close() -> None:
+    """Boundary instants: state() is open at exactly the open, closed at
+    exactly the close."""
+    from app.data.models import CalendarDay
+    from app.market.calendar import StaticCalendarProvider
+    from app.market.clock import NY_TZ
+
+    day = date(2026, 10, 15)
+    session = CalendarDay(
+        date=day,
+        open=datetime(2026, 10, 15, 9, 30, tzinfo=NY_TZ),
+        close=datetime(2026, 10, 15, 16, 0, tzinfo=NY_TZ),
+    )
+    cal = StaticCalendarProvider([session])
+    for instant, expect in (
+        (session.open, "open"),
+        (session.close, "closed"),
+    ):
+        clock = SessionClock(
+            FakeClock(instant.astimezone(UTC)), AppConfig(), calendar=cal
+        )
+        assert clock.state().state == expect, instant
