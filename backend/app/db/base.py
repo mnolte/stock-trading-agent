@@ -45,10 +45,6 @@ def configure_sqlite(engine: Engine, busy_timeout_seconds: float) -> Engine:
         cursor.execute("PRAGMA mmap_size=268435456")
         cursor.execute("PRAGMA temp_store=MEMORY")
         cursor.execute("PRAGMA cache_size=-64000")
-        # SQLite defaults foreign keys off — the ~30 declared FKs are
-        # advisory without this. Set on connect (it can't toggle inside
-        # a transaction).
-        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
     return engine

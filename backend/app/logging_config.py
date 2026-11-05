@@ -144,18 +144,23 @@ class SecretScrubFilter(logging.Filter):
             record.args = ()
         if record.exc_text:
             record.exc_text = _scrub_text(record.exc_text, secrets)
-        if record.exc_info is not None:
+        if record.exc_info:
             # Handlers format exc_info lazily *after* filters run — the
             # console sink would emit the raw traceback (rule 9). Render
             # it here, scrub it, and clear exc_info so every formatter
-            # uses the scrubbed exc_text instead.
+            # uses the scrubbed exc_text instead. exc_info can also be
+            # True (resolve via sys.exc_info) or a degenerate tuple.
             try:
                 import traceback
 
-                record.exc_text = _scrub_text(
-                    "".join(traceback.format_exception(*record.exc_info)),
-                    secrets,
-                )
+                exc_info = record.exc_info
+                if not isinstance(exc_info, tuple):
+                    exc_info = sys.exc_info()
+                if exc_info[0] is not None:
+                    record.exc_text = _scrub_text(
+                        "".join(traceback.format_exception(*exc_info)),
+                        secrets,
+                    )
             except Exception as render_exc:  # noqa: BLE001 - never break logging
                 # A log filter must not log (recursion) — stderr only.
                 print(
