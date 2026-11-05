@@ -2,6 +2,46 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-05 — [045] GUI catch-up
+
+From the design review in `docs/analysis/045-gui-catch-up.md`. Every screen with the app shell is re-rendered at 1440 and 390; Main, Positions and Settings also at 1024.
+
+- **Shell, every screen.**
+  - One header layout, two fixed rows (about 110 px): title, PAPER and the subtitle; then the session pill, the Needs you chip, equity, today, regime, Pause and Kill switch. Nothing wraps at 1440; at 1024 the right-hand group drops to a third row.
+  - The **Ask button moves from the header to the sidebar** (full-width accent button under the app mark, icon only when collapsed), as the app already did on 5 Nov; the phone bar keeps its Ask icon. Ctrl/⌘+J unchanged.
+  - Phone (< 820 px): the title row is hidden (the top bar carries it), the stats collapse to one mono line (equity, today, regime; EUR in the tooltip), Pause and Kill switch share one row. The header is about 150 px instead of 300.
+  - Sidebar mark says v0.2. Model names: `gpt-4.1-mini` for live, briefing and verdicts; `claude-sonnet-5-5` for the weekly review and Ask; `gpt-4o-mini` is gone from every screen.
+- **Decision drawers, one order for every version** (`drawercommon.py` in the generators): action · tiles · **What happened** · the version's blocks · Agent reasoning · Safety gates · Levels (folded) · Outcome · footer links.
+  - **What happened** (new, every drawer): final action, changes by code with their reason code, warnings, order status, the verdict (pending / draft with "Confirm draft" and "Change…" / confirmed / none, with why) and "Ask about this decision".
+  - **Outcome** on every drawer (was v1 only): 1h, 1 session, 5 sessions for entries; option touches for a skip; what the position did afterwards and the next open for a hold or exit.
+  - Levels fold by default; the summary gives the count and the bar time.
+  - `Decision.dc.html` (v1, live): gates now follow the reasoning; the verdict chip moved into What happened.
+  - `DecisionV3.dc.html` gains the Selection block the spec gives v3 drawers.
+  - `DecisionV4Held.dc.html`: Position before "Does the entry thesis still hold?", as in the v5 held drawer.
+  - New **`DecisionV5.dc.html`**: a v5 candidate (HD, shadow F, 4 Nov 17:46): options with target distance in ATR, per-option `min_confidence` and `base_rate · n` (dash under 30 cases), the Model column, the trend gate as the first gate row, the ev gate ("0.45 ≥ 0.42 · EV +0.35R"), the time-left row, and a previous decision in the same context with its final action. `DecisionV5.png`, `DecisionV5-390.png`.
+  - Drawers shrink to the viewport (`max-width: 560px`), so the 390 renders show the phone layout: `Decision-390.png`, `DecisionV5-390.png`.
+  - Corrects the 3 Nov entry: `DecisionV4.dc.html` never carried the per-option `min_confidence` and `target_atr` columns; they are in `DecisionV5.dc.html`.
+- **Dashboard** (`Main.dc.html`).
+  - Watchlist in **screened mode**: a Rank column with its hover, counts over the 69 eligible symbols, 15 rows, "Sorted by rank · 15 of 69 eligible shown · held symbols always listed" and "Show all 69". Five more sample symbols (AVGO, HD, COST, LLY, V); HD and LLY show the call cap.
+  - Cycle strip and feed follow the pool: "59 of 67 symbols not held failed the pre-filter; 8 passed, 6 reached the model (call cap 10, held first)"; a "NO CALL · call cap" row; "+51 more" on the pre-filter row; "Next · cycle 4 of 6 today".
+  - Needs you: an "Ask" link on every item; the health line reads "Email failing since 15:00".
+  - Model calls tile hover names the Ask cap ($1.84 of $15).
+  - Briefing card: the text, "Numbers checked ✓" (hover explains), the next briefing, and the facts, model and cost behind a "Facts used" disclosure. The explanation paragraph is gone.
+  - Last action times carry the New York time in a tooltip.
+- **Positions** (`Positions.dc.html`): order history gets "All · Problems" and a period filter, a rejected order row (red) and "Load 20 more"; the card header says the period. `Positions-390.png` and `Positions-1024.png` are new.
+- **Reviews** (`Reviews.dc.html`): each verdict has one primary **"Confirm good call / bad call / unclear"** button (the draft), "Change…" and a "Decision →" link; "Confirm all 3 drafts" at the top. The hyphen in "−1.0R" is a minus sign. `Reviews-390.png` is new.
+- **Insights** (`Insights.dc.html`): new **"What each filter removed"** card between the funnel and the slices (PR 37): per filter the count removed, target first, stop first, neither, average R if taken, and a sample status. The first finding is now about high volatility; the 10:46 finding that was once read as a real result is gone, and the card says "sample data".
+- **LLM inspector** (`Inspector.dc.html`): Source gains **Ask** and Backtests; the prompt list runs to `decision.v5`, `weekly.v2`, `verdict.v2`, `ask.v1`; the reason list has every warning and error reason of the spec; an Ask call in the list and its details ("Question 1 of 4 · context Positions & orders", effort instead of temperature for Claude); the user message is labelled "input snapshot as sent to the model" with a **Stored input** link.
+- **Settings** (`Settings.dc.html`).
+  - Notifications: all **27 events** of the spec table, folded behind "Event table · 27 events · browser on for 23 · email on for 19".
+  - New sections **Entry selection** (mode, confidence weight, last-slot minimum), **Decision gates** (v3: room, edge, near level; v5: entry gate, min EV, max R/R, trend gate, base-rate window, price vs signal) and **Display** (near-stop distance, slow-call threshold); Trading gains "Prices and timeouts" (quote age, deviation, tighten quote age, fill settle, Alpaca read timeout).
+  - Decision prompt lists v1–v5 (shadow versions marked); model lists are `gpt-4.1-mini`, `gpt-6.1-sol`, `claude-haiku-5-5`, `claude-sonnet-5-5`; the weekly review defaults to `claude-sonnet-5-5`.
+  - Section list: "Changed from default" filter under Find, "· Ask the agent" as a jump link, the new sections.
+- **Universe** (`Universe.dc.html`): the company name under each symbol (what `about_symbol` matches; `universe.names` overrides), with a line in "How the screen works".
+- **States** (`States.dc.html`): banners for live decisions failing, trade-updates stream degraded, a missing or failing key, keys imported from `.env`, EUR unavailable; a **Needs you reference** with every kind of item (11 rows: wording, button, when it leaves) and the empty card; the "Alpaca not answering · as of" card state; a position with a held-back exit; feed rows for every code reason; the latest-decision card for code-built options.
+- **Ask** (`AskStates.dc.html`): the intro names the sidebar button; the sample note and the phone answer follow the new Insights finding.
+- `DESIGN.md`: the screens table has 25 rows, the screenshot list is current, the header component lists Needs you, Pause and the kill switch, Ask is a sidebar component, and two rules are added (design notes under cards are help text; the 1024 renders).
+
 ## 2026-11-03 — Decision v5 held drawer
 
 - New `DecisionV5Held.dc.html` (PR 37), built on the KO call of 3 Nov at 15:46 NY. It shows:
