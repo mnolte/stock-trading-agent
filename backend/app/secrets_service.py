@@ -396,7 +396,13 @@ class SecretsStore:
             row.saved_at = now
             if test_result is not None:
                 row.test_result = test_result
-                row.test_detail = scrub(test_detail or "", [value]) or None
+                row.test_detail = (
+                    scrub(
+                        test_detail or "",
+                        [*self._values.values(), value],
+                    )
+                    or None
+                )
                 row.tested_at = now
             session.commit()
         self._values[name] = value
@@ -415,7 +421,9 @@ class SecretsStore:
                 row.tested_at = now
                 row.test_result = "ok" if ok else "failed"
                 row.test_detail = (
-                    scrub(detail, [self._values.get(name, "")]) if detail else None
+                    scrub(detail, list(self._values.values()))
+                    if detail
+                    else None
                 )
                 session.commit()
         self._load_rows()
