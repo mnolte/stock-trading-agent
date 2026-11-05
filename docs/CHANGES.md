@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-05 — OpenAI fixed-temperature models
+
+- Model entries can set `supports_temperature: false`. The OpenAI adapter then omits temperature from structured-output and chat tool calls instead of sending a value the model rejects. GPT-6.1-sol has this flag; other models keep their existing temperatures. Calls are still never retried. The Responses API path continues to omit temperature.
+
 ## 2026-11-05 — [044] Spec rulings from the 043 audit
 
 Answers the seven open questions in issue #124, found during the audit on #123.

@@ -53,6 +53,9 @@ def _paper_client() -> tuple[TestClient, _StubExecutor]:
     run_migrations()
     config = get_config()
     config.env.mode = "paper"
+    # Keep Ask on OpenAI so Anthropic-key tests aren't refused for it;
+    # the ask-model check has its own test below.
+    config._active.setdefault("ask", {})["model"] = "gpt-4o-mini"
     app = create_app()
     clock = make_clock(config)
     app.state.clock = clock
@@ -196,6 +199,35 @@ def test_remove_unused_key_pauses_shadows() -> None:
         strategy = session.get(Strategy, sid)
         assert strategy is not None
         assert strategy.status == "paused"
+
+
+def test_remove_key_refused_while_ask_uses_it() -> None:
+    """ask.model's provider counts too — removing its key would leave Ask
+    unable to answer."""
+    client, _ = _paper_client()
+    get_config()._active.setdefault("ask", {})["model"] = "claude-sonnet-5-5"
+    _save_keys(client, "anthropic")
+    res = client.post("/api/keys/anthropic/remove")
+    assert res.status_code == 422
+    assert "Ask the agent" in res.text
+
+
+def test_remove_key_refused_by_pending_settings() -> None:
+    """A pending version promotes at the next cycle — the key it moves a
+    model to must not be removable first."""
+    client, _ = _paper_client()
+    _save_keys(client, "anthropic")
+    config = get_config()
+    tree = config.effective()
+    tree.setdefault("decision", {})["model"] = "claude-haiku-5-5"
+    config.set_pending(tree, 502)
+    try:
+        res = client.post("/api/keys/anthropic/remove")
+        assert res.status_code == 422
+        assert "pending settings" in res.text
+    finally:
+        config._pending = None
+        config.pending_version = None
 
 
 def test_missing_model_key_is_refused_on_save() -> None:

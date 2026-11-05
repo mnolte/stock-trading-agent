@@ -3184,6 +3184,9 @@ def _model_key_hint(request: Request, provider: str) -> str:
     if tasks:
         uses.append(" and ".join([", ".join(tasks[:-1]), tasks[-1]])
                   if len(tasks) > 1 else tasks[0])
+    ask_model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
+    if model_provider(config, ask_model) == provider:
+        uses.append("Ask the agent")
     with get_session_maker()() as session:
         strategies = session.execute(
             select(Strategy.name, Strategy.model).where(
@@ -3500,6 +3503,32 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
                 detail=f"{task_names[task]} use{'s' if task != 'verdict' else ''} "
                 f"{model}: pick another model first",
             )
+    ask_model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
+    if model_provider(config, ask_model) == group:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Ask the agent uses {ask_model}: pick another model first",
+        )
+    # A pending settings version promotes at the next cycle — removing
+    # the key it points at would activate a missing-key state.
+    pending = config.pending()
+    if pending is not None:
+        from app.settings_service import _MergedConfig
+
+        view = _MergedConfig(pending)
+        named = [
+            ("live decisions", str(view.get("decision", "model", default=""))),
+            ("Ask the agent", str(view.get("ask", "model", default=""))),
+        ] + [
+            (task_names[task], review_model(view, task)) for task in REVIEW_TASKS
+        ]
+        for what, model in named:
+            if model_provider(view, model) == group:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"pending settings move {what} to {model}: "
+                    "pick another model first",
+                )
     from app.db.models import Strategy
 
     paused: list[str] = []
@@ -5574,8 +5603,8 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
     from app.db.models import LogReview
 
     review = str(body.get("review") or "")
-    note = str(body.get("note") or "").strip()
-    fingerprint = str(body.get("fingerprint") or "")
+    note = _multi_line(body.get("note"), 4000).strip()
+    fingerprint = _one_line(body.get("fingerprint"), 400)
     if review not in ("expected", "fixed") or not note or not fingerprint:
         raise HTTPException(
             status_code=422, detail="review (expected|fixed), note and fingerprint required"
@@ -5585,8 +5614,8 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
         session.add(
             LogReview(
                 fingerprint=fingerprint,
-                level=str(body.get("level") or "ERROR"),
-                sample=str(body.get("sample") or "")[:400],
+                level=_one_line(body.get("level"), 16) or "ERROR",
+                sample=_multi_line(body.get("sample"), 400),
                 review=review,
                 note=note,
                 reviewed_at=_naive_utc(clock.now()),

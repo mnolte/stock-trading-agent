@@ -73,6 +73,11 @@ class OpenAIAdapter:
         """Swap the key in place after a Settings save."""
         self._build(api_key)
 
+    def _temperature_kwargs(self, model: str, temperature: float) -> dict[str, Any]:
+        if self._config.get("models", model, "supports_temperature", default=True) is False:
+            return {}
+        return {"temperature": temperature}
+
     async def complete(
         self,
         *,
@@ -91,7 +96,7 @@ class OpenAIAdapter:
         try:
             response = await self._client.chat.completions.with_raw_response.create(
                 model=use_model,
-                temperature=use_temperature,
+                **self._temperature_kwargs(use_model, use_temperature),
                 response_format=cast(
                     ResponseFormat,
                     {
@@ -293,7 +298,7 @@ class OpenAIAdapter:
         try:
             response = await self._client.chat.completions.create(
                 model=use_model,
-                temperature=0.2,
+                **self._temperature_kwargs(use_model, 0.2),
                 messages=cast(Any, wire_messages),
                 tools=cast(Any, wire_tools) if wire_tools else cast(Any, None),
                 stream=True,

@@ -294,6 +294,8 @@ def estimate(
                     session_factory,
                     model=model,
                     temperature=temperature,
+                    prompt_version=spec.prompt_version
+                    or str(config.get("decision", "prompt", default="decision.v1")),
                     prompt_hash=prompt_hash,
                     start=datetime.combine(start, datetime.min.time()),
                     end=datetime.combine(end, datetime.max.time()),
