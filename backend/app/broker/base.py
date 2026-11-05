@@ -123,7 +123,11 @@ class Broker(Protocol):
         ...
 
     async def replace_stop(
-        self, order_id: str, *, stop_price: Decimal
+        self,
+        order_id: str,
+        *,
+        stop_price: Decimal,
+        client_order_id: str | None = None,
     ) -> DataResult[BrokerOrder]:
         """Move a stop leg in place; returns the replacement order."""
         ...

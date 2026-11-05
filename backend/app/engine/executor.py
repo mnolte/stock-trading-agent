@@ -3624,7 +3624,7 @@ class Executor:
         done (docs/SPEC.md, Exits).
         """
         def missing(error: str | None) -> bool:
-            return bool(error) and (
+            return error is not None and (
                 "404" in error or "not found" in error.lower()
             )
 

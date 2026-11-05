@@ -23,7 +23,6 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
 from app.decide.client import DecisionClient, ModelResponse, token_cost
-from app.decide.levels import OPTIONS_VERSION
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     NO_CALL_REASONS,

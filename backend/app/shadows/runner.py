@@ -37,7 +37,16 @@ from app.config import AppConfig
 from app.data.cache import BarCache, _naive_utc
 from app.data.models import Quote
 from app.db.base import get_session_maker
-from app.db.models import Cycle, Decision, LlmCall, Position, Run, ShadowDecision, ShadowPosition, Strategy
+from app.db.models import (
+    Cycle,
+    Decision,
+    LlmCall,
+    Position,
+    Run,
+    ShadowDecision,
+    ShadowPosition,
+    Strategy,
+)
 from app.decide.client import DecisionClient, ModelResponse, token_cost
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
@@ -841,8 +850,16 @@ class ShadowRunner:
                 cycle,
                 d,
                 context,
-                final_action=("no_call" if response.error or response.refused else validation.final_action),
-                no_call_reason=("model_error" if response.error or response.refused else None),
+                final_action=(
+                    "no_call"
+                    if response.error or response.refused
+                    else validation.final_action
+                ),
+                no_call_reason=(
+                    "model_error"
+                    if response.error or response.refused
+                    else None
+                ),
                 rules=rules,
                 position=snap_json.get("position"),
             )
@@ -2306,7 +2323,9 @@ class ShadowRunner:
             or risk.atr_multiple < Decimal(str(cfg.get("decision", "stop_atr_min", default=1.5)))
             or risk.atr_multiple > Decimal(str(cfg.get("decision", "stop_atr_max", default=4.0)))
             or risk.reward_to_risk is None
-            or risk.reward_to_risk < Decimal(str(cfg.get("decision", "min_reward_risk", default=1.5)))
+            or risk.reward_to_risk < Decimal(
+                str(cfg.get("decision", "min_reward_risk", default=1.5))
+            )
         ):
             row.final_action = "blocked"
             row.gates_result = {
