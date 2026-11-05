@@ -89,6 +89,7 @@ The examples use 099 as a made-up number.
 | 040 | fix | EP shadow gate_detail crash | — | — | #113 | building |
 | 041 | fix | Stale header numbers | — | — | #115 | building |
 | 042 | fix | Backend test audit fixes | — | — | #116 | building |
+| 044 | spec | Spec rulings from the 043 audit | — | #135 | — | planned |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
 

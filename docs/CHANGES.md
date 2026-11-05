@@ -2,6 +2,21 @@
 
 Newest first.
 
+## 2026-11-05 — [044] Spec rulings from the 043 audit
+
+Answers the seven open questions in issue #124, found during the audit on #123.
+- **Entry selection:** the call cap counts real model calls only. A candidate that ends without a call uses no slot.
+- **Counterfactual touches:** the fallback stop reference (min of price and the last 5-minute close) applies to every version with code-built options, for counterfactual options only.
+- **Agent and earnings exits:**
+  - the quantity is confirmed before the legs are cancelled;
+  - a held-back exit is stored as pending and retried at every position check and cycle;
+  - the protective stop is placed if the legs are gone;
+  - a critical Needs you item after 3 tries, or at once for an earnings exit still pending at the close.
+- **Market price:** with a stale or suspect price, a held position gets no stop options and no stop reference, so a tighten can't be chosen.
+- **Verdicts:** confirmed. Every model enter, blocked or not, and every model skip gets a verdict (Reviews → Verdicts, unchanged).
+- **Option order:** confirmed and clarified: nearest stop first, then the lowest reward to risk.
+- **Constants to config:** `decision.v5.price_vs_signal_adverse_atr` (0.5) and `decision.v4.near_level_atr` (1.0). The prompts' "1 ATR" wording pins the latter, so a change needs a new prompt version. Both keys come with the code (rule 7).
+
 ## 2026-11-05 — [042] Backend test audit fixes
 
 - The startup route-coverage walk (`app/auth/guard.py`) now expands lazily included routers — under this FastAPI version it previously saw none of the API surface, so a router included outside `/api` would have shipped unguarded without the check firing. The session-walk test asserts it actually checked routes.
