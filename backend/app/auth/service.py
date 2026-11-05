@@ -634,11 +634,12 @@ class AuthService:
                 Path(self._config.env.sa_data_dir) / "secret.key"
             )
             user.totp_secret_encrypted = fernet.encrypt(secret.encode()).decode()
+            username = user.username
             session.commit()
         return {
             "secret": secret,
             "otpauth_uri": otpauth_uri(
-                secret, user.username, "Stock Trading Agent"
+                secret, username, "Stock Trading Agent"
             ),
         }
 
