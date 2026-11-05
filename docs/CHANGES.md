@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-05 — Live pending exits (issue #136)
+
+- Store held-back live exits on the position with the decision, reason, first attempt time and failure count.
+- Retry before cycle and position-check work. Reconcile saved sell client IDs before any new submission, and repair missing protection while an exit waits.
+- Surface a critical Needs you item after three failures or at session close, including earnings exits. Clear pending state on a confirmed flat position or sell fill.
+- Adds Alembic revision `q1a2b3c4d5e6`; existing installations need the schema upgrade on their next permitted restart.
+
 ## 2026-11-05 — Executor/API misc lows (issue #134)
 
 - Trade-update fill and position bookkeeping now takes the reconciliation lock, so a broker snapshot cannot race stream writes.

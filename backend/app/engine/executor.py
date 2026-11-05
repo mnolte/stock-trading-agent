@@ -2308,6 +2308,7 @@ class Executor:
         offline: bool = False,
     ) -> None:
         """The broker no longer reports this position; find its exit fill."""
+        position.pending_exit = None
         fills = session.execute(
             select(Fill, Order)
             .join(Order, Fill.order_id == Order.id)
@@ -3672,7 +3673,78 @@ class Executor:
             return False, None, None
         return True, order, None
 
+    def _hold_exit(
+        self, session: Session, position: Position, decision: Decision,
+        reason: str, failure: str,
+    ) -> None:
+        pending = dict(position.pending_exit or {})
+        pending.setdefault("reason", reason)
+        pending.setdefault("decision_id", decision.id)
+        pending.setdefault("since", self.clock.now().isoformat())
+        pending["failure"] = failure
+        pending["tries"] = int(str(pending.get("tries", 0))) + 1
+        position.pending_exit = pending
+        ev(logger, logging.INFO, "executor.exit_pending",
+           f"{position.symbol}: exit pending ({failure})", symbol=position.symbol,
+           decision_id=decision.id, tries=pending["tries"])
+        self._alert_pending_exit(session, position)
+        session.commit()
+
+    def _alert_pending_exit(self, session: Session, position: Position) -> None:
+        pending = dict(position.pending_exit or {})
+        if not pending:
+            return
+        now = self.clock.now().astimezone(NY_TZ)
+        since = datetime.fromisoformat(str(pending["since"])).astimezone(NY_TZ)
+        day = self.calendar.session_for(since.date())
+        at_close = day is not None and now >= day.close
+        threshold = int(self.config.get("execution", "pending_exit_failures_alert", default=3))
+        failed = int(str(pending.get("tries", 0))) >= threshold
+        if (failed or at_close) and not pending.get("alerted"):
+            pending["alerted"] = True
+            position.pending_exit = dict(pending)
+            record_event(
+                session, self.clock, level="critical", event_type="pending_exit",
+                details={"symbol": position.symbol, "message": (
+                    f"{position.symbol} exit held back since {since:%H:%M}: "
+                    f"{pending.get('failure', 'sell awaiting fill')}"
+                )}, affects="order",
+            )
+        session.commit()
+
+    async def retry_pending_exits(self) -> None:
+        """Reconcile ambiguous submissions before attempting any new exit."""
+        async with self._reconcile_lock:
+            with self._session_factory() as session:
+                positions = session.scalars(select(Position).where(
+                    Position.closed_at.is_(None), Position.pending_exit.is_not(None),
+                )).all()
+                for position in positions:
+                    pending = position.pending_exit
+                    if not pending:
+                        continue
+                    decision = session.get(Decision, int(str(pending["decision_id"])))
+                    if decision is None:
+                        logger.error("pending exit has no decision: %s", position.symbol)
+                        continue
+                    session.commit()
+                    await self._exit(session, decision, position, reason=str(pending["reason"]))
+                    session.commit()
+
     async def _exit(
+        self, session: Session, decision: Decision, position: Position, *, reason: str,
+    ) -> None:
+        await self._attempt_exit(session, decision, position, reason=reason)
+        if position.pending_exit:
+            self._alert_pending_exit(session, position)
+            session.commit()
+            report = ReconcileReport()
+            await self._place_protective_stop(session, position, None, report)
+            if report.errors:
+                logger.warning("pending exit protection: %s", report.errors)
+            session.commit()
+
+    async def _attempt_exit(
         self,
         session: Session,
         decision: Decision,
@@ -3685,6 +3757,50 @@ class Executor:
         Same-session exits sell at once — the PDT deferral is retired
         (docs/SPEC.md, Day trades (rule retired)).
         """
+        session.commit()
+        quantity = await self.broker.get_position(position.symbol)
+        if quantity.error is not None:
+            self._hold_exit(session, position, decision, reason, "quantity not confirmed")
+            return
+        if quantity.data is None or quantity.data.qty == 0:
+            position.pending_exit = None
+            self._flat_symbols.add(position.symbol)
+            session.commit()
+            return
+        pending = dict(position.pending_exit or {})
+        client_id = pending.get("client_order_id")
+        if client_id:
+            recovered = await self.broker.get_order_by_client_id(str(client_id))
+            missing = recovered.data is None and (
+                recovered.error is None or "404" in recovered.error
+                or "not found" in recovered.error.lower()
+            )
+            if recovered.error is not None and not missing:
+                self._hold_exit(session, position, decision, reason, "sell outcome unconfirmed")
+                return
+            if recovered.data is not None:
+                self._store_broker_order(session, recovered.data, decision.id, leg="exit")
+                session.commit()
+                if recovered.data.status == "filled":
+                    position.pending_exit = None
+                    session.commit()
+                    return
+                if recovered.data.is_open:
+                    self._hold_exit(session, position, decision, reason, "sell still working")
+                    return
+            else:
+                # Reconciliation must positively establish absence before a
+                # new attempt. Never resend merely because the write failed.
+                orders = await self.broker.get_open_orders()
+                if orders.error is not None or any(
+                    order.symbol == position.symbol and order.side == "sell"
+                    and order.order_type == "market" for order in orders.data
+                ):
+                    self._hold_exit(session, position, decision, reason, "sell outcome unconfirmed")
+                    return
+            pending.pop("client_order_id", None)
+            position.pending_exit = pending
+            session.commit()
         # Cancel every open order for the symbol and confirm each is dead
         # before selling — both sides: a still-working buy parent (a
         # partially filled entry, or an order placed outside the agent)
@@ -3697,6 +3813,7 @@ class Executor:
             )
         ).scalars().all()
         for row in open_orders:
+            session.commit()
             ok, final, error = await self._ensure_dead(row.alpaca_order_id)
             if not ok:
                 record_event(
@@ -3713,7 +3830,7 @@ class Executor:
                         **({"error": error} if error else {}),
                     },
                 )
-                session.flush()
+                self._hold_exit(session, position, decision, reason, "leg cancel not confirmed")
                 return
             if final is not None:
                 row.status = final.status
@@ -3725,6 +3842,7 @@ class Executor:
         # Broker-side orders the DB never recorded (e.g. a crash between
         # the broker's accept and our store) must be cancelled and
         # confirmed too — the market sell must never go past a live leg.
+        session.commit()
         broker_open = await self.broker.get_open_orders()
         if broker_open.error is not None:
             record_event(
@@ -3738,7 +3856,7 @@ class Executor:
                 },
                 affects="order",
             )
-            session.flush()
+            self._hold_exit(session, position, decision, reason, "leg cancel not confirmed")
             return
         known_ids = {row.alpaca_order_id for row in open_orders}
         extra_legs: list[BrokerOrder] = []
@@ -3753,6 +3871,7 @@ class Executor:
                 if leg_order.is_open and leg_order.id not in known_ids
             )
         for order in extra_legs:
+            session.commit()
             ok, final, error = await self._ensure_dead(order.id)
             if not ok:
                 record_event(
@@ -3769,7 +3888,7 @@ class Executor:
                         **({"error": error} if error else {}),
                     },
                 )
-                session.flush()
+                self._hold_exit(session, position, decision, reason, "leg cancel not confirmed")
                 return
             if final is not None:
                 self._store_broker_order(session, final, None)
@@ -3796,16 +3915,16 @@ class Executor:
         if rel_error is None and confirmed is None:
             # Confirmed flat at the broker — nothing left to sell; the
             # stored-qty fallback below is only for a failed read.
+            position.pending_exit = None
             self._flat_symbols.add(position.symbol)
+            session.commit()
             return
         if rel_error is None and confirmed is not None:
             sell_qty = min(position.qty, self._free_qty(confirmed))
         elif self.state.broker_guard_confirmed:
             sell_qty = position.qty
         else:
-            # Nothing re-drives this decision: the exit only happens
-            # if a later decision says exit again. Same severity as the
-            # still-held path below — the trade fell out silently.
+            # Keep the decision durable for the next check or cycle.
             ev(
                 logger, logging.WARNING, "executor.exit_unconfirmed_qty",
                 f"{position.symbol}: exit held back — position qty "
@@ -3826,7 +3945,7 @@ class Executor:
                 },
                 affects="order",
             )
-            session.flush()
+            self._hold_exit(session, position, decision, reason, "quantity not confirmed")
             return
         if sell_qty <= 0:
             # Shares are still held after the settle window — the sale
@@ -3846,8 +3965,16 @@ class Executor:
                 },
                 affects="order",
             )
-            session.flush()
+            self._hold_exit(session, position, decision, reason, "shares still held")
             return
+        client_id = self._client_id("exit", position.id, position.symbol)
+        pending = dict(position.pending_exit or {})
+        pending.setdefault("reason", reason)
+        pending.setdefault("decision_id", decision.id)
+        pending.setdefault("since", self.clock.now().isoformat())
+        pending["client_order_id"] = client_id
+        position.pending_exit = pending
+        session.commit()
         # One slot, send through store+commit: rule 16 forbids cutting
         # an order submission between sending and storing the answer.
         with self._order_slot():
@@ -3855,9 +3982,7 @@ class Executor:
                 symbol=position.symbol,
                 qty=sell_qty,
                 market_on_open=not regular_hours,
-                client_order_id=self._client_id(
-                    "exit", position.id, position.symbol
-                ),
+                client_order_id=client_id,
             )
             if sold.error is not None or sold.data is None:
                 record_event(
@@ -3871,8 +3996,10 @@ class Executor:
                     },
                     affects="order",
                 )
-                session.flush()
+                self._hold_exit(session, position, decision, reason, "sell outcome unconfirmed")
                 return
+            if sold.data.status == "filled":
+                position.pending_exit = None
             self._store_broker_order(
                 session, sold.data, decision.id, leg="exit"
             )

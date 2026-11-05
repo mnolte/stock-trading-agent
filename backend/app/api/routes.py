@@ -1814,6 +1814,7 @@ def banners(request: Request) -> dict[str, object]:
                         "reconciliation",
                         "protective_stop",
                         "position_check_failed",
+                        "pending_exit",
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
                         "universe_screen_failed",
@@ -1899,6 +1900,16 @@ def banners(request: Request) -> dict[str, object]:
                         "actions": ["open_orders", "acknowledge"],
                     }
                 )
+            elif event.event_type == "pending_exit":
+                items.append({
+                    "id": event.id,
+                    "kind": "pending_exit",
+                    "level": "critical",
+                    "message": str(details.get("message", "Exit pending")),
+                    "details": details,
+                    "time": event.time.replace(tzinfo=UTC).isoformat(),
+                    "actions": ["open_orders", "acknowledge"],
+                })
             elif event.event_type == "flatten_sell_rejected":
                 items.append(
                     {

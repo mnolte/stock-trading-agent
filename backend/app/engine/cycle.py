@@ -605,6 +605,9 @@ class CycleRunner:
         # broker. A failed reconciliation blocks entries through the gates.
         from app.logging_config import ev
 
+        if self.executor is not None:
+            session.commit()
+            await self.executor.retry_pending_exits()
         if not getattr(self.calendar, "is_loaded", True):
             report.status = "skipped"
             report.errors.append("trading calendar unavailable")

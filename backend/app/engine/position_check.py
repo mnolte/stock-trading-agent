@@ -66,14 +66,14 @@ class PositionChecker:
     async def run(self) -> CheckReport:
         now = self.clock.now()
         report = CheckReport()
-        # Outside the session (weekend, holiday, pre-open, post-close):
-        # the broker-side stops keep working without 15-minute broker
-        # calls — the agent stays idle (docs/SPEC.md, Session).
+        # Outside the session only durable pending exits need broker work;
+        # their retries use market-on-open and alert at the close.
         ny_now = now.astimezone(NY_TZ)
         session_day = self.executor.calendar.session_for(ny_now.date())
         if session_day is None or not (
             session_day.open <= ny_now < session_day.close
         ):
+            await self.executor.retry_pending_exits()
             return report
         from app.logging_config import ev, log_context
 
@@ -137,6 +137,8 @@ class PositionChecker:
         return report
 
     async def _run(self, session: Session, report: CheckReport) -> None:
+        session.commit()
+        await self.executor.retry_pending_exits()
         rec = await self.executor.reconcile()
         report.mismatches = len(rec.mismatches)
         report.stops_placed = len(rec.protective_stops)
