@@ -13,7 +13,8 @@ from app.market.clock import FakeClock
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
-from tests.test_executor import NOW, _executor
+from tests.helpers import NOW
+from tests.test_executor import _executor
 
 pytestmark = pytest.mark.anyio
 

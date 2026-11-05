@@ -13,19 +13,20 @@ import time
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import pytest
 from app.config import get_config
 from app.db.base import Base, get_engine, get_session_maker
 from app.db.models import Cycle, Decision, Run, ShadowEquity, Strategy
-from app.decide.client import FakeDecisionClient, ModelResponse
+from app.decide.client import FakeDecisionClient
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.shadows.runner import ShadowRunner
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
+
+from tests.lock_probe import LockProbe
 
 pytestmark = pytest.mark.anyio
 
@@ -138,47 +139,6 @@ def test_live_write_waits_for_a_shadow_write_and_never_fails() -> None:
         assert session.execute(select(func.count(ShadowEquity.id))).scalar_one() == 1
 
 
-class LockProbeClient:
-    """While the model call is awaited, another connection tries to take
-    the write lock with no wait at all — it must get it at once."""
-
-    provider = "fake"
-
-    def __init__(self, db_path: str) -> None:
-        self.db_path = db_path
-        self.inner = FakeDecisionClient(enter_symbols={"MSFT"})
-        self.probes = 0
-
-    async def complete(
-        self,
-        *,
-        system: str,
-        user: str,
-        schema: dict[str, Any] | None = None,
-        model: str | None = None,
-        temperature: float | None = None,
-    ) -> ModelResponse:
-        conn = sqlite3.connect(self.db_path, timeout=0)
-        try:
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-            except sqlite3.OperationalError as exc:
-                call = self.probes + 1
-                raise AssertionError(f"write lock held during model call {call}") from exc
-            conn.execute("ROLLBACK")
-            self.probes += 1
-        finally:
-            conn.close()
-        return await self.inner.complete(
-            system=system, user=user, schema=schema,
-            model=model, temperature=temperature,
-        )
-
-    async def converse(self, **kwargs: Any) -> Any:
-        return
-        yield
-
-
 async def test_shadow_runner_holds_no_write_lock_while_awaiting_a_model() -> None:
     from tests.test_shadows import _snap
 
@@ -223,7 +183,11 @@ async def test_shadow_runner_holds_no_write_lock_while_awaiting_a_model() -> Non
         )
         session.commit()
         cycle_id = cycle.id
-    probe = LockProbeClient(get_config().env.sa_db_path)
+    # While each model call is awaited, the probe takes the write lock
+    # from another connection with no wait at all — it must get it.
+    probe = LockProbe(
+        "model", FakeDecisionClient(enter_symbols={"MSFT"}), get_config().env.sa_db_path
+    )
     runner = ShadowRunner(
         config=get_config(),
         clock=FakeClock(cycle_time + timedelta(minutes=1)),
@@ -236,4 +200,5 @@ async def test_shadow_runner_holds_no_write_lock_while_awaiting_a_model() -> Non
     assert report.strategies[0].calls == 3
     # Every probe got the write lock immediately (no "database is locked"),
     # even after the first call stored a row and an entry.
-    assert probe.probes == 3
+    assert probe.calls == ["complete"] * 3
+    assert probe.violations == []

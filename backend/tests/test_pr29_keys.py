@@ -16,15 +16,13 @@ import app.config as config_module
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from app.api.main import create_app, run_migrations
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Strategy
-from app.engine.state import load_execution_state
-from app.market.clock import make_clock
-from app.secrets_service import FakeKeyTesters, SecretsStore
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+
+from tests.helpers import StubExecutor, paper_keys_client
 
 pytestmark = pytest.mark.anyio
 
@@ -38,35 +36,11 @@ NOW = datetime(2026, 10, 19, 9, 0)
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
-class _StubExecutor:
-    def __init__(self) -> None:
-        self.resumed = False
-
-    async def resume_from_pause(self) -> None:
-        self.resumed = True
-
-    async def refresh_account(self) -> None:
-        return None
-
-
-def _paper_client() -> tuple[TestClient, _StubExecutor]:
-    run_migrations()
-    config = get_config()
-    config.env.mode = "paper"
+def _paper_client() -> tuple[TestClient, StubExecutor]:
     # Keep Ask on OpenAI so Anthropic-key tests aren't refused for it;
-    # the ask-model check has its own test below.
-    config._active.setdefault("ask", {})["model"] = "gpt-4o-mini"
-    app = create_app()
-    clock = make_clock(config)
-    app.state.clock = clock
-    app.state.exec_state = load_execution_state(clock, config)
-    app.state.secrets_store = SecretsStore(config, clock)
-    app.state.key_testers = FakeKeyTesters()
-    executor = _StubExecutor()
-    app.state.executor = executor
-    # Settings validation only touches the broker for universe changes.
-    app.state.broker = object()
-    return TestClient(app), executor
+    # the ask-model check has its own test below. Settings validation
+    # only touches the broker for universe changes, so a stub will do.
+    return paper_keys_client(ask_model="gpt-4o-mini", stub_broker=True)
 
 
 def _save_keys(client: TestClient, *groups: str) -> None:

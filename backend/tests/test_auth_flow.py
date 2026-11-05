@@ -8,60 +8,27 @@ driven by advancing it.
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from datetime import timedelta
+from typing import Any
 
 import app.config as config_module
 import pytest
-from app.api.main import create_app
-from app.auth.create_user import create_or_reset_user
 from app.auth.passwords import totp_code
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import AuthSession, SignInAttempt
-from app.market.clock import FakeClock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
-PASSWORD = "a fourteen char password"
-
-
-def _seed_user() -> tuple[str, list[str]]:
-    config = get_config()
-    clock = FakeClock(datetime.now(UTC))
-    with get_session_maker()() as session:
-        _user, secret, codes = create_or_reset_user(
-            session, config, clock, username="marc", password=PASSWORD
-        )
-    return secret, codes
+from tests.helpers import PASSWORD, auth_app, csrf_headers, sign_in
 
 
 @pytest.fixture
 def app_auth(monkeypatch: pytest.MonkeyPatch) -> Generator[Any, None, None]:
-    monkeypatch.setenv("SA_AUTH", "required")
-    monkeypatch.setattr(config_module, "_config", None)
-    secret, codes = _seed_user()
-    app = create_app()
-    yield app, secret, codes
-
-
-def _sign_in(client: TestClient, secret: str) -> str:
-    """Full sign-in; returns the CSRF token for write calls."""
-    app = cast(FastAPI, client.app)
-    app.state.clock.advance(timedelta(seconds=31))
-    r = client.post("/api/auth/sign-in", json={"password": PASSWORD, "remember": True})
-    assert r.status_code == 200, r.text
-    code = totp_code(secret, app.state.clock.now())
-    r = client.post("/api/auth/code", json={"code": code})
-    assert r.status_code == 200, r.text
-    return client.cookies.get("sa_csrf") or ""
-
-
-def _csrf(client: TestClient) -> dict[str, str]:
-    return {"X-CSRF-Token": client.cookies.get("sa_csrf") or ""}
+    yield auth_app(monkeypatch)
 
 
 # ---------------------------------------------------------------------
@@ -105,7 +72,7 @@ def test_recovery_code_works_once(app_auth: Any) -> None:
             r = client.post("/api/auth/code", json={"code": code})
             if attempt == 1:
                 assert r.status_code == 200
-                client.post("/api/auth/sign-out", headers=_csrf(client))
+                client.post("/api/auth/sign-out", headers=csrf_headers(client))
             else:
                 assert r.status_code == 401  # already spent
 
@@ -125,7 +92,7 @@ def test_lockout_after_five_failures(app_auth: Any) -> None:
         assert r.status_code == 429
         # After the wait it works again.
         app.state.clock.advance(timedelta(minutes=16))
-        assert _sign_in(client, secret)
+        assert sign_in(client, secret, remember=True)
 
 
 def test_global_pause_after_twenty_failures(app_auth: Any) -> None:
@@ -156,7 +123,7 @@ def test_global_pause_after_twenty_failures(app_auth: Any) -> None:
 def test_idle_and_absolute_expiry(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         assert client.get("/api/header").status_code == 200
         # Idle: 12 hours without activity signs out.
         app.state.clock.advance(timedelta(hours=13))
@@ -164,7 +131,7 @@ def test_idle_and_absolute_expiry(app_auth: Any) -> None:
         assert r.status_code == 401
         assert r.json()["error"]["code"] == "session_expired"
         # Sign back in; the absolute cap (30 days) expires the cookie.
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         app.state.clock.advance(timedelta(days=31))
         r = client.get("/api/header")
         assert r.status_code == 401
@@ -173,12 +140,12 @@ def test_idle_and_absolute_expiry(app_auth: Any) -> None:
 def test_sign_out_and_sign_out_everywhere(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         first = client.cookies.get("__Host-sa_session") or ""
-        _sign_in(client, secret)  # a second device
+        sign_in(client, secret, remember=True)  # a second device
         with get_session_maker()() as session:
             assert len(session.execute(select(AuthSession)).scalars().all()) == 2
-        r = client.post("/api/auth/sign-out-everywhere", headers=_csrf(client))
+        r = client.post("/api/auth/sign-out-everywhere", headers=csrf_headers(client))
         assert r.status_code == 200
         assert client.get("/api/header").status_code == 401
         # The first device's token is dead too.
@@ -194,15 +161,15 @@ def test_sessions_list_and_sign_out_by_id(app_auth: Any) -> None:
     # inside 'with' would boot the lifespan again and hit the run lock.
     with TestClient(app, base_url="https://testserver") as client:
         other_client = TestClient(app, base_url="https://testserver")
-        _sign_in(client, secret)
-        _sign_in(other_client, secret)  # a second device
+        sign_in(client, secret, remember=True)
+        sign_in(other_client, secret, remember=True)  # a second device
         data = client.get("/api/auth/sessions").json()
         devices = data["devices"]
         assert len(devices) == 2
         assert [d["current"] for d in devices].count(True) == 1
         other = next(d for d in devices if not d["current"])
         r = client.post(
-            f"/api/auth/sessions/{other['id']}/sign-out", headers=_csrf(client)
+            f"/api/auth/sessions/{other['id']}/sign-out", headers=csrf_headers(client)
         )
         assert r.status_code == 200
         assert other_client.get("/api/header").status_code == 401
@@ -213,9 +180,9 @@ def test_sign_out_others_keeps_current(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
         other_client = TestClient(app, base_url="https://testserver")
-        _sign_in(client, secret)
-        _sign_in(other_client, secret)  # a second device
-        r = client.post("/api/auth/sign-out-others", headers=_csrf(client))
+        sign_in(client, secret, remember=True)
+        sign_in(other_client, secret, remember=True)  # a second device
+        r = client.post("/api/auth/sign-out-others", headers=csrf_headers(client))
         assert r.status_code == 200
         assert r.json()["signed_out"] == 1
         assert client.get("/api/header").status_code == 200
@@ -227,21 +194,21 @@ def test_totp_reset_requires_confirm_and_replaces_secret(app_auth: Any) -> None:
     is you'; the old secret stops working immediately."""
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
-        r = client.post("/api/auth/totp", headers=_csrf(client))
+        sign_in(client, secret, remember=True)
+        r = client.post("/api/auth/totp", headers=csrf_headers(client))
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "confirm_required"
         client.post(
-            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client)
         )
-        r = client.post("/api/auth/totp", headers=_csrf(client))
+        r = client.post("/api/auth/totp", headers=csrf_headers(client))
         assert r.status_code == 200
         new_secret = r.json()["secret"]
         assert new_secret != secret
         # The old code no longer signs in; the new one does — past the
         # already-spent TOTP step (codes at or below last_totp_step are
         # refused as replays).
-        client.post("/api/auth/sign-out", headers=_csrf(client))
+        client.post("/api/auth/sign-out", headers=csrf_headers(client))
         app.state.clock.advance(timedelta(seconds=31))
         client.post("/api/auth/sign-in", json={"password": PASSWORD})
         old_code = totp_code(secret, app.state.clock.now())
@@ -255,18 +222,18 @@ def test_recovery_codes_regenerate_requires_confirm(app_auth: Any) -> None:
     you'; a regenerated code signs in, an old one is dead."""
     app, _secret, codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, _secret)
-        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        sign_in(client, _secret, remember=True)
+        r = client.post("/api/auth/recovery-codes", headers=csrf_headers(client))
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "confirm_required"
         client.post(
-            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client)
         )
-        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        r = client.post("/api/auth/recovery-codes", headers=csrf_headers(client))
         assert r.status_code == 200
         new_codes = r.json()["codes"]
         assert new_codes and new_codes != codes
-        client.post("/api/auth/sign-out", headers=_csrf(client))
+        client.post("/api/auth/sign-out", headers=csrf_headers(client))
         client.post("/api/auth/sign-in", json={"password": PASSWORD})
         assert (
             client.post("/api/auth/code", json={"code": codes[0]}).status_code == 401
@@ -293,8 +260,8 @@ def test_risky_writes_require_confirm(
     confirm_required without a fresh confirmation."""
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
-        r = client.post(path, json=body, headers=_csrf(client))
+        sign_in(client, secret, remember=True)
+        r = client.post(path, json=body, headers=csrf_headers(client))
         assert r.status_code == 403, f"{path} -> {r.status_code}"
         assert r.json()["error"]["code"] == "confirm_required"
 
@@ -304,12 +271,12 @@ def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
     tightening never asks (design, Settings → Access)."""
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         for body, expect in (
             ({"settings": {"risk": {"daily_loss_limit_pct": 3}}, "reason": "t"}, 403),
             ({"settings": {"risk": {"daily_loss_limit_pct": 1}}, "reason": "t"}, 200),
         ):
-            r = client.post("/api/settings", json=body, headers=_csrf(client))
+            r = client.post("/api/settings", json=body, headers=csrf_headers(client))
             assert r.status_code == expect, f"{body} -> {r.status_code} {r.text}"
             if expect == 403:
                 assert r.json()["error"]["code"] == "confirm_required"
@@ -318,10 +285,10 @@ def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
 def test_confirm_required_then_valid_five_minutes(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         # A risky action without a fresh confirmation → 403 confirm_required.
         r = client.post(
-            "/api/kill-switch", json={"action": "flatten"}, headers=_csrf(client)
+            "/api/kill-switch", json={"action": "flatten"}, headers=csrf_headers(client)
         )
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "confirm_required"
@@ -329,17 +296,17 @@ def test_confirm_required_then_valid_five_minutes(app_auth: Any) -> None:
         r = client.post(
             "/api/auth/confirm",
             json={"secret": PASSWORD},
-            headers=_csrf(client),
+            headers=csrf_headers(client),
         )
         assert r.status_code == 200
         r = client.post(
-            "/api/kill-switch", json={"action": "flatten"}, headers=_csrf(client)
+            "/api/kill-switch", json={"action": "flatten"}, headers=csrf_headers(client)
         )
         assert r.status_code == 200
         # …but the confirmation lapses after auth.confirm_minutes.
         app.state.clock.advance(timedelta(minutes=6))
         r = client.post(
-            "/api/kill-switch", json={"action": "flatten"}, headers=_csrf(client)
+            "/api/kill-switch", json={"action": "flatten"}, headers=csrf_headers(client)
         )
         assert r.status_code == 403
 
@@ -347,13 +314,13 @@ def test_confirm_required_then_valid_five_minutes(app_auth: Any) -> None:
 def test_csrf_required_on_writes(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         r = client.post("/api/pause")
         assert r.status_code == 403
         assert r.json()["error"]["code"] == "forbidden"
         r = client.post("/api/pause", headers={"X-CSRF-Token": "wrong"})
         assert r.status_code == 403
-        r = client.post("/api/pause", headers=_csrf(client))
+        r = client.post("/api/pause", headers=csrf_headers(client))
         assert r.status_code == 200
 
 
@@ -401,7 +368,7 @@ def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
         with pytest.raises(WebSocketDisconnect):
             client.websocket_connect("/ws/ws").__enter__()
         # A foreign Origin is refused even with a session.
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         session_cookie = client.cookies.get("__Host-sa_session") or ""
         ws_headers = {"Cookie": f"__Host-sa_session={session_cookie}"}
         with pytest.raises(WebSocketDisconnect):
@@ -458,7 +425,7 @@ def test_scrubber_hides_auth_values(app_auth: Any) -> None:
 
     app, secret, codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         token = client.cookies.get("__Host-sa_session") or ""
         blob = (
             f"token={token} csrf={client.cookies.get('sa_csrf') or ''} "
@@ -554,7 +521,7 @@ def test_totp_step_cannot_be_reused(app_auth: Any) -> None:
         )
         # Sign out, sign in again at the same frozen step — the same code
         # now fails the replay check.
-        client.post("/api/auth/sign-out", headers=_csrf(client))
+        client.post("/api/auth/sign-out", headers=csrf_headers(client))
         client.post("/api/auth/sign-in", json={"password": PASSWORD})
         r = client.post("/api/auth/code", json={"code": code})
         assert r.status_code == 401
@@ -592,12 +559,12 @@ def test_password_change_keeps_this_session(app_auth: Any) -> None:
     """Changing the password signs out other sessions, not this one."""
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
-        client.post("/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client))
+        sign_in(client, secret, remember=True)
+        client.post("/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client))
         r = client.post(
             "/api/auth/password",
             json={"current_password": PASSWORD, "new_password": "new fourteen chars!!"},
-            headers=_csrf(client),
+            headers=csrf_headers(client),
         )
         assert r.status_code == 200
         # This device is still signed in.
@@ -609,10 +576,10 @@ def test_password_change_keeps_this_session(app_auth: Any) -> None:
 def test_new_session_token_every_sign_in(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
-        _sign_in(client, secret)
+        sign_in(client, secret, remember=True)
         first = client.cookies.get("__Host-sa_session")
-        client.post("/api/auth/sign-out", headers=_csrf(client))
-        _sign_in(client, secret)
+        client.post("/api/auth/sign-out", headers=csrf_headers(client))
+        sign_in(client, secret, remember=True)
         second = client.cookies.get("__Host-sa_session")
         assert first and second and first != second
 
@@ -620,7 +587,6 @@ def test_new_session_token_every_sign_in(app_auth: Any) -> None:
 def test_startup_route_walk_refuses_unguarded_route() -> None:
     """With SA_AUTH=required a route outside the guard refuses startup."""
     from app.auth.guard import check_route_coverage
-    from fastapi import FastAPI
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.get("/healthz")(lambda: {"ok": True})
@@ -638,7 +604,7 @@ def test_startup_route_walk_reaches_lazy_included_routers() -> None:
     """Routers added via include_router stay lazy in this FastAPI
     version — the coverage walk must expand them or it sees nothing."""
     from app.auth.guard import check_route_coverage
-    from fastapi import APIRouter, FastAPI
+    from fastapi import APIRouter
 
     ok = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     ok.get("/healthz")(lambda: {"ok": True})

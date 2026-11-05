@@ -201,26 +201,10 @@ def app_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Generator[tuple[Any, str], None, None]:
     """SA_AUTH=required app with the single user seeded (like PR 23's)."""
-    from datetime import UTC, datetime
+    from tests.helpers import auth_app
 
-    import app.config as config_module
-    from app.api.main import create_app
-    from app.auth.create_user import create_or_reset_user
-    from app.config import get_config
-    from app.db.base import get_session_maker
-    from app.market.clock import FakeClock
-
-    monkeypatch.setenv("SA_AUTH", "required")
-    monkeypatch.setattr(config_module, "_config", None)
-    with get_session_maker()() as session:
-        _u, secret, _codes = create_or_reset_user(
-            session,
-            get_config(),
-            FakeClock(datetime.now(UTC)),
-            username="marc",
-            password="a fourteen char password",
-        )
-    yield create_app(), secret
+    app, secret, _codes = auth_app(monkeypatch)
+    yield app, secret
 
 
 def test_gate_runs_before_sign_in(app_auth: Any) -> None:

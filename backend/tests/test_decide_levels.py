@@ -6,73 +6,15 @@ bars and asserts every offered option meets the band and R/R rules.
 
 from __future__ import annotations
 
-import random
-from datetime import UTC, date, datetime, timedelta
+from datetime import date
 from decimal import Decimal
 
 from app.config import AppConfig
-from app.data.models import Bar1h, Bar5m, DailyBar
 from app.decide.levels import find_levels, options_config
 
-NY_OPEN = 9, 30
+from tests.helpers import bar5m, dbar, wave_bars
+
 CFG = options_config(AppConfig())
-
-
-def bar1h(day: date, start_h: int, start_m: int, high: str, low: str,
-        close: str | None = None, o: str | None = None) -> Bar1h:
-    start = datetime.combine(day, datetime.min.time(), tzinfo=UTC).replace(
-        hour=start_h, minute=start_m
-    )
-    return Bar1h(
-        symbol="X", start=start, end=start + timedelta(hours=1),
-        open=Decimal(o or low), high=Decimal(high), low=Decimal(low),
-        close=Decimal(close or low), volume=1000, feed="sip", complete=True,
-    )
-
-
-def dbar(day: date, o: str, h: str, lo: str, c: str) -> DailyBar:
-    return DailyBar(
-        symbol="X", date=day, open=Decimal(o), high=Decimal(h),
-        low=Decimal(lo), close=Decimal(c), volume=100_000,
-    )
-
-
-def bar5m(day: date, h: int, m: int, high: str, low: str, close: str,
-        vol: int = 1000) -> Bar5m:
-    start = datetime.combine(day, datetime.min.time(), tzinfo=UTC).replace(
-        hour=h, minute=m
-    )
-    return Bar5m(
-        symbol="X", start=start, open=Decimal(close), high=Decimal(high),
-        low=Decimal(low), close=Decimal(close), volume=vol, feed="sip",
-    )
-
-
-# A gentle wave: bar i moves a little so the middle bars are swings.
-def wave_bars(day: date, n: int, base: float = 100.0, step: float = 1.0,
-              seed: int = 7) -> list[Bar1h]:
-    """n 1h bars on a triangle wave with seeded wicks — strict swings.
-
-    Two bars up, two down, … gives local extremes every other bar; the
-    seeded wicks break the exact ties a shared peak price would cause.
-    """
-    rng = random.Random(seed)
-    bars: list[Bar1h] = []
-    price = base
-    for i in range(n):
-        d = step if (i // 2) % 2 == 0 else -step
-        nxt = price + d
-        hi = max(price, nxt) + rng.uniform(0.02, 0.2) * step
-        lo = min(price, nxt) - rng.uniform(0.02, 0.2) * step
-        start = datetime.combine(day, datetime.min.time(), tzinfo=UTC) + timedelta(hours=i)
-        bars.append(Bar1h(
-            symbol="X", start=start, end=start + timedelta(hours=1),
-            open=Decimal(str(round(price, 4))), high=Decimal(str(round(hi, 4))),
-            low=Decimal(str(round(lo, 4))), close=Decimal(str(round(nxt, 4))),
-            volume=1000, feed="sip", complete=True,
-        ))
-        price = nxt
-    return bars
 
 
 class TestFindLevels:

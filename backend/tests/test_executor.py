@@ -10,7 +10,7 @@ from typing import Any, cast
 
 import pytest
 from app.broker.fake import FakeBroker, _OrderRec, _PosRec
-from app.broker.models import BrokerAccount, BrokerOrder, BrokerPosition
+from app.broker.models import BrokerOrder, BrokerPosition
 from app.config import AppConfig
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -26,7 +26,6 @@ from app.data.models import Bar5m, DailyBar, DataResult, Quote
 from app.data.service import MarketDataService
 from app.db.models import (
     Approval,
-    Cycle,
     DayTrade,
     Decision,
     Event,
@@ -38,17 +37,25 @@ from app.engine.executor import Executor, ReconcileReport
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
-from app.rules.prefilter import RulesResult
-from app.signals.service import SignalService, SymbolEval
-from app.signals.snapshot import IndicatorSnapshot
+from app.signals.service import SignalService
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.helpers import (
+    NOW,
+    YESTERDAY,
+    events_of,
+    make_account,
+    make_decision,
+    make_item,
+    make_quote,
+    make_snapshot,
+    open_position,
+)
+
 pytestmark = pytest.mark.anyio
 
-# Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
-NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
-YESTERDAY = datetime(2026, 10, 14, 15, 0)  # naive UTC, stored format
+# NOW (tests.helpers): Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
 
 
 def _sources(**overrides: object) -> DataSources:
@@ -102,135 +109,11 @@ def _executor(
     return executor
 
 
-def _account(
-    equity: str = "10000", cash: str = "10000", last_equity: str = "10000"
-) -> BrokerAccount:
-    return BrokerAccount(
-        account_number="PA-TEST",
-        equity=Decimal(equity),
-        cash=Decimal(cash),
-        last_equity=Decimal(last_equity),
-    )
-
-
-def _decision(
-    session: Session,
-    symbol: str,
-    final_action: str,
-    model_output: dict[str, object] | None = None,
-) -> Decision:
-    cycle = Cycle(
-        kind="cycle",
-        scheduled_time=NOW.replace(tzinfo=None),
-        started_at=NOW.replace(tzinfo=None),
-        status="running",
-    )
-    session.add(cycle)
-    session.flush()
-    decision = Decision(
-        cycle_id=cycle.id,
-        symbol=symbol,
-        context="candidate" if final_action == "enter" else "held",
-        final_action=final_action,
-        model_output=model_output,
-        prompt_version="decision.v1",
-        prompt_hash="0" * 64,
-        model="fake",
-    )
-    session.add(decision)
-    session.flush()
-    return decision
-
-
-def _snapshot(symbol: str, days_to_earnings: int | None = 9) -> IndicatorSnapshot:
-    return IndicatorSnapshot(
-        symbol=symbol,
-        price=Decimal("420"),
-        ema_fast=Decimal("416.9"),
-        ema_slow=Decimal("414.3"),
-        rsi=Decimal("57"),
-        atr_1h=Decimal("3.10"),
-        session_vwap=Decimal("417.4"),
-        obv_trend="up",
-        rs_vs_spy_pct=Decimal("0.9"),
-        daily_close=Decimal("415.8"),
-        daily_sma_fast=Decimal("402.1"),
-        daily_sma_slow=Decimal("381.6"),
-        daily_atr_percentile=Decimal("48"),
-        opening_gap_pct=Decimal("0.3"),
-        days_to_earnings=days_to_earnings,
-        earnings_available=True,
-    )
-
-
-def _item(symbol: str) -> SymbolEval:
-    return SymbolEval(
-        symbol=symbol,
-        snapshot=_snapshot(symbol),
-        rules=RulesResult(symbol, "pass", None, []),
-        bars_1h=[],
-        daily=[],
-        today_5m=[],
-        price=Decimal("420"),
-        day_change_pct=Decimal("0.5"),
-    )
-
-
-def _quote(
-    symbol: str,
-    ask: str = "420.10",
-    bid: str = "420.00",
-    last: str | None = None,
-) -> Quote:
-    return Quote(
-        symbol=symbol,
-        bid=Decimal(bid),
-        ask=Decimal(ask),
-        last=Decimal(last) if last is not None else Decimal(ask),
-        timestamp=NOW,
-        feed="iex",
-        trade_timestamp=NOW,
-        fetched_at=NOW,
-    )
-
-
 def _store_reference(executor: Executor, symbol: str, price: Decimal) -> None:
     executor.market_data.bars_cache.store([Bar5m(
         symbol=symbol, start=NOW - timedelta(minutes=30),
         open=price, high=price, low=price, close=price, volume=100, feed="sip",
     )])
-
-
-def _open_position(
-    session: Session,
-    symbol: str = "MSFT",
-    qty: int = 4,
-    entry: str = "415",
-    stop: str = "410",
-    opened_at: datetime = YESTERDAY,
-    origin: str = "agent",
-) -> Position:
-    position = Position(
-        symbol=symbol,
-        origin=origin,
-        pending_ack=False,
-        qty=qty,
-        avg_entry_price=Decimal(entry),
-        current_stop_price=Decimal(stop),
-        target_price=Decimal("435"),
-        opened_at=opened_at,
-    )
-    session.add(position)
-    session.flush()
-    return position
-
-
-def _events(session: Session, event_type: str) -> list[Event]:
-    return list(
-        session.execute(
-            select(Event).where(Event.event_type == event_type)
-        ).scalars()
-    )
 
 
 # ----------------------------------------------------------------------
@@ -268,7 +151,7 @@ async def test_reconcile_adopts_unknown_position_with_atr(
         assert position.current_stop_price is not None
         assert Decimal("97") < position.current_stop_price < Decimal("100")
         assert position.initial_stop == position.current_stop_price
-        events = _events(session, "reconciliation")
+        events = events_of(session, "reconciliation")
         assert any(e.details and e.details.get("kind") == "adopted_position" for e in events)
     # A standalone stop sits at the broker.
     stops = [
@@ -338,7 +221,7 @@ async def test_reconcile_adopted_position_keeps_existing_broker_stop(
         assert position.pending_ack is True
         # The effective protection is the existing stop's price.
         assert position.current_stop_price == Decimal("95")
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 def test_client_order_ids_unique_across_processes(
@@ -458,7 +341,7 @@ async def test_crash_after_broker_accepted_entry_reconciles_without_resend(
 
     monkeypatch.setattr(Executor, "_store_broker_order", crash_once)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -468,11 +351,11 @@ async def test_crash_after_broker_accepted_entry_reconciles_without_resend(
             await executor.apply_decision(
                 session,
                 decision,
-                _item("MSFT"),
+                make_item("MSFT"),
                 None,
-                _quote("MSFT"),
+                make_quote("MSFT"),
                 NOW,
-                account=_account(),
+                account=make_account(),
                 earnings_known=True,
             )
     assert broker.submit_calls == 1
@@ -515,9 +398,9 @@ async def test_acknowledge_adopted_position_unblocks_entries(
         refreshed = session.get(Position, position_id)
         assert refreshed is not None and refreshed.pending_ack is False
         # Blocking events are acknowledged too.
-        assert not _events(session, "reconciliation") or all(
+        assert not events_of(session, "reconciliation") or all(
             e.acknowledged_at is not None
-            for e in _events(session, "reconciliation")
+            for e in events_of(session, "reconciliation")
         )
         assert not executor.state.pending_ack(session)
 
@@ -533,7 +416,7 @@ async def test_reconcile_qty_mismatch_corrects_from_broker(
     broker.positions["MSFT"] = _PosRec(qty=6, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -548,7 +431,7 @@ async def test_reconcile_qty_mismatch_corrects_from_broker(
         assert executor.state.pending_ack(session)
         assert any(
             e.details and e.details.get("kind") == "qty_mismatch"
-            for e in _events(session, "reconciliation")
+            for e in events_of(session, "reconciliation")
         )
 
 
@@ -558,7 +441,7 @@ async def test_reconcile_closes_position_broker_no_longer_reports(
     broker = FakeBroker(FakeClock(NOW))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -585,7 +468,7 @@ async def test_reconcile_never_reopens_a_closed_position(
     broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -594,11 +477,11 @@ async def test_reconcile_never_reopens_a_closed_position(
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -647,7 +530,7 @@ async def test_partial_fills_grow_the_open_position(
     broker.partial_fill["MSFT"] = 2
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -656,11 +539,11 @@ async def test_partial_fills_grow_the_open_position(
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -697,7 +580,7 @@ async def test_position_without_stop_gets_protective_stop(
     broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -715,7 +598,7 @@ async def test_position_without_stop_gets_protective_stop(
             select(Position).where(Position.symbol == "MSFT")
         ).scalar_one()
         assert position.initial_stop == Decimal("410")
-        assert _events(session, "protective_stop")
+        assert events_of(session, "protective_stop")
 
 
 async def test_failed_protective_stop_alerts_and_retries(
@@ -728,7 +611,7 @@ async def test_failed_protective_stop_alerts_and_retries(
     broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     broker.fail_writes = True
@@ -740,7 +623,7 @@ async def test_failed_protective_stop_alerts_and_retries(
         o for o in broker.orders.values() if o.order_type == "stop"
     ]
     with session_factory() as session:
-        events = _events(session, "protective_stop_failed")
+        events = events_of(session, "protective_stop_failed")
         assert len(events) == 1
         assert events[0].level == "critical"
         assert events[0].details is not None
@@ -763,7 +646,7 @@ async def test_position_with_live_stop_needs_no_new_order(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -799,7 +682,7 @@ async def test_held_bracket_stop_leg_counts_as_coverage(
     }
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="420", stop="410")
+        open_position(session, "MSFT", qty=4, entry="420", stop="410")
         for leg_order in submitted.data.legs:
             session.add(
                 Order(
@@ -824,8 +707,8 @@ async def test_held_bracket_stop_leg_counts_as_coverage(
     assert report.protective_stops == []
     assert broker.submit_calls == 1  # only the bracket; no resend
     with session_factory() as session:
-        assert not _events(session, "protective_stop")
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop")
+        assert not events_of(session, "protective_stop_failed")
 
 
 
@@ -839,7 +722,7 @@ async def test_no_protective_stop_when_sell_fills_cover_the_position(
     broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         stop_row = Order(
             alpaca_order_id="filled-stop",
             symbol="MSFT",
@@ -873,8 +756,8 @@ async def test_no_protective_stop_when_sell_fills_cover_the_position(
         for o in broker.orders.values()
     )
     with session_factory() as session:
-        assert not _events(session, "protective_stop")
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_breached_stop_sells_at_market(
@@ -887,7 +770,7 @@ async def test_breached_stop_sells_at_market(
     broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     await executor.reconcile()
@@ -901,7 +784,7 @@ async def test_breached_stop_sells_at_market(
     with session_factory() as session:
         row = session.execute(select(Order)).scalar_one()
         assert row.leg == "exit"  # legs stay entry/stop/target/exit
-        assert _events(session, "protective_stop")
+        assert events_of(session, "protective_stop")
 
     # The position closes on the next pass: the sa-breach client id maps
     # the reason to stop_breached (docs/SPEC.md, Protective stops).
@@ -932,7 +815,7 @@ async def test_orphaned_stop_with_target_gets_oco_repair(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -942,7 +825,7 @@ async def test_orphaned_stop_with_target_gets_oco_repair(
     assert len(oco) == 1
     assert rec.status == "canceled"  # the target was cancelled first
     with session_factory() as session:
-        assert _events(session, "protective_stop")
+        assert events_of(session, "protective_stop")
 
 
 async def test_orphan_repair_falls_back_to_plain_stop(
@@ -963,7 +846,7 @@ async def test_orphan_repair_falls_back_to_plain_stop(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -984,7 +867,7 @@ async def test_protective_sell_capped_at_confirmed_qty(
     broker.positions["MSFT"] = _PosRec(qty=2, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     await executor.reconcile()
@@ -1015,7 +898,7 @@ async def test_in_flight_exit_sell_defers_protective_repair(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
         session.commit()
 
     report = await executor.reconcile()
@@ -1024,7 +907,7 @@ async def test_in_flight_exit_sell_defers_protective_repair(
     assert rec.status == "new"  # the in-flight exit was not cancelled
     assert broker.submit_calls == 0
     with session_factory() as session:
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_stale_market_sell_is_cancelled_and_repaired(
@@ -1049,7 +932,7 @@ async def test_stale_market_sell_is_cancelled_and_repaired(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
         session.commit()
 
     report = await executor.reconcile()
@@ -1082,7 +965,7 @@ async def test_partial_exit_remainder_gets_protective_stop(
         )
         session.add(entry)
         session.flush()
-        position = _open_position(
+        position = open_position(
             session, "KO", qty=7, entry="95.37", stop="94.22"
         )
         position.entry_order_id = entry.id
@@ -1111,7 +994,7 @@ async def test_partial_exit_remainder_gets_protective_stop(
     assert stops[0].qty == 7
     assert stops[0].stop_price == Decimal("94.22")
     with session_factory() as session:
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_adopted_position_partial_sell_still_gets_stop(
@@ -1130,7 +1013,7 @@ async def test_adopted_position_partial_sell_still_gets_stop(
     with session_factory() as session:
         # Adopted row: no entry order, and the sell fill was recorded
         # without the stream's exit_filled_qty bookkeeping.
-        position = _open_position(
+        position = open_position(
             session, "KO", qty=21, entry="95.37", stop="94.22",
             origin="adopted",
         )
@@ -1165,7 +1048,7 @@ async def test_adopted_position_partial_sell_still_gets_stop(
         # original size — that's what kept the cover check honest.
         assert position.qty == 7
         assert position.exit_filled_qty == 14
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_orphan_repair_waits_for_held_release(
@@ -1190,7 +1073,7 @@ async def test_orphan_repair_waits_for_held_release(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
         session.commit()
 
     report = await executor.reconcile()
@@ -1201,7 +1084,7 @@ async def test_orphan_repair_waits_for_held_release(
     assert len(oco) == 1
     assert oco[0].qty == 21
     with session_factory() as session:
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_oco_fallback_reconfirms_the_free_qty(
@@ -1239,7 +1122,7 @@ async def test_oco_fallback_reconfirms_the_free_qty(
     broker.submit_oco_exit = shrink_on_oco  # type: ignore[method-assign]
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
         session.commit()
 
     report = await executor.reconcile()
@@ -1249,7 +1132,7 @@ async def test_oco_fallback_reconfirms_the_free_qty(
     assert len(stops) == 1
     assert stops[0].qty == 7  # not the stale 21 — Alpaca would reject it
     with session_factory() as session:
-        assert not _events(session, "protective_stop_failed")
+        assert not events_of(session, "protective_stop_failed")
 
 
 async def test_insufficient_stop_cover_gets_oco_repair(
@@ -1273,7 +1156,7 @@ async def test_insufficient_stop_cover_gets_oco_repair(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -1306,7 +1189,7 @@ async def test_never_released_hold_defers_to_next_pass(
     broker.orders[rec.id] = rec
     executor = _executor(session_factory, broker, clock)
     with session_factory() as session:
-        _open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
+        open_position(session, "KO", qty=21, entry="95.37", stop="94.22")
         session.commit()
 
     report = await executor.reconcile()
@@ -1329,11 +1212,11 @@ async def test_enter_places_bracket_order(
     executor = _executor(
         session_factory,
         broker,
-        sources=_sources(quotes=_StaticQuotes({"MSFT": _quote("MSFT")})),
+        sources=_sources(quotes=_StaticQuotes({"MSFT": make_quote("MSFT")})),
     )
     await executor.reconcile()
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -1342,11 +1225,11 @@ async def test_enter_places_bracket_order(
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1373,17 +1256,17 @@ async def test_enter_blocked_by_gate_places_nothing(
     executor = _executor(session_factory, broker)
     executor.state.kill_switch_on = True
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1400,17 +1283,17 @@ async def test_enter_skipped_on_wide_spread(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT", ask="421.00", bid="419.00"),  # ~0.48% spread
+            make_quote("MSFT", ask="421.00", bid="419.00"),  # ~0.48% spread
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1427,17 +1310,17 @@ async def test_entry_blocked_without_a_quote(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
             None,
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1453,17 +1336,17 @@ async def test_entry_blocked_when_quote_mid_is_zero(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT", ask="0.00", bid="0.00"),
+            make_quote("MSFT", ask="0.00", bid="0.00"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1478,23 +1361,23 @@ async def test_failed_entry_write_is_never_resent(
     broker.place_then_fail = True  # Alpaca accepted it; the reply timed out.
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
         # One attempt only; the accepted order is recovered by client id.
         assert broker.submit_calls == 1
-        assert _events(session, "order_recovered")
+        assert events_of(session, "order_recovered")
         order = session.execute(
             select(Order).where(Order.leg == "entry")
         ).scalar_one()
@@ -1542,7 +1425,7 @@ async def test_entry_timeout_cancels_and_records(
             select(Order).where(Order.leg == "entry")
         ).scalar_one()
         assert row.status == "canceled"
-        events = _events(session, "entry_timeout")
+        events = events_of(session, "entry_timeout")
         assert events and "entry not filled" in str(events[0].details)
 
 
@@ -1690,9 +1573,9 @@ async def _enter_symbol(
     session.commit()
     _store_reference(executor, symbol, Decimal("100"))
     executor.market_data.sources.quotes = _StaticQuotes({
-        symbol: _quote(symbol, ask="100.00", bid="99.95"),
+        symbol: make_quote(symbol, ask="100.00", bid="99.95"),
     })
-    decision = _decision(
+    decision = make_decision(
         session,
         symbol,
         "enter",
@@ -1701,11 +1584,11 @@ async def _enter_symbol(
     await executor.apply_decision(
         session,
         decision,
-        _item(symbol),
+        make_item(symbol),
         None,
-        _quote(symbol, ask="100.00", bid="99.95"),
+        make_quote(symbol, ask="100.00", bid="99.95"),
         NOW,
-        account=_account(),
+        account=make_account(),
         earnings_known=True,
     )
     return decision
@@ -1774,7 +1657,7 @@ async def test_partially_filled_entry_counts_unfilled_only(
     )
     await executor.reconcile()
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -1783,11 +1666,11 @@ async def test_partially_filled_entry_counts_unfilled_only(
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT", ask="100.00", bid="99.95"),
+            make_quote("MSFT", ask="100.00", bid="99.95"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1804,7 +1687,7 @@ async def test_partially_filled_entry_counts_unfilled_only(
         ).scalar_one()
         assert position.qty == 2  # the filled part — never double counted
         ctx = executor._gate_context(
-            session, _account(), "MSFT", 9, True
+            session, make_account(), "MSFT", 9, True
         )
         assert len(ctx.working_entries) == 1
         working = ctx.working_entries[0]
@@ -1842,7 +1725,7 @@ async def test_cancelling_a_working_entry_frees_the_budget(
         entry.status = "canceled"
         session.commit()
 
-        retry = _decision(
+        retry = make_decision(
             session,
             "S5",
             "enter",
@@ -1851,11 +1734,11 @@ async def test_cancelling_a_working_entry_frees_the_budget(
         await executor.apply_decision(
             session,
             retry,
-            _item("S5"),
+            make_item("S5"),
             None,
-            _quote("S5", ask="100.00", bid="99.95"),
+            make_quote("S5", ask="100.00", bid="99.95"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1906,7 +1789,7 @@ async def test_every_working_status_counts_in_the_gates(
             )
         )
         session.commit()
-        ctx = executor._gate_context(session, _account(), "AAPL", 9, True)
+        ctx = executor._gate_context(session, make_account(), "AAPL", 9, True)
         assert [e.symbol for e in ctx.working_entries] == ["MSFT"]
         held, pending = executor.signals._held_and_pending()
         assert "MSFT" in pending
@@ -1928,7 +1811,7 @@ async def test_same_day_exit_sells_at_once(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(
+        position = open_position(
             session,
             "MSFT",
             qty=4,
@@ -1951,15 +1834,15 @@ async def test_same_day_exit_sells_at_once(
                 created_at=NOW.replace(tzinfo=None),
             )
         )
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -1982,7 +1865,7 @@ async def test_next_day_exit_cancels_legs_then_sells(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -1998,15 +1881,15 @@ async def test_next_day_exit_cancels_legs_then_sells(
                 created_at=YESTERDAY,
             )
         )
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -2032,7 +1915,7 @@ async def test_exit_aborted_when_leg_cancel_fails(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -2050,19 +1933,19 @@ async def test_exit_aborted_when_leg_cancel_fails(
         )
         session.commit()
         broker.fail_writes = True
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
-        events = _events(session, "order_submit_failed")
+        events = events_of(session, "order_submit_failed")
         assert events and events[0].level == "critical"
         assert position.closed_at is None
     # No market sell was ever attempted; the stop leg stayed live.
@@ -2082,7 +1965,7 @@ async def test_exit_aborted_when_cancel_unconfirmed(
     broker.cancel_stuck = True  # cancel answers 200 but the leg stays open
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -2099,19 +1982,19 @@ async def test_exit_aborted_when_cancel_unconfirmed(
             )
         )
         session.commit()
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
-        events = _events(session, "leg_cancel_unconfirmed")
+        events = events_of(session, "leg_cancel_unconfirmed")
         assert events and events[0].level == "critical"
         assert position.closed_at is None
     assert list(broker.orders) == [stop.data.id]
@@ -2130,17 +2013,17 @@ async def test_exit_cancels_broker_leg_missing_from_db(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.commit()
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -2167,21 +2050,21 @@ async def test_exit_aborted_when_broker_leg_cancel_unconfirmed(
     broker.cancel_stuck = True
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.commit()
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
-        events = _events(session, "leg_cancel_unconfirmed")
+        events = events_of(session, "leg_cancel_unconfirmed")
         assert events and events[0].level == "critical"
         assert position.closed_at is None
     # No market sell went past the still-live stop.
@@ -2204,7 +2087,7 @@ async def test_exit_cancels_working_entry_order(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=bracket.data.id,
@@ -2221,15 +2104,15 @@ async def test_exit_cancels_working_entry_order(
             )
         )
         session.commit()
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -2264,7 +2147,7 @@ async def test_exit_aborted_when_leg_state_unreadable(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -2281,19 +2164,19 @@ async def test_exit_aborted_when_leg_state_unreadable(
             )
         )
         session.commit()
-        decision = _decision(session, "MSFT", "exit")
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
-        events = _events(session, "leg_cancel_unconfirmed")
+        events = events_of(session, "leg_cancel_unconfirmed")
         assert events and events[0].level == "critical"
         assert position.closed_at is None
     # The leg was never cancelled and no market sell went out.
@@ -2312,7 +2195,7 @@ async def test_earnings_exit_sells_held_position(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -2328,15 +2211,15 @@ async def test_earnings_exit_sells_held_position(
                 created_at=YESTERDAY,
             )
         )
-        decision = _decision(session, "MSFT", "hold")
+        decision = make_decision(session, "MSFT", "hold")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
             force_exit_reason="earnings_exit",
         )
@@ -2371,15 +2254,15 @@ async def test_earnings_exit_runs_for_acknowledged_adopted_position(
     with session_factory() as session:
         adopted = session.get(Position, position_id)
         assert adopted is not None
-        decision = _decision(session, "XYZ", "hold")
+        decision = make_decision(session, "XYZ", "hold")
         await executor.apply_decision(
             session,
             decision,
-            _item("XYZ"),
+            make_item("XYZ"),
             adopted,
-            _quote("XYZ", ask="50.10", bid="50.00"),
+            make_quote("XYZ", ask="50.10", bid="50.00"),
             clock.now(),
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
             force_exit_reason="earnings_exit",
         )
@@ -2417,13 +2300,13 @@ async def test_tighten_rechecks_references_and_keeps_old_stop_on_failure(
     )
     assert stop.data is not None
     with session_factory() as session:
-        position = _open_position(session, entry="100", stop="95")
+        position = open_position(session, entry="100", stop="95")
         executor._store_broker_order(session, stop.data, None, leg="stop")
-        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
-        item = replace(_item("MSFT"), snapshot=replace(_snapshot("MSFT"), atr_1h=atr))
+        decision = make_decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        item = replace(make_item("MSFT"), snapshot=replace(make_snapshot("MSFT"), atr_1h=atr))
         await executor.apply_decision(
-            session, decision, item, position, _quote("MSFT"), NOW,
-            account=_account(), earnings_known=True,
+            session, decision, item, position, make_quote("MSFT"), NOW,
+            account=make_account(), earnings_known=True,
         )
         session.commit()
         if reason is None:
@@ -2472,12 +2355,12 @@ async def test_tighten_rechecks_price_before_replacement(
     )
     assert stop.data is not None
     with session_factory() as session:
-        position = _open_position(session, entry="100", stop="95")
+        position = open_position(session, entry="100", stop="95")
         executor._store_broker_order(session, stop.data, None, leg="stop")
-        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        decision = make_decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
         await executor.apply_decision(
-            session, decision, _item("MSFT"), position, quote, NOW,
-            account=_account(), earnings_known=True,
+            session, decision, make_item("MSFT"), position, quote, NOW,
+            account=make_account(), earnings_known=True,
         )
         session.commit()
         assert position.current_stop_price == Decimal("95")
@@ -2507,16 +2390,16 @@ async def test_tighten_ignores_implausible_low_bid(
     )
     assert stop.data is not None
     with session_factory() as session:
-        position = _open_position(session, entry="100", stop="95")
+        position = open_position(session, entry="100", stop="95")
         executor._store_broker_order(session, stop.data, None, leg="stop")
-        decision = _decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
+        decision = make_decision(session, "MSFT", "tighten_stop", {"stop_price": "99.5"})
         item = replace(
-            _item("MSFT"),
-            snapshot=replace(_snapshot("MSFT"), atr_1h=Decimal("1")),
+            make_item("MSFT"),
+            snapshot=replace(make_snapshot("MSFT"), atr_1h=Decimal("1")),
         )
         await executor.apply_decision(
             session, decision, item, position, quote, NOW,
-            account=_account(), earnings_known=True,
+            account=make_account(), earnings_known=True,
         )
         session.commit()
         assert position.current_stop_price == Decimal("99.5")
@@ -2532,7 +2415,7 @@ async def test_tighten_stop_moves_only_upward(
     )
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
         session.add(
             Order(
                 alpaca_order_id=stop.data.id,
@@ -2549,17 +2432,17 @@ async def test_tighten_stop_moves_only_upward(
             )
         )
         # A lower stop is ignored: stops only move in the position's favour.
-        lower = _decision(session, "MSFT", "tighten_stop", {"stop_price": 405.0})
+        lower = make_decision(session, "MSFT", "tighten_stop", {"stop_price": 405.0})
         await executor.apply_decision(
-            session, lower, _item("MSFT"), position, _quote("MSFT"), NOW,
-            account=_account(), earnings_known=True,
+            session, lower, make_item("MSFT"), position, make_quote("MSFT"), NOW,
+            account=make_account(), earnings_known=True,
         )
         assert broker.orders[stop.data.id].stop_price == Decimal("410")
         calls_before = broker.submit_calls
-        higher = _decision(session, "MSFT", "tighten_stop", {"stop_price": 415.0})
+        higher = make_decision(session, "MSFT", "tighten_stop", {"stop_price": 415.0})
         await executor.apply_decision(
-            session, higher, _item("MSFT"), position, _quote("MSFT"), NOW,
-            account=_account(), earnings_known=True,
+            session, higher, make_item("MSFT"), position, make_quote("MSFT"), NOW,
+            account=make_account(), earnings_known=True,
         )
         session.commit()
         assert position.current_stop_price == Decimal("415")
@@ -2581,7 +2464,7 @@ async def test_same_day_round_trip_records_day_trade(
     broker = FakeBroker(FakeClock(NOW))  # broker no longer reports it
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(
+        open_position(
             session, "MSFT", opened_at=datetime(2026, 10, 15, 15, 0)
         )
         session.commit()
@@ -2599,7 +2482,7 @@ async def test_overnight_close_is_not_a_day_trade(
     broker = FakeBroker(FakeClock(NOW))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", opened_at=YESTERDAY)
+        open_position(session, "MSFT", opened_at=YESTERDAY)
         session.commit()
 
     await executor.reconcile()
@@ -2629,8 +2512,8 @@ async def test_flatten_cancels_orders_and_sells_positions(
     assert result["cancelled_orders"] == 1
     assert (await broker.get_positions()).data == []
     with session_factory() as session:
-        assert _events(session, "flatten")
-        assert _events(session, "kill_switch")
+        assert events_of(session, "flatten")
+        assert events_of(session, "kill_switch")
 
 
 async def test_flatten_never_refuses_same_day_positions(
@@ -2641,7 +2524,7 @@ async def test_flatten_never_refuses_same_day_positions(
     broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", opened_at=NOW.replace(tzinfo=None))
+        open_position(session, "MSFT", opened_at=NOW.replace(tzinfo=None))
         session.commit()
 
     result = await executor.flatten()
@@ -2650,7 +2533,7 @@ async def test_flatten_never_refuses_same_day_positions(
     assert (await broker.get_positions()).data == []
     # Day-trade warnings are retired with the PDT rule — none in the event.
     with session_factory() as session:
-        events = _events(session, "flatten")
+        events = events_of(session, "flatten")
         assert events[0].details is not None
         assert "day_trade_warnings" not in (events[0].details or {})
 
@@ -2696,7 +2579,7 @@ async def test_flatten_rejected_sell_keeps_stop_and_alerts(
     broker.reject_sells.add("MSFT")
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", opened_at=YESTERDAY)
+        open_position(session, "MSFT", opened_at=YESTERDAY)
         session.commit()
 
     result = await executor.flatten()
@@ -2711,9 +2594,9 @@ async def test_flatten_rejected_sell_keeps_stop_and_alerts(
     ]
     assert len(stops) == 1 and stops[0].qty == 4
     with session_factory() as session:
-        events = _events(session, "flatten_sell_rejected")
+        events = events_of(session, "flatten_sell_rejected")
         assert events and events[0].level == "critical"
-        assert _events(session, "protective_stop")
+        assert events_of(session, "protective_stop")
 
 
 async def test_flatten_holds_sell_when_cancel_unconfirmed(
@@ -2729,7 +2612,7 @@ async def test_flatten_holds_sell_when_cancel_unconfirmed(
     broker.cancel_stuck = True  # cancel_all answers ok but orders stay open
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", opened_at=YESTERDAY)
+        open_position(session, "MSFT", opened_at=YESTERDAY)
         session.commit()
 
     result = await executor.flatten()
@@ -2743,7 +2626,7 @@ async def test_flatten_holds_sell_when_cancel_unconfirmed(
     assert broker.orders[stop.data.id].status == "new"
     assert [p.symbol for p in (await broker.get_positions()).data] == ["MSFT"]
     with session_factory() as session:
-        events = _events(session, "flatten_sell_blocked")
+        events = events_of(session, "flatten_sell_blocked")
         assert events and events[0].level == "critical"
 
 
@@ -2760,7 +2643,7 @@ async def test_resume_requires_a_reason(
     state = executor.state
     assert not state.kill_switch_on
     with session_factory() as session:
-        events = _events(session, "kill_switch_resume")
+        events = events_of(session, "kill_switch_resume")
         assert events[0].details is not None
         assert events[0].details["reason"] == "checked, all good"
 
@@ -2819,7 +2702,7 @@ async def test_drawdown_kill_turns_the_switch_on(
     assert executor.state.kill_switch_on
     assert executor.state.kill_switch_auto
     with session_factory() as session:
-        events = _events(session, "kill_switch")
+        events = events_of(session, "kill_switch")
         assert events[0].details is not None
         assert events[0].details["automatic"] is True
 
@@ -2864,7 +2747,7 @@ async def test_exit_stream_closes_before_reconcile(
     broker = FakeBroker(FakeClock(NOW), prices={"SBUX": Decimal("103.15")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "SBUX", entry="103.15")
+        open_position(session, "SBUX", entry="103.15")
         session.add(Order(
             alpaca_order_id="stream-exit", client_order_id=executor._client_id(kind, 1, "SBUX"),
             symbol="SBUX", side="sell", order_type=order_type, leg=kind,
@@ -2879,7 +2762,7 @@ async def test_exit_stream_closes_before_reconcile(
             assert position.exit_reason == ("stop_breached" if kind == "breach" else kind)
             assert position.realized_pnl_raw == Decimal("0")
             assert session.execute(select(func.count(Fill.id))).scalar_one() == 1
-            assert not _events(session, "reconciliation")
+            assert not events_of(session, "reconciliation")
         return None
 
     monkeypatch.setattr(executor, "reconcile", check_closed)
@@ -2919,7 +2802,7 @@ async def test_reconcile_closes_position_from_offline_fill(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        position = _open_position(session, "MSFT", entry="415")
+        position = open_position(session, "MSFT", entry="415")
         session.commit()
         pos_id = position.id
     rec = _OrderRec(
@@ -2941,7 +2824,7 @@ async def test_reconcile_closes_position_from_offline_fill(
         assert closed.closed_while_offline is True
         assert closed.exit_reason == "stop"
         assert closed.realized_pnl_raw == Decimal("-20")
-        assert not _events(session, "reconciliation")
+        assert not events_of(session, "reconciliation")
         assert not executor.state.pending_ack(session)
 
 
@@ -2951,14 +2834,14 @@ async def test_reconcile_flat_without_fill_is_mismatch(
     broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT")
+        open_position(session, "MSFT")
         session.commit()
 
     report = await executor.reconcile()
 
     assert any("closed at broker" in m for m in report.mismatches)
     with session_factory() as session:
-        events = _events(session, "reconciliation")
+        events = events_of(session, "reconciliation")
         assert len(events) == 1
         assert events[0].details is not None
         assert events[0].details["kind"] == "flat_without_fill"
@@ -2979,7 +2862,7 @@ async def test_flat_check_defers_while_fills_settle(
     with session_factory() as session:
         # The entry fill landed a second ago; the broker's position
         # view hasn't caught up (endpoint lags fresh fills).
-        position = _open_position(
+        position = open_position(
             session, "SHEL", qty=18, entry="108.49", stop="107.37",
             opened_at=a_second_ago,
         )
@@ -3008,7 +2891,7 @@ async def test_flat_check_defers_while_fills_settle(
         reloaded = session.get(Position, pos_id)
         assert reloaded is not None and reloaded.closed_at is None
         assert not [
-            e for e in _events(session, "reconciliation")
+            e for e in events_of(session, "reconciliation")
             if (e.details or {}).get("kind") == "flat_without_fill"
         ]
 
@@ -3018,7 +2901,7 @@ async def test_flat_check_defers_while_fills_settle(
     assert any("SHEL" in m for m in report.mismatches)
     with session_factory() as session:
         assert [
-            e for e in _events(session, "reconciliation")
+            e for e in events_of(session, "reconciliation")
             if (e.details or {}).get("kind") == "flat_without_fill"
         ]
 
@@ -3072,17 +2955,17 @@ async def test_paused_blocks_new_entry(
     executor = _executor(session_factory, broker)
     executor.state.paused = True
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -3102,16 +2985,16 @@ async def test_paused_position_can_still_exit(
     executor = _executor(session_factory, broker)
     executor.state.paused = True
     with session_factory() as session:
-        position = _open_position(session, "MSFT", opened_at=YESTERDAY)
-        decision = _decision(session, "MSFT", "exit")
+        position = open_position(session, "MSFT", opened_at=YESTERDAY)
+        decision = make_decision(session, "MSFT", "exit")
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             position,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -3148,7 +3031,7 @@ async def test_pause_and_resume_record_events(
     assert paused_since is None
 
     with session_factory() as session:
-        events = _events(session, "pause")
+        events = events_of(session, "pause")
     assert [e.details["on"] for e in events if e.details] == [True, False]
 
 
@@ -3384,7 +3267,7 @@ class _DownQuotes:
 async def _apply_enter(executor: Executor, session: Session) -> Decision:
     session.commit()
     _store_reference(executor, "MSFT", Decimal("420.10"))
-    decision = _decision(
+    decision = make_decision(
         session,
         "MSFT",
         "enter",
@@ -3393,11 +3276,11 @@ async def _apply_enter(executor: Executor, session: Session) -> Decision:
     await executor.apply_decision(
         session,
         decision,
-        _item("MSFT"),
+        make_item("MSFT"),
         None,
-        _quote("MSFT"),
+        make_quote("MSFT"),
         NOW,
-        account=_account(),
+        account=make_account(),
         earnings_known=True,
     )
     return decision
@@ -3419,14 +3302,17 @@ async def test_entry_sizes_against_final_limit(
     monkeypatch.setattr(executor, "_atr_1h", lambda _symbol: Decimal("1"))
     _store_reference(executor, "MSFT", Decimal(ask))
     with session_factory() as session:
-        decision = _decision(session, "MSFT", "enter", {
+        decision = make_decision(session, "MSFT", "enter", {
             "stop_price": "98", "target_price": "108",
         })
-        item = replace(_item("MSFT"), snapshot=replace(_snapshot("MSFT"), atr_1h=Decimal("1")))
+        item = replace(
+            make_item("MSFT"),
+            snapshot=replace(make_snapshot("MSFT"), atr_1h=Decimal("1")),
+        )
         await executor.apply_decision(
             session, decision, item, None,
             Quote("MSFT", Decimal("100"), Decimal("100"), Decimal("100"), NOW, "iex"),
-            NOW, account=_account(), earnings_known=True,
+            NOW, account=make_account(), earnings_known=True,
         )
         session.commit()
         if mode == "supervised":
@@ -3542,7 +3428,7 @@ async def test_entry_does_not_use_old_budgets_when_account_refresh_fails(
     executor = _executor(
         session_factory, broker, clock, sources=_sources(quotes=_AgedQuotes(clock, 0)),
     )
-    executor.state.account = _account()
+    executor.state.account = make_account()
     with session_factory() as session:
         decision = await _apply_enter(executor, session)
         assert decision.final_action == "blocked"
@@ -3681,7 +3567,7 @@ async def test_v2_order_time_recheck_fails_fresh_quote(
     with session_factory() as session:
         session.commit()
         _store_reference(executor, "MSFT", Decimal("420.10"))
-        decision = _decision(
+        decision = make_decision(
             session,
             "MSFT",
             "enter",
@@ -3700,11 +3586,11 @@ async def test_v2_order_time_recheck_fails_fresh_quote(
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -3732,7 +3618,7 @@ async def test_unparseable_update_marks_stream_degraded(
     assert executor.state.stream_degraded
     assert executor.state.stream_failures == 1
     with session_factory() as session:
-        events = _events(session, "stream_degraded")
+        events = events_of(session, "stream_degraded")
         assert len(events) == 1
         assert events[0].level == "critical"
 
@@ -3747,7 +3633,7 @@ async def test_repeat_failures_notify_once_per_episode(
     await executor.on_stream_failure("bad 2")
     assert executor.state.stream_failures == 2
     with session_factory() as session:
-        assert len(_events(session, "stream_degraded")) == 1
+        assert len(events_of(session, "stream_degraded")) == 1
 
 
 async def test_degraded_clears_after_quiet_window(
@@ -3803,7 +3689,7 @@ async def test_reconcile_missed_fill_marks_degraded(
     assert executor.state.stream_degraded
     assert executor.state.stream_failures == 1
     with session_factory() as session:
-        assert _events(session, "stream_degraded")
+        assert events_of(session, "stream_degraded")
 
 
 async def test_reconcile_fresh_fill_waits_out_grace(
@@ -3878,7 +3764,7 @@ async def test_flat_symbol_is_not_refetched_within_a_pass(
     broker.get_position = spy  # type: ignore[method-assign]
     executor = _executor(session_factory, broker)
     with session_factory() as session:
-        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        open_position(session, "MSFT", qty=4, entry="415", stop="410")
         session.commit()
 
     report = await executor.reconcile()
@@ -4027,7 +3913,7 @@ async def test_qty_check_defers_while_fills_settle(
     with session_factory() as session:
         # The DB recorded 12 shares' worth of prints; the broker's
         # position view still shows the earlier 10.
-        _open_position(session, "PG", qty=12, entry="162.85", stop="158.00")
+        open_position(session, "PG", qty=12, entry="162.85", stop="158.00")
         await _seed_entry_row(session, submitted, "PG", 12, "163.00")
 
     await broker.tick("PG", Decimal("162.85"))  # 10 of 12 print
@@ -4094,18 +3980,18 @@ async def _tighten_with_quote_age(
     _store_reference(executor, "HD", Decimal("330.00"))
     assert stop.data is not None
     with session_factory() as session:
-        position = _open_position(session, "HD", entry="325", stop="325.54")
+        position = open_position(session, "HD", entry="325", stop="325.54")
         executor._store_broker_order(session, stop.data, None, leg="stop")
-        decision = _decision(
+        decision = make_decision(
             session, "HD", "tighten_stop", {"stop_price": "329.00"}
         )
         item = replace(
-            _item("HD"),
-            snapshot=replace(_snapshot("HD"), atr_1h=Decimal("1")),
+            make_item("HD"),
+            snapshot=replace(make_snapshot("HD"), atr_1h=Decimal("1")),
         )
         await executor.apply_decision(
             session, decision, item, position, quote, NOW,
-            account=_account(), earnings_known=True,
+            account=make_account(), earnings_known=True,
         )
         session.commit()
         return {
@@ -4155,7 +4041,7 @@ async def test_fills_open_and_reconcile_give_one_position(
     executor = _executor(session_factory, broker, clock)
     decision = None
     with session_factory() as session:
-        decision = _decision(session, "SHEL", "enter")
+        decision = make_decision(session, "SHEL", "enter")
         entry = Order(
             alpaca_order_id="shel-entry",
             symbol="SHEL",
