@@ -286,7 +286,9 @@ def test_recovery_codes_regenerate_requires_confirm(app_auth: Any) -> None:
         ("/api/keys/openai/remove", {}),
     ],
 )
-def test_risky_writes_require_confirm(app_auth: Any, path: str, body: dict) -> None:
+def test_risky_writes_require_confirm(
+    app_auth: Any, path: str, body: dict[str, object]
+) -> None:
     """Every write guarded by 'Confirm it is you' answers 403
     confirm_required without a fresh confirmation."""
     app, secret, _codes = app_auth
