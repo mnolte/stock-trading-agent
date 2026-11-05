@@ -61,6 +61,7 @@ def test_head_schema_has_earnings_hour_raw(
     _upgrade(db, "head", monkeypatch)
     engine = create_engine(f"sqlite:///{db}")
     columns = {c["name"]: c for c in inspect(engine).get_columns("earnings")}
+    engine.dispose()
     assert "hour_raw" in columns
     assert columns["hour_raw"]["nullable"] is False
 
@@ -86,6 +87,7 @@ def test_earnings_migration_backfills_and_normalises(
             text("SELECT symbol, time_of_day || '|' || hour_raw FROM earnings")
         ).all()
     rows: dict[str, str] = dict(result)
+    engine.dispose()
     assert rows["AAPL"] == "before_open|bmo"
     assert rows["MSFT"] == "during_market|dmh"
     assert rows["XOM"] == "unknown|weird"

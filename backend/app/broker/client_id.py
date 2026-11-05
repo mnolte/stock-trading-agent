@@ -32,6 +32,10 @@ def client_order_id(instance: str, kind: str, *parts: object) -> str:
     # Alpaca caps client_order_id at 48 chars; the instance is the only
     # unbounded segment, so it is clamped to keep the whole id in range.
     inst = _INSTANCE_SAFE.sub("", str(instance))[:10]
+    if inst.lower() in KINDS:
+        # sa-<kind>-<rest> is the pre-instance shape — an instance named
+        # like a kind would parse as pre-instance and hide its orders.
+        raise ValueError(f"instance id reserved by order kinds: {inst!r}")
     segments = ["sa", inst, kind] if inst else ["sa", kind]
     segments.extend(str(p) for p in parts)
     return "-".join(segments)

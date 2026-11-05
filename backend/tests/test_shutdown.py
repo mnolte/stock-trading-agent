@@ -208,6 +208,33 @@ def test_order_slot_blocks_until_stored() -> None:
     asyncio.run(run())
 
 
+def test_wait_for_work_holds_while_an_order_is_in_flight() -> None:
+    """The actual guarantee: even with the predicate true, wait_for_work
+    does not return while a submit is between send and store — the
+    shutdown must never cut an order write (hard rule 16)."""
+    async def run() -> None:
+        m = ShutdownManager(grace_seconds=5)
+        slot = m.order_slot()
+        slot.__enter__()
+        waiter = asyncio.ensure_future(m.wait_for_work(lambda: True, poll=0.01))
+        await asyncio.sleep(0.05)
+        assert not waiter.done()  # predicate true, still waiting
+        slot.__exit__(None, None, None)
+        assert await asyncio.wait_for(waiter, 2) is True
+
+    asyncio.run(run())
+
+
+def test_run_lock_heartbeat_bumps_timestamp(tmp_path: Path) -> None:
+    lock = RunLock(tmp_path / "run.lock")
+    lock.acquire()
+    started = json.loads(lock.path.read_text())["started_at"]
+    lock.heartbeat()
+    data = json.loads(lock.path.read_text())
+    assert data["heartbeat_at"] >= started
+    lock.release()
+
+
 def test_writes_refused_while_shutting_down(client: TestClient) -> None:
     """503 for POST/PUT while shutting down; GETs keep working (spec)."""
     manager = cast(FastAPI, client.app).state.shutdown

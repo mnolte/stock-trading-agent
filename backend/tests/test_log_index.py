@@ -7,6 +7,7 @@ import logging
 import queue
 import sqlite3
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import cast
 

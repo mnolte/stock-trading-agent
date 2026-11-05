@@ -35,6 +35,19 @@ def test_auto_means_off_when_auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not resume_after_clean_restart_enabled(get_config())
 
 
+def test_explicit_on_and_off_bypass_auto(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit values don't consult SA_AUTH: 'on' resumes locally,
+    'off' pauses even when required."""
+    monkeypatch.setattr(config_module, "_config", None)
+    from app.config import get_config
+
+    monkeypatch.setenv("SA_AUTH", "off")
+    config = get_config().overlay({"ops": {"resume_after_clean_restart": "on"}})
+    assert resume_after_clean_restart_enabled(config)
+    config = get_config().overlay({"ops": {"resume_after_clean_restart": "off"}})
+    assert not resume_after_clean_restart_enabled(config)
+
+
 def test_clean_running_resumes() -> None:
     d = decide_restart(
         was_running=True,

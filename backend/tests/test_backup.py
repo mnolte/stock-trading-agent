@@ -8,6 +8,9 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_config
 from app.db.backup import create_backup
+from app.market.clock import FakeClock
+
+NOW = datetime(2026, 10, 15, 14, 0, tzinfo=ZoneInfo("UTC"))
 
 APP_TZ = ZoneInfo("Europe/Amsterdam")
 
@@ -17,8 +20,8 @@ def _db_path() -> Path:
 
 
 def _today() -> date:
-    """The date the backup code stamps: today in the app timezone."""
-    return datetime.now(tz=APP_TZ).date()
+    """The date the backup code stamps: the frozen test day."""
+    return NOW.astimezone(APP_TZ).date()
 
 
 def _is_date_suffix(name: str) -> bool:
@@ -40,7 +43,7 @@ def test_create_backup_creates_dated_copy() -> None:
     db_path = _db_path()
     _write_db(db_path)
 
-    create_backup()
+    create_backup(FakeClock(NOW))
 
     backup_path = db_path.parent / "backups" / f"{db_path.name}.{_today().isoformat()}"
     with sqlite3.connect(backup_path) as conn:
@@ -57,7 +60,7 @@ def test_create_backup_prunes_old_copies() -> None:
         old = _today() - timedelta(days=days_ago)
         (backup_dir / f"{db_path.name}.{old.isoformat()}").write_text("old")
 
-    create_backup()
+    create_backup(FakeClock(NOW))
 
     # WAL-mode databases leave -shm/-wal sidecars next to the copy; the
     # pruner (and this check) only counts files with a date suffix.
@@ -82,7 +85,7 @@ def test_create_backup_keeps_the_retention_boundary() -> None:
     kept.write_text("keep")
     pruned.write_text("prune")
 
-    create_backup()
+    create_backup(FakeClock(NOW))
 
     assert kept.exists()
     assert not pruned.exists()
@@ -93,7 +96,7 @@ def test_backup_copy_restores_and_reads() -> None:
     db_path = _db_path()
     _write_db(db_path)
 
-    create_backup()
+    create_backup(FakeClock(NOW))
 
     backup = db_path.parent / "backups" / f"{db_path.name}.{_today().isoformat()}"
     restored = db_path.parent / "restored.db"
@@ -112,6 +115,6 @@ def test_create_backup_ignores_unrelated_files() -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     (backup_dir / f"{db_path.name}.not-a-date").write_text("keep")
 
-    create_backup()
+    create_backup(FakeClock(NOW))
 
     assert (backup_dir / f"{db_path.name}.not-a-date").exists()

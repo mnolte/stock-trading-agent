@@ -9,6 +9,7 @@ backtest work is in progress.
 
 from __future__ import annotations
 
+import inspect
 import sqlite3
 from typing import Any
 
@@ -37,8 +38,19 @@ class LockProbe:
         if not callable(attr):
             return attr
 
-        async def guarded(*args: Any, **kwargs: Any) -> Any:
-            self._check(method)
-            return await attr(*args, **kwargs)
+        if inspect.iscoroutinefunction(attr):
 
-        return guarded
+            async def guarded(*args: Any, **kwargs: Any) -> Any:
+                self._check(method)
+                return await attr(*args, **kwargs)
+
+            return guarded
+
+        # Sync attributes (calendar lookups, properties): the check runs
+        # at call time — wrapping them in a coroutine left the result
+        # unawaited and broke every sync call on the probed object.
+        def guarded_sync(*args: Any, **kwargs: Any) -> Any:
+            self._check(method)
+            return attr(*args, **kwargs)
+
+        return guarded_sync

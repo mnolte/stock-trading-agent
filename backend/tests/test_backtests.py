@@ -761,7 +761,7 @@ def test_estimate_cost_cap_refusal_and_warning(tmp_path: Path) -> None:
                 cost_usd=Decimal("20.00"),
                 run_dir=str(tmp_path / "run-old"),
                 finished_at=_naive_utc(datetime.now()),
-                created_at=_naive_utc(datetime.now()),
+                created_at=_naive_utc(datetime(2024, 6, 10)),
             )
         )
         # Token history so the per-call cost estimate is known.
@@ -778,7 +778,7 @@ def test_estimate_cost_cap_refusal_and_warning(tmp_path: Path) -> None:
                 tokens=1000,
                 tokens_in=800,
                 tokens_out=200,
-                created_at=_naive_utc(datetime.now()),
+                created_at=_naive_utc(datetime(2024, 6, 10)),
             )
         )
         session.commit()

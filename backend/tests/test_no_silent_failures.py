@@ -13,6 +13,7 @@ import asyncio
 import logging
 import re
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -124,13 +125,14 @@ def test_spawn_logs_failure() -> None:
             for r in records
         )
     finally:
-        target.handlers.clear()
+        target.removeHandler(handler)
 
 
 def test_thread_hook_logs() -> None:
     loop = asyncio.new_event_loop()
     install_global_hooks(loop)
     records, target = _capture()
+    old_sys_hook, old_thread_hook = sys.excepthook, threading.excepthook
     try:
         def die() -> None:
             raise ValueError("thread died")
@@ -144,4 +146,5 @@ def test_thread_hook_logs() -> None:
         )
     finally:
         loop.close()
-        target.handlers.clear()
+        target.removeHandler(handler)
+        sys.excepthook, threading.excepthook = old_sys_hook, old_thread_hook

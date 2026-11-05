@@ -89,6 +89,7 @@ def test_live_write_waits_for_a_shadow_write_and_never_fails() -> None:
         session.commit()  # must not raise "database is locked"
     waited = time.monotonic() - started
     thread.join(5)
+    assert not thread.is_alive()
     assert errors == []
     assert waited > 0.3  # it really waited for the shadow's lock
     with sf() as session:

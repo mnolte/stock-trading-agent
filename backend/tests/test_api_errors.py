@@ -126,6 +126,7 @@ def test_500_log_line_scrubs_the_secret(
             text = log_path.read_text()
             break
         time.sleep(0.1)
+    assert text, f"log line {error_id} never landed in {log_path}"
     line = next(
         json.loads(raw) for raw in text.splitlines() if error_id in raw
     )
@@ -135,7 +136,6 @@ def test_500_log_line_scrubs_the_secret(
     # The console handler scrubs the same way — the key is nowhere on
     # stderr either.
     captured = capfd.readouterr()
-    assert error_id not in captured.err or FAKE_KEY not in captured.err
     assert FAKE_KEY not in captured.err
 
 
