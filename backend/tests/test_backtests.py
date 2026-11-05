@@ -70,6 +70,32 @@ def _live_schema() -> None:
     migrate_db(Path(get_config().env.sa_db_path))
 
 
+@pytest.fixture(autouse=True)
+def worker_priority(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the child worker's priority request without lowering pytest's priority."""
+    requested: list[int] = []
+
+    def record(increment: int) -> int:
+        requested.append(increment)
+        return 0
+
+    monkeypatch.setattr("app.backtests.worker.os.nice", record, raising=False)
+    return requested
+
+
+@pytest.mark.parametrize("priority", [0, 7, 10])
+async def test_worker_requests_configured_process_priority(
+    worker_priority: list[int], priority: int,
+) -> None:
+    config = AppConfig()
+    config.yaml["backtest"]["process_nice"] = priority
+    await run_backtest(
+        -1, config=config, live_sf=get_session_maker(),
+        wall=FakeClock(datetime(2026, 10, 15, tzinfo=NY_TZ)),
+    )
+    assert worker_priority == [priority]
+
+
 def _bar(
     symbol: str,
     start: datetime,
