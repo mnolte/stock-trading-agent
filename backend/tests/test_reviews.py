@@ -21,6 +21,7 @@ from app.db.models import (
     Decision,
     EquitySnapshot,
     Event,
+    LlmCall,
     Outcome,
     Position,
     Review,
@@ -34,7 +35,7 @@ from app.reviews.facts import verdict_eligible, weekly_facts
 from app.reviews.numbercheck import bad_numbers
 from app.reviews.service import ReviewService
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -992,6 +993,15 @@ def _clear_briefings() -> None:
     from app.db.base import get_session_maker
 
     with get_session_maker()() as session:
+        session.execute(
+            update(LlmCall)
+            .where(
+                LlmCall.review_id.in_(
+                    select(Review.id).where(Review.kind == "briefing")
+                )
+            )
+            .values(review_id=None)
+        )
         session.execute(delete(Review).where(Review.kind == "briefing"))
         session.commit()
 

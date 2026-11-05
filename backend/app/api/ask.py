@@ -27,7 +27,7 @@ from app.ask.tools import AskDeps
 from app.config import get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import AskMessage, AskNote, AskThread
+from app.db.models import AskMessage, AskNote, AskThread, LlmCall
 from app.errors import ApiError, ErrorCode
 from app.llm.clients import make_model_clients
 from app.market.clock import make_clock
@@ -217,6 +217,16 @@ def delete_thread(request: Request, thread_id: int) -> dict[str, Any]:
         row = session.get(AskThread, thread_id)
         if row is None:
             raise HTTPException(404)
+        message_ids = select(AskMessage.id).where(
+            AskMessage.thread_id == thread_id
+        )
+        # Keep the call rows — the requests were real and cost real
+        # money — but their message link must not dangle.
+        session.execute(
+            update(LlmCall)
+            .where(LlmCall.ask_message_id.in_(message_ids))
+            .values(ask_message_id=None)
+        )
         session.execute(
             delete(AskMessage).where(AskMessage.thread_id == thread_id)
         )
@@ -479,6 +489,15 @@ def cleanup_threads(session: Any, clock: Any, config: Any) -> int:
         update(AskNote)
         .where(AskNote.source_thread_id.in_(old))
         .values(source_thread_id=None, source_message_id=None)
+    )
+    session.execute(
+        update(LlmCall)
+        .where(
+            LlmCall.ask_message_id.in_(
+                select(AskMessage.id).where(AskMessage.thread_id.in_(old))
+            )
+        )
+        .values(ask_message_id=None)
     )
     session.execute(delete(AskMessage).where(AskMessage.thread_id.in_(old)))
     session.execute(delete(AskThread).where(AskThread.id.in_(old)))

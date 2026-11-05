@@ -954,8 +954,16 @@ def test_summarise_metrics(tmp_path: Path) -> None:
     sf = session_maker_for(db, config)
     with sf() as session:
         session.add(
+            Cycle(
+                scheduled_time=datetime(2024, 6, 3, 10, 0),
+                status="done",
+            )
+        )
+        session.commit()
+        cycle_id = session.execute(select(Cycle.id)).scalar_one()
+        session.add(
             Decision(
-                cycle_id=1,
+                cycle_id=cycle_id,
                 symbol="AAA",
                 context="candidate",
                 input_snapshot={"regime": {"trend": "up", "volatility": "normal"}},
@@ -970,7 +978,7 @@ def test_summarise_metrics(tmp_path: Path) -> None:
         )
         session.add(
             Decision(
-                cycle_id=1,
+                cycle_id=cycle_id,
                 symbol="BBB",
                 context="candidate",
                 input_snapshot={},

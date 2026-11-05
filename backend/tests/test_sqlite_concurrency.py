@@ -18,12 +18,13 @@ from typing import Any
 import pytest
 from app.config import get_config
 from app.db.base import Base, get_engine, get_session_maker
-from app.db.models import Cycle, Run, ShadowEquity, Strategy
+from app.db.models import Cycle, Decision, Run, ShadowEquity, Strategy
 from app.decide.client import FakeDecisionClient, ModelResponse
 from app.market.calendar import WeekdayCalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.shadows.runner import ShadowRunner
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -40,6 +41,7 @@ def test_scratch_schema_copy_is_empty_isolated_and_uses_production_pragmas(
     with session_factory() as session:
         assert session.execute(text("PRAGMA journal_mode")).scalar_one() == "wal"
         assert session.execute(text("PRAGMA busy_timeout")).scalar_one() == 30000
+        assert session.execute(text("PRAGMA foreign_keys")).scalar_one() == 1
         assert session.execute(text("PRAGMA temp_store")).scalar_one() == 2
         assert session.execute(text("PRAGMA mmap_size")).scalar_one() == 268435456
         assert session.execute(text("PRAGMA cache_size")).scalar_one() == -64000
@@ -50,6 +52,24 @@ def test_scratch_schema_copy_is_empty_isolated_and_uses_production_pragmas(
         assert session.execute(select(func.count(Run.id))).scalar_one() == 1
     with sqlite3.connect(empty_db_template) as template:
         assert template.execute("SELECT count(*) FROM runs").fetchone() == (0,)
+
+
+def test_foreign_keys_are_enforced(session_factory: sessionmaker[Session]) -> None:
+    """Declared FKs are advisory no longer: an orphan row is refused."""
+    with session_factory() as session:
+        session.add(
+            Decision(
+                cycle_id=999999,
+                symbol="AAA",
+                context="candidate",
+                final_action="skip",
+                prompt_version="v1",
+                prompt_hash="x",
+                model="test",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_engine_uses_wal_and_busy_timeout() -> None:
