@@ -294,6 +294,13 @@ def test_daily_loss_limit_blocks() -> None:
     assert result.blocked_by == "daily_loss_limit"
 
 
+def test_daily_loss_limit_at_boundary_blocks() -> None:
+    """Exactly −2%: the limit is inclusive (pnl_pct <= −limit)."""
+    result = _run(_ctx(equity=Decimal("9800"), last_equity=Decimal("10000")))
+    assert not result.allowed
+    assert result.blocked_by == "daily_loss_limit"
+
+
 def test_daily_loss_limit_passes_above() -> None:
     result = _run(_ctx(equity=Decimal("9900"), last_equity=Decimal("10000")))
     assert result.allowed
@@ -346,6 +353,19 @@ def test_drawdown_kill_blocks() -> None:
         _ctx(
             equity=Decimal("9100"),
             last_equity=Decimal("9100"),
+            peak_equity=Decimal("10000"),
+        )
+    )
+    assert not result.allowed
+    assert result.blocked_by == "drawdown_kill"
+
+
+def test_drawdown_at_kill_boundary_blocks() -> None:
+    """Exactly 8% below peak: the kill is inclusive (dd_pct >= kill)."""
+    result = _run(
+        _ctx(
+            equity=Decimal("9200"),
+            last_equity=Decimal("9200"),
             peak_equity=Decimal("10000"),
         )
     )

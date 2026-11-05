@@ -5,7 +5,7 @@ from __future__ import annotations
 import app.config as config_module
 import pytest
 from app.api.main import create_app
-from app.auth.guard import check_auth_guard, client_ip
+from app.auth.guard import check_auth_guard, client_ip, request_is_https
 from app.config import AppConfig, get_config
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -95,3 +95,24 @@ def test_forwarded_for_only_from_trusted_proxy(
     assert client_ip(_request("9.9.9.9", forwarded), config) == "9.9.9.9"
     # No header at all: the peer is the address either way.
     assert client_ip(_request("10.0.0.2"), config) == "10.0.0.2"
+
+
+def test_request_is_https_decides_secure_cookies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Secure/__Host- cookie decision: direct https, an https
+    SA_PUBLIC_URL, or X-Forwarded-Proto from a trusted proxy only."""
+    config = _config(monkeypatch, SA_TRUSTED_PROXY="10.0.0.2")
+    https = [(b"x-forwarded-proto", b"https")]
+    plain = [(b"x-forwarded-proto", b"http")]
+    # XFP counts only through the configured proxy.
+    assert request_is_https(_request("10.0.0.2", https), config) is True
+    assert request_is_https(_request("9.9.9.9", https), config) is False
+    assert request_is_https(_request("10.0.0.2", plain), config) is False
+    # An https public URL means the browser is on https by definition.
+    config = _config(monkeypatch, SA_PUBLIC_URL="https://stocks.example.com")
+    assert request_is_https(_request("9.9.9.9", plain), config) is True
+    # A direct https request always counts.
+    req = _request("9.9.9.9")
+    req.scope["scheme"] = "https"
+    assert request_is_https(req, config) is True

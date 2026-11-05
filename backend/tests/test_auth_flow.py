@@ -186,6 +186,133 @@ def test_sign_out_and_sign_out_everywhere(app_auth: Any) -> None:
         assert client.get("/api/header").status_code == 401
 
 
+def test_sessions_list_and_sign_out_by_id(app_auth: Any) -> None:
+    """Settings → Access devices: the list marks the current session and
+    sign-out by id kills the other device's token."""
+    app, secret, _codes = app_auth
+    # A second cookie jar on the same booted app — a second TestClient
+    # inside 'with' would boot the lifespan again and hit the run lock.
+    with TestClient(app, base_url="https://testserver") as client:
+        other_client = TestClient(app, base_url="https://testserver")
+        _sign_in(client, secret)
+        _sign_in(other_client, secret)  # a second device
+        data = client.get("/api/auth/sessions").json()
+        devices = data["devices"]
+        assert len(devices) == 2
+        assert [d["current"] for d in devices].count(True) == 1
+        other = next(d for d in devices if not d["current"])
+        r = client.post(
+            f"/api/auth/sessions/{other['id']}/sign-out", headers=_csrf(client)
+        )
+        assert r.status_code == 200
+        assert other_client.get("/api/header").status_code == 401
+        assert client.get("/api/header").status_code == 200
+
+
+def test_sign_out_others_keeps_current(app_auth: Any) -> None:
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        other_client = TestClient(app, base_url="https://testserver")
+        _sign_in(client, secret)
+        _sign_in(other_client, secret)  # a second device
+        r = client.post("/api/auth/sign-out-others", headers=_csrf(client))
+        assert r.status_code == 200
+        assert r.json()["signed_out"] == 1
+        assert client.get("/api/header").status_code == 200
+        assert other_client.get("/api/header").status_code == 401
+
+
+def test_totp_reset_requires_confirm_and_replaces_secret(app_auth: Any) -> None:
+    """POST /api/auth/totp resets the second factor — behind 'Confirm it
+    is you'; the old secret stops working immediately."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        r = client.post("/api/auth/totp", headers=_csrf(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+        )
+        r = client.post("/api/auth/totp", headers=_csrf(client))
+        assert r.status_code == 200
+        new_secret = r.json()["secret"]
+        assert new_secret != secret
+        # The old code no longer signs in; the new one does — past the
+        # already-spent TOTP step (codes at or below last_totp_step are
+        # refused as replays).
+        client.post("/api/auth/sign-out", headers=_csrf(client))
+        app.state.clock.advance(timedelta(seconds=31))
+        client.post("/api/auth/sign-in", json={"password": PASSWORD})
+        old_code = totp_code(secret, app.state.clock.now())
+        assert client.post("/api/auth/code", json={"code": old_code}).status_code == 401
+        new_code = totp_code(new_secret, app.state.clock.now())
+        assert client.post("/api/auth/code", json={"code": new_code}).status_code == 200
+
+
+def test_recovery_codes_regenerate_requires_confirm(app_auth: Any) -> None:
+    """New recovery codes replace the old set — behind 'Confirm it is
+    you'; a regenerated code signs in, an old one is dead."""
+    app, _secret, codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, _secret)
+        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+        )
+        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        assert r.status_code == 200
+        new_codes = r.json()["codes"]
+        assert new_codes and new_codes != codes
+        client.post("/api/auth/sign-out", headers=_csrf(client))
+        client.post("/api/auth/sign-in", json={"password": PASSWORD})
+        assert (
+            client.post("/api/auth/code", json={"code": codes[0]}).status_code == 401
+        )
+        assert (
+            client.post("/api/auth/code", json={"code": new_codes[0]}).status_code
+            == 200
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/paper-reset", {}),
+        ("/api/runs", {}),
+        ("/api/keys/openai", {"value": "sk-fake-0123456789abcdef"}),
+        ("/api/keys/openai/remove", {}),
+    ],
+)
+def test_risky_writes_require_confirm(app_auth: Any, path: str, body: dict) -> None:
+    """Every write guarded by 'Confirm it is you' answers 403
+    confirm_required without a fresh confirmation."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        r = client.post(path, json=body, headers=_csrf(client))
+        assert r.status_code == 403, f"{path} -> {r.status_code}"
+        assert r.json()["error"]["code"] == "confirm_required"
+
+
+def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
+    """Loosening a numeric risk limit needs 'Confirm it is you';
+    tightening never asks (design, Settings → Access)."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        for body, expect in (
+            ({"settings": {"risk": {"daily_loss_limit_pct": 3}}, "reason": "t"}, 403),
+            ({"settings": {"risk": {"daily_loss_limit_pct": 1}}, "reason": "t"}, 200),
+        ):
+            r = client.post("/api/settings", json=body, headers=_csrf(client))
+            assert r.status_code == expect, f"{body} -> {r.status_code} {r.text}"
+            if expect == 403:
+                assert r.json()["error"]["code"] == "confirm_required"
+
+
 def test_confirm_required_then_valid_five_minutes(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:

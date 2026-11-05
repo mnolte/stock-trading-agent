@@ -45,3 +45,41 @@ def test_future_trade_timestamp_is_suspect() -> None:
         max_deviation_pct=Decimal("1"),
     )
     assert reason == "price_suspect"
+
+
+def test_old_trade_timestamp_is_stale() -> None:
+    quote = _quote(
+        "100.00", "100.05", "100.02",
+        trade_ts=NOW - timedelta(minutes=16),
+    )
+    reason = quote.price_reason(
+        now=NOW,
+        max_age_seconds=900,
+        bar_close=Decimal("100.00"),
+        max_deviation_pct=Decimal("1"),
+    )
+    assert reason == "price_stale"
+
+
+def test_deviation_boundary_inclusive_plausible_exclusive_suspect() -> None:
+    """Exactly max_deviation_pct from the bar close is not suspect (the
+    check is strict >); just over it is. The plausible band is <=."""
+    at_edge = _quote("99.00", "99.20", "99.00", trade_ts=NOW)
+    assert (
+        at_edge.price_reason(
+            now=NOW, max_age_seconds=900,
+            bar_close=Decimal("100.00"), max_deviation_pct=Decimal("1"),
+        )
+        is None
+    )
+    over = _quote("98.99", "99.20", "98.99", trade_ts=NOW)
+    assert (
+        over.price_reason(
+            now=NOW, max_age_seconds=900,
+            bar_close=Decimal("100.00"), max_deviation_pct=Decimal("1"),
+        )
+        == "price_suspect"
+    )
+    # Bid and ask exactly 1% from last: still plausible; 1% over: not.
+    assert _quote("99.00", "101.00", "100.00").quote_plausible(Decimal("1"))
+    assert not _quote("98.99", "101.00", "100.00").quote_plausible(Decimal("1"))
