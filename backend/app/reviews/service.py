@@ -55,6 +55,18 @@ from app.signals.service import SignalService
 
 logger = logging.getLogger(__name__)
 
+
+def _hhmm(raw: str, key: str, default_h: int, default_m: int) -> tuple[int, int]:
+    """Parse a config "HH:MM" — a malformed value falls back, it never
+    crashes the review schedule."""
+    parts = raw.split(":")
+    try:
+        return int(parts[0]), int(parts[1])
+    except (IndexError, ValueError):
+        logger.warning("invalid %s %r — using %02d:%02d", key, raw, default_h, default_m)
+        return default_h, default_m
+
+
 REASON_NUMBER_CHECK = "number check failed"
 REASON_FACT_CHECK = "fact check failed"
 REASON_NO_KEY = "no OpenAI key"
@@ -157,7 +169,7 @@ class ReviewService:
             5,
         )
         raw = str(self.config.get("reviews", "weekly_time", default="10:00"))
-        hour, minute = (int(p) for p in raw.split(":")[:2])
+        hour, minute = _hhmm(raw, "reviews.weekly_time", 10, 0)
         return weekday, time(hour, minute)
 
     def weekly_due_instants(
@@ -192,7 +204,7 @@ class ReviewService:
         raw = str(
             self.config.get("reviews", "briefing_time_ny", default="09:00")
         )
-        hour, minute = (int(p) for p in raw.split(":")[:2])
+        hour, minute = _hhmm(raw, "reviews.briefing_time_ny", 9, 0)
         return datetime.combine(day, time(hour, minute), tzinfo=NY_TZ).astimezone(
             ZoneInfo("UTC")
         )

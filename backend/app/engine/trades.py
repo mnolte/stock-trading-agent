@@ -41,7 +41,9 @@ def _dividends(
         if (
             action.symbol == symbol
             and action.action_type == "dividend"
-            and start <= action.date.date() <= end
+            # Ex-date must be after the buy (held at the prior close)
+            # and on or before the sell.
+            and start < action.date.date() <= end
             and action.ratio_or_amount is not None
         ):
             total += action.ratio_or_amount * qty

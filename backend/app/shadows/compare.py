@@ -348,8 +348,16 @@ def _live_trade_r(session: Session, live: Decision) -> tuple[Position | None, De
     ).scalar_one_or_none()
     if position is None:
         return None, None
-    stop = (live.model_output or {}).get("stop_price")
-    r = _trade_r(position, Decimal(str(stop))) if isinstance(stop, int | float) else None
+    # v2+ decisions carry only an option_id — resolve it like the
+    # performance R fix (position stop first, stored options second).
+    stop = position.initial_stop
+    if stop is None:
+        from app.decide.output import decision_trade_prices
+
+        stop, _target = decision_trade_prices(
+            live.model_output, live.options, live.chosen_option
+        )
+    r = _trade_r(position, stop) if stop is not None else None
     return position, r
 
 

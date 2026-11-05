@@ -225,7 +225,10 @@ class AfterExitWorker:
         if fetched.error is not None:
             return None, fetched.error
         fresh = session_bars(fetched.data or [], row.sessions)
-        if not fresh and not cached:
+        if not fresh and (must_fetch or not cached):
+            # On must_fetch the cached bars' basis is unknowable, so an
+            # empty fetch is a real failure (retry, then unavailable) —
+            # not a "pending" that retries forever.
             return None, "no bars returned"
         self.market_data.bars_cache.store(fresh)
         # Union by bar start: fetched bars win. With must_fetch the

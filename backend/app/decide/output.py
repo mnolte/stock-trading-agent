@@ -2048,7 +2048,7 @@ def validate_model_output_v4(
         # becomes skip · flip_flop. An enter → skip is never blocked.
         prev = snapshot.get("previous_decision") or {}
         since = prev.get("since") or {}
-        move = since.get("price_move_atr")
+        move = _decimal_or_none(since.get("price_move_atr"))
         new_symbol_headline = any(
             h.get("new") and h.get("about_symbol")
             for h in (snapshot.get("headlines") or [])
@@ -2058,7 +2058,7 @@ def validate_model_output_v4(
             isinstance(prev, dict)
             and prev.get("action") == "skip"
             and move is not None
-            and abs(float(move)) < flip_min
+            and abs(move) < flip_min
             and not since.get("checks_changed")
             and not new_symbol_headline
             and not since.get("new_levels_within_1_atr")
@@ -2276,9 +2276,11 @@ def decision_trade_prices(
         )
     if chosen_option is None or not options:
         return None, None
+    raw_options = options.get("options")
+    raw_stops = options.get("stop_options")
     pool = [
-        *(options.get("options") or []),
-        *(options.get("stop_options") or []),
+        *(raw_options if isinstance(raw_options, list) else []),
+        *(raw_stops if isinstance(raw_stops, list) else []),
     ]
     chosen = _option_by_id(pool, chosen_option)
     if chosen is None:

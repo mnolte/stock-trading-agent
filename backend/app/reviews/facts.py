@@ -342,7 +342,9 @@ def weekly_facts(
         else:
             flat += 1
         confidence = (decision.model_output or {}).get("confidence")
-        if biggest_miss is None or pct > Decimal(str(biggest_miss["pct"])):
+        if pct > flat_pct and (
+            biggest_miss is None or pct > Decimal(str(biggest_miss["pct"]))
+        ):
             biggest_miss = {
                 "symbol": decision.symbol,
                 "date": _aware(scheduled).astimezone(NY_TZ).date().isoformat(),

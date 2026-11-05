@@ -520,7 +520,11 @@ class DecisionService:
                  if validation.claims is not None else {})
                 or None
             ),
-            options_version=OPTIONS_VERSION if v2 is not None else None,
+            options_version=(
+                v2.options_column.get("options_version")
+                if v2 is not None
+                else None
+            ),
         )
         session.add(decision)
         session.flush()

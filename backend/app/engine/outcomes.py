@@ -274,12 +274,34 @@ class OutcomeWorker:
     # ------------------------------------------------------------------
     # fills
 
+    def _retention_cutoff(self, now: datetime) -> date | None:
+        """The oldest trading day the 5m cache can still hold.
+
+        ``schedule.bars_5m_keep_sessions`` prunes older bars, so a row
+        whose targets predate this day can never fill — scanning it
+        again every pass is wasted work, and an option_touches row would
+        hold its verdict back forever.
+        """
+        keep = int(
+            self.config.get("schedule", "bars_5m_keep_sessions", default=120)
+        )
+        if keep <= 0 or self.calendar is None:
+            return None
+        day = now.astimezone(NY_TZ).date()
+        for _ in range(keep):
+            prev = self.calendar.previous_trading_day(day)
+            if prev is None:
+                break
+            day = prev.date
+        return day
+
     def fill(self, session: Session, now: datetime | None = None) -> OutcomeReport:
         """One pass over every unfilled outcome target and open trade."""
         now = now or self.clock.now()
         report = OutcomeReport()
         if self.market_data is None or self.calendar is None:
             return report
+        cutoff = self._retention_cutoff(now)
 
         rows = session.execute(
             select(Decision, Cycle.scheduled_time, Outcome)
@@ -300,6 +322,13 @@ class OutcomeWorker:
                 if getattr(outcome, field) is not None:
                     continue
                 if now < target + self._delay:
+                    continue
+                if (
+                    cutoff is not None
+                    and target.astimezone(NY_TZ).date() < cutoff
+                ):
+                    # The bars for this target were pruned — it can
+                    # never fill; stop scanning it.
                     continue
                 bar = self._price_at(decision.symbol, target)
                 if bar is None:
@@ -331,6 +360,15 @@ class OutcomeWorker:
         ).all()
         filled_n = missing_n = 0
         for decision, scheduled, outcome in stale:
+            basis = _aware_utc(
+                outcome.price_5sessions_at or scheduled
+            ).astimezone(NY_TZ).date()
+            if cutoff is not None and basis < cutoff:
+                # The window's bars were pruned — the touches can never
+                # arrive; mark the row done so its verdict can draft.
+                outcome.option_touches = {}
+                filled_n += 1
+                continue
             if self._fill_option_touches(
                 session, decision, outcome, _aware_utc(scheduled)
             ):
@@ -363,6 +401,10 @@ class OutcomeWorker:
                 (t for f, _a, t in targets if f == "price_5sessions"), None
             )
             if five is None or now < five + self._delay:
+                continue
+            if cutoff is not None and five.astimezone(NY_TZ).date() < cutoff:
+                srow.option_touches = {}
+                sf_filled += 1
                 continue
             if self._fill_shadow_touches(srow, decision_time, five):
                 sf_filled += 1
@@ -419,7 +461,10 @@ class OutcomeWorker:
             if raw_id is None:
                 continue
             oid = str(raw_id)
-            if oid == traded_id and traded_touch is not None:
+            if oid == traded_id:
+                # The traded option's touch is real, not a bar replay —
+                # while the position is still open it stays NULL and
+                # the row retries until the true touch is known.
                 touches[oid] = traded_touch
                 continue
             entry = option.get("entry_limit", option.get("entry"))
@@ -458,7 +503,9 @@ class OutcomeWorker:
                 continue
             fill_index: int | None = None
             for index, bar in enumerate(bars):
-                if bar.start - decision_time > timedelta(minutes=10):
+                # The entry order dies at 10 minutes — a bar starting
+                # exactly then can no longer fill it.
+                if bar.start - decision_time >= timedelta(minutes=10):
                     break
                 if bar.low <= limit:
                     fill_index = index
@@ -509,7 +556,9 @@ class OutcomeWorker:
             return True
         if outcome.price_5sessions_at is None:
             return False
-        end = _aware_utc(outcome.price_5sessions_at) + timedelta(minutes=5)
+        # Inclusive end bound: the bar that supplied the 5-session price
+        # is the last one in the window; +5m would admit the next bar.
+        end = _aware_utc(outcome.price_5sessions_at)
         snapshot = decision.input_snapshot
         constraints = (
             snapshot.get("constraints") if isinstance(snapshot, dict) else None
@@ -558,7 +607,7 @@ class OutcomeWorker:
         price_bar = self._price_at(row.symbol, five_target)
         if price_bar is None:
             return False  # bars missing — stay NULL, retry next pass
-        end = _aware_utc(price_bar.start) + timedelta(minutes=5)
+        end = _aware_utc(price_bar.start)
         snapshot = row.input_snapshot or {}
         constraints = (
             snapshot.get("constraints") if isinstance(snapshot, dict) else None

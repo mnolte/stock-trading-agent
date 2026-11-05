@@ -121,7 +121,11 @@ def _eval_set(
     if (
         budget.last_slot_min_ev_r is not None
         and len(subset) == budget.free_slots
-        and min(e.expected_r for e in subset) < budget.last_slot_min_ev_r
+        # Submission order is descending expected profit — the floor
+        # binds the member taking the last slot, the set's lowest-
+        # profit member (docs/SPEC.md, Selection).
+        and min(subset, key=lambda e: e.expected_profit).expected_r
+        < budget.last_slot_min_ev_r
     ):
         return None
     cash = budget.cash
@@ -229,23 +233,11 @@ def choose(
             total += entry.expected_r * sizing.shares * risk
         return total, keys, taken
 
-    # Same last-slot rule as the optimal search: a set filling every
-    # free slot needs its weakest member to clear the floor, not just
-    # the entry that happened to land in the last slot. Drop the
-    # weakest and re-walk without it so a below-floor entry can't hide
-    # in an earlier slot.
-    excluded: set[str] = set()
-    while True:
-        rank_total, rank_keys, taken = rank_walk(
-            [e for e in pool if e.key not in excluded]
-        )
-        if (
-            budget.last_slot_min_ev_r is None
-            or len(taken) < budget.free_slots
-            or min(e.expected_r for e in taken) >= budget.last_slot_min_ev_r
-        ):
-            break
-        excluded.add(min(taken, key=lambda e: e.expected_r).key)
+    # The floor binds the entry landing in the last free slot — the
+    # walk's own guard at slots == free_slots-1 does exactly that, and
+    # the optimal search checks the same member (the set's last
+    # submission = its lowest-profit member).
+    rank_total, rank_keys, _taken = rank_walk(pool)
 
     chosen = (
         tuple(sorted(best_subset, key=lambda e: -e.expected_profit))
