@@ -13,8 +13,8 @@ How Stock Trading Agent looks and what it says. It uses the same visual language
 | Path | Contents |
 | --- | --- |
 | `tokens.css` | Every colour, font, size, spacing and radius. Copy it into `frontend/src/styles/`; use only these variables. |
-| `screens/` | The 7 screens as HTML: the exact source for styles, layout and wording. |
-| `screenshots/` | One PNG per screen at 1440 px wide (Decision at 560 px), plus `Main-390.png` at phone width. |
+| `screens/` | One HTML file per screen (25): the exact source for styles, layout and wording. |
+| `screenshots/` | One PNG per screen at 1440 px (drawers at 560 px, `AskStates` at 2000 px, `States` is a reference sheet), a `-390.png` at phone width for every app screen and for `Decision` and `DecisionV5`, and a `-1024.png` for Main, Positions and Settings. |
 | `CHANGES.md` | Design change log, newest first. |
 
 ## How to read the screen files
@@ -35,6 +35,7 @@ How Stock Trading Agent looks and what it says. It uses the same visual language
 | `DecisionV3Held.dc.html` | Decision drawer for a held position under decision.v3 (SBUX, shadow D): action with confidence (target before the current stop), Position block (R now, stop and target with their ATR distance, levels to the target, invalidation filled by code, scheduled exit), the entry thesis marked as belief, Stop options with distance below the price and locked R, options not offered with their reason, conflicts, reasoning, and the checks including the lock-in claim check. `DecisionV3Held.png` | PR 30 |
 | `DecisionV4.dc.html` | Decision drawer for a decision.v4 candidate (TSLA, shadow E): the model's enter turned into a skip by the flip-flop guard; Previous decision (action, best option, confidence, conflicts, what moved since); checks compared with the previous cycle; options with their stop group; each conflict with what outweighs it; the model's "what changed" and the guard's finding; news marked about the symbol or not, with the effect of each cited headline; the v4 gates (confidence sanity, flip-flop). `DecisionV4.png` | PR 34 |
 | `DecisionV4Held.dc.html` | Decision drawer for a held position under decision.v4 (PG, shadow E, exit): "Does the entry thesis still hold?" with the checks at entry against now and `thesis_holds`; Position with neutral probability, time held and session time left; conflicts with not outweighed; what changed; confidence sanity against the neutral probability. `DecisionV4Held.png` | PR 34 |
+| `DecisionV5.dc.html` | Decision drawer for a decision.v5 candidate (HD, shadow F, 4 Nov 17:46): the trend gate as the first gate row, options with target distance in ATR, per-option `min_confidence` and `base_rate · n`, the ev gate row, the time-left row, a previous decision in the same context. `DecisionV5.png`, `DecisionV5-390.png` | 045 |
 | `DecisionV5Held.dc.html` | Decision drawer for a held position under decision.v5, from the KO case of 3 Nov (last cycle, −0.62R): a Hold or exit block (exit below neutral − 0.03, hold overnight from neutral + 0.10, the model's number) with the expected value in a note; position rows for price since the signal bar, session left and last cycle, overnight gap p90; the fifth thesis check (price vs EMA 20); conflicts not outweighed; exit consistency in the checks. `DecisionV5Held.png` | PR 37 |
 | `AskDrawer.dc.html` | Ask the agent docked next to Positions (440 px): header with thread title, earlier chats, New and Close; the context chip; a question, its lookup steps, an answer with a small table, reference chips and the footer (model, lookups, cost, data as of, Copy, model calls); a follow-up streaming with its live steps, the caret and Stop. `AskDrawer.png` | PR 36 |
 | `AskStates.dc.html` | Ask the agent states: first open on a decision with three suggestions; earlier chats with search; problems (a number not found in the data, a failed answer with Retry, a stopped answer, the monthly cap replacing the composer); notes; phone at 390 px with an answer that uses a note. `AskStates.png` (2000 px) | PR 36 |
@@ -58,7 +59,8 @@ How Stock Trading Agent looks and what it says. It uses the same visual language
 Build these first, in PR 1, on a hidden `/dev/components` page:
 
 1. Sidebar with groups, active item and collapse (232 px / 72 px)
-2. Header: title, PAPER badge, session pill, equity, today, regime chip, Kill switch button
+2. Header, two fixed rows: title, PAPER badge and subtitle; session pill, Needs you chip, equity, today, regime chip, Pause/Resume, Kill switch. Below 820 px the title row is hidden and the stats are one mono line (see `Main-390.png`)
+2a. Sidebar Ask button (accent, under the app mark; icon only when collapsed) and the phone bar's Ask icon; both open the Ask drawer, as does Ctrl/⌘+J
 3. Card with uppercase label and optional right-side link
 4. Stat card (label, value, sub line, optional bar)
 5. Table with mono numeric columns and horizontal scroll on narrow screens
@@ -79,7 +81,9 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 - **Colour means something:** green is a gain or a pass, red a loss, a stop or a failure, amber a warning or a skip, blue a stop raised or an info note. Never use colour alone; there is always a word or icon.
 - **Controls:** buttons, nav items and clickable rows are at least 44 px high.
 - **PAPER** shows in the header on every screen, always.
-- **Sample data:** every number in the designs is sample data. Labels that say "Sample data" in the designs are for the designs only.
+- **Sample data:** every number in the designs is sample data, including every "finding" on Insights and every note in Ask. Labels that say "Sample data" in the designs are for the designs only. Never quote a design number as a result of the run.
+- **Design notes:** a muted paragraph under a table or card that explains how to read it (for example the bar legend under Open positions) is help text. Build it as the design shows it the first time, but it may move behind an info icon or a disclosure; it is never required copy.
+- **Decision drawers** share one order, whatever the prompt version: action · tiles · What happened · the version's own blocks · Agent reasoning · Safety gates · Levels (folded) · Outcome · footer links. What happened holds the final action, every change by code with its reason, warnings, the order status, the verdict (with Confirm draft and Change… when a draft exists) and "Ask about this decision".
 
 ## Interaction rules
 
@@ -101,7 +105,7 @@ These apply to every screen. Inline styles can't express hover or focus, so the 
 
 ## Phone width
 
-The `-390.png` screenshots show each screen at 390 px. Below 820 px the sidebar is replaced by a sticky top bar: the app mark, the screen title, the Needs you count and a menu button that opens the sidebar as an overlay (focus rules as for dialogs). The header's Needs you chip is hidden there, since the bar carries the count. Cards stack, wide tables scroll inside their card, and no screen scrolls sideways.
+The `-390.png` screenshots show each screen at 390 px; `Main-1024.png`, `Positions-1024.png` and `Settings-1024.png` show the layout a laptop with the Ask drawer docked, or a tablet, gets. Decision drawers shrink to the viewport (`max-width: 560px`) and their four tiles become two columns. Below 820 px the sidebar is replaced by a sticky top bar: the app mark, the screen title, the Needs you count and a menu button that opens the sidebar as an overlay (focus rules as for dialogs). The header's Needs you chip is hidden there, since the bar carries the count. Cards stack, wide tables scroll inside their card, and no screen scrolls sideways.
 
 ## Answered questions
 
@@ -111,7 +115,7 @@ Both questions from the first handoff are now settled in `docs/SPEC.md` (supervi
 
 ## Screenshot check in every UI PR
 
-1. Add a Playwright test that opens each screen the PR touched with the sample data and takes screenshots at 1440 × 900 and 390 × 844.
+1. Add a Playwright test that opens each screen the PR touched with the sample data and takes screenshots at 1440 × 900 and 390 × 844 (and 1024 × 768 for Main, Positions and Settings).
 2. Save them in `docs/screenshots/pr-<n>/`, never in `design/`, and show each one in the PR description next to the matching reference PNG from `design/screenshots/`.
 3. List deliberate differences under "Design differences".
 
