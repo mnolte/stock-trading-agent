@@ -39,7 +39,7 @@ from app.db.models import (
 from app.engine.outcomes import OutcomeWorker
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
-from sqlalchemy import select
+from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -499,6 +499,85 @@ async def test_best_worst_while_open(
     assert outcome.worst_price == min(b.low for b in bars)
     assert outcome.best_price_at is not None
     assert outcome.worst_price_at is not None
+
+
+@pytest.mark.parametrize(
+    ("closed_offset", "missing", "expected_visit"),
+    [
+        (timedelta(microseconds=-1), None, False),
+        (timedelta(0), None, True),
+        (timedelta(microseconds=1), None, True),
+        (None, None, True),
+        (timedelta(days=-1), "best_price", True),
+        (timedelta(days=-1), "worst_price", True),
+        (timedelta(days=-1), "first_touch", True),
+        (timedelta(days=-1), "outcome", False),
+    ],
+)
+def test_best_worst_only_visits_unsettled_or_incomplete_trades(
+    session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch,
+    closed_offset: timedelta | None, missing: str | None, expected_visit: bool,
+) -> None:
+    now = datetime(2026, 10, 15, 18, tzinfo=UTC)
+    opened = now - timedelta(days=2)
+    worker, _ = _worker(session_factory, FakeClock(now))
+    decision_id = _seed_decision(session_factory, opened)
+    _seed_position(session_factory, decision_id, opened)
+    _seed_bars(session_factory, [(opened + timedelta(minutes=5), 420, 440, 400, 420)])
+    with session_factory() as session:
+        position = session.execute(select(Position)).scalar_one()
+        position.closed_at = (
+            _naive(now - DELAY + closed_offset) if closed_offset is not None else None
+        )
+        outcome = session.execute(select(Outcome)).scalar_one()
+        outcome.price_1h = outcome.price_1session = outcome.price_5sessions = Decimal("420")
+        outcome.best_price = Decimal("430")
+        outcome.worst_price = Decimal("410")
+        outcome.first_touch = "neither"
+        if missing == "outcome":
+            session.delete(outcome)
+        elif missing is not None:
+            setattr(outcome, missing, None)
+        session.commit()
+
+    visited: list[int] = []
+    original = worker._update_best_worst
+
+    def track(session: Session, position: Position, at: datetime) -> bool:
+        visited.append(position.id)
+        return original(session, position, at)
+
+    monkeypatch.setattr(worker, "_update_best_worst", track)
+    with session_factory() as session:
+        report = worker.fill(session, now)
+        session.commit()
+    assert bool(visited) == expected_visit
+    assert report.best_worst == int(expected_visit)
+    if missing != "outcome":
+        outcome = _outcome(session_factory, decision_id)
+        assert outcome.best_price == Decimal("440" if expected_visit else "430")
+        assert outcome.worst_price == Decimal("400" if expected_visit else "410")
+        assert outcome.first_touch == ("stop" if expected_visit else "neither")
+
+
+def test_pending_outcome_does_not_load_unused_decision_payloads(
+    session_factory: sessionmaker[Session],
+) -> None:
+    now = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    worker, _ = _worker(session_factory, FakeClock(now))
+    _seed_decision(session_factory, now)
+    unloaded: list[set[str]] = []
+
+    def loaded(session: Session, instance: object) -> None:
+        if isinstance(instance, Decision):
+            unloaded.append(set(inspect(instance).unloaded))
+
+    with session_factory() as session:
+        event.listen(session, "loaded_as_persistent", loaded)
+        report = worker.fill(session, now)
+        assert report.filled == report.pending == 0
+    assert len(unloaded) == 1
+    assert {"input_snapshot", "model_output", "rules_result", "validation_result"} <= unloaded[0]
 
 
 async def test_best_worst_not_tracked_for_skips(

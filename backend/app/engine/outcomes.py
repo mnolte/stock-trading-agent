@@ -24,7 +24,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, load_only, sessionmaker
 
 from app.config import AppConfig
 from app.data.alpaca import AlpacaDataClient
@@ -314,6 +314,7 @@ class OutcomeWorker:
                     Outcome.price_5sessions.is_(None),
                 )
             )
+            .options(load_only(Decision.symbol, Decision.options, Decision.chosen_option))
         ).all()
         for decision, scheduled, outcome in rows:
             decision_time = _aware_utc(scheduled)
@@ -415,7 +416,15 @@ class OutcomeWorker:
         session.flush()
 
         for position in session.execute(
-            select(Position).where(Position.entry_decision_id.is_not(None))
+            select(Position)
+            .join(Outcome, Outcome.decision_id == Position.entry_decision_id)
+            .where(or_(
+                Position.closed_at.is_(None),
+                Position.closed_at >= _naive_utc(now - self._delay),
+                Outcome.best_price.is_(None),
+                Outcome.worst_price.is_(None),
+                Outcome.first_touch.is_(None),
+            ))
         ).scalars():
             if self._update_best_worst(session, position, now):
                 report.best_worst += 1
@@ -648,26 +657,20 @@ class OutcomeWorker:
         end = min(closed, now) if closed else now
         if end <= opened:
             return False
-        if closed is not None and closed + self._delay < now:
-            # The window is fixed after the close; give late bars one delay
-            # to arrive, then stop rewriting the row.
-            outcome = session.execute(
-                select(Outcome).where(
-                    Outcome.decision_id == position.entry_decision_id
-                )
-            ).scalar_one_or_none()
-            if (
-                outcome is not None
-                and outcome.best_price is not None
-                and outcome.worst_price is not None
-                and outcome.first_touch is not None
-            ):
-                return False
         outcome = session.execute(
             select(Outcome).where(Outcome.decision_id == position.entry_decision_id)
         ).scalar_one_or_none()
         if outcome is None:
             return False
+        if closed is not None and closed + self._delay < now:
+            # The window is fixed after the close; give late bars one delay
+            # to arrive, then stop rewriting the row.
+            if (
+                outcome.best_price is not None
+                and outcome.worst_price is not None
+                and outcome.first_touch is not None
+            ):
+                return False
         extremes = self.market_data.bars_cache.get_extremes(
             position.symbol, opened, end
         )
