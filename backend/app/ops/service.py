@@ -308,7 +308,9 @@ class OpsService:
                 if (self._clock.now() - ran_at).days > stale_days:
                     restore_test = {**restore_test, "level": "warning"}
             except (TypeError, ValueError):
-                pass
+                logger.warning(
+                    "unparseable restore_test.at %r — ignored", ran
+                )
         result = {
             "local": {
                 "latest": latest.name if latest else None,

@@ -64,6 +64,9 @@ async def feed(websocket: WebSocket) -> None:
             if receive_task in done:
                 if receive_task.exception() is not None:
                     raise receive_task.exception()  # type: ignore[misc]
+                if len(receive_task.result()) > 64 * 1024:
+                    await websocket.close(code=1009)  # message too big
+                    return
                 await websocket.send_json({"type": "pong"})
             if topics_task in done:
                 topics = topics_task.result()

@@ -30,7 +30,7 @@ from time import monotonic
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
@@ -453,17 +453,37 @@ class ShadowRunner:
                         bars=self._bars,
                         config=self.config,
                     )
-                    await self._decide(
-                        session,
-                        strategy,
-                        cycle,
-                        run,
-                        scheduled,
-                        live,
-                        deadline,
-                        sr,
-                        extra_snapshots or {},
-                    )
+                    try:
+                        await self._decide(
+                            session,
+                            strategy,
+                            cycle,
+                            run,
+                            scheduled,
+                            live,
+                            deadline,
+                            sr,
+                            extra_snapshots or {},
+                        )
+                    except Exception:  # noqa: BLE001
+                        # A mid-strategy failure leaves partial rows
+                        # committed — and `done > 0` would then skip this
+                        # strategy forever, the undecided symbols neither
+                        # retried nor marked. Roll the partial rows back
+                        # so the next cycle pass retries the whole set.
+                        logger.exception(
+                            "shadow decide failed for strategy %s cycle %s",
+                            strategy.id, cycle_id,
+                        )
+                        session.rollback()
+                        session.execute(
+                            delete(ShadowDecision).where(
+                                ShadowDecision.strategy_id == strategy.id,
+                                ShadowDecision.cycle_id == cycle_id,
+                            )
+                        )
+                        session.commit()
+                        continue
                     write_equity(
                         session,
                         strategy_id=strategy.id,

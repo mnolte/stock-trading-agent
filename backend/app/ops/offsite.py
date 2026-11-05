@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -86,7 +87,14 @@ def _restic_env(creds: OffsiteCredentials) -> dict[str, str]:
     return env
 
 
+_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9]$")
+
+
 def _repo(creds: OffsiteCredentials) -> str:
+    # The bucket name becomes part of the repo URL — anything outside
+    # the S3 name shape could reshape where credentials are sent.
+    if not _BUCKET_RE.fullmatch(creds.bucket):
+        raise ValueError(f"invalid backup bucket name {creds.bucket!r}")
     return f"s3:{creds.endpoint}/{creds.bucket}"
 
 

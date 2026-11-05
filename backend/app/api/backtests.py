@@ -527,7 +527,7 @@ def run_trades(request: Request, run_id: int, slug: str) -> dict[str, Any]:
     sf = _strategy_sf(request, run_id, slug)
     with sf() as session:
         rows = session.execute(
-            select(Position).order_by(Position.opened_at)
+            select(Position).order_by(Position.opened_at).limit(5000)
         ).scalars().all()
     return {
         "trades": [
@@ -557,6 +557,7 @@ def run_decisions(request: Request, run_id: int, slug: str) -> dict[str, Any]:
             select(Decision, Cycle.scheduled_time)
             .join(Cycle, Decision.cycle_id == Cycle.id)
             .order_by(Cycle.scheduled_time, Decision.id)
+            .limit(20000)
         ).all()
     return {
         "items": [

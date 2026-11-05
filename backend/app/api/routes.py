@@ -3957,6 +3957,10 @@ def _briefing_card(
 @router.get("/dashboard")
 def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
     """The Main screen: cycle line, stat cards, latest decision, feed."""
+    from app.settings_service import SYMBOL_RE
+
+    if symbol is not None and not SYMBOL_RE.fullmatch(symbol.upper()):
+        raise HTTPException(status_code=422, detail="invalid symbol")
     config = get_config()
     clock = getattr(request.app.state, "clock", None) or make_clock()
     state = getattr(request.app.state, "exec_state", None)
@@ -4594,6 +4598,10 @@ def _feed_reason(decision: Decision) -> str | None:
 @router.get("/chart/{symbol}")
 def chart(request: Request, symbol: str) -> dict[str, object]:
     """Session-aligned 1h candles + VWAP + EMAs + level lines for the chart."""
+    from app.settings_service import SYMBOL_RE
+
+    if not SYMBOL_RE.fullmatch(symbol.upper()):
+        raise HTTPException(status_code=422, detail="invalid symbol")
     clock = getattr(request.app.state, "clock", None) or make_clock()
     now = clock.now()
     market_data = getattr(request.app.state, "market_data", None)

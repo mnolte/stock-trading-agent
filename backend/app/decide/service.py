@@ -50,7 +50,7 @@ from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
 from app.rules.prefilter import RulesResult
 
-logger = logging.getLogger("app.model.openai")
+logger = logging.getLogger("app.model")
 
 # Final action recorded when no usable model answer exists (no call made,
 # or the call failed). ``no_call_reason`` says why: rules, call_cap,
@@ -221,6 +221,7 @@ class DecisionService:
             hit = self._cache.lookup(
                 model=_model,
                 temperature=_temperature,
+                prompt_version=self._prompt.version,
                 prompt_hash=self._prompt.sha256,
                 user=user,
                 provider=_provider,
