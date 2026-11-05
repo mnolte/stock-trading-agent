@@ -562,6 +562,8 @@ class Executor:
                         session.commit()
                     continue
                 self._orders_this_cycle += 1
+                # One slot, send through store+commit (rule 16): flatten
+                # has no running cycle to hold shutdown back.
                 with self._order_slot():
                     result = await self.broker.submit_market_sell(
                         symbol=pos.symbol,
@@ -569,34 +571,34 @@ class Executor:
                         market_on_open=not regular_hours,
                         client_order_id=self._client_id("exit", 0, pos.symbol),
                     )
-                if result.error is not None or result.data is None:
-                    errors.append(f"{pos.symbol}: {result.error}")
-                    rejected.append(pos.symbol)
-                    # Never refused, never retried: the position keeps its
-                    # stop (re-placed by the reconcile below) and the
-                    # rejection shows as a critical banner.
-                    with self._session_factory() as session:
-                        record_event(
-                            session,
-                            self.clock,
-                            level="critical",
-                            event_type="flatten_sell_rejected",
-                            details={
-                                "symbol": pos.symbol,
-                                "qty": pos.qty,
-                                "error": result.error,
-                                "market_on_open": not regular_hours,
-                            },
-                            affects="order",
-                        )
-                        session.commit()
-                else:
-                    sold.append(pos.symbol)
-                    with self._session_factory() as session:
-                        self._store_broker_order(
-                            session, result.data, None, leg="exit"
-                        )
-                        session.commit()
+                    if result.error is not None or result.data is None:
+                        errors.append(f"{pos.symbol}: {result.error}")
+                        rejected.append(pos.symbol)
+                        # Never refused, never retried: the position keeps
+                        # its stop (re-placed by the reconcile below) and
+                        # the rejection shows as a critical banner.
+                        with self._session_factory() as session:
+                            record_event(
+                                session,
+                                self.clock,
+                                level="critical",
+                                event_type="flatten_sell_rejected",
+                                details={
+                                    "symbol": pos.symbol,
+                                    "qty": pos.qty,
+                                    "error": result.error,
+                                    "market_on_open": not regular_hours,
+                                },
+                                affects="order",
+                            )
+                            session.commit()
+                    else:
+                        sold.append(pos.symbol)
+                        with self._session_factory() as session:
+                            self._store_broker_order(
+                                session, result.data, None, leg="exit"
+                            )
+                            session.commit()
         with self._session_factory() as session:
             record_event(
                 session,
@@ -968,6 +970,10 @@ class Executor:
                     "ok": False,
                     "error": f"approval is {approval.status}",
                 }
+            # One slot, send through store+commit: rule 16 forbids
+            # cutting an order submission between sending and storing
+            # the answer — approve has no running cycle to hold
+            # shutdown back.
             with self._order_slot():
                 submitted = await self.broker.submit_bracket_entry(
                     symbol=approval.symbol,
@@ -977,75 +983,75 @@ class Executor:
                     target_price=approval.target_price,
                     client_order_id=client_id,
                 )
-            if submitted.error is not None or submitted.data is None:
-                ev(
-                    log_orders, logging.ERROR, "orders.submit_failed",
-                    f"{approval.symbol}: order submit failed: {submitted.error}",
-                    symbol=approval.symbol, order=client_id,
-                )
-                # Never resent; reconciliation decides what Alpaca did.
-                recovered = await self.broker.get_order_by_client_id(client_id)
-                if recovered.error is None and recovered.data is not None:
-                    # The broker did accept it — the order is live, so
-                    # the approval is approved, not rejected.
-                    self._store_broker_order(
-                        session, recovered.data, approval.decision_id
+                if submitted.error is not None or submitted.data is None:
+                    ev(
+                        log_orders, logging.ERROR, "orders.submit_failed",
+                        f"{approval.symbol}: order submit failed: {submitted.error}",
+                        symbol=approval.symbol, order=client_id,
+                    )
+                    # Never resent; reconciliation decides what Alpaca did.
+                    recovered = await self.broker.get_order_by_client_id(client_id)
+                    if recovered.error is None and recovered.data is not None:
+                        # The broker did accept it — the order is live,
+                        # so the approval is approved, not rejected.
+                        self._store_broker_order(
+                            session, recovered.data, approval.decision_id
+                        )
+                        record_event(
+                            session,
+                            self.clock,
+                            level="critical",
+                            event_type="order_recovered",
+                            details={
+                                "symbol": approval.symbol,
+                                "client_order_id": client_id,
+                            },
+                        )
+                        approval.qty = qty
+                        approval.limit_price = limit
+                        self._resolve_approval(approval, "approved", None)
+                        session.commit()
+                        self._notify(
+                            {"approvals", "decisions", "positions", "orders",
+                             "banners", "attention"}
+                        )
+                        return {"ok": True, "recovered": True}
+                    self._resolve_approval(
+                        approval,
+                        "rejected",
+                        f"order submit failed: {submitted.error}",
                     )
                     record_event(
                         session,
                         self.clock,
                         level="critical",
-                        event_type="order_recovered",
+                        event_type="order_submit_failed",
                         details={
                             "symbol": approval.symbol,
                             "client_order_id": client_id,
+                            "error": submitted.error,
                         },
                     )
-                    approval.qty = qty
-                    approval.limit_price = limit
-                    self._resolve_approval(approval, "approved", None)
                     session.commit()
-                    self._notify(
-                        {"approvals", "decisions", "positions", "orders",
-                         "banners", "attention"}
-                    )
-                    return {"ok": True, "recovered": True}
-                self._resolve_approval(
-                    approval,
-                    "rejected",
-                    f"order submit failed: {submitted.error}",
+                    self._notify({"approvals", "decisions", "banners", "attention"})
+                    return {
+                        "ok": False,
+                        "error": f"order submit failed: {submitted.error}",
+                    }
+                self._store_broker_order(
+                    session, submitted.data, approval.decision_id
                 )
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="order_submit_failed",
-                    details={
-                        "symbol": approval.symbol,
-                        "client_order_id": client_id,
-                        "error": submitted.error,
-                    },
+                ev(
+                    log_orders, logging.INFO, "orders.submitted",
+                    f"{approval.symbol}: bracket entry x{qty} "
+                    f"limit {limit} stop {approval.stop_price} "
+                    f"target {approval.target_price} ({client_id})",
+                    symbol=approval.symbol, order=client_id,
                 )
+                approval.qty = qty
+                approval.limit_price = limit
+                self._resolve_approval(approval, "approved", None)
                 session.commit()
-                self._notify({"approvals", "decisions", "banners", "attention"})
-                return {
-                    "ok": False,
-                    "error": f"order submit failed: {submitted.error}",
-                }
-            self._store_broker_order(
-                session, submitted.data, approval.decision_id
-            )
-            ev(
-                log_orders, logging.INFO, "orders.submitted",
-                f"{approval.symbol}: bracket entry x{qty} "
-                f"limit {limit} stop {approval.stop_price} "
-                f"target {approval.target_price} ({client_id})",
-                symbol=approval.symbol, order=client_id,
-            )
-            approval.qty = qty
-            approval.limit_price = limit
-            self._resolve_approval(approval, "approved", None)
-            session.commit()
         self._notify({"approvals", "decisions", "positions", "orders", "header", "attention"})
         return {"ok": True}
 
@@ -1434,6 +1440,21 @@ class Executor:
         price = (order.filled_avg_price * order.filled_qty - sum(
             (fill.price * fill.qty for fill in recorded_value), Decimal(0)
         )) / delta
+        # The marginal price derives from a shifting cumulative average;
+        # a non-positive or far-off value means the inputs don't line up
+        # — store the broker's average and say so, never a nonsense fill.
+        if (
+            price <= 0
+            or abs(price - order.filled_avg_price)
+            > order.filled_avg_price / 4
+        ):
+            ev(
+                logger, logging.WARNING, "executor.marginal_fill_price",
+                f"{row.symbol}: marginal fill price {price} implausible "
+                f"for avg {order.filled_avg_price} — storing the average",
+                symbol=row.symbol, order=row.alpaca_order_id,
+            )
+            price = order.filled_avg_price
         session.add(
             Fill(
                 order_id=row.id,
@@ -2651,6 +2672,7 @@ class Executor:
             today = self.calendar.session_for(ny_now.date())
             moo = today is None or not (today.open <= ny_now <= today.close)
             session.commit()
+            # One slot, send through store (rule 16).
             with self._order_slot():
                 result = await self.broker.submit_market_sell(
                     symbol=position.symbol,
@@ -2660,20 +2682,21 @@ class Executor:
                         "breach", position.id, position.symbol
                     ),
                 )
-            if result.error is not None or result.data is None:
-                report.errors.append(
-                    f"stop_breached {position.symbol}: {result.error}"
-                )
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="protective_stop_failed",
-                    details={"symbol": position.symbol, "error": result.error},
-                    affects="order",
-                )
-                return None
-            self._store_broker_order(session, result.data, None, leg="exit")
+                if result.error is not None or result.data is None:
+                    report.errors.append(
+                        f"stop_breached {position.symbol}: {result.error}"
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="protective_stop_failed",
+                        details={"symbol": position.symbol, "error": result.error},
+                        affects="order",
+                    )
+                    return None
+                self._store_broker_order(session, result.data, None, leg="exit")
+                session.flush()
             record_event(
                 session,
                 self.clock,
@@ -2787,6 +2810,7 @@ class Executor:
                 )
                 return Decimal(0)
             target = position.target_price or stop
+            # One slot, send through store (rule 16).
             with self._order_slot():
                 result = await self.broker.submit_oco_exit(
                     symbol=position.symbol,
@@ -2844,20 +2868,21 @@ class Executor:
                         ),
                     )
                     repaired_by = "stop"
-            if result.error is not None or result.data is None:
-                report.errors.append(
-                    f"protective stop {position.symbol}: {result.error}"
-                )
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="protective_stop_failed",
-                    details={"symbol": position.symbol, "error": result.error},
-                    affects="order",
-                )
-                return None
-            self._store_broker_order(session, result.data, None, leg="stop")
+                if result.error is not None or result.data is None:
+                    report.errors.append(
+                        f"protective stop {position.symbol}: {result.error}"
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="protective_stop_failed",
+                        details={"symbol": position.symbol, "error": result.error},
+                        affects="order",
+                    )
+                    return None
+                self._store_broker_order(session, result.data, None, leg="stop")
+                session.flush()
             gap = (self.clock.now() - unprotected_since).total_seconds()
             ev(
                 log_reconcile, logging.CRITICAL,
@@ -2895,6 +2920,7 @@ class Executor:
             return Decimal(0)
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
+        # One slot, send through store (rule 16).
         with self._order_slot():
             result = await self.broker.submit_stop_order(
                 symbol=position.symbol,
@@ -2904,23 +2930,24 @@ class Executor:
                     "stop", position.id, position.symbol
                 ),
             )
-        if result.error is not None or result.data is None:
-            report.errors.append(
-                f"protective stop {position.symbol}: {result.error}"
-            )
-            record_event(
-                session,
-                self.clock,
-                level="critical",
-                event_type="protective_stop_failed",
-                details={
-                    "symbol": position.symbol,
-                    "error": result.error,
-                },
-                affects="order",
-            )
-            return None
-        self._store_broker_order(session, result.data, None, leg="stop")
+            if result.error is not None or result.data is None:
+                report.errors.append(
+                    f"protective stop {position.symbol}: {result.error}"
+                )
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="protective_stop_failed",
+                    details={
+                        "symbol": position.symbol,
+                        "error": result.error,
+                    },
+                    affects="order",
+                )
+                return None
+            self._store_broker_order(session, result.data, None, leg="stop")
+            session.flush()
         report.protective_stops.append(position.symbol)
         record_event(
             session,
@@ -3360,6 +3387,9 @@ class Executor:
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)
         session.commit()  # hard rule 13
+        # The slot stays held from send through store+commit: rule 16
+        # forbids cutting an order submission between sending and
+        # storing the answer.
         with self._order_slot():
             submitted = await self.broker.submit_bracket_entry(
                 symbol=decision.symbol,
@@ -3369,38 +3399,40 @@ class Executor:
                 target_price=_cents(Decimal(str(target))),
                 client_order_id=client_id,
             )
-        if submitted.error is not None or submitted.data is None:
-            # Never resent: reconciliation decides what Alpaca did.
-            recovered = await self.broker.get_order_by_client_id(client_id)
-            if recovered.error is None and recovered.data is not None:
-                self._store_broker_order(
-                    session, recovered.data, decision.id
-                )
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="order_recovered",
-                    details={
-                        "symbol": decision.symbol,
-                        "client_order_id": client_id,
-                    },
-                )
-            else:
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="order_submit_failed",
-                    details={
-                        "symbol": decision.symbol,
-                        "client_order_id": client_id,
-                        "error": submitted.error,
-                    },
-                )
-            session.flush()
-            return
-        self._store_broker_order(session, submitted.data, decision.id)
+            if submitted.error is not None or submitted.data is None:
+                # Never resent: reconciliation decides what Alpaca did.
+                recovered = await self.broker.get_order_by_client_id(client_id)
+                if recovered.error is None and recovered.data is not None:
+                    self._store_broker_order(
+                        session, recovered.data, decision.id
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="order_recovered",
+                        details={
+                            "symbol": decision.symbol,
+                            "client_order_id": client_id,
+                        },
+                    )
+                else:
+                    decision.final_action = "blocked"
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="order_submit_failed",
+                        details={
+                            "symbol": decision.symbol,
+                            "client_order_id": client_id,
+                            "error": submitted.error,
+                        },
+                    )
+                session.commit()
+                return
+            self._store_broker_order(session, submitted.data, decision.id)
+            session.commit()
         self._notify({"positions", "orders", "decisions", "header"})
 
     async def _tighten(
@@ -3513,30 +3545,33 @@ class Executor:
                 decision.validation_result = validation
             session.flush()
             return
+        # One slot, send through store+commit (rule 16).
         with self._order_slot():
             result = await self.broker.replace_stop(
                 stop_row.alpaca_order_id, stop_price=_cents(new_stop)
             )
-        if result.error is not None or result.data is None:
-            # Never resent; reconciliation will repair or alert.
-            record_event(
-                session,
-                self.clock,
-                level="critical",
-                event_type="order_submit_failed",
-                details={
-                    "symbol": position.symbol,
-                    "order": stop_row.alpaca_order_id,
-                    "error": result.error,
-                },
+            if result.error is not None or result.data is None:
+                # Never resent; reconciliation will repair or alert.
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="order_submit_failed",
+                    details={
+                        "symbol": position.symbol,
+                        "order": stop_row.alpaca_order_id,
+                        "error": result.error,
+                    },
+                )
+                session.flush()
+                return
+            stop_row.status = "replaced"
+            stop_row.active_until = _naive_utc(self.clock.now())
+            self._store_broker_order(
+                session, result.data, stop_row.decision_id, leg="stop"
             )
-            session.flush()
-            return
-        stop_row.status = "replaced"
-        stop_row.active_until = _naive_utc(self.clock.now())
-        self._store_broker_order(session, result.data, stop_row.decision_id, leg="stop")
-        position.current_stop_price = _cents(new_stop)
-        session.flush()
+            position.current_stop_price = _cents(new_stop)
+            session.commit()
         self._notify({"positions", "orders"})
 
     async def _ensure_dead(
@@ -3730,6 +3765,8 @@ class Executor:
             )
             session.flush()
             return
+        # One slot, send through store+commit: rule 16 forbids cutting
+        # an order submission between sending and storing the answer.
         with self._order_slot():
             sold = await self.broker.submit_market_sell(
                 symbol=position.symbol,
@@ -3739,22 +3776,24 @@ class Executor:
                     "exit", position.id, position.symbol
                 ),
             )
-        if sold.error is not None or sold.data is None:
-            record_event(
-                session,
-                self.clock,
-                level="critical",
-                event_type="order_submit_failed",
-                details={
-                    "symbol": position.symbol,
-                    "error": sold.error,
-                },
-                affects="order",
+            if sold.error is not None or sold.data is None:
+                record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="order_submit_failed",
+                    details={
+                        "symbol": position.symbol,
+                        "error": sold.error,
+                    },
+                    affects="order",
+                )
+                session.flush()
+                return
+            self._store_broker_order(
+                session, sold.data, decision.id, leg="exit"
             )
-            session.flush()
-            return
-        self._store_broker_order(session, sold.data, decision.id, leg="exit")
-        session.flush()
+            session.commit()
         if reason == "earnings_exit":
             self._notifier.notify(
                 "exit_deferred_or_earnings_exit",
