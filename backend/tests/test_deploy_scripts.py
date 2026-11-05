@@ -14,29 +14,36 @@ DEPLOY = ROOT / "deploy" / "deploy.sh"
 RESTORE = ROOT / "deploy" / "restore.sh"
 PROVISION = ROOT / "deploy" / "provision.sh"
 
-_GUARD = r"""
-market_hours_now() {
-    local now="${SA_DEPLOY_NOW:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}"
-    TZ=America/New_York date -d "$now" '+%u %H%M'
-}
-read -r weekday hhmm <<<"$(market_hours_now)"
-if (( weekday <= 5 )) && (( 10#$hhmm >= 930 && 10#$hhmm < 1600 )); then
-    echo BLOCK
-else
-    echo ok
-fi
-"""
-
-
-def _guard(at: str) -> str:
+def _extract_guard() -> str:
+    """The real market_hours_now + check_market_hours definitions,
+    lifted out of deploy/deploy.sh — the test exercises the script's
+    own code, so a broken or weakened guard fails here."""
     out = subprocess.run(
-        ["bash", "-c", _GUARD],
-        env={"SA_DEPLOY_NOW": at, "PATH": "/usr/bin:/bin"},
+        [
+            "sed", "-n",
+            "/^market_hours_now()/,/^}/p; /^check_market_hours()/,/^}/p",
+            str(DEPLOY),
+        ],
         capture_output=True,
         text=True,
         check=True,
     )
-    return out.stdout.strip()
+    assert "check_market_hours" in out.stdout
+    return out.stdout
+
+
+def _guard(at: str, extra_env: dict[str, str] | None = None) -> int:
+    """Exit status of the script's check_market_hours: 0 = allowed."""
+    script = (
+        'die() { echo "$*" >&2; exit 1; }\n'
+        + _extract_guard()
+        + "\ncheck_market_hours\n"
+    )
+    env = {"SA_DEPLOY_NOW": at, "PATH": "/usr/bin:/bin", **(extra_env or {})}
+    out = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True
+    )
+    return out.returncode
 
 
 # 26 Oct – 1 Nov 2026: EU moved to winter time on 25 Oct, the US stays
@@ -44,19 +51,25 @@ def _guard(at: str) -> str:
 @pytest.mark.parametrize(
     ("at", "expect"),
     [
-        ("2026-10-30T13:29:00Z", "ok"),      # Fri 09:29 EDT — just before
-        ("2026-10-30T13:30:00Z", "BLOCK"),   # Fri 09:30 EDT
-        ("2026-10-30T19:59:00Z", "BLOCK"),   # Fri 15:59 EDT
-        ("2026-10-30T20:00:00Z", "ok"),      # Fri 16:00 EDT
-        ("2026-11-02T14:29:00Z", "ok"),      # Mon 09:29 EST (US on winter now)
-        ("2026-11-02T14:30:00Z", "BLOCK"),   # Mon 09:30 EST
-        ("2026-11-02T20:59:00Z", "BLOCK"),   # Mon 15:59 EST
-        ("2026-11-02T21:00:00Z", "ok"),      # Mon 16:00 EST
-        ("2026-11-01T16:00:00Z", "ok"),      # Sunday — no session
+        ("2026-10-30T13:29:00Z", 0),  # Fri 09:29 EDT — just before
+        ("2026-10-30T13:30:00Z", 1),  # Fri 09:30 EDT
+        ("2026-10-30T19:59:00Z", 1),  # Fri 15:59 EDT
+        ("2026-10-30T20:00:00Z", 0),  # Fri 16:00 EDT
+        ("2026-11-02T14:29:00Z", 0),  # Mon 09:29 EST (US on winter now)
+        ("2026-11-02T14:30:00Z", 1),  # Mon 09:30 EST
+        ("2026-11-02T20:59:00Z", 1),  # Mon 15:59 EST
+        ("2026-11-02T21:00:00Z", 0),  # Mon 16:00 EST
+        ("2026-11-01T16:00:00Z", 0),  # Sunday — no session
     ],
 )
-def test_market_hours_guard(at: str, expect: str) -> None:
+def test_market_hours_guard(at: str, expect: int) -> None:
     assert _guard(at) == expect
+
+
+@pytest.mark.parametrize("extra", [{"EMERGENCY": "1"}, {"SA_DEPLOY_GUARD": "0"}])
+def test_market_hours_guard_bypasses(extra: dict[str, str]) -> None:
+    """--emergency and SA_DEPLOY_GUARD=0 both skip the block."""
+    assert _guard("2026-11-02T14:30:00Z", extra) == 0
 
 
 def test_deploy_script_uses_ny_timezone_not_fixed_offset() -> None:
