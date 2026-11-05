@@ -143,7 +143,7 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 **Entries**
 
 - Every entry is a bracket order: limit buy entry, stop-loss leg, take-profit leg. Time-in-force `gtc` so the stop and target survive overnight.
-- **Market price.** On the free data plan the IEX quote is one small exchange's book, so it is not used as the market price. The market price is the IEX last trade, which must be at most 60 seconds old (`execution.quote_max_age_seconds`, judged on the trade's own timestamp, never the fetch time) and within 1% (`execution.quote_max_deviation_pct`) of the last closed 5-min bar's close. A missing or older trade is `price_stale`; a trade further from the bar is `price_suspect`; either means no model call and no entry. Held positions are always reviewed; for them a stale or suspect price only blocks a tighten_stop. For a tighten the trade may be up to 5 minutes old (`execution.tighten_quote_max_age_seconds`, 300), because a stop move only lowers risk and IEX trades in quieter names are often 2–7 minutes apart; the 1% bar check still applies. A tighten blocked this way becomes `hold` shown as changed by code with reason `price_stale` or `price_suspect` (drawer, feed and inspector), like the break-even guard.
+- **Market price.** On the free data plan the IEX quote is one small exchange's book, so it is not used as the market price. The market price is the IEX last trade, which must be at most 60 seconds old (`execution.quote_max_age_seconds`, judged on the trade's own timestamp, never the fetch time) and within 1% (`execution.quote_max_deviation_pct`) of the last closed 5-min bar's close. A missing or older trade is `price_stale`; a trade further from the bar is `price_suspect`; either means no model call and no entry. Held positions are always reviewed; for them a stale or suspect price only blocks a tighten_stop. For a tighten the trade may be up to 5 minutes old (`execution.tighten_quote_max_age_seconds`, 300), because a stop move only lowers risk and IEX trades in quieter names are often 2–7 minutes apart; the 1% bar check still applies. A tighten blocked this way becomes `hold` shown as changed by code with reason `price_stale` or `price_suspect` (drawer, feed and inspector), like the break-even guard. The block happens before the model is asked: with a stale or suspect price the held snapshot's `stop_options` is empty with the reason ("price stale: no stop moves this cycle"), and `stop_reference_price` is null. A tighten can't be chosen, so a stored decision never flips from tighten to hold for this reason; the order-time check stays as a backstop.
 - **IEX bid and ask** are used only when plausible: both present, timestamped, and within 1% of the market price. A thin IEX book (a side missing or further away) is recorded as `spread_unknown` and is not a reason to skip.
 - Entry limit = market price + 0.05%. If not filled within 10 minutes, cancel it and record "entry not filled".
 - Skip the entry if the IEX spread is above 0.15% of price, measured only when the quote is plausible. With `spread_unknown` the entry may go ahead: the limit caps what can be paid and the universe is liquid.
@@ -154,7 +154,13 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 **Managing positions**
 
 - Moving a stop (for example to break-even) replaces the stop leg in place. Stops only ever move in the position's favour.
-- An agent exit cancels the open legs first, then sends a market sell. Confirm the legs are cancelled before selling, so the position can never be sold twice.
+- An agent exit (and an earnings exit) first confirms the position's quantity at Alpaca. Then it cancels the open legs, confirms they are cancelled, and sends a market sell for the confirmed quantity. The position can never be sold twice, and the legs are never cancelled while the quantity is unknown.
+- **Held-back exits.** When an exit can't be completed (the quantity can't be confirmed, a leg cancel isn't confirmed, or the sell is refused), the exit is stored as pending on the position, with its reason, decision and time.
+  - At every 15-minute position check and every cycle, code tries the pending exit again before anything else.
+  - If the legs are already gone and the exit still can't be sent, the protective stop is placed as for any position without a stop. The exit stays pending.
+  - After 3 failed tries, or when the session ends with an exit still pending, a critical Needs you item says so ("KO exit held back since 15:46: quantity not confirmed"). Outside the session the retry uses market-on-open, as today.
+  - An earnings exit still pending at the close is critical at once: the position would be held through the report.
+  - A pending exit clears when the position is flat at Alpaca or the sell fills.
 - Stop orders trigger only during regular hours. A gap through the stop fills at the open price; the GUI shows that slippage separately.
 
 **Reconciliation**
@@ -949,7 +955,7 @@ The risk rules don't change: no threshold is lowered to let more trades through.
   - A target is kept only when reward to risk is at least `decision.min_reward_risk` (1.5). Close targets are merged the same way.
   - Each target lists `levels_in_way`: the level ids strictly between `L` and the target.
 - **Option list.**
-  - At most `decision.options.max_options` (6), lettered A–F: by stop, nearest first, then by reward to risk.
+  - At most `decision.options.max_options` (6), lettered A–F: by stop, nearest first, then by reward to risk, lowest first. So option A has the nearest stop and the nearest target, and the pre-score of entry selection sizes that option.
   - Each option has id, stop, stop_basis (for example "0.1 ATR below L8, 1h swing low 13 Oct 14:30" or "2.0 × ATR"), stop_atr, target, target_basis, rr, risk per share and levels_in_way.
   - If no option exists, no model call is made: the decision is stored as `no_call` with the new reason `no_options` and the reason why (for example "nearest swing low 1.1 ATR away; daily swing low 4.7 ATR away; no target with rr ≥ 1.5").
 - **Constraints block.** The snapshot also gets `constraints` (atr_1h, entry_limit, allowed stop range, min_rr), so the model sees the rules the options already meet.
@@ -1599,7 +1605,7 @@ When more entries pass than there are free slots, today the first ones in rank o
 **Steps in a cycle** (`expected_profit` only):
 
 1. **Held positions first,** as today: their model calls run and their exits and stop moves are carried out before any entry is chosen, so a slot freed by an exit is available in the same cycle.
-2. **Pre-score and call order.** For every candidate that passed the rules and has a usable market price, code builds the options (decision.v2 and v3) and sizes the first option with the shared sizing function. The pre-score is the dollars at risk of that size; it is what one R of this trade is worth after the max-position cap. Candidates are called in pre-score order, ties by rank; the call cap of 10 applies to that order. decision.v1 candidates have no options and keep rank order.
+2. **Pre-score and call order.** For every candidate that passed the rules and has a usable market price, code builds the options (decision.v2 and v3) and sizes the first option with the shared sizing function. The pre-score is the dollars at risk of that size; it is what one R of this trade is worth after the max-position cap. Candidates are called in pre-score order, ties by rank; the call cap of 10 applies to that order. The cap counts real model calls only, as in rank mode. A candidate that ends without a call (no options, a price check, the trend gate) uses no slot, and the walk goes on to the next one until 10 calls are made or the list ends. decision.v1 candidates have no options and keep rank order.
 3. **Collect.** All candidate model calls of the cycle run first and nothing is submitted yet. Calls may run concurrently within the existing rate limiter and call cap. Each answer is validated as today.
 4. **Score each enter** that passed validation and a dry run of the entry gates against the cycle's starting state:
    - break-even `be` = 1 ÷ (1 + R/R) of the chosen option;
@@ -1658,7 +1664,8 @@ Decision v4 keeps everything v3 does (options, checks, room filter, break-even m
 **Snapshot v4** (decision.v4 strategies only; v1–v3 snapshots unchanged):
 - **`previous_decision`**: the model's last decision on this symbol in the current session, or null.
   - It holds the cycle time, action, option id, `best_option_id`, confidence, conflicts and price.
-  - It also holds `since`, the facts code computed: the price move in ATR, which checks changed (name: old → new), headline ids that are new since then, and levels that are new within 1 ATR.
+  - It also holds `since`, the facts code computed: the price move in ATR, which checks changed (name: old → new), headline ids that are new since then, and levels that are new within `decision.v4.near_level_atr` (1.0) ATR. The same key sets the distance for the path-claim check.
+  - The prompts say "1 ATR" in words. Changing the key therefore needs a new prompt version, and startup warns when the config and the prompt version disagree.
 - **Headlines:**
   - each headline gains `about_symbol`, true when its title names the company or its ticker (the name from the pool or config);
   - at most `decision.v4.max_headlines` (12), the most recent first;
@@ -1794,6 +1801,7 @@ Decision v5 keeps everything v4 does and changes the following. Built as PR 37; 
 **Counterfactual touches** (every strategy, from PR 37). Missed opportunities can't be measured today: options removed by the room filter are stored as an id and a reason only, and candidates stopped by the rules pre-filter or a gate get no options at all.
 - Removed options are stored in full (stop, target, rr, basis, reason).
 - For every candidate stopped before the model by the rules pre-filter, the trend gate or the price checks, code builds the options anyway, with no model call. It stores them with the reason that stopped the candidate.
+- When the quote gives no stop reference (a price check failed), these counterfactual options use min(market price, last closed 5-minute bar close), for every prompt version with code-built options (v2–v5). The fallback never reaches an offered option, a model call or an order. The stored `stop_reference_price` stays null.
 - All of these get option touches like offered options.
 - Insights and the replay report gain "What each filter removed": per filter (each rules check, room, trend gate, the ev gate, spread, slots), the count, how many options reached the target first or the stop first, and the R they would have made.
 - Code-only and cheap: bars are already stored. Shadows and backtests do the same.
@@ -1818,7 +1826,7 @@ Decision v5 keeps everything v4 does and changes the following. Built as PR 37; 
   - `base_rate` and `base_n` (see Base rates).
 - **Position** (held):
   - `price_vs_signal`: (price − signal bar close) ÷ ATR, rounded to 2. The checks are made on the last completed 1-hour bar, so this shows a move they don't show yet;
-  - in `thesis_holds`, a fifth comparable check, `price_vs_ema20`. It counts as adverse when the price is now below the 1-hour EMA 20 and `price_vs_signal` ≤ −0.5.
+  - in `thesis_holds`, a fifth comparable check, `price_vs_ema20`. It counts as adverse when the price is now below the 1-hour EMA 20 and `price_vs_signal` ≤ −`decision.v5.price_vs_signal_adverse_atr` (0.5).
 - **Previous decision:**
   - only from the same context (candidate or held);
   - `final_action` and `change_reason` added, so a blocked enter doesn't look like a position.
