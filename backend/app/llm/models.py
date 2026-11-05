@@ -88,10 +88,22 @@ def known_model(config: ConfigLike, model: str) -> bool:
 
 
 def model_provider(config: ConfigLike, model: str) -> str:
-    """``openai`` or ``anthropic``; legacy entries read as OpenAI."""
-    entry = model_entry(config, model) or {}
+    """``openai`` or ``anthropic``; legacy entries read as OpenAI.
+
+    An unknown provider or a model missing from the table silently
+    resolving to OpenAI misroutes calls — warn so the typo is visible.
+    """
+    entry = model_entry(config, model)
+    if entry is None:
+        if model:
+            logger.warning("model %r is not in the models list; treating as openai", model)
+        return "openai"
     provider = entry.get("provider")
-    return str(provider) if provider in PROVIDERS else "openai"
+    if provider in PROVIDERS:
+        return str(provider)
+    if provider is not None:
+        logger.warning("model %r has unknown provider %r; treating as openai", model, provider)
+    return "openai"
 
 
 def provider_label(provider: str) -> str:

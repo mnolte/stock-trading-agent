@@ -1852,6 +1852,17 @@ def validate_model_output_v4(
 
     # --- warnings, never gates (docs/SPEC.md, Decision v4 — Code checks)
     warnings: list[str] = []
+    # Cited headlines must be ones the snapshot actually offered — a
+    # phantom id would sit in the audit trail as if it were read.
+    offered_ids = {
+        str(h.get("id"))
+        for h in (snapshot.get("headlines") or [])
+        if isinstance(h, dict) and h.get("id") is not None
+    }
+    unknown_used = [n for n in output.news_used if str(n.id) not in offered_ids]
+    if unknown_used:
+        warnings.append("news_used_unknown")
+        output.news_used = [n for n in output.news_used if str(n.id) in offered_ids]
     anchor: Decimal | None = None
     if context == "candidate":
         anchor_option = chosen if output.action == "enter" else best
