@@ -642,7 +642,11 @@ class FakeBroker:
         return DataResult(data=self._to_broker_order(rec), source="fake")
 
     async def replace_stop(
-        self, order_id: str, *, stop_price: Decimal
+        self,
+        order_id: str,
+        *,
+        stop_price: Decimal,
+        client_order_id: str | None = None,
     ) -> DataResult[BrokerOrder]:
         self.submit_calls += 1
         if self.fail_writes:
@@ -659,7 +663,7 @@ class FakeBroker:
         rec.status = "replaced"
         new_rec = _OrderRec(
             id=self._next_id(),
-            client_order_id=rec.client_order_id,
+            client_order_id=client_order_id or rec.client_order_id,
             symbol=rec.symbol,
             side=rec.side,
             order_type=rec.order_type,

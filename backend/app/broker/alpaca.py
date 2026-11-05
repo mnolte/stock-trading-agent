@@ -515,9 +515,18 @@ class AlpacaPaperBroker:
             )
 
     async def replace_stop(
-        self, order_id: str, *, stop_price: Decimal
+        self,
+        order_id: str,
+        *,
+        stop_price: Decimal,
+        client_order_id: str | None = None,
     ) -> DataResult[BrokerOrder]:
-        request = ReplaceOrderRequest(stop_price=float(stop_price))
+        # Stamp a fresh client id: Alpaca creates a new order on
+        # replace, and without an id our exit attribution would depend
+        # on restoring the parent link at the next reconcile.
+        request = ReplaceOrderRequest(
+            stop_price=float(stop_price), client_order_id=client_order_id
+        )
         try:
             raw = await self.limiter.run_write(
                 self.trading.replace_order_by_id, order_id, request

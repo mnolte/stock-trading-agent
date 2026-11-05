@@ -20,10 +20,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, object_session, sessionmaker
 
 from app.broker.base import Broker
-from app.broker.client_id import client_order_id, order_instance, order_kind
+from app.broker.client_id import (
+    client_order_id,
+    order_instance,
+    order_kind,
+    safe_instance,
+)
 from app.broker.models import (
     OPEN_ORDER_STATUSES,
     BrokerAccount,
@@ -572,7 +577,9 @@ class Executor:
                         client_order_id=self._client_id("exit", 0, pos.symbol),
                     )
                     if result.error is not None or result.data is None:
-                        errors.append(f"{pos.symbol}: {result.error}")
+                        errors.append(
+                            f"{pos.symbol}: {result.error or 'submit failed'}"
+                        )
                         rejected.append(pos.symbol)
                         # Never refused, never retried: the position keeps
                         # its stop (re-placed by the reconcile below) and
@@ -686,7 +693,11 @@ class Executor:
     ) -> None:
         # A resolved approval stays resolved: expire_pending or a reject
         # that landed while this call was in flight is never overwritten
-        # back to a live outcome.
+        # back to a live outcome. Re-read the row — the status may have
+        # changed since the in-flight check.
+        bound = object_session(approval)
+        if bound is not None:
+            bound.refresh(approval)
         if approval.status != "pending":
             return
         approval.status = status
@@ -1283,9 +1294,7 @@ class Executor:
         an ``sa-`` prefix and our own ids never trip it. Once per order.
         """
         other = order_instance(order.client_order_id)
-        own = "".join(
-            c for c in str(self.config.env.sa_instance_id) if c.isalnum()
-        )
+        own = safe_instance(self.config.env.sa_instance_id)
         if other is None or other == own:
             return None
         existing = session.execute(
@@ -2267,7 +2276,7 @@ class Executor:
                 Order.alpaca_order_id == order.parent_alpaca_order_id
             )).scalar_one_or_none()
             client_id = parent.client_order_id if parent else None
-        own = "".join(c for c in str(self.config.env.sa_instance_id) if c.isalnum())
+        own = safe_instance(self.config.env.sa_instance_id)
         return order_kind(client_id) is not None and order_instance(client_id) == (own or None)
 
     def _close_position(
@@ -2469,22 +2478,25 @@ class Executor:
                         "stop", position.id, bp.symbol
                     ),
                 )
-            if result.error is not None or result.data is None:
-                placed = None
-                report.errors.append(
-                    f"adopted stop {bp.symbol}: {result.error}"
-                )
-                record_event(
-                    session,
-                    self.clock,
-                    level="critical",
-                    event_type="protective_stop_failed",
-                    details={"symbol": bp.symbol, "error": result.error},
-                    affects="order",
-                )
-            else:
-                self._store_broker_order(session, result.data, None, leg="stop")
-                placed = Decimal(bp.qty)
+                if result.error is not None or result.data is None:
+                    placed = None
+                    report.errors.append(
+                        f"adopted stop {bp.symbol}: {result.error}"
+                    )
+                    record_event(
+                        session,
+                        self.clock,
+                        level="critical",
+                        event_type="protective_stop_failed",
+                        details={"symbol": bp.symbol, "error": result.error},
+                        affects="order",
+                    )
+                else:
+                    self._store_broker_order(
+                        session, result.data, None, leg="stop"
+                    )
+                    placed = Decimal(bp.qty)
+                session.commit()
         report.adopted.append(bp.symbol)
         self._mismatch(
             session, report, f"{bp.symbol}: adopted {bp.qty} shares",
@@ -2570,7 +2582,15 @@ class Executor:
         live_sells: list[tuple[BrokerOrder, str]] = []
         for order in orders_r.data or []:
             for leg in (order, *order.legs):
-                if leg.is_open and leg.side == "sell" and leg.symbol == position.symbol:
+                # "held" legs are a working entry's nested stop/target —
+                # inactive until the parent fills, they hold no shares
+                # and cancelling their parent would kill a live buy.
+                if (
+                    leg.is_open
+                    and leg.status != "held"
+                    and leg.side == "sell"
+                    and leg.symbol == position.symbol
+                ):
                     live_sells.append((leg, order.id))
         # Never sell more than is held (and a position already sold in
         # full is exiting, not uncovered).
@@ -2670,7 +2690,7 @@ class Executor:
             # (MOO outside the session) — the only sale a check may make.
             ny_now = self.clock.now().astimezone(NY_TZ)
             today = self.calendar.session_for(ny_now.date())
-            moo = today is None or not (today.open <= ny_now <= today.close)
+            moo = today is None or not (today.open <= ny_now < today.close)
             session.commit()
             # One slot, send through store (rule 16).
             with self._order_slot():
@@ -2748,12 +2768,20 @@ class Executor:
                 row = session.execute(
                     select(Order).where(Order.alpaca_order_id == cancel_id)
                 ).scalar_one_or_none()
-                if row is not None and final is not None:
-                    row.status = final.status
-                    if row.active_until is None:
-                        row.active_until = _naive_utc(
-                            final.updated_at or self.clock.now()
-                        )
+                if row is not None:
+                    if final is not None:
+                        row.status = final.status
+                        if row.active_until is None:
+                            row.active_until = _naive_utc(
+                                final.updated_at or self.clock.now()
+                            )
+                    else:
+                        # No record at the broker — it cannot fill, so
+                        # mark it dead rather than leaving a phantom
+                        # open row behind its now-canceled legs.
+                        row.status = "canceled"
+                        if row.active_until is None:
+                            row.active_until = _naive_utc(self.clock.now())
                 # A confirmed-dead parent takes its nested legs down with
                 # it: mark the leg rows terminal too, else they read as
                 # live until the next order refresh (~15 min).
@@ -2772,6 +2800,9 @@ class Executor:
                                     (final.updated_at if final else None)
                                     or self.clock.now()
                                 )
+                # Release the write lock before the next leg's broker
+                # calls (hard rule 13).
+                session.commit()
             session.commit()
             # A confirmed cancel is not a released hold: Alpaca keeps
             # held_for_orders for a moment and queued fills can still
@@ -3548,7 +3579,11 @@ class Executor:
         # One slot, send through store+commit (rule 16).
         with self._order_slot():
             result = await self.broker.replace_stop(
-                stop_row.alpaca_order_id, stop_price=_cents(new_stop)
+                stop_row.alpaca_order_id,
+                stop_price=_cents(new_stop),
+                client_order_id=self._client_id(
+                    "stop", position.id, position.symbol
+                ),
             )
             if result.error is not None or result.data is None:
                 # Never resent; reconciliation will repair or alert.
@@ -3588,16 +3623,23 @@ class Executor:
         The market sell must never go out before every leg is confirmed
         done (docs/SPEC.md, Exits).
         """
+        def missing(error: str | None) -> bool:
+            return bool(error) and (
+                "404" in error or "not found" in error.lower()
+            )
+
         checked = await self.broker.get_order(order_id)
         if checked.error is not None:
-            return False, None, None
+            # A broker 404 is not an unconfirmed read — the order
+            # provably cannot fill, so it counts as dead.
+            return (True, None, None) if missing(checked.error) else (False, None, None)
         if checked.data is not None and checked.data.is_open:
             cancelled = await self.broker.cancel_order(order_id)
             if cancelled.error is not None:
                 return False, None, cancelled.error
             checked = await self.broker.get_order(order_id)
             if checked.error is not None:
-                return False, None, None
+                return (True, None, None) if missing(checked.error) else (False, None, None)
         order = checked.data
         if order is None:
             return True, None, None
@@ -3736,12 +3778,28 @@ class Executor:
         elif self.state.broker_guard_confirmed:
             sell_qty = position.qty
         else:
+            # Nothing re-drives this decision: the exit only happens
+            # if a later decision says exit again. Same severity as the
+            # still-held path below — the trade fell out silently.
             ev(
                 logger, logging.WARNING, "executor.exit_unconfirmed_qty",
                 f"{position.symbol}: exit held back — position qty "
-                f"could not be confirmed ({rel_error}); retrying "
-                "at the next position check",
+                f"could not be confirmed ({rel_error})",
                 symbol=position.symbol,
+            )
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="exit_unconfirmed_qty",
+                details={
+                    "symbol": position.symbol,
+                    "message": (
+                        "exit held back — broker position could not "
+                        f"be confirmed ({rel_error})"
+                    ),
+                },
+                affects="order",
             )
             session.flush()
             return

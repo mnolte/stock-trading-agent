@@ -20,6 +20,17 @@ KINDS = frozenset({"entry", "stop", "target", "exit", "breach"})
 _INSTANCE_SAFE = re.compile(r"[^a-zA-Z0-9]")
 
 
+def safe_instance(instance: str) -> str:
+    """The instance segment exactly as ``client_order_id`` stores it.
+
+    Alphanumeric only and clamped to 10 chars — the 48-char Alpaca cap
+    makes the instance the only unbounded segment. Every own-vs-foreign
+    comparison must normalize the configured id the same way or own
+    orders read as another instance's.
+    """
+    return _INSTANCE_SAFE.sub("", str(instance))[:10]
+
+
 def client_order_id(instance: str, kind: str, *parts: object) -> str:
     """Build an id: ``sa-<instance>-<kind>-<parts>``.
 
@@ -31,7 +42,7 @@ def client_order_id(instance: str, kind: str, *parts: object) -> str:
         raise ValueError(f"unknown client order id kind: {kind!r}")
     # Alpaca caps client_order_id at 48 chars; the instance is the only
     # unbounded segment, so it is clamped to keep the whole id in range.
-    inst = _INSTANCE_SAFE.sub("", str(instance))[:10]
+    inst = safe_instance(instance)
     if inst.lower() in KINDS:
         # sa-<kind>-<rest> is the pre-instance shape — an instance named
         # like a kind would parse as pre-instance and hide its orders.

@@ -71,9 +71,9 @@ class EnvSettings(BaseSettings):
         """An instance named like an order kind (entry|stop|target|exit|
         breach) would break client-order-id parsing: our own ids would
         read as the pre-instance format and exits would misattribute."""
-        from app.broker.client_id import KINDS
+        from app.broker.client_id import KINDS, safe_instance
 
-        if isinstance(value, str) and value.strip().lower() in KINDS:
+        if isinstance(value, str) and safe_instance(value).lower() in KINDS:
             raise ValueError(
                 f"SA_INSTANCE_ID {value!r} collides with an order kind"
             )
