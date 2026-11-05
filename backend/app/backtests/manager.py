@@ -27,7 +27,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.backtests.store import dir_size, run_dir_for
@@ -249,9 +249,20 @@ class BacktestManager:
                     continue
                 # A child that disappeared, never spawned or whose pid was
                 # recycled — mark it and keep its partial results
-                # (docs/SPEC.md, Process).
-                row.status = "interrupted"
-                row.finished_at = _naive_utc(self.clock.now())
+                # (docs/SPEC.md, Process). Conditional write: a child
+                # that committed its terminal status between the select
+                # and now is not clobbered by our stale row.
+                session.execute(
+                    update(Backtest)
+                    .where(
+                        Backtest.id == row.id,
+                        Backtest.status.in_(ACTIVE_STATUSES),
+                    )
+                    .values(
+                        status="interrupted",
+                        finished_at=_naive_utc(self.clock.now()),
+                    )
+                )
                 session.commit()
             queued = session.execute(
                 select(Backtest)

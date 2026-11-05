@@ -394,6 +394,7 @@ def get_status(session: Session, deps: AskDeps, _args: Any) -> dict[str, Any]:
         try:
             regime = deps.signals.regime(deps.clock.now()).label
         except Exception:  # noqa: BLE001
+            logger.exception("regime read failed")
             regime = "unavailable"
     request = type("R", (), {"app": type("A", (), {"state": _state_ns(deps)})()})()
     attention = build_attention(request)

@@ -100,7 +100,12 @@ class FinnhubEarningsSource:
                 continue
             day = row.get("date")
             if isinstance(day, str):
-                day = date.fromisoformat(day)
+                try:
+                    day = date.fromisoformat(day)
+                except ValueError:
+                    continue  # malformed row — skip like other bad rows
+            if day is None:
+                continue
             hour_raw = str(row.get("hour") or "")
             events.append(
                 EarningsEvent(

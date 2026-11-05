@@ -773,6 +773,9 @@ async def run_backtest(
             bundle.signals.earnings_missing = earnings_src.missing_symbols(symbols)
             _prime_bars(bundle, store, all_days, symbols)
             await bundle.market_data.refresh_earnings(run.start, run.end)
+            await bundle.market_data.refresh_corporate_actions(
+                run.start, run.end
+            )
             bundles.append(bundle)
 
         final = await _run_sessions(

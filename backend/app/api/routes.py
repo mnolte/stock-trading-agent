@@ -140,6 +140,7 @@ def _regime_label(request: Request) -> str:
     try:
         return signals.regime(signals.clock.now()).label
     except Exception:  # noqa: BLE001
+        logger.exception("regime read failed")
         return "unavailable"
 
 
@@ -408,7 +409,12 @@ def list_decisions(
     filters = [Cycle.scheduled_time >= start_utc, Cycle.scheduled_time < end_utc]
     if cycle is not None:
         try:
-            cycle_at = datetime.fromisoformat(cycle).astimezone(UTC).replace(tzinfo=None)
+            parsed = datetime.fromisoformat(cycle)
+            cycle_at = (
+                parsed.replace(tzinfo=UTC)
+                if parsed.tzinfo is None
+                else parsed.astimezone(UTC)
+            ).replace(tzinfo=None)
         except ValueError:
             raise HTTPException(status_code=422, detail="bad cycle timestamp") from None
         filters = [Cycle.scheduled_time == cycle_at]
@@ -908,7 +914,7 @@ def _keys_issue(request: Request) -> str | None:
     for what, (model, provider) in uses.items():
         if not store.provider_ok(provider):
             needed.setdefault(provider, []).append(
-                f"{what.capitalize()} use{'s' if what == 'live decisions' else 's'} "
+                f"{what.capitalize()} use{'s' if not what.endswith('s') else ''} "
                 f"{model}: add the {provider_label(provider)} key or choose another model"
             )
     for provider in sorted(needed):
@@ -1256,7 +1262,12 @@ async def positions(request: Request) -> dict[str, object]:
         earnings_map = {symbol: d.date() for symbol, d in earnings_next}
         closed_today = session.execute(
             select(Position)
-            .where(Position.closed_at.is_not(None))
+            .where(
+                Position.closed_at.is_not(None),
+                Position.closed_at >= datetime.combine(
+                    today_ny, dtime.min, tzinfo=NY_TZ
+                ).astimezone(UTC).replace(tzinfo=None),
+            )
             .order_by(Position.closed_at.desc())
         ).scalars().all()
         closed_today = [

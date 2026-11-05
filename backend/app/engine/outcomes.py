@@ -430,9 +430,9 @@ class OutcomeWorker:
         decision_time: datetime,
         end: datetime,
         shared_limit: Any,
-        traded_id: str | None,
-        traded_touch: str | None,
-        row_label: str,
+        traded_id: str | None = None,
+        traded_touch: str | None = None,
+        row_label: str = "",
     ) -> dict[str, object] | None:
         """First stop/target touch per offered option; the one scan both
         the live and the shadow fill use (docs/SPEC.md, Option outcomes).
@@ -463,8 +463,11 @@ class OutcomeWorker:
             oid = str(raw_id)
             if oid == traded_id:
                 # The traded option's touch is real, not a bar replay —
-                # while the position is still open it stays NULL and
-                # the row retries until the true touch is known.
+                # while the position is still open the whole row waits:
+                # returning None keeps the column NULL and retries next
+                # pass instead of freezing a guess.
+                if traded_touch is None:
+                    return None
                 touches[oid] = traded_touch
                 continue
             entry = option.get("entry_limit", option.get("entry"))
@@ -579,8 +582,11 @@ class OutcomeWorker:
             row_label=f"decision {decision.id}",
         )
         if touches is None:
-            # Bars missing — stay NULL so a later bar top-up retries.
+            # Bars missing or the traded option's real touch still
+            # unknown — stay NULL so a later pass retries.
             return False
+        # A null touch inside the dict is a terminal verdict (no limit
+        # to test, unparseable price) — persist it, never a guessed fill.
         outcome.option_touches = touches
         return None not in touches.values()
 
@@ -623,8 +629,8 @@ class OutcomeWorker:
             decision_time=decision_time,
             end=end,
             shared_limit=shared_limit,
-            traded_id=row.chosen_option,
-            traded_touch=None,
+            # A shadow never really traded — the chosen option gets the
+            # same counterfactual scan as the rest.
             row_label=f"shadow {row.id}",
         )
         if touches is None:

@@ -503,8 +503,9 @@ async def run_server_checks(ops: Any) -> None:
     try:
         ops.check_disk()
         await ops.check_clock()
-        ops.check_cert()
-        ops.check_backups()
+        # The TLS handshake can block up to 10 s — keep it off the loop.
+        await asyncio.to_thread(ops.check_cert)
+        await asyncio.to_thread(ops.check_backups)
     except Exception:  # noqa: BLE001
         logger.exception("server checks failed")
 

@@ -30,7 +30,7 @@ from time import monotonic
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
@@ -491,10 +491,13 @@ class ShadowRunner:
                             ShadowDecision.strategy_id == strategy.id,
                             ShadowDecision.cycle_id == cycle_id,
                         )
+                        # Null the link, don't delete the call — those
+                        # requests were real and cost real money; the
+                        # audit and monthly spend stay correct.
                         session.execute(
-                            delete(LlmCall).where(
-                                LlmCall.shadow_decision_id.in_(stale_ids)
-                            )
+                            update(LlmCall)
+                            .where(LlmCall.shadow_decision_id.in_(stale_ids))
+                            .values(shadow_decision_id=None)
                         )
                         session.execute(
                             delete(ShadowDecision).where(

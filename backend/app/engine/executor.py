@@ -2598,8 +2598,9 @@ class Executor:
                 # held leg under a filled parent is real protection
                 # (Alpaca keeps it held even after the fill).
                 if leg.status == "held" and (
-                    leg is order
-                    or (order.is_open and order.filled_qty == 0)
+                    leg is not order
+                    and order.is_open
+                    and order.filled_qty == 0
                 ):
                     continue
                 if (

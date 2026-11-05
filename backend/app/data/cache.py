@@ -7,7 +7,7 @@ from itertools import batched
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.data.models import Bar1h, Bar5m, CalendarDay, DailyBar
@@ -115,7 +115,27 @@ class BarCache:
             ]
             if new_rows:
                 session.execute(insert(Bar5mRow), new_rows)
-                session.commit()
+            # Existing rows get refreshed too — SIP revises bars and the
+            # newest session is refetched while it is still forming; an
+            # insert-only store would keep the stale row forever.
+            for b, sym, start in keyed:
+                if (sym, start) in existing:
+                    session.execute(
+                        update(Bar5mRow)
+                        .where(
+                            Bar5mRow.symbol == sym,
+                            Bar5mRow.start == start,
+                        )
+                        .values(
+                            open=b.open,
+                            high=b.high,
+                            low=b.low,
+                            close=b.close,
+                            volume=b.volume,
+                            feed=b.feed,
+                        )
+                    )
+            session.commit()
             return len(new_rows)
 
     def prune_5m(self, before: datetime) -> int:
@@ -196,7 +216,23 @@ class BarCache:
             ]
             if new_rows:
                 session.execute(insert(Bar1dRow), new_rows)
-                session.commit()
+            for b in bars:
+                if (b.symbol, b.date) in existing:
+                    session.execute(
+                        update(Bar1dRow)
+                        .where(
+                            Bar1dRow.symbol == b.symbol,
+                            Bar1dRow.date == b.date,
+                        )
+                        .values(
+                            open=b.open,
+                            high=b.high,
+                            low=b.low,
+                            close=b.close,
+                            volume=b.volume,
+                        )
+                    )
+            session.commit()
             return len(new_rows)
 
     def count_daily(self, symbol: str) -> int:

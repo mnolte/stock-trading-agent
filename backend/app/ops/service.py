@@ -120,7 +120,9 @@ class OpsService:
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.get(url)
-            return response.status_code < 500
+            # 4xx is a miss too — a wrong URL returning 404 must not
+            # read as a live heartbeat.
+            return response.status_code < 400
         except httpx.HTTPError:
             return False
 
