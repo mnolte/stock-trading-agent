@@ -376,19 +376,15 @@ def _funnel(
     call_cap = no_call("call_cap")
     price_blocked = sum(no_call(r) for r in _PRICE_REASONS) + price_gated
     no_options = no_call("no_options")
-    # Reached the model (call attempted): every candidate not lost to the
-    # pre-call reasons above.
-    called = passed_rules - call_cap - price_blocked - no_options
-
     called_rows = [
+        # Rows where the model was actually asked: every no_call is a
+        # pre-call loss (rules, cap, price, checks…) except model_error,
+        # which is a call that failed. Filtering by name would let a new
+        # reason (e.g. reference_missing) misread as invalid output.
         d
         for d in candidates
-        if not (
-            d.final_action == "no_call"
-            and d.no_call_reason
-            in ("rules", "call_cap", "no_options", *_PRICE_REASONS)
-        )
-        and not (d.final_action == "blocked" and d.gate in _PRICE_REASONS)
+        if d.final_action != "no_call" or d.no_call_reason == "model_error"
+        if not (d.final_action == "blocked" and d.gate in _PRICE_REASONS)
     ]
     proposed = [d for d in called_rows if d.model_action == "enter"]
     model_skips = sum(1 for d in called_rows if d.model_action == "skip")
@@ -398,6 +394,10 @@ def _funnel(
         if d.final_action == "no_call" and d.no_call_reason == "model_error"
     )
     invalid = len(called_rows) - len(proposed) - model_skips - model_errors
+    # Reached the model (call attempted): every candidate not lost to the
+    # pre-call reasons above.
+    called = len(called_rows)
+    other_pre_call = passed_rules - call_cap - price_blocked - no_options - called
 
     passed_checks = [d for d in proposed if d.final_action != "skip"]
     check_losses: dict[str, int] = {}
@@ -444,6 +444,7 @@ def _funnel(
                 ("call cap", call_cap),
                 ("price checks", price_blocked),
                 ("no options", no_options),
+                *([("other pre-call", other_pre_call)] if other_pre_call else []),
             ],
         ),
         step(
@@ -514,6 +515,8 @@ def _dimension_values(
     dte = trade.days_to_earnings
     if dte is None:
         dte_key = "none scheduled" if trade.earnings_known else None
+    elif dte <= 3:
+        dte_key = "0–3 days"
     elif dte <= 10:
         dte_key = "4–10 days"
     elif dte <= 20:
@@ -676,7 +679,6 @@ def _slices(
     """Per dimension: one row per slice with its sample status, plus the
     findings list across all dimensions."""
     rs = _scored_rs(trades)
-    list(rs.values())
 
     strength_edges = _tercile_edges(
         [t.rs_vs_spy_pct for t in trades if t.rs_vs_spy_pct is not None]
