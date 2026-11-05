@@ -25,7 +25,6 @@ from app.data.cache import _naive_utc
 from app.db.models import LLMCache
 from app.market.clock import Clock
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -62,8 +61,7 @@ class LLMCacheStore:
                 select(LLMCache).where(
                     LLMCache.provider == provider,
                     LLMCache.model == model,
-                    LLMCache.effort.is_(None) if effort is None
-                    else LLMCache.effort == effort,
+                    LLMCache.effort.is_(None) if effort is None else LLMCache.effort == effort,
                     LLMCache.temperature == (temperature or 0),
                     # prompt_version joins the key: two prompt files can
                     # share a hash (identical text) while promising a
@@ -122,8 +120,10 @@ class LLMCacheStore:
                 # identical, so dropping ours is safe but not silent.
                 session.rollback()
                 logger.debug(
-                    "llm_cache store skipped: duplicate key "
-                    "(%s %s %s)", provider, model, prompt_version
+                    "llm_cache store skipped: duplicate key (%s %s %s)",
+                    provider,
+                    model,
+                    prompt_version,
                 )
 
 
@@ -146,8 +146,7 @@ def cache_hit_count(
             select(func.count(LLMCache.id)).where(
                 LLMCache.provider == provider,
                 LLMCache.model == model,
-                LLMCache.effort.is_(None) if effort is None
-                else LLMCache.effort == effort,
+                LLMCache.effort.is_(None) if effort is None else LLMCache.effort == effort,
                 LLMCache.temperature == temperature,
                 LLMCache.prompt_hash == prompt_hash,
                 LLMCache.cycle_time >= _naive_utc(start),

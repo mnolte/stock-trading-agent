@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-05 — [043] Trading path audit fixes
+
+- Exits and flatten now sell only broker-released shares (`qty_available` after `_await_released`) — a confirmed cancel is not a released hold, and a market sell against held shares was rejected, stalling the exit. Blocked sells now raise a critical event instead of vanishing, and flatten records a failed `cancel_all_orders`.
+- The protective repair fails on a broken open-orders read instead of treating it as "no live sells", marks nested leg rows dead with their parent, and surfaces a negative broker qty as a critical mismatch in adoption and coverage instead of pretending a sell stop covers a short.
+- `orders.alpaca_order_id` is now unique (migration merges any duplicates): two writers could grow a duplicate and crash every later reconcile. `submitted_at` is populated. `approve()` is single-flight, re-checks status before the send, resolves a broker-recovered order as approved, and never overwrites a terminal status. `Position.closed_at` is the exit fill time, not detection time.
+- Every order call holds the shutdown slot from send through store+commit (rule 16), and `_enter` marks an unrecovered submit failure `blocked`. Marginal fill prices are clamped to the broker average when the derivation is implausible.
+- Live and shadow option touches share one scan: the shadow copy had inverted entry precedence, no malformed-input guards and a divergent window. Rows with missing bars stay NULL and retry instead of being frozen by a tombstone. Weekend/holiday decisions get session targets. After-exit windows fetch one price basis when a split is in play instead of double-adjusting; `_initial_stop` resolves v2+ decisions so R metrics work again; blocked model-enters get verdicts; a `price: 0` snapshot no longer crashes the review run; the rank-order last-slot floor matches the optimal search.
+- Smaller fixes: LLM cache key gains `prompt_version`; WS frames over 64 KiB are refused; `/chart` and `/dashboard` validate tickers; backtest list reads are capped; `SA_INSTANCE_ID` rejects order-kind words at startup; a mid-strategy shadow failure rolls back partial rows; several silent `except` paths now log.
+
 ## 2026-11-05 — [042] Backend test audit fixes
 
 - The startup route-coverage walk (`app/auth/guard.py`) now expands lazily included routers — under this FastAPI version it previously saw none of the API surface, so a router included outside `/api` would have shipped unguarded without the check firing. The session-walk test asserts it actually checked routes.
