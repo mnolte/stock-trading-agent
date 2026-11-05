@@ -185,13 +185,16 @@ class OutcomeWorker:
             if self.calendar is not None
             else None
         )
-        if session is None:
-            return targets
+        # A decision taken outside a session (weekend, holiday, a gap in
+        # the calendar) still gets session targets — counted from the
+        # trading days strictly after its date, else the fields would
+        # stay null and the row would rescan forever.
+        base_day = session.date if session is not None else decision_ny.date()
         for n, fields in (
             (1, ("price_1session", "price_1session_at")),
             (5, ("price_5sessions", "price_5sessions_at")),
         ):
-            later = self._session_n_after(session.date, n)
+            later = self._session_n_after(base_day, n)
             if later is None:
                 continue
             target_ny = datetime.combine(
@@ -377,71 +380,47 @@ class OutcomeWorker:
         session.flush()
         return report
 
-    def _fill_option_touches(
+    def _option_touches(
         self,
-        session: Session,
-        decision: Decision,
-        outcome: Outcome,
+        options_raw: list[dict[str, Any]],
+        *,
+        symbol: str,
         decision_time: datetime,
-    ) -> bool:
-        """First stop/target touch per offered option (docs/SPEC.md, Option
-        outcomes). True when every option got a non-null verdict.
+        end: datetime,
+        shared_limit: Any,
+        traded_id: str | None,
+        traded_touch: str | None,
+        row_label: str,
+    ) -> dict[str, object] | None:
+        """First stop/target touch per offered option; the one scan both
+        the live and the shadow fill use (docs/SPEC.md, Option outcomes).
 
         Rules: the entry_limit must be reached inside a 10-minute window
         from the decision ("not_filled" otherwise); bars after the fill bar
         decide, and a bar touching both counts as a stop touch. The traded
-        option uses the real fill and the stored ``first_touch``.
+        option uses the real fill and the stored ``first_touch`` when one
+        is passed.
 
         The limit is one value per decision: stored options carry no
-        per-option entry, so it comes from the snapshot's constraints or
-        an option's ``stop + risk`` (the stored risk is limit − stop).
+        per-option entry, so it comes from the option, then the snapshot's
+        constraints, then an option's ``stop + risk`` (the stored risk is
+        limit − stop). Returns None when the bars are missing — the
+        caller must leave the column NULL so the row is retried, never
+        write a tombstone that drops it from the backfill scan.
         """
-        if outcome.option_touches is not None:
-            return True
-        column = decision.options or {}
-        # Offered and removed options both get a verdict — the
-        # counterfactual touches (docs/SPEC.md, Decision v5) measure
-        # what each filter removed. Old-format removed entries carry
-        # only {id, reason} and stay null.
-        options_raw: list[dict[str, Any]] = []
-        for key in ("options", "removed"):
-            entries = column.get(key)
-            if isinstance(entries, list):
-                options_raw += [o for o in entries if isinstance(o, dict)]
-        if not options_raw:
-            # No offered options → nothing to record; marking it done
-            # keeps the row out of the backfill scan.
-            outcome.option_touches = {}
-            return True
         assert self.market_data is not None  # noqa: S101 - internal invariant
-        if outcome.price_5sessions_at is None:
-            return False
-        end = _aware_utc(outcome.price_5sessions_at) + timedelta(minutes=5)
-        bars = self.market_data.get_5m_bars(decision.symbol, decision_time, end)
+        bars = self.market_data.get_5m_bars(symbol, decision_time, end)
         if not bars:
-            outcome.option_touches = {
-                str(o.get("id") or o.get("option_id")): None
-                for o in options_raw
-                if isinstance(o, dict)
-            }
-            return False
-        snapshot = decision.input_snapshot
-        constraints = (
-            snapshot.get("constraints") if isinstance(snapshot, dict) else None
-        )
-        shared_limit = (
-            constraints.get("entry_limit")
-            if isinstance(constraints, dict)
-            else None
-        )
+            return None
         # ``get_5m_bars`` returns bars in start order already.
-        traded_id = decision.chosen_option
         touches: dict[str, object] = {}
-        all_filled = True
         for option in options_raw:
-            oid = str(option.get("id") or option.get("option_id"))
-            if oid == traded_id and outcome.first_touch is not None:
-                touches[oid] = outcome.first_touch
+            raw_id = option.get("id") or option.get("option_id")
+            if raw_id is None:
+                continue
+            oid = str(raw_id)
+            if oid == traded_id and traded_touch is not None:
+                touches[oid] = traded_touch
                 continue
             entry = option.get("entry_limit", option.get("entry"))
             stop = option.get("stop")
@@ -460,12 +439,11 @@ class OutcomeWorker:
                 target_d = (
                     Decimal(str(target)) if target is not None else None
                 )
-            except InvalidOperation:
+            except (InvalidOperation, ValueError):
                 logger.warning(
-                    "option %s touch left null: unparseable price "
-                    "(decision %d)",
+                    "option %s touch left null: unparseable price (%s)",
                     oid,
-                    decision.id,
+                    row_label,
                 )
                 limit = stop_d = target_d = None
             if (
@@ -477,7 +455,6 @@ class OutcomeWorker:
                 or not target_d.is_finite()
             ):
                 touches[oid] = None
-                all_filled = False
                 continue
             fill_index: int | None = None
             for index, bar in enumerate(bars):
@@ -502,18 +479,70 @@ class OutcomeWorker:
                     touch = _TOUCH_TARGET
                     break
             touches[oid] = touch
+        return touches
+
+    def _fill_option_touches(
+        self,
+        session: Session,
+        decision: Decision,
+        outcome: Outcome,
+        decision_time: datetime,
+    ) -> bool:
+        """First stop/target touch per offered option; True when every
+        option got a non-null verdict."""
+        if outcome.option_touches is not None:
+            return True
+        column = decision.options or {}
+        # Offered and removed options both get a verdict — the
+        # counterfactual touches (docs/SPEC.md, Decision v5) measure
+        # what each filter removed. Old-format removed entries carry
+        # only {id, reason} and stay null.
+        options_raw: list[dict[str, Any]] = []
+        for key in ("options", "removed"):
+            entries = column.get(key)
+            if isinstance(entries, list):
+                options_raw += [o for o in entries if isinstance(o, dict)]
+        if not options_raw:
+            # No offered options → nothing to record; marking it done
+            # keeps the row out of the backfill scan.
+            outcome.option_touches = {}
+            return True
+        if outcome.price_5sessions_at is None:
+            return False
+        end = _aware_utc(outcome.price_5sessions_at) + timedelta(minutes=5)
+        snapshot = decision.input_snapshot
+        constraints = (
+            snapshot.get("constraints") if isinstance(snapshot, dict) else None
+        )
+        shared_limit = (
+            constraints.get("entry_limit")
+            if isinstance(constraints, dict)
+            else None
+        )
+        touches = self._option_touches(
+            options_raw,
+            symbol=decision.symbol,
+            decision_time=decision_time,
+            end=end,
+            shared_limit=shared_limit,
+            traded_id=decision.chosen_option,
+            traded_touch=outcome.first_touch,
+            row_label=f"decision {decision.id}",
+        )
+        if touches is None:
+            # Bars missing — stay NULL so a later bar top-up retries.
+            return False
         outcome.option_touches = touches
-        return all_filled
+        return None not in touches.values()
 
     def _fill_shadow_touches(
         self,
         row: ShadowDecision,
         decision_time: datetime,
-        end: datetime,
+        five_target: datetime,
     ) -> bool:
         """Counterfactual touches for one shadow decision — the same
         bar scan as the live fill (docs/SPEC.md, Decision v5)."""
-        assert self.market_data is not None  # noqa: S101 - internal invariant
         column = row.options or {}
         raw: list[dict[str, Any]] = []
         for key in ("options", "removed"):
@@ -523,56 +552,30 @@ class OutcomeWorker:
         if not raw:
             row.option_touches = {}
             return True
-        bars = self.market_data.get_5m_bars(
-            row.symbol, decision_time, end + timedelta(minutes=5)
-        )
-        if not bars:
-            row.option_touches = {
-                str(o.get("id")): None for o in raw if o.get("id") is not None
-            }
-            return False
+        # Same window as the live fill: through the close of the bar
+        # that supplied the 5-session price, not the nominal target —
+        # with a data gap the two can be sessions apart.
+        price_bar = self._price_at(row.symbol, five_target)
+        if price_bar is None:
+            return False  # bars missing — stay NULL, retry next pass
+        end = _aware_utc(price_bar.start) + timedelta(minutes=5)
         snapshot = row.input_snapshot or {}
         constraints = snapshot.get("constraints") or {}
         shared_limit = constraints.get("entry_limit")
-        touches: dict[str, object] = {}
-        all_filled = True
-        for option in raw:
-            oid = str(option.get("id"))
-            if option.get("id") is None:
-                continue
-            entry = shared_limit or option.get("entry_limit")
-            stop = option.get("stop")
-            target = option.get("target")
-            if entry is None and stop is not None and option.get("risk") is not None:
-                entry = Decimal(str(stop)) + Decimal(str(option["risk"]))
-            limit = Decimal(str(entry)) if entry is not None else None
-            stop_d = Decimal(str(stop)) if stop is not None else None
-            target_d = Decimal(str(target)) if target is not None else None
-            if limit is None or stop_d is None or target_d is None:
-                touches[oid] = None
-                all_filled = False
-                continue
-            fill_index: int | None = None
-            for index, bar in enumerate(bars):
-                if bar.start - decision_time > timedelta(minutes=10):
-                    break
-                if bar.low <= limit:
-                    fill_index = index
-                    break
-            if fill_index is None:
-                touches[oid] = "not_filled"
-                continue
-            touch = _TOUCH_NEITHER
-            for bar in bars[fill_index + 1 :]:
-                if bar.low <= stop_d:
-                    touch = _TOUCH_STOP
-                    break
-                if bar.high >= target_d:
-                    touch = _TOUCH_TARGET
-                    break
-            touches[oid] = touch
+        touches = self._option_touches(
+            raw,
+            symbol=row.symbol,
+            decision_time=decision_time,
+            end=end,
+            shared_limit=shared_limit,
+            traded_id=row.chosen_option,
+            traded_touch=None,
+            row_label=f"shadow {row.id}",
+        )
+        if touches is None:
+            return False
         row.option_touches = touches
-        return all_filled
+        return None not in touches.values()
 
     def _update_best_worst(
         self, session: Session, position: Position, now: datetime
