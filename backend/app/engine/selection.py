@@ -187,43 +187,65 @@ def choose(
 
     # The rank-order comparison: the same entries, walked best rank
     # first, each taken when it still fits — today's behaviour.
-    rank_cash = budget.cash
-    rank_risk = budget.open_risk_used
-    rank_sectors: dict[str, int] = dict(budget.sector_counts)
-    rank_total = Decimal(0)
-    rank_keys: list[str] = []
-    slots = 0
-    for entry in sorted(pool, key=_rank_key):
-        if slots >= budget.free_slots or slots >= budget.orders_left:
-            break
-        if entry.sector is None:
-            continue
-        if rank_sectors.get(entry.sector, 0) >= budget.sector_cap:
-            continue
-        if (
-            budget.last_slot_min_ev_r is not None
-            and slots == budget.free_slots - 1
-            and entry.expected_r < budget.last_slot_min_ev_r
-        ):
-            continue
-        sizing = position_size(
-            budget.equity,
-            entry.entry,
-            entry.stop,
-            cash=rank_cash,
-            current_open_risk=rank_risk,
-            config=config,
-            risk_factor=risk_factor,
+    def rank_walk(
+        candidates: list[ScoredEntry],
+    ) -> tuple[Decimal, list[str], list[ScoredEntry]]:
+        rank_cash = budget.cash
+        rank_risk = budget.open_risk_used
+        rank_sectors: dict[str, int] = dict(budget.sector_counts)
+        total = Decimal(0)
+        keys: list[str] = []
+        taken: list[ScoredEntry] = []
+        for entry in sorted(candidates, key=_rank_key):
+            if len(taken) >= budget.free_slots or len(taken) >= budget.orders_left:
+                break
+            if entry.sector is None:
+                continue
+            if rank_sectors.get(entry.sector, 0) >= budget.sector_cap:
+                continue
+            if (
+                budget.last_slot_min_ev_r is not None
+                and len(taken) == budget.free_slots - 1
+                and entry.expected_r < budget.last_slot_min_ev_r
+            ):
+                continue
+            sizing = position_size(
+                budget.equity,
+                entry.entry,
+                entry.stop,
+                cash=rank_cash,
+                current_open_risk=rank_risk,
+                config=config,
+                risk_factor=risk_factor,
+            )
+            if sizing.shares < 1:
+                continue
+            risk = entry.entry - entry.stop
+            rank_risk += sizing.shares * risk
+            rank_cash -= sizing.shares * entry.entry
+            rank_sectors[entry.sector] = rank_sectors.get(entry.sector, 0) + 1
+            taken.append(entry)
+            keys.append(entry.key)
+            total += entry.expected_r * sizing.shares * risk
+        return total, keys, taken
+
+    # Same last-slot rule as the optimal search: a set filling every
+    # free slot needs its weakest member to clear the floor, not just
+    # the entry that happened to land in the last slot. Drop the
+    # weakest and re-walk without it so a below-floor entry can't hide
+    # in an earlier slot.
+    excluded: set[str] = set()
+    while True:
+        rank_total, rank_keys, taken = rank_walk(
+            [e for e in pool if e.key not in excluded]
         )
-        if sizing.shares < 1:
-            continue
-        risk = entry.entry - entry.stop
-        rank_risk += sizing.shares * risk
-        rank_cash -= sizing.shares * entry.entry
-        rank_sectors[entry.sector] = rank_sectors.get(entry.sector, 0) + 1
-        slots += 1
-        rank_keys.append(entry.key)
-        rank_total += entry.expected_r * sizing.shares * risk
+        if (
+            budget.last_slot_min_ev_r is None
+            or len(taken) < budget.free_slots
+            or min(e.expected_r for e in taken) >= budget.last_slot_min_ev_r
+        ):
+            break
+        excluded.add(min(taken, key=lambda e: e.expected_r).key)
 
     chosen = (
         tuple(sorted(best_subset, key=lambda e: -e.expected_profit))
