@@ -99,18 +99,18 @@ def test_ble001_catches_uncommented(tmp_path: Path) -> None:
     assert result.returncode != 0
 
 
-def _capture() -> tuple[list[logging.LogRecord], logging.Logger]:
+def _capture() -> tuple[list[logging.LogRecord], logging.Logger, logging.Handler]:
     """Attach a real handler to the `app` logger for hook/spawn tests."""
     records: list[logging.LogRecord] = []
     handler = logging.StreamHandler()
     handler.emit = records.append  # type: ignore[method-assign, assignment]
     target = logging.getLogger("app")
     target.addHandler(handler)
-    return records, target
+    return records, target, handler
 
 
 def test_spawn_logs_failure() -> None:
-    records, target = _capture()
+    records, target, handler = _capture()
     try:
         async def boom() -> None:
             raise RuntimeError("task exploded")
@@ -131,7 +131,7 @@ def test_spawn_logs_failure() -> None:
 def test_thread_hook_logs() -> None:
     loop = asyncio.new_event_loop()
     install_global_hooks(loop)
-    records, target = _capture()
+    records, target, handler = _capture()
     old_sys_hook, old_thread_hook = sys.excepthook, threading.excepthook
     try:
         def die() -> None:

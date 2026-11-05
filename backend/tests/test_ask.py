@@ -17,7 +17,8 @@ from app.db.models import AskMessage, AskThread, LlmCall, Position
 from app.llm.fake import FakeModelClient
 from app.market.clock import FakeClock
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text as sqla_text
+from sqlalchemy import select
+from sqlalchemy import text as sqla_text
 from sqlalchemy.orm import Session, sessionmaker
 
 NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)

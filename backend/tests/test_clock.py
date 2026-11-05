@@ -88,7 +88,7 @@ def test_session_cycles_follow_ny_offset_across_dst() -> None:
         )
         for d in (date(2026, 10, 30), date(2026, 11, 2))
     ]
-    for session, expect_utc in zip(days, (14, 15)):
+    for session, expect_utc in zip(days, (14, 15), strict=True):
         config = AppConfig().overlay(
             {"schedule": {"cycles": ["10:46"], "position_checks": []}}
         )

@@ -13,7 +13,7 @@ Usage (from backend/, after e2e_seed, with the e2e env):
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -67,7 +67,11 @@ def _sessions() -> list[date]:
 def _ny_open(day: date) -> datetime:
     from app.market.clock import NY_TZ
 
-    return datetime(day.year, day.month, day.day, 9, 30, tzinfo=NY_TZ).astimezone(UTC).replace(tzinfo=None)
+    return (
+        datetime(day.year, day.month, day.day, 9, 30, tzinfo=NY_TZ)
+        .astimezone(UTC)
+        .replace(tzinfo=None)
+    )
 
 
 def _seed_strategy_db(

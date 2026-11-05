@@ -169,7 +169,7 @@ def seed_v2_decision() -> None:
                         {"name": "risk per trade", "passed": True, "detail": "0.80% equity"},
                         {"name": "open risk", "passed": True, "detail": "1.9% of 3%"},
                         {"name": "positions", "passed": True, "detail": "2 of 5"},
-                                                {"name": "daily loss", "passed": True, "detail": "-0.2% of -2%"},
+                        {"name": "daily loss", "passed": True, "detail": "-0.2% of -2%"},
                     ],
                     "sizing": {"shares": 4, "limited_by": []},
                 },

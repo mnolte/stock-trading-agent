@@ -36,6 +36,17 @@ def _rec(
     return record
 
 
+@pytest.fixture(autouse=True)
+def _clear_client_error_times() -> Generator[None, None, None]:
+    """Module-global sender buckets leak between files under xdist —
+    clear before and after (security/test_client_logs does the same)."""
+    import app.api.routes as routes
+
+    routes._client_error_times.clear()
+    yield
+    routes._client_error_times.clear()
+
+
 def test_index_writes_and_queries(tmp_path: Path) -> None:
     db = tmp_path / "logs.db"
     handler = LogIndexHandler(db)

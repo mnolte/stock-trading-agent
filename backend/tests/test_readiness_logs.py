@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from app.market.clock import NY_TZ
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +15,7 @@ from app.db.base import get_session_maker
 from app.db.models import LogReview
 from app.log_index import LogIndexHandler
 from app.market.calendar import WeekdayCalendarProvider
+from app.market.clock import NY_TZ
 from sqlalchemy.orm import Session
 
 
