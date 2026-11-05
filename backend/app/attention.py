@@ -129,7 +129,7 @@ def build_attention(request: Request) -> dict[str, Any]:
             .where(
                 Event.acknowledged_at.is_(None),
                 Event.event_type.in_(
-                    ("reconciliation", "protective_stop", "another_instance")
+                    ("reconciliation", "protective_stop", "another_instance", "pending_exit")
                 ),
             )
             .order_by(Event.id.desc())
@@ -150,6 +150,12 @@ def build_attention(request: Request) -> dict[str, Any]:
                         event.time,
                     )
                 )
+            elif event.event_type == "pending_exit":
+                items.append(_item(
+                    "banner_ack", "critical", str(details.get("message", "Exit pending")),
+                    "Check the position and orders at Alpaca.", "Acknowledge",
+                    "/positions", event.time,
+                ))
             elif event.event_type == "protective_stop":
                 items.append(
                     _item(

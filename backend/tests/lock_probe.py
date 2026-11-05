@@ -22,8 +22,12 @@ class LockProbe:
         self._inner = inner
         self._db_path = db_path
         self.violations: list[str] = []
+        # Every probed call, in order — lets a test assert the probe
+        # really ran (a zero-call run proves nothing).
+        self.calls: list[str] = []
 
     def _check(self, method: str) -> None:
+        self.calls.append(method)
         conn = sqlite3.connect(self._db_path, timeout=0)
         try:
             conn.execute("BEGIN IMMEDIATE")

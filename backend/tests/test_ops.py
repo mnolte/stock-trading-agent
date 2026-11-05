@@ -277,3 +277,99 @@ def test_clock_check_failure_marks_offset_unknown(tmp_path: Path) -> None:
     result = asyncio.run(ops.check_clock())
     assert result["offset_ms"] is None
     assert result["level"] == "unknown"
+
+
+def test_clock_check_failure_keeps_strikes(tmp_path: Path) -> None:
+    """A failed check proves nothing either way — it must not reset the
+    strike count, or alternating failure/overshoot never warns."""
+    import asyncio
+    from datetime import timedelta
+
+    from app.data.models import DataResult, MarketClock
+
+    clock_time = NOW + timedelta(seconds=30)
+
+    class _Data:
+        fail = False
+
+        async def fetch_clock(self) -> DataResult[MarketClock | None]:
+            if self.fail:
+                return DataResult(data=None, error="unreachable", source="fake")
+            return DataResult(
+                data=MarketClock(
+                    is_open=True,
+                    timestamp=clock_time,
+                    next_open=NOW,
+                    next_close=NOW,
+                ),
+                source="fake",
+            )
+
+    data = _Data()
+    ops = _ops(tmp_path, data_client=data)
+    assert asyncio.run(ops.check_clock())["strikes"] == 1
+    data.fail = True
+    failed = asyncio.run(ops.check_clock())
+    assert failed["level"] == "unknown"
+    assert failed["strikes"] == 1  # kept, not reset
+    data.fail = False
+    assert asyncio.run(ops.check_clock())["strikes"] == 2
+    assert asyncio.run(ops.check_clock())["level"] == "warning"
+
+
+def test_clock_check_single_over_reports_ok(tmp_path: Path) -> None:
+    """One check over the threshold is a strike, not 'unknown' — the
+    offset was measured fine."""
+    import asyncio
+    from datetime import timedelta
+
+    from app.data.models import DataResult, MarketClock
+
+    class _Data:
+        async def fetch_clock(self) -> DataResult[MarketClock | None]:
+            return DataResult(
+                data=MarketClock(
+                    is_open=True,
+                    timestamp=NOW + timedelta(seconds=30),
+                    next_open=NOW,
+                    next_close=NOW,
+                ),
+                source="fake",
+            )
+
+    ops = _ops(tmp_path, data_client=_Data())
+    result = asyncio.run(ops.check_clock())
+    assert result["strikes"] == 1
+    assert result["level"] == "ok"
+
+
+def test_backup_check_ignores_non_dated_siblings(tmp_path: Path) -> None:
+    """Only `<db>.YYYY-MM-DD` files count — a fresher `.tmp` sibling must
+    not fake freshness."""
+    ops = _ops(tmp_path)
+    get_config().env.sa_db_path = str(tmp_path / "stock-agent.db")
+    backups = tmp_path / "backups"
+    backups.mkdir(exist_ok=True)
+    (backups / "stock-agent.db.tmp").write_text("x")
+    result = ops.check_backups()
+    assert result["local"]["latest"] is None
+    assert result["local"]["level"] == "warning"
+
+
+def test_cert_check_uses_url_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A public URL on a non-443 port must check that port, not 443."""
+    import ssl
+
+    seen: list[tuple[str, int]] = []
+
+    def fake_get_server_certificate(addr: tuple[str, int], timeout: int) -> str:
+        seen.append(addr)
+        raise ssl.SSLError("stop here")
+
+    monkeypatch.setattr(
+        ssl, "get_server_certificate", fake_get_server_certificate
+    )
+    ops = _ops(tmp_path)
+    get_config().env.sa_public_url = "https://stock.example.nl:8443"
+    assert ops.check_cert()["level"] == "unknown"
+    assert seen == [("stock.example.nl", 8443)]

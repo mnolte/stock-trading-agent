@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 import app.config as config_module  # noqa: E402
 
+from tests.helpers import PASSWORD, seed_user  # noqa: E402
+
 
 def _compose() -> dict[str, Any]:
     loaded: dict[str, Any] = yaml.safe_load(
@@ -81,28 +83,6 @@ def test_local_compose_uses_internal_ca_domain() -> None:
 # X-Forwarded-Proto trust rules
 
 
-PASSWORD = "a fourteen char password"
-
-
-def _seed_user() -> str:
-    from datetime import UTC, datetime
-
-    from app.auth.create_user import create_or_reset_user
-    from app.config import get_config
-    from app.db.base import get_session_maker
-    from app.market.clock import FakeClock
-
-    with get_session_maker()() as session:
-        _user, secret, _codes = create_or_reset_user(
-            session,
-            get_config(),
-            FakeClock(datetime.now(UTC)),
-            username="marc",
-            password=PASSWORD,
-        )
-    return secret
-
-
 @pytest.fixture
 def auth_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     def make(
@@ -112,7 +92,7 @@ def auth_env(monkeypatch: pytest.MonkeyPatch) -> Any:
         monkeypatch.setenv("SA_TRUSTED_PROXY", trusted)
         monkeypatch.setenv("SA_PUBLIC_URL", public_url)
         monkeypatch.setattr(config_module, "_config", None)
-        secret = _seed_user()
+        secret, _codes = seed_user()
         from app.api.main import create_app
 
         return create_app(), secret

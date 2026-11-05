@@ -13,44 +13,29 @@ from typing import Any, cast
 import app.config as config_module
 import pytest
 from app.api.main import create_app
-from app.auth.create_user import create_or_reset_user
 from app.auth.passwords import totp_code
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Event, Notification, Secret
-from app.market.clock import FakeClock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-PASSWORD = "a fourteen char password"
+from tests.helpers import csrf_headers, seed_user, sign_in
+
 NOW = datetime(2026, 10, 15, 20, 0, tzinfo=UTC)
 
 
 def _seed() -> str:
-    with get_session_maker()() as session:
-        _u, secret, _codes = create_or_reset_user(
-            session,
-            get_config(),
-            FakeClock(NOW),
-            username="marc",
-            password=PASSWORD,
-        )
-    return secret
+    return seed_user(NOW)[0]
 
 
 def _sign_in(client: TestClient, secret: str, confirm: bool = True) -> None:
-    r1 = client.post("/api/auth/sign-in", json={"password": PASSWORD})
-    assert r1.status_code == 200, r1.text
-    clock: Any = cast(FastAPI, client.app).state.clock
-    r2 = client.post(
-        "/api/auth/code",
-        json={"code": totp_code(secret, clock.now())},
-    )
-    assert r2.status_code == 200, r2.text
+    sign_in(client, secret, advance=False)
     if confirm:
         # Confirm burns the TOTP step like sign-in: the same code cannot
         # be replayed, so confirm uses the next step's code.
+        clock: Any = cast(FastAPI, client.app).state.clock
         r3 = client.post(
             "/api/auth/confirm",
             json={
@@ -58,9 +43,7 @@ def _sign_in(client: TestClient, secret: str, confirm: bool = True) -> None:
                     secret, clock.now() + timedelta(seconds=30)
                 )
             },
-            headers={
-                "X-CSRF-Token": client.cookies.get("sa_csrf") or ""
-            },
+            headers=csrf_headers(client),
         )
         assert r3.status_code == 200, r3.text
 

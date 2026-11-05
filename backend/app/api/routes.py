@@ -1814,6 +1814,7 @@ def banners(request: Request) -> dict[str, object]:
                         "reconciliation",
                         "protective_stop",
                         "position_check_failed",
+                        "pending_exit",
                         "flatten_sell_rejected",
                         "flatten_sell_blocked",
                         "universe_screen_failed",
@@ -1899,6 +1900,16 @@ def banners(request: Request) -> dict[str, object]:
                         "actions": ["open_orders", "acknowledge"],
                     }
                 )
+            elif event.event_type == "pending_exit":
+                items.append({
+                    "id": event.id,
+                    "kind": "pending_exit",
+                    "level": "critical",
+                    "message": str(details.get("message", "Exit pending")),
+                    "details": details,
+                    "time": event.time.replace(tzinfo=UTC).isoformat(),
+                    "actions": ["open_orders", "acknowledge"],
+                })
             elif event.event_type == "flatten_sell_rejected":
                 items.append(
                     {
@@ -3184,6 +3195,9 @@ def _model_key_hint(request: Request, provider: str) -> str:
     if tasks:
         uses.append(" and ".join([", ".join(tasks[:-1]), tasks[-1]])
                   if len(tasks) > 1 else tasks[0])
+    ask_model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
+    if model_provider(config, ask_model) == provider:
+        uses.append("Ask the agent")
     with get_session_maker()() as session:
         strategies = session.execute(
             select(Strategy.name, Strategy.model).where(
@@ -3500,6 +3514,32 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
                 detail=f"{task_names[task]} use{'s' if task != 'verdict' else ''} "
                 f"{model}: pick another model first",
             )
+    ask_model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
+    if model_provider(config, ask_model) == group:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Ask the agent uses {ask_model}: pick another model first",
+        )
+    # A pending settings version promotes at the next cycle — removing
+    # the key it points at would activate a missing-key state.
+    pending = config.pending()
+    if pending is not None:
+        from app.settings_service import _MergedConfig
+
+        view = _MergedConfig(pending)
+        named = [
+            ("live decisions", str(view.get("decision", "model", default=""))),
+            ("Ask the agent", str(view.get("ask", "model", default=""))),
+        ] + [
+            (task_names[task], review_model(view, task)) for task in REVIEW_TASKS
+        ]
+        for what, model in named:
+            if model_provider(view, model) == group:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"pending settings move {what} to {model}: "
+                    "pick another model first",
+                )
     from app.db.models import Strategy
 
     paused: list[str] = []
@@ -5454,7 +5494,7 @@ def api_logs(request: Request) -> dict[str, object]:
     lines = [_log_row(r) for r in rows[:limit]]
     return {
         "lines": lines,
-        "next_cursor": rows[limit][0] if len(rows) > limit else None,
+        "next_cursor": rows[limit - 1][0] if len(rows) > limit else None,
         "index_available": True,
     }
 
@@ -5574,8 +5614,8 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
     from app.db.models import LogReview
 
     review = str(body.get("review") or "")
-    note = str(body.get("note") or "").strip()
-    fingerprint = str(body.get("fingerprint") or "")
+    note = _multi_line(body.get("note"), 4000).strip()
+    fingerprint = _one_line(body.get("fingerprint"), 400)
     if review not in ("expected", "fixed") or not note or not fingerprint:
         raise HTTPException(
             status_code=422, detail="review (expected|fixed), note and fingerprint required"
@@ -5585,8 +5625,8 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
         session.add(
             LogReview(
                 fingerprint=fingerprint,
-                level=str(body.get("level") or "ERROR"),
-                sample=str(body.get("sample") or "")[:400],
+                level=_one_line(body.get("level"), 16) or "ERROR",
+                sample=_multi_line(body.get("sample"), 400),
                 review=review,
                 note=note,
                 reviewed_at=_naive_utc(clock.now()),
@@ -5629,8 +5669,10 @@ def server_status(request: Request) -> dict[str, object]:
             started_at = None
     import os
 
+    from app.db.backup import dated_backups
+
     db = Path(config.env.sa_db_path)
-    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    backups = sorted(dated_backups(db.parent / "backups", db.name))
     return {
         "version": request.app.version,
         "image_tag": os.environ.get("SA_VERSION", ""),
@@ -5679,8 +5721,10 @@ def server_backup_download(request: Request) -> Response:
     if get_config().env.sa_auth != "required":
         raise HTTPException(status_code=404, detail="not on a VPS")
     require_confirmed(request)
+    from app.db.backup import dated_backups
+
     db = Path(get_config().env.sa_db_path)
-    backups = sorted((db.parent / "backups").glob(f"{db.name}.*"))
+    backups = sorted(dated_backups(db.parent / "backups", db.name))
     if not backups:
         raise HTTPException(status_code=404, detail="no backup yet")
     latest = backups[-1]

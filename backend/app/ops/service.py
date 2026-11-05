@@ -25,9 +25,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 
+from app.db.backup import dated_backups
 from app.market.clock import NY_TZ
 from app.ops.offsite import OffsiteError, restore_latest
 from app.ops.urls import UrlRejected, validate_public_https_url
@@ -145,7 +147,7 @@ class OpsService:
 
     def check_disk(self) -> dict[str, Any]:
         usage = shutil.disk_usage(self._config.env.sa_data_dir)
-        pct = round(usage.used * 100 / usage.total, 1)
+        pct = round(usage.used * 100 / usage.total, 1) if usage.total else 0.0
         warn = int(self._config.get("ops", "disk_warn_pct", default=80))
         crit = int(self._config.get("ops", "disk_critical_pct", default=90))
         level = "ok"
@@ -207,14 +209,20 @@ class OpsService:
             self._notify_clock_failure()
         # Half the round-trip is the one-way error budget on the broker
         # timestamp; warn only after 3 consecutive checks over the
-        # threshold so one skewed response does not page Marc.
+        # threshold so one skewed response does not page Marc. A failed
+        # check proves nothing either way — keep the strike count.
         strikes = int(self._status.get("clock_strikes", 0))
         over = offset_ms is not None and offset_ms / 1000 > max_off
-        strikes = strikes + 1 if over else 0
+        if check_failed:
+            level = "unknown"
+        elif over:
+            strikes += 1
+            level = "warning" if strikes >= 3 else "ok"
+        else:
+            strikes = 0
+            level = "ok"
         self._status["clock_strikes"] = strikes
-        level = "ok" if offset_ms is not None and not over else "unknown"
         if over and strikes >= 3 and offset_ms is not None:
-            level = "warning"
             self._notify(
                 "clock_offset",
                 f"clock off by {offset_ms / 1000:.2f}s for {strikes} checks — "
@@ -245,13 +253,16 @@ class OpsService:
         """Days until the public certificate expires (14-day warning)."""
         warn_days = int(self._config.get("ops", "cert_warn_days", default=14))
         public = self._config.env.sa_public_url
-        host = (public.split("://", 1)[-1]).split("/")[0].split(":")[0]
-        if not public.startswith("https://") or not host:
+        parsed = urlparse(public)
+        host = parsed.hostname or ""
+        if parsed.scheme != "https" or not host:
             unknown2: dict[str, Any] = {"expires": None, "days_left": None, "level": "unknown"}
             self._set("cert", unknown2)
             return unknown2
         try:
-            pem = ssl.get_server_certificate((host, 443), timeout=10)
+            pem = ssl.get_server_certificate(
+                (host, parsed.port or 443), timeout=10
+            )
             from cryptography import x509
 
             cert = x509.load_pem_x509_certificate(pem.encode())
@@ -282,7 +293,7 @@ class OpsService:
         stale_hours = int(self._config.get("ops", "backup_stale_hours", default=36))
         db = Path(self._config.env.sa_db_path)
         backups = sorted(
-            (db.parent / "backups").glob(f"{db.name}.*"),
+            dated_backups(db.parent / "backups", db.name),
             key=lambda p: p.stat().st_mtime if p.exists() else 0,
         )
         latest = backups[-1] if backups else None

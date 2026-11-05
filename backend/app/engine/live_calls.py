@@ -61,6 +61,16 @@ class LiveModelHealth:
         self._config = config
         self._secrets = secrets
         self._notify = notify or (lambda topics: None)
+        # Topics waiting for the caller's commit — a WS refetch that
+        # races the commit would otherwise miss the banner change.
+        self._pending_topics: set[str] = set()
+
+    def flush_notifications(self) -> None:
+        """Emit queued notifications; the caller invokes this after the
+        event/state rows commit, never before."""
+        if self._pending_topics:
+            topics, self._pending_topics = self._pending_topics, set()
+            self._notify(topics)
 
     def settle_cycle(
         self, session: Session, calls: list[ModelResponse]
@@ -139,7 +149,7 @@ class LiveModelHealth:
             f"live decisions failing: {provider} {error}",
             provider=provider,
         )
-        self._notify({"banners", "header"})
+        self._pending_topics.update({"banners", "header"})
 
     def _clear(self) -> None:
         state = self._state
@@ -158,4 +168,4 @@ class LiveModelHealth:
             logger, logging.INFO, "cycle.live_decisions_recovered",
             "live decisions recovered — model call succeeded",
         )
-        self._notify({"banners", "header"})
+        self._pending_topics.update({"banners", "header"})

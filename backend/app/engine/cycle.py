@@ -542,7 +542,11 @@ class CycleRunner:
                     logger, logging.INFO, "cycle.end",
                     f"Cycle c-{cycle.id:04d} {report.status} in "
                     f"{(cycle.duration_seconds or 0):.1f}s",
-                    symbols=len(report.decisions),
+                    symbols=session.execute(
+                        select(func.count(func.distinct(Decision.symbol))).where(
+                            Decision.cycle_id == cycle.id
+                        )
+                    ).scalar_one(),
                     calls=report.calls,
                     decisions=len(report.decisions),
                     status=report.status,
@@ -601,6 +605,9 @@ class CycleRunner:
         # broker. A failed reconciliation blocks entries through the gates.
         from app.logging_config import ev
 
+        if self.executor is not None:
+            session.commit()
+            await self.executor.retry_pending_exits()
         if not getattr(self.calendar, "is_loaded", True):
             report.status = "skipped"
             report.errors.append("trading calendar unavailable")
@@ -888,9 +895,13 @@ class CycleRunner:
             # Review items past the cap are recorded without a call — the
             # tail starts where the loop stopped, not at ``max_calls``,
             # since quote-missing candidates never consumed a call slot.
+            dev_pct = self.config.get_decimal(
+                "execution", "quote_max_deviation_pct", default=Decimal(1)
+            )
             for item in reviews[
                 capped_at if capped_at is not None else len(reviews):
             ]:
+                capped_quote = quotes.get(item.symbol)
                 decision = self.decide.record_no_call(
                     session,
                     cycle_id=cycle_id,
@@ -909,9 +920,16 @@ class CycleRunner:
                         position=positions.get(item.symbol),
                         news=None,
                         rank=item.rank,
-                    last_bar=self.market_data.bars_cache.latest(
-                        item.symbol, now - timedelta(minutes=5),
-                    ),
+                        quote=capped_quote,
+                        quote_plausible=(
+                            capped_quote.quote_plausible(dev_pct)
+                            if capped_quote is not None
+                            else False
+                        ),
+                        news_status=self._news_status.get(item.symbol, "failed"),
+                        last_bar=self.market_data.bars_cache.latest(
+                            item.symbol, now - timedelta(minutes=5),
+                        ),
                     ),
                     rules=item.rules,
                     reason="call_cap",
@@ -922,6 +940,7 @@ class CycleRunner:
         if self.model_health is not None:
             self.model_health.settle_cycle(session, call_responses)
             session.commit()
+            self.model_health.flush_notifications()
         self._notify({"decisions", "watchlist", "header", "banners", "performance"})
 
     # ------------------------------------------------------------------
@@ -949,14 +968,21 @@ class CycleRunner:
         from app.logging_config import ev
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
+        price_reason = self._price_reason(item.symbol, quote, now)
         # A candidate outside the prefetched news set can still reach the
         # model call (the call estimate doesn't know about checks/options
-        # no-calls) — fetch its headlines so it never calls blind.
-        if news_map is not None and context == "candidate" and item.symbol not in news_map:
+        # no-calls) — fetch its headlines so it never calls blind. Not
+        # before the price check though: a price-blocked candidate never
+        # calls, so that fetch would be a guaranteed-wasted request.
+        if (
+            news_map is not None
+            and context == "candidate"
+            and price_reason is None
+            and item.symbol not in news_map
+        ):
             extra = await self._fetch_news([item.symbol], now, report)
             if extra:
                 news_map.update(extra)
-        price_reason = self._price_reason(item.symbol, quote, now)
         price = (
             quote.last
             if quote is not None and price_reason is None
@@ -1600,7 +1626,11 @@ class CycleRunner:
             report.decisions.append(decision.id)
             position_of[decision.id] = i + 1
             collected.append({**p, "decision": decision})
+        dev_pct = self.config.get_decimal(
+            "execution", "quote_max_deviation_pct", default=Decimal(1)
+        )
         for item in capped_held + [p["item"] for p in capped]:
+            capped_quote = quotes.get(item.symbol)
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,
@@ -1619,6 +1649,13 @@ class CycleRunner:
                     position=positions.get(item.symbol),
                     news=None,
                     rank=item.rank,
+                    quote=capped_quote,
+                    quote_plausible=(
+                        capped_quote.quote_plausible(dev_pct)
+                        if capped_quote is not None
+                        else False
+                    ),
+                    news_status=self._news_status.get(item.symbol, "failed"),
                     last_bar=self.market_data.bars_cache.latest(
                         item.symbol, now - timedelta(minutes=5),
                     ),

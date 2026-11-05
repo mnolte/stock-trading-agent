@@ -1109,8 +1109,30 @@ async def test_refresh_daily_records_source_gaps(
         },
     ) == {gap_day}
 
-    # A bar that arrives later clears its gap mark.
+    # Recorded gaps count as loaded — a routine refresh only asks for the
+    # still-forming newest session, not the confirmed gap again.
     fake_sources.bars.fetch_daily_bars = original  # type: ignore[method-assign]
+    starts: list[date] = []
+
+    async def spy(symbol: str, start: date, end: date) -> DataResult[list[DailyBar]]:
+        starts.append(start)
+        return await original(symbol, start, end)
+
+    fake_sources.bars.fetch_daily_bars = spy  # type: ignore[method-assign]
+    await service.refresh_daily(date(2026, 10, 15))
+    assert starts == [date(2026, 10, 15)] * len(starts)
+    assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == {gap_day}
+
+    # A gap day lying inside a fetched range still clears its mark when
+    # the bar arrives: drop an earlier cached session so the request
+    # spans the gap.
+    from app.db.models import Bar1d as Bar1dRow
+
+    with session_factory() as session:
+        session.execute(
+            delete(Bar1dRow).where(Bar1dRow.date == date(2026, 10, 9))
+        )
+        session.commit()
     await service.refresh_daily(date(2026, 10, 15))
     assert service.bars_cache.daily_gap_dates("AAPL", {gap_day}) == set()
 
@@ -1151,6 +1173,114 @@ async def test_refresh_daily_refetches_a_mid_range_hole(
 
 # ----------------------------------------------------------------------
 # cycles at scale (docs/SPEC.md, Cycles at scale)
+
+
+async def test_get_1h_range_mixes_stored_recomputed_and_empty_sessions(
+    session_factory: sessionmaker[Session], fake_sources: DataSources,
+) -> None:
+    from app.data.aggregate import aggregate_1h
+
+    service = _service(fake_sources, session_factory)
+    sessions = service.recent_sessions(date(2026, 10, 15), 3)
+    for day in (sessions[0], sessions[2]):
+        await service.refresh_bars(day.open, day.close, symbols=["AAPL"])
+    stored = service.get_1h_bars("AAPL", sessions[0])
+    expected_last = aggregate_1h(
+        "AAPL", service.get_5m_bars("AAPL", sessions[2].open, sessions[2].close), sessions[2]
+    )
+    expected = stored + expected_last
+    assert len(expected) == 14
+    assert service.get_1h_bars_range("AAPL", sessions) == expected
+    # The second call also exercises the stored empty-session fingerprint.
+    assert service.get_1h_bars_range("AAPL", sessions) == expected
+    assert service.get_1h_bars_range("AAPL", []) == []
+
+
+async def test_refresh_history_refetches_mid_range_5m_hole(
+    session_factory: sessionmaker[Session], fake_sources: DataSources,
+) -> None:
+    from app.data.cache import _naive_utc
+    from app.db.models import Bar5m as Bar5mRow
+
+    service = _service(fake_sources, session_factory)
+    today = date(2026, 10, 15)
+    await service.refresh_history(today, symbols=["AAPL"], session_count=5)
+    hole = FakeCalendarSource().session_for(date(2026, 10, 13))
+    assert hole is not None
+    with session_factory() as session:
+        session.execute(delete(Bar5mRow).where(
+            Bar5mRow.start >= _naive_utc(hole.open),
+            Bar5mRow.start < _naive_utc(hole.close),
+        ))
+        session.commit()
+    starts: list[datetime] = []
+    original = fake_sources.bars.fetch_5m_bars
+
+    async def spy(
+        symbols: list[str], start: datetime, end: datetime,
+    ) -> DataResult[list[Bar5m]]:
+        starts.append(start)
+        return await original(symbols, start, end)
+
+    fake_sources.bars.fetch_5m_bars = spy  # type: ignore[method-assign]
+    results = await service.refresh_history(today, symbols=["AAPL"], session_count=5)
+    assert starts == [hole.open.astimezone(UTC)]
+    assert results["AAPL"].error is None
+    assert results["AAPL"].data == 78
+    assert len(service.get_5m_bars("AAPL", hole.open, hole.close)) == 78
+
+
+def test_aggregate_daily_excludes_pre_and_post_market() -> None:
+    from app.data.aggregate import aggregate_daily
+
+    day = FakeCalendarSource().session_for(date(2026, 10, 15))
+    assert day is not None
+    regular = Bar5m("AAPL", day.open, Decimal("100"), Decimal("101"),
+                    Decimal("99"), Decimal("100.5"), 10, "sip")
+    pre = replace(regular, start=day.open - timedelta(minutes=5),
+                  high=Decimal("999"), low=Decimal("1"), volume=999)
+    post = replace(pre, start=day.close)
+    assert aggregate_daily("AAPL", [post, regular, pre], day) == DailyBar(
+        "AAPL", day.date, regular.open, regular.high, regular.low, regular.close, 10
+    )
+    assert aggregate_daily("AAPL", [pre, post], day) is None
+
+
+def test_bars_per_session_skips_holiday() -> None:
+    from app.data.aggregate import bars_per_session
+
+    holiday = date(2026, 12, 25)
+    calendar = FakeCalendarSource(holidays={holiday})
+    before = calendar.session_for(date(2026, 12, 24))
+    after = calendar.session_for(date(2026, 12, 28))
+    assert before is not None and after is not None
+    bar = Bar5m("AAPL", before.open, Decimal("100"), Decimal("101"),
+                Decimal("99"), Decimal("100"), 10, "sip")
+    holiday_bar = replace(bar, start=datetime(2026, 12, 25, 10, tzinfo=NY_TZ))
+    after_bar = replace(bar, start=after.open)
+    assert bars_per_session([after_bar, holiday_bar, bar], [before, after]) == {
+        before.date: [bar], after.date: [after_bar],
+    }
+
+
+async def test_backtest_daily_visibility_exact_close_plus_delay() -> None:
+    from app.backtests.sources import BacktestBarSource
+    from app.backtests.store import bar_store_path, make_bar_store
+    from app.market.clock import FakeClock, SessionClock
+
+    config = AppConfig()
+    store = make_bar_store(bar_store_path(config), config)
+    day = date(2024, 6, 3)
+    bar = DailyBar("AAA", day, Decimal("100"), Decimal("101"),
+                   Decimal("99"), Decimal("100"), 10)
+    store.store_daily([bar])
+    edge = datetime(2024, 6, 3, 16, tzinfo=NY_TZ) + SessionClock.BAR_DELAY
+    clock = FakeClock(edge - timedelta(microseconds=1))
+    source = BacktestBarSource(store, clock)
+    assert (await source.fetch_daily_bars("AAA", day, day)).data == []
+    clock.set(edge)
+    assert (await source.fetch_daily_bars("AAA", day, day)).data == [bar]
+
 
 
 class _CountingBars(FakeBarSource):

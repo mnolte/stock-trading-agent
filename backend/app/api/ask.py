@@ -27,7 +27,7 @@ from app.ask.tools import AskDeps
 from app.config import get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import AskMessage, AskNote, AskThread
+from app.db.models import AskMessage, AskNote, AskThread, LlmCall
 from app.errors import ApiError, ErrorCode
 from app.llm.clients import make_model_clients
 from app.market.clock import make_clock
@@ -61,10 +61,16 @@ def _deps(request: Request) -> AskDeps:
 
 
 def _enabled(request: Request) -> dict[str, Any]:
-    """(enabled, reason) for the composer: off, no key, or monthly cap."""
+    """(enabled, code, reason) for the composer: off, no key, or monthly
+    cap. ``code`` is the machine-readable reason — callers must not
+    sniff the English sentence."""
     config = get_config()
     if not bool(config.get("ask", "enabled", default=True)):
-        return {"enabled": False, "reason": "Ask the agent is off in Settings."}
+        return {
+            "enabled": False,
+            "code": "disabled",
+            "reason": "Ask the agent is off in Settings.",
+        }
     model = str(config.get("ask", "model", default="claude-sonnet-5-5"))
     if config.env.mode != "simulated":
         from app.llm.models import PROVIDER_KEY, model_provider
@@ -75,17 +81,20 @@ def _enabled(request: Request) -> dict[str, Any]:
         if store is not None and not store.provider_ok(key_name):
             return {
                 "enabled": False,
+                "code": "no_key",
                 "reason": f"{model} needs the {provider} key — set it in Settings.",
             }
     with get_session_maker()() as session:
         spent = monthly_spend(session, config, _clock(request))
         cap = float(config.get("ask", "monthly_cost_cap_usd", default=15))
         n, qspent = monthly_questions(session, config, _clock(request))
+    capped = float(spent) >= cap
     return {
-        "enabled": float(spent) < cap,
+        "enabled": not capped,
+        "code": "cap" if capped else None,
         "reason": (
             None
-            if float(spent) < cap
+            if not capped
             else (
                 f"Ask has used its ${cap:.2f} for this month. "
                 "It starts again on the 1st, or raise the cap in Settings."
@@ -217,6 +226,16 @@ def delete_thread(request: Request, thread_id: int) -> dict[str, Any]:
         row = session.get(AskThread, thread_id)
         if row is None:
             raise HTTPException(404)
+        message_ids = select(AskMessage.id).where(
+            AskMessage.thread_id == thread_id
+        )
+        # Keep the call rows — the requests were real and cost real
+        # money — but their message link must not dangle.
+        session.execute(
+            update(LlmCall)
+            .where(LlmCall.ask_message_id.in_(message_ids))
+            .values(ask_message_id=None)
+        )
         session.execute(
             delete(AskMessage).where(AskMessage.thread_id == thread_id)
         )
@@ -244,7 +263,7 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
         with get_session_maker()() as session:
             if session.get(AskThread, thread_id) is None:
                 raise HTTPException(404)
-            if "month" in (status.get("reason") or "") or "cap" in (status.get("reason") or ""):
+            if status.get("code") == "cap":
                 clock = _clock(request)
                 msg = AskMessage(
                     thread_id=thread_id,
@@ -316,6 +335,7 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
                 yield f"event: {ev['event']}\ndata: {json.dumps(ev['data'])}\n\n"
         except (asyncio.CancelledError, GeneratorExit):
             ask_service.request_stop(message_id)
+            _mark_abandoned(message_id)
             raise
         except Exception:  # noqa: BLE001
             logger.exception("ask answer failed")
@@ -326,6 +346,20 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _mark_abandoned(message_id: int) -> None:
+    """Client gone mid-answer: flag the row stopped so it never reads as
+    mid-flight when the generator is already dead. A live generator
+    overwrites this with its own final status."""
+    try:
+        with get_session_maker()() as session:
+            msg = session.get(AskMessage, message_id)
+            if msg is not None and msg.status == "ok" and not msg.text:
+                msg.status = "stopped"
+                session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("ask: could not mark message %s stopped", message_id)
 
 
 async def _cap_stream(message_id: int, reason: str | None) -> AsyncIterator[str]:
@@ -479,6 +513,15 @@ def cleanup_threads(session: Any, clock: Any, config: Any) -> int:
         update(AskNote)
         .where(AskNote.source_thread_id.in_(old))
         .values(source_thread_id=None, source_message_id=None)
+    )
+    session.execute(
+        update(LlmCall)
+        .where(
+            LlmCall.ask_message_id.in_(
+                select(AskMessage.id).where(AskMessage.thread_id.in_(old))
+            )
+        )
+        .values(ask_message_id=None)
     )
     session.execute(delete(AskMessage).where(AskMessage.thread_id.in_(old)))
     session.execute(delete(AskThread).where(AskThread.id.in_(old)))

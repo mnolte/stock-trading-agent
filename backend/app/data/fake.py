@@ -252,6 +252,8 @@ class FakeBarSource:
         start_date = start.astimezone(NY_TZ).date()
         end_date = end.astimezone(NY_TZ).date()
         calendar = await self.calendar.fetch_calendar(start_date, end_date)
+        if calendar.error is not None:
+            return DataResult(data=[], error=calendar.error, source="fake")
         bars: list[Bar5m] = []
         for day in calendar.data:
             # Skip sessions fully outside the requested UTC interval.
@@ -277,6 +279,8 @@ class FakeBarSource:
     ) -> DataResult[list[DailyBar]]:
         """Daily bars rolled up from the same deterministic 5m generator."""
         calendar = await self.calendar.fetch_calendar(start, end)
+        if calendar.error is not None:
+            return DataResult(data=[], error=calendar.error, source="fake")
         bars: list[DailyBar] = []
         for day in calendar.data:
             if not start <= day.date <= end:

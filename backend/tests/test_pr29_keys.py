@@ -16,15 +16,13 @@ import app.config as config_module
 import pytest
 from alembic import command
 from alembic.config import Config as AlembicConfig
-from app.api.main import create_app, run_migrations
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Strategy
-from app.engine.state import load_execution_state
-from app.market.clock import make_clock
-from app.secrets_service import FakeKeyTesters, SecretsStore
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+
+from tests.helpers import StubExecutor, paper_keys_client
 
 pytestmark = pytest.mark.anyio
 
@@ -38,32 +36,11 @@ NOW = datetime(2026, 10, 19, 9, 0)
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
-class _StubExecutor:
-    def __init__(self) -> None:
-        self.resumed = False
-
-    async def resume_from_pause(self) -> None:
-        self.resumed = True
-
-    async def refresh_account(self) -> None:
-        return None
-
-
-def _paper_client() -> tuple[TestClient, _StubExecutor]:
-    run_migrations()
-    config = get_config()
-    config.env.mode = "paper"
-    app = create_app()
-    clock = make_clock(config)
-    app.state.clock = clock
-    app.state.exec_state = load_execution_state(clock, config)
-    app.state.secrets_store = SecretsStore(config, clock)
-    app.state.key_testers = FakeKeyTesters()
-    executor = _StubExecutor()
-    app.state.executor = executor
-    # Settings validation only touches the broker for universe changes.
-    app.state.broker = object()
-    return TestClient(app), executor
+def _paper_client() -> tuple[TestClient, StubExecutor]:
+    # Keep Ask on OpenAI so Anthropic-key tests aren't refused for it;
+    # the ask-model check has its own test below. Settings validation
+    # only touches the broker for universe changes, so a stub will do.
+    return paper_keys_client(ask_model="gpt-4o-mini", stub_broker=True)
 
 
 def _save_keys(client: TestClient, *groups: str) -> None:
@@ -196,6 +173,35 @@ def test_remove_unused_key_pauses_shadows() -> None:
         strategy = session.get(Strategy, sid)
         assert strategy is not None
         assert strategy.status == "paused"
+
+
+def test_remove_key_refused_while_ask_uses_it() -> None:
+    """ask.model's provider counts too — removing its key would leave Ask
+    unable to answer."""
+    client, _ = _paper_client()
+    get_config()._active.setdefault("ask", {})["model"] = "claude-sonnet-5-5"
+    _save_keys(client, "anthropic")
+    res = client.post("/api/keys/anthropic/remove")
+    assert res.status_code == 422
+    assert "Ask the agent" in res.text
+
+
+def test_remove_key_refused_by_pending_settings() -> None:
+    """A pending version promotes at the next cycle — the key it moves a
+    model to must not be removable first."""
+    client, _ = _paper_client()
+    _save_keys(client, "anthropic")
+    config = get_config()
+    tree = config.effective()
+    tree.setdefault("decision", {})["model"] = "claude-haiku-5-5"
+    config.set_pending(tree, 502)
+    try:
+        res = client.post("/api/keys/anthropic/remove")
+        assert res.status_code == 422
+        assert "pending settings" in res.text
+    finally:
+        config._pending = None
+        config.pending_version = None
 
 
 def test_missing_model_key_is_refused_on_save() -> None:

@@ -237,6 +237,7 @@ class Position(Base):
     # Historical: exits deferred under the retired day-trade rule (PR 26).
     # No longer written; kept so old positions keep their record.
     deferred_exit: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    pending_exit: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
     opened_at: Mapped[datetime] = mapped_column(nullable=False)
     closed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     realized_pnl_raw: Mapped[Decimal | None] = mapped_column(Money, nullable=True)

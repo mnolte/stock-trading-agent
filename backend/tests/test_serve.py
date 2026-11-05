@@ -20,7 +20,13 @@ _SCANNED = [
     ROOT / "Makefile",
     *sorted(ROOT.glob("docker-compose*.yml")),
     *sorted((ROOT / "deploy").glob("*.sh")),
+    *sorted((ROOT / "deploy").glob("*.py")),
+    *sorted((ROOT / ".github" / "workflows").glob("*.yml")),
 ]
+
+# uvicorn's CLI also takes its address from UVICORN_HOST/UVICORN_PORT;
+# app.serve reads SA_HOST/SA_PORT only, so neither may appear either.
+_ADDRESS_FLAG = re.compile(r"--(host|port)\b|\bUVICORN_(HOST|PORT)\b")
 
 
 def test_serve_reads_host_port_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,16 +62,45 @@ def test_no_host_port_flags_anywhere() -> None:
         if not path.exists():
             continue
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
-            if re.search(r"--(host|port)\b", line):
+            if _ADDRESS_FLAG.search(line):
                 offenders.append(f"{path.name}:{lineno}: {line.strip()}")
     assert not offenders, "--host/--port found:\n" + "\n".join(offenders)
 
 
+def test_address_flag_pattern() -> None:
+    assert _ADDRESS_FLAG.search("uvicorn app:app --host 0.0.0.0")
+    assert _ADDRESS_FLAG.search("  --port=8000")
+    assert _ADDRESS_FLAG.search("UVICORN_HOST=0.0.0.0")
+    assert _ADDRESS_FLAG.search("env: {UVICORN_PORT: 8000}")
+    assert not _ADDRESS_FLAG.search("SA_HOST=127.0.0.1 SA_PORT=8000")
+    assert not _ADDRESS_FLAG.search("--hostname-check")
+
+
+def _cmd_args(text: str) -> list[str]:
+    """The exec-form CMD, continuation lines included. The match runs to
+    the ``]`` that ends the instruction's last line, so a ``]`` inside an
+    argument (a parametrised test id) can't cut it short."""
+    command = re.search(
+        r"^CMD (\[(?:[^\n]*\\\n)*[^\n]*\])[ \t]*$", text, re.MULTILINE
+    )
+    assert command is not None
+    args: list[str] = json.loads(command.group(1).replace("\\\n", ""))
+    return args
+
+
+def test_cmd_args_reads_past_brackets_in_arguments() -> None:
+    text = (
+        'FROM x\n'
+        'CMD ["pytest", "--deselect", "t.py::test_a[1]", \\\n'
+        '     "-n", "auto"]\n'
+        'ENTRYPOINT ["python"]\n'
+    )
+    assert _cmd_args(text) == ["pytest", "--deselect", "t.py::test_a[1]", "-n", "auto"]
+
+
 def test_entrypoint_is_app_serve() -> None:
     text = (ROOT / "Dockerfile").read_text()
-    command = re.search(r"CMD (\[.*?\])", text, re.DOTALL)
-    assert command is not None
-    args = json.loads(command.group(1).replace("\\\n", ""))
+    args = _cmd_args(text)
     assert args[:4] == ["/opt/venv/bin/python", "-m", "pytest", "backend/tests"]
     assert args[args.index("-n") + 1] == "auto"
     assert args[args.index("--dist") + 1] == "worksteal"

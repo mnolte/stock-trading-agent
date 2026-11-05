@@ -7,6 +7,7 @@ spec) and filenames carry the local date.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -14,6 +15,20 @@ from zoneinfo import ZoneInfo
 
 from app.config import get_config
 from app.market.clock import Clock
+
+_BACKUP_SUFFIX = re.compile(r"\.\d{4}-\d{2}-\d{2}$")
+
+
+def dated_backups(backup_dir: Path, db_name: str) -> list[Path]:
+    """Only the dated copies (``<db>.YYYY-MM-DD``) — siblings like a
+    stray ``.tmp`` or ``.wal`` file must never read as a backup."""
+    if not backup_dir.is_dir():
+        return []
+    return [
+        path
+        for path in backup_dir.glob(f"{db_name}.*")
+        if _BACKUP_SUFFIX.search(path.name)
+    ]
 
 
 def create_backup(clock: Clock | None = None) -> None:
@@ -56,13 +71,10 @@ def create_backup(clock: Clock | None = None) -> None:
     # ``storage.backup_days`` days including today.
     retention_days = int(cfg.get("storage", "backup_days", default=14))
     cutoff = today - timedelta(days=retention_days - 1)
-    for backup in backup_dir.glob(f"{db_path.name}.*"):
-        try:
-            backup_date = datetime.strptime(
-                backup.name.rsplit(".", 1)[-1], "%Y-%m-%d"
-            ).replace(tzinfo=UTC).date()
-        except ValueError:
-            continue  # Not a dated backup of this database.
+    for backup in dated_backups(backup_dir, db_path.name):
+        backup_date = datetime.strptime(
+            backup.name.rsplit(".", 1)[-1], "%Y-%m-%d"
+        ).replace(tzinfo=UTC).date()
         if backup_date < cutoff:
             backup.unlink()
 
@@ -75,7 +87,7 @@ def main() -> None:
     db_path = Path(cfg.env.sa_db_path)
     backup_dir = db_path.parent / "backups"
     latest = max(
-        backup_dir.glob(f"{db_path.name}.*"),
+        dated_backups(backup_dir, db_path.name),
         key=lambda p: p.stat().st_mtime,
     )
     print(latest)

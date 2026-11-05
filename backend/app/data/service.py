@@ -386,8 +386,13 @@ class MarketDataService:
             }
         end = sessions[-1].date
         # Batched coverage first: only symbols short of the full window
-        # get the per-symbol date query.
+        # get the per-symbol date query. Sessions the source already
+        # confirmed it has no bar for are known, not missing — without
+        # this a recent IPO re-downloads the whole window every refresh.
         covered_counts = self.bars_cache.daily_bar_counts(wanted, sessions)
+        known_gaps = self.bars_cache.daily_gap_dates_many(
+            wanted, {s.date for s in sessions}
+        )
         semaphore = asyncio.Semaphore(10)
 
         async def fetch(
@@ -401,11 +406,16 @@ class MarketDataService:
         fetches = []
         fetch_start: dict[str, date] = {}
         for symbol in wanted:
-            if covered_counts.get(symbol, 0) == len(sessions):
+            gaps = known_gaps.get(symbol, set())
+            if covered_counts.get(symbol, 0) + len(gaps) == len(sessions):
                 missing: list[date] = []
             else:
                 covered = self.bars_cache.covered_daily_dates(symbol, sessions)
-                missing = [s.date for s in sessions if s.date not in covered]
+                missing = [
+                    s.date
+                    for s in sessions
+                    if s.date not in covered and s.date not in gaps
+                ]
             # The newest session's daily bar is still forming — refetch
             # it even when the cache has a row for it.
             if end not in missing:

@@ -201,3 +201,33 @@ async def test_calendar_retry_skips_when_loaded() -> None:
     # Already loaded: the retry job is a no-op, no fetch happens.
     await retry_calendar_load(store, config, clock)
     assert source.fail_remaining == 1
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "expected"),
+    [(9, 59, (10, 0)), (10, 0, (10, 15)), (10, 15, (11, 0)),
+     (11, 0, None), (16, 0, None)],
+)
+def test_next_live_event_strictly_after_now(
+    hour: int, minute: int, expected: tuple[int, int] | None,
+) -> None:
+    config = AppConfig().overlay(
+        {"schedule": {"cycles": ["10:00", "11:00"], "position_checks": ["10:15"]}}
+    )
+    now = datetime(2026, 10, 15, hour, minute, tzinfo=NY)
+    clock = SessionClock(FakeClock(now), config, FakeCalendarSource())
+    event = clock.next_live_event(now.astimezone(UTC))
+    assert event == (
+        datetime(2026, 10, 15, *expected, tzinfo=NY) if expected else None
+    )
+
+
+def test_active_checks_includes_open_excludes_close() -> None:
+    calendar = FakeCalendarSource()
+    session = calendar.session_for(date(2026, 10, 15))
+    assert session is not None
+    config = AppConfig().overlay(
+        {"schedule": {"position_checks": ["09:29", "09:30", "16:00"]}}
+    )
+    clock = SessionClock(FakeClock(session.open), config, calendar)
+    assert clock.active_checks(session) == [session.open]

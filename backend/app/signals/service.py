@@ -330,7 +330,7 @@ class SignalService:
         spy_daily = self.daily_bars("SPY", sessions, now)
         return compute_regime(spy_daily, self.config)
 
-    def is_last_cycle(self, today: date, now: datetime) -> bool:
+    def is_last_cycle(self, now: datetime) -> bool:
         """True once the session's last active cycle time has been reached."""
         return self.session_clock.is_last_cycle(now)
 
@@ -467,7 +467,7 @@ class SignalService:
         earnings_next = self.next_earnings(symbols, today)
         earnings_status = self.market_data.latest_earnings
         earnings_ok = earnings_status is not None and earnings_status.error is None
-        last_cycle = self.is_last_cycle(today, now.astimezone(NY_TZ))
+        last_cycle = self.is_last_cycle(now.astimezone(NY_TZ))
         # The cycle currently in effect (most recent scheduled cycle <= now),
         # for the rules.entry_cycles strategy override.
         session_today = self.calendar.session_for(today)

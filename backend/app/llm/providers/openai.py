@@ -29,7 +29,7 @@ from app.llm.models import model_timeout_seconds
 if TYPE_CHECKING:
     from app.config import AppConfig
 
-logger = logging.getLogger("app.model.openai")
+logger = logging.getLogger(__name__)
 
 
 def _classify_error(exc: Exception) -> str:
@@ -73,6 +73,11 @@ class OpenAIAdapter:
         """Swap the key in place after a Settings save."""
         self._build(api_key)
 
+    def _temperature_kwargs(self, model: str, temperature: float) -> dict[str, Any]:
+        if self._config.get("models", model, "supports_temperature", default=True) is False:
+            return {}
+        return {"temperature": temperature}
+
     async def complete(
         self,
         *,
@@ -91,7 +96,7 @@ class OpenAIAdapter:
         try:
             response = await self._client.chat.completions.with_raw_response.create(
                 model=use_model,
-                temperature=use_temperature,
+                **self._temperature_kwargs(use_model, use_temperature),
                 response_format=cast(
                     ResponseFormat,
                     {
@@ -124,11 +129,22 @@ class OpenAIAdapter:
             )
         usage = completion.usage
         message = completion.choices[0].message if completion.choices else None
+        finish = (
+            getattr(completion.choices[0], "finish_reason", None)
+            if completion.choices
+            else None
+        )
         raw = message.content if message else None
         parsed: Any = None
         error: str | None = None
         error_type: str | None = None
-        if raw is not None:
+        if finish == "length":
+            # A truncated answer is not a valid decision — flag it like
+            # Anthropic's max_tokens instead of passing half-JSON on.
+            error = "truncated"
+            error_type = "invalid_output"
+            raw = ""
+        elif raw is not None:
             try:
                 parsed = json.loads(raw)
             except json.JSONDecodeError:
@@ -191,6 +207,7 @@ class OpenAIAdapter:
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         usage: Any = None
+        truncated = False
         try:
             async for event in response_stream:
                 etype = getattr(event, "type", "")
@@ -222,6 +239,11 @@ class OpenAIAdapter:
                     usage = getattr(
                         getattr(event, "response", None), "usage", None
                     )
+                elif etype == "response.incomplete":
+                    truncated = True
+                    usage = getattr(
+                        getattr(event, "response", None), "usage", None
+                    )
         except Exception as exc:  # noqa: BLE001
             yield ConverseEvent(
                 kind="done",
@@ -240,6 +262,8 @@ class OpenAIAdapter:
                 tokens_out=getattr(usage, "output_tokens", None),
                 cached_tokens_in=cached,
                 latency_ms=int((time.monotonic() - started) * 1000),
+                error="truncated" if truncated else None,
+                error_type="invalid_output" if truncated else None,
                 provider=self.provider,
             ),
         )
@@ -293,7 +317,7 @@ class OpenAIAdapter:
         try:
             response = await self._client.chat.completions.create(
                 model=use_model,
-                temperature=0.2,
+                **self._temperature_kwargs(use_model, 0.2),
                 messages=cast(Any, wire_messages),
                 tools=cast(Any, wire_tools) if wire_tools else cast(Any, None),
                 stream=True,
@@ -346,6 +370,9 @@ class OpenAIAdapter:
             return
         if finish == "content_filter":
             refused = True
+        # A round cut by the token cap reads as success downstream — flag
+        # it as invalid output like Anthropic's max_tokens does.
+        truncated = finish == "length"
         calls: list[ToolCall] = []
         for idx in sorted(call_parts):
             part = call_parts[idx]
@@ -372,8 +399,16 @@ class OpenAIAdapter:
                 tokens_out=usage.completion_tokens if usage else None,
                 cached_tokens_in=cached,
                 latency_ms=int((time.monotonic() - started) * 1000),
-                error=None if not refused else "content_filter refusal",
-                error_type="refusal" if refused else None,
+                error=(
+                    "content_filter refusal"
+                    if refused
+                    else ("truncated" if truncated else None)
+                ),
+                error_type=(
+                    "refusal"
+                    if refused
+                    else ("invalid_output" if truncated else None)
+                ),
                 request_id=request_id,
                 refused=refused,
                 provider=self.provider,

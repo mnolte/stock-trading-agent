@@ -500,6 +500,13 @@ class ShadowRunner:
                             .values(shadow_decision_id=None)
                         )
                         session.execute(
+                            update(ShadowPosition)
+                            .where(
+                                ShadowPosition.entry_decision_id.in_(stale_ids)
+                            )
+                            .values(entry_decision_id=None)
+                        )
+                        session.execute(
                             delete(ShadowDecision).where(
                                 ShadowDecision.strategy_id == strategy.id,
                                 ShadowDecision.cycle_id == cycle_id,

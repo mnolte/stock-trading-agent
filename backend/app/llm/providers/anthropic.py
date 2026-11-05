@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from app.config import AppConfig
 
-logger = logging.getLogger("app.model.anthropic")
+logger = logging.getLogger(__name__)
 
 # JSON Schema keywords Anthropic's structured outputs reject (numeric,
 # string and array constraints, and additionalProperties other than
@@ -356,8 +356,14 @@ class AnthropicAdapter:
 
 
 def _wire_messages(messages: list[ConverseMessage]) -> list[dict[str, Any]]:
-    """Provider-agnostic turns → Anthropic content-block messages."""
+    """Provider-agnostic turns → Anthropic content-block messages.
+
+    Consecutive tool results go in ONE user message's content list —
+    the API documents several tool_result blocks per message, not
+    one user message per result.
+    """
     out: list[dict[str, Any]] = []
+    last_was_tool_result = False
     for m in messages:
         if m.role == "assistant":
             content: list[dict[str, Any]] = []
@@ -373,21 +379,21 @@ def _wire_messages(messages: list[ConverseMessage]) -> list[dict[str, Any]]:
                 for c in m.tool_calls
             )
             out.append({"role": "assistant", "content": content})
+            last_was_tool_result = False
         elif m.role == "tool":
-            out.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": m.tool_call_id,
-                            "content": m.text,
-                        }
-                    ],
-                }
-            )
+            block = {
+                "type": "tool_result",
+                "tool_use_id": m.tool_call_id,
+                "content": m.text,
+            }
+            if last_was_tool_result:
+                out[-1]["content"].append(block)
+            else:
+                out.append({"role": "user", "content": [block]})
+            last_was_tool_result = True
         else:
             out.append({"role": "user", "content": m.text})
+            last_was_tool_result = False
     return out
 
 

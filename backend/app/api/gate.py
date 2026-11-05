@@ -164,11 +164,13 @@ async def _refuse_ws(send: Send, code: int, reason: str) -> None:
     await send({"type": "websocket.close", "code": code, "reason": reason})
 
 
-async def _drain_body(receive: Receive, cap: int) -> bytes | None:
-    """Read the request body counting bytes; None once the cap is crossed.
+async def _drain_body(receive: Receive, cap: int) -> tuple[bytes | None, bool]:
+    """Read the request body counting bytes; returns ``(body, over_cap)``.
 
     The cap is enforced while reading, never after — the caller answers
-    413 without routing the request.
+    413 without routing the request. ``(None, False)`` means the client
+    disconnected mid-body: there is nobody left to answer, so the caller
+    must not send a 413 either.
     """
     chunks: list[bytes] = []
     total = 0
@@ -176,16 +178,16 @@ async def _drain_body(receive: Receive, cap: int) -> bytes | None:
         message = await receive()
         kind = message["type"]
         if kind == "http.disconnect":
-            return None
+            return None, False
         if kind != "http.request":
             continue
         chunk = message.get("body", b"")
         chunks.append(chunk)
         total += len(chunk)
         if total > cap:
-            return None
+            return None, True
         if not message.get("more_body", False):
-            return b"".join(chunks)
+            return b"".join(chunks), False
 
 
 class RequestGateMiddleware:
@@ -255,9 +257,10 @@ class RequestGateMiddleware:
                 if declared is not None and declared > cap:
                     await _send_error(send, 413, "too_large")
                     return
-                body = await _drain_body(receive, cap)
+                body, over_cap = await _drain_body(receive, cap)
                 if body is None:
-                    await _send_error(send, 413, "too_large")
+                    if over_cap:
+                        await _send_error(send, 413, "too_large")
                     return
                 # Replay the counted body to the app below.
                 delivered = False

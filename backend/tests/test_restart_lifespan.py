@@ -18,18 +18,15 @@ from typing import Any, cast
 import app.config as config_module
 import pytest
 from app.api.main import create_app
-from app.auth.create_user import create_or_reset_user
-from app.auth.passwords import totp_code
-from app.config import get_config
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Event, Notification
-from app.market.clock import FakeClock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-PASSWORD = "a fourteen char password"
+from tests.helpers import seed_user, sign_in
+
 NOW = datetime(2026, 10, 15, 20, 0, tzinfo=UTC)
 
 
@@ -44,29 +41,6 @@ def _insert_event(event_type: str, details: dict[str, object] | None = None) -> 
             )
         )
         session.commit()
-
-
-def _seed_user() -> str:
-    with get_session_maker()() as session:
-        _u, secret, _codes = create_or_reset_user(
-            session,
-            get_config(),
-            FakeClock(NOW),
-            username="marc",
-            password=PASSWORD,
-        )
-    return secret
-
-
-def _sign_in(client: TestClient, secret: str) -> None:
-    r1 = client.post("/api/auth/sign-in", json={"password": PASSWORD})
-    assert r1.status_code == 200, r1.text
-    clock: Any = cast(FastAPI, client.app).state.clock
-    r2 = client.post(
-        "/api/auth/code",
-        json={"code": totp_code(secret, clock.now())},
-    )
-    assert r2.status_code == 200, r2.text
 
 
 def _events(event_type: str) -> list[Event]:
@@ -121,17 +95,15 @@ def _first_boot_then_resume_marker() -> None:
 
 
 def test_clean_running_boot_resumes(auth_boot: None, tmp_path: Path) -> None:
-    _seed_user()
     _first_boot_then_resume_marker()
-    # 30 s for the pending-ticket step: use a recovery-code-free sign-in
     with _boot() as client:
         app = cast(FastAPI, client.app)
         assert app.state.exec_state.paused is False
         resumed = _events("restart_resumed")
         assert resumed, "restart_resumed event missing"
         # banner
-        secret = _seed_user()
-        _sign_in(client, secret)
+        secret, _codes = seed_user(NOW)
+        sign_in(client, secret, advance=False)
         kinds = {b["kind"] for b in _banners(client)}
         assert "restart_resumed" in kinds
         # notification
@@ -139,17 +111,32 @@ def test_clean_running_boot_resumes(auth_boot: None, tmp_path: Path) -> None:
         assert "restarted_resumed" in events
 
 
+# app/restart.py decide_restart: the one reason each saboteur must cause.
+REASONS = {
+    "unclean": "the previous shutdown was not clean",
+    "kill_switch": "the kill switch is on",
+    "mismatch": "reconciliation found differences",
+    "guard": "the broker guard is unconfirmed",
+}
+
+
 def _paused_boot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, saboteur: str
 ) -> None:
-    _seed_user()
     _first_boot_then_resume_marker()
     if saboteur == "unclean":
         # a lock from a different boot = the previous run died
         lock = tmp_path / "data" / "run.lock"
         lock.parent.mkdir(parents=True, exist_ok=True)
+        # Same fields RunLock._payload/heartbeat write (app/shutdown.py).
         lock.write_text(
-            json.dumps({"pid": 999999999, "boot_id": "other-boot", "heartbeat": 0})
+            json.dumps({
+                "pid": 999999999,
+                "boot_id": "other-boot",
+                "started_at": 0,
+                "heartbeat_seconds": 30,
+                "heartbeat_at": 0,
+            })
         )
     elif saboteur == "kill_switch":
         _insert_event("kill_switch", {"on": True, "reason": "test"})
@@ -180,8 +167,10 @@ def _paused_boot(
         assert app.state.exec_state.paused is True, saboteur
         paused_rows = _events("restart_paused")
         assert paused_rows, f"restart_paused event missing ({saboteur})"
-        secret = _seed_user()
-        _sign_in(client, secret)
+        details = paused_rows[0].details or {}
+        assert details.get("reasons") == [REASONS[saboteur]], details
+        secret, _codes = seed_user(NOW)
+        sign_in(client, secret, advance=False)
         kinds = {b["kind"] for b in _banners(client)}
         assert "restart_paused" in kinds
         events = {n.event for n in _notifications(app)}

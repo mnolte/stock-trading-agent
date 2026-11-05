@@ -18,12 +18,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from app.api.main import create_app, run_migrations
+from app.api.main import run_migrations
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import Event, Position, Secret
-from app.engine.state import load_execution_state
-from app.market.clock import FakeClock, make_clock
+from app.market.clock import FakeClock
 from app.secrets_service import (
     FakeKeyTesters,
     KeyTestResult,
@@ -33,6 +32,8 @@ from app.secrets_service import (
 )
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+
+from tests.helpers import paper_keys_client
 
 pytestmark = pytest.mark.anyio
 
@@ -209,38 +210,8 @@ def test_alpaca_replace_saves_both_keys(client: TestClient) -> None:
 # resume gate + banner (paper mode, no lifespan → state set by hand)
 
 
-class _StubExecutor:
-    def __init__(self) -> None:
-        self.resumed = False
-
-    async def resume_from_pause(self) -> None:
-        self.resumed = True
-
-    async def refresh_account(self) -> None:
-        return None
-
-
-def _paper_client() -> tuple[TestClient, _StubExecutor]:
-    """A paper-mode app without the lifespan: only the state the routes
-    need is installed, so no real client is ever constructed."""
-    run_migrations()
-    config = get_config()
-    config.env.mode = "paper"
-    app = create_app()
-    clock = make_clock(config)
-    app.state.clock = clock
-    app.state.exec_state = load_execution_state(clock, config)
-    app.state.secrets_store = SecretsStore(config, clock)
-    app.state.key_testers = FakeKeyTesters()
-    executor = _StubExecutor()
-    app.state.executor = executor
-    # TestClient without __enter__ never runs the lifespan, so the manual
-    # state above is the whole world — no network-capable client exists.
-    return TestClient(app), executor
-
-
 def test_resume_disabled_until_all_keys_pass() -> None:
-    client, executor = _paper_client()
+    client, executor = paper_keys_client()
     refused = client.post("/api/pause/resume")
     assert refused.status_code == 422
     assert "add an OpenAI or Anthropic key" in refused.text
@@ -273,7 +244,7 @@ def test_resume_disabled_until_all_keys_pass() -> None:
 
 
 def test_missing_keys_banner_gone_once_all_pass() -> None:
-    client, _ = _paper_client()
+    client, _ = paper_keys_client()
     client.post("/api/keys/openai", json={"value": FAKE_OPENAI})
     client.post("/api/keys/finnhub", json={"value": FAKE_FINNHUB})
     client.post(

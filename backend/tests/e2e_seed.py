@@ -165,13 +165,17 @@ def seed_v2_decision() -> None:
                 },
                 gates_result={
                     "blocked_by": None,
+                    # Live gate names (app/risk/gates.py), never retired ones.
                     "checks": [
-                        {"name": "risk per trade", "passed": True, "detail": "0.80% equity"},
-                        {"name": "open risk", "passed": True, "detail": "1.9% of 3%"},
-                        {"name": "positions", "passed": True, "detail": "2 of 5"},
-                        {"name": "daily loss", "passed": True, "detail": "-0.2% of -2%"},
+                        {"name": "kill_switch", "passed": True, "detail": "off"},
+                        {"name": "paused", "passed": True, "detail": "entries active"},
+                        {"name": "max_open_positions", "passed": True, "detail": "2 of 4"},
+                        {"name": "daily_loss_limit", "passed": True,
+                         "detail": "session P&L -0.20%"},
+                        {"name": "position_size", "passed": True,
+                         "detail": "4 shares, limited by open_risk"},
                     ],
-                    "sizing": {"shares": 4, "limited_by": []},
+                    "sizing": {"shares": 4, "limited_by": ["open_risk"]},
                 },
                 final_action="enter",
                 prompt_version="decision.v2",

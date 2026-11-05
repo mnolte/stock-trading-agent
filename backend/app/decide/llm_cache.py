@@ -132,13 +132,16 @@ def cache_hit_count(
     *,
     model: str,
     temperature: float,
+    prompt_version: str,
     prompt_hash: str,
     start: datetime,
     end: datetime,
     provider: str = "openai",
     effort: str | None = None,
 ) -> int:
-    """Estimate input: cached rows whose cycle time falls in the period."""
+    """Estimate input: cached rows whose cycle time falls in the period.
+    Keyed like lookup/store — prompt_version joins prompt_hash or two
+    versions sharing a hash would overcount hits."""
     with session_factory() as session:
         from sqlalchemy import func
 
@@ -148,6 +151,7 @@ def cache_hit_count(
                 LLMCache.model == model,
                 LLMCache.effort.is_(None) if effort is None else LLMCache.effort == effort,
                 LLMCache.temperature == temperature,
+                LLMCache.prompt_version == prompt_version,
                 LLMCache.prompt_hash == prompt_hash,
                 LLMCache.cycle_time >= _naive_utc(start),
                 LLMCache.cycle_time <= _naive_utc(end),

@@ -425,6 +425,8 @@ def _skip_dims(
             if dte == "unavailable"
             else "none scheduled"
             if dte is None
+            else "0–3 days"
+            if dte <= 3
             else "4–10 days"
             if dte <= 10
             else "11–20 days"
@@ -562,9 +564,6 @@ def _live_inputs(
         price = sum((f.price * f.qty for f in fills), Decimal(0)) / qty
         return price, qty
 
-    {
-        p.entry_decision_id: p for p in positions if p.entry_decision_id
-    }
     open_positions = session.execute(
         select(func.count(Position.id)).where(Position.closed_at.is_(None))
     ).scalar_one()
@@ -979,21 +978,6 @@ def _shadow_inputs(
             .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
             .where(ShadowDecision.id.in_(decision_ids or {0}))
         ).all()
-    }
-    {
-        d.id: d
-        for d in session.execute(
-            select(Decision).where(
-                Decision.id.in_(
-                    {
-                        row.live_decision_id
-                        for row in entry_decisions.values()
-                        if row.live_decision_id
-                    }
-                    or {0}
-                )
-            )
-        ).scalars()
     }
 
     dividends_rows = session.execute(

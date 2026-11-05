@@ -11,7 +11,6 @@ from typing import cast
 import pytest
 from app.api.websocket import UpdateBus, feed
 from app.broker.fake import FakeBroker, _PosRec
-from app.broker.models import BrokerAccount
 from app.config import AppConfig
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -32,25 +31,31 @@ from app.data.models import (
     Quote,
 )
 from app.data.service import MarketDataService
-from app.db.models import Approval, Cycle, Decision, Event, Order, Position, Run
+from app.db.models import Approval, Cycle, Decision, Order, Position, Run
 from app.engine.executor import Executor
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
-from app.market.clock import NY_TZ, UTC, FakeClock
-from app.rules.prefilter import RulesResult
+from app.market.clock import NY_TZ, FakeClock
 from app.settings_service import SettingsError, validate_settings
-from app.signals.service import SignalService, SymbolEval
-from app.signals.snapshot import IndicatorSnapshot
+from app.signals.service import SignalService
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.helpers import (
+    NOW,
+    YESTERDAY,
+    events_of,
+    make_account,
+    make_decision,
+    make_item,
+    make_quote,
+)
+
 pytestmark = pytest.mark.anyio
 
-# Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
-NOW = datetime(2026, 10, 15, 17, 0, tzinfo=UTC)
-YESTERDAY = datetime(2026, 10, 14, 15, 0)  # naive UTC, stored format
+# NOW (tests.helpers): Thursday 15 Oct 2026, 13:00 New York (17:00 UTC) — mid-session.
 
 
 def _sources(clock: FakeClock | None = None, **overrides: object) -> DataSources:
@@ -97,99 +102,6 @@ def _executor(
     )
 
 
-def _account(
-    equity: str = "10000", cash: str = "10000", last_equity: str = "10000"
-) -> BrokerAccount:
-    return BrokerAccount(
-        account_number="PA-TEST",
-        equity=Decimal(equity),
-        cash=Decimal(cash),
-        last_equity=Decimal(last_equity),
-    )
-
-
-def _decision(
-    session: Session,
-    symbol: str,
-    final_action: str,
-    model_output: dict[str, object] | None = None,
-) -> Decision:
-    cycle = Cycle(
-        kind="cycle",
-        scheduled_time=NOW.replace(tzinfo=None),
-        started_at=NOW.replace(tzinfo=None),
-        status="running",
-    )
-    session.add(cycle)
-    session.flush()
-    decision = Decision(
-        cycle_id=cycle.id,
-        symbol=symbol,
-        context="candidate" if final_action == "enter" else "held",
-        final_action=final_action,
-        model_output=model_output,
-        prompt_version="decision.v1",
-        prompt_hash="0" * 64,
-        model="fake",
-    )
-    session.add(decision)
-    session.flush()
-    return decision
-
-
-def _snapshot(symbol: str) -> IndicatorSnapshot:
-    return IndicatorSnapshot(
-        symbol=symbol,
-        price=Decimal("420"),
-        ema_fast=Decimal("416.9"),
-        ema_slow=Decimal("414.3"),
-        rsi=Decimal("57"),
-        atr_1h=Decimal("3.10"),
-        session_vwap=Decimal("417.4"),
-        obv_trend="up",
-        rs_vs_spy_pct=Decimal("0.9"),
-        daily_close=Decimal("415.8"),
-        daily_sma_fast=Decimal("402.1"),
-        daily_sma_slow=Decimal("381.6"),
-        daily_atr_percentile=Decimal("48"),
-        opening_gap_pct=Decimal("0.3"),
-        days_to_earnings=9,
-        earnings_available=True,
-    )
-
-
-def _item(symbol: str) -> SymbolEval:
-    return SymbolEval(
-        symbol=symbol,
-        snapshot=_snapshot(symbol),
-        rules=RulesResult(symbol, "pass", None, []),
-        bars_1h=[],
-        daily=[],
-        today_5m=[],
-        price=Decimal("420"),
-        day_change_pct=Decimal("0.5"),
-    )
-
-
-def _quote(symbol: str, ask: str = "420.10", bid: str = "420.00") -> Quote:
-    return Quote(
-        symbol=symbol,
-        bid=Decimal(bid),
-        ask=Decimal(ask),
-        last=Decimal(ask),
-        timestamp=NOW,
-        feed="iex",
-    )
-
-
-def _events(session: Session, event_type: str) -> list[Event]:
-    return list(
-        session.execute(
-            select(Event).where(Event.event_type == event_type)
-        ).scalars()
-    )
-
-
 async def _pending_approval_id(
     session_factory: sessionmaker[Session],
     executor: Executor,
@@ -199,7 +111,7 @@ async def _pending_approval_id(
 ) -> int:
     """Run a supervised entry and return the stored approval's id."""
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session,
             symbol,
             "enter",
@@ -208,11 +120,11 @@ async def _pending_approval_id(
         await executor.apply_decision(
             session,
             decision,
-            _item(symbol),
+            make_item(symbol),
             None,
-            _quote(symbol),
+            make_quote(symbol),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -242,17 +154,17 @@ async def test_supervised_entry_creates_pending_approval(
     await executor.reconcile()
 
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 410.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -282,17 +194,17 @@ async def test_automatic_entry_still_sends_order(
         NOW - timedelta(hours=2), NOW, ["MSFT"]
     )
     with session_factory() as session:
-        decision = _decision(
+        decision = make_decision(
             session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
         )
         await executor.apply_decision(
             session,
             decision,
-            _item("MSFT"),
+            make_item("MSFT"),
             None,
-            _quote("MSFT"),
+            make_quote("MSFT"),
             NOW,
-            account=_account(),
+            account=make_account(),
             earnings_known=True,
         )
         session.commit()
@@ -712,8 +624,8 @@ async def test_paper_reset_flattens_and_records(
         o.status in ("filled", "canceled") for o in broker.orders.values()
     ) and open_orders.data == []
     with session_factory() as session:
-        assert _events(session, "paper_reset")
-        assert _events(session, "kill_switch")
+        assert events_of(session, "paper_reset")
+        assert events_of(session, "kill_switch")
 
 
 async def test_start_new_run_creates_run_and_resets(
@@ -734,7 +646,7 @@ async def test_start_new_run_creates_run_and_resets(
     with session_factory() as session:
         run = session.execute(select(Run)).scalar_one()
         assert run.starting_equity == Decimal("10000")
-        assert _events(session, "run_started")
+        assert events_of(session, "run_started")
 
 
 async def test_start_new_run_reports_open_positions(

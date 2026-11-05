@@ -290,6 +290,9 @@ def session_factory(
     """A scratch database with the production engine's pragmas (WAL,
     busy timeout, mmap) so tests see the same concurrency semantics —
     but none of the template's seeded market data."""
+    # Keep WAL and one connection per session: test_ask.py::
+    # test_tools_never_write relies on cross-connection visibility (a
+    # tool's commit on another connection shows up after rollback).
     db_path = tmp_path / "test.db"
     shutil.copyfile(empty_db_template, db_path)
     engine = configure_sqlite(
