@@ -358,6 +358,13 @@ export default function Insights() {
                     </tr>
                   </thead>
                   <tbody>
+                    {dim.rows.length === 0 && (
+                      <tr style={{ borderTop: '1px solid var(--sa-border)' }}>
+                        <td colSpan={8} style={{ padding: '6px 8px', color: 'var(--sa-text-muted)' }}>
+                          Under 10 trades per slice — slices start counting at 10.
+                        </td>
+                      </tr>
+                    )}
                     {dim.rows.map((r) => (
                       <tr key={r.slice} style={{ borderTop: '1px solid var(--sa-border)', opacity: r.status === 'early' ? 0.6 : 1 }}>
                         <td style={{ padding: '6px 8px' }}>
