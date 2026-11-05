@@ -35,6 +35,7 @@ from app.db.models import (
     Position,
     Run,
 )
+from app.decide.output import decision_trade_prices
 from app.engine.trades import _dividends, _trade_r
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
@@ -237,16 +238,25 @@ def _entry_regime(
 def _initial_stop(
     position: Position, decisions: dict[int, Decision]
 ) -> Decimal | None:
-    """The stop the entry decision proposed, so R uses the risk at entry."""
+    """The stop the entry decision proposed, so R uses the risk at entry.
+
+    v1 decisions carry stop_price in the model output; v2+ only return
+    an option_id, resolved against the stored options column — the same
+    helper the executor uses. The position's own recorded initial stop
+    wins when present: it is the level actually traded.
+    """
+    if position.initial_stop is not None:
+        return position.initial_stop
     decision = (
         decisions.get(position.entry_decision_id)
         if position.entry_decision_id is not None
         else None
     )
     if decision is not None:
-        stop = (decision.model_output or {}).get("stop_price")
-        if isinstance(stop, int | float):
-            return Decimal(str(stop))
+        stop, _target = decision_trade_prices(
+            decision.model_output, decision.options, decision.chosen_option
+        )
+        return stop
     return None
 
 
@@ -810,6 +820,10 @@ def _median(values: list[Decimal]) -> Decimal | None:
 def _buckets(bucket_r: Decimal) -> list[tuple[Decimal | None, Decimal | None]]:
     """(lower, upper) edges — each bucket includes its lower edge; the
     first is "below −1.5R", the last "3R or more" (docs/SPEC.md)."""
+    if bucket_r <= 0:
+        # A nonpositive width would never reach the upper edge — clamp
+        # to the default rather than hang the endpoint.
+        bucket_r = Decimal("0.5")
     edges = [_DIST_LOWER]
     while edges[-1] < _DIST_UPPER:
         nxt = edges[-1] + bucket_r

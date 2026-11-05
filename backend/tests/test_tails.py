@@ -430,11 +430,12 @@ async def test_job_three_failures_become_unavailable(
         assert p.after_exit_status == "unavailable"
 
 
-async def test_split_during_window_adjusts_bars_and_exit(
+async def test_split_during_window_fetches_one_basis(
     session_factory: sessionmaker[Session],
 ) -> None:
-    """A 2:1 split ex-date inside the window: cached pre-split bars and
-    the exit price are halved before comparing."""
+    """A 2:1 split ex-date inside the window: the cached basis is
+    unknowable, so the whole window comes from a fresh fetch — the
+    stored values are the fetched (post-split-basis) prices."""
     exit_at = datetime(2026, 10, 6, 18, 0, tzinfo=UTC)
     now = datetime(2026, 10, 13, 21, 0, tzinfo=UTC)
     clock = FakeClock(now)
@@ -462,14 +463,14 @@ async def test_split_during_window_adjusts_bars_and_exit(
         bars = session.execute(
             select(Bar5mRow).where(Bar5mRow.symbol == "AAA")
         ).scalars().all()
-        # Expected: bars before Oct 9 divided by 2, later bars as stored.
-        expected_highs = []
-        for b in bars:
-            day_ = b.start.replace(tzinfo=UTC).astimezone(NY_TZ).date()
-            if b.start >= exit_at.replace(tzinfo=None):
-                expected_highs.append(
-                    b.high / 2 if day_ < date(2026, 10, 9) else b.high
-                )
+        # Expected: the fetched bars win the whole window — every bar on
+        # one basis, so the window days' highs as stored.
+        expected_highs = [
+            b.high
+            for b in bars
+            if b.start.replace(tzinfo=UTC).astimezone(NY_TZ).date()
+            > date(2026, 10, 6)
+        ]
         assert p.after_exit_best_price == max(expected_highs)
         stored_best = p.after_exit_best_price
         stored_close = p.after_exit_close_price
