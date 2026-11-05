@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -29,7 +30,7 @@ class EnvSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=str(ROOT / ".env"),
+        env_file=os.environ.get("SA_ENV_FILE") or str(ROOT / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
