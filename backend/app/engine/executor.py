@@ -1895,9 +1895,19 @@ class Executor:
             # step 5's coverage check.
             open_stops: dict[str, Decimal] = {}
             broker_stops: dict[str, list[BrokerOrder]] = {}
+            # Held legs of an unfilled open entry are inactive — but a
+            # held leg whose parent already filled is real protection
+            # (Alpaca keeps filled brackets' legs held).
+            held_inactive = {
+                leg.id
+                for order in broker_open.values()
+                if order.is_open and order.filled_qty == 0
+                for leg in order.legs
+            }
             for order in broker_open.values():
                 if (
                     order.is_open
+                    and order.id not in held_inactive
                     and order.side == "sell"
                     and order.order_type in (
                         "stop",
@@ -2582,12 +2592,18 @@ class Executor:
         live_sells: list[tuple[BrokerOrder, str]] = []
         for order in orders_r.data or []:
             for leg in (order, *order.legs):
-                # "held" legs are a working entry's nested stop/target —
-                # inactive until the parent fills, they hold no shares
-                # and cancelling their parent would kill a live buy.
+                # A "held" leg counts only once its parent filled: under
+                # an unfilled open entry it is inactive — holds no
+                # shares, and cancelling the parent kills a live buy. A
+                # held leg under a filled parent is real protection
+                # (Alpaca keeps it held even after the fill).
+                if leg.status == "held" and (
+                    leg is order
+                    or (order.is_open and order.filled_qty == 0)
+                ):
+                    continue
                 if (
                     leg.is_open
-                    and leg.status != "held"
                     and leg.side == "sell"
                     and leg.symbol == position.symbol
                 ):
