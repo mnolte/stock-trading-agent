@@ -76,6 +76,40 @@ async def test_news_status_distinguishes_failed_and_truncated(
     }
 
 
+@pytest.mark.parametrize(
+    "status,message,flat",
+    [(404, "not found", True), (500, "position does not exist", False),
+     (403, "request 404 forbidden", False),
+     (None, "position does not exist", True),
+     (None, "request 404 failed", False)],
+)
+async def test_broker_missing_position_uses_http_status(
+    monkeypatch: pytest.MonkeyPatch, status: int | None, message: str, flat: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from alpaca.common.exceptions import APIError
+    from app.broker.alpaca import AlpacaPaperBroker
+
+    broker = AlpacaPaperBroker("test-key", "test-secret")
+    error = (
+        APIError(  # type: ignore[no-untyped-call]
+            message, SimpleNamespace(response=SimpleNamespace(status_code=status)),
+        )
+        if status is not None else RuntimeError(message)
+    )
+
+    async def fail(*args: object, **kwargs: object) -> Any:
+        raise error
+
+    monkeypatch.setattr(broker.limiter, "run_read", fail)
+    result = await broker.get_position("MSFT")
+    assert result.data is None
+    assert (result.error is None) is flat
+    if not flat:
+        assert result.error == message
+
+
 def test_trading_client_is_paper() -> None:
     client = AlpacaDataClient("test-key", "test-secret")
     assert client.trading._base_url == BaseURL.TRADING_PAPER

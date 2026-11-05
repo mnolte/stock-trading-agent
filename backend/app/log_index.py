@@ -167,10 +167,11 @@ class LogIndexHandler(logging.Handler):
 
     def _report_failure(self, record: logging.LogRecord, exc: Exception) -> None:
         """Index failure → file + stderr only, never through the index."""
-        line = (
-            f"log index write failed: {exc} "
-            f"(line: {record.getMessage()[:200]})"
-        )
+        try:
+            message = record.getMessage()[:200]
+        except Exception as message_exc:  # noqa: BLE001 - malformed log arguments
+            message = f"<unformattable record: {type(message_exc).__name__}>"
+        line = f"log index write failed: {exc} (line: {message})"
         print(line, file=sys.stderr)
         if self._fallback is not None:
             try:
@@ -186,7 +187,8 @@ class LogIndexHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             row = _record_to_row(record)
-        except Exception:  # noqa: BLE001 - a bad record must not break logging
+        except Exception as exc:  # noqa: BLE001 - keep the listener alive
+            self._report_failure(record, exc)
             return
         if row is not None:
             # Under the same lock as flush(): an append that lands on a

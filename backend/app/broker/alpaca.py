@@ -19,6 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import (
     OrderClass,
@@ -247,7 +248,13 @@ class AlpacaPaperBroker:
             # Alpaca answers a missing position with a 404 — that is a
             # flat answer, not an error. Other failures stay errors.
             text = str(exc)
-            if "404" in text or "position does not exist" in text.lower():
+            status = exc.status_code if isinstance(exc, APIError) else None
+            # Prefer the HTTP status; a 5xx message mentioning a missing
+            # position must not turn a failed read into a flat answer.
+            # Legacy/unstructured errors may have only Alpaca's exact phrase.
+            if status == 404 or (
+                status is None and "position does not exist" in text.lower()
+            ):
                 return DataResult(data=None, source="alpaca")
             return DataResult(data=None, error=text, source="alpaca")
 

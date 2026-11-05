@@ -79,6 +79,30 @@ def test_index_failure_keeps_file_logging(tmp_path: Path) -> None:
     assert fallback_lines, "index failure must reach the file handler"
 
 
+@pytest.mark.parametrize("bad_message", [False, True])
+def test_malformed_record_reports_failure_and_listener_continues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], bad_message: bool,
+) -> None:
+    fallback_lines: list[logging.LogRecord] = []
+    fallback = logging.StreamHandler()
+    fallback.emit = fallback_lines.append  # type: ignore[method-assign, assignment]
+    handler = LogIndexHandler(tmp_path / "logs.db", file_fallback=fallback)
+    record = _rec("bad record")
+    if bad_message:
+        record.msg = "bad %s %s"
+        record.args = ("one",)
+    else:
+        record.created = float("inf")
+    handler.emit(record)
+    assert "log index write failed" in capsys.readouterr().err
+    assert len(fallback_lines) == 1
+    assert fallback_lines[0].event == "log_index.failed"  # type: ignore[attr-defined]
+    handler.emit(_rec("good record", logging.WARNING))
+    with sqlite3.connect(handler.db_path) as conn:
+        assert conn.execute("SELECT message FROM log_lines").fetchall() == [("good record",)]
+    handler.close()
+
+
 def test_fingerprint_groups_recurring() -> None:
     """Same problem, different ids/numbers → one fingerprint."""
     a = fingerprint("broker.orders", "orders.submit_failed",

@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-05 — Executor/API misc lows (issue #134)
+
+- Trade-update fill and position bookkeeping now takes the reconciliation lock, so a broker snapshot cannot race stream writes.
+- Missing Alpaca positions use the SDK's HTTP status; unstructured errors only use the specific missing-position phrase, not arbitrary `404` text.
+- Malformed log records report through the index's stderr/file fallback instead of disappearing silently.
+- Stored briefing status lines and plain-text fallbacks share one wording source, including regime and yesterday, so the GUI and email show the status only once.
+
 ## 2026-11-05 — OpenAI fixed-temperature models
 
 - Model entries can set `supports_temperature: false`. The OpenAI adapter then omits temperature from structured-output and chat tool calls instead of sending a value the model rejects. GPT-6.1-sol has this flag; other models keep their existing temperatures. Calls are still never retried. The Responses API path continues to omit temperature.

@@ -2,6 +2,7 @@
 kill switch — all offline and deterministic (docs/SPEC.md, Alpaca
 integration + Risk management)."""
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -2882,14 +2883,32 @@ async def test_exit_stream_closes_before_reconcile(
         return None
 
     monkeypatch.setattr(executor, "reconcile", check_closed)
-    await executor.on_trade_update(TradeUpdateInfo(
+    update = TradeUpdateInfo(
         event="fill", order=BrokerOrder(
             id="stream-exit", client_order_id=executor._client_id(kind, 1, "SBUX"), symbol="SBUX",
             side="sell", order_type=order_type, order_class="simple", status="filled",
             qty=4, filled_qty=4, filled_avg_price=Decimal("103.15"), filled_at=NOW,
             limit_price=None, stop_price=None, created_at=NOW, updated_at=NOW,
         ), timestamp=NOW, position_qty=0, qty=4, price=Decimal("103.15"),
-    ))
+    )
+    # Simulate reconcile holding its lock across a broker read. Stream
+    # bookkeeping must not change the database under that snapshot.
+    async with executor._reconcile_lock:
+        task = asyncio.create_task(executor.on_trade_update(update))
+        await asyncio.sleep(0)
+        try:
+            assert not task.done()
+            with session_factory() as session:
+                position = session.execute(select(Position)).scalar_one()
+                assert position.closed_at is None
+                assert position.qty == 4
+                assert session.execute(select(func.count(Fill.id))).scalar_one() == 0
+        finally:
+            if task.done():
+                await task
+    await asyncio.wait_for(task, timeout=5)
+    # A repeated stream fill is idempotent after the lock is released.
+    await asyncio.wait_for(executor.on_trade_update(update), timeout=5)
 
 
 async def test_reconcile_closes_position_from_offline_fill(

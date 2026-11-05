@@ -168,6 +168,33 @@ async def test_briefing_status_line_is_written_by_code(
     assert "Banners:" in status
 
 
+@pytest.mark.parametrize("available", [True, False])
+def test_briefing_fallback_and_status_share_wording(available: bool) -> None:
+    from types import SimpleNamespace
+
+    from app.reviews.templates import briefing_display, briefing_plain, briefing_status
+
+    facts = {
+        "positions": [{"symbol": "MSFT", "qty": 4, "stop_distance_pct": 2.5}],
+        "earnings_today": [], "earnings_tomorrow": [], "banners": [],
+        "regime": "risk_on", "yesterday": {"return_pct": 1.2, "return_usd": 120},
+    } if available else {"positions": None}
+    status = briefing_status(facts)
+    plain = briefing_plain(facts)["text"]
+    assert plain == status
+    assert "Regime:" in status and "Yesterday:" in status
+    if available:
+        assert "MSFT 4 sh, stop 2.5% below price" in status
+        assert "risk_on" in status and "+$120.00" in status
+    else:
+        assert "Positions: unavailable." in status
+    # GUI/email remove the duplicated prefix, including legacy rows.
+    for content in ({"status_line": status}, {}):
+        assert briefing_display(SimpleNamespace(
+            content=content, facts=facts, text=plain,
+        )) == (status, "")
+
+
 def _naive(dt: datetime) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None)
 

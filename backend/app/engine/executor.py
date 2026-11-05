@@ -1545,6 +1545,23 @@ class Executor:
 
     async def on_trade_update(self, update: TradeUpdateInfo) -> None:
         """A trade-updates event: mark the order, then reconcile the rest."""
+        # Reconciliation awaits broker reads before writing its snapshot.
+        # Do not let stream bookkeeping change fills/positions mid-pass.
+        async with self._reconcile_lock:
+            foreign = self._record_trade_update(update)
+        if foreign is not None:
+            await self.activate_kill_switch(
+                reason=(
+                    f"another instance ({foreign}) is trading "
+                    "this Alpaca account"
+                ),
+                automatic=True,
+            )
+        self._notify({"positions", "orders", "header"})
+        await self.reconcile()
+
+    def _record_trade_update(self, update: TradeUpdateInfo) -> str | None:
+        """Store stream bookkeeping while the caller holds the reconcile lock."""
         # An update arriving inside the grace window answers a fill
         # reconciliation had already recorded (stream health).
         pending_fill = self._fills_awaiting_update.get(update.order.id)
@@ -1613,16 +1630,7 @@ class Executor:
                             position.qty -= delta
                             position.exit_filled_qty += delta
                 session.commit()
-        if foreign is not None:
-            await self.activate_kill_switch(
-                reason=(
-                    f"another instance ({foreign}) is trading "
-                    "this Alpaca account"
-                ),
-                automatic=True,
-            )
-        self._notify({"positions", "orders", "header"})
-        await self.reconcile()
+        return foreign
 
     async def reconcile(self) -> ReconcileReport:
         """Compare broker state with the database; Alpaca wins on mismatch."""

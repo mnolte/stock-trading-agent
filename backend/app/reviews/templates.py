@@ -115,24 +115,7 @@ def _fmt_signed(value: object, digits: int = 2) -> str:
 
 
 def briefing_status(facts: dict[str, Any]) -> str:
-    def names(key: str, field: str) -> str:
-        rows = facts.get(key)
-        if not isinstance(rows, list):
-            return "unavailable"
-        return ", ".join(
-            str(row.get(field, "")).replace("_", " ") for row in rows
-        ) or "none"
-
-    return (
-        f"Positions: {names('positions', 'symbol')}. "
-        f"Earnings today: {names('earnings_today', 'symbol')}; "
-        f"tomorrow: {names('earnings_tomorrow', 'symbol')}. "
-        f"Banners: {names('banners', 'kind')}."
-    )
-
-
-def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
-    """{text} for the daily briefing template."""
+    """One code-written status line for stored and fallback briefings."""
     pos = facts.get("positions") or []
     pos_bits = []
     for p in pos:
@@ -143,7 +126,9 @@ def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
             if distance is not None
             else f"{p['symbol']} {p['qty']} sh, no fresh price"
         )
-    positions = "; ".join(pos_bits) or "none"
+    positions = "; ".join(pos_bits) or (
+        "none" if isinstance(facts.get("positions"), list) else "unavailable"
+    )
     today = ", ".join(e["symbol"] for e in facts.get("earnings_today") or [])
     tomorrow = ", ".join(
         e["symbol"] for e in facts.get("earnings_tomorrow") or []
@@ -159,13 +144,26 @@ def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
         str(b.get("kind", "")).replace("_", " ")
         for b in facts.get("banners") or []
     )
-    text = (
+    today = today or (
+        "none" if isinstance(facts.get("earnings_today"), list) else "unavailable"
+    )
+    tomorrow = tomorrow or (
+        "none" if isinstance(facts.get("earnings_tomorrow"), list) else "unavailable"
+    )
+    banners = banners or (
+        "none" if isinstance(facts.get("banners"), list) else "unavailable"
+    )
+    return (
         f"Positions: {positions}. "
-        f"Earnings today: {today or 'none'}; tomorrow: {tomorrow or 'none'}. "
+        f"Earnings today: {today}; tomorrow: {tomorrow}. "
         f"Regime: {facts.get('regime') or 'unavailable'}. "
         f"Yesterday: {y_txt}. Banners: {banners or 'none'}."
     )
-    return {"text": text}
+
+
+def briefing_plain(facts: dict[str, Any]) -> dict[str, Any]:
+    """{text} for the daily briefing template."""
+    return {"text": briefing_status(facts)}
 
 
 def _fmt_usd_signed(value: object) -> str:
