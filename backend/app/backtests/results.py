@@ -8,7 +8,7 @@ equity curve with SPY, and breakdowns by regime and symbol.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
@@ -17,8 +17,14 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig
-from app.db.models import Bar1d, Decision, EquitySnapshot, Position
-from app.engine.trades import _trade_r
+from app.db.models import (
+    Bar1d,
+    CorporateAction,
+    Decision,
+    EquitySnapshot,
+    Position,
+)
+from app.engine.trades import _dividends, _trade_r
 from app.market.clock import NY_TZ
 
 
@@ -66,11 +72,23 @@ def summarise(
         closed = session.execute(
             select(Position).where(Position.closed_at.is_not(None))
         ).scalars().all()
+        actions = session.execute(
+            select(CorporateAction).where(
+                CorporateAction.action_type == "dividend"
+            )
+        ).scalars().all()
+
         def _adj(p: Position) -> Decimal:
-            return (
-                p.realized_pnl_adjusted
-                if p.realized_pnl_adjusted is not None
-                else Decimal(0)
+            """Slippage-adjusted pnl plus dividends — the same adjusted
+            figure live performance reports."""
+            if p.realized_pnl_adjusted is None:
+                return Decimal(0)
+            return p.realized_pnl_adjusted + _dividends(
+                actions,
+                p.symbol,
+                _day(p.opened_at),
+                _day(p.closed_at) if p.closed_at else _day(p.opened_at),
+                p.qty,
             )
 
         wins = [p for p in closed if _adj(p) > 0]
@@ -113,8 +131,8 @@ def summarise(
                 Decision.cached.is_(False)
             )
         ).scalar_one()
-        by_symbol = _by_symbol(closed)
-        by_regime = _by_regime(session, closed)
+        by_symbol = _by_symbol(closed, _adj)
+        by_regime = _by_regime(session, closed, _adj)
         time_in_market = _sessions_in_market(session, closed)
 
     return {
@@ -189,19 +207,23 @@ def _sessions_in_market(
     return float(len(covered) / len(session_days))
 
 
-def _by_symbol(closed: Sequence[Position]) -> dict[str, dict[str, Any]]:
+def _by_symbol(
+    closed: Sequence[Position], adj: Callable[[Position], Decimal]
+) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for p in closed:
         row = out.setdefault(p.symbol, {"trades": 0, "pnl": 0.0, "wins": 0})
         row["trades"] += 1
-        row["pnl"] += float(p.realized_pnl_adjusted or 0)
-        if (p.realized_pnl_adjusted or 0) > 0:
+        row["pnl"] += float(adj(p))
+        if adj(p) > 0:
             row["wins"] += 1
     return out
 
 
 def _by_regime(
-    session: Session, closed: Sequence[Position]
+    session: Session,
+    closed: Sequence[Position],
+    adj: Callable[[Position], Decimal],
 ) -> dict[str, dict[str, Any]]:
     """Closed trades grouped by the regime at their entry decision."""
     out: dict[str, dict[str, Any]] = {}
@@ -224,7 +246,7 @@ def _by_regime(
                     )
         row = out.setdefault(regime, {"trades": 0, "pnl": 0.0, "rs": []})
         row["trades"] += 1
-        row["pnl"] += float(p.realized_pnl_adjusted or 0)
+        row["pnl"] += float(adj(p))
         r = _trade_r(p, entry_stop)
         if r is not None:
             row["rs"].append(r)

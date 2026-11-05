@@ -42,6 +42,7 @@ from app.data.models import (
 from app.db.base import get_session_maker
 from app.db.models import (
     Backtest,
+    CorporateAction,
     Cycle,
     Decision,
     LLMCache,
@@ -1021,6 +1022,94 @@ def test_summarise_metrics(tmp_path: Path) -> None:
     assert out["calls"] == 0  # no latency_ms on these fake rows
     assert out["profit_factor"] == pytest.approx(50 / 30)
     assert out["cost_usd"] == pytest.approx(0.01)
+
+
+def test_summarise_adds_dividends_like_live(tmp_path: Path) -> None:
+    """realized_pnl_adjusted + dividends — the same adjusted figure live
+    performance reports, not slippage-only."""
+    config = AppConfig()
+    db = tmp_path / "strategy.db"
+    from app.backtests.bundle import init_strategy_db
+
+    init_strategy_db(db)
+    sf = session_maker_for(db, config)
+    with sf() as session:
+        session.add(
+            Position(
+                symbol="AAA",
+                origin="agent",
+                qty=10,
+                avg_entry_price=Decimal("100"),
+                opened_at=datetime(2024, 6, 3, 10, 0),
+                closed_at=datetime(2024, 6, 6, 15, 0),
+                exit_reason="target",
+                realized_pnl_raw=Decimal("50"),
+                realized_pnl_adjusted=Decimal("50"),
+            )
+        )
+        session.add(
+            Position(
+                symbol="BBB",
+                origin="agent",
+                qty=10,
+                avg_entry_price=Decimal("100"),
+                opened_at=datetime(2024, 6, 4, 10, 0),
+                closed_at=datetime(2024, 6, 5, 15, 0),
+                exit_reason="stop",
+                realized_pnl_raw=Decimal("-30"),
+                realized_pnl_adjusted=Decimal("-30"),
+            )
+        )
+        # Ex-date inside AAA's hold: 10 shares × $1.00 → +$10 adjusted.
+        session.add(
+            CorporateAction(
+                symbol="AAA",
+                action_type="dividend",
+                date=datetime(2024, 6, 4, 12, 0),
+                ratio_or_amount=Decimal("1.00"),
+            )
+        )
+        session.commit()
+    out = summarise(sf, config=config, equity=Decimal(10000))
+    assert out["profit_factor"] == pytest.approx(60 / 30)
+    assert out["by_symbol"]["AAA"]["pnl"] == pytest.approx(60.0)
+
+
+async def test_run_window_without_sessions_finishes_done() -> None:
+    """A start..end window covering only non-trading days is a clean
+    'done' result with a warning, not an IndexError as 'interrupted'."""
+    config = AppConfig()
+    config.yaml["universe"]["symbols"] = ["AAA"]
+    sf = get_session_maker()
+    manager = BacktestManager(config, FakeClock(datetime.now(tz=NY_TZ)))
+    row = manager.create(
+        name="weekend",
+        start=date(2026, 10, 17),  # Saturday
+        end=date(2026, 10, 18),  # Sunday
+        universe_mode="fixed",
+        strategies=[
+            {
+                "ref": "rules_only",
+                "name": "Rules only",
+                "kind": "rules_only",
+                "slug": "rules-only",
+            }
+        ],
+        starting_equity=Decimal(10000),
+        slippage_pct=Decimal("0.05"),
+    )
+    await run_backtest(
+        row.id,
+        config=config,
+        live_sf=sf,
+        earnings=FakeEarningsSource(events=[]),
+        wall=FakeClock(datetime.now(tz=NY_TZ)),
+    )
+    with sf() as session:
+        done = session.get(Backtest, row.id)
+        assert done is not None
+        assert done.status == "done"
+        assert any("no trading sessions" in w for w in done.warnings or [])
 
 
 # ---------------------------------------------------------------------------

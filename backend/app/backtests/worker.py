@@ -67,6 +67,10 @@ from app.market.clock import NY_TZ, Clock, FakeClock, RealClock, SessionClock
 logger = logging.getLogger("app.backtest.worker")
 
 
+class _NoSessions(Exception):
+    """The run window contains no trading sessions — a clean result."""
+
+
 class RunCancelled(Exception):
     """The row's cancel flag was set — stop cleanly, keep the results."""
 
@@ -358,14 +362,38 @@ async def _fill_bar_store(
     warnings: list[str] = []
     live_sf = get_session_maker()
     start_dt, end_dt = days[0].open, days[-1].close
+    # Per symbol, not one in-window sweep: the full 5m cache for a long
+    # run is ~700k ORM rows — that much at once is a memory spike.
     with live_sf() as session:
-        rows5 = session.execute(
-            select(Bar5m).where(
-                Bar5m.symbol.in_(symbols),
-                Bar5m.start >= _naive_utc(start_dt),
-                Bar5m.start <= _naive_utc(end_dt),
+        for symbol in symbols:
+            rows5 = session.execute(
+                select(Bar5m).where(
+                    Bar5m.symbol == symbol,
+                    Bar5m.start >= _naive_utc(start_dt),
+                    Bar5m.start <= _naive_utc(end_dt),
+                )
+            ).scalars().all()
+            # Defence in depth: the live cache is regular-hours only by
+            # convention, but a dirty row must not leak into the store.
+            store.store(
+                session_bars(
+                    [
+                        Bar5mData(
+                            symbol=r.symbol,
+                            start=_aware(r.start),
+                            open=r.open,
+                            high=r.high,
+                            low=r.low,
+                            close=r.close,
+                            volume=r.volume,
+                            feed=r.feed,
+                        )
+                        for r in rows5
+                    ],
+                    days,
+                )
             )
-        ).scalars().all()
+            session.expunge_all()
         rows1 = session.execute(
             select(Bar1d).where(
                 Bar1d.symbol.in_(symbols),
@@ -373,26 +401,6 @@ async def _fill_bar_store(
                 Bar1d.date <= run.end,
             )
         ).scalars().all()
-    # Defence in depth: the live cache is regular-hours only by
-    # convention, but a dirty row must not leak into the store.
-    store.store(
-        session_bars(
-            [
-                Bar5mData(
-                    symbol=r.symbol,
-                    start=_aware(r.start),
-                    open=r.open,
-                    high=r.high,
-                    low=r.low,
-                    close=r.close,
-                    volume=r.volume,
-                    feed=r.feed,
-                )
-                for r in rows5
-            ],
-            days,
-        )
-    )
     store.store_daily(
         [
             DailyBar(
@@ -706,6 +714,13 @@ async def run_backtest(
         else:
             all_days = _weekday_sessions(fill_start, run.end)
         days = [d for d in all_days if d.date >= run.start]
+        if not days:
+            # e.g. start..end are all weekend/holidays — a clean result,
+            # not an IndexError reported as "interrupted".
+            warnings.append(
+                f"no trading sessions between {run.start} and {run.end}"
+            )
+            raise _NoSessions()
 
         symbols = _run_symbols(config, live_sf)
         warnings += await _fill_market_db(
@@ -792,6 +807,8 @@ async def run_backtest(
             status = final
     except RunCancelled:
         status = "cancelled"
+    except _NoSessions:
+        status = "done"
     except Exception as exc:  # noqa: BLE001
         logger.exception("backtest run %s failed", run_id)
         warnings.append(str(exc)[:500])
