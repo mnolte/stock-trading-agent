@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +15,7 @@ from app.db.base import get_session_maker
 from app.db.models import LogReview
 from app.log_index import LogIndexHandler
 from app.market.calendar import WeekdayCalendarProvider
+from app.market.clock import NY_TZ
 from sqlalchemy.orm import Session
 
 
@@ -43,7 +44,7 @@ def _criteria(
     db = tmp_path / "logs.db"
     monkeypatch.setattr(readiness, "index_path", lambda _cfg: db)
     return readiness._log_criteria(
-        session, WeekdayCalendarProvider(), date.today(), get_config()
+        session, WeekdayCalendarProvider(), datetime.now(tz=NY_TZ).date(), get_config()
     )
 
 
@@ -63,7 +64,7 @@ def test_index_unavailable_never_passes(
     )
     with get_session_maker()() as session:
         criteria = readiness._log_criteria(
-            session, WeekdayCalendarProvider(), date.today(), get_config()
+            session, WeekdayCalendarProvider(), datetime.now(tz=NY_TZ).date(), get_config()
         )
     assert _by_key(criteria)["log_errors"]["status"] == "not_yet"
     assert _by_key(criteria)["log_critical"]["status"] == "not_yet"

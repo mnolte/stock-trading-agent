@@ -150,12 +150,9 @@ def test_saturday_shows_fridays_session(client: TestClient) -> None:
 
     # The market-closed card is present with the stops + summary.
     assert body["market_closed"]["open_count"] == 1
-    assert body["market_closed"]["stops"] == [
-        {"symbol": "MSFT", "stop": "409.60000000"}
-    ]
-    assert Decimal(body["market_closed"]["stops"][0]["stop"]) == Decimal(
-        "409.60"
-    )
+    (stop,) = body["market_closed"]["stops"]
+    assert stop["symbol"] == "MSFT"
+    assert Decimal(stop["stop"]) == Decimal("409.60")
     assert body["cycle_counter"]["session_is_today"] is False
 
 

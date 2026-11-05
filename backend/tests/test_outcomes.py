@@ -561,10 +561,10 @@ def _seed_bars(
                 Bar5mRow(
                     symbol="MSFT",
                     start=_naive(start),
-                    open=open_,
-                    high=high,
-                    low=low,
-                    close=close,
+                    open=Decimal(str(open_)),
+                    high=Decimal(str(high)),
+                    low=Decimal(str(low)),
+                    close=Decimal(str(close)),
                     volume=1000,
                     feed="test",
                 )

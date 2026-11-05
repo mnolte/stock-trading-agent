@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 # A weekday (Monday) and the following days for backfill scenarios.
-RUN_START = datetime(2026, 12, 14, 13, 0)  # naive UTC, Monday
+RUN_START = datetime(2026, 12, 14, 14, 30)  # naive UTC, Monday
 DAY1 = date(2026, 12, 14)  # Monday
 DAY2 = date(2026, 12, 15)  # Tuesday
 

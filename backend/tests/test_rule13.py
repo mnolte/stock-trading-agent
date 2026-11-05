@@ -96,7 +96,16 @@ def _probed_sources(probes: list[LockProbe], clock: FakeClock | None = None) -> 
         calendar=raw.calendar,
         alpaca=raw.alpaca,
     )
-    for name in ("bars", "quotes", "news", "earnings", "fx", "corporate_actions", "alpaca"):
+    for name in (
+        "bars",
+        "quotes",
+        "news",
+        "earnings",
+        "fx",
+        "corporate_actions",
+        "calendar",
+        "alpaca",
+    ):
         src = getattr(wrapped, name)
         if src is None:
             continue

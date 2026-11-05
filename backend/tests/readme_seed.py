@@ -316,6 +316,10 @@ def main() -> None:
             run = Run(started_at=_ny_open(RUN_START), starting_equity=STARTING_EQUITY)
             session.add(run)
             session.flush()
+        elif run.started_at > _ny_open(RUN_START):
+            # Seeded trades start at RUN_START — pull an existing run's
+            # start back so they count toward since-start metrics.
+            run.started_at = _ny_open(RUN_START)
 
         equity = STARTING_EQUITY
         spy = STARTING_EQUITY

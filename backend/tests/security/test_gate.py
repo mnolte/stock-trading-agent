@@ -49,11 +49,20 @@ def test_bodiless_cross_origin_post_refused(client: TestClient) -> None:
 
 
 def test_fetch_metadata_alone_refuses(client: TestClient) -> None:
-    """Sec-Fetch-Site cross-site without an Origin header is still a
-    cross-site write."""
+    """Sec-Fetch-Site same-site without an Origin header is still a
+    cross-site write (only same-origin/none pass)."""
     r = client.post("/api/pause", headers={"Sec-Fetch-Site": "same-site"})
     assert r.status_code == 403
     assert r.json()["error"]["code"] == "origin_refused"
+
+
+def test_fetch_metadata_same_origin_passes(client: TestClient) -> None:
+    r = client.post(
+        "/api/kill-switch",
+        json={"action": "entries"},
+        headers={"Sec-Fetch-Site": "same-origin"},
+    )
+    assert r.status_code == 200
 
 
 def test_own_origin_write_passes(client: TestClient) -> None:
@@ -128,6 +137,25 @@ def test_oversized_body_refused(client: TestClient) -> None:
     assert r.json()["error"]["code"] == "too_large"
 
 
+def test_import_gets_the_larger_upload_cap(client: TestClient) -> None:
+    """security.max_upload_kb (5 MiB) applies only to the CSV import —
+    the same body on a normal route hits max_body_kb (1 MiB) → 413."""
+    body = b'{"pad": "' + b"x" * (2 * 1024 * 1024) + b'"}'
+    r = client.post(
+        "/api/universe/import",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code != 413
+    r = client.post(
+        "/api/logs/review",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "too_large"
+
+
 # ---------------------------------------------------------------------
 # websocket upgrade goes through the same checks
 # ---------------------------------------------------------------------
@@ -144,6 +172,14 @@ def test_websocket_foreign_host_refused(client: TestClient) -> None:
     with pytest.raises(WebSocketDisconnect):
         client.websocket_connect(
             "/ws/ws", headers={"Host": "evil.example"}
+        ).__enter__()
+
+
+def test_websocket_cross_site_fetch_metadata_refused(client: TestClient) -> None:
+    """The upgrade counts as a write — foreign Sec-Fetch-Site refuses."""
+    with pytest.raises(WebSocketDisconnect):
+        client.websocket_connect(
+            "/ws/ws", headers={"Sec-Fetch-Site": "cross-site"}
         ).__enter__()
 
 

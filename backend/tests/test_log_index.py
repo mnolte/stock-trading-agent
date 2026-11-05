@@ -7,6 +7,7 @@ import logging
 import queue
 import sqlite3
 import time
+from collections.abc import Generator
 from pathlib import Path
 from typing import cast
 
@@ -33,6 +34,17 @@ def _rec(
     record = logging.LogRecord(logger, level, __file__, 1, msg, (), None)
     record.context = context
     return record
+
+
+@pytest.fixture(autouse=True)
+def _clear_client_error_times() -> Generator[None, None, None]:
+    """Module-global sender buckets leak between files under xdist —
+    clear before and after (security/test_client_logs does the same)."""
+    import app.api.routes as routes
+
+    routes._client_error_times.clear()
+    yield
+    routes._client_error_times.clear()
 
 
 def test_index_writes_and_queries(tmp_path: Path) -> None:

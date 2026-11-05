@@ -717,6 +717,41 @@ async def test_position_without_stop_gets_protective_stop(
         assert _events(session, "protective_stop")
 
 
+async def test_failed_protective_stop_alerts_and_retries(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A protective-stop write that fails raises the critical event and
+    the report error (hard rule 2: stop immediately, then an alert) —
+    the position stays uncovered until a later pass succeeds."""
+    broker = FakeBroker(FakeClock(NOW), prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    executor = _executor(session_factory, broker)
+    with session_factory() as session:
+        _open_position(session, "MSFT", qty=4, entry="415", stop="410")
+        session.commit()
+
+    broker.fail_writes = True
+    report = await executor.reconcile()
+
+    assert report.protective_stops == []
+    assert any("protective stop MSFT" in e for e in report.errors)
+    assert not [
+        o for o in broker.orders.values() if o.order_type == "stop"
+    ]
+    with session_factory() as session:
+        events = _events(session, "protective_stop_failed")
+        assert len(events) == 1
+        assert events[0].level == "critical"
+        assert events[0].details is not None
+        assert events[0].details["symbol"] == "MSFT"
+
+    # A later pass with the broker healthy repairs it — no resend of
+    # the failed write, a fresh submission at the same level.
+    broker.fail_writes = False
+    report = await executor.reconcile()
+    assert report.protective_stops == ["MSFT"]
+
+
 async def test_position_with_live_stop_needs_no_new_order(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -2612,7 +2647,7 @@ async def test_flatten_never_refuses_same_day_positions(
 
     assert result["sold"] == ["MSFT"]
     assert (await broker.get_positions()).data == []
-    # The sale counted as a day trade — a warning goes into the event.
+    # Day-trade warnings are retired with the PDT rule — none in the event.
     with session_factory() as session:
         events = _events(session, "flatten")
         assert events[0].details is not None

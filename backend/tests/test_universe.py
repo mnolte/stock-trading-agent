@@ -662,7 +662,7 @@ async def test_held_symbol_leaves_pool_when_position_closes(
                 symbol="AAPL",
                 qty=4,
                 avg_entry_price=Decimal("100"),
-                opened_at=clock.now(),
+                opened_at=clock.now().replace(tzinfo=None),
             )
         )
         session.commit()
@@ -734,7 +734,7 @@ async def test_held_symbols_always_listed(
                 symbol="ZZZ",
                 qty=4,
                 avg_entry_price=Decimal("100"),
-                opened_at=clock.now(),
+                opened_at=clock.now().replace(tzinfo=None),
             )
         )
         session.commit()
@@ -765,7 +765,7 @@ def test_universe_includes_held_symbols(
                 symbol="ZZZ",
                 qty=4,
                 avg_entry_price=Decimal("100"),
-                opened_at=clock.now(),
+                opened_at=clock.now().replace(tzinfo=None),
                 origin="adopted",
             )
         )
@@ -1043,7 +1043,7 @@ async def test_screened_universe_keeps_held_symbols(
                 symbol="ZZZ",
                 qty=4,
                 avg_entry_price=Decimal("100"),
-                opened_at=clock.now(),
+                opened_at=clock.now().replace(tzinfo=None),
             )
         )
         session.commit()

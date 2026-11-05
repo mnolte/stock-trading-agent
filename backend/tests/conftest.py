@@ -47,7 +47,7 @@ for _var in (
 
 import app.config as config_module  # noqa: E402
 from app.api.main import create_app  # noqa: E402
-from app.db.base import Base, _engines  # noqa: E402
+from app.db.base import Base, _engines, configure_sqlite  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
@@ -138,37 +138,26 @@ def _build_template(path: Path) -> None:
 
 def _template_fingerprint() -> str:
     """Everything that determines the template's content: schema, fake
-    data, refresh logic, config defaults, the universe and the frozen
-    clock. A change to any of them rebuilds the shared database."""
+    data, refresh and signal logic, config defaults, the universe and
+    the frozen clock. A change to any of them rebuilds the shared
+    database — hashing all of ``app/`` so a change the seed uses
+    transitively (indicators, regime, protocols…) can't leave a stale
+    template behind."""
     import hashlib
 
     backend = Path(__file__).resolve().parents[1]
     files = (
-        sorted(backend.glob("alembic/versions/*.py"))
-        + [backend / "universe" / "pool.csv"]
+        sorted(backend.glob("app/**/*.py"))
+        + sorted(backend.glob("alembic/versions/*.py"))
         + [
-            backend / "app" / part
-            for part in (
-                "api/main.py",
-                "config.py",
-                "data/aggregate.py",
-                "data/cache.py",
-                "data/factory.py",
-                "data/fake.py",
-                "data/service.py",
-                "data/models.py",
-                "db/models.py",
-                "market/calendar.py",
-                "market/clock.py",
-                "signals/service.py",
-            )
-            if (backend / "app" / part).exists()
+            backend / "universe" / "pool.csv",
+            Path(__file__),
+            backend / "config.example.yaml",
         ]
-        + [Path(__file__), backend / "config.example.yaml"]
     )
     digest = hashlib.sha256(str(TEMPLATE_NOW).encode())
     for path in files:
-        digest.update(path.name.encode())
+        digest.update(str(path.relative_to(backend)).encode())
         digest.update(path.read_bytes())
     return digest.hexdigest()[:16]
 
@@ -213,8 +202,13 @@ def _ensure_template() -> Path:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     """Pre-build the warm template on the xdist controller so workers
-    don't each repeat the fake-data seed in parallel."""
+    don't each repeat the fake-data seed in parallel. Skipped when the
+    run selects tests explicitly — a filtered run may not need the
+    template, and the fixture still builds it under the lock on first
+    use."""
     if hasattr(session.config, "workerinput"):
+        return
+    if session.config.args or session.config.option.keyword:
         return
     _ensure_template()
 
@@ -261,11 +255,38 @@ def _isolated_db(
     db_path.unlink(missing_ok=True)
 
 
+@pytest.fixture(autouse=True)
+def _fast_password_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sign-in flows hash and verify Argon2id passwords constantly —
+    ~200 ms per operation at the OWASP profile dominates the auth tests.
+    A minimum-cost profile keeps the semantics (the parameters travel
+    inside the hash, so cheap hashes still verify) at a few ms each.
+    Production keeps the OWASP default in ``PasswordHasher()``."""
+    import app.auth.passwords as passwords
+    from argon2 import PasswordHasher
+
+    monkeypatch.setattr(
+        passwords,
+        "_hasher",
+        PasswordHasher(time_cost=1, memory_cost=8192, parallelism=1),
+    )
+
+
 @pytest.fixture
-def session_factory(tmp_path: Path) -> sessionmaker[Session]:
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+def session_factory(tmp_path: Path) -> Generator[sessionmaker[Session], None, None]:
+    """A scratch database with the production engine's pragmas (WAL,
+    busy timeout, mmap) so tests see the same concurrency semantics —
+    but none of the template's seeded market data."""
+    engine = configure_sqlite(
+        create_engine(
+            f"sqlite:///{tmp_path / 'test.db'}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+        ),
+        busy_timeout_seconds=30,
+    )
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    yield sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    engine.dispose()
 
 
 @pytest.fixture

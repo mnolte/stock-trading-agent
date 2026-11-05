@@ -10,6 +10,7 @@ with Caddy in front that is the proxy's own address, never the internet's.
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from starlette.requests import Request
@@ -115,6 +116,30 @@ def is_guarded_path(path: str) -> bool:
     return path.startswith("/api/") or path == "/api" or path.startswith("/ws")
 
 
+def iter_flat_routes(app: object) -> Iterator[tuple[str, frozenset[str] | None, object]]:
+    """Walk the route table, expanding lazily included routers.
+
+    FastAPI keeps ``include_router`` lazy: ``app.routes`` yields
+    ``_IncludedRouter`` objects that carry no ``.path`` — the real routes
+    live on ``original_router`` under ``include_context.prefix``. A walk
+    that reads ``route.path`` straight off ``app.routes`` sees none of
+    the API surface; the coverage check below and every route-table test
+    must expand these first.
+    """
+    stack = [(route, "") for route in getattr(app, "routes", [])]
+    while stack:
+        route, prefix = stack.pop()
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            ctx = getattr(route, "include_context", None)
+            child_prefix = prefix + getattr(ctx, "prefix", "")
+            stack += [(child, child_prefix) for child in original.routes]
+            continue
+        yield prefix + getattr(route, "path", ""), getattr(
+            route, "methods", None
+        ), route
+
+
 def check_route_coverage(app: object) -> None:
     """Refuse to start when a route exists that no session check covers.
 
@@ -123,14 +148,11 @@ def check_route_coverage(app: object) -> None:
     nor under a guarded prefix — a route added outside /api would
     otherwise ship reachable without sign-in.
     """
-    for route in getattr(app, "routes", []):
-        path = getattr(route, "path", "")
+    for path, methods, route in iter_flat_routes(app):
         if not path or path in OPEN_PATHS:
             continue
         # Mounts (static files) and docs/redoc never carry API data.
-        if getattr(route, "methods", None) is None and getattr(
-            route, "routes", None
-        ) is not None:
+        if methods is None and getattr(route, "routes", None) is not None:
             continue
         if not is_guarded_path(path):
             raise RuntimeError(

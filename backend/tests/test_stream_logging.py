@@ -22,7 +22,7 @@ AFTER_HOURS = datetime(2026, 10, 15, 22, 0, tzinfo=UTC)  # 18:00 — closed
 def _record(name: str, level: int, msg: str) -> logging.LogRecord:
     return logging.makeLogRecord(
         {
-            "name": "alpaca.trading.stream",
+            "name": name,
             "levelno": level,
             "levelname": logging.getLevelName(level),
             "msg": msg,

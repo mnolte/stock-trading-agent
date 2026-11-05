@@ -105,7 +105,7 @@ def seed_v2_decision() -> None:
     ]
     snapshot = {
         "symbol": "MSFT", "context": "candidate",
-        "time_ny": "2026-10-15T16:46:00-04:00",
+        "time_ny": "2026-10-15T15:46:00-04:00",
         "price": 418.40, "stop_reference_price": "418.05", "last_bar_close": "418.05",
         "indicators_1h": {"atr14": 3.21, "rsi14": 58.2, "ema20": 415.60, "ema50": 412.30,
                           "vwap": 417.90, "obv": "up"},
@@ -124,9 +124,9 @@ def seed_v2_decision() -> None:
             return
         cycle = Cycle(
             kind="cycle",
-            scheduled_time=datetime(2026, 10, 15, 20, 46),
-            started_at=datetime(2026, 10, 15, 20, 46),
-            finished_at=datetime(2026, 10, 15, 20, 46, 12),
+            scheduled_time=datetime(2026, 10, 15, 19, 46),
+            started_at=datetime(2026, 10, 15, 19, 46),
+            finished_at=datetime(2026, 10, 15, 19, 46, 12),
             duration_seconds=12.0,
             status="done",
         )
@@ -169,7 +169,6 @@ def seed_v2_decision() -> None:
                         {"name": "risk per trade", "passed": True, "detail": "0.80% equity"},
                         {"name": "open risk", "passed": True, "detail": "1.9% of 3%"},
                         {"name": "positions", "passed": True, "detail": "2 of 5"},
-                        {"name": "day trades", "passed": True, "detail": "0 of 3"},
                         {"name": "daily loss", "passed": True, "detail": "-0.2% of -2%"},
                     ],
                     "sizing": {"shares": 4, "limited_by": []},

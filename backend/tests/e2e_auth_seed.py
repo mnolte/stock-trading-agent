@@ -28,7 +28,7 @@ with get_session_maker()() as session:
     _user, secret, codes = create_or_reset_user(
         session,
         config,
-        FakeClock(now.replace(tzinfo=UTC)),
+        FakeClock(now.astimezone(UTC)),
         username="marc",
         password=PASSWORD,
     )

@@ -70,10 +70,15 @@ async def test_foreign_instance_turns_kill_switch_on(
     await executor.reconcile()
     with session_factory() as session:
         assert (
-            session.execute(select(Event).where(Event.event_type == "another_instance"))
-            .scalars()
-            .all()
-        ).__len__() == 1
+            len(
+                session.execute(
+                    select(Event).where(Event.event_type == "another_instance")
+                )
+                .scalars()
+                .all()
+            )
+            == 1
+        )
 
 
 async def test_own_and_plain_ids_do_not_trip_it(

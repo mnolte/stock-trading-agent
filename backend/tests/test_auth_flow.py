@@ -186,6 +186,135 @@ def test_sign_out_and_sign_out_everywhere(app_auth: Any) -> None:
         assert client.get("/api/header").status_code == 401
 
 
+def test_sessions_list_and_sign_out_by_id(app_auth: Any) -> None:
+    """Settings → Access devices: the list marks the current session and
+    sign-out by id kills the other device's token."""
+    app, secret, _codes = app_auth
+    # A second cookie jar on the same booted app — a second TestClient
+    # inside 'with' would boot the lifespan again and hit the run lock.
+    with TestClient(app, base_url="https://testserver") as client:
+        other_client = TestClient(app, base_url="https://testserver")
+        _sign_in(client, secret)
+        _sign_in(other_client, secret)  # a second device
+        data = client.get("/api/auth/sessions").json()
+        devices = data["devices"]
+        assert len(devices) == 2
+        assert [d["current"] for d in devices].count(True) == 1
+        other = next(d for d in devices if not d["current"])
+        r = client.post(
+            f"/api/auth/sessions/{other['id']}/sign-out", headers=_csrf(client)
+        )
+        assert r.status_code == 200
+        assert other_client.get("/api/header").status_code == 401
+        assert client.get("/api/header").status_code == 200
+
+
+def test_sign_out_others_keeps_current(app_auth: Any) -> None:
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        other_client = TestClient(app, base_url="https://testserver")
+        _sign_in(client, secret)
+        _sign_in(other_client, secret)  # a second device
+        r = client.post("/api/auth/sign-out-others", headers=_csrf(client))
+        assert r.status_code == 200
+        assert r.json()["signed_out"] == 1
+        assert client.get("/api/header").status_code == 200
+        assert other_client.get("/api/header").status_code == 401
+
+
+def test_totp_reset_requires_confirm_and_replaces_secret(app_auth: Any) -> None:
+    """POST /api/auth/totp resets the second factor — behind 'Confirm it
+    is you'; the old secret stops working immediately."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        r = client.post("/api/auth/totp", headers=_csrf(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+        )
+        r = client.post("/api/auth/totp", headers=_csrf(client))
+        assert r.status_code == 200
+        new_secret = r.json()["secret"]
+        assert new_secret != secret
+        # The old code no longer signs in; the new one does — past the
+        # already-spent TOTP step (codes at or below last_totp_step are
+        # refused as replays).
+        client.post("/api/auth/sign-out", headers=_csrf(client))
+        app.state.clock.advance(timedelta(seconds=31))
+        client.post("/api/auth/sign-in", json={"password": PASSWORD})
+        old_code = totp_code(secret, app.state.clock.now())
+        assert client.post("/api/auth/code", json={"code": old_code}).status_code == 401
+        new_code = totp_code(new_secret, app.state.clock.now())
+        assert client.post("/api/auth/code", json={"code": new_code}).status_code == 200
+
+
+def test_recovery_codes_regenerate_requires_confirm(app_auth: Any) -> None:
+    """New recovery codes replace the old set — behind 'Confirm it is
+    you'; a regenerated code signs in, an old one is dead."""
+    app, _secret, codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, _secret)
+        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=_csrf(client)
+        )
+        r = client.post("/api/auth/recovery-codes", headers=_csrf(client))
+        assert r.status_code == 200
+        new_codes = r.json()["codes"]
+        assert new_codes and new_codes != codes
+        client.post("/api/auth/sign-out", headers=_csrf(client))
+        client.post("/api/auth/sign-in", json={"password": PASSWORD})
+        assert (
+            client.post("/api/auth/code", json={"code": codes[0]}).status_code == 401
+        )
+        assert (
+            client.post("/api/auth/code", json={"code": new_codes[0]}).status_code
+            == 200
+        )
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/api/paper-reset", {}),
+        ("/api/runs", {}),
+        ("/api/keys/openai", {"value": "sk-fake-0123456789abcdef"}),
+        ("/api/keys/openai/remove", {}),
+    ],
+)
+def test_risky_writes_require_confirm(
+    app_auth: Any, path: str, body: dict[str, object]
+) -> None:
+    """Every write guarded by 'Confirm it is you' answers 403
+    confirm_required without a fresh confirmation."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        r = client.post(path, json=body, headers=_csrf(client))
+        assert r.status_code == 403, f"{path} -> {r.status_code}"
+        assert r.json()["error"]["code"] == "confirm_required"
+
+
+def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
+    """Loosening a numeric risk limit needs 'Confirm it is you';
+    tightening never asks (design, Settings → Access)."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        _sign_in(client, secret)
+        for body, expect in (
+            ({"settings": {"risk": {"daily_loss_limit_pct": 3}}, "reason": "t"}, 403),
+            ({"settings": {"risk": {"daily_loss_limit_pct": 1}}, "reason": "t"}, 200),
+        ):
+            r = client.post("/api/settings", json=body, headers=_csrf(client))
+            assert r.status_code == expect, f"{body} -> {r.status_code} {r.text}"
+            if expect == 403:
+                assert r.json()["error"]["code"] == "confirm_required"
+
+
 def test_confirm_required_then_valid_five_minutes(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
@@ -234,7 +363,7 @@ def test_csrf_required_on_writes(app_auth: Any) -> None:
 
 def test_every_route_requires_a_session(app_auth: Any) -> None:
     app, _secret, _codes = app_auth
-    from app.auth.guard import OPEN_PATHS
+    from app.auth.guard import OPEN_PATHS, iter_flat_routes
 
     # The open set is exactly /healthz + the sign-in endpoints — drift in
     # either place fails this test.
@@ -245,21 +374,24 @@ def test_every_route_requires_a_session(app_auth: Any) -> None:
         "/api/auth/code",
         "/api/auth/status",
     }
+    checked = 0
     with TestClient(app, base_url="https://testserver") as client:
-        for route in app.routes:
-            path = getattr(route, "path", "")
-            methods = getattr(route, "methods", None) or {"GET"}
+        for path, methods, _route in iter_flat_routes(app):
             if not path.startswith("/api"):
                 continue
             if path in open_paths:
                 continue
-            for method in methods - {"HEAD", "OPTIONS"}:
+            for method in (methods or {"GET"}) - {"HEAD", "OPTIONS"}:
                 response = client.request(method, path)
+                checked += 1
                 assert response.status_code == 401, (
                     f"{method} {path} answered {response.status_code}"
                 )
                 body = response.json()
                 assert body["error"]["code"] in ("not_signed_in",), body
+    # The walk must actually reach the API surface — lazy included
+    # routers without a .path made it a no-op once before.
+    assert checked > 30
 
 
 def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
@@ -400,7 +532,14 @@ def test_pending_ticket_rules(app_auth: Any) -> None:
         code = totp_code(secret, app.state.clock.now())
         r = client.post("/api/auth/code", json={"code": code})
         assert r.status_code == 200
-        assert "sa_pending" not in r.headers.get("set-cookie", "") or True
+        # The single-use ticket is dropped: the response clears the
+        # pending cookie and the jar no longer holds it.
+        set_cookies = r.headers.get_list("set-cookie")
+        assert any(
+            "sa_pending" in h and ("Max-Age=0" in h or 'sa_pending=""' in h)
+            for h in set_cookies
+        ), set_cookies
+        assert client.cookies.get("sa_pending") is None
 
 
 def test_totp_step_cannot_be_reused(app_auth: Any) -> None:
@@ -491,6 +630,29 @@ def test_startup_route_walk_refuses_unguarded_route() -> None:
     bad = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     bad.get("/healthz")(lambda: {"ok": True})
     bad.get("/internal/debug")(lambda: {})
+    with pytest.raises(RuntimeError, match="not behind the session check"):
+        check_route_coverage(bad)
+
+
+def test_startup_route_walk_reaches_lazy_included_routers() -> None:
+    """Routers added via include_router stay lazy in this FastAPI
+    version — the coverage walk must expand them or it sees nothing."""
+    from app.auth.guard import check_route_coverage
+    from fastapi import APIRouter, FastAPI
+
+    ok = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    ok.get("/healthz")(lambda: {"ok": True})
+    router = APIRouter()
+    router.get("/anything")(lambda: {})
+    ok.include_router(router, prefix="/api")
+    check_route_coverage(ok)  # /api router is guarded — passes
+
+    bad = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    bad.get("/healthz")(lambda: {"ok": True})
+    internal = APIRouter()
+    internal.get("/debug")(lambda: {})
+    internal.include_router(APIRouter())
+    bad.include_router(internal, prefix="/internal")
     with pytest.raises(RuntimeError, match="not behind the session check"):
         check_route_coverage(bad)
 

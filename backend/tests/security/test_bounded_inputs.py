@@ -7,52 +7,87 @@ quoted as a phrase, exports capped at ``security.export_max_rows``.
 
 from __future__ import annotations
 
+import inspect
+import re
+import typing
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
+from app.auth.guard import iter_flat_routes
+from fastapi.params import Depends, Param, Query
 from fastapi.testclient import TestClient
 
-_PARAMS = ("limit", "window", "after_id", "cursor", "line_id")
 _VALUES = ("-1", "0", "1000000000000", "abc")
+# Path placeholders resolve to these values; anything else defaults to "1".
+_PATH_VALUES = {"slug": "live"}
+# Sent to every route on top of its declared parameters — unknown query
+# params must be ignored, never crash.
+_JUNK_PARAM = "bogus"
 
 
-def _get_routes(app: Any) -> list[str]:
-    """All GET /api paths — this FastAPI version keeps included routers
-    lazy (``_IncludedRouter``), so expand them via ``original_router``."""
-    paths = []
-    stack = [(route, "") for route in app.routes]
-    while stack:
-        route, prefix = stack.pop()
-        original = getattr(route, "original_router", None)
-        if original is not None:
-            ctx = getattr(route, "include_context", None)
-            stack += [
-                (child, prefix + getattr(ctx, "prefix", ""))
-                for child in original.routes
-            ]
+def _get_routes(app: Any) -> list[tuple[str, Any]]:
+    """All GET /api (path, endpoint) pairs — expands lazy included
+    routers via the shared walker so no route is silently skipped."""
+    routes = []
+    for path, methods, route in iter_flat_routes(app):
+        if "GET" in (methods or set()) and path.startswith("/api"):
+            endpoint = getattr(route, "endpoint", None)
+            routes.append((path, endpoint))
+    return routes
+
+
+_SCALARS = (str, int, float, bool, Decimal, date, datetime)
+
+
+def _scalar_annotation(annotation: Any) -> bool:
+    if annotation in _SCALARS:
+        return True
+    args = [a for a in typing.get_args(annotation) if a is not type(None)]
+    return bool(args) and all(a in _SCALARS for a in args)
+
+
+def _declared_params(endpoint: Any) -> list[str]:
+    """Query parameters the endpoint actually declares — skips injected
+    dependencies (``Depends``), ``Request``/``Session`` objects and
+    header/path/body params."""
+    if endpoint is None:
+        return []
+    try:
+        sig = inspect.signature(endpoint)
+    except (TypeError, ValueError):
+        return []
+    out = []
+    for name, p in sig.parameters.items():
+        default = p.default
+        if isinstance(default, Depends):
             continue
-        methods = getattr(route, "methods", None) or set()
-        path = prefix + getattr(route, "path", "")
-        if "GET" in methods and path.startswith("/api"):
-            paths.append(path)
-    return paths
+        if isinstance(default, Param):
+            if isinstance(default, Query):
+                out.append(name)
+            continue
+        if default is inspect.Parameter.empty:
+            if _scalar_annotation(p.annotation):
+                out.append(name)
+        elif isinstance(default, _SCALARS) or default is None:
+            out.append(name)
+    return out
 
 
 def test_every_get_route_survives_bad_params(client: TestClient) -> None:
-    """Send -1, 0, 10^12 and abc to every plausible query parameter of
-    every GET route: nothing may answer 500 (spec → Bounded inputs)."""
+    """Send -1, 0, 10^12 and abc to every declared query parameter of
+    every GET route, plus one undeclared junk param: nothing may answer
+    500 (spec → Bounded inputs)."""
     routes = _get_routes(client.app)
     assert len(routes) > 30
     failures: list[str] = []
-    for path in routes:
-        # Path parameters get an int-friendly value so the route resolves.
-        url = path
-        for placeholder in (
-            "{decision_id}", "{review_id}", "{run_id}", "{line_id}",
-            "{call_id}", "{strategy_id}", "{symbol}",
-        ):
-            url = url.replace(placeholder, "1")
-        url = url.replace("{slug}", "live")
-        for param in _PARAMS:
+    for path, endpoint in routes:
+        url = re.sub(
+            r"{(\w+)}", lambda m: _PATH_VALUES.get(m.group(1), "1"), path
+        )
+        assert "{" not in url, f"unresolved path param in {path}"
+        params = set(_declared_params(endpoint)) | {_JUNK_PARAM}
+        for param in sorted(params):
             for value in _VALUES:
                 r = client.get(url, params={param: value})
                 if r.status_code >= 500:

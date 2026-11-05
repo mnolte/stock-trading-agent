@@ -465,7 +465,7 @@ async def test_split_during_window_adjusts_bars_and_exit(
         # Expected: bars before Oct 9 divided by 2, later bars as stored.
         expected_highs = []
         for b in bars:
-            day_ = b.start.astimezone(UTC).astimezone(NY_TZ).date()
+            day_ = b.start.replace(tzinfo=UTC).astimezone(NY_TZ).date()
             if b.start >= exit_at.replace(tzinfo=None):
                 expected_highs.append(
                     b.high / 2 if day_ < date(2026, 10, 9) else b.high

@@ -783,6 +783,24 @@ async def test_shadow_at_own_drawdown_stops_entering(sf: sessionmaker[Session]) 
 async def test_same_day_exit_fills_at_once(sf: sessionmaker[Session]) -> None:
     """Shadow exits on the entry day fill like any other — the PDT
     deferral is retired (docs/SPEC.md, Day trades)."""
+    sid = _strategy(sf, "A")
+    _pending(sf, sid)
+    t = datetime(2026, 10, 15, 10, 50, tzinfo=NY_TZ)
+    bars = Bars(
+        [
+            _bar("MSFT", t, "100.40", "100.50", "100.00", "100.20"),  # fills
+            _bar(
+                "MSFT", t + timedelta(minutes=5), "100.20", "100.30", "97.90", "98.00"
+            ),  # same-day bar touches the stop
+        ]
+    )
+    events = _replay(sf, sid, bars, t + timedelta(minutes=20))
+    assert [e.kind for e in events] == ["filled", "stop"]
+    (sp,) = _positions(sf, sid)
+    assert sp.status == "closed"
+    assert sp.exit_reason == "stop" and sp.exit_price == Decimal("98")
+    assert sp.closed_at is not None
+    assert sp.closed_at.date() == _naive(t).date()
 
 async def test_stop_and_flatten_closes_shadow_positions_at_next_open(
     sf: sessionmaker[Session],

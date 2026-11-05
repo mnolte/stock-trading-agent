@@ -96,6 +96,29 @@ def test_changed_host_without_password_is_422_and_no_connection(
     assert mailer.configs == []
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"port": 2525},
+        {"username": "other@saved.example"},
+    ],
+)
+def test_changed_port_or_username_without_password_is_422(
+    client: TestClient, change: dict[str, object]
+) -> None:
+    """The destination guard fires on port and username changes too,
+    not only on host (hard rule 20)."""
+    mailer = _smtp_configured(client)
+    mailer.configs.clear()
+    r = client.post(
+        "/api/notifications/smtp",
+        json={**SMTP_BODY, **change, "password": ""},
+    )
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "password_required"
+    assert mailer.configs == []
+
+
 def test_changed_host_with_password_logs_in_with_it(
     client: TestClient,
 ) -> None:

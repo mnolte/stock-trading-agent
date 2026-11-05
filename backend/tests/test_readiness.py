@@ -968,6 +968,9 @@ def test_infer_affects() -> None:
     assert infer_affects({"decision_id": 3}) == "decision"
     assert infer_affects({"symbol": "AAPL"}) == "none"
     assert infer_affects(None) == "none"
+    # Multiple keys: the most downstream object wins (fill > order > decision).
+    assert infer_affects({"fill_id": 1, "order_id": 2, "decision_id": 3}) == "fill"
+    assert infer_affects({"order_id": 2, "decision_id": 3}) == "order"
 
 
 def test_error_auto_resolves_after_an_hour(

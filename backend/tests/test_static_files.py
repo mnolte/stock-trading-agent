@@ -64,6 +64,13 @@ def test_missing_asset_is_404_not_index(client: TestClient) -> None:
     assert response.text != INDEX
 
 
+def test_missing_named_file_outside_assets_is_404(client: TestClient) -> None:
+    """A missing file with an extension outside /assets/ is a 404 too —
+    the suffix check refuses the SPA fallback, not only /assets paths."""
+    assert client.get("/favicon.ico").status_code == 404
+    assert client.get("/manifest.json").status_code == 404
+
+
 def test_missing_extensionless_path_still_falls_back(
     client: TestClient,
 ) -> None:

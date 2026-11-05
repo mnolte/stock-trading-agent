@@ -87,7 +87,6 @@ def test_auth_routes_non_object_body_is_422(app_auth: Any) -> None:
                 r = client.post(path, json=body, headers=_csrf(client))
                 assert r.status_code == 422, f"{path} {body!r} -> {r.status_code}"
                 assert r.json()["error"]["code"] == "invalid", r.text
-            assert r.status_code < 500
 
 
 def test_auth_routes_wrong_field_type_is_422(app_auth: Any) -> None:

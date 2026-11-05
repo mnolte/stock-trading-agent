@@ -3,13 +3,24 @@ sanitised fields."""
 
 from __future__ import annotations
 
+from collections.abc import Generator
+
 import app.api.routes as routes
 import pytest
+from app.config import get_config
 from fastapi.testclient import TestClient
 
 
-def test_rate_limit_is_per_address_not_tab(client: TestClient) -> None:
+@pytest.fixture(autouse=True)
+def _clear_senders() -> Generator[None, None, None]:
+    """The per-address buckets are module-global — clear before and
+    after so a leaked sender can't spill into another test."""
     routes._client_error_times.clear()
+    yield
+    routes._client_error_times.clear()
+
+
+def test_rate_limit_is_per_address_not_tab(client: TestClient) -> None:
     for i in range(10):
         r = client.post("/api/logs/client", json={"tab_id": f"t{i}", "message": "x"})
         assert r.status_code == 200
@@ -18,23 +29,23 @@ def test_rate_limit_is_per_address_not_tab(client: TestClient) -> None:
 
 
 def test_senders_table_bounded(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    routes._client_error_times.clear()
-    for i in range(5):
+    """The senders table is capped at security.client_error_senders —
+    the oldest entries are evicted when a new sender arrives."""
+    get_config().yaml["security"]["client_error_senders"] = 4
+    for i in range(4):
         routes._client_error_times[f"10.0.0.{i}"] = [0.0]
     monkeypatch.setattr(
-        "app.api.routes.client_ip" if False else "app.auth.guard.client_ip",
-        lambda *_a, **_k: "10.0.0.9",
+        "app.auth.guard.client_ip", lambda *_a, **_k: "10.0.0.9"
     )
     client.post("/api/logs/client", json={"message": "x"})
-    # client_error_senders = 1000 default — monkeypatch a tiny cap check
-    # happens via the while-loop; assert table stays sane.
-    assert len(routes._client_error_times) <= 1000
+    assert len(routes._client_error_times) == 4
+    assert "10.0.0.0" not in routes._client_error_times  # oldest evicted
+    assert "10.0.0.9" in routes._client_error_times
 
 
 def test_fields_capped_and_single_lined(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    routes._client_error_times.clear()
     import logging
 
     with caplog.at_level(logging.ERROR, logger="frontend"):
