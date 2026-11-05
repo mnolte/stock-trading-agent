@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta
 
+import pytest
 from app.config import AppConfig
 from app.market.clock import UTC, FakeClock, SessionClock
 
@@ -130,3 +131,29 @@ def test_session_clock_at_exact_open_and_close() -> None:
             FakeClock(instant.astimezone(UTC)), AppConfig(), calendar=cal
         )
         assert clock.state().state == expect, instant
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("2026-10-15T09:30:00-04:00", datetime(2026, 10, 15, 13, 30, tzinfo=UTC)),
+     ("2026-10-15T12:34:00", datetime(2026, 10, 15, 12, 34, tzinfo=UTC))],
+)
+def test_make_clock_parses_sim_now(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: datetime,
+) -> None:
+    from app.market.clock import make_clock
+
+    monkeypatch.setenv("SA_SIM_NOW", raw)
+    config = AppConfig()
+    config.env.mode = "simulated"
+    clock = make_clock(config)
+    assert isinstance(clock, FakeClock)
+    assert clock.now() == expected
+
+
+def test_make_clock_paper_uses_real_clock() -> None:
+    from app.market.clock import RealClock, make_clock
+
+    config = AppConfig()
+    config.env.mode = "paper"
+    assert isinstance(make_clock(config), RealClock)
