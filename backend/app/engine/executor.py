@@ -470,10 +470,12 @@ class Executor:
         today_session = self.calendar.session_for(ny_now.date())
         regular_hours = (
             today_session is not None
-            and today_session.open <= ny_now <= today_session.close
+            and today_session.open <= ny_now < today_session.close
         )
         sold: list[str] = []
         errors: list[str] = []
+        if cancelled.error is not None:
+            errors.append(f"cancel all orders: {cancelled.error}")
         rejected: list[str] = []
         blocked: list[str] = []
         # Confirm the cancels landed before selling: a stop leg still live
@@ -516,11 +518,48 @@ class Executor:
                         )
                         session.commit()
                     continue
+                # A confirmed cancel is not a released hold: poll until
+                # the broker frees the shares, then sell only what it
+                # reports free — a market sell against held shares is
+                # rejected (same KO lesson as _exit).
+                released, rel_error = await self._await_released(pos.symbol)
+                if rel_error is None and released is None:
+                    continue  # already flat at the broker
+                if rel_error is not None or released is None:
+                    sell_qty = 0
+                else:
+                    sell_qty = min(pos.qty, self._free_qty(released))
+                if sell_qty <= 0:
+                    blocked.append(pos.symbol)
+                    errors.append(
+                        f"{pos.symbol}: sell held back, "
+                        + (
+                            rel_error
+                            if rel_error
+                            else "shares still held_for_orders"
+                        )
+                    )
+                    with self._session_factory() as session:
+                        record_event(
+                            session,
+                            self.clock,
+                            level="critical",
+                            event_type="flatten_sell_blocked",
+                            details={
+                                "symbol": pos.symbol,
+                                "qty": pos.qty,
+                                "reason": rel_error
+                                or "shares still held_for_orders",
+                            },
+                            affects="order",
+                        )
+                        session.commit()
+                    continue
                 self._orders_this_cycle += 1
                 with self._order_slot():
                     result = await self.broker.submit_market_sell(
                         symbol=pos.symbol,
-                        qty=pos.qty,
+                        qty=sell_qty,
                         market_on_open=not regular_hours,
                         client_order_id=self._client_id("exit", 0, pos.symbol),
                     )
@@ -3499,36 +3538,56 @@ class Executor:
         today_session = self.calendar.session_for(ny_now.date())
         regular_hours = (
             today_session is not None
-            and today_session.open <= ny_now <= today_session.close
+            and today_session.open <= ny_now < today_session.close
         )
         self._orders_this_cycle += 1
-        # Never sell more than is held: cap at the qty Alpaca confirms
-        # right before the send. Falling back to the stored qty is only
-        # allowed while the broker guard is confirmed — without it the
-        # exit waits for a confirmed qty (retried at the next check).
-        confirmed = await self.broker.get_position(position.symbol)
-        if confirmed.error is None and (
-            confirmed.data is None or confirmed.data.qty <= 0
-        ):
+        # Never sell more than is held AND free: a confirmed cancel is
+        # not a released hold — ``held_for_orders`` takes a moment to
+        # clear, and a market sell against held shares is rejected.
+        # Poll until the broker frees the shares (same discipline as the
+        # protective-stop repair), then cap at the qty it reports free.
+        # Falling back to the stored qty is only allowed while the
+        # broker guard is confirmed — without it the exit waits for a
+        # confirmed qty (retried at the next check).
+        confirmed, rel_error = await self._await_released(position.symbol)
+        if rel_error is None and confirmed is None:
             # Confirmed flat at the broker — nothing left to sell; the
             # stored-qty fallback below is only for a failed read.
             self._flat_symbols.add(position.symbol)
             return
-        if confirmed.error is None and confirmed.data is not None:
-            sell_qty = min(position.qty, confirmed.data.qty)
+        if rel_error is None and confirmed is not None:
+            sell_qty = min(position.qty, self._free_qty(confirmed))
         elif self.state.broker_guard_confirmed:
             sell_qty = position.qty
         else:
             ev(
                 logger, logging.WARNING, "executor.exit_unconfirmed_qty",
                 f"{position.symbol}: exit held back — position qty "
-                f"could not be confirmed ({confirmed.error}); retrying "
+                f"could not be confirmed ({rel_error}); retrying "
                 "at the next position check",
                 symbol=position.symbol,
             )
             session.flush()
             return
         if sell_qty <= 0:
+            # Shares are still held after the settle window — the sale
+            # would be rejected. Surface it instead of silently dropping
+            # the exit; the next position check retries the repair.
+            record_event(
+                session,
+                self.clock,
+                level="critical",
+                event_type="exit_held_qty",
+                details={
+                    "symbol": position.symbol,
+                    "message": (
+                        "exit held back — shares still held_for_orders "
+                        "after the settle window"
+                    ),
+                },
+                affects="order",
+            )
+            session.flush()
             return
         with self._order_slot():
             sold = await self.broker.submit_market_sell(
