@@ -36,12 +36,12 @@ test('latest decision card: chips, summary box, full-decision button', async ({
 
 test('decision drawer: gates, signal stack, reasoning, outcome', async ({
   page,
+  request,
 }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
 
-  // The card tracks ?symbol= and the default symbol's latest decision is a
-  // rules no_call — no model call, so no "Open model call" link. XOM's
-  // seeded decision did reach the model.
+  // The card tracks ?symbol=. The drawer sections render for any decision,
+  // including a rules no_call.
   await page.goto('/?symbol=XOM');
 
   const card = page.locator('section', {
@@ -52,6 +52,7 @@ test('decision drawer: gates, signal stack, reasoning, outcome', async ({
   // The card refetches when ?symbol= resolves — wait until it shows XOM's
   // decision before opening the drawer.
   await expect(card.getByText('XOM', { exact: true }).first()).toBeVisible();
+  const href = await button.getAttribute('href');
   await button.click();
   await expect(page).toHaveURL(/\/decisions\/\d+/);
 
@@ -83,6 +84,32 @@ test('decision drawer: gates, signal stack, reasoning, outcome', async ({
   await expect(
     page.getByRole('link', { name: 'Open position & orders' })
   ).toBeVisible();
+
+  // "Open model call" shows only when the decision reached the model. The
+  // card's target may be a rules no_call — live cycles keep writing newer
+  // decisions for the same symbol — so open a decision that has a call
+  // through the inspector's list instead of assuming the card's target did.
+  let modelCallHref: string | null = null;
+  await expect(async () => {
+    const detail = (await (
+      await request.get(`/api${href}`)
+    ).json()) as { llm_call_id: number | null };
+    if (detail.llm_call_id !== null) {
+      modelCallHref = href;
+      return;
+    }
+    const list = (await (
+      await request.get('/api/llm-calls?source=live&limit=50')
+    ).json()) as { calls: { kind: string; decision_id: number | null }[] };
+    const call = list.calls.find(
+      (c) => c.kind === 'decision' && c.decision_id !== null
+    );
+    expect(call, 'no live decision reached the model yet').toBeTruthy();
+    modelCallHref = `/decisions/${call!.decision_id}`;
+  }).toPass({ timeout: 60_000 });
+  if (modelCallHref !== href) {
+    await page.goto(modelCallHref!);
+  }
   await expect(
     page.getByRole('link', { name: 'Open model call' })
   ).toBeVisible();
