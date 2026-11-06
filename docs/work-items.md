@@ -92,7 +92,7 @@ The examples use 099 as a made-up number.
 | 043 | fix | Trading path audit fixes | — | — | #123 | building |
 | 044 | spec | Spec rulings from the 043 audit | — | #135 | — | planned |
 | 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | — | planned |
-| 047 | fix | Drawer model-call e2e flake | — | — | — | building |
+| 047 | fix | Drawer model-call e2e flake | — | — | #141 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
 
