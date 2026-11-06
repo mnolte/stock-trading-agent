@@ -12,7 +12,7 @@ Usage (from backend/, with the e2e env): ``../.venv/bin/python -m tests.e2e_seed
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -52,7 +52,7 @@ def seed_v2_decision() -> None:
     the e2e DB is scratch data.
     """
     from app.db.base import get_session_maker
-    from app.db.models import Cycle, Decision
+    from app.db.models import Cycle, Decision, LlmCall
 
     levels = [
         {
@@ -132,8 +132,7 @@ def seed_v2_decision() -> None:
         )
         session.add(cycle)
         session.flush()
-        session.add(
-            Decision(
+        decision = Decision(
                 cycle_id=cycle.id,
                 symbol="MSFT",
                 context="candidate",
@@ -191,6 +190,32 @@ def seed_v2_decision() -> None:
                 },
                 chosen_option="D",
                 explanation_check={"passed": True, "bad_ids": [], "bad_numbers": []},
+        )
+        session.add(decision)
+        session.flush()
+        # A real model decision always has its llm_calls row — the drawer's
+        # "Open model call" link and the inspector's input snapshot read it.
+        session.add(
+            LlmCall(
+                sent_at=datetime(2026, 10, 15, 19, 46, 10),
+                session_date=date(2026, 10, 15),
+                source="live",
+                kind="decision",
+                decision_id=decision.id,
+                cycle_id=cycle.id,
+                symbol="MSFT",
+                context="candidate",
+                model="gpt-4o-mini",
+                temperature=0,
+                prompt_version="decision.v2",
+                prompt_hash="a1" * 32,
+                tokens_in=2800,
+                tokens_out=400,
+                cost=Decimal("0.00066"),
+                latency_ms=840,
+                final_action="enter",
+                outcome="success",
+                reasons=[],
             )
         )
         session.commit()

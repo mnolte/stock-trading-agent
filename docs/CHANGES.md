@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-06 — [047] Drawer model-call e2e flake
+
+- The PR 9 drawer e2e assumed the latest-decision card's target had reached the model; a live cycle writing a newer rules no_call for the same symbol made it fail at random.
+- `tests/e2e_seed.py` now writes the `llm_calls` row a real model decision always has, so a decision with "Open model call" exists from the start; the test opens the card's drawer for the sections and resolves a decision with a call through `/api/llm-calls` for the footer link.
+
 ## 2026-11-05 — Live pending exits (issue #136)
 
 - Store held-back live exits on the position with the decision, reason, first attempt time and failure count.
