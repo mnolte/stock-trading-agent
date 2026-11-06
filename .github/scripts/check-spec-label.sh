@@ -21,6 +21,10 @@
 #      .env.example need an entry in docs/CHANGES.md; changes to design
 #      files need one in design/CHANGES.md. Other spec-owned files
 #      (README, kickoff, analysis, this gate itself) need the label only.
+#   4. Archiving a finished kickoff is not a spec change: an unchanged
+#      move of docs/kickoffs/<name>.md to docs/kickoffs/archive/<name>.md
+#      (docs/work-items.md) needs no label. Any edit in the same move, a
+#      move elsewhere, or a move out of the archive still does.
 set -euo pipefail
 
 # Missing pattern file must fail loudly — an empty pattern list would
@@ -32,6 +36,18 @@ mapfile -t patterns < <(grep -vE '^[[:space:]]*(#|$)' .github/spec-paths.txt)
 # --no-renames reports a rename as delete + add, so a renamed spec file
 # still trips the gate.
 mapfile -t changed < <(git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA")
+
+# Rule 4: exact moves of a kickoff into docs/kickoffs/archive/, same
+# file name, content unchanged (git's R100). Both sides are exempt.
+archived=()
+while IFS=$'\t' read -r status old new; do
+  [[ $status == R100 ]] || continue
+  [[ $old == docs/kickoffs/*.md && $old != docs/kickoffs/archive/* ]] || continue
+  [[ $new == "docs/kickoffs/archive/${old#docs/kickoffs/}" ]] || continue
+  [[ ${old#docs/kickoffs/} != */* ]] || continue
+  archived+=("$old" "$new")
+done < <(git diff --name-status -M100% "$BASE_SHA...$HEAD_SHA")
+is_archived() { printf '%s\n' "${archived[@]}" | grep -qxF "$1"; }
 
 # Glob match a path against patterns. [[ == ]] pattern semantics let a
 # single '*' cross '/', which is why 'design/*' covers design/screens/*.
@@ -47,6 +63,7 @@ changed_has() { printf '%s\n' "${changed[@]}" | grep -qxF "$1"; }
 # Spec-owned files this PR actually touches.
 spec_files=()
 for f in "${changed[@]}"; do
+  if ((${#archived[@]})) && is_archived "$f"; then continue; fi
   if matches "$f" "${patterns[@]}"; then spec_files+=("$f"); fi
 done
 
@@ -73,7 +90,7 @@ fi
 
 # Rule 3: the changelog gate. These are the spec-owned files whose change
 # is a behaviour or design change and therefore needs a dated entry.
-# Spec-owned files not listed here (docs/README.md, DEVIN_KICKOFF.md,
+# Spec-owned files not listed here (docs/README.md, kickoffs,
 # analysis, CLAUDE.md, the gate's own files) need the label only.
 needs_spec_log=(docs/SPEC.md AGENTS.md 'backend/prompts/*.md' backend/config.example.yaml .env.example)
 needs_design_log=('design/screens/*' design/DESIGN.md design/tokens.css)

@@ -48,6 +48,7 @@ def run_gate(
     label: bool,
     base_files: dict[str, str] | None = None,
     renames: list[tuple[str, str]] | None = None,
+    after_renames: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     repo = tmp_path / "repo"
     (repo / ".github" / "scripts").mkdir(parents=True)
@@ -71,6 +72,9 @@ def run_gate(
     for old, new in renames or []:
         (repo / new).parent.mkdir(parents=True, exist_ok=True)
         _git(repo, "mv", old, new)
+    for rel, content in (after_renames or {}).items():
+        (repo / rel).write_text(content)
+        _git(repo, "add", rel)
     _git(repo, "commit", "-qm", "pr")
     head = _git(repo, "rev-parse", "HEAD")
 
@@ -168,3 +172,68 @@ def test_editing_the_gate_itself_needs_the_label(tmp_path: Path) -> None:
     comment = (REPO_ROOT / ".github" / "spec-paths.txt").read_text() + "# touch\n"
     r = run_gate(tmp_path, {".github/spec-paths.txt": comment}, label=False)
     assert r.returncode == 1
+
+
+# Rule 4: archiving a finished kickoff (docs/work-items.md) is an unchanged
+# move into docs/kickoffs/archive/ and needs no label; anything else does.
+KICKOFF = "# 099 · fix · KO overnight exit\n\nBuild it.\n"
+
+
+def test_unchanged_kickoff_move_into_archive_needs_no_label(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {"docs/work-items.md": "| 099 | fix | KO overnight exit | merged |\n"},
+        label=False,
+        base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
+        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "::warning::" not in r.stdout
+
+
+def test_kickoff_moved_and_edited_needs_the_label(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {},
+        label=False,
+        base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
+        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+        after_renames={"docs/kickoffs/archive/099-fix-ko-overnight-exit.md": KICKOFF + "Done.\n"},
+    )
+    assert r.returncode == 1
+    assert "no 'spec change' label" in r.stdout
+
+
+def test_kickoff_moved_under_another_name_needs_the_label(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {},
+        label=False,
+        base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
+        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-done.md")],
+    )
+    assert r.returncode == 1
+
+
+def test_kickoff_moved_out_of_the_archive_needs_the_label(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {},
+        label=False,
+        base_files={"docs/kickoffs/archive/099-fix-ko-overnight-exit.md": KICKOFF},
+        renames=[("docs/kickoffs/archive/099-fix-ko-overnight-exit.md", "docs/kickoffs/099-fix-ko-overnight-exit.md")],
+    )
+    assert r.returncode == 1
+
+
+def test_archive_move_next_to_a_spec_edit_still_needs_the_label(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {"docs/SPEC.md": "spec\n"},
+        label=False,
+        base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
+        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+    )
+    assert r.returncode == 1
+    assert "docs/SPEC.md" in r.stdout
+    assert "docs/kickoffs/archive/" not in r.stdout

@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-06 — [048] Kickoff archive
+
+- `docs/kickoffs/` now holds only open work. A kickoff moves unchanged to `docs/kickoffs/archive/` in the PR that sets its item to `merged` (usually the last build PR; for a `spec` or `analysis` item, the PR that completes it); a `dropped` item's kickoff moves too. Rule in `docs/work-items.md` (Done kickoffs go to the archive), AGENTS.md (Names), CLAUDE.md, `docs/README.md` rule 9 and the PR template.
+- Moved now, everything merged: `pr-29.md` … `pr-37.md`, `fix-live-2026-10-29.md`, `fix-live-2026-10-30.md`, `fix-scan-2026-10-31.md`, `fix-v4-2026-11-03.md`, `ops-alerts.md`, `quote-plausibility.md`, and `docs/DEVIN_KICKOFF.md` (items 001–028) as `docs/kickoffs/archive/DEVIN_KICKOFF.md`. Left open: `045-feat-gui-catch-up.md` (ready, not built).
+- Spec-label gate, rule 4: an unchanged move of `docs/kickoffs/<name>.md` to `docs/kickoffs/archive/<name>.md` needs no `spec change` label, so a build PR can archive its kickoff without becoming spec work. An edit in the same move, another name, or a move out of the archive still needs the label. Five tests in `backend/tests/ci/test_spec_label.py`.
+- Register statuses brought up to date: 038–044 and 047 `merged`, 045 `ready`.
+- Paths in older entries below and in code comments are not rewritten; a kickoff not in `docs/kickoffs/` is in `docs/kickoffs/archive/`.
+
 ## 2026-11-06 — [047] Drawer model-call e2e flake
 
 - The PR 9 drawer e2e assumed the latest-decision card's target had reached the model; a live cycle writing a newer rules no_call for the same symbol made it fail at random.
