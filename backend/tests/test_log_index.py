@@ -246,6 +246,30 @@ def test_logs_api_export(client: TestClient) -> None:
     assert "exported" in resp.text
 
 
+def test_logs_routes_survive_a_schema_less_index(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A logs.db file without the log_lines table is "index unavailable",
+    never a 5xx — a fresh data dir used to 503 with 'no such table'."""
+    import app.log_index as log_index
+
+    empty = tmp_path / "logs-empty.db"
+    sqlite3.connect(empty).close()
+    monkeypatch.setattr(log_index, "index_path", lambda config: empty)
+
+    logs = client.get("/api/logs")
+    assert logs.status_code == 200
+    assert logs.json()["index_available"] is False
+
+    around = client.get("/api/logs/1/around")
+    assert around.status_code == 200
+    assert around.json()["index_available"] is False
+
+    export = client.get("/api/logs/export.jsonl")
+    assert export.status_code == 200
+    assert export.json()["index_available"] is False
+
+
 def test_client_log_endpoint(client: TestClient) -> None:
     """Frontend errors land in the index at ERROR with logger 'frontend'."""
     resp = client.post(
