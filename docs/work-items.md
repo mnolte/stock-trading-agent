@@ -24,7 +24,7 @@ The examples use 099 as a made-up number.
 
 | Thing | Format | Example |
 | --- | --- | --- |
-| Kickoff | `docs/kickoffs/NNN-type-slug.md`, first line `# NNN · type · Title`; `docs/kickoffs/archive/` once merged | `docs/kickoffs/099-fix-ko-overnight-exit.md` |
+| Kickoff | `docs/kickoffs/NNN-type-slug.md`, first line `# NNN · type · Title`; `docs/kickoffs/archive/` from the first build PR | `docs/kickoffs/099-fix-ko-overnight-exit.md` |
 | Spec branch (Claude) | `spec/NNN-slug` | `spec/099-ko-overnight-exit` |
 | Build branch (Devin) | `type/NNN-slug` | `fix/099-ko-overnight-exit` |
 | PR title | `[NNN] type: Title` | `[099] fix: KO overnight exit` |
@@ -43,17 +43,18 @@ The examples use 099 as a made-up number.
 - **Small fixes found during a review** of item NNN go into a follow-up PR of that item. They get their own number only when they need their own kickoff.
 - **Dependabot and other automatic PRs** keep their own names and get no number.
 
-## Done kickoffs go to the archive
+## Kickoffs move to the archive with the build
 
-`docs/kickoffs/` holds only the kickoffs still to build. When an item's status becomes `merged`, its kickoff moves to `docs/kickoffs/archive/`, same file name, content unchanged, in the same PR that sets the status:
+`docs/kickoffs/` holds only kickoffs nobody has started building. The PR that builds a kickoff moves it to `docs/kickoffs/archive/` in the same PR as the code, with `git mv`, same file name, content unchanged (decided 7 Nov):
 
-- usually the item's last build PR (Devin), together with its row: build PR and `merged`;
-- for a `spec` or `analysis` item without a build, the PR that completes it;
+- one build PR: that PR moves it, and sets the row to the build PR and `building`; Devin sets `merged` after the merge, or the next PR does;
+- several build PRs (a phased item such as 046, or steps in separate PRs): the first one moves it; the later ones read it from `archive/` and leave it there;
+- a `spec` or `analysis` item without a build: the PR that completes it;
 - a `dropped` item's kickoff moves too, with the reason in its row.
 
-An unchanged move into `archive/` needs no `spec change` label (the gate checks that the file is identical and keeps its name); a move with any edit, or out of the archive, does. A follow-up PR for an archived item reads the kickoff from `archive/` and leaves it there. Old paths in `docs/CHANGES.md` and in code comments are not rewritten: a kickoff that isn't in `docs/kickoffs/` is in `docs/kickoffs/archive/`. `archive/DEVIN_KICKOFF.md` holds items 001–028.
+An unchanged move into `archive/` needs no `spec change` label (the gate checks that the file is identical and keeps its name); a move with any edit, or out of the archive, does. If the kickoff must change, change it in a spec PR first. Old paths in `docs/CHANGES.md` and in code comments are not rewritten: a kickoff that isn't in `docs/kickoffs/` is in `docs/kickoffs/archive/`. `archive/DEVIN_KICKOFF.md` holds items 001–028.
 
-So: a file in `docs/kickoffs/` is open work; the register's Status says how far it is.
+So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` is being built or done, and the register's Status says which.
 
 ## Register
 
@@ -108,9 +109,10 @@ So: a file in `docs/kickoffs/` is open work; the register's Status says how far 
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
 | 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |
-| 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | #148 | building |
+| 050 | fix | Stop invariant | `archive/050-fix-stop-invariant.md` | #144 | #148 | merged |
+| 051 | spec | Archive kickoffs with the build | — | — | — | merged |
 
-Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
+Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
 ### Before the convention
 

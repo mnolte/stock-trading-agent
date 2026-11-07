@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-07 — [051] Kickoffs move to the archive with the build
+
+- The build PR now moves its kickoff to `docs/kickoffs/archive/`, in the same PR as the code (`git mv`, unchanged). An item built in several PRs: the first moves it, the later ones read it from `archive/`. Before (048), the move waited for the PR that set the item to `merged`. So `docs/kickoffs/` lists only work nobody has started; the register's Status still says `building` or `merged`.
+- Rule in `docs/work-items.md` (Kickoffs move to the archive with the build), AGENTS.md (Names), CLAUDE.md, `docs/README.md` rule 9 and the PR template. The spec-label gate is unchanged: an unchanged move still needs no label.
+- Moved now: `050-fix-stop-invariant.md` (built in #148), row 050 set to `merged`. Left open: `046-fix-spec-alignment.md` (ready; its first Phase 1 PR moves it).
+
 ## 2026-11-07 — [050] Stop invariant (build)
 
 Build of the 050 spec entry on branch `fix/050-stop-invariant`.
