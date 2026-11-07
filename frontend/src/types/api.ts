@@ -258,6 +258,15 @@ export interface PositionRow {
   target_price: string | null;
   origin: string;
   pending_ack: boolean;
+  /** The exit sell held back by the broker (design: "exit held back
+   * since <time> · n tries"). */
+  pending_exit?: {
+    reason?: string | null;
+    decision_id?: number | null;
+    since?: string | null;
+    failure?: string | null;
+    tries?: number | null;
+  } | null;
   opened_at: string;
   closed_at: string | null;
   realized_pnl_raw: number | null;

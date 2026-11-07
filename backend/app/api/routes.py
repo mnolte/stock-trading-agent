@@ -1156,6 +1156,7 @@ def _position_json(
         ),
         "origin": position.origin,
         "pending_ack": position.pending_ack,
+        "pending_exit": position.pending_exit,
         "opened_at": position.opened_at.replace(tzinfo=UTC).isoformat(),
         "closed_at": (
             position.closed_at.replace(tzinfo=UTC).isoformat()

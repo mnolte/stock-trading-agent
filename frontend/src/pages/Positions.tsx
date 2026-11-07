@@ -1,12 +1,13 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import { StopTargetBar } from '../components/StopTargetBar';
 import { useLiveUpdates } from '../api/liveContext';
 import { getOrders, getPositions } from '../api/state';
-import { useApiResource } from '../api/useResource';
+import { useApiResource, type Resource } from '../api/useResource';
 import type {
   OrderRow,
+  OrdersResponse,
   PositionLeg,
   PositionRow,
 } from '../types/api';
@@ -99,6 +100,8 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
   const closeStop = p.to_stop_atr != null && p.to_stop_atr < near;
   const latest = p.latest_decision ?? null;
   const legs = p.legs ?? [];
+  const pendingExit = p.pending_exit ?? null;
+  const legsProblem = p.legs_problem === true || pendingExit !== null;
   return (
     <div
       style={{
@@ -137,6 +140,19 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
           {p.earnings_date && ` · next earnings ${p.earnings_date}`}
         </span>
       </div>
+      {pendingExit && (
+        <div
+          role="status"
+          style={{
+            fontSize: 'var(--sa-text-md)',
+            color: 'var(--sa-warning-text)',
+          }}
+        >
+          exit held back{pendingExit.since ? ` since ${displayTime(pendingExit.since)}` : ''}
+          {pendingExit.tries ? ` · ${pendingExit.tries} tr${pendingExit.tries === 1 ? 'y' : 'ies'}` : ''}
+          {pendingExit.failure ? ` · ${pendingExit.failure}` : ''}
+        </div>
+      )}
       <StopTargetBar
         stop={p.current_stop_price != null ? Number(p.current_stop_price) : null}
         entry={Number(p.avg_entry_price)}
@@ -187,15 +203,15 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
         )}
       </div>
       <details
-        open={p.legs_problem === true}
+        open={legsProblem}
         style={{
           borderTop: '1px solid var(--sa-border)',
           paddingTop: 'var(--sa-space-2)',
-          color: p.legs_problem ? 'var(--sa-warning-text)' : undefined,
+          color: legsProblem ? 'var(--sa-warning-text)' : undefined,
         }}
       >
-        <summary style={{ cursor: 'pointer', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-md)', color: p.legs_problem ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
-          Orders at Alpaca · {p.legs_summary ?? `${legs.length} legs`}
+        <summary style={{ cursor: 'pointer', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-md)', color: legsProblem ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
+          Orders at Alpaca · {pendingExit ? `exit pending: ${pendingExit.failure ?? pendingExit.reason ?? 'sell held back'}` : p.legs_summary ?? `${legs.length} legs`}
         </summary>
         <div style={{ overflowX: 'auto' }}>
           <div style={{ minWidth: '460px' }}>
@@ -221,8 +237,58 @@ function OrderStatus({ status }: { status: string }) {
   return <Chip variant={variant}>{status.replace(/_/g, ' ')}</Chip>;
 }
 
-function OrderHistoryRow({ o }: { o: OrderRow }) {
+const OPEN_ORDER_STATUSES = new Set([
+  'new', 'accepted', 'pending_new', 'accepted_for_bidding',
+  'partially_filled', 'held', 'calculated', 'pending_cancel',
+  'pending_replace', 'pending_review',
+]);
+
+/** The "Problems" filter (design/screens/Positions.dc.html): rejected,
+ * ended without a fill, replaced after an error, or a stop that filled
+ * worse than its stop price. */
+function orderProblems(o: OrderRow): string[] {
+  const problems: string[] = [];
+  if (o.status === 'rejected') problems.push('rejected');
+  if (!OPEN_ORDER_STATUSES.has(o.status) && o.status !== 'filled' && o.fills.length === 0) {
+    problems.push('not filled');
+  }
+  if (o.replaced_from) problems.push('replaced after an error');
+  if (
+    o.leg === 'stop' &&
+    o.filled_avg_price !== null &&
+    o.stop_price !== null &&
+    Number(o.filled_avg_price) < Number(o.stop_price)
+  ) {
+    problems.push('fill worse than the stop');
+  }
+  return problems;
+}
+
+/** NY date string of an ISO instant — the period filter's session day. */
+function nyDay(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+}
+
+/** The last n weekday session days ending today (display filter — the
+ * trading calendar itself lives on the backend). */
+function lastWeekdayDays(n: number): Set<string> {
+  const days = new Set<string>();
+  const d = new Date(
+    new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) + 'T00:00:00',
+  );
+  while (days.size < n) {
+    const wd = d.getDay();
+    if (wd !== 0 && wd !== 6) days.add(nyDay(d.toISOString()));
+    d.setDate(d.getDate() - 1);
+  }
+  return days;
+}
+
+type Period = 'today' | '5' | '20' | 'all';
+
+function OrderHistoryRow({ o, problem }: { o: OrderRow; problem: string[] }) {
   const fill = o.fills[0];
+  const rejected = o.status === 'rejected';
   const cells = [
     displayDateTime(o.created_at),
     o.symbol,
@@ -244,7 +310,7 @@ function OrderHistoryRow({ o }: { o: OrderRow }) {
             textAlign: i === 0 ? 'left' : 'right',
             ...mono,
             fontSize: 'var(--sa-text-md)',
-            color: 'var(--sa-text-2)',
+            color: rejected ? 'var(--sa-negative-text)' : 'var(--sa-text-2)',
             whiteSpace: 'nowrap',
           }}
         >
@@ -259,8 +325,130 @@ function OrderHistoryRow({ o }: { o: OrderRow }) {
         }}
       >
         <OrderStatus status={o.status} />
+        {problem.length > 0 && o.status !== 'rejected' && (
+          <div style={{ fontSize: 'var(--sa-text-xs, 11px)', color: 'var(--sa-warning-text)' }}>
+            {problem.join(' · ')}
+          </div>
+        )}
       </td>
     </tr>
+  );
+}
+
+function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
+  const [filter, setFilter] = useState<'all' | 'problems'>('all');
+  const [period, setPeriod] = useState<Period>('today');
+  const [shown, setShown] = useState(20);
+  const orders = res.data?.orders ?? [];
+  const periodDays =
+    period === 'today'
+      ? lastWeekdayDays(1)
+      : period === '5'
+        ? lastWeekdayDays(5)
+        : period === '20'
+          ? lastWeekdayDays(20)
+          : null;
+  const filtered = orders.filter(
+    (o) =>
+      (periodDays === null || periodDays.has(nyDay(o.created_at))) &&
+      (filter === 'all' || orderProblems(o).length > 0),
+  );
+  const visible = filtered.slice(0, shown);
+  const sel = (active: boolean): React.CSSProperties => ({
+    height: 'var(--sa-control-height)',
+    padding: '0 var(--sa-space-3)',
+    borderRadius: 'var(--sa-radius-md)',
+    border: `1px solid ${active ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
+    background: active ? 'var(--sa-accent-bg)' : 'var(--sa-raised)',
+    color: active ? 'var(--sa-accent)' : 'var(--sa-text-2)',
+    fontSize: 'var(--sa-text-sm)',
+    fontWeight: 600,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+  });
+  return (
+    <>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)', alignItems: 'center' }}>
+        {(['all', 'problems'] as const).map((f) => (
+          <button key={f} type="button" aria-pressed={filter === f} onClick={() => { setFilter(f); setShown(20); }} style={sel(filter === f)}>
+            {f === 'all' ? 'All' : 'Problems'}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        {(['today', '5', '20', 'all'] as const).map((p) => (
+          <button key={p} type="button" aria-pressed={period === p} onClick={() => { setPeriod(p); setShown(20); }} style={sel(period === p)}>
+            {p === 'all' ? 'All' : p === 'today' ? 'Today' : `${p} sessions`}
+          </button>
+        ))}
+      </div>
+      <CardBody
+        res={res}
+        what="the order history"
+        isEmpty={() => visible.length === 0}
+        empty={
+          <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
+            {filter === 'problems' ? 'No order problems in this period.' : 'No orders in this period.'}
+          </div>
+        }
+      >
+        {() => (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '860px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
+                  {['Time', 'Symbol', 'Side', 'Leg', 'Type', 'Qty', 'Price', 'Fill', 'Slippage', 'Status'].map((h, i) => (
+                    <th
+                      key={h}
+                      style={{
+                        padding: 'var(--sa-space-2) 10px',
+                        textAlign: i === 0 ? 'left' : 'right',
+                        fontSize: 'var(--sa-text-sm)',
+                        color: 'var(--sa-text-muted)',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((o) => (
+                  <OrderHistoryRow key={o.id} o={o} problem={orderProblems(o)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardBody>
+      {filtered.length > shown && (
+        <button
+          type="button"
+          onClick={() => setShown((s) => s + 20)}
+          style={{
+            height: 'var(--sa-control-height)',
+            alignSelf: 'flex-start',
+            padding: '0 var(--sa-space-3)',
+            borderRadius: 'var(--sa-radius-sm)',
+            border: '1px solid var(--sa-border)',
+            background: 'var(--sa-raised)',
+            color: 'var(--sa-text-2)',
+            fontSize: 'var(--sa-text-md)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          Load 20 more ({filtered.length - shown} left)
+        </button>
+      )}
+      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+        Slippage is the fill minus the intended price per share — negative is
+        better for a buy. A stop that gaps at the open fills at the open
+        price; that difference shows here too.
+      </div>
+    </>
   );
 }
 
@@ -289,8 +477,6 @@ export default function Positions() {
   const exitSymbols = closedToday.map((p) => p.symbol);
   const account = positions?.account;
   const recon = positions?.reconciliation;
-  const recentOrders = ordersRes.data?.orders.slice(0, 8) ?? [];
-
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
       <div
@@ -318,6 +504,7 @@ export default function Positions() {
 
       {positions?.totals && open.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', padding: '12px 16px', background: 'var(--sa-panel)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-lg)', fontSize: 'var(--sa-text-md)' }}>
+          {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
           <span><span style={{ color: 'var(--sa-text-muted)' }}>Unrealized</span>{' '}
             <span style={{ ...mono, color: (positions.totals.unrealized_usd ?? 0) >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>{positions.totals.unrealized_usd != null ? signedUsd(positions.totals.unrealized_usd) : '—'}</span></span>
           <span><span style={{ color: 'var(--sa-text-muted)' }}>If every stop hits</span>{' '}
@@ -440,51 +627,8 @@ export default function Positions() {
         </div>
       </div>
 
-      <Card label="Order history" right={`last ${recentOrders.length} orders · times in Amsterdam`} busy={ordersRes.loading}>
-        <CardBody
-          res={ordersRes}
-          what="the order history"
-          isEmpty={() => recentOrders.length === 0}
-          empty={
-            <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>No orders yet.</div>
-          }
-        >
-          {() => (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', minWidth: '860px' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
-                    {['Time', 'Symbol', 'Side', 'Leg', 'Type', 'Qty', 'Price', 'Fill', 'Slippage', 'Status'].map((h, i) => (
-                      <th
-                        key={h}
-                        style={{
-                          padding: 'var(--sa-space-2) 10px',
-                          textAlign: i === 0 ? 'left' : 'right',
-                          fontSize: 'var(--sa-text-sm)',
-                          color: 'var(--sa-text-muted)',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentOrders.map((o) => (
-                    <OrderHistoryRow key={o.id} o={o} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardBody>
-        <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
-          Slippage is the fill minus the intended price per share — negative is
-          better for a buy. A stop that gaps at the open fills at the open
-          price; that difference shows here too.
-        </div>
+      <Card label="Order history" right="times in Amsterdam" busy={ordersRes.loading}>
+        <OrderHistory res={ordersRes} />
       </Card>
     </div>
   );
