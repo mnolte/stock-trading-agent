@@ -15,7 +15,7 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
@@ -578,6 +578,48 @@ def _trade_block(
     }
 
 
+def _held_after(position: Position | None) -> dict[str, object] | None:
+    """What the position a held decision reviewed did afterwards: its
+    close and, when written, the after-exit metrics (docs/SPEC.md,
+    Tail metrics). Returns None while the position is still open."""
+    if position is None or position.closed_at is None:
+        return None
+    exit_price = None
+    if position.realized_pnl_raw is not None and position.qty:
+        exit_price = position.avg_entry_price + (
+            position.realized_pnl_raw / position.qty
+        )
+    r_multiple = None
+    if (
+        exit_price is not None
+        and position.initial_stop is not None
+        and position.avg_entry_price != position.initial_stop
+    ):
+        r_multiple = (exit_price - position.avg_entry_price) / (
+            position.avg_entry_price - position.initial_stop
+        )
+    return {
+        "closed_at": position.closed_at.replace(tzinfo=UTC).isoformat(),
+        "exit_reason": position.exit_reason,
+        "exit_price": str(exit_price) if exit_price is not None else None,
+        "r": str(r_multiple.quantize(Decimal("0.01")))
+        if r_multiple is not None
+        else None,
+        "after_exit_best_price": (
+            str(position.after_exit_best_price)
+            if position.after_exit_best_price is not None
+            else None
+        ),
+        "after_exit_best_at": _iso(position.after_exit_best_at),
+        "after_exit_close_price": (
+            str(position.after_exit_close_price)
+            if position.after_exit_close_price is not None
+            else None
+        ),
+        "after_exit_status": position.after_exit_status,
+    }
+
+
 @router.get("/decisions/{decision_id}")
 def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     """One stored decision with its prompt, output, checks and raw response."""
@@ -616,15 +658,37 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         position_row = session.execute(
             select(Position).where(Position.entry_decision_id == decision_id)
         ).scalar_one_or_none()
+        held_position_row = None
+        if decision.context == "held" and position_row is None:
+            # The position a held decision reviewed: same symbol, open at
+            # the decision time (docs/SPEC.md, Decision v5 — GUI: the
+            # outcome of a hold or exit is what the position did after).
+            held_position_row = session.execute(
+                select(Position)
+                .where(
+                    Position.symbol == decision.symbol,
+                    Position.opened_at <= scheduled.replace(tzinfo=None),
+                    or_(
+                        Position.closed_at.is_(None),
+                        Position.closed_at >= scheduled.replace(tzinfo=None),
+                    ),
+                )
+                .order_by(Position.opened_at)
+                .limit(1)
+            ).scalar_one_or_none()
         verdict_row = session.execute(
             select(Verdict).where(Verdict.decision_id == decision_id)
         ).scalar_one_or_none()
-        llm_call_id = session.execute(
-            select(LlmCall.id)
+        llm_call_row = session.execute(
+            select(LlmCall.id, LlmCall.reasons)
             .where(LlmCall.decision_id == decision_id)
             .order_by(LlmCall.id)
             .limit(1)
-        ).scalar_one_or_none()
+        ).first()
+        llm_call_id = llm_call_row[0] if llm_call_row else None
+        llm_call_reasons = (
+            [str(r) for r in llm_call_row[1]] if llm_call_row else []
+        )
         earnings = _decision_earnings(session, decision, scheduled)
         # Entry selection (PR 33): the cycle's record plus every scored
         # candidate of the same cycle for the drawer block.
@@ -710,6 +774,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
                 ),
                 "worst_price_at": _iso(outcome.worst_price_at),
                 "first_touch": outcome.first_touch,
+                "option_touches": outcome.option_touches,
                 "r_1h": _r_multiple(outcome.price_1h, entry, stop),
                 "r_1session": _r_multiple(outcome.price_1session, entry, stop),
                 "r_5sessions": _r_multiple(outcome.price_5sessions, entry, stop),
@@ -782,6 +847,8 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "verdict_eligible": verdict_eligible(decision),
         "verdict_due": _iso(verdict_due),
         "llm_call_id": llm_call_id,
+        "warnings": llm_call_reasons,
+        "held_after": _held_after(held_position_row),
         "earnings": earnings,
         "execution_mode": get_config().get(
             "execution", "mode", default="automatic"

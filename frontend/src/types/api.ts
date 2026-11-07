@@ -167,6 +167,9 @@ export interface DecisionOutcome {
   worst_price: string | null;
   worst_price_at: string | null;
   first_touch: 'stop' | 'target' | 'neither' | null;
+  /** Per-option first touch of a v2+ decision: id → stop | target |
+   * neither | not_filled | null (pending). */
+  option_touches?: Record<string, string | null> | null;
   r_1h: string | null;
   r_1session: string | null;
   r_5sessions: string | null;
@@ -616,6 +619,20 @@ export interface DecisionDetail {
   verdict_due: string | null;
   /** The llm_calls row for this decision's request, when one was sent. */
   llm_call_id: number | null;
+  /** The linked call's reasons (the What happened block's warnings). */
+  warnings?: string[];
+  /** Held decisions: what the reviewed position did afterwards (null
+   * while it is still open or unknown). */
+  held_after?: {
+    closed_at: string | null;
+    exit_reason: string | null;
+    exit_price: string | null;
+    r: string | null;
+    after_exit_best_price: string | null;
+    after_exit_best_at: string | null;
+    after_exit_close_price: string | null;
+    after_exit_status: string | null;
+  } | null;
   earnings: DecisionEarnings | null;
   execution_mode: string | null;
   eur_usd_rate: string | null;

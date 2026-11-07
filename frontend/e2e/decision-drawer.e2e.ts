@@ -142,7 +142,7 @@ test('focus returns to the opener and verdict failures remain actionable', async
   });
   await navigate(page, '/decisions/9001');
   const drawer = page.getByRole('dialog');
-  const pick = drawer.getByRole('button', { name: 'Good call', exact: true });
+  const pick = drawer.getByRole('button', { name: 'Confirm good call', exact: true });
   await pick.click();
   await expect(pick).toBeDisabled();
   await expect(drawer.getByRole('status')).toHaveText('Saving verdict…');
@@ -175,7 +175,7 @@ test('a verdict finishing after navigation cannot refresh the old decision', asy
     await route.fulfill({ json: {} });
   });
   await page.goto('/decisions/9001');
-  await page.getByRole('dialog').getByRole('button', { name: 'Good call', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Confirm good call', exact: true }).click();
   await navigate(page, '/decisions/9002');
   await expect(page.getByRole('heading', { name: 'TEST9002 decision' })).toBeVisible();
   const before = reads;
