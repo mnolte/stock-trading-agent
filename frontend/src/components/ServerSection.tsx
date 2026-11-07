@@ -17,11 +17,12 @@ interface ServerStatus {
   cert: { expires: string | null; days_left: number | null; level: string } | null;
   backups: {
     local: { latest: string | null; age_hours: number | null; level: string } | null;
-    offsite: { at: string; ok: boolean } | null;
-    restore_test: { at: string; ok: boolean } | null;
+    offsite: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
+    restore_test: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
   } | null;
   host: { pending_updates?: number; next_reboot_window?: string } | null;
   heartbeat: { url: string; last_ping: string | null; configured: boolean };
+  config_layers?: { local_overrides: number; unknown_keys: number };
   latest_backup: string | null;
 }
 
@@ -232,6 +233,13 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         help="Deploys only outside 09:30–16:00 New York; the previous image is kept for rollback."
         right={`v${data.version}${data.image_tag ? ` · image ${data.image_tag}` : ''}${data.deployed_at ? ` · deployed ${fmtWhen(data.deployed_at)}` : ''}`}
       />
+      {data.config_layers && (
+        <Row
+          label="Config"
+          help="The example always loads; a local config.yaml overrides it key by key — unknown keys are ignored."
+          right={`Config: ${data.config_layers.local_overrides} local override${data.config_layers.local_overrides === 1 ? '' : 's'} · ${data.config_layers.unknown_keys} unknown key${data.config_layers.unknown_keys === 1 ? '' : 's'}`}
+        />
+      )}
       <Row
         label="Address"
         help={`HTTPS certificate renews automatically${cert?.expires ? ` · expires ${cert.expires}` : ''}`}
@@ -287,18 +295,22 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         label="Offsite copy (encrypted)"
         help="Encrypted before upload; the backup password is stored like the API keys."
         right={
-          backups?.offsite
-            ? `${backups.offsite.ok ? 'ok' : 'failed'} · ${fmtWhen(backups.offsite.at)}`
-            : 'not configured'
+          backups?.offsite?.not_set_up
+            ? 'not set up'
+            : backups?.offsite
+              ? `${backups.offsite.ok ? 'ok' : 'failed'} · ${fmtWhen(backups.offsite.at ?? null)}`
+              : 'not configured'
         }
-        level={backups?.offsite ? (backups.offsite.ok ? 'ok' : 'warning') : 'unknown'}
+        level={backups?.offsite?.not_set_up ? 'unknown' : backups?.offsite ? (backups.offsite.ok ? 'ok' : 'warning') : 'unknown'}
       />
       <Row
         label="Restore test"
         help="Monthly: the latest offsite copy is restored to a temporary folder and checked."
         right={
-          backups?.restore_test
-            ? `${backups.restore_test.ok ? 'restored and checked' : 'failed'} · ${fmtWhen(backups.restore_test.at)}`
+          backups?.restore_test?.not_set_up
+            ? 'not set up'
+            : backups?.restore_test
+              ? `${backups.restore_test.ok ? 'restored and checked' : 'failed'} · ${fmtWhen(backups.restore_test.at ?? null)}`
             : 'not run yet'
         }
         level={
@@ -320,7 +332,7 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-positive)', textAlign: 'right' }}>
           {data.heartbeat.configured
             ? `last ping ${fmtWhen(data.heartbeat.last_ping)} · after each cycle and check`
-            : 'not configured'}
+            : 'Heartbeat not set'}
           <Button style={{ marginLeft: 8 }} onClick={() => setHbEditing((v) => !v)}>
             {data.heartbeat.configured ? 'Change…' : 'Set…'}
           </Button>

@@ -583,5 +583,10 @@ def build_attention(request: Request) -> dict[str, Any]:
             "keys": keys,
             "email": email,
             "email_since": email_since,
+            "heartbeat": (
+                "Heartbeat not set"
+                if ops is None or not ops.heartbeat_url()
+                else "set"
+            ),
         },
     }

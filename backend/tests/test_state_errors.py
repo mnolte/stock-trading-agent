@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
+from pathlib import Path
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
@@ -267,3 +268,41 @@ def test_unclean_summary_counts_missed_work(
         calendar=cast(CalendarProvider, calendar),
     )
     assert overnight["missed"] == "nothing"
+
+
+def test_backup_not_set_up_sends_nothing(
+    tmp_path: Path,
+) -> None:
+    """Without backup credentials the offsite copy and the monthly
+    restore test show 'not set up' — no failure notification
+    (docs/SPEC.md, Backups; item 050 step 8)."""
+    from app.ops.service import OpsService
+
+    sent: list[tuple[str, str]] = []
+
+    class _Notifier:
+        def notify(self, event: str, line: str, **kwargs: Any) -> None:
+            sent.append((event, line))
+
+    class _Secrets:
+        def get(self, name: str) -> None:
+            return None
+
+    config = AppConfig()
+    config.env.sa_data_dir = str(tmp_path)  # type: ignore[misc]
+    config.env.sa_db_path = str(tmp_path / "db.sqlite")  # type: ignore[misc]
+    ops = OpsService(
+        config, FakeClock(NOW), notifier=_Notifier(), secrets=_Secrets()
+    )
+
+    import asyncio
+    assert asyncio.run(ops.run_restore_test()) is False
+    assert ops.status["restore_test"]["not_set_up"] is True
+    backups = ops.check_backups()
+    assert backups["offsite"] == {"not_set_up": True}
+    assert backups["restore_test"] == {"not_set_up": True}
+    # Missing credentials send nothing; the unrelated stale local copy
+    # may still alert.
+    assert not [
+        n for n in sent if "offsite" in n[1] or "restore" in n[1]
+    ]

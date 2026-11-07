@@ -5921,6 +5921,8 @@ def server_status(request: Request) -> dict[str, object]:
             "configured": bool(ops and ops.heartbeat_url()),
         },
         "latest_backup": backups[-1].name if backups else None,
+        # "Config: n local overrides · n unknown keys" (item 050).
+        "config_layers": config.layer_counts(),
     }
 
 
