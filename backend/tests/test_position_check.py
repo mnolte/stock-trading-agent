@@ -127,6 +127,9 @@ async def test_failed_checks_alert_at_threshold(
             select(Event).where(Event.event_type == "position_check_failed")
         ).scalars().all()
         assert events
+        # Warning-severity row in the spec's notification table: the event
+        # is recorded at error, not critical (G5).
+        assert events[0].level == "error"
         assert events[0].details is not None
         assert events[0].details["consecutive"] == 3
         cycles = session.execute(
