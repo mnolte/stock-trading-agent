@@ -79,9 +79,9 @@ describe('counterTail', () => {
 });
 
 describe('labels', () => {
-  it('todayLabel is "Cycle n of 6 today"', () => {
-    expect(todayLabel(counter({}))).toBe('Cycle 3 of 6 today');
-    expect(todayLabel(counter({ cycle_index: 0 }))).toBe('Cycle 0 of 6 today');
+  it('todayLabel is "Next · cycle n of 6 today"', () => {
+    expect(todayLabel(counter({}))).toBe('Next · cycle 3 of 6 today');
+    expect(todayLabel(counter({ cycle_index: 0 }))).toBe('Next · cycle 0 of 6 today');
   });
   it('todayLabel is empty on a day without a session', () => {
     expect(
@@ -91,7 +91,7 @@ describe('labels', () => {
   it('todayLabel drops "today" when the shown session is not today', () => {
     expect(
       todayLabel(counter({ session_is_today: false })),
-    ).toBe('Cycle 3 of 6');
+    ).toBe('Next · cycle 3 of 6');
   });
   it('runLabel is the cycle number in this run', () => {
     expect(runLabel(counter({}))).toBe('#42 this run');

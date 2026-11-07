@@ -186,7 +186,15 @@ export default function Universe() {
     return (
       <tr key={r.symbol}>
         <td style={tdMono('var(--sa-text-muted)')}>{r.rank ?? '—'}</td>
-        <td style={{ ...td(), fontWeight: 600 }}>{r.symbol}</td>
+        <td style={{ ...td(), fontWeight: 600 }}>
+          {r.symbol}
+          <div
+            title="Used to tell headlines about this company from the rest (about_symbol). From Alpaca's asset name, cleaned; universe.names overrides it."
+            style={{ fontWeight: 400, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+          >
+            {r.name ?? '—'}
+          </div>
+        </td>
         <td style={{ ...td(), color: 'var(--sa-text-2)' }}>{r.sector || '—'}</td>
         <td style={tdMono()}>{usd(r.last_close, 2)}</td>
         <td style={tdMono()}>{dollarVolumeM(r.avg_dollar_volume)}</td>
@@ -396,7 +404,7 @@ export default function Universe() {
               >
                 <b style={{ fontWeight: 600 }}>{s.symbol}</b>
                 <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
-                  {s.sector || 'no sector'}
+                  {s.name ? `${s.name} · ` : ''}{s.sector || 'no sector'}
                 </span>
                 {heldSet.has(s.symbol) && <Chip variant="info">held</Chip>}
               </span>

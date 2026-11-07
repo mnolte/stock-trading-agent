@@ -41,12 +41,12 @@ export function counterTail(c: CycleCounter, nowMs: number): string | null {
   return `in ${counterCountdown(c.next_cycle, nowMs)}`;
 }
 
-/** "Cycle 3 of 6 today" — the count of the session's cycles that have run.
+/** "Next · cycle 3 of 6 today" — the next cycle's number in the session.
  * Off-hours the shown session is the last completed one, so the "today"
  * suffix drops off. Null when there is no shown session. */
 export function todayLabel(c: CycleCounter): string | null {
   if (!c.cycles_today) return null;
-  return `Cycle ${c.cycle_index} of ${c.cycles_today}${
+  return `Next · cycle ${c.cycle_index} of ${c.cycles_today}${
     c.session_is_today ? ' today' : ''
   }`;
 }

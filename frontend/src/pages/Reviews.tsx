@@ -12,7 +12,6 @@ import {
 } from '../api/state';
 import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
-import { VerdictButtons } from '../components/VerdictButtons';
 import type {
   BriefingFacts,
   ReviewDetail,
@@ -524,20 +523,99 @@ function BriefingView({ review }: { review: ReviewDetail }) {
 // ---------------------------------------------------------------------------
 // verdicts to confirm
 
+const VERDICT_CHOICES: { value: VerdictValue; label: string }[] = [
+  { value: 'good_call', label: 'Good call' },
+  { value: 'bad_call', label: 'Bad call' },
+  { value: 'unclear', label: 'Unclear' },
+];
+
+const pickStyle = (accent: boolean): React.CSSProperties => ({
+  height: 'var(--sa-control-height)',
+  padding: '0 var(--sa-space-3)',
+  borderRadius: 'var(--sa-radius-md)',
+  border: `1px solid ${accent ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
+  background: accent ? 'var(--sa-accent)' : 'var(--sa-raised)',
+  color: accent ? 'var(--sa-bg)' : 'var(--sa-text-2)',
+  fontSize: 'var(--sa-text-sm)',
+  fontWeight: 600,
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  whiteSpace: 'nowrap',
+});
+
+/** One draft: the primary "Confirm <draft>" button, "Change…" revealing
+ * the other two labels, and "Decision →" to the drawer (design:
+ * Reviews). */
+function VerdictPick({
+  item,
+  onResolve,
+}: {
+  item: VerdictItem;
+  onResolve: (id: number, v: VerdictValue) => void;
+}) {
+  const location = useLocation();
+  const [changing, setChanging] = useState(false);
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--sa-space-2)' }}>
+      {!changing ? (
+        <>
+          <button
+            type="button"
+            style={pickStyle(true)}
+            onClick={() => onResolve(item.id, item.verdict)}
+          >
+            Confirm {verdictLabel(item.verdict).toLowerCase()}
+          </button>
+          <button type="button" style={pickStyle(false)} onClick={() => setChanging(true)}>
+            Change…
+          </button>
+          <Link
+            to={`/decisions/${item.decision_id}`}
+            state={{ backgroundLocation: location }}
+            style={{ fontSize: 'var(--sa-text-sm)', whiteSpace: 'nowrap' }}
+          >
+            Decision →
+          </Link>
+        </>
+      ) : (
+        VERDICT_CHOICES.filter((c) => c.value !== item.verdict).map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            style={pickStyle(false)}
+            onClick={() => onResolve(item.id, c.value)}
+          >
+            {c.label}
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
 function VerdictsCard({
   items,
   onResolve,
+  onResolveAll,
 }: {
   items: VerdictItem[];
   onResolve: (id: number, v: VerdictValue) => void;
+  onResolveAll: () => void;
 }) {
   const location = useLocation();
   return (
     <Card
       label="Verdicts to confirm"
       right={
-        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {items.length} waiting
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
+          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+            {items.length} waiting
+          </span>
+          {items.length > 0 && (
+            <button type="button" style={pickStyle(true)} onClick={onResolveAll}>
+              Confirm all {items.length} drafts
+            </button>
+          )}
         </span>
       }
     >
@@ -647,10 +725,7 @@ function VerdictsCard({
                   </div>
                 )}
               </div>
-              <VerdictButtons
-                current={v.verdict}
-                onPick={(value) => onResolve(v.id, value)}
-              />
+              <VerdictPick item={v} onResolve={onResolve} />
             </div>
           );
         })
@@ -767,6 +842,19 @@ export default function Reviews() {
     },
     [],
   );
+  const resolveAll = useCallback(() => {
+    // Each draft keeps its own label (design: "Confirm all n drafts").
+    void (async () => {
+      try {
+        for (const v of verdicts) {
+          await postVerdict(v.id, v.verdict);
+        }
+        setVerdicts((await getVerdicts('draft')).items);
+      } catch (e) {
+        console.error(e);
+      }
+    })();
+  }, [verdicts]);
 
   // The pending row is the first Saturday whose week has no review yet;
   // a week already written (catch-up) rolls forward seven days.
@@ -1031,7 +1119,7 @@ export default function Reviews() {
               </div>
             </Card>
           )}
-          <VerdictsCard items={verdicts} onResolve={resolve} />
+          <VerdictsCard items={verdicts} onResolve={resolve} onResolveAll={resolveAll} />
         </div>
       </div>
     </div>

@@ -40,6 +40,7 @@ import {
   OUTCOMES,
   parseFilters,
   PERIODS,
+  REASON_LABELS,
   REASON_OPTIONS,
   resolveRange,
   reviewTitle,
@@ -231,6 +232,7 @@ function Filters({
     key: 'action' | 'reason' | 'model' | 'prompt' | 'strategy',
     anyLabel: string,
     values: Record<string, number> | string[],
+    label: (v: string) => string = (v) => v,
   ) => (
     <label style={FIELD_LABEL}>
       {key[0].toUpperCase() + key.slice(1)}
@@ -242,7 +244,7 @@ function Filters({
         <option value="">{anyLabel}</option>
         {(Array.isArray(values) ? values : Object.keys(values)).map((v) => (
           <option key={v} value={v}>
-            {Array.isArray(values) ? v : `${v} (${values[v]})`}
+            {Array.isArray(values) ? label(v) : `${label(v)} (${values[v]})`}
           </option>
         ))}
       </select>
@@ -416,9 +418,31 @@ function Filters({
             />
           </label>
           {select('action', 'Any action', ACTION_OPTIONS)}
-          {select('reason', 'Any reason', REASON_OPTIONS)}
+          {select(
+            'reason',
+            'Any reason',
+            [
+              ...REASON_OPTIONS,
+              // "changed_by_code · <reason>" composite options from the
+              // summary's counts (docs/SPEC.md, LLM call history —
+              // Filters). No-call reasons never appear — no call was sent.
+              ...Object.keys(summary?.options.reason ?? {}).filter(
+                (r) => r.startsWith('changed_by_code.') && !REASON_OPTIONS.includes(r),
+              ),
+            ],
+            (v) =>
+              v.startsWith('changed_by_code.')
+                ? `changed_by_code · ${v.slice('changed_by_code.'.length)}`
+                : REASON_LABELS[v] ?? v,
+          )}
           {select('model', 'Any model', summary?.options.model ?? [])}
-          {select('prompt', 'Any prompt', summary?.options.prompt ?? [])}
+          {select(
+            'prompt',
+            'Any prompt',
+            // Every version and kind from the manifest — not only
+            // prompts that have calls.
+            summary?.prompt_manifest ?? Object.keys(summary?.options.prompt ?? {}),
+          )}
           {filters.sources.includes('shadow') &&
             select('strategy', 'Any strategy', summary?.options.strategy ?? [])}
           <div style={{ display: 'flex', gap: 'var(--sa-space-2)', flexWrap: 'wrap' }}>
@@ -682,7 +706,7 @@ function CallDetails({
     { label: 'Source', value: sourceLabel },
     {
       label: 'Model',
-      value: `${detail.model ?? '—'} · ${detail.provider ?? '—'} · temp ${detail.temperature ?? '—'}`,
+      value: `${detail.model ?? '—'} · ${detail.provider ?? '—'} · temp ${detail.temperature ?? '—'}${detail.effort ? ` · effort ${detail.effort}` : ''}`,
     },
     { label: 'Prompt', value: detail.prompt_version ?? '—' },
     {
@@ -748,7 +772,9 @@ function CallDetails({
                 ? 'Open in Reviews'
                 : detail.source === 'shadow'
                   ? 'Open strategy'
-                  : 'Open decision'}
+                  : detail.source === 'ask'
+                    ? 'Open the chat'
+                    : 'Open decision'}
             </Link>
           )}
           <button
@@ -849,7 +875,11 @@ function CallDetails({
         </div>
         {detail.prompt.system !== null && <MonoPre>{detail.prompt.system}</MonoPre>}
         <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-          {detail.source === 'review' ? 'User · facts computed by code' : 'User · input snapshot'}
+          {detail.source === 'review'
+            ? 'User · facts computed by code'
+            : detail.source === 'ask'
+              ? 'User · question and context'
+              : 'User · input snapshot as sent to the model'}
         </div>
         <MonoPre>{detail.prompt.user ?? '—'}</MonoPre>
         {detail.prompt.stored !== null && detail.prompt.stored !== detail.prompt.user && (

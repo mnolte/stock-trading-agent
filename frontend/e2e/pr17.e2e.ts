@@ -359,11 +359,11 @@ test('scale: 71-symbol pool — held picks + Find symbol, feed in collapsed cycl
   // Watchlist: screened mode shows the rank column and truncates to the
   // configured 15 rows behind Show all.
   await page.goto('/');
-  await expect(page.getByText('Sorted by rank · 15 rows, then Show all')).toBeVisible();
+  await expect(page.getByText(/Sorted by rank · 15 of \d+ eligible shown/)).toBeVisible();
   await expect(page.getByText('Rank', { exact: true })).toBeVisible();
   const rows = page.locator('[aria-label="Watchlist"] button.sa-row');
   await expect(rows).toHaveCount(15);
-  await page.getByRole('button', { name: /Show all \(56 more\)/ }).click();
+  await page.getByRole('button', { name: /Show all 71/ }).click();
   await expect(rows).toHaveCount(71);
 
   await page.screenshot({ path: shot('main', testInfo.project.name), fullPage: true });
@@ -445,7 +445,7 @@ test('off-hours: the dashboard shows the last session, not an empty today', asyn
 
   // Cycle strip: the last session's cycles, no "today", and a countdown
   // longer than a day shows day/time only — never "in 64:12".
-  await expect(page.getByText('Cycle 6 of 6', { exact: true })).toBeVisible();
+  await expect(page.getByText(/cycle 6 of 6/)).toBeVisible();
   await expect(page.getByText(/next cycle Mon .* NY/)).toBeVisible();
   await expect(page.getByText(/\bin \d+:\d{2}\b/)).toHaveCount(0);
 

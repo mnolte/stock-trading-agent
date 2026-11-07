@@ -31,13 +31,14 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import String, asc, cast, desc, func, select
+from sqlalchemy import String, asc, cast, desc, func, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import (
+    AskMessage,
     Cycle,
     Decision,
     LlmCall,
@@ -52,6 +53,7 @@ from app.decide.prompt import (
     cached_prompt,
     prompt_spec,
 )
+from app.decide.prompt import _manifest as _prompt_manifest
 from app.decide.snapshot import strip_internal
 from app.decide.v3 import v3_send_snapshot
 from app.decide.v4 import v4_send_snapshot
@@ -60,7 +62,7 @@ router = APIRouter()
 
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 100
-_SOURCES = ("live", "shadow", "review", "ask")
+_SOURCES = ("live", "shadow", "review", "ask", "backtest")
 _OUTCOMES = ("success", "warning", "error")
 
 _FILTER_KEYS = (
@@ -120,8 +122,51 @@ def _conditions(
     if skip != "action" and (action := q.get("action")):
         conds.append(LlmCall.final_action == action)
     if skip != "reason" and (reason := q.get("reason")):
-        je = func.json_each(LlmCall.reasons).table_valued("value").alias("je")
-        conds.append(select(je.c.value).where(je.c.value == reason).exists())
+        if reason.startswith("changed_by_code."):
+            # "changed_by_code · <reason>": the warning split by the
+            # stored change reason (docs/SPEC.md, LLM call history —
+            # Filters). The reason lives on the linked row's
+            # gates/validation result, not the call's own reasons.
+            change_reason = reason.split(".", 1)[1]
+            conds.append(
+                or_(
+                    LlmCall.decision_id.in_(
+                        select(Decision.id).where(
+                            func.coalesce(
+                                func.json_extract(
+                                    Decision.gates_result, "$.blocked_by"
+                                ),
+                                func.json_extract(
+                                    Decision.validation_result, "$.reason"
+                                ),
+                            )
+                            == change_reason
+                        )
+                    ),
+                    LlmCall.shadow_decision_id.in_(
+                        select(ShadowDecision.id).where(
+                            func.coalesce(
+                                func.json_extract(
+                                    ShadowDecision.gates_result,
+                                    "$.blocked_by",
+                                ),
+                                func.json_extract(
+                                    ShadowDecision.validation_result,
+                                    "$.reason",
+                                ),
+                            )
+                            == change_reason
+                        )
+                    ),
+                )
+            )
+        else:
+            je = func.json_each(LlmCall.reasons).table_valued("value").alias(
+                "je"
+            )
+            conds.append(
+                select(je.c.value).where(je.c.value == reason).exists()
+            )
     if skip != "model" and (model := q.get("model")):
         conds.append(LlmCall.model == model)
     if skip != "prompt" and (prompt := q.get("prompt")):
@@ -161,6 +206,7 @@ def _row_json(call: LlmCall, strategy_names: dict[int, str]) -> dict[str, Any]:
         "shadow_decision_id": call.shadow_decision_id,
         "review_id": call.review_id,
         "verdict_id": call.verdict_id,
+        "ask_message_id": call.ask_message_id,
         "cycle_id": call.cycle_id,
         "symbol": call.symbol,
         "context": call.context,
@@ -429,6 +475,35 @@ def calls_summary(request: Request) -> dict[str, Any]:
         ):
             for reason in raw if isinstance(raw, list) else []:
                 reason_options[reason] = reason_options.get(reason, 0) + int(n)
+        # "changed_by_code · <reason>" splits the warning by the stored
+        # change reason (docs/SPEC.md, LLM call history — Filters).
+        je = func.json_each(LlmCall.reasons).table_valued("value").alias(
+            "je_cbc"
+        )
+        cbc = select(je.c.value).where(
+            je.c.value == "changed_by_code"
+        ).exists()
+        cbc_reason = func.coalesce(
+            func.json_extract(Decision.gates_result, "$.blocked_by"),
+            func.json_extract(Decision.validation_result, "$.reason"),
+            func.json_extract(ShadowDecision.gates_result, "$.blocked_by"),
+            func.json_extract(ShadowDecision.validation_result, "$.reason"),
+        )
+        for change_reason, n in session.execute(
+            select(cbc_reason, func.count())
+            .select_from(LlmCall)
+            .outerjoin(Decision, LlmCall.decision_id == Decision.id)
+            .outerjoin(
+                ShadowDecision,
+                LlmCall.shadow_decision_id == ShadowDecision.id,
+            )
+            .where(*_conditions(q, skip="reason"), cbc)
+            .group_by(cbc_reason)
+        ):
+            if change_reason is None:
+                continue
+            key = f"changed_by_code.{change_reason}"
+            reason_options[key] = reason_options.get(key, 0) + int(n)
         options["reason"] = reason_options
 
     return {
@@ -440,6 +515,12 @@ def calls_summary(request: Request) -> dict[str, Any]:
         "buckets": buckets,
         "session_dates": session_dates,
         "options": options,
+        # Every prompt version and kind, not only ones with calls —
+        # the prompt filter lists the manifest (docs/SPEC.md, LLM
+        # call history — Filters).
+        "prompt_manifest": sorted(
+            name.removesuffix(".md") for name in _prompt_manifest()
+        ),
     }
 
 
@@ -466,6 +547,12 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
             "request_id": call.provider_request_id or call.request_id,
             "provider": call.provider,
         }
+        # Claude models carry an effort in the models config — shown in
+        # the details meta row (docs/SPEC.md, LLM call history — Ask).
+        model_cfg = (
+            get_config().get("models", call.model or "", default={}) or {}
+        )
+        body["effort"] = model_cfg.get("effort") if isinstance(model_cfg, dict) else None
         body["raw_response"] = call.raw_response
 
         # Rebuild the prompt: the versioned file plus the stored input.
@@ -498,6 +585,10 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
 
         body["result"], body["explanation"] = _result_text(session, call)
         body["link"] = _link(call)
+        ask = _ask_meta(session, [call]).get(call.id)
+        body["ask"] = ask
+        if ask is not None:
+            body["link"] = f"/ask?thread={ask['thread_id']}"
     return body
 
 
@@ -525,6 +616,26 @@ def _stored_payload(session: Session, call: LlmCall) -> dict[str, Any] | None:
             payload = {"kind": "verdict", "facts": verdict.facts}
         if payload is None:
             payload = {"kind": "verdict", "facts": None}
+    elif call.ask_message_id is not None:
+        # An ask call's stored input is the question plus its context.
+        message = session.get(AskMessage, call.ask_message_id)
+        if message is not None:
+            question = session.execute(
+                select(AskMessage.text, AskMessage.context)
+                .where(
+                    AskMessage.thread_id == message.thread_id,
+                    AskMessage.role == "user",
+                    AskMessage.id < message.id,
+                )
+                .order_by(AskMessage.id.desc())
+                .limit(1)
+            ).first()
+            payload = {
+                "kind": "ask",
+                "thread_id": message.thread_id,
+                "question": question[0] if question else None,
+                "context": question[1] if question else message.context,
+            }
     return payload
 
 
@@ -609,7 +720,67 @@ def _link(call: LlmCall) -> str | None:
         return f"/strategies?strategy={call.strategy_id}"
     if call.source == "review":
         return "/reviews"
+    if call.source == "ask":
+        return "/ask"
     return None
+
+
+def _ask_meta(
+    session: Session, calls: list[LlmCall]
+) -> dict[int, dict[str, Any]]:
+    """Per call: the chat message's thread, question index ("Question k
+    of n") and the screen it was asked on (docs/SPEC.md, LLM call
+    history — Ask calls)."""
+    message_ids = [
+        call.ask_message_id for call in calls if call.ask_message_id is not None
+    ]
+    if not message_ids:
+        return {}
+    messages = {
+        m.id: m
+        for m in session.execute(
+            select(AskMessage).where(AskMessage.id.in_(message_ids))
+        ).scalars()
+    }
+    threads = {m.thread_id for m in messages.values()}
+    user_messages: dict[int, list[int]] = {}
+    for thread_id, mid in session.execute(
+        select(AskMessage.thread_id, AskMessage.id)
+        .where(AskMessage.thread_id.in_(threads), AskMessage.role == "user")
+        .order_by(AskMessage.id)
+    ):
+        user_messages.setdefault(thread_id, []).append(mid)
+    # The question this answer served: the last user message before it.
+    screens: dict[tuple[int, int], str] = {}
+    for thread_id in user_messages:
+        rows = session.execute(
+            select(AskMessage.id, AskMessage.context)
+            .where(AskMessage.thread_id == thread_id, AskMessage.role == "user")
+        ).all()
+        for mid, ctx in rows:
+            ctx = ctx if isinstance(ctx, dict) else {}
+            screens[(thread_id, mid)] = str(ctx.get("screen") or "")
+    meta: dict[int, dict[str, Any]] = {}
+    for call in calls:
+        msg = messages.get(call.ask_message_id or -1)
+        if msg is None:
+            continue
+        thread_users = user_messages.get(msg.thread_id, [])
+        question_id = next(
+            (m for m in reversed(thread_users) if m < msg.id), None
+        )
+        index = (
+            thread_users.index(question_id) + 1
+            if question_id is not None
+            else None
+        )
+        meta[call.id] = {
+            "thread_id": msg.thread_id,
+            "question_index": index,
+            "question_count": len(thread_users),
+            "screen": screens.get((msg.thread_id, question_id or -1)) or None,
+        }
+    return meta
 
 
 @router.get("/llm-calls")
@@ -649,10 +820,14 @@ def list_calls(
             .limit(limit + 1)
         ).scalars().all()
         names = _strategy_names(session)
+        ask_meta = _ask_meta(session, list(rows))
     has_more = len(rows) > limit
     page = rows[:limit]
     return {
-        "calls": [_row_json(call, names) for call in page],
+        "calls": [
+            {**_row_json(call, names), "ask": ask_meta.get(call.id)}
+            for call in page
+        ],
         "total": int(total),
         "has_more": has_more,
         "next_cursor": _encode_cursor(page[-1]) if has_more and page else None,

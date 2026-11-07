@@ -236,9 +236,25 @@ const UNITS: Record<string, string> = {
 // field path -> section id, for the section-list change badges
 const SECTION_OF: Record<string, string> = {
   'execution.mode': 'trading',
-  'selection.mode': 'trading',
-  'selection.confidence_weight': 'trading',
-  'selection.last_slot_min_ev_r': 'trading',
+  'execution.quote_max_age_seconds': 'trading',
+  'execution.quote_max_deviation_pct': 'trading',
+  'execution.tighten_quote_max_age_seconds': 'trading',
+  'execution.fill_settle_seconds': 'trading',
+  'api.broker_timeout_seconds': 'trading',
+  'selection.mode': 'entry-selection',
+  'selection.confidence_weight': 'entry-selection',
+  'selection.last_slot_min_ev_r': 'entry-selection',
+  'decision.entry_gate': 'gates',
+  'decision.min_ev_r': 'gates',
+  'decision.v3.min_room_atr': 'gates',
+  'decision.v3.min_edge': 'gates',
+  'decision.v4.near_level_atr': 'gates',
+  'decision.v5.trend_gate': 'gates',
+  'decision.v5.max_rr': 'gates',
+  'decision.v5.base_rate_sessions': 'gates',
+  'decision.v5.price_vs_signal_adverse_atr': 'gates',
+  'gui.near_stop_atr': 'display',
+  'inspector.slow_call_seconds': 'display',
   'performance.slippage_pct_per_side': 'trading',
   'risk.risk_per_trade_pct': 'risk',
   'risk.max_position_pct': 'risk',
@@ -296,8 +312,11 @@ const SECTIONS = [
   { id: 'risk', label: 'Risk limits' },
   { id: 'rules', label: 'Entry rules' },
   { id: 'earnings', label: 'Earnings' },
+  { id: 'entry-selection', label: 'Entry selection' },
+  { id: 'gates', label: 'Decision gates' },
   { id: 'model', label: 'Model and reviews' },
   { id: 'ask', label: 'Ask the agent' },
+  { id: 'display', label: 'Display' },
   { id: 'notify', label: 'Notifications' },
   { id: 'ready', label: 'Readiness' },
   { id: 'schedule', label: 'Schedule' },
@@ -1351,6 +1370,7 @@ export default function Settings() {
   const [reason, setReason] = useState('');
   const [find, setFind] = useState('');
   const [activeSection, setActiveSection] = useState('keys');
+  const [changedOnly, setChangedOnly] = useState(false);
   const [newSymbol, setNewSymbol] = useState('');
   const [newSector, setNewSector] = useState('');
   const authStatus = useAuthStatus();
@@ -1689,6 +1709,7 @@ export default function Settings() {
     }).length;
 
   const visibleSections = SECTIONS.filter((section) => {
+    if (changedOnly && sectionChanges(section.id) === 0) return false;
     if (!find.trim()) return true;
     const query = find.trim().toLowerCase();
     return `${section.label} ${SEARCH_TEXT[section.id] ?? ''}`.toLowerCase().includes(query);
@@ -1776,8 +1797,26 @@ export default function Settings() {
             placeholder="Find a setting"
             value={find}
             onChange={(e) => setFind(e.target.value)}
-            style={{ ...textInput(), marginBottom: 10, width: '100%' }}
+            style={{ ...textInput(), marginBottom: 6, width: '100%' }}
           />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 'var(--sa-text-sm)',
+              color: 'var(--sa-text-muted)',
+              padding: '0 4px 10px',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={changedOnly}
+              onChange={(e) => setChangedOnly(e.target.checked)}
+            />
+            Changed from default
+          </label>
           {visibleSections.map((section) => {
             const count = sectionChanges(section.id);
             const active = activeSection === section.id;
@@ -2033,55 +2072,6 @@ export default function Settings() {
                 <option>Return vs SPY, 20 sessions</option>
               </select>
             </Row>
-            {row('selection.mode', {
-              id: 'selmode',
-              label: 'Entry selection',
-              help: 'Rank sends entries in rank order; expected profit picks the set with the highest total expected profit within the same limits. Gates, sizing and orders do not change.',
-              children: (
-                <select
-                  id="selmode"
-                  aria-label="Entry selection"
-                  value={s.selection.mode}
-                  onChange={(e) => patch('selection', 'mode', e.target.value)}
-                  style={{ ...selectStyle, minWidth: 200 }}
-                >
-                  <option value="rank">Rank order</option>
-                  <option value="expected_profit">Expected profit</option>
-                </select>
-              ),
-            })}
-            {row('selection.confidence_weight', {
-              id: 'selw',
-              label: 'Confidence weight',
-              help: 'How far confidence moves the probability away from break-even when scoring entries.',
-              children: (
-                <NumBox
-                  id="selw"
-                  value={s.selection.confidence_weight}
-                  accent={'selection.confidence_weight' in changed}
-                  invalid={!!fieldErrors['selection.confidence_weight']}
-                  onChange={(v) => patch('selection', 'confidence_weight', v)}
-                />
-              ),
-            })}
-            {row('selection.last_slot_min_ev_r', {
-              id: 'selfloor',
-              label: 'Last slot min expected R',
-              help: 'Minimum expected R for an entry taking the last free slot. 0 means off.',
-              children: (
-                <NumBox
-                  id="selfloor"
-                  value={s.selection.last_slot_min_ev_r ?? 0}
-                  unit="R"
-                  accent={'selection.last_slot_min_ev_r' in changed}
-                  invalid={!!fieldErrors['selection.last_slot_min_ev_r']}
-                  onChange={(v) =>
-                    patch('selection', 'last_slot_min_ev_r', v > 0 ? v : null)
-                  }
-                />
-              ),
-            })}
-
             <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -2193,6 +2183,83 @@ export default function Settings() {
                   accent={'performance.slippage_pct_per_side' in changed}
                   invalid={!!fieldErrors['performance.slippage_pct_per_side']}
                   onChange={(v) => patch('performance', 'slippage_pct_per_side', v)}
+                />
+              ),
+            })}
+
+            <h3 style={subHead}>Prices and timeouts</h3>
+            {row('execution.quote_max_age_seconds', {
+              id: 'qage',
+              label: 'Quote max age',
+              help: 'An IEX last trade older than this counts as stale — the price is not a live market price.',
+              children: (
+                <NumBox
+                  id="qage"
+                  value={s.execution.quote_max_age_seconds ?? 0}
+                  unit="s"
+                  accent={'execution.quote_max_age_seconds' in changed}
+                  invalid={!!fieldErrors['execution.quote_max_age_seconds']}
+                  onChange={(v) => patch('execution', 'quote_max_age_seconds', v)}
+                />
+              ),
+            })}
+            {row('execution.quote_max_deviation_pct', {
+              id: 'qdev',
+              label: 'Quote max deviation',
+              help: 'Last trade vs last closed 5-minute bar beyond this flags the price as suspect; bid/ask vs market beyond it is implausible.',
+              children: (
+                <NumBox
+                  id="qdev"
+                  value={s.execution.quote_max_deviation_pct ?? 0}
+                  unit="%"
+                  accent={'execution.quote_max_deviation_pct' in changed}
+                  invalid={!!fieldErrors['execution.quote_max_deviation_pct']}
+                  onChange={(v) => patch('execution', 'quote_max_deviation_pct', v)}
+                />
+              ),
+            })}
+            {row('execution.tighten_quote_max_age_seconds', {
+              id: 'tqage',
+              label: 'Tighten quote max age',
+              help: 'A held-position tighten may accept an IEX last trade this old.',
+              children: (
+                <NumBox
+                  id="tqage"
+                  value={s.execution.tighten_quote_max_age_seconds ?? 0}
+                  unit="s"
+                  accent={'execution.tighten_quote_max_age_seconds' in changed}
+                  invalid={!!fieldErrors['execution.tighten_quote_max_age_seconds']}
+                  onChange={(v) => patch('execution', 'tighten_quote_max_age_seconds', v)}
+                />
+              ),
+            })}
+            {row('execution.fill_settle_seconds', {
+              id: 'fset',
+              label: 'Fill settle window',
+              help: 'No quantity check while an entry order works or a fill is this fresh — fills still settle.',
+              children: (
+                <NumBox
+                  id="fset"
+                  value={s.execution.fill_settle_seconds ?? 0}
+                  unit="s"
+                  accent={'execution.fill_settle_seconds' in changed}
+                  invalid={!!fieldErrors['execution.fill_settle_seconds']}
+                  onChange={(v) => patch('execution', 'fill_settle_seconds', v)}
+                />
+              ),
+            })}
+            {row('api.broker_timeout_seconds', {
+              id: 'btmo',
+              label: 'Broker answer timeout',
+              help: 'GUI reads from Alpaca slower than this serve the last reconciled values marked stale.',
+              children: (
+                <NumBox
+                  id="btmo"
+                  value={s.api?.broker_timeout_seconds ?? 0}
+                  unit="s"
+                  accent={'api.broker_timeout_seconds' in changed}
+                  invalid={!!fieldErrors['api.broker_timeout_seconds']}
+                  onChange={(v) => patch('api', 'broker_timeout_seconds', v)}
                 />
               ),
             })}
@@ -2420,6 +2487,243 @@ export default function Settings() {
               help: "An entry that hasn't filled is cancelled.",
               children: (
                 <NumBox id="tmo" value={s.execution.entry_timeout_minutes} unit="min" accent={'execution.entry_timeout_minutes' in changed} invalid={!!fieldErrors['execution.entry_timeout_minutes']} onChange={(v) => patch('execution', 'entry_timeout_minutes', v)} />
+              ),
+            })}
+          </Section>
+
+          <Section id="entry-selection" title="Entry selection" blurb="How the cycle's candidates are ranked and picked when slots run out.">
+            {row('selection.mode', {
+              id: 'selmode',
+              label: 'Entry selection',
+              help: 'Rank sends entries in rank order; expected profit picks the set with the highest total expected profit within the same limits. Gates, sizing and orders do not change.',
+              children: (
+                <select
+                  id="selmode"
+                  aria-label="Entry selection"
+                  value={s.selection.mode}
+                  onChange={(e) => patch('selection', 'mode', e.target.value)}
+                  style={{ ...selectStyle, minWidth: 200 }}
+                >
+                  <option value="rank">Rank order</option>
+                  <option value="expected_profit">Expected profit</option>
+                </select>
+              ),
+            })}
+            {row('selection.confidence_weight', {
+              id: 'selw',
+              label: 'Confidence weight',
+              help: 'How far confidence moves the probability away from break-even when scoring entries.',
+              children: (
+                <NumBox
+                  id="selw"
+                  value={s.selection.confidence_weight}
+                  accent={'selection.confidence_weight' in changed}
+                  invalid={!!fieldErrors['selection.confidence_weight']}
+                  onChange={(v) => patch('selection', 'confidence_weight', v)}
+                />
+              ),
+            })}
+            {row('selection.last_slot_min_ev_r', {
+              id: 'selfloor',
+              label: 'Last slot min expected R',
+              help: 'Minimum expected R for an entry taking the last free slot. 0 means off.',
+              children: (
+                <NumBox
+                  id="selfloor"
+                  value={s.selection.last_slot_min_ev_r ?? 0}
+                  unit="R"
+                  accent={'selection.last_slot_min_ev_r' in changed}
+                  invalid={!!fieldErrors['selection.last_slot_min_ev_r']}
+                  onChange={(v) =>
+                    patch('selection', 'last_slot_min_ev_r', v > 0 ? v : null)
+                  }
+                />
+              ),
+            })}
+          </Section>
+
+          <Section id="gates" title="Decision gates" blurb="The code gates a candidate passes before and after the model — per prompt version.">
+            {row('decision.entry_gate', {
+              id: 'egate',
+              label: 'Entry gate',
+              help: 'Floor keeps the v1–v4 break-even gate; ev prices each option on expected value (v5).',
+              children: (
+                <select
+                  id="egate"
+                  aria-label="Entry gate"
+                  value={s.decision.entry_gate ?? 'floor'}
+                  onChange={(e) => patch('decision', 'entry_gate', e.target.value)}
+                  style={{ ...selectStyle, minWidth: 160 }}
+                >
+                  <option value="floor">floor</option>
+                  <option value="ev">ev</option>
+                </select>
+              ),
+            })}
+            {row('decision.min_ev_r', {
+              id: 'minev',
+              label: 'Min expected R (ev gate)',
+              help: 'The ev gate sets each option\'s min_confidence = (1 + min_ev_r) / (1 + rr), rounded up to 2.',
+              children: (
+                <NumBox
+                  id="minev"
+                  value={s.decision.min_ev_r ?? 0}
+                  unit="R"
+                  accent={'decision.min_ev_r' in changed}
+                  invalid={!!fieldErrors['decision.min_ev_r']}
+                  onChange={(v) => patch('decision', 'min_ev_r', v)}
+                />
+              ),
+            })}
+            {row('decision.v3.min_room_atr', {
+              id: 'v3room',
+              label: 'v3 room to first level',
+              help: 'The first level in the way must be at least this far above the entry limit, in 1h ATR.',
+              children: (
+                <NumBox
+                  id="v3room"
+                  value={s.decision.v3?.min_room_atr ?? 0}
+                  unit="× ATR"
+                  accent={'decision.v3.min_room_atr' in changed}
+                  invalid={!!fieldErrors['decision.v3.min_room_atr']}
+                  onChange={(v) =>
+                    patch('decision', 'v3', { ...(s.decision.v3 ?? {}), min_room_atr: v })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v3.min_edge', {
+              id: 'v3edge',
+              label: 'v3 min edge over break-even',
+              help: 'Enter needs confidence ≥ max(min confidence, break-even + this edge).',
+              children: (
+                <NumBox
+                  id="v3edge"
+                  value={s.decision.v3?.min_edge ?? 0}
+                  accent={'decision.v3.min_edge' in changed}
+                  invalid={!!fieldErrors['decision.v3.min_edge']}
+                  onChange={(v) =>
+                    patch('decision', 'v3', { ...(s.decision.v3 ?? {}), min_edge: v })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v4.near_level_atr', {
+              id: 'v4near',
+              label: 'v4 near-a-level distance',
+              help: '"Near a level" for since/paths, in 1h ATR. Prompts pin this — change means a new prompt version.',
+              children: (
+                <NumBox
+                  id="v4near"
+                  value={s.decision.v4?.near_level_atr ?? 0}
+                  unit="× ATR"
+                  accent={'decision.v4.near_level_atr' in changed}
+                  invalid={!!fieldErrors['decision.v4.near_level_atr']}
+                  onChange={(v) =>
+                    patch('decision', 'v4', { ...(s.decision.v4 ?? {}), near_level_atr: v })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v5.trend_gate', {
+              id: 'v5trend',
+              label: 'v5 trend gate',
+              help: 'Candidates without trend 1h and regime up get no model call.',
+              children: (
+                <Switch
+                  id="v5trend"
+                  on={s.decision.v5?.trend_gate ?? true}
+                  onChange={() =>
+                    patch('decision', 'v5', {
+                      ...(s.decision.v5 ?? {}),
+                      trend_gate: !(s.decision.v5?.trend_gate ?? true),
+                    })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v5.max_rr', {
+              id: 'v5rr',
+              label: 'v5 max reward to risk',
+              help: 'v5 builds no option above this reward-to-risk.',
+              children: (
+                <NumBox
+                  id="v5rr"
+                  value={s.decision.v5?.max_rr ?? 0}
+                  unit="R"
+                  accent={'decision.v5.max_rr' in changed}
+                  invalid={!!fieldErrors['decision.v5.max_rr']}
+                  onChange={(v) =>
+                    patch('decision', 'v5', { ...(s.decision.v5 ?? {}), max_rr: v })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v5.base_rate_sessions', {
+              id: 'v5base',
+              label: 'v5 base rate window',
+              help: 'Sessions of history the per-option base rate counts. Under 30 cases a drawer shows no rate.',
+              children: (
+                <NumBox
+                  id="v5base"
+                  value={s.decision.v5?.base_rate_sessions ?? 0}
+                  unit="sessions"
+                  accent={'decision.v5.base_rate_sessions' in changed}
+                  invalid={!!fieldErrors['decision.v5.base_rate_sessions']}
+                  onChange={(v) =>
+                    patch('decision', 'v5', { ...(s.decision.v5 ?? {}), base_rate_sessions: v })
+                  }
+                />
+              ),
+            })}
+            {row('decision.v5.price_vs_signal_adverse_atr', {
+              id: 'v5adv',
+              label: 'v5 adverse price move',
+              help: 'Price this far below the signal bar (in ATR) and under EMA 20 counts as adverse for the held thesis.',
+              children: (
+                <NumBox
+                  id="v5adv"
+                  value={s.decision.v5?.price_vs_signal_adverse_atr ?? 0}
+                  unit="× ATR"
+                  accent={'decision.v5.price_vs_signal_adverse_atr' in changed}
+                  invalid={!!fieldErrors['decision.v5.price_vs_signal_adverse_atr']}
+                  onChange={(v) =>
+                    patch('decision', 'v5', { ...(s.decision.v5 ?? {}), price_vs_signal_adverse_atr: v })
+                  }
+                />
+              ),
+            })}
+          </Section>
+
+          <Section id="display" title="Display" blurb="GUI thresholds — what turns amber or counts as slow. No trading effect.">
+            {row('gui.near_stop_atr', {
+              id: 'nearstop',
+              label: 'Near-stop warning',
+              help: 'Positions closer to their stop than this many 1h ATR turn amber.',
+              children: (
+                <NumBox
+                  id="nearstop"
+                  value={s.gui?.near_stop_atr ?? 0}
+                  unit="× ATR"
+                  accent={'gui.near_stop_atr' in changed}
+                  invalid={!!fieldErrors['gui.near_stop_atr']}
+                  onChange={(v) => patch('gui', 'near_stop_atr', v)}
+                />
+              ),
+            })}
+            {row('inspector.slow_call_seconds', {
+              id: 'slowcall',
+              label: 'Slow call',
+              help: 'A model call slower than this gets the "slow" warning in the inspector.',
+              children: (
+                <NumBox
+                  id="slowcall"
+                  value={s.inspector?.slow_call_seconds ?? 0}
+                  unit="s"
+                  accent={'inspector.slow_call_seconds' in changed}
+                  invalid={!!fieldErrors['inspector.slow_call_seconds']}
+                  onChange={(v) => patch('inspector', 'slow_call_seconds', v)}
+                />
               ),
             })}
           </Section>
@@ -2710,13 +3014,31 @@ export default function Settings() {
             blurb="What the agent tells you about, and where. Critical alerts always reach the browser."
           >
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, padding: '8px 0 4px' }}>
-              <EventChannelTable
-                events={data.notification_events}
-                channels={s.notifications?.events ?? {}}
-                changed={changed}
-                onToggle={toggleChannel}
-                onReset={resetEventChannels}
-              />
+              <details style={{ flex: '3 1 420px', minWidth: 0 }}>
+                <summary
+                  style={{
+                    cursor: 'pointer',
+                    fontSize: 'var(--sa-text-base)',
+                    padding: '6px 0 10px',
+                    color: 'var(--sa-text-2)',
+                  }}
+                >
+                  What arrives — {data.notification_events.length} events ·{' '}
+                  {
+                    data.notification_events.filter((ev) =>
+                      (s.notifications?.events?.[ev.key] ?? []).includes('email'),
+                    ).length
+                  }{' '}
+                  to email
+                </summary>
+                <EventChannelTable
+                  events={data.notification_events}
+                  channels={s.notifications?.events ?? {}}
+                  changed={changed}
+                  onToggle={toggleChannel}
+                  onReset={resetEventChannels}
+                />
+              </details>
               <div style={{ flex: '2 1 300px', minWidth: 0 }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <BrowserNotifyCard />

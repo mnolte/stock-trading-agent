@@ -157,7 +157,10 @@ def test_rename_out_of_design_counts_via_old_path(tmp_path: Path) -> None:
         {},
         label=False,
         base_files={"design/notes.md": "old\n"},
-        renames=[("design/notes.md", "notes.md")],
+        renames=[
+            ("design/notes.md",
+             "notes.md"),
+        ],
     )
     assert r.returncode == 1
 
@@ -185,7 +188,10 @@ def test_unchanged_kickoff_move_into_archive_needs_no_label(tmp_path: Path) -> N
         {"docs/work-items.md": "| 099 | fix | KO overnight exit | merged |\n"},
         label=False,
         base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
-        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+        renames=[
+            ("docs/kickoffs/099-fix-ko-overnight-exit.md",
+             "docs/kickoffs/archive/099-fix-ko-overnight-exit.md"),
+        ],
     )
     assert r.returncode == 0, r.stdout + r.stderr
     assert "::warning::" not in r.stdout
@@ -197,7 +203,10 @@ def test_kickoff_moved_and_edited_needs_the_label(tmp_path: Path) -> None:
         {},
         label=False,
         base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
-        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+        renames=[
+            ("docs/kickoffs/099-fix-ko-overnight-exit.md",
+             "docs/kickoffs/archive/099-fix-ko-overnight-exit.md"),
+        ],
         after_renames={"docs/kickoffs/archive/099-fix-ko-overnight-exit.md": KICKOFF + "Done.\n"},
     )
     assert r.returncode == 1
@@ -210,7 +219,10 @@ def test_kickoff_moved_under_another_name_needs_the_label(tmp_path: Path) -> Non
         {},
         label=False,
         base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
-        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-done.md")],
+        renames=[
+            ("docs/kickoffs/099-fix-ko-overnight-exit.md",
+             "docs/kickoffs/archive/099-done.md"),
+        ],
     )
     assert r.returncode == 1
 
@@ -221,7 +233,10 @@ def test_kickoff_moved_out_of_the_archive_needs_the_label(tmp_path: Path) -> Non
         {},
         label=False,
         base_files={"docs/kickoffs/archive/099-fix-ko-overnight-exit.md": KICKOFF},
-        renames=[("docs/kickoffs/archive/099-fix-ko-overnight-exit.md", "docs/kickoffs/099-fix-ko-overnight-exit.md")],
+        renames=[
+            ("docs/kickoffs/archive/099-fix-ko-overnight-exit.md",
+             "docs/kickoffs/099-fix-ko-overnight-exit.md"),
+        ],
     )
     assert r.returncode == 1
 
@@ -232,7 +247,10 @@ def test_archive_move_next_to_a_spec_edit_still_needs_the_label(tmp_path: Path) 
         {"docs/SPEC.md": "spec\n"},
         label=False,
         base_files={"docs/kickoffs/099-fix-ko-overnight-exit.md": KICKOFF},
-        renames=[("docs/kickoffs/099-fix-ko-overnight-exit.md", "docs/kickoffs/archive/099-fix-ko-overnight-exit.md")],
+        renames=[
+            ("docs/kickoffs/099-fix-ko-overnight-exit.md",
+             "docs/kickoffs/archive/099-fix-ko-overnight-exit.md"),
+        ],
     )
     assert r.returncode == 1
     assert "docs/SPEC.md" in r.stdout

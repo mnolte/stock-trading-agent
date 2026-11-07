@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { get } from '../api/client';
 import { useApiResource } from '../api/useResource';
 import { Card } from '../components/Card';
+import { Chip } from '../components/Chip';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatCard } from '../components/StatCard';
 
@@ -61,6 +62,17 @@ interface Snapshot {
     baseline_r?: string | null; not_filled?: number; na?: string;
   };
   slices: Record<string, { label: string; rows: SliceRow[]; hidden: number }>;
+  /** What each filter removed (docs/SPEC.md, Decision v5): per filter,
+   * the options it removed and their counterfactual touches. */
+  filters_removed?: {
+    filter: string;
+    count: number;
+    decided: number;
+    target_first: number;
+    stop_first: number;
+    neither: number;
+    r_made: string | null;
+  }[];
   calibration: {
     buckets?: { label: string; stated: string | null; actual: string | null; n: number; status: string }[];
     hidden?: number; entries?: number; weighted_gap_pts?: string | null; na?: string;
@@ -156,6 +168,149 @@ function RangeBar({ lo, hi, avg }: { lo: string | null | undefined; hi: string |
       <div style={{ position: 'absolute', left: pct(loN), width: `calc(${pct(hiN)} - ${pct(loN)})`, height: '100%', background: 'var(--sa-accent)', opacity: 0.4, borderRadius: 3 }} />
       <div style={{ position: 'absolute', left: pct(avgN), width: 2, height: '100%', background: 'var(--sa-text)' }} />
     </div>
+  );
+}
+
+interface FilterRemovedRow {
+  filter: string;
+  count: number;
+  decided: number;
+  target_first: number;
+  stop_first: number;
+  neither: number;
+  r_made: string | null;
+}
+
+/** Display names for the filter keys the backend groups under
+ * (docs/SPEC.md, Decision v5 — What each filter removed). */
+const FILTER_LABELS: Record<string, string> = {
+  room: 'Room to first level',
+  'rr cap': 'Reward/risk cap',
+  'trend gate': 'Trend gate',
+  'confidence gate': 'Expected-value gate',
+  spread: 'Spread',
+  slots: 'Slots full · not selected',
+  rules: 'Rules',
+  checks: 'Code checks',
+};
+
+function filterLabel(key: string): string {
+  return FILTER_LABELS[key] ?? key.replace(/_/g, ' ');
+}
+
+/** "What each filter removed" — the card between the funnel and the
+ * slices (design/screens/Insights.dc.html). Percentages are of the
+ * decided counterfactual touches; under 30 decided the cells show — and
+ * the row badge reads "too few", under 100 "early", else "counts". */
+function FilterRemovedCard({ filters }: { filters: FilterRemovedRow[] }) {
+  const total = filters.reduce((n, f) => n + f.count, 0);
+  const monoCell: React.CSSProperties = {
+    fontFamily: 'var(--sa-font-mono)',
+    fontSize: 'var(--sa-text-md)',
+    textAlign: 'right',
+    padding: '8px 10px',
+    whiteSpace: 'nowrap',
+  };
+  const badge = (row: FilterRemovedRow): { text: string; accent: boolean } =>
+    row.decided < 30
+      ? { text: 'too few', accent: false }
+      : row.decided < 100
+        ? { text: 'early · under 100 decided', accent: false }
+        : { text: 'counts', accent: true };
+  return (
+    <Card
+      label="What each filter removed"
+      right={`this run · ${total} candidates stopped before the model · decided touches only`}
+    >
+      {filters.length === 0 ? (
+        <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
+          No counterfactual touches yet — the card fills once decisions with option touches fill in.
+        </div>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: '760px', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Filter', 'Removed', 'Target first', 'Stop first', 'Neither', 'R if taken, avg', ''].map((h, i) => (
+                    <th
+                      key={h || 'badge'}
+                      scope="col"
+                      style={{
+                        textAlign: i === 0 || i === 6 ? 'left' : 'right',
+                        padding: '8px 10px',
+                        fontSize: 'var(--sa-text-sm)',
+                        fontWeight: 500,
+                        color: 'var(--sa-text-muted)',
+                        borderBottom: '1px solid var(--sa-border)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filters.map((row) => {
+                  const b = badge(row);
+                  const few = row.decided < 30;
+                  const pct = (n: number) =>
+                    row.decided > 0 ? `${Math.round((n / row.decided) * 100)}%` : '—';
+                  // "Neither" covers every decided touch that was not a
+                  // target or stop first (incl. not_filled).
+                  const neither = Math.max(0, row.decided - row.target_first - row.stop_first);
+                  const r = row.r_made !== null ? Number(row.r_made) : null;
+                  return (
+                    <tr key={row.filter}>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)' }}>
+                        {filterLabel(row.filter)}
+                      </td>
+                      <td style={{ ...monoCell, borderBottom: '1px solid var(--sa-border)', color: 'var(--sa-text-2)' }}>
+                        {row.count.toLocaleString()}
+                      </td>
+                      <td style={{ ...monoCell, borderBottom: '1px solid var(--sa-border)', color: 'var(--sa-positive)' }}>
+                        {few ? '—' : pct(row.target_first)}
+                      </td>
+                      <td style={{ ...monoCell, borderBottom: '1px solid var(--sa-border)', color: 'var(--sa-negative-text)' }}>
+                        {few ? '—' : pct(row.stop_first)}
+                      </td>
+                      <td style={{ ...monoCell, borderBottom: '1px solid var(--sa-border)', color: 'var(--sa-text-muted)' }}>
+                        {few ? '—' : pct(neither)}
+                      </td>
+                      <td
+                        style={{
+                          ...monoCell,
+                          borderBottom: '1px solid var(--sa-border)',
+                          color:
+                            few || r === null
+                              ? 'var(--sa-text-muted)'
+                              : r >= 0
+                                ? 'var(--sa-positive)'
+                                : 'var(--sa-negative-text)',
+                        }}
+                      >
+                        {few || r === null ? '—' : `${r >= 0 ? '+' : '−'}${Math.abs(r).toFixed(2)}R`}
+                      </td>
+                      <td style={{ padding: '9px 10px', borderBottom: '1px solid var(--sa-border)' }}>
+                        <Chip variant={b.accent ? 'warning' : 'neutral'}>{b.text}</Chip>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+            Every candidate a filter stopped gets the options code would have built
+            and their touches (counterfactual touches), so each filter shows what
+            it removed. "R if taken" is the average over decided touches: target
+            +R/R, stop −1R. A filter that removes setups with a positive R costs
+            money; one that removes negative R earns its keep.
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -326,6 +481,8 @@ export default function Insights() {
               )}
             </Card>
           </div>
+
+          <FilterRemovedCard filters={snap.filters_removed ?? []} />
 
           {/* slices */}
           <Card label="Slices" right={

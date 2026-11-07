@@ -103,7 +103,7 @@ So: a file in `docs/kickoffs/` is open work; the register's Status says how far 
 | 042 | fix | Backend test audit fixes | — | — | #116 | merged |
 | 043 | fix | Trading path audit fixes | — | — | #123 | merged |
 | 044 | spec | Spec rulings from the 043 audit | — | #135 | — | merged |
-| 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | — | ready |
+| 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | #146 | merged |
 | 046 | fix | Spec and design alignment | `046-fix-spec-alignment.md` | #140 | — | ready |
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
 | 048 | fix | Log routes 503 on schema-less index | — | — | #143 | merged |

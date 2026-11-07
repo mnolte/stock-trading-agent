@@ -22,10 +22,13 @@ export const SOURCES: { value: LlmCallSource; label: string }[] = [
   { value: 'shadow', label: 'Shadows' },
   { value: 'review', label: 'Reviews' },
   { value: 'ask', label: 'Ask' },
+  { value: 'backtest', label: 'Backtests' },
 ];
 
-/** spec default: shadows stay off (they triple the volume). */
-export const DEFAULT_SOURCES: LlmCallSource[] = ['live', 'review'];
+/** spec default: shadows and backtests stay off (they triple the
+ * volume); live, reviews and Ask are on (docs/SPEC.md, LLM call
+ * history — Filters). */
+export const DEFAULT_SOURCES: LlmCallSource[] = ['live', 'review', 'ask'];
 
 export const OUTCOMES = ['success', 'warning', 'error'] as const;
 
@@ -218,12 +221,18 @@ export function groupBySession(
 }
 
 /** The row's left column: symbol for decisions, the kind for reviews
- * ("Briefing", "Weekly" or "Verdict" — design/screens/Inspector.dc.html). */
+ * ("Briefing", "Weekly" or "Verdict" — design/screens/Inspector.dc.html),
+ * the question it served for ask ("Question k of n"). */
 export function rowTitle(call: LlmCallRow): string {
   if (call.source === 'review') {
     return { briefing: 'Briefing', weekly: 'Weekly', verdict: 'Verdict' }[
       call.kind
     ] ?? 'Review';
+  }
+  if (call.source === 'ask') {
+    const k = call.ask?.question_index;
+    const n = call.ask?.question_count;
+    return k != null && n != null ? `Question ${k} of ${n}` : 'Ask';
   }
   return call.symbol ?? '—';
 }
@@ -239,9 +248,13 @@ export function reviewTitle(kind: string): string {
 /** The row's context part under the symbol: context or review prompt. */
 export function rowContext(call: LlmCallRow): string {
   if (call.source === 'review') return `review · ${call.prompt_version ?? '—'}`;
+  if (call.source === 'ask') {
+    return `ask · context ${call.ask?.screen ?? '—'}`;
+  }
   if (call.source === 'shadow') {
     return `shadow · ${call.strategy ?? '—'} · ${call.context ?? 'candidate'}`;
   }
+  if (call.source === 'backtest') return 'backtest';
   return call.context ?? 'candidate';
 }
 

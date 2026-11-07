@@ -14,13 +14,9 @@ import { SkeletonLines } from '../components/cardState';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
 import { useAsk } from '../ask/AskContext';
 import { useMediaQuery } from '../hooks/useMediaQuery';
-import { VerdictButtons } from '../components/VerdictButtons';
 import {
   dueDayLabel,
-  modelCallText,
-  thesisCheckChip,
   verdictLabel,
-  verdictOutcomeText,
   verdictVariant,
 } from './reviewsFormat';
 import {
@@ -647,14 +643,33 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
     </div>
   );
   return (
-    <Section label="Levels" right="nearest first on each side of the price">
-      <div
+    // Folded by default on every version (design: "Levels · n · the
+    // summary gives the count and the bar time").
+    <details
+      style={{
+        marginTop: 'var(--sa-space-5)',
+        border: '1px solid var(--sa-border)',
+        borderRadius: 'var(--sa-radius-md)',
+        padding: '0 var(--sa-space-3)',
+      }}
+    >
+      <summary
         style={{
-          border: '1px solid var(--sa-border)',
-          borderRadius: 'var(--sa-radius-md)',
-          padding: '0 var(--sa-space-3)',
+          cursor: 'pointer',
+          minHeight: 'var(--sa-control-height)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 'var(--sa-space-3)',
+          fontSize: 'var(--sa-text-md)',
+          fontWeight: 600,
+          color: 'var(--sa-text-2)',
+          textTransform: 'uppercase',
+          letterSpacing: 'var(--sa-label-tracking)',
         }}
       >
+        Levels · {levels.length} · from 1h and daily bars to {sipBarEnd(decision.cycle_time)} NY
+      </summary>
+      <div>
         {levels.map((lv, i) => (
           <Fragment key={lv.id}>
             {i === limitIdx && priceLine}
@@ -710,7 +725,16 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
         ))}
         {limitIdx === levels.length && priceLine}
       </div>
-    </Section>
+      <div
+        style={{
+          fontSize: 'var(--sa-text-sm)',
+          color: 'var(--sa-text-muted)',
+          padding: 'var(--sa-space-2) 0 var(--sa-space-3)',
+        }}
+      >
+        Nearest first on each side of the price.
+      </div>
+    </details>
   );
 }
 
@@ -856,10 +880,11 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
   // decision.v5: options carry target_atr and min_confidence; v3/v4
   // options don't, and their drawer stays unchanged (docs/SPEC.md).
   const v5Cols = options.some(
-    (o) => o.min_confidence != null || o.target_atr != null,
+    (o) => o.min_confidence != null || o.target_atr != null || o.base_rate != null || o.base_n != null,
   );
+  const confidence = decision.model_output?.confidence ?? null;
   const headers = v5Cols
-    ? ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even', 'Min conf', 'Target ATR']
+    ? ['', 'Stop', 'Target · ATR · in the way', 'R/R', 'Min conf', 'Base rate', 'Model']
     : ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even'];
   return (
     <Section
@@ -934,27 +959,37 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                   </div>
                 </td>
                 <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
-                  <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
+                  <div style={{ fontFamily: MONO }}>
+                    {o.target.toFixed(2)}
+                    {v5Cols && o.target_atr != null && (
+                      <span style={{ fontSize: 'var(--sa-text-xs, 11px)', color: 'var(--sa-text-2)' }}>
+                        {' '}{o.target_atr.toFixed(1)} ATR
+                      </span>
+                    )}
+                  </div>
                   <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
-                    {o.target_basis}
-                    {(o.levels_in_way ?? []).length > 0
-                      ? ` · in the way ${_v3WayText(o.levels_in_way)}`
-                      : ''}
+                    {v5Cols
+                      ? (o.levels_in_way ?? []).length > 0
+                        ? _v3WayText(o.levels_in_way)
+                        : o.target_basis
+                      : `${o.target_basis}${(o.levels_in_way ?? []).length > 0 ? ` · in the way ${_v3WayText(o.levels_in_way)}` : ''}`}
                   </div>
                 </td>
                 <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)', textAlign: 'right' }}>
-                  {o.rr.toFixed(2)}
+                  {o.rr.toFixed(v5Cols ? 1 : 2)}
                 </td>
-                <td
-                  style={{
-                    padding: '8px 10px',
-                    fontFamily: MONO,
-                    fontSize: 'var(--sa-text-sm)',
-                    color: 'var(--sa-text-2)',
-                  }}
-                >
-                  {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
-                </td>
+                {!v5Cols && (
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      fontFamily: MONO,
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-2)',
+                    }}
+                  >
+                    {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
+                  </td>
+                )}
                 {v5Cols && (
                   <>
                     <td
@@ -972,12 +1007,52 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                       style={{
                         padding: '8px 10px',
                         fontFamily: MONO,
-                        fontSize: 'var(--sa-text-sm)',
+                        fontSize: 'var(--sa-text-xs, 11px)',
                         textAlign: 'right',
                         color: 'var(--sa-text-2)',
                       }}
                     >
-                      {o.target_atr != null ? `${o.target_atr.toFixed(2)}` : '—'}
+                      {o.base_rate != null && (o.base_n ?? 0) >= 30 ? (
+                        <>
+                          {o.base_rate.toFixed(2)}{' '}
+                          <span style={{ color: 'var(--sa-text-muted)' }}>n {o.base_n}</span>
+                        </>
+                      ) : (
+                        <span
+                          title="Fewer than 30 comparable cases: no base rate yet"
+                          style={{ color: 'var(--sa-text-muted)' }}
+                        >
+                          —{o.base_n != null ? ` n ${o.base_n}` : ''}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 10px',
+                        fontFamily: MONO,
+                        fontSize: 'var(--sa-text-sm)',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {o.id === chosen && confidence !== null ? (
+                        <span
+                          style={{
+                            color:
+                              o.min_confidence != null && confidence >= o.min_confidence
+                                ? 'var(--sa-positive)'
+                                : 'var(--sa-negative-text)',
+                          }}
+                        >
+                          {confidence.toFixed(2)}{' '}
+                          {o.min_confidence != null
+                            ? confidence >= o.min_confidence
+                              ? '✓'
+                              : '✗'
+                            : ''}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--sa-text-muted)' }}>—</span>
+                      )}
                     </td>
                   </>
                 )}
@@ -1017,6 +1092,10 @@ interface V4Headline {
 interface V4Previous {
   time?: string | null;
   action?: string | null;
+  /** The final action code took (v5: shown beside the model's action). */
+  final_action?: string | null;
+  /** The gate or check behind a change code made (v5). */
+  change_reason?: string | null;
   option_id?: string | null;
   best_option_id?: string | null;
   confidence?: number | null;
@@ -1091,6 +1170,9 @@ function V4PreviousDecision({ decision }: { decision: DecisionDetail }) {
         {prev.best_option_id ? ` · best option ${prev.best_option_id}` : ''}
         {prev.confidence != null
           ? ` · confidence ${Number(prev.confidence).toFixed(2)}`
+          : ''}
+        {prev.final_action && prev.final_action !== prev.action
+          ? ` · final ${prev.final_action}${prev.change_reason ? ` · ${prev.change_reason}` : ''}`
           : ''}
       </div>
       {(prev.conflicts ?? []).length > 0 && (
@@ -1301,6 +1383,98 @@ function V4Thesis({ decision }: { decision: DecisionDetail }) {
 function _v3Position(decision: DecisionDetail): V3Position | null {
   const pos = decision.input_snapshot?.position;
   return pos && typeof pos === 'object' ? (pos as V3Position) : null;
+}
+
+/** decision.v5 held: the Hold or exit block — confidence against the
+ * neutral probability, the exit line and, in the last cycle, the
+ * overnight line (design/screens/DecisionV5Held.dc.html). */
+function V5HoldOrExit({ decision }: { decision: DecisionDetail }) {
+  const pos = _v3Position(decision);
+  if (pos === null || pos.neutral_probability == null) return null;
+  const neutral = Number(pos.neutral_probability);
+  const confidence = decision.model_output?.confidence ?? null;
+  const session = decision.input_snapshot?.session as
+    | { last_cycle?: boolean; minutes_left?: number | null }
+    | undefined;
+  const overnight = decision.input_snapshot?.overnight as
+    | { gap_p90_atr?: number | null }
+    | undefined;
+  const gap = overnight?.gap_p90_atr != null ? Number(overnight.gap_p90_atr) : null;
+  const stopAtr = pos.stop_distance_atr != null ? Number(pos.stop_distance_atr) : null;
+  const lastCycle = session?.last_cycle === true;
+  const exitLine = neutral - 0.03;
+  const holdLine = neutral + 0.10;
+  const rows: { label: string; value: string; sub?: string }[] = [
+    {
+      label: 'Exit below',
+      value: exitLine.toFixed(2),
+      sub: `neutral ${neutral.toFixed(2)} − 0.03`,
+    },
+    {
+      label: 'Neutral probability',
+      value: neutral.toFixed(2),
+      sub: 'break-even between holding and selling',
+    },
+    {
+      label: "Model's confidence",
+      value: confidence !== null ? formatConfidence(confidence) : '—',
+      sub:
+        confidence !== null
+          ? confidence < exitLine
+            ? 'below the exit line'
+            : lastCycle && confidence < holdLine && stopAtr !== null && gap !== null && stopAtr < gap
+              ? 'below the overnight line'
+              : 'holds'
+          : undefined,
+    },
+  ];
+  if (lastCycle) {
+    rows.splice(1, 0, {
+      label: 'Hold overnight from',
+      value: holdLine.toFixed(2),
+      sub: `neutral ${neutral.toFixed(2)} + 0.10${
+        stopAtr !== null && gap !== null
+          ? ` · stop ${stopAtr.toFixed(2)} ATR vs overnight gap p90 ${gap.toFixed(2)} ATR`
+          : ''
+      }`,
+    });
+  }
+  return (
+    <Section label="Hold or exit" right="from the neutral probability">
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+        }}
+      >
+        {rows.map((row, i) => (
+          <div
+            key={row.label}
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              gap: 'var(--sa-space-3)',
+              padding: '8px 12px',
+              borderTop: i === 0 ? 'none' : '1px solid var(--sa-border)',
+              fontSize: 'var(--sa-text-md)',
+            }}
+          >
+            <span style={{ color: 'var(--sa-text-muted)' }}>{row.label}</span>
+            <span style={{ textAlign: 'right', minWidth: 0 }}>
+              <span style={{ fontFamily: MONO, color: 'var(--sa-text)' }}>{row.value}</span>
+              {row.sub && (
+                <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+                  {' '}
+                  {row.sub}
+                </span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
 }
 
 function _factRow(label: string, value: string, sub?: string) {
@@ -1582,6 +1756,226 @@ function V2Explanation({ decision }: { decision: DecisionDetail }) {
 }
 
 // ---------------------------------------------------------------------------
+// What happened — one block on every version (design/DESIGN.md → Decision
+// drawers): final action, changes by code, warnings, order status, verdict.
+
+function _whRow(label: string, children: React.ReactNode, first = false) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '118px minmax(0, 1fr)',
+        gap: 'var(--sa-space-3)',
+        padding: '8px 12px',
+        borderTop: first ? 'none' : '1px solid var(--sa-border)',
+        fontSize: 'var(--sa-text-md)',
+        alignItems: 'start',
+      }}
+    >
+      <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>
+      <span style={{ minWidth: 0, lineHeight: 1.5 }}>{children}</span>
+    </div>
+  );
+}
+
+/** The confirm flow inside What happened: one "Confirm <draft>" button,
+ * "Change…" revealing the two other labels (design: the draft is the
+ * primary action). */
+function VerdictCell({
+  decision,
+  onResolved,
+}: {
+  decision: DecisionDetail;
+  onResolved: () => Promise<void>;
+}) {
+  const verdict = decision.verdict;
+  const [changing, setChanging] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const pick = async (value: VerdictValue) => {
+    if (!verdict || pending) return;
+    setPending(true);
+    setSaveError(null);
+    try {
+      await postVerdict(verdict.id, value);
+      await onResolved();
+    } catch {
+      setSaveError('The verdict could not be saved or refreshed. Retry your choice.');
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (verdict) {
+    const others = (
+      ['good_call', 'bad_call', 'unclear'] as VerdictValue[]
+    ).filter((v) => v !== verdict.verdict);
+    return (
+      <span style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--sa-space-2)' }}>
+        <Chip variant={verdictVariant(verdict.verdict)}>
+          {verdict.source === 'draft' ? `draft · ${verdictLabel(verdict.verdict)}` : verdictLabel(verdict.verdict)}
+        </Chip>
+        {verdict.reason && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{verdict.reason}</span>
+        )}
+        {verdict.source === 'draft' && !changing && (
+          <>
+            <DialogButton
+              variant="accent"
+              disabled={pending}
+              onClick={() => void pick(verdict.verdict)}
+            >
+              Confirm {verdictLabel(verdict.verdict).toLowerCase()}
+            </DialogButton>
+            <DialogButton variant="cancel" disabled={pending} onClick={() => setChanging(true)}>
+              Change…
+            </DialogButton>
+          </>
+        )}
+        {changing &&
+          others.map((v) => (
+            <DialogButton key={v} variant="cancel" disabled={pending} onClick={() => void pick(v)}>
+              {verdictLabel(v)}
+            </DialogButton>
+          ))}
+        {pending && <span role="status">Saving verdict…</span>}
+        {saveError && <span role="alert">{saveError}</span>}
+      </span>
+    );
+  }
+  if (decision.verdict_eligible) {
+    return (
+      <span style={{ color: 'var(--sa-text-muted)' }}>
+        pending · a draft is written after 5 sessions
+        {decision.verdict_due ? ` (${dueDayLabel(decision.verdict_due)})` : ''}
+        , then you confirm or change it here
+      </span>
+    );
+  }
+  return (
+    <span style={{ color: 'var(--sa-text-muted)' }}>
+      none ·{' '}
+      {decision.context === 'held'
+        ? 'verdicts are written for entries and skips, not for hold, exit or tighten'
+        : decision.final_action === 'no_call'
+          ? 'the model was not called this cycle'
+          : 'this decision gets no verdict'}
+    </span>
+  );
+}
+
+function WhatHappened({
+  decision,
+  backtest,
+  onVerdictResolved,
+}: {
+  decision: DecisionDetail;
+  backtest: boolean;
+  onVerdictResolved: () => Promise<void>;
+}) {
+  const ask = useAsk();
+  const location = useLocation();
+  const output = decision.model_output;
+  const validation = decision.validation_result as {
+    changed_by_code?: boolean;
+    model_action?: string;
+    reason?: string | null;
+    note?: string | null;
+  } | null;
+  const gates = decision.gates_result as { blocked_by?: string | null } | null;
+  const changed = Boolean(validation?.changed_by_code);
+  const option =
+    decision.chosen_option ?? output?.option_id ?? output?.best_option_id ?? null;
+  const changeReason = validation?.reason ?? gates?.blocked_by ?? null;
+  // Sizing reductions are a final-action detail, not a code change
+  // (design: "size reduced 5 → 4 sh by max position 20%").
+  const sizing = (decision.gates_result as GatesResult | null)?.sizing;
+  const reduced =
+    (sizing?.limited_by ?? []).length > 0
+      ? `size reduced to ${sizing?.shares ?? '—'} sh by ${(sizing?.limited_by ?? []).join(' and ').replace(/_/g, ' ')}`
+      : null;
+  const warnings = (decision.warnings ?? []).filter((w) => w !== 'changed_by_code');
+  const finalParts = [
+    `${actionText(decision.final_action).label}${option && decision.final_action !== 'no_call' ? ` ${option}` : ''}`,
+    output
+      ? changed && validation?.model_action
+        ? `the model said ${validation.model_action.toUpperCase().replace('_', ' ')}`
+        : 'as the model chose'
+      : 'the model was not asked this cycle',
+    reduced ??
+      (decision.trade?.qty && decision.trade.entry
+        ? `${decision.trade.qty} sh @ ${Number(decision.trade.entry).toFixed(2)}`
+        : null),
+  ].filter(Boolean);
+
+  return (
+    <Section label="What happened" right="final action, code, order, verdict">
+      <div
+        style={{
+          border: '1px solid var(--sa-border)',
+          borderRadius: 'var(--sa-radius-md)',
+          overflow: 'hidden',
+          background: 'var(--sa-raised)',
+        }}
+      >
+        {_whRow('Final action', finalParts.join(' · '), true)}
+        {_whRow(
+          'Changed by code',
+          changed ? (
+            <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '6px' }}>
+              <Chip variant="warning">{changeReason ?? 'changed'}</Chip>
+              {validation?.note && (
+                <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  {validation.note}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span style={{ color: 'var(--sa-text-muted)' }}>
+              nothing · the final action is the model's
+            </span>
+          ),
+        )}
+        {_whRow(
+          'Warnings',
+          warnings.length > 0 ? (
+            <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '6px' }}>
+              {warnings.map((w) => (
+                <Chip key={w} variant="warning">{w}</Chip>
+              ))}
+            </span>
+          ) : (
+            <span style={{ color: 'var(--sa-text-muted)' }}>none</span>
+          ),
+        )}
+        {_whRow('Order', orderStatusText(decision, backtest))}
+        {_whRow(
+          'Verdict',
+          <VerdictCell decision={decision} onResolved={onVerdictResolved} />,
+        )}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <DialogButton
+          variant="cancel"
+          title="Opens Ask the agent with this decision as its context (Ctrl+J)"
+          onClick={() =>
+            ask.openDrawer({
+              screen: 'decision',
+              label: `${decision.symbol} decision`,
+              record_ref: `decision:${decision.id}`,
+              summary: `${decision.symbol} ${decision.final_action}`,
+              route: location.pathname,
+            })
+          }
+        >
+          Ask about this decision
+        </DialogButton>
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // level tiles + outcome
 
 function LevelTile({
@@ -1623,152 +2017,121 @@ function LevelTile({
   );
 }
 
-function VerdictRow({
-  decision,
-  onResolved,
-}: {
-  decision: DecisionDetail;
-  onResolved: () => Promise<void>;
+function OutcomeTile({ label, value, sub, pending }: {
+  label: string; value: string; sub?: string | null; pending?: boolean;
 }) {
-  const verdict = decision.verdict;
-  const [pending, setPending] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const saving = useRef(false);
-  if (!decision.verdict_eligible) return null;
-  const pick = async (value: VerdictValue) => {
-    if (!verdict || saving.current) return;
-    saving.current = true;
-    setPending(true);
-    setSaveError(null);
-    try {
-      await postVerdict(verdict.id, value);
-      await onResolved();
-    } catch {
-      setSaveError('The verdict could not be saved or refreshed. Retry your choice.');
-    } finally {
-      saving.current = false;
-      setPending(false);
-    }
-  };
   return (
     <div
       style={{
+        padding: '10px',
+        border: `1px ${pending ? 'dashed var(--sa-border-strong)' : 'solid var(--sa-border)'}`,
+        borderRadius: 'var(--sa-radius-md)',
         display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        gap: 'var(--sa-space-2)',
-        marginTop: 'var(--sa-space-3)',
+        flexDirection: 'column',
+        gap: '4px',
       }}
     >
-      {verdict ? (
-        <>
-          <span
-            title={
-              verdict.source === 'draft'
-                ? 'A draft verdict — confirm or change it. Only confirmed verdicts count in reviews.'
-                : 'Confirmed by you; counts in reviews.'
-            }
-            style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
-          >
-            {verdict.source === 'draft' ? 'Draft verdict:' : 'Verdict:'}
-          </span>
-          <Chip variant={verdictVariant(verdict.verdict)}>
-            {verdictLabel(verdict.verdict)}
-          </Chip>
-          {verdict.label_by_code && (
-            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              label by code
-            </span>
-          )}
-          {verdict.reason && (
-            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              {verdict.reason}
-            </span>
-          )}
-          <VerdictButtons current={verdict.verdict} onPick={pick} disabled={pending} />
-          {pending && <span role="status">Saving verdict…</span>}
-          {saveError && <span role="alert">{saveError}</span>}
-          {(verdict.outcome || verdict.model_action || verdict.thesis_check) && (
-            <div
-              style={{
-                flexBasis: '100%',
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 'var(--sa-space-2)',
-                fontSize: 'var(--sa-text-sm)',
-                color: 'var(--sa-text-muted)',
-              }}
-            >
-              {verdict.outcome && (
-                <span>
-                  Outcome:{' '}
-                  <span style={{ color: 'var(--sa-text-2)' }}>
-                    {verdictOutcomeText(verdict.outcome)}
-                  </span>
-                </span>
-              )}
-              {verdict.model_action && (
-                <span>
-                  model{' '}
-                  <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-2)' }}>
-                    {modelCallText(verdict.model_action, verdict.option_id)}
-                  </span>
-                  {verdict.changed_by_code && (
-                    <>
-                      {' → '}
-                      <span style={{ fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-warning-text)' }}>
-                        {decision.final_action.toUpperCase()}
-                      </span>{' '}
-                      <span style={{ color: 'var(--sa-warning-text)' }}>
-                        by code
-                        {verdict.change_text || verdict.change_reason
-                          ? ` · ${verdict.change_text ?? verdict.change_reason}`
-                          : ''}
-                      </span>
-                    </>
-                  )}
-                </span>
-              )}
-              {thesisCheckChip(verdict.thesis_check) && (
-                <span>
-                  Thesis:{' '}
-                  <Chip variant={thesisCheckChip(verdict.thesis_check)!.variant}>
-                    {thesisCheckChip(verdict.thesis_check)!.text}
-                  </Chip>
-                  {verdict.contradiction && (
-                    <span style={{ color: 'var(--sa-text-2)' }}> {verdict.contradiction}</span>
-                  )}
-                </span>
-              )}
-            </div>
-          )}
-        </>
-      ) : (
-        <span
-          title="A draft verdict is written once the 5-session result is in; you confirm or change it."
-        >
-          <Chip variant="neutral">
-            Verdict: draft after {dueDayLabel(decision.verdict_due)}
-          </Chip>
+      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{label}</span>
+      <span
+        style={{
+          fontFamily: 'var(--sa-font-mono)',
+          fontSize: 'var(--sa-text-md)',
+          color: pending ? 'var(--sa-text-muted)' : 'var(--sa-text)',
+        }}
+      >
+        {value}
+      </span>
+      {sub && (
+        <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-xs)', color: 'var(--sa-text-muted)' }}>
+          {sub}
         </span>
       )}
-      <Link to="/reviews" style={{ fontSize: 'var(--sa-text-sm)' }}>
-        Verdicts in Reviews
-      </Link>
     </div>
   );
 }
 
-function OutcomeSection({
-  decision,
-  onVerdictResolved,
-}: {
-  decision: DecisionDetail;
-  onVerdictResolved: () => Promise<void>;
-}) {
+/** A skip is judged by what its options did (design: option touches). */
+function OptionTouches({ decision }: { decision: DecisionDetail }) {
+  const touches = decision.outcome?.option_touches ?? null;
+  const options = _v2Options(decision);
+  const chosen = decision.chosen_option ?? decision.model_output?.best_option_id;
+  const ids = touches
+    ? Object.keys(touches)
+    : options.map((o) => o.id);
+  if (ids.length === 0) {
+    return muted('No options were built — there is nothing to measure.');
+  }
+  return (
+    <>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gap: 'var(--sa-space-2)',
+        }}
+      >
+        {ids.map((oid) => {
+          const option = options.find((o) => o.id === oid);
+          const touch = touches?.[oid];
+          const pending = touch === null || touch === undefined;
+          return (
+            <OutcomeTile
+              key={oid}
+              label={`${oid}${option ? ` · ${option.rr.toFixed(1)}R` : ''}${oid === chosen ? ' · chosen' : ''}`}
+              value={pending ? 'pending' : touch === 'not_filled' ? 'not filled' : touch}
+              pending={pending}
+              sub={pending ? 'neither yet' : touch === 'stop' ? 'stop first' : touch === 'target' ? 'target first' : undefined}
+            />
+          );
+        })}
+      </div>
+      {touches === null && muted('Option touches fill once the 5-session window closes.')}
+    </>
+  );
+}
+
+/** A hold or exit is judged by what the position did afterwards, and the
+ * next open against the exit when it closed (design: held outcome). */
+function HeldAftermath({ decision }: { decision: DecisionDetail }) {
+  const after = decision.held_after;
+  if (after === null || after === undefined) {
+    return muted('The position is still open — its outcome fills when it closes.');
+  }
+  const r = after.r !== null ? ` · ${signed(Number(after.r))}R` : '';
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+        gap: 'var(--sa-space-2)',
+      }}
+    >
+      <OutcomeTile
+        label="Exit"
+        value={`${after.exit_price ? Number(after.exit_price).toFixed(2) : '—'}${r}`}
+        sub={after.closed_at ? displayDayTime(after.closed_at) : null}
+      />
+      <OutcomeTile
+        label="Best after exit"
+        value={after.after_exit_best_price ? Number(after.after_exit_best_price).toFixed(2) : 'pending'}
+        pending={!after.after_exit_best_price}
+        sub={after.after_exit_best_at ? displayDayTime(after.after_exit_best_at) : null}
+      />
+      <OutcomeTile
+        label="5 sessions after"
+        value={after.after_exit_close_price ? Number(after.after_exit_close_price).toFixed(2) : 'pending'}
+        pending={!after.after_exit_close_price}
+        sub={after.after_exit_status && after.after_exit_status !== 'done' ? after.after_exit_status : null}
+      />
+    </div>
+  );
+}
+
+function OutcomeSection({ decision }: { decision: DecisionDetail }) {
   const outcome = decision.outcome;
-  const hasTrade = decision.trade !== null && decision.trade.status !== 'none';
+  const held = decision.context === 'held';
+  const skip = !held && ['skip', 'blocked', 'no_call'].includes(decision.final_action)
+    && (decision.model_output !== null || decision.final_action === 'skip');
   const tiles: {
     label: string;
     price: string | null;
@@ -1802,99 +2165,59 @@ function OutcomeSection({
   else if (outcome?.worst_price) soFar.push(`worst ${outcome.worst_price}`);
   if (touchLabel) soFar.push(`first touch: ${touchLabel}`);
 
+  const right =
+    held ? 'after this decision'
+    : skip ? 'option touches · 5 sessions'
+    : decision.next_outcome_due
+      ? <span title={formatNyTitle(decision.next_outcome_due)}>next result {displayDayTime(decision.next_outcome_due)}</span>
+      : outcome === null ? 'not recorded'
+        : tiles.every((tile) => tile.price !== null) ? 'all results in' : 'results pending';
+
   return (
-    <Section
-      label="Outcome"
-      right={
-        decision.next_outcome_due
-          ? <span title={formatNyTitle(decision.next_outcome_due)}>next result {displayDayTime(decision.next_outcome_due)}</span>
-          : outcome === null ? 'not recorded'
-            : tiles.every((tile) => tile.price !== null) ? 'all results in' : 'results pending'
-      }
-    >
-      {outcome === null ? (
+    <Section label="Outcome" right={right}>
+      {held ? (
+        <HeldAftermath decision={decision} />
+      ) : skip ? (
+        <OptionTouches decision={decision} />
+      ) : outcome === null ? (
         muted('No outcome row stored for this decision.')
       ) : (
-        <>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-              gap: 'var(--sa-space-2)',
-            }}
-          >
-            {tiles.map((tile) => (
-              <div
-                key={tile.label}
-                style={{
-                  padding: '10px',
-                  border: `1px ${
-                    tile.price
-                      ? 'solid var(--sa-border)'
-                      : 'dashed var(--sa-border-strong)'
-                  }`,
-                  borderRadius: 'var(--sa-radius-md)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '4px',
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 'var(--sa-text-sm)',
-                    color: 'var(--sa-text-muted)',
-                  }}
-                >
-                  {tile.label}
-                </span>
-                <span
-                  style={{
-                    fontFamily: 'var(--sa-font-mono)',
-                    fontSize: 'var(--sa-text-md)',
-                    color: tile.price ? 'var(--sa-text)' : 'var(--sa-text-muted)',
-                  }}
-                >
-                  {tile.price
-                    ? `${Number(tile.price).toFixed(2)}${tile.r ? ` · ${signed(Number(tile.r))}R` : ''}`
-                    : 'pending'}
-                </span>
-                {tile.at && (
-                  <span
-                    title={`Timestamp of the 5-minute bar · ${formatNyTitle(tile.at)}`}
-                    style={{
-                      fontSize: 'var(--sa-text-xs)',
-                      color: 'var(--sa-text-muted)',
-                    }}
-                  >
-                    bar {displayTime(tile.at)}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-          {soFar.length > 0 && (
-            <div
-              style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
-            >
-              So far: {soFar.join(' · ')}
-            </div>
-          )}
-          {hasTrade && !touchLabel && (
-            <div
-              style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
-            >
-              first touch: —
-            </div>
-          )}
-        </>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+            gap: 'var(--sa-space-2)',
+          }}
+        >
+          {tiles.map((tile) => (
+            <OutcomeTile
+              key={tile.label}
+              label={tile.label}
+              value={
+                tile.price
+                  ? `${Number(tile.price).toFixed(2)}${tile.r ? ` · ${signed(Number(tile.r))}R` : ''}`
+                  : 'pending'
+              }
+              pending={!tile.price}
+              sub={tile.at ? `bar ${displayTime(tile.at)}` : null}
+            />
+          ))}
+        </div>
       )}
-      <VerdictRow decision={decision} onResolved={onVerdictResolved} />
+      {soFar.length > 0 && (
+        <div
+          style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+        >
+          So far: {soFar.join(' · ')}
+        </div>
+      )}
     </Section>
   );
 }
 
 // ---------------------------------------------------------------------------
 // drawer — design/screens/Decision.dc.html: 560px, docked right, over a scrim
+
 
 function DrawerShell({
   label,
@@ -2026,6 +2349,7 @@ export default function Decision() {
   const location = useLocation();
   const navigate = useNavigate();
   const ask = useAsk();
+  const tilesNarrow = useMediaQuery('(max-width: 820px)');
   const requestKey = `${id}:${btRun ?? ''}:${btSlug ?? ''}`;
   const [result, setResult] = useState<{ key: string; decision: DecisionDetail | null; error: string | null; loading: boolean }>({
     key: requestKey, decision: null, error: null, loading: true,
@@ -2178,7 +2502,7 @@ export default function Decision() {
   const selected = _v2Options(decision).find((option) =>
     option.id === (output?.option_id ?? output?.best_option_id ?? decision.chosen_option));
   const levelTiles = (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+    <div style={{ display: 'grid', gridTemplateColumns: tilesNarrow ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))',
       gap: 'var(--sa-space-2)', padding: 'var(--sa-space-4) 0' }}>
       <LevelTile label={!held && decision.prompt_version !== 'decision.v1' ? 'Entry limit' : 'Entry'} value={trade?.entry ?? null} />
       <LevelTile label="Stop" value={trade?.stop ?? null} accent="var(--sa-negative-text)" />
@@ -2443,14 +2767,25 @@ export default function Decision() {
             The decision could not be refreshed. Showing stale data.{' '}
             <DialogButton variant="cancel" onClick={() => setRetry((value) => value + 1)}>Retry</DialogButton>
           </div>}
-          {decision.prompt_version !== 'decision.v1' && levelTiles}
+          {/* One order on every version (design/DESIGN.md → Decision
+              drawers): action · tiles · What happened · the version's
+              blocks · reasoning · gates · levels (folded) · outcome. */}
+          {levelTiles}
+          <WhatHappened
+            key={`wh-${requestKey}`}
+            decision={decision}
+            backtest={backtest}
+            onVerdictResolved={refresh}
+          />
           {_isV4Plus(decision.prompt_version) ? (
             <>
               {held ? (
                 <>
-                  <V4Thesis decision={decision} />
+                  {decision.prompt_version === 'decision.v5' && (
+                    <V5HoldOrExit decision={decision} />
+                  )}
                   <V3PositionFacts decision={decision} />
-                  <V4PreviousDecision decision={decision} />
+                  <V4Thesis decision={decision} />
                 </>
               ) : (
                 <>
@@ -2463,53 +2798,52 @@ export default function Decision() {
               ) : (
                 <V3StopOptions decision={decision} />
               )}
-              <V2Levels decision={decision} />
-              <V4Headlines decision={decision} />
+              {!held && <SelectionBlock decision={decision} />}
               <V4Reasoning decision={decision} />
+              <V4Headlines decision={decision} />
               <V2Explanation decision={decision} />
               <SafetyGates decision={decision} />
-              <SelectionBlock decision={decision} />
             </>
           ) : decision.prompt_version === 'decision.v3' ? (
             <>
-              <V3Checks decision={decision} />
-              <V3PositionFacts decision={decision} />
-              {decision.context === 'candidate' ? (
-                <V3OptionsTable decision={decision} />
+              {held ? (
+                <>
+                  <V3PositionFacts decision={decision} />
+                  <V3StopOptions decision={decision} />
+                </>
               ) : (
-                <V3StopOptions decision={decision} />
+                <>
+                  <V3Checks decision={decision} />
+                  <V3OptionsTable decision={decision} />
+                  <SelectionBlock decision={decision} />
+                </>
               )}
-              <V2Levels decision={decision} />
               <V3Reasoning decision={decision} />
               <V2Explanation decision={decision} />
               <SafetyGates decision={decision} />
-              <SelectionBlock decision={decision} />
             </>
           ) : (
             <>
-              <SafetyGates decision={decision} />
-              <SelectionBlock decision={decision} />
-              {decision.prompt_version === 'decision.v2' && (
+              {decision.prompt_version === 'decision.v2' ? (
                 <>
                   <V2OptionsTable decision={decision} />
-                  <V2Levels decision={decision} />
+                  <SelectionBlock decision={decision} />
                 </>
+              ) : (
+                <SignalStack decision={decision} />
               )}
-              <SignalStack decision={decision} />
               <Reasoning decision={decision} />
               {decision.prompt_version === 'decision.v2' && (
                 <V2Explanation decision={decision} />
               )}
+              <SafetyGates decision={decision} />
             </>
           )}
-
-          {/* level tiles */}
-          {decision.prompt_version === 'decision.v1' && levelTiles}
+          <V2Levels decision={decision} />
 
           <OutcomeSection
             key={requestKey}
             decision={decision}
-            onVerdictResolved={refresh}
           />
         </div>
 

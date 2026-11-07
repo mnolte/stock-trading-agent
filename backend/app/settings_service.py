@@ -43,6 +43,11 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "entry_limit_offset_pct": ("number", 0, 10),
         "entry_timeout_minutes": ("int", 1, 240),
         "max_spread_pct": ("number", 0, 10),
+        # Trading → Prices and timeouts (docs/SPEC.md, GUI — Settings).
+        "quote_max_age_seconds": ("int", 1, 3600),
+        "quote_max_deviation_pct": ("number", 0, 100),
+        "tighten_quote_max_age_seconds": ("int", 1, 86400),
+        "fill_settle_seconds": ("int", 0, 3600),
     },
     "rules": {
         "rsi_min": ("number", 0, 100),
@@ -57,6 +62,21 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "stop_atr_max": ("number", 0, 20),
         "min_reward_risk": ("number", 0, 20),
         "max_calls_per_cycle": ("int", 1, 100),
+        # Decision gates (docs/SPEC.md, GUI — Settings → Decision gates).
+        "entry_gate": ("entry_gate", None, None),
+        "min_ev_r": ("number", 0, 20),
+        "v3": ("submap", None, None),
+        "v4": ("submap", None, None),
+        "v5": ("submap", None, None),
+    },
+    "gui": {
+        "near_stop_atr": ("number", 0, 20),
+    },
+    "inspector": {
+        "slow_call_seconds": ("int", 0, 3600),
+    },
+    "api": {
+        "broker_timeout_seconds": ("int", 1, 120),
     },
     "selection": {
         "mode": ("selection_mode", None, None),
@@ -128,6 +148,24 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     },
 }
 
+# Per-sub-key specs for the "submap" kind — nested settings groups like
+# decision.v3/v4/v5 (docs/SPEC.md, GUI — Settings → Decision gates).
+SUBSPECS: dict[tuple[str, str], dict[str, tuple[str, float | None, float | None]]] = {
+    ("decision", "v3"): {
+        "min_room_atr": ("number", 0, 20),
+        "min_edge": ("number", 0, 1),
+    },
+    ("decision", "v4"): {
+        "near_level_atr": ("number", 0, 20),
+    },
+    ("decision", "v5"): {
+        "trend_gate": ("bool", None, None),
+        "max_rr": ("number", 0, 20),
+        "base_rate_sessions": ("int", 0, 260),
+        "price_vs_signal_adverse_atr": ("number", 0, 20),
+    },
+}
+
 # Channels the user may pick per event (``app`` is always on).
 NOTIFY_CHANNELS = {"browser", "email"}
 
@@ -167,6 +205,22 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "stop_atr_max"): "Stop distance to",
     ("decision", "min_reward_risk"): "Min reward to risk",
     ("decision", "max_calls_per_cycle"): "Max model calls per cycle",
+    ("decision", "entry_gate"): "Entry gate",
+    ("decision", "min_ev_r"): "Min expected R (ev gate)",
+    ("decision", "v3.min_room_atr"): "v3 room to first level",
+    ("decision", "v3.min_edge"): "v3 min edge over break-even",
+    ("decision", "v4.near_level_atr"): "v4 near-a-level distance",
+    ("decision", "v5.trend_gate"): "v5 trend gate",
+    ("decision", "v5.max_rr"): "v5 max reward to risk",
+    ("decision", "v5.base_rate_sessions"): "v5 base rate window",
+    ("decision", "v5.price_vs_signal_adverse_atr"): "v5 adverse price move",
+    ("gui", "near_stop_atr"): "Near-stop warning",
+    ("inspector", "slow_call_seconds"): "Slow call",
+    ("api", "broker_timeout_seconds"): "Broker answer timeout",
+    ("execution", "quote_max_age_seconds"): "Quote max age",
+    ("execution", "quote_max_deviation_pct"): "Quote max deviation",
+    ("execution", "tighten_quote_max_age_seconds"): "Tighten quote max age",
+    ("execution", "fill_settle_seconds"): "Fill settle window",
     ("selection", "mode"): "Entry selection",
     ("selection", "confidence_weight"): "Confidence weight",
     ("selection", "last_slot_min_ev_r"): "Last slot min expected R",
@@ -471,6 +525,43 @@ async def validate_settings(
                     out[key] = _clean_quiet_hours(value)
                 elif kind == "notify_events":
                     out[key] = _clean_notify_events(value)
+                elif kind == "submap":
+                    subspecs = SUBSPECS.get((section, key), {})
+                    if not isinstance(value, dict):
+                        raise SettingsError([f"{label}: expected a group"])
+                    # Only the editable subs replace; other keys in the
+                    # group keep their active value.
+                    merged_subs = dict(
+                        _nested_get(active, section, key) or {}
+                    )
+                    for sub, subvalue in value.items():
+                        subspec = subspecs.get(sub)
+                        sub_label = LABELS.get(
+                            (section, f"{key}.{sub}"), f"{section}.{key}.{sub}"
+                        )
+                        if subspec is None:
+                            raise SettingsError([f"{sub_label}: not editable"])
+                        sub_kind, sub_min, sub_max = subspec
+                        if sub_kind == "bool":
+                            if not isinstance(subvalue, bool):
+                                raise SettingsError(
+                                    [f"{sub_label}: must be true or false"]
+                                )
+                            merged_subs[sub] = subvalue
+                        else:
+                            num = _clean_number(
+                                subvalue, sub_min, sub_max, sub_label
+                            )
+                            merged_subs[sub] = (
+                                int(num) if sub_kind == "int" else num
+                            )
+                    out[key] = merged_subs
+                elif kind == "entry_gate":
+                    if value not in ("floor", "ev"):
+                        raise SettingsError(
+                            [f"{label}: must be floor or ev"]
+                        )
+                    out[key] = value
                 elif kind == "selection_mode":
                     if value not in ("rank", "expected_profit"):
                         raise SettingsError(

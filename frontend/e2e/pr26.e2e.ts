@@ -204,6 +204,7 @@ test('decision drawer: re-entry gate reads "Not traded today"', async ({ page },
 test('settings: notifications list the earnings exit, no day-trade guard', async ({ page }, testInfo) => {
   await page.goto('/settings');
   await page.getByRole('link', { name: 'Notifications' }).first().click();
+  await page.locator('summary').last().click();
 
   await expect(page.getByText('Earnings exit tomorrow')).toBeVisible({
     timeout: 60_000,

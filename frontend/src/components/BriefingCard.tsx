@@ -118,20 +118,12 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
                 <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
                   {card.text}
                 </p>
-                {card.chips.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
-                    {card.chips.map((chip, i) => (
-                      <Chip key={i} variant={chipVariant(chip.tone)}>
-                        {chip.text}
-                      </Chip>
-                    ))}
-                  </div>
-                )}
                 <div style={{ flex: 1 }} />
                 <div
                   style={{
                     display: 'flex',
                     flexWrap: 'wrap',
+                    alignItems: 'center',
                     gap: 'var(--sa-space-2) var(--sa-space-4)',
                     paddingTop: 'var(--sa-space-3)',
                     borderTop: '1px solid var(--sa-border)',
@@ -139,23 +131,54 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
                     color: 'var(--sa-text-muted)',
                   }}
                 >
-                  <span>
+                  <span
+                    title={
+                      card.source === 'model'
+                        ? 'Written by the model from figures computed by the agent before the open; every number was checked against those figures. Things that changed since are in the cards around it.'
+                        : 'Built from the same figures with the plain template. Things that changed since are in the cards around it.'
+                    }
+                    style={{ textDecoration: card.source === 'model' ? 'underline dotted' : 'none', textUnderlineOffset: '3px' }}
+                  >
                     {card.source === 'model'
                       ? 'Numbers checked ✓'
                       : `Plain briefing: ${card.reason ?? 'template used'}`}
                   </span>
-                  <span>
-                    {card.source === 'model' ? card.model ?? 'model' : 'template'}
-                    {card.prompt_version ? ` · ${card.prompt_version}` : ''}
-                  </span>
-                  {card.cost !== null && <span>{formatCost(card.cost)}</span>}
+                  <span style={{ flex: 1 }} />
                   {next && <span>Next briefing {next}</span>}
                 </div>
-                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                  {card.source === 'model'
-                    ? 'Written by the model from figures computed by the agent before the open; every number was checked against those figures. Things that changed since are in the cards around it.'
-                    : 'Built from the same figures with the plain template. Things that changed since are in the cards around it.'}
-                </div>
+                <details
+                  style={{
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                  }}
+                >
+                  <summary
+                    style={{
+                      cursor: 'pointer',
+                      minHeight: 'var(--sa-control-height)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                    }}
+                  >
+                    Facts used · {card.source === 'model' ? card.model ?? 'model' : 'template'}
+                    {card.prompt_version ? ` · ${card.prompt_version}` : ''}
+                    {card.cost !== null ? ` · ${formatCost(card.cost)}` : ''}
+                  </summary>
+                  {card.chips.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)', padding: 'var(--sa-space-2) 0' }}>
+                      {card.chips.map((chip, i) => (
+                        <Chip key={i} variant={chipVariant(chip.tone)}>
+                          {chip.text}
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ paddingBottom: 'var(--sa-space-1)' }}>
+                    {card.source === 'model' ? card.model ?? 'model' : 'template'}
+                    {card.prompt_version ? ` · ${card.prompt_version}` : ''}
+                    {card.cost !== null ? ` · ${formatCost(card.cost)}` : ''}
+                  </div>
+                </details>
               </>
             )}
           </>

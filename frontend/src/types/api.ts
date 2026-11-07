@@ -167,6 +167,9 @@ export interface DecisionOutcome {
   worst_price: string | null;
   worst_price_at: string | null;
   first_touch: 'stop' | 'target' | 'neither' | null;
+  /** Per-option first touch of a v2+ decision: id → stop | target |
+   * neither | not_filled | null (pending). */
+  option_touches?: Record<string, string | null> | null;
   r_1h: string | null;
   r_1session: string | null;
   r_5sessions: string | null;
@@ -255,6 +258,15 @@ export interface PositionRow {
   target_price: string | null;
   origin: string;
   pending_ack: boolean;
+  /** The exit sell held back by the broker (design: "exit held back
+   * since <time> · n tries"). */
+  pending_exit?: {
+    reason?: string | null;
+    decision_id?: number | null;
+    since?: string | null;
+    failure?: string | null;
+    tries?: number | null;
+  } | null;
   opened_at: string;
   closed_at: string | null;
   realized_pnl_raw: number | null;
@@ -320,6 +332,8 @@ export interface AttentionResponse {
     clock: { offset_ms: number | null; level: string };
     keys: { status: string; detail: string };
     email: string;
+    /** The first failure of the current streak ("failing since <time>"). */
+    email_since?: string | null;
   };
 }
 
@@ -616,6 +630,20 @@ export interface DecisionDetail {
   verdict_due: string | null;
   /** The llm_calls row for this decision's request, when one was sent. */
   llm_call_id: number | null;
+  /** The linked call's reasons (the What happened block's warnings). */
+  warnings?: string[];
+  /** Held decisions: what the reviewed position did afterwards (null
+   * while it is still open or unknown). */
+  held_after?: {
+    closed_at: string | null;
+    exit_reason: string | null;
+    exit_price: string | null;
+    r: string | null;
+    after_exit_best_price: string | null;
+    after_exit_best_at: string | null;
+    after_exit_close_price: string | null;
+    after_exit_status: string | null;
+  } | null;
   earnings: DecisionEarnings | null;
   execution_mode: string | null;
   eur_usd_rate: string | null;
@@ -730,7 +758,14 @@ export interface SettingsForm {
     entry_limit_offset_pct: number;
     entry_timeout_minutes: number;
     max_spread_pct: number;
+    quote_max_age_seconds?: number;
+    quote_max_deviation_pct?: number;
+    tighten_quote_max_age_seconds?: number;
+    fill_settle_seconds?: number;
   };
+  gui?: { near_stop_atr?: number };
+  inspector?: { slow_call_seconds?: number };
+  api?: { broker_timeout_seconds?: number };
   selection: {
     mode: string;
     confidence_weight: number;
@@ -746,6 +781,16 @@ export interface SettingsForm {
     stop_atr_max: number;
     min_reward_risk: number;
     max_calls_per_cycle: number;
+    entry_gate?: string;
+    min_ev_r?: number;
+    v3?: { min_room_atr?: number; min_edge?: number };
+    v4?: { near_level_atr?: number };
+    v5?: {
+      trend_gate?: boolean;
+      max_rr?: number;
+      base_rate_sessions?: number;
+      price_vs_signal_adverse_atr?: number;
+    };
   };
   risk: {
     risk_per_trade_pct: number;
@@ -1199,6 +1244,8 @@ export interface DashboardStats {
   reviews_cost_cap: string;
   shadows_cost_month?: string | null;
   shadows_cost_cap?: string;
+  ask_cost_month?: string | null;
+  ask_cost_cap?: string;
 }
 
 // ---- Daily briefing card ---------------------------------------------------
@@ -1395,6 +1442,7 @@ export interface ChartResponse {
 export interface UniverseFixedSymbol {
   symbol: string;
   sector: string;
+  name?: string | null;
 }
 
 export interface UniverseThresholds {
@@ -1428,6 +1476,7 @@ export type UniverseRowStatus =
 
 export interface UniverseRow {
   symbol: string;
+  name?: string | null;
   sector: string;
   added_at: string | null;
   status: UniverseRowStatus;
@@ -1804,7 +1853,16 @@ export interface ReadinessResponse {
 // --- LLM call history (PR 18) --------------------------------------------
 
 export type LlmCallOutcome = 'success' | 'warning' | 'error';
-export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask';
+export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask' | 'backtest';
+
+/** The ask metadata on an ask call: its thread and the question it
+ * served ("Question k of n") with the screen it was asked on. */
+export interface LlmCallAsk {
+  thread_id: number;
+  question_index: number | null;
+  question_count: number;
+  screen: string | null;
+}
 
 export interface LlmCallRow {
   id: number;
@@ -1818,6 +1876,8 @@ export interface LlmCallRow {
   shadow_decision_id: number | null;
   review_id: number | null;
   verdict_id: number | null;
+  ask_message_id?: number | null;
+  ask?: LlmCallAsk | null;
   cycle_id: number | null;
   symbol: string | null;
   context: string | null;
@@ -1872,6 +1932,9 @@ export interface LlmCallsSummary {
     reason: Record<string, number>;
     strategy: Record<string, number>;
   };
+  /** Every prompt version and kind from the manifest — the prompt
+   * filter lists all of them, not only ones with calls. */
+  prompt_manifest?: string[];
 }
 
 export interface LlmCallDetail extends LlmCallRow {
@@ -1895,6 +1958,8 @@ export interface LlmCallDetail extends LlmCallRow {
   result: string;
   explanation: string | null;
   link: string | null;
+  /** The model's configured effort — Claude models only. */
+  effort?: string | null;
 }
 
 

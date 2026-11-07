@@ -60,7 +60,13 @@ function HealthLine({ health }: { health: AttentionResponse['health'] }) {
       health.keys.status === 'passing' ? 'all passing' : health.keys.detail,
       health.keys.status === 'passing' ? ok : warn,
     ],
-    ['Email', health.email === 'failing' ? 'failing' : health.email, health.email === 'failing' ? warn : health.email === 'off' ? muted : ok],
+    [
+      'Email',
+      health.email === 'failing'
+        ? `failing${health.email_since ? ` since ${displayTime(health.email_since)}` : ''}`
+        : health.email,
+      health.email === 'failing' ? warn : health.email === 'off' ? muted : ok,
+    ],
   ];
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', padding: '10px 0 4px', borderTop: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-sm)' }}>

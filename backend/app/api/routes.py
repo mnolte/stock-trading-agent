@@ -15,11 +15,12 @@ from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.api.strategies import check_promotion, finish_promotion
+from app.ask.service import monthly_spend as ask_monthly_spend
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
@@ -578,6 +579,48 @@ def _trade_block(
     }
 
 
+def _held_after(position: Position | None) -> dict[str, object] | None:
+    """What the position a held decision reviewed did afterwards: its
+    close and, when written, the after-exit metrics (docs/SPEC.md,
+    Tail metrics). Returns None while the position is still open."""
+    if position is None or position.closed_at is None:
+        return None
+    exit_price = None
+    if position.realized_pnl_raw is not None and position.qty:
+        exit_price = position.avg_entry_price + (
+            position.realized_pnl_raw / position.qty
+        )
+    r_multiple = None
+    if (
+        exit_price is not None
+        and position.initial_stop is not None
+        and position.avg_entry_price != position.initial_stop
+    ):
+        r_multiple = (exit_price - position.avg_entry_price) / (
+            position.avg_entry_price - position.initial_stop
+        )
+    return {
+        "closed_at": position.closed_at.replace(tzinfo=UTC).isoformat(),
+        "exit_reason": position.exit_reason,
+        "exit_price": str(exit_price) if exit_price is not None else None,
+        "r": str(r_multiple.quantize(Decimal("0.01")))
+        if r_multiple is not None
+        else None,
+        "after_exit_best_price": (
+            str(position.after_exit_best_price)
+            if position.after_exit_best_price is not None
+            else None
+        ),
+        "after_exit_best_at": _iso(position.after_exit_best_at),
+        "after_exit_close_price": (
+            str(position.after_exit_close_price)
+            if position.after_exit_close_price is not None
+            else None
+        ),
+        "after_exit_status": position.after_exit_status,
+    }
+
+
 @router.get("/decisions/{decision_id}")
 def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
     """One stored decision with its prompt, output, checks and raw response."""
@@ -616,15 +659,37 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         position_row = session.execute(
             select(Position).where(Position.entry_decision_id == decision_id)
         ).scalar_one_or_none()
+        held_position_row = None
+        if decision.context == "held" and position_row is None:
+            # The position a held decision reviewed: same symbol, open at
+            # the decision time (docs/SPEC.md, Decision v5 — GUI: the
+            # outcome of a hold or exit is what the position did after).
+            held_position_row = session.execute(
+                select(Position)
+                .where(
+                    Position.symbol == decision.symbol,
+                    Position.opened_at <= scheduled.replace(tzinfo=None),
+                    or_(
+                        Position.closed_at.is_(None),
+                        Position.closed_at >= scheduled.replace(tzinfo=None),
+                    ),
+                )
+                .order_by(Position.opened_at)
+                .limit(1)
+            ).scalar_one_or_none()
         verdict_row = session.execute(
             select(Verdict).where(Verdict.decision_id == decision_id)
         ).scalar_one_or_none()
-        llm_call_id = session.execute(
-            select(LlmCall.id)
+        llm_call_row = session.execute(
+            select(LlmCall.id, LlmCall.reasons)
             .where(LlmCall.decision_id == decision_id)
             .order_by(LlmCall.id)
             .limit(1)
-        ).scalar_one_or_none()
+        ).first()
+        llm_call_id = llm_call_row[0] if llm_call_row else None
+        llm_call_reasons = (
+            [str(r) for r in llm_call_row[1]] if llm_call_row else []
+        )
         earnings = _decision_earnings(session, decision, scheduled)
         # Entry selection (PR 33): the cycle's record plus every scored
         # candidate of the same cycle for the drawer block.
@@ -710,6 +775,7 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
                 ),
                 "worst_price_at": _iso(outcome.worst_price_at),
                 "first_touch": outcome.first_touch,
+                "option_touches": outcome.option_touches,
                 "r_1h": _r_multiple(outcome.price_1h, entry, stop),
                 "r_1session": _r_multiple(outcome.price_1session, entry, stop),
                 "r_5sessions": _r_multiple(outcome.price_5sessions, entry, stop),
@@ -782,6 +848,8 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "verdict_eligible": verdict_eligible(decision),
         "verdict_due": _iso(verdict_due),
         "llm_call_id": llm_call_id,
+        "warnings": llm_call_reasons,
+        "held_after": _held_after(held_position_row),
         "earnings": earnings,
         "execution_mode": get_config().get(
             "execution", "mode", default="automatic"
@@ -1088,6 +1156,7 @@ def _position_json(
         ),
         "origin": position.origin,
         "pending_ack": position.pending_ack,
+        "pending_exit": position.pending_exit,
         "opened_at": position.opened_at.replace(tzinfo=UTC).isoformat(),
         "closed_at": (
             position.closed_at.replace(tzinfo=UTC).isoformat()
@@ -2340,6 +2409,27 @@ def banners(request: Request) -> dict[str, object]:
                 "actions": [],
             }
         )
+    # EUR is display-only: a failed ECB read shows USD only, trading
+    # never uses the rate (docs/SPEC.md, GUI — States).
+    fx = getattr(
+        getattr(request.app.state, "market_data", None), "latest_fx", None
+    )
+    if fx is not None and (fx.error is not None or fx.data is None):
+        items.append(
+            {
+                "id": None,
+                "kind": "eur_unavailable",
+                "level": "info",
+                "message": (
+                    "EUR unavailable: the ECB rate could not be fetched. "
+                    "Amounts show in USD only until it is back; trading "
+                    "never uses the rate."
+                ),
+                "details": {"error": fx.error} if fx.error else {},
+                "time": "",
+                "actions": [],
+            }
+        )
     health = (last_cycle.data_source_health or {}) if last_cycle else {}
     bars_health = str(health.get("bars", ""))
     if bars_health.startswith("failed"):
@@ -2561,6 +2651,31 @@ def _settings_form(config: object) -> dict[str, object]:
                 "execution", "entry_timeout_minutes", default=10
             ),
             "max_spread_pct": get("execution", "max_spread_pct", default=0.15),
+            "quote_max_age_seconds": get(
+                "execution", "quote_max_age_seconds", default=60
+            ),
+            "quote_max_deviation_pct": get(
+                "execution", "quote_max_deviation_pct", default=1.0
+            ),
+            "tighten_quote_max_age_seconds": get(
+                "execution", "tighten_quote_max_age_seconds", default=300
+            ),
+            "fill_settle_seconds": get(
+                "execution", "fill_settle_seconds", default=10
+            ),
+        },
+        "gui": {
+            "near_stop_atr": get("gui", "near_stop_atr", default=1.5),
+        },
+        "inspector": {
+            "slow_call_seconds": get(
+                "inspector", "slow_call_seconds", default=15
+            ),
+        },
+        "api": {
+            "broker_timeout_seconds": get(
+                "api", "broker_timeout_seconds", default=5
+            ),
         },
         "selection": {
             "mode": get("selection", "mode", default="rank"),
@@ -2586,6 +2701,30 @@ def _settings_form(config: object) -> dict[str, object]:
             "max_calls_per_cycle": get(
                 "decision", "max_calls_per_cycle", default=10
             ),
+            "entry_gate": get("decision", "entry_gate", default="floor"),
+            "min_ev_r": get("decision", "min_ev_r", default=0.25),
+            # Only the editable sub-keys are echoed — other v3/v4/v5
+            # config stays read-only (docs/SPEC.md, Settings —
+            # Decision gates).
+            **{
+                ver: {
+                    k: (get("decision", ver) or {}).get(k)
+                    for k in spec
+                }
+                for ver, spec in (
+                    ("v3", {"min_room_atr": None, "min_edge": None}),
+                    ("v4", {"near_level_atr": None}),
+                    (
+                        "v5",
+                        {
+                            "trend_gate": None,
+                            "max_rr": None,
+                            "base_rate_sessions": None,
+                            "price_vs_signal_adverse_atr": None,
+                        },
+                    ),
+                )
+            },
         },
         "risk": {
             "risk_per_trade_pct": get("risk", "risk_per_trade_pct", default=0.5),
@@ -4503,6 +4642,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         shadows_spend = (
             shadow_runner.monthly_spend(session) if shadow_runner is not None else None
         )
+        # Ask has its own monthly cap too (docs/SPEC.md, Model call
+        # counter) — shown on the tile's hover.
+        ask_spend = ask_monthly_spend(session, config, clock)
     calls_per_cycle = int(
         config.get("decision", "max_calls_per_cycle", default=10)
     )
@@ -4564,6 +4706,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
             "shadows_cost_cap": str(
                 config.get("shadows", "monthly_cost_cap_usd", default=5)
+            ),
+            "ask_cost_month": str(ask_spend),
+            "ask_cost_cap": str(
+                config.get("ask", "monthly_cost_cap_usd", default=15)
             ),
         },
         "briefing": _briefing_card(request, clock, app_tz, today_ny),

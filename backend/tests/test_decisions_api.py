@@ -103,6 +103,7 @@ def test_decisions_list_and_detail(client: TestClient) -> None:
         "worst_price": None,
         "worst_price_at": None,
         "first_touch": None,
+        "option_touches": None,
         "r_1h": None,
         "r_1session": None,
         "r_5sessions": None,

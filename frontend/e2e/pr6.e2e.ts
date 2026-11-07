@@ -54,7 +54,6 @@ test('decision detail: sections render', async ({ page }, testInfo) => {
 
   await page.goto(`/decisions/${items[0].id}`);
   await expect(page.getByRole('heading', { name: 'Safety gates' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Signal stack' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agent reasoning' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Outcome', exact: true })).toBeVisible();
 

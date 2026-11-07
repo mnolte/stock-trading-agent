@@ -24,7 +24,10 @@ from app.db.models import (
     Approval,
     Cycle,
     Decision,
+    Earning,
     Event,
+    Notification,
+    Position,
     SettingsVersion,
     ShadowDecision,
     Strategy,
@@ -458,6 +461,31 @@ def build_attention(request: Request) -> dict[str, Any]:
                 )
             )
 
+        # 8. An open position whose earnings report lands tonight — its
+        #    scheduled earnings exit runs at the close (docs/SPEC.md,
+        #    Needs you).
+        for symbol, tod in session.execute(
+            select(Position.symbol, Earning.time_of_day)
+            .join(Earning, Earning.symbol == Position.symbol)
+            .where(
+                Position.closed_at.is_(None),
+                func.date(Earning.date) == today_ny.isoformat(),
+            )
+        ):
+            if str(tod) == "amc":
+                items.append(
+                    _item(
+                        "decision",
+                        "info",
+                        f"{symbol} earnings exit at the close today.",
+                        "The position leaves at the close — its earnings "
+                        "report lands after the close.",
+                        "Open Positions",
+                        "/positions",
+                        None,
+                    )
+                )
+
     # Health line: Alpaca sync, order stream, clock, keys, email.
     reconcile_at = getattr(state, "last_reconcile_at", None)
     stream_connected = (
@@ -494,6 +522,22 @@ def build_attention(request: Request) -> dict[str, Any]:
         if smtp.get("configured")
         else "off"
     )
+    email_since = None
+    if email_failures > 0:
+        # The streak's first failure — the health line's "failing since".
+        failed_times = session.execute(
+            select(Notification.time)
+            .where(
+                func.json_extract(
+                    Notification.channel_status, "$.email"
+                )
+                == "failed"
+            )
+            .order_by(Notification.time.desc())
+            .limit(email_failures)
+        ).scalars().all()
+        if failed_times:
+            email_since = _iso(min(failed_times))
 
     return {
         "items": items,
@@ -510,5 +554,6 @@ def build_attention(request: Request) -> dict[str, Any]:
             },
             "keys": keys,
             "email": email,
+            "email_since": email_since,
         },
     }

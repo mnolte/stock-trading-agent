@@ -33,7 +33,7 @@ test('decision drawer: v2 options, levels and checks', async ({ page }, testInfo
 
   await page.goto(`/decisions/${id}`);
   await expect(page.getByRole('heading', { name: 'Options offered' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Levels' })).toBeVisible();
+  await expect(page.locator('summary', { hasText: 'Levels' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Safety gates' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Agent reasoning' })).toBeVisible();
 
