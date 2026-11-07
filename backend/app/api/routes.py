@@ -1890,24 +1890,25 @@ def banners(request: Request) -> dict[str, object]:
             getattr(request.app.state, "unclean_interrupted", 0) or 0
         )
         stopped = getattr(request.app.state, "unclean_stopped_at", None)
-        when = ""
+        downtime = ""
         if isinstance(stopped, datetime):
-            app_tz = ZoneInfo(
-                str(
-                    get_config().get(
-                        "app", "timezone", default="Europe/Amsterdam"
-                    )
-                )
+            from app.restart import unclean_summary
+
+            summary = unclean_summary(
+                stopped,
+                _clock(request).now(),
+                config=get_config(),
+                calendar=_calendar(request),
             )
-            local = stopped.astimezone(app_tz)
-            when = f" ({local.day} {local.strftime('%b %H:%M')})"
+            downtime = f" {summary['summary']}."
         items.append(
             {
                 "id": None,
                 "kind": "unclean_run",
                 "level": "warning",
                 "message": (
-                    f"The previous run did not shut down cleanly{when}. "
+                    "The previous run did not shut down cleanly."
+                    f"{downtime} "
                     f"Database integrity check {integrity} · "
                     f"reconciliation with Alpaca: {reconcile_text} · "
                     f"{interrupted} "

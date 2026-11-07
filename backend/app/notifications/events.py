@@ -447,6 +447,8 @@ def format_recorded(
         line = "stayed paused"
         if isinstance(reasons, list) and reasons:
             line = "stayed paused: " + "; ".join(str(r) for r in reasons)
+        if details.get("downtime"):
+            line = f"{line} ({details['downtime']})"
         return key, line, "/logs"
     if event_type == "backup_downloaded":
         return key, "downloaded the latest backup", "/settings"

@@ -17,12 +17,77 @@ Either way the agent says so in a banner and a notification.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING
 
 from app.config import AppConfig
+from app.market.clock import NY_TZ, FakeClock, SessionClock
 
 if TYPE_CHECKING:
     from app.engine.executor import ReconcileReport
+    from app.market.calendar import CalendarProvider
+
+
+def unclean_summary(
+    last_seen: datetime,
+    now: datetime,
+    *,
+    config: AppConfig,
+    calendar: CalendarProvider,
+) -> dict[str, str]:
+    """"Last alive 18:46:35 · down 61 min · missed 3 position checks and
+    the 19:46 cycle" — the unclean-run banner/log/notification wording
+    (design/screens/States.dc.html; docs/SPEC.md, Clean shutdown).
+
+    Missed work counts the scheduled position checks and cycles that
+    fell inside the downtime window, from the trading calendar; outside
+    a session it says "missed nothing".
+    """
+    app_tz = ZoneInfo(
+        str(config.get("app", "timezone", default="Europe/Amsterdam"))
+    )
+    clock = SessionClock(FakeClock(now), config, calendar)
+    start = last_seen.astimezone(NY_TZ).date()
+    end = now.astimezone(NY_TZ).date()
+    checks: list[datetime] = []
+    cycles: list[datetime] = []
+    day = start
+    while day <= end:
+        session = calendar.session_for(day)
+        if session is not None:
+            checks += [
+                t
+                for t in clock.active_checks(session)
+                if last_seen < t <= now
+            ]
+            cycles += [
+                t
+                for t in clock.active_cycles(session)
+                if last_seen < t <= now
+            ]
+        day += timedelta(days=1)
+    parts: list[str] = []
+    if checks:
+        parts.append(f"{len(checks)} position check{'s' if len(checks) != 1 else ''}")
+    if cycles:
+        parts.append(
+            "the "
+            + ", ".join(t.astimezone(app_tz).strftime("%H:%M") for t in cycles)
+            + f" cycle{'s' if len(cycles) != 1 else ''}"
+        )
+    missed = " and ".join(parts) if parts else "nothing"
+    down_minutes = max(0, int((now - last_seen).total_seconds() // 60))
+    return {
+        "last_alive": last_seen.astimezone(app_tz).strftime("%H:%M:%S"),
+        "down": f"{down_minutes} min",
+        "down_minutes": str(down_minutes),
+        "missed": missed,
+        "summary": (
+            f"Last alive {last_seen.astimezone(app_tz):%H:%M:%S} · "
+            f"down {down_minutes} min · missed {missed}"
+        ),
+    }
 
 
 def resume_after_clean_restart_enabled(config: AppConfig) -> bool:

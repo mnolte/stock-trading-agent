@@ -22,6 +22,8 @@ from app.readiness.service import (
 from tests.helpers import NOW, events_of, open_position
 from tests.test_stop_check import _executor, _holding, _position_row
 from app.broker.fake import FakeBroker
+from app.config import AppConfig
+from app.market.calendar import CalendarProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -228,3 +230,40 @@ def test_live_decisions_and_api_key_dismiss(
                 session, clock=clock, event_id=api_event.id, note="seen",
                 secrets=_Secrets(),
             )
+
+
+def test_unclean_summary_counts_missed_work(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Missed position checks and cycles count from the trading
+    calendar between the last heartbeat and now; outside a session the
+    answer is 'missed nothing' (design/screens/States.dc.html)."""
+    from app.data.fake import FakeCalendarSource
+    from app.restart import unclean_summary
+
+    config = AppConfig()
+    config.yaml["schedule"]["cycles"] = ["10:46", "11:46"]
+    config.yaml["schedule"]["position_checks"] = [
+        "10:00", "10:15", "10:30", "10:45",
+    ]
+    calendar = FakeCalendarSource()
+    # 15 Oct 2026 is a trading day in the fake calendar; NOW is 13:00 NY.
+    died = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)   # 10:00 NY
+    back = datetime(2026, 10, 15, 15, 31, tzinfo=UTC)  # 11:31 NY
+    summary = unclean_summary(
+        died, back, config=config, calendar=cast(CalendarProvider, calendar)
+    )
+    assert "down 91 min" in summary["summary"]
+    assert "3 position checks" in summary["summary"]
+    # The missed 10:46 NY cycle renders in Amsterdam time, like the
+    # design's "the 19:46 cycle".
+    assert "the 16:46 cycle" in summary["summary"]
+    assert "17:46" not in summary["summary"]  # not due yet
+
+    overnight = unclean_summary(
+        datetime(2026, 10, 15, 20, 0, tzinfo=UTC),   # after close
+        datetime(2026, 10, 16, 12, 0, tzinfo=UTC),   # before open
+        config=config,
+        calendar=cast(CalendarProvider, calendar),
+    )
+    assert overnight["missed"] == "nothing"
