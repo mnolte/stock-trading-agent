@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-11-07 — [050] Stop invariant (spec)
+
+From the live data of 4–5 November (`docs/analysis/050-live-data-2026-11-04.md`): KO kept 7 shares without a stop at Alpaca for 6 hours, the error resolved itself after an hour, and the app was down for an hour unnoticed.
+
+- **Alpaca integration → Stop check** (new): at the end of every reconcile, every open position must have working stops for the shares Alpaca holds, or stops plus an exit in flight (a market sell younger than `execution.exit_in_flight_seconds`, 60, or a queued market-on-open sell). Otherwise one more repair, then a stop-missing episode: CRITICAL then ERROR in the log, a critical Needs you item, the `missing_stop` notification every 30 minutes during the session, a red line on the position. It closes only when a check finds the position protected or flat. Repair skips log WARNING with a reason; only the check decides.
+- **Readiness → Errors**: errors that describe a state (stop missing, protective stop failed, pending exit, reconciliation mismatch, stream degraded, live decisions failing, key failing) no longer resolve after an hour of quiet; they resolve when the state clears, and can't be dismissed while it lasts.
+- **Needs you**: a new first row for a position without a stop right now; the banner row now reads "a protective stop that was placed". **Notifications**: the `missing_stop` row covers "still none, every 30 minutes".
+- **Architecture → Config layers** (new): `config.example.yaml` always loads, `config.yaml` overrides it, saved settings override both, key by key. Until now a local `config.yaml` hid every later default (the cause of the gpt-6.1-sol briefing failures and of `missing_stop` being browser-only). Unknown keys and unknown model ids warn at start; saving an unknown model is refused.
+- **Unclean stop detection**: the banner, log and notification say when the app was last alive, how long it was down and which checks and cycles it missed.
+- **Monitoring**: the heartbeat applies to a local install too; "Heartbeat not set" while empty. **Backups**: "not set up" instead of a failure without offsite credentials.
+- **Model list**: `supports_temperature` for OpenAI models (default true).
+- Kickoff `docs/kickoffs/050-fix-stop-invariant.md`. `execution.exit_in_flight_seconds` arrives with the code (rule 7).
+
 ## 2026-11-06 — [048] Kickoff archive
 
 - `docs/kickoffs/` now holds only open work. A kickoff moves unchanged to `docs/kickoffs/archive/` in the PR that sets its item to `merged` (usually the last build PR; for a `spec` or `analysis` item, the PR that completes it); a `dropped` item's kickoff moves too. Rule in `docs/work-items.md` (Done kickoffs go to the archive), AGENTS.md (Names), CLAUDE.md, `docs/README.md` rule 9 and the PR template.
