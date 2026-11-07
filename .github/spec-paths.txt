@@ -18,7 +18,9 @@
 # --- Behaviour spec and its map ---
 docs/SPEC.md
 docs/README.md
-docs/DEVIN_KICKOFF.md
+# Kickoffs, including docs/kickoffs/archive/ (items 001–028 are in
+# archive/DEVIN_KICKOFF.md). An unchanged move into archive/ needs no
+# label (rule 4 in the script).
 docs/kickoffs/*
 docs/analysis/*
 
