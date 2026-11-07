@@ -2170,11 +2170,20 @@ def banners(request: Request) -> dict[str, object]:
             window_start=None,
             minutes=minutes,
         )
+        from app.readiness.service import STATE_ERROR_TYPES
+
         open_ids = {e.id for e in open_errors}
+        state_ids = {
+            e.id for e in open_errors if e.event_type in STATE_ERROR_TYPES
+        }
         shown_ids = {item["id"] for item in items if "id" in item}
         for item in items:
             actions = cast("list[str]", item.get("actions") or [])
-            if item.get("id") in open_ids and "dismiss" not in actions:
+            if (
+                item.get("id") in open_ids
+                and item.get("id") not in state_ids
+                and "dismiss" not in actions
+            ):
                 item["actions"] = [*actions, "dismiss"]
         for event in open_errors:
             if event.id in shown_ids:
@@ -2185,18 +2194,27 @@ def banners(request: Request) -> dict[str, object]:
                 if mapped is not None
                 else event.event_type.replace("_", " ")
             )
+            if event.event_type in STATE_ERROR_TYPES:
+                message = (
+                    f"{line}. It resolves when the state clears; "
+                    "a dismiss while it lasts is refused."
+                )
+                actions: list[str] = []
+            else:
+                message = (
+                    f"{line}. Dismiss with a note or it resolves "
+                    f"itself after {minutes} minutes without recurring."
+                )
+                actions = ["dismiss"]
             items.append(
                 {
                     "id": event.id,
                     "kind": "unresolved_error",
                     "level": event.level,
-                    "message": (
-                        f"{line}. Dismiss with a note or it resolves "
-                        f"itself after {minutes} minutes without recurring."
-                    ),
+                    "message": message,
                     "details": event.details or {},
                     "time": event.time.replace(tzinfo=UTC).isoformat(),
-                    "actions": ["dismiss"],
+                    "actions": actions,
                 }
             )
 

@@ -92,6 +92,65 @@ def test_banner_ack_leaves_when_acknowledged(client: TestClient) -> None:
     assert _attention(client)["items"] == []
 
 
+def test_stop_missing_episode_first_until_it_closes(
+    client: TestClient,
+) -> None:
+    """An open stop_missing episode is the first Needs you item —
+    critical, "Open position", never by acknowledgement (item 050)."""
+    with get_session_maker()() as session:
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 19, 46),
+                level="critical",
+                event_type="stop_missing",
+                details={
+                    "symbol": "KO",
+                    "shares": "7",
+                    "stop_qty": "0",
+                    "reason": "the protective stop was refused: "
+                    "21 requested, 7 available",
+                },
+                affects="order",
+            )
+        )
+        # A second critical item — the episode still sorts first.
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 20, 0),
+                level="critical",
+                event_type="pending_exit",
+                details={"symbol": "MSFT", "message": "Exit pending"},
+                affects="order",
+            )
+        )
+        session.commit()
+        episode_id = session.execute(
+            select(Event).where(Event.event_type == "stop_missing")
+        ).scalar_one().id
+
+    payload = _attention(client)
+    item = payload["items"][0]
+    assert item["kind"] == "stop_missing"
+    assert item["severity"] == "critical"
+    assert "KO has no stop at Alpaca since" in item["text"]
+    assert "7 shares" in item["detail"]
+    assert "Code retries at every check." in item["detail"]
+    assert item["action_label"] == "Open position"
+    assert item["link"] == "/positions"
+
+    # No acknowledgement is offered: the endpoint doesn't apply to it.
+    r = client.post(f"/api/events/{episode_id}/acknowledge")
+    assert r.status_code == 200  # harmless — it doesn't clear the item
+    assert _attention(client)["items"][0]["kind"] == "stop_missing"
+
+    with get_session_maker()() as session:
+        event = session.get(Event, episode_id)
+        event.resolved_at = datetime(2026, 10, 15, 21, 46)  # type: ignore[union-attr]
+        event.resolution = "condition"  # type: ignore[union-attr]
+        session.commit()
+    assert _kinds(_attention(client))[:1] != ["stop_missing"]
+
+
 def test_episode_leaves_when_it_clears(client: TestClient) -> None:
     app = cast(Any, client.app)
     state = getattr(app.state, "exec_state", None)
