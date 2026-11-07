@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from app.api.strategies import check_promotion, finish_promotion
+from app.ask.service import monthly_spend as ask_monthly_spend
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, get_config
 from app.data.cache import _naive_utc
@@ -61,7 +62,6 @@ from app.notifications.service import (
     EMAIL_FAILURE_BANNER_AT,
     NotificationService,
 )
-from app.ask.service import monthly_spend as ask_monthly_spend
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
 from app.risk.budget import Meter, risk_budget

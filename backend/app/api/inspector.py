@@ -752,7 +752,7 @@ def _ask_meta(
         user_messages.setdefault(thread_id, []).append(mid)
     # The question this answer served: the last user message before it.
     screens: dict[tuple[int, int], str] = {}
-    for thread_id, mids in user_messages.items():
+    for thread_id in user_messages:
         rows = session.execute(
             select(AskMessage.id, AskMessage.context)
             .where(AskMessage.thread_id == thread_id, AskMessage.role == "user")
