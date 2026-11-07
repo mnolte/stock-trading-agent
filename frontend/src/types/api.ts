@@ -298,6 +298,12 @@ export interface PositionRow {
   locked_in?: boolean;
   legs_problem?: boolean;
   legs_summary?: string;
+  /** Open stop-missing episode: no live stop at Alpaca (item 050). */
+  stop_missing?: {
+    since: string;
+    reason?: string | null;
+    stop_qty?: string | null;
+  } | null;
 }
 
 export interface PositionsTotals {
@@ -626,6 +632,8 @@ export interface DecisionDetail {
   outcome: DecisionOutcome | null;
   next_outcome_due: string | null;
   verdict: DecisionVerdict | null;
+  /** Open stop-missing episode for this decision's symbol (item 050). */
+  stop_missing?: { since: string; reason?: string | null } | null;
   verdict_eligible: boolean;
   verdict_due: string | null;
   /** The llm_calls row for this decision's request, when one was sent. */

@@ -20,8 +20,7 @@ import {
   displayTime,
   openedTodayNy,
   signed,
-  signedUsd,
-} from '../format';
+  signedUsd, elapsedHm } from '../format';
 
 const mono: React.CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
@@ -101,7 +100,8 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
   const latest = p.latest_decision ?? null;
   const legs = p.legs ?? [];
   const pendingExit = p.pending_exit ?? null;
-  const legsProblem = p.legs_problem === true || pendingExit !== null;
+  const noStop = p.stop_missing != null;
+  const legsProblem = p.legs_problem === true || pendingExit !== null || noStop;
   return (
     <div
       style={{
@@ -132,6 +132,12 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
           {p.locked_in ? 'stop above entry' : p.r_multiple != null ? `${signed(p.r_multiple)}R` : ''}
         </span>
         {statusChips(p)}
+        {noStop && (
+          <Chip variant="negative">
+            No stop at Alpaca since {displayTime(p.stop_missing!.since)} ·{' '}
+            {elapsedHm(p.stop_missing!.since)}
+          </Chip>
+        )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
           {p.opened_today
@@ -211,8 +217,18 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
         }}
       >
         <summary style={{ cursor: 'pointer', minHeight: 32, display: 'flex', alignItems: 'center', gap: 8, fontSize: 'var(--sa-text-md)', color: legsProblem ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
-          Orders at Alpaca · {pendingExit ? `exit pending: ${pendingExit.failure ?? pendingExit.reason ?? 'sell held back'}` : p.legs_summary ?? `${legs.length} legs`}
+          Orders at Alpaca ·{' '}
+          {noStop
+            ? `no stop at Alpaca${p.stop_missing?.reason ? ` — ${p.stop_missing.reason}` : ''}`
+            : pendingExit
+              ? `exit pending: ${pendingExit.failure ?? pendingExit.reason ?? 'sell held back'}`
+              : p.legs_summary ?? `${legs.length} legs`}
         </summary>
+        {noStop && (
+          <div style={{ ...mono, fontSize: 'var(--sa-text-md)', color: 'var(--sa-negative-text)', padding: '4px 0' }}>
+            stop none
+          </div>
+        )}
         <div style={{ overflowX: 'auto' }}>
           <div style={{ minWidth: '460px' }}>
             {legs.map((leg) => (

@@ -686,6 +686,21 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             .order_by(LlmCall.id)
             .limit(1)
         ).first()
+        episode_row = session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars()
+        open_episode = next(
+            (
+                e
+                for e in episode_row
+                if str((e.details or {}).get("symbol") or "")
+                == decision.symbol
+            ),
+            None,
+        )
         llm_call_id = llm_call_row[0] if llm_call_row else None
         llm_call_reasons = (
             [str(r) for r in llm_call_row[1]] if llm_call_row else []
@@ -752,6 +767,14 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "validation_result": decision.validation_result,
         "gates_result": decision.gates_result,
         "trade": trade,
+        "stop_missing": (
+            {
+                "since": open_episode.time.replace(tzinfo=UTC).isoformat(),
+                "reason": (open_episode.details or {}).get("reason"),
+            }
+            if open_episode is not None
+            else None
+        ),
         "outcome": (
             {
                 "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
@@ -1331,6 +1354,18 @@ async def positions(request: Request) -> dict[str, object]:
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
         legs = {p.id: _position_legs(session, p) for p in open_rows}
+        # Open stop-missing episodes by symbol — the position card's
+        # "No stop at Alpaca since …" chip (item 050).
+        episodes: dict[str, Event] = {}
+        for episode in session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            symbol = str((episode.details or {}).get("symbol") or "")
+            if symbol:
+                episodes.setdefault(symbol, episode)
         earnings_next = session.execute(
             select(Earning.symbol, func.min(Earning.date))
             .where(
@@ -1405,6 +1440,16 @@ async def positions(request: Request) -> dict[str, object]:
     for p in open_rows:
         item = _position_json(p, marks.get(p.symbol))
         item["legs"] = legs[p.id]
+        episode = episodes.get(p.symbol)
+        if episode is not None:
+            details = episode.details or {}
+            item["stop_missing"] = {
+                "since": episode.time.replace(tzinfo=UTC).isoformat(),
+                "reason": details.get("reason"),
+                "stop_qty": details.get("stop_qty"),
+            }
+        else:
+            item["stop_missing"] = None
         item["last_price"] = (
             str(last_prices.get(p.symbol))
             if last_prices.get(p.symbol) is not None
