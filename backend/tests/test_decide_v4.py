@@ -1,7 +1,7 @@
 """decision.v4: snapshot v4, the v4 code checks and the v4 output schema.
 
 Synthetic snapshots over the v3 shape — the kickoff tests
-(docs/kickoffs/pr-34.md — Tests).
+(docs/kickoffs/archive/pr-34.md — Tests).
 """
 
 from __future__ import annotations

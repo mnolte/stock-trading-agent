@@ -24,7 +24,7 @@ The examples use 099 as a made-up number.
 
 | Thing | Format | Example |
 | --- | --- | --- |
-| Kickoff | `docs/kickoffs/NNN-type-slug.md`, first line `# NNN · type · Title` | `docs/kickoffs/099-fix-ko-overnight-exit.md` |
+| Kickoff | `docs/kickoffs/NNN-type-slug.md`, first line `# NNN · type · Title`; `docs/kickoffs/archive/` once merged | `docs/kickoffs/099-fix-ko-overnight-exit.md` |
 | Spec branch (Claude) | `spec/NNN-slug` | `spec/099-ko-overnight-exit` |
 | Build branch (Devin) | `type/NNN-slug` | `fix/099-ko-overnight-exit` |
 | PR title | `[NNN] type: Title` | `[099] fix: KO overnight exit` |
@@ -43,72 +43,87 @@ The examples use 099 as a made-up number.
 - **Small fixes found during a review** of item NNN go into a follow-up PR of that item. They get their own number only when they need their own kickoff.
 - **Dependabot and other automatic PRs** keep their own names and get no number.
 
+## Done kickoffs go to the archive
+
+`docs/kickoffs/` holds only the kickoffs still to build. When an item's status becomes `merged`, its kickoff moves to `docs/kickoffs/archive/`, same file name, content unchanged, in the same PR that sets the status:
+
+- usually the item's last build PR (Devin), together with its row: build PR and `merged`;
+- for a `spec` or `analysis` item without a build, the PR that completes it;
+- a `dropped` item's kickoff moves too, with the reason in its row.
+
+An unchanged move into `archive/` needs no `spec change` label (the gate checks that the file is identical and keeps its name); a move with any edit, or out of the archive, does. A follow-up PR for an archived item reads the kickoff from `archive/` and leaves it there. Old paths in `docs/CHANGES.md` and in code comments are not rewritten: a kickoff that isn't in `docs/kickoffs/` is in `docs/kickoffs/archive/`. `archive/DEVIN_KICKOFF.md` holds items 001–028.
+
+So: a file in `docs/kickoffs/` is open work; the register's Status says how far it is.
+
 ## Register
 
 | Nr | Type | Title | Kickoff | Spec PRs | Build PRs | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| 001 | feat | Skeleton | `DEVIN_KICKOFF.md` | — | — | merged |
-| 002 | feat | Market and data | `DEVIN_KICKOFF.md` | — | — | merged |
-| 003 | feat | Signals, regime and rules | `DEVIN_KICKOFF.md` | — | — | merged |
-| 004 | feat | Decision layer | `DEVIN_KICKOFF.md` | — | — | merged |
-| 005 | feat | Execution | `DEVIN_KICKOFF.md` | — | — | merged |
-| 006 | feat | GUI | `DEVIN_KICKOFF.md` | — | — | merged |
-| 007 | feat | Performance and outcomes | `DEVIN_KICKOFF.md` | — | — | merged |
-| 008 | feat | Hardening | `DEVIN_KICKOFF.md` | — | — | merged |
-| 009 | feat | Reviews | `DEVIN_KICKOFF.md` | — | — | merged |
-| 010 | feat | Settings and API keys | `DEVIN_KICKOFF.md` | — | — | merged |
-| 011 | feat | Pool and liquidity screen | `DEVIN_KICKOFF.md` | — | — | merged |
-| 012 | feat | Cycles at scale | `DEVIN_KICKOFF.md` | — | — | merged |
-| 013 | feat | Strategies and shadows | `DEVIN_KICKOFF.md` | — | — | merged |
-| 014 | feat | Backtesting | `DEVIN_KICKOFF.md` | — | — | merged |
-| 015 | fix | Integrity fixes | `DEVIN_KICKOFF.md` | — | — | merged |
-| 016 | feat | Readiness | `DEVIN_KICKOFF.md` | — | — | merged |
-| 017 | feat | Dashboard and interaction polish | `DEVIN_KICKOFF.md` | — | — | merged |
-| 018 | feat | LLM call history | `DEVIN_KICKOFF.md` | — | — | merged |
-| 019 | feat | Tail metrics | `DEVIN_KICKOFF.md` | — | — | merged |
-| 020 | feat | Logging, error handling and shutdown | `DEVIN_KICKOFF.md` | — | — | merged |
-| 021 | feat | Decision v2: code-built options | `DEVIN_KICKOFF.md` | — | — | merged |
-| 022 | feat | Insights | `DEVIN_KICKOFF.md` | — | — | merged |
-| 023 | feat | Sign-in and access | `DEVIN_KICKOFF.md` | — | #43 | merged |
-| 024 | ops | VPS deployment | `DEVIN_KICKOFF.md` | — | #44 | merged |
-| 025 | feat | Error pages and API errors | `DEVIN_KICKOFF.md` | — | #45 | merged |
-| 026 | fix | Day-trade rule retired | `DEVIN_KICKOFF.md` | — | #41 | merged |
-| 027 | fix | Protective stops hardened | `DEVIN_KICKOFF.md` | — | — | merged |
-| 028 | fix | Security hardening | `DEVIN_KICKOFF.md` | — | #47 | merged |
-| 029 | feat | Model providers | `pr-29.md` | — | #61 | merged |
-| 030 | feat | Decision v3 | `pr-30.md` | #50, #51, #53 | #54 | merged |
-| 031 | fix | Exit fills and reconciliation | `pr-31.md` | #55 | #58 | merged |
-| 032 | feat | Review attribution | `pr-32.md` | #57 | #59, #75 | merged |
-| 033 | feat | Entry selection | `pr-33.md` | #67 | #78 | merged |
-| 034 | feat | Decision v4 | `pr-34.md` | #79, #83 | #82 | merged |
-| 035 | feat | Needs you and positions at a glance | `pr-35.md` | #84 | #90 | merged |
-| 036 | feat | Ask the agent | `pr-36.md` | #91, #92 | #98, #99 | merged |
-| 037 | feat | Decision v5 | `pr-37.md` | #103, #105 | #106 | merged |
-| 038 | spec | Naming convention for work items | — | #107 | — | planned |
-| 039 | fix | Protective stop repair | — | — | #111, #112 | building |
-| 040 | fix | EP shadow gate_detail crash | — | — | #113 | building |
-| 041 | fix | Stale header numbers | — | — | #115 | building |
-| 042 | fix | Backend test audit fixes | — | — | #116 | building |
-| 043 | fix | Trading path audit fixes | — | — | #123 | building |
-| 044 | spec | Spec rulings from the 043 audit | — | #135 | — | planned |
-| 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | — | planned |
-| 047 | fix | Drawer model-call e2e flake | — | — | #141 | building |
+| 001 | feat | Skeleton | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 002 | feat | Market and data | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 003 | feat | Signals, regime and rules | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 004 | feat | Decision layer | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 005 | feat | Execution | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 006 | feat | GUI | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 007 | feat | Performance and outcomes | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 008 | feat | Hardening | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 009 | feat | Reviews | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 010 | feat | Settings and API keys | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 011 | feat | Pool and liquidity screen | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 012 | feat | Cycles at scale | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 013 | feat | Strategies and shadows | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 014 | feat | Backtesting | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 015 | fix | Integrity fixes | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 016 | feat | Readiness | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 017 | feat | Dashboard and interaction polish | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 018 | feat | LLM call history | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 019 | feat | Tail metrics | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 020 | feat | Logging, error handling and shutdown | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 021 | feat | Decision v2: code-built options | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 022 | feat | Insights | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 023 | feat | Sign-in and access | `archive/DEVIN_KICKOFF.md` | — | #43 | merged |
+| 024 | ops | VPS deployment | `archive/DEVIN_KICKOFF.md` | — | #44 | merged |
+| 025 | feat | Error pages and API errors | `archive/DEVIN_KICKOFF.md` | — | #45 | merged |
+| 026 | fix | Day-trade rule retired | `archive/DEVIN_KICKOFF.md` | — | #41 | merged |
+| 027 | fix | Protective stops hardened | `archive/DEVIN_KICKOFF.md` | — | — | merged |
+| 028 | fix | Security hardening | `archive/DEVIN_KICKOFF.md` | — | #47 | merged |
+| 029 | feat | Model providers | `archive/pr-29.md` | — | #61 | merged |
+| 030 | feat | Decision v3 | `archive/pr-30.md` | #50, #51, #53 | #54 | merged |
+| 031 | fix | Exit fills and reconciliation | `archive/pr-31.md` | #55 | #58 | merged |
+| 032 | feat | Review attribution | `archive/pr-32.md` | #57 | #59, #75 | merged |
+| 033 | feat | Entry selection | `archive/pr-33.md` | #67 | #78 | merged |
+| 034 | feat | Decision v4 | `archive/pr-34.md` | #79, #83 | #82 | merged |
+| 035 | feat | Needs you and positions at a glance | `archive/pr-35.md` | #84 | #90 | merged |
+| 036 | feat | Ask the agent | `archive/pr-36.md` | #91, #92 | #98, #99 | merged |
+| 037 | feat | Decision v5 | `archive/pr-37.md` | #103, #105 | #106 | merged |
+| 038 | spec | Naming convention for work items | — | #107 | — | merged |
+| 039 | fix | Protective stop repair | — | — | #111, #112 | merged |
+| 040 | fix | EP shadow gate_detail crash | — | — | #113 | merged |
+| 041 | fix | Stale header numbers | — | — | #115 | merged |
+| 042 | fix | Backend test audit fixes | — | — | #116 | merged |
+| 043 | fix | Trading path audit fixes | — | — | #123 | merged |
+| 044 | spec | Spec rulings from the 043 audit | — | #135 | — | merged |
+| 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | — | ready |
+| 046 | fix | Spec and design alignment | `046-fix-spec-alignment.md` | #140 | — | ready |
+| 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
+| 048 | fix | Log routes 503 on schema-less index | — | — | #143 | merged |
+| 048 | spec | Kickoff archive | — | #142 | — | merged |
 | 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | — | planned |
 
-Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged`, or `dropped` (with the reason in the row).
+Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
 ### Before the convention
 
-Work with a kickoff but no number, kept under its old file name. The old names stay as they are, so links in `docs/CHANGES.md` keep working.
+Work with a kickoff but no number, kept under its old file name. All of it is merged, so the kickoffs are in `archive/` under their old names.
 
 | Kickoff | What | Spec PRs | Build PRs |
 | --- | --- | --- | --- |
-| `fix-live-2026-10-29.md` | Live fixes of 29 Oct: stream envelope, clock check, break-even guard | #55 | #56 |
-| `fix-live-2026-10-30.md` | Live fixes of 30 Oct: decisions failing, fill settling, GUI timeouts | #65 | #64, #66 |
-| `ops-alerts.md` | Alerts, log volume, small fixes | #55 | #62 |
-| `quote-plausibility.md` | Analysis: IEX quote plausibility | — | #63 |
-| `fix-scan-2026-10-31.md` | Repository scan fixes | #71 | #72, #74 |
+| `archive/fix-live-2026-10-29.md` | Live fixes of 29 Oct: stream envelope, clock check, break-even guard | #55 | #56 |
+| `archive/fix-live-2026-10-30.md` | Live fixes of 30 Oct: decisions failing, fill settling, GUI timeouts | #65 | #64, #66 |
+| `archive/ops-alerts.md` | Alerts, log volume, small fixes | #55 | #62 |
+| `archive/quote-plausibility.md` | Analysis: IEX quote plausibility | — | #63 |
+| `archive/fix-scan-2026-10-31.md` | Repository scan fixes | #71 | #72, #74 |
 | — | Analysis: decision v4 candidates | — | #73 |
 | — | Decision bookkeeping B1–B4 | — | #80, #81 |
-| `fix-v4-2026-11-03.md` | Decision v4 code fixes of 3 Nov | #103 | #104 |
+| `archive/fix-v4-2026-11-03.md` | Decision v4 code fixes of 3 Nov | #103 | #104 |
 | — | Trading path audit fixes; Ask number check | — | #100, #102 |

@@ -79,7 +79,7 @@ stock-agent/
     tests/
   frontend/
   design/           # DESIGN.md, tokens.css, screens/, screenshots/
-  docs/             # SPEC.md, CHANGES.md, README.md, DEVIN_KICKOFF.md
+  docs/             # SPEC.md, CHANGES.md, README.md, work-items.md, kickoffs/ (archive/ once merged), analysis/
   README.md  AGENTS.md  CLAUDE.md
 ```
 

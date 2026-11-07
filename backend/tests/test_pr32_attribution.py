@@ -1,6 +1,6 @@
 """PR 32 remainder: the draft-label table, verdict facts per spec,
 weekly groups/sample/suggestion, briefing status-line dedup and the
-known-prompt-version 422 paths (docs/kickoffs/pr-32.md).
+known-prompt-version 422 paths (docs/kickoffs/archive/pr-32.md).
 """
 
 import json

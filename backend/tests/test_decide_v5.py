@@ -1,4 +1,4 @@
-"""decision.v5 tests (docs/SPEC.md, Decision v5; docs/kickoffs/pr-37.md)."""
+"""decision.v5 tests (docs/SPEC.md, Decision v5; docs/kickoffs/archive/pr-37.md)."""
 
 from __future__ import annotations
 
@@ -359,7 +359,7 @@ def test_gap_p90_atr_value() -> None:
 def test_base_rate_shrinkage_formula(session_factory: Any) -> None:
     """n 30, rate 0.50, break-even ≈ 0.33 (rr 2.0) → shrunk ≈ 0.42 —
     computed by the real base_rates over seeded rows
-    (docs/kickoffs/pr-37.md)."""
+    (docs/kickoffs/archive/pr-37.md)."""
     from app.db.models import Cycle, Decision, Outcome
 
     from tests.test_outcomes import _naive
@@ -556,7 +556,7 @@ def test_hold_at_overnight_margin_no_warning() -> None:
 def test_ko_answer_warns_and_holds() -> None:
     """The KO answer: hold at 0.65 with neutral 0.12, the stop inside
     the gap → hold_below_breakeven + confidence_outlier warn; the
-    decision stands (docs/kickoffs/pr-37.md)."""
+    decision stands (docs/kickoffs/archive/pr-37.md)."""
     snap = _snapshot(
         context="held",
         session={"minutes_left": 14, "last_cycle": True},
@@ -770,7 +770,7 @@ async def test_removed_and_rules_blocked_options_get_touches(
 ) -> None:
     """A room-removed option and an option built for a candidate the
     rules stopped both get touches from the fixture bars
-    (docs/kickoffs/pr-37.md — counterfactual touches)."""
+    (docs/kickoffs/archive/pr-37.md — counterfactual touches)."""
 
     from app.market.clock import FakeClock
 
@@ -827,7 +827,7 @@ async def test_removed_and_rules_blocked_options_get_touches(
 
 
 def test_build_v5_held_snapshot_ko_shape() -> None:
-    """The KO snapshot shape (docs/kickoffs/pr-37.md — Done when):
+    """The KO snapshot shape (docs/kickoffs/archive/pr-37.md — Done when):
     ``last_cycle`` true, ``gap_p90_atr`` above 0.83,
     ``price_vs_signal`` −0.48, the fifth thesis check and the earnings
     status."""

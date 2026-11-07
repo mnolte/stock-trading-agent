@@ -15,6 +15,19 @@ From the live data of 4–5 November (`docs/analysis/050-live-data-2026-11-04.md
 - **Model list**: `supports_temperature` for OpenAI models (default true).
 - Kickoff `docs/kickoffs/050-fix-stop-invariant.md`. `execution.exit_in_flight_seconds` arrives with the code (rule 7).
 
+## 2026-11-06 — [048] Kickoff archive
+
+- `docs/kickoffs/` now holds only open work. A kickoff moves unchanged to `docs/kickoffs/archive/` in the PR that sets its item to `merged` (usually the last build PR; for a `spec` or `analysis` item, the PR that completes it); a `dropped` item's kickoff moves too. Rule in `docs/work-items.md` (Done kickoffs go to the archive), AGENTS.md (Names), CLAUDE.md, `docs/README.md` rule 9 and the PR template.
+- Moved now, everything merged: `pr-29.md` … `pr-37.md`, `fix-live-2026-10-29.md`, `fix-live-2026-10-30.md`, `fix-scan-2026-10-31.md`, `fix-v4-2026-11-03.md`, `ops-alerts.md`, `quote-plausibility.md`, and `docs/DEVIN_KICKOFF.md` (items 001–028) as `docs/kickoffs/archive/DEVIN_KICKOFF.md`. Left open: `045-feat-gui-catch-up.md` (ready, not built).
+- Spec-label gate, rule 4: an unchanged move of `docs/kickoffs/<name>.md` to `docs/kickoffs/archive/<name>.md` needs no `spec change` label, so a build PR can archive its kickoff without becoming spec work. An edit in the same move, another name, or a move out of the archive still needs the label. Five tests in `backend/tests/ci/test_spec_label.py`.
+- Register statuses brought up to date: 038–044 and 047 `merged`, 045 `ready`.
+- Paths in older entries below and in code comments are not rewritten; a kickoff not in `docs/kickoffs/` is in `docs/kickoffs/archive/`.
+
+## 2026-11-06 — [048] Log routes 503 on schema-less index
+
+- An existing `logs.db` without the `log_lines` table made `/api/logs/{id}/around` and `/api/logs/export.jsonl` crash with `no such table` — a 503 on bad input, which broke `test_every_get_route_survives_bad_params` inside the image.
+- `_log_db` now treats a file without the index schema as unavailable, and both routes answer like `/api/logs` does (`index_available: false`) instead of raising 503.
+
 ## 2026-11-06 — [047] Drawer model-call e2e flake
 
 - The PR 9 drawer e2e assumed the latest-decision card's target had reached the model; a live cycle writing a newer rules no_call for the same symbol made it fail at random.
@@ -170,7 +183,7 @@ them rewrites them on the next verdict scan.
 
 ## 2026-11-04 — Decision v5: the code
 
-The v5 build (`docs/kickoffs/pr-37.md`) lands behind the version
+The v5 build (`docs/kickoffs/archive/pr-37.md`) lands behind the version
 gates: v1–v4 keep their behaviour; a `decision.v5` strategy or prompt
 version takes the v5 path.
 
@@ -424,7 +437,7 @@ changes:
   - **Safety:** read-only by construction, no secrets in any tool result, untrusted text treated as data, strict Markdown rendering.
   - **Storage, settings and eval:** `ask_threads` and `ask_messages`; Settings → Ask the agent; `make eval-ask` with about 25 questions.
 - New prompt `backend/prompts/ask.v1.md`, not in the manifest until PR 36 wires it. The `ask` config block comes with PR 36 (rule 7).
-- Header: the Ask button on every screen. Out of scope: actions from the chat (later, behind "Confirm it is you"). Build plan item 36. Kickoff `docs/kickoffs/pr-36.md`.
+- Header: the Ask button on every screen. Out of scope: actions from the chat (later, behind "Confirm it is you"). Build plan item 36. Kickoff `docs/kickoffs/archive/pr-36.md`.
 
 ## 2026-11-01 — Needs you and positions at a glance (PR 35)
 
@@ -438,7 +451,7 @@ changes:
   - open positions moved up on the dashboard;
   - on Positions: a totals line, four facts per position, and Alpaca legs folded into a line that opens on a problem.
 - **Phone:** below 820 px a sticky top bar with the menu replaces the sidebar; no sideways scroll at 390 px.
-- Build plan item 35. Kickoff `docs/kickoffs/pr-35.md`. `gui.near_stop_atr` comes with PR 35 (rule 7).
+- Build plan item 35. Kickoff `docs/kickoffs/archive/pr-35.md`. `gui.near_stop_atr` comes with PR 35 (rule 7).
 - Config: `gui.near_stop_atr: 1.5` added to `backend/config.example.yaml`.
 
 ## 2026-11-01 — Decision v4: best option and conflict checks clarified
@@ -504,7 +517,7 @@ changes:
 - `verdicts.prompt_version` records the review prompt (new Alembic revision on `c3d4e5f6a7b8`); `/api/verdicts` and the decision verdict now carry the model's call, code's change with its reason, the outcome line, the thesis check and `label_by_code`.
 - Briefing: `text` stores only the model's sentences; `status_line` is code's and shows above the text in the GUI and email; a leading copy in older rows is stripped on read, never rewritten.
 - Known prompt versions: saving settings with `decision.prompt` without a contract is refused `unknown_prompt_version`, as is a backtest strategy naming one; the replay CLI already raised.
-- Kickoff `docs/kickoffs/pr-32.md` steps 6 and 8 and the listed test gaps; the read-only live-database check and a frontend pass under the design screenshot remain open.
+- Kickoff `docs/kickoffs/archive/pr-32.md` steps 6 and 8 and the listed test gaps; the read-only live-database check and a frontend pass under the design screenshot remain open.
 
 ## 2026-10-31 — Analysis: decision.v4 candidates
 
@@ -520,7 +533,7 @@ changes:
 - `test_settings_saves.py` saves every reviews.models and quiet_hours case through the API and walks every key the Settings page can send (a dropped validation branch now fails the suite); `settings-save.e2e.ts` saves both through the page.
 - The Settings page had the same PR 29 gap on its side: `diffSettings`/`diffMap` know the other dict fields (`universe.screen`, `notifications.quiet_hours`, `notifications.events`) but not `reviews.models`, so a review-model change counted no unsaved change and was dropped from the save body. The leaf diffs are in, with labels for the three model rows.
 - `AuthService.scrub_values` — one of the log scrubber's secret providers — logged every failure, and the scrubber filtered that record through the same provider: an unbounded loop at shutdown (backend CI hung on it). `_all_secrets` now falls back to the last collected values when a provider emits a record mid-collection, and `scrub_values` warns once per failure episode.
-- Kickoff `docs/kickoffs/fix-scan-2026-10-31.md`, step 1.
+- Kickoff `docs/kickoffs/archive/fix-scan-2026-10-31.md`, step 1.
 
 ## 2026-10-31 — Repository scan fixes
 
@@ -536,7 +549,7 @@ changes:
 - API keys: a secret shorter than 8 characters is refused at save.
 - A body that is not JSON at all still answers 400 `bad_request` (logged at WARNING); typed route bodies only changed the parsed-but-invalid cases to 422 `invalid`.
 - An app's secret providers are unregistered at shutdown, and `install_secret_scrub_filter` no longer stacks a second scrub filter on a handler that already has one. Registered per app and never removed, a stale `AuthService.scrub_values` keeps running on every later record in the process, fails on its dead store once per failure episode, and that warn is a stray "logs" publish on whatever app is still live (it flaked `test_websocket_needs_session_and_own_origin`: an `update` beat the `pong`); filters that survive their app made one extra `_all_secrets` collection per record per boot.
-- Kickoff `docs/kickoffs/fix-scan-2026-10-31.md`. The rest are code bugs against the existing spec and AGENTS.md.
+- Kickoff `docs/kickoffs/archive/fix-scan-2026-10-31.md`. The rest are code bugs against the existing spec and AGENTS.md.
 
 ## 2026-10-31 — Misfire grace on every scheduled job
 
@@ -562,7 +575,7 @@ changes:
 
 ## 2026-10-30 — Live fixes of 30 October — implementation
 
-- `docs/kickoffs/fix-live-2026-10-30.md` lands in code: the "Live decisions failing" critical event, banner and notification (once per episode, cleared by the first good call) with the provider key marked failing on a 401/403; "Trade opened" fires once when the entry order is final, with the filled quantity; reconcile defers the quantity check while an entry order works or a fill is fresh; GUI broker reads answer the last reconciled values, marked stale, past the timeout; a held-position tighten accepts an older last trade and a still-blocked tighten shows as changed by code (`price_stale`/`price_suspect`); stream reconnect errors log once per outage then once per 10 minutes, and a long outage degrades the stream only in session; no chart request without a symbol; screenshot specs write to a temp dir unless `SCREENSHOT_DIR`.
+- `docs/kickoffs/archive/fix-live-2026-10-30.md` lands in code: the "Live decisions failing" critical event, banner and notification (once per episode, cleared by the first good call) with the provider key marked failing on a 401/403; "Trade opened" fires once when the entry order is final, with the filled quantity; reconcile defers the quantity check while an entry order works or a fill is fresh; GUI broker reads answer the last reconciled values, marked stale, past the timeout; a held-position tighten accepts an older last trade and a still-blocked tighten shows as changed by code (`price_stale`/`price_suspect`); stream reconnect errors log once per outage then once per 10 minutes, and a long outage degrades the stream only in session; no chart request without a symbol; screenshot specs write to a temp dir unless `SCREENSHOT_DIR`.
 - `config.example.yaml`: `api.broker_timeout_seconds` (5), `execution.fill_settle_seconds` (10), `execution.tighten_quote_max_age_seconds` (300), `notifications.events.live_decisions_failing` ([browser, email]).
 - Logger names outside `app`/`frontend` log at WARNING and up; the app's own bare logger names (`model.*`, `broker.*`, `data.*`, `rules`, `risk`, `check`, `db`, `api`, `backtest.worker`) moved under `app.*`. Reconnects announce `app.broker.stream` INFO with the outage length.
 
@@ -580,7 +593,7 @@ changes:
 - Stream health: reconnect errors are logged once per outage, then once per 10 minutes with a count. An outage of more than 5 minutes in a session marks the stream `degraded`.
 - Notifications: "Trade opened" waits for the entry order to be final and shows the filled quantity. New row "Live decisions failing".
 - Logging: every logger outside `app.*` and `frontend` logs at WARNING and up, not a fixed list.
-- Kickoff `docs/kickoffs/fix-live-2026-10-30.md`. No design change: the GUI uses the existing banner and the stale-data pattern from `States.dc.html`.
+- Kickoff `docs/kickoffs/archive/fix-live-2026-10-30.md`. No design change: the GUI uses the existing banner and the stale-data pattern from `States.dc.html`.
 
 ## 2026-10-30 — Analysis: IEX quote plausibility
 
@@ -588,7 +601,7 @@ changes:
 
 ## 2026-10-30 — Ops: alerts, log volume and small fixes — implementation
 
-- `docs/kickoffs/ops-alerts.md` lands in code: the "New error" warning notification (one per ERROR fingerprint per session, link to Logs), third-party loggers at WARNING unless `logging.library_debug`, no `/api/chart/` call without a symbol, and no repeat broker ask for a position already found flat in the same pass.
+- `docs/kickoffs/archive/ops-alerts.md` lands in code: the "New error" warning notification (one per ERROR fingerprint per session, link to Logs), third-party loggers at WARNING unless `logging.library_debug`, no `/api/chart/` call without a symbol, and no repeat broker ask for a position already found flat in the same pass.
 - `config.example.yaml`: `notifications.events.new_error: [browser, email]` — the spec's on/on default for the new row.
 
 ## 2026-10-30 — Review attribution (PR 32) — implementation
@@ -635,7 +648,7 @@ changes:
 
 ## 2026-10-29 — Kickoffs tidied
 
-- `docs/kickoffs/pr-30.md`: reads both PR 30 change log entries, and states the label and changelog rules.
+- `docs/kickoffs/archive/pr-30.md`: reads both PR 30 change log entries, and states the label and changelog rules.
 - `docs/kickoffs/docs-readme.md` removed: the README rewrite was merged in #46.
 
 ## 2026-10-29 — Decision v3 implemented: checks by code, room and break-even (PR 30)

@@ -5388,13 +5388,25 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
 
 def _log_db(request: Request) -> sqlite3.Connection | None:
     """Open the log index read-only, or None when unavailable (never pass
-    readiness, but the API still answers)."""
+    readiness, but the API still answers). An existing file without the
+    schema — a fresh data dir, a half-written index — is unavailable too:
+    bad input still gets a 4xx answer, never a 500."""
     from app.log_index import index_path
 
     path = index_path(get_config())
     if not path.exists():
         return None
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='log_lines'"
+        ).fetchone()
+    except sqlite3.Error:
+        has_table = None
+    if has_table is None:
+        conn.close()
+        return None
+    return conn
 
 
 def _log_row(row: tuple[object, ...]) -> dict[str, object]:
@@ -5553,7 +5565,7 @@ def api_logs_around(line_id: int, request: Request) -> dict[str, object]:
     window = _int_param(request, "window", 20, 1, 100)
     conn = _log_db(request)
     if conn is None:
-        raise HTTPException(status_code=503, detail="log index unavailable")
+        return {"lines": [], "center": line_id, "index_available": False}
     with contextlib.closing(conn), conn:
         rows = conn.execute(
             f"SELECT {_COLS} FROM log_lines WHERE id BETWEEN ? AND ? "  # noqa: S608 - whitelisted column list, params bound
@@ -5572,11 +5584,11 @@ def api_logs_export(request: Request) -> Response:
     """
     import json
 
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import JSONResponse, StreamingResponse
 
     conn = _log_db(request)
     if conn is None:
-        raise HTTPException(status_code=503, detail="log index unavailable")
+        return JSONResponse({"index_available": False})
     cap = int(
         get_config().get("security", "export_max_rows", default=100000)
     )
