@@ -90,6 +90,8 @@ function AppRoutes() {
               </ErrorBoundary>
             }
           />
+          {/* A catch-all keeps this Routes quiet on every other page. */}
+          <Route path="*" element={null} />
         </Routes>
       </Suspense>
     </>

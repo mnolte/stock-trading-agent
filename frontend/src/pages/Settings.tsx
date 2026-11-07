@@ -1782,8 +1782,6 @@ export default function Settings() {
         </Banner>
       )}
 
-      {/* Phone width: the section list becomes a horizontal scroll row. */}
-      <style>{`@media (max-width: 760px) { nav.sn { position: static !important; max-width: none !important; flex: 1 1 100% !important; flex-direction: row !important; flex-wrap: nowrap; overflow-x: auto; gap: 6px !important; padding-bottom: 4px } nav.sn a { flex: 0 0 auto; white-space: nowrap; border: 1px solid var(--sa-border) } nav.sn .sn-hint, nav.sn .sn-find { display: none } }`}</style>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-6)', alignItems: 'flex-start' }}>
         <nav
           className="sn"
