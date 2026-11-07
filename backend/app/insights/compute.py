@@ -1395,14 +1395,22 @@ def compute_insights(
     for name, group in sorted(by_filter.items()):
         target = sum(1 for r in group if r.touch == "target")
         stop = sum(1 for r in group if r.touch == "stop")
+        neither = sum(1 for r in group if r.touch == "neither")
+        decided = sum(1 for r in group if r.touch is not None)
         rs = [r.r_made for r in group if r.r_made is not None]
         filters_out.append(
             {
                 "filter": name,
                 "count": len(group),
+                # Decided touches only (docs/SPEC.md, Decision v5 — What
+                # each filter removed): pending bars don't count.
+                "decided": decided,
                 "target_first": target,
                 "stop_first": stop,
-                "r_made": _q2(sum(rs, Decimal(0))) if rs else None,
+                "neither": neither,
+                "r_made": (
+                    _q2(sum(rs, Decimal(0)) / len(rs)) if rs else None
+                ),
             }
         )
 
