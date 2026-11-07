@@ -104,7 +104,9 @@ So: a file in `docs/kickoffs/` is open work; the register's Status says how far 
 | 043 | fix | Trading path audit fixes | — | — | #123 | merged |
 | 044 | spec | Spec rulings from the 043 audit | — | #135 | — | merged |
 | 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | — | ready |
+| 046 | fix | Spec and design alignment | `046-fix-spec-alignment.md` | #140 | — | ready |
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
+| 048 | fix | Log routes 503 on schema-less index | — | — | #143 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).

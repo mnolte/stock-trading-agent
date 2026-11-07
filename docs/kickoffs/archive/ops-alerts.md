@@ -1,6 +1,6 @@
 # Ops — alerts, log volume and small fixes
 
-Kickoff for Devin. Start the session with: "Build docs/kickoffs/ops-alerts.md."
+Kickoff for Devin. Start the session with: "Build docs/kickoffs/archive/ops-alerts.md."
 
 ```text
 Small ops PR, after fix-live-2026-10-29. From the live-data report of
