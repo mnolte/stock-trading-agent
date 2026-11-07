@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-07 — [052] Browser console warnings
+
+- **Favicon**: `frontend/public/favicon.svg` (the SA app mark) linked from `index.html`; the browser no longer requests `/favicon.ico` and 404s.
+- **Router**: the decision-drawer `<Routes>` in `App.tsx` gets a catch-all that renders nothing, ending the dev warning "No routes matched location" on every page that isn't a decision deep link.
+- **CSP**: the Settings section-nav phone media query moved from an inline `<style>` element to `styles/global.css`; the strict CSP (`default-src 'self'`, no `style-src`) no longer blocks it. The rules and their `!important` use are unchanged.
+
 ## 2026-11-07 — [051] Kickoffs move to the archive with the build
 
 - The build PR now moves its kickoff to `docs/kickoffs/archive/`, in the same PR as the code (`git mv`, unchanged). An item built in several PRs: the first moves it, the later ones read it from `archive/`. Before (048), the move waited for the PR that set the item to `merged`. So `docs/kickoffs/` lists only work nobody has started; the register's Status still says `building` or `merged`.
