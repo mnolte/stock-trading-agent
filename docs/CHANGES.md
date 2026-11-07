@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-06 — [048] Log routes 503 on schema-less index
+
+- An existing `logs.db` without the `log_lines` table made `/api/logs/{id}/around` and `/api/logs/export.jsonl` crash with `no such table` — a 503 on bad input, which broke `test_every_get_route_survives_bad_params` inside the image.
+- `_log_db` now treats a file without the index schema as unavailable, and both routes answer like `/api/logs` does (`index_available: false`) instead of raising 503.
+
 ## 2026-11-06 — [047] Drawer model-call e2e flake
 
 - The PR 9 drawer e2e assumed the latest-decision card's target had reached the model; a live cycle writing a newer rules no_call for the same symbol made it fail at random.
