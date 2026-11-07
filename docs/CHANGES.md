@@ -34,7 +34,9 @@ From the live data of 4–5 November (`docs/analysis/050-live-data-2026-11-04.md
 - Register statuses brought up to date: 038–044 and 047 `merged`, 045 `ready`.
 - Paths in older entries below and in code comments are not rewritten; a kickoff not in `docs/kickoffs/` is in `docs/kickoffs/archive/`.
 
-## 2026-11-06 — [048] Log routes 503 on schema-less index
+## 2026-11-06 — [049] Log routes 503 on schema-less index
+
+*Item 049; merged as [048] in #143, renumbered 7 Nov because 048 was already the kickoff archive (#142).*
 
 - An existing `logs.db` without the `log_lines` table made `/api/logs/{id}/around` and `/api/logs/export.jsonl` crash with `no such table` — a 503 on bad input, which broke `test_every_get_route_survives_bad_params` inside the image.
 - `_log_db` now treats a file without the index schema as unavailable, and both routes answer like `/api/logs` does (`index_available: false`) instead of raising 503.
