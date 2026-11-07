@@ -2,6 +2,11 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-07 — [045] GUI decisions
+
+- `Inspector.dc.html`: the reason select groups Warning, changed_by_code (by change reason) and Error, and drops `no_options`, which is a no-call reason and never reaches the inspector. Screenshots unchanged (the select is closed in them).
+- `DESIGN.md` → Numbers: EUR beside equity, today's P&L and card totals only; other amounts in USD with EUR in a tooltip.
+
 ## 2026-11-07 — [050] Stop invariant
 
 - `States.dc.html`: new "Position without a stop at Alpaca · stop-missing episode" (KO, 7 shares, red chip "No stop at Alpaca since 15:46 · 1 h 30 min", legs line "stop none", the closing line); a first Needs you reference row "KO has no stop at Alpaca since 15:46" that leaves only when a check finds a stop or the position flat; the unclean-restart banner says "Last alive 18:46:35 · down 61 min · missed 3 position checks and the 19:46 cycle". `States.png` re-rendered.
