@@ -291,8 +291,25 @@ def unresolved_errors(
         row
         for row in rows
         if row.resolved_at is None or row.resolved_at > as_of
-        if latest[row.event_type] + limit > as_of
+        if row.event_type in STATE_ERROR_TYPES
+        or latest[row.event_type] + limit > as_of
     ]
+
+
+# Errors that describe a *state*, not a moment: they resolve only from
+# their own clearing code (the stop check for stop_missing and
+# protective_stop_failed; the existing clearing paths for the rest; a
+# reconciliation mismatch on acknowledgement) — never after quiet time
+# (docs/SPEC.md, Readiness — Errors).
+STATE_ERROR_TYPES = frozenset({
+    "stop_missing",
+    "protective_stop_failed",
+    "pending_exit",
+    "reconciliation",
+    "stream_degraded",
+    "live_decisions_failing",
+    "api_key",
+})
 
 
 def apply_auto_resolution(
@@ -303,7 +320,8 @@ def apply_auto_resolution(
     Every member of a quiet group gets ``resolved_at = last recurrence +
     minutes`` and ``resolution = 'auto'`` — the timestamp preserves what
     the state was at any point in between, which backfilled snapshots
-    rely on.
+    rely on. State errors (``STATE_ERROR_TYPES``) never resolve this
+    way.
     """
     now = _naive(now)
     rows = list(
@@ -312,6 +330,7 @@ def apply_auto_resolution(
                 Event.level.in_(ERROR_LEVELS),
                 Event.affects != "none",
                 Event.resolved_at.is_(None),
+                Event.event_type.not_in(STATE_ERROR_TYPES),
             )
         ).scalars()
     )
