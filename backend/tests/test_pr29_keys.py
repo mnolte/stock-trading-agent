@@ -135,7 +135,7 @@ def test_remove_in_use_key_refused() -> None:
     _save_keys(client, "openai")
     res = client.post("/api/keys/openai/remove")
     assert res.status_code == 422
-    assert "live decisions use gpt-4o-mini" in res.text
+    assert "live decisions use gpt-4.1-mini" in res.text
 
 
 def test_remove_key_in_use_by_review_refused() -> None:
