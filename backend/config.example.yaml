@@ -238,6 +238,17 @@ notifications:
     daily_briefing: [email]
     weekly_review: [email]
     verdicts_waiting: []
+    readiness_changed: [browser]
+    another_instance: [browser, email]
+    new_sign_in: [browser, email]
+    sign_in_lockout: [browser, email]
+    restarted_resumed: [browser]
+    restarted_paused: [browser, email]
+    backup_failed: [browser, email]
+    backup_downloaded: [browser, email]   # not in the spec table; a sign-in-class security signal
+    disk_space: [browser, email]          # 80% warning; 90% is critical
+    cert_expiring: [browser, email]
+    clock_offset: [browser, email]
 
 ask:                            # PR 36, Ask the agent
   enabled: true
