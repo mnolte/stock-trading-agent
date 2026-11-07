@@ -12,6 +12,8 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import patch
 
+import pytest
+
 from app.backtests.manager import BacktestManager, _pid_same, _pid_start
 from app.config import AppConfig
 from app.db.models import Backtest
@@ -77,6 +79,36 @@ def test_tick_marks_recycled_pid_interrupted_and_sends_nothing(
     with mgr._sessions() as session:
         row = session.get(Backtest, run_id)
         assert row is not None and row.status == "interrupted"
+
+
+@pytest.mark.anyio
+async def test_cancel_sends_nothing_to_a_recycled_pid(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The grace-period kill path has the same guard as the tick: a pid
+    whose start time moved on is a recycled pid and is never signalled,
+    even after cancel_grace_seconds expires (G11)."""
+    mgr = _manager(session_factory)
+    run_id = _running_row(mgr)  # pid=os.getpid(), started_at=1.0
+    with mgr._sessions() as session:
+        row = session.get(Backtest, run_id)
+        assert row is not None
+        row.cancel_requested = True
+        session.commit()
+
+    real_kill = os.kill
+
+    def spy(pid: int, sig: int) -> None:
+        if sig:
+            raise AssertionError(f"signal {sig} sent to recycled pid {pid}")
+        real_kill(pid, sig)
+
+    with patch("app.backtests.manager.os.kill", spy):
+        await mgr._stop_after_grace(run_id, os.getpid(), 1.0, 0)
+
+    with mgr._sessions() as session:
+        row = session.get(Backtest, run_id)
+        assert row is not None and row.status == "cancelled"
 
 
 def test_matching_start_time_is_alive(session_factory: sessionmaker[Session]) -> None:
