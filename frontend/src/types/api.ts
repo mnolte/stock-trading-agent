@@ -758,7 +758,14 @@ export interface SettingsForm {
     entry_limit_offset_pct: number;
     entry_timeout_minutes: number;
     max_spread_pct: number;
+    quote_max_age_seconds?: number;
+    quote_max_deviation_pct?: number;
+    tighten_quote_max_age_seconds?: number;
+    fill_settle_seconds?: number;
   };
+  gui?: { near_stop_atr?: number };
+  inspector?: { slow_call_seconds?: number };
+  api?: { broker_timeout_seconds?: number };
   selection: {
     mode: string;
     confidence_weight: number;
@@ -774,6 +781,16 @@ export interface SettingsForm {
     stop_atr_max: number;
     min_reward_risk: number;
     max_calls_per_cycle: number;
+    entry_gate?: string;
+    min_ev_r?: number;
+    v3?: { min_room_atr?: number; min_edge?: number };
+    v4?: { near_level_atr?: number };
+    v5?: {
+      trend_gate?: boolean;
+      max_rr?: number;
+      base_rate_sessions?: number;
+      price_vs_signal_adverse_atr?: number;
+    };
   };
   risk: {
     risk_per_trade_pct: number;

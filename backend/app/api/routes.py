@@ -2630,6 +2630,31 @@ def _settings_form(config: object) -> dict[str, object]:
                 "execution", "entry_timeout_minutes", default=10
             ),
             "max_spread_pct": get("execution", "max_spread_pct", default=0.15),
+            "quote_max_age_seconds": get(
+                "execution", "quote_max_age_seconds", default=60
+            ),
+            "quote_max_deviation_pct": get(
+                "execution", "quote_max_deviation_pct", default=1.0
+            ),
+            "tighten_quote_max_age_seconds": get(
+                "execution", "tighten_quote_max_age_seconds", default=300
+            ),
+            "fill_settle_seconds": get(
+                "execution", "fill_settle_seconds", default=10
+            ),
+        },
+        "gui": {
+            "near_stop_atr": get("gui", "near_stop_atr", default=1.5),
+        },
+        "inspector": {
+            "slow_call_seconds": get(
+                "inspector", "slow_call_seconds", default=15
+            ),
+        },
+        "api": {
+            "broker_timeout_seconds": get(
+                "api", "broker_timeout_seconds", default=5
+            ),
         },
         "selection": {
             "mode": get("selection", "mode", default="rank"),
@@ -2655,6 +2680,30 @@ def _settings_form(config: object) -> dict[str, object]:
             "max_calls_per_cycle": get(
                 "decision", "max_calls_per_cycle", default=10
             ),
+            "entry_gate": get("decision", "entry_gate", default="floor"),
+            "min_ev_r": get("decision", "min_ev_r", default=0.25),
+            # Only the editable sub-keys are echoed — other v3/v4/v5
+            # config stays read-only (docs/SPEC.md, Settings —
+            # Decision gates).
+            **{
+                ver: {
+                    k: (get("decision", ver) or {}).get(k)
+                    for k in spec
+                }
+                for ver, spec in (
+                    ("v3", {"min_room_atr": None, "min_edge": None}),
+                    ("v4", {"near_level_atr": None}),
+                    (
+                        "v5",
+                        {
+                            "trend_gate": None,
+                            "max_rr": None,
+                            "base_rate_sessions": None,
+                            "price_vs_signal_adverse_atr": None,
+                        },
+                    ),
+                )
+            },
         },
         "risk": {
             "risk_per_trade_pct": get("risk", "risk_per_trade_pct", default=0.5),
