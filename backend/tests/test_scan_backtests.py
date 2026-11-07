@@ -13,7 +13,6 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
-
 from app.backtests.manager import BacktestManager, _pid_same, _pid_start
 from app.config import AppConfig
 from app.db.models import Backtest
