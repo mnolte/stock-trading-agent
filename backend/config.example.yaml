@@ -198,12 +198,13 @@ reviews:
   briefing_enabled: true
   briefing_time_ny: "09:00"       # trading days only
   verdict_after_sessions: 5
+  skip_flat_pct: 2                # v1-skip verdict draft: |outcome| under this % of entry counts as flat
   models:                       # PR 29; any entry in models, OpenAI or Anthropic, per task
     weekly: gpt-4o-mini
     briefing: gpt-4o-mini
     verdict: gpt-4o-mini
   temperature: 0.2              # OpenAI models only
-  prompts: {weekly: weekly.v2, briefing: briefing.v1, verdict: verdict.v2}
+  prompts: {weekly: weekly.v2, briefing: briefing.v2, verdict: verdict.v2}
   min_closed_trades_for_suggestion: 10
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
