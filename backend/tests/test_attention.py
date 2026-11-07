@@ -60,7 +60,7 @@ def test_empty_state(client: TestClient) -> None:
     assert payload["items"] == []
     assert payload["count"] == 0
     health = payload["health"]
-    assert set(health) == {"alpaca", "stream", "clock", "keys", "email"}
+    assert set(health) == {"alpaca", "stream", "clock", "keys", "email", "email_since"}
     assert health["keys"]["status"] == "passing"  # simulated mode
     assert health["email"] in ("on", "off")
 

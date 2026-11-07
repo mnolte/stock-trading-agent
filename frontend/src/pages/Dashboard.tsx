@@ -1109,6 +1109,9 @@ export default function Dashboard() {
                   : '') +
                 (stats.shadows_cost_month !== null && stats.shadows_cost_month !== undefined
                   ? ` Shadows have their own $${stats.shadows_cost_cap} monthly cap: $${Number(stats.shadows_cost_month).toFixed(2)} used.`
+                  : '') +
+                (stats.ask_cost_month !== null && stats.ask_cost_month !== undefined
+                  ? ` Ask has its own $${stats.ask_cost_cap} monthly cap: $${Number(stats.ask_cost_month).toFixed(2)} used.`
                   : '')
               : undefined
           }

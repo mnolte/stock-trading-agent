@@ -174,7 +174,7 @@ export function Watchlist({
         <span style={{ flex: 1 }} />
         {screened && (
           <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            Sorted by rank · {watchlistRows} rows, then Show all
+            Sorted by rank · {Math.min(watchlistRows, visible.length)} of {visible.length} eligible shown · held symbols always listed
           </span>
         )}
       </div>
@@ -313,7 +313,7 @@ export function Watchlist({
             cursor: 'pointer',
           }}
         >
-          Show all ({visible.length - watchlistRows} more)
+          Show all {visible.length}
         </button>
       )}
       {screened && showAll && visible.length > watchlistRows && (

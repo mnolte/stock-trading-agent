@@ -323,6 +323,8 @@ export interface AttentionResponse {
     clock: { offset_ms: number | null; level: string };
     keys: { status: string; detail: string };
     email: string;
+    /** The first failure of the current streak ("failing since <time>"). */
+    email_since?: string | null;
   };
 }
 
@@ -1216,6 +1218,8 @@ export interface DashboardStats {
   reviews_cost_cap: string;
   shadows_cost_month?: string | null;
   shadows_cost_cap?: string;
+  ask_cost_month?: string | null;
+  ask_cost_cap?: string;
 }
 
 // ---- Daily briefing card ---------------------------------------------------

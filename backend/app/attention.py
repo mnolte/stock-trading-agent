@@ -25,6 +25,7 @@ from app.db.models import (
     Cycle,
     Decision,
     Event,
+    Notification,
     SettingsVersion,
     ShadowDecision,
     Strategy,
@@ -494,6 +495,22 @@ def build_attention(request: Request) -> dict[str, Any]:
         if smtp.get("configured")
         else "off"
     )
+    email_since = None
+    if email_failures > 0:
+        # The streak's first failure — the health line's "failing since".
+        failed_times = session.execute(
+            select(Notification.time)
+            .where(
+                func.json_extract(
+                    Notification.channel_status, "$.email"
+                )
+                == "failed"
+            )
+            .order_by(Notification.time.desc())
+            .limit(email_failures)
+        ).scalars().all()
+        if failed_times:
+            email_since = _iso(min(failed_times))
 
     return {
         "items": items,
@@ -510,5 +527,6 @@ def build_attention(request: Request) -> dict[str, Any]:
             },
             "keys": keys,
             "email": email,
+            "email_since": email_since,
         },
     }

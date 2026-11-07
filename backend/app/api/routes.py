@@ -61,6 +61,7 @@ from app.notifications.service import (
     EMAIL_FAILURE_BANNER_AT,
     NotificationService,
 )
+from app.ask.service import monthly_spend as ask_monthly_spend
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
 from app.risk.budget import Meter, risk_budget
@@ -4570,6 +4571,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         shadows_spend = (
             shadow_runner.monthly_spend(session) if shadow_runner is not None else None
         )
+        # Ask has its own monthly cap too (docs/SPEC.md, Model call
+        # counter) — shown on the tile's hover.
+        ask_spend = ask_monthly_spend(session, config, clock)
     calls_per_cycle = int(
         config.get("decision", "max_calls_per_cycle", default=10)
     )
@@ -4631,6 +4635,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
             "shadows_cost_cap": str(
                 config.get("shadows", "monthly_cost_cap_usd", default=5)
+            ),
+            "ask_cost_month": str(ask_spend),
+            "ask_cost_cap": str(
+                config.get("ask", "monthly_cost_cap_usd", default=15)
             ),
         },
         "briefing": _briefing_card(request, clock, app_tz, today_ny),
