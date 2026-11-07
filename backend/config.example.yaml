@@ -101,7 +101,7 @@ indicators:                     # signal indicator periods (docs/SPEC.md, Indica
   atr_percentile_sessions: 60   # daily ATR percentile window
 
 decision:
-  model: gpt-4o-mini            # live decisions; any entry in models, OpenAI or Anthropic
+  model: gpt-4.1-mini           # live decisions; any entry in models, OpenAI or Anthropic
   temperature: 0                # OpenAI models only; Claude models use the effort in models
   prompt: decision.v1
   min_confidence_enter: 0.55
@@ -201,8 +201,8 @@ reviews:
   skip_flat_pct: 2                # v1-skip verdict draft: |outcome| under this % of entry counts as flat
   models:                       # PR 29; any entry in models, OpenAI or Anthropic, per task
     weekly: gpt-4o-mini
-    briefing: gpt-4o-mini
-    verdict: gpt-4o-mini
+    briefing: gpt-4.1-mini
+    verdict: gpt-4.1-mini
   temperature: 0.2              # OpenAI models only
   prompts: {weekly: weekly.v2, briefing: briefing.v2, verdict: verdict.v2}
   min_closed_trades_for_suggestion: 10
