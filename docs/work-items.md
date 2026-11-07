@@ -10,7 +10,7 @@ NNN-type-slug        for example   099-fix-ko-overnight-exit
 
 The examples use 099 as a made-up number.
 
-- **NNN.** Three digits, one sequence for all types, never reused or renumbered. It continues the build plan: items 001–037 are build plan items 1–37. The next free number is the row after the last one below.
+- **NNN.** Three digits, one sequence for all types, never reused or renumbered. It continues the build plan: items 001–037 are build plan items 1–37. The next free number is one above the highest of: the last row below on `main`, and every `[NNN]` in the title of an open pull request (`gh pr list`), so two PRs open at the same time don't take the same number. If two merged items still share a number, the one whose first PR was opened later moves to the next free number, with a note in its row and its `docs/CHANGES.md` entry; that is the only renumbering (049, 7 Nov).
 - **type:**
   - `feat`: new behaviour or a new screen;
   - `fix`: behaviour that is wrong against the spec, or a bug;
@@ -106,9 +106,9 @@ So: a file in `docs/kickoffs/` is open work; the register's Status says how far 
 | 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | #146 | merged |
 | 046 | fix | Spec and design alignment | `046-fix-spec-alignment.md` | #140 | — | ready |
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
-| 048 | fix | Log routes 503 on schema-less index | — | — | #143 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
-| 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | — | planned |
+| 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |
+| 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | — | ready |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
