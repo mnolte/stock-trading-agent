@@ -1235,6 +1235,11 @@ class Executor:
             if event is None:
                 return False
             event.acknowledged_at = _naive_utc(self.clock.now())
+            if event.event_type == "reconciliation":
+                # A mismatch resolves on acknowledgement (docs/SPEC.md,
+                # Readiness — Errors).
+                event.resolved_at = event.acknowledged_at
+                event.resolution = "acknowledged"
             session.commit()
         self._notify({"banners", "header", "attention"})
         return True
@@ -3179,6 +3184,47 @@ class Executor:
                 event.resolved_at = _naive_utc(now)
                 event.resolution = "condition"
 
+    def _resolve_state_errors(
+        self,
+        session: Session,
+        positions: Iterable[Position],
+        now: datetime,
+    ) -> None:
+        """State errors resolve only from their own clearing code
+        (docs/SPEC.md, Readiness — Errors): a pending exit resolves when
+        no open position holds it back, stream_degraded when the flag
+        cleared, live_decisions_failing when calls run again."""
+        held_back = {
+            p.symbol for p in positions if p.pending_exit
+        }
+        for event in session.execute(
+            select(Event).where(
+                Event.event_type.in_(
+                    (
+                        "pending_exit",
+                        "stream_degraded",
+                        "live_decisions_failing",
+                    )
+                ),
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            if event.event_type == "pending_exit":
+                symbol = str((event.details or {}).get("symbol") or "")
+                if symbol not in held_back:
+                    event.resolved_at = _naive_utc(now)
+                    event.resolution = "condition"
+            elif event.event_type == "stream_degraded":
+                if not self.state.stream_degraded:
+                    event.resolved_at = _naive_utc(now)
+                    event.resolution = "condition"
+            elif (
+                event.event_type == "live_decisions_failing"
+                and self.state.live_calls_failing_since is None
+            ):
+                event.resolved_at = _naive_utc(now)
+                event.resolution = "condition"
+
     async def _stop_check(
         self,
         session: Session,
@@ -3297,6 +3343,7 @@ class Executor:
             if bp is None or Decimal(bp.qty) <= 0:
                 self._close_stop_episode(session, episode, now)
                 self._resolve_stop_failures(session, symbol, now)
+        self._resolve_state_errors(session, positions, now)
         session.commit()
 
     async def _await_released(

@@ -1086,7 +1086,12 @@ def dismiss_event(
     with get_session_maker()() as session:
         try:
             event = dismiss_error(
-                session, clock=_clock(request), event_id=event_id, note=note
+                session,
+                clock=_clock(request),
+                event_id=event_id,
+                note=note,
+                exec_state=getattr(request.app.state, "exec_state", None),
+                secrets=getattr(request.app.state, "secrets", None),
             )
             session.commit()
             dismissed_id = event.id

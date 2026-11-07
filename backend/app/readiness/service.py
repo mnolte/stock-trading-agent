@@ -353,8 +353,87 @@ def apply_auto_resolution(
     return resolved
 
 
+def state_error_state(
+    session: Session,
+    event: Event,
+    *,
+    exec_state: object | None = None,
+    secrets: object | None = None,
+) -> str | None:
+    """Whether the state a state error describes still holds, with a
+    short description for the 409 "still true: <state>" answer.
+
+    ``None`` means the state cleared — the row may be dismissed.
+    """
+    from app.db.models import Position
+
+    details = event.details or {}
+    symbol = str(details.get("symbol") or "")
+    if event.event_type == "stop_missing":
+        # The open episode is itself the live state.
+        return f"{symbol} has no stop at Alpaca"
+    if event.event_type == "protective_stop_failed":
+        open_episode = session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars()
+        if any(
+            str((e.details or {}).get("symbol") or "") == symbol
+            for e in open_episode
+        ):
+            return f"{symbol} has no stop at Alpaca"
+        return None
+    if event.event_type == "pending_exit":
+        position = session.execute(
+            select(Position).where(
+                Position.symbol == symbol,
+                Position.closed_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if position is not None and position.pending_exit:
+            return f"{symbol} exit still held back"
+        return None
+    if event.event_type == "reconciliation":
+        if event.acknowledged_at is None:
+            return "the mismatch is not acknowledged"
+        return None
+    if event.event_type == "stream_degraded":
+        if exec_state is not None and getattr(
+            exec_state, "stream_degraded", False
+        ):
+            return "the trade-updates stream is degraded"
+        if exec_state is None:
+            return "stream state unavailable"
+        return None
+    if event.event_type == "live_decisions_failing":
+        if exec_state is not None and getattr(
+            exec_state, "live_calls_failing_since", None
+        ) is not None:
+            return "live decisions are still failing"
+        if exec_state is None:
+            return "live-calls state unavailable"
+        return None
+    if event.event_type == "api_key":
+        name = str(details.get("name") or "")
+        if secrets is None:
+            return "key status unavailable"
+        status = secrets.group_status(name)  # type: ignore[attr-defined]
+        if status.get("status") == "failing":
+            return f"the {name} key still fails"
+        return None
+    return None
+
+
 def dismiss_error(
-    session: Session, *, clock: Clock, event_id: int, note: str
+    session: Session,
+    *,
+    clock: Clock,
+    event_id: int,
+    note: str,
+    exec_state: object | None = None,
+    secrets: object | None = None,
 ) -> Event:
     """Dismiss one unresolved error with a required note."""
     note = note.strip()
@@ -369,6 +448,12 @@ def dismiss_error(
         or event.affects == "none"
     ):
         raise ReadinessError("not an unresolved error")
+    if event.event_type in STATE_ERROR_TYPES:
+        still = state_error_state(
+            session, event, exec_state=exec_state, secrets=secrets
+        )
+        if still is not None:
+            raise ReadinessError(f"still true: {still}")
     event.resolved_at = _naive(clock.now())
     event.resolution = "dismissed"
     event.note = note
@@ -396,6 +481,33 @@ def _latest_run(session: Session) -> Run | None:
     return session.execute(
         select(Run).order_by(Run.id.desc()).limit(1)
     ).scalar_one_or_none()
+
+
+def _stop_episode_hours(
+    session: Session,
+    *,
+    run_start: datetime,
+    window_start: datetime,
+    as_of: datetime,
+) -> float:
+    """Hours with an open stop_missing episode in the window
+    (docs/SPEC.md, Alpaca integration — Stop check)."""
+    total = 0.0
+    for event in session.execute(
+        select(Event).where(
+            Event.event_type == "stop_missing",
+            Event.time >= run_start,
+            Event.time <= as_of,
+            (Event.resolved_at.is_(None))
+            | (Event.resolved_at >= window_start),
+        )
+    ).scalars():
+        end = event.resolved_at if event.resolved_at is not None else as_of
+        end = min(end, as_of)
+        start = max(event.time, window_start)
+        if end > start:
+            total += (end - start).total_seconds() / 3600
+    return round(total, 2)
 
 
 def _missing_stop_count(
@@ -959,12 +1071,22 @@ def evaluate(
         window_start=stops_start,
         as_of=as_of_naive,
     )
+    stop_hours = _stop_episode_hours(
+        session,
+        run_start=run_start,
+        window_start=stops_start,
+        as_of=as_of_naive,
+    )
     criteria.append(
         _criterion(
             "stops_missing",
-            value=str(stops_count),
-            status=PASS if stops_count == 0 else NOT_YET,
-            sample=stops_count,
+            value=(
+                f"{stop_hours:g} h" if stop_hours else str(stops_count)
+            ),
+            status=(
+                PASS if stops_count == 0 and stop_hours == 0 else NOT_YET
+            ),
+            sample=stops_count + int(bool(stop_hours)),
         )
     )
 
