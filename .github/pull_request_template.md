@@ -20,7 +20,7 @@ Spec files changed: none
 
 - [ ] `make lint`
 - [ ] `make test`
-- [ ] Row in `docs/work-items.md` updated (build PR, status); if this PR completes the item, its kickoff moved unchanged to `docs/kickoffs/archive/`
+- [ ] Row in `docs/work-items.md` updated (build PR, status); the kickoff this PR builds moved unchanged to `docs/kickoffs/archive/` in this PR (unless an earlier PR of the item already moved it)
 
 ## Not tested
 
