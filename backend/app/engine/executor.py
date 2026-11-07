@@ -15,9 +15,9 @@ import secrets
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -3282,7 +3282,7 @@ class Executor:
                     self._close_stop_episode(session, episode, now)
                 self._resolve_stop_failures(session, position.symbol, now)
                 continue
-            details = {
+            details: dict[str, object] = {
                 "symbol": position.symbol,
                 "shares": str(int(held)),
                 "stop_qty": str(stop_qty),

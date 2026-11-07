@@ -11,11 +11,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
-from sqlalchemy.orm import Session, sessionmaker
-
 import app.config as config_module
+import pytest
 from app.config import AppConfig
+from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
 
@@ -115,6 +114,7 @@ async def test_settings_save_refuses_unknown_model(
     from app.broker.fake import FakeBroker
     from app.market.clock import FakeClock
     from app.settings_service import SettingsError, validate_settings
+
     from tests.helpers import NOW
 
     broker = FakeBroker(FakeClock(NOW))
@@ -147,9 +147,10 @@ def test_startup_warns_per_missing_model(
 
     config = AppConfig()
     config.apply_saved({"decision": {"model": "gpt-9"}, "ask": {"model": "claude-9"}}, 7)
-    with session_factory() as session:
-        with caplog.at_level(logging.WARNING, logger="app.llm.models"):
-            check_models_at_startup(config, session)
+    with session_factory() as session, caplog.at_level(
+        logging.WARNING, logger="app.llm.models"
+    ):
+        check_models_at_startup(config, session)
     warned = {
         m for m in ("gpt-9", "claude-9") if any(m in r.getMessage() for r in caplog.records)
     }

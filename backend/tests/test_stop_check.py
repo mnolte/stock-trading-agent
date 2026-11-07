@@ -7,16 +7,12 @@ only a later pass — finding the position protected or flat — closes.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any, cast
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
-
 from app.broker.fake import FakeBroker, _OrderRec, _PosRec
-from app.broker.models import BrokerOrder, BrokerPosition
 from app.config import AppConfig
 from app.data.factory import DataSources
 from app.data.fake import (
@@ -28,7 +24,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Bar5m, DataResult
+from app.data.models import Bar5m
 from app.data.service import MarketDataService
 from app.db.models import Event, Position
 from app.engine.executor import Executor
@@ -36,6 +32,8 @@ from app.engine.state import ExecutionState
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, FakeClock
 from app.signals.service import SignalService
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from tests.helpers import NOW, events_of, open_position
 
@@ -134,9 +132,9 @@ def _market_sell(
 ) -> None:
     """An open market sell at the broker — what a fresh exit looks like
     before it fills (the fake fills submitted sells at once)."""
-    now = broker._now()  # type: ignore[attr-defined]
+    now = broker._now()
     rec = _OrderRec(
-        id=broker._next_id(),  # type: ignore[attr-defined]
+        id=broker._next_id(),
         client_order_id=None,
         symbol=symbol,
         side="sell",
@@ -328,7 +326,7 @@ async def test_moo_queued_outside_session_protects_until_two_after_open(
     # The next session's open is 09:30 New York; at +3 minutes the
     # queued sell should have filled — no longer protection.
     ny = clock.now().astimezone(NY_TZ)
-    session_day = executor.calendar.session_for(ny_now := (ny + timedelta(days=1)).date())
+    session_day = executor.calendar.session_for((ny + timedelta(days=1)).date())
     if session_day is None:
         # find the next trading day via the fake calendar's sessions
         for offset in range(1, 5):

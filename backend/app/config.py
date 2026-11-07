@@ -111,7 +111,11 @@ def _filter_known(
     """
     dropped: list[tuple[str, ...]] = []
 
-    def walk(base_node: dict[str, Any], over_node: dict[str, Any], prefix: tuple[str, ...]) -> dict[str, Any]:
+    def walk(
+        base_node: dict[str, Any],
+        over_node: dict[str, Any],
+        prefix: tuple[str, ...],
+    ) -> dict[str, Any]:
         kept: dict[str, Any] = {}
         for key, value in over_node.items():
             if prefix == () and key == "models":
@@ -189,8 +193,8 @@ class AppConfig:
         local_kept, unknown = _filter_known(self._example, self._local)
         self._local_override_count = len(_leaf_paths(local_kept))
         self._unknown_keys: set[str] = set()
-        for path in unknown:
-            self._warn_unknown(path, "config.yaml")
+        for key_path in unknown:
+            self._warn_unknown(key_path, "config.yaml")
         self._yaml = _deep_merge(self._example, local_kept)
         # The settings in force right now (YAML + last promoted version).
         self._active: dict[str, Any] = self._yaml

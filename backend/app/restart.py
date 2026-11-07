@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from app.config import AppConfig
 from app.market.clock import NY_TZ, FakeClock, SessionClock

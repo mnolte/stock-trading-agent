@@ -1357,15 +1357,15 @@ async def positions(request: Request) -> dict[str, object]:
         # Open stop-missing episodes by symbol — the position card's
         # "No stop at Alpaca since …" chip (item 050).
         episodes: dict[str, Event] = {}
-        for episode in session.execute(
+        for open_ep in session.execute(
             select(Event).where(
                 Event.event_type == "stop_missing",
                 Event.resolved_at.is_(None),
             )
         ).scalars():
-            symbol = str((episode.details or {}).get("symbol") or "")
+            symbol = str((open_ep.details or {}).get("symbol") or "")
             if symbol:
-                episodes.setdefault(symbol, episode)
+                episodes.setdefault(symbol, open_ep)
         earnings_next = session.execute(
             select(Earning.symbol, func.min(Earning.date))
             .where(
@@ -2245,13 +2245,13 @@ def banners(request: Request) -> dict[str, object]:
                     f"{line}. It resolves when the state clears; "
                     "a dismiss while it lasts is refused."
                 )
-                actions: list[str] = []
+                event_actions: list[str] = []
             else:
                 message = (
                     f"{line}. Dismiss with a note or it resolves "
                     f"itself after {minutes} minutes without recurring."
                 )
-                actions = ["dismiss"]
+                event_actions = ["dismiss"]
             items.append(
                 {
                     "id": event.id,
@@ -2260,7 +2260,7 @@ def banners(request: Request) -> dict[str, object]:
                     "message": message,
                     "details": event.details or {},
                     "time": event.time.replace(tzinfo=UTC).isoformat(),
-                    "actions": actions,
+                    "actions": event_actions,
                 }
             )
 

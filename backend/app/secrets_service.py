@@ -452,7 +452,7 @@ class SecretsStore:
                     )
                 ).scalars():
                     if str((event.details or {}).get("name") or "") == name:
-                        event.resolved_at = _naive_utc(self.clock.now())
+                        event.resolved_at = _naive_utc(self._clock.now())
                         event.resolution = "condition"
             record_event(
                 session,

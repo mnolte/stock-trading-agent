@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-11-07 — [050] Stop invariant (build)
+
+Build of the 050 spec entry on branch `fix/050-stop-invariant`.
+
+- **Stop check** (`engine/executor.py`): at the end of every reconcile, every broker position is checked against the open orders for live protection (bracket legs, OCO stops, standalone stops; statuses `new`, `accepted`, `held`, `partially_filled`) with quantity from `qty_available` vs stored legs plus an exit in flight (`execution.exit_in_flight_seconds`, 60, in `config.example.yaml`). One repair attempt, then a durable `stop_missing` episode that closes only when a check finds the position protected or flat. The repair's skip reasons (`exit_in_flight`, `insufficient_qty`, `already_protected`, `repair_error`) are returned to the caller and logged at WARNING; the old "prior fills cover the position" comparison against the full original quantity can't cover a partial-exit remainder anymore.
+- **State errors** (`readiness/service.py`, `api/routes.py`, `engine/executor.py`, `secrets_service.py`): `stop_missing`, `protective_stop_failed`, `pending_exit`, `reconciliation`, `stream_degraded`, `live_decisions_failing` and `api_key` are excluded from quiet-time auto-resolution and from banner dismiss while still true (POST `/api/events/{id}/dismiss` answers 409). Clearing paths: stop check, pending-exit clear, stream recovery, live-call recovery, acknowledge, key test pass. Readiness `stops_missing` counts hours with an open episode.
+- **Needs you** (`attention.py`): an open `stop_missing` episode is the first item — critical, "KO has no stop at Alpaca since 15:46 · 7 shares · <reason>. Code retries at every check.", action "Open position", no acknowledge. `stop_missing` maps to the `missing_stop` notification (30-minute repeats during the session).
+- **GUI**: red "No stop at Alpaca since … · n h m min" chip on position cards and the dashboard mini list, "stop none" red in the Orders at Alpaca block, a "Stop at Alpaca" row in decision drawers' What happened, "Heartbeat not set" and offsite "not set up" in Settings → Server with a "Config: n local overrides · n unknown keys" row.
+- **Config layers** (`config.py`, `llm/models.py`, `settings_service.py`): `config.example.yaml` always loads; `config.yaml` overrides key by key; saved settings override both. Unknown keys warn once and are ignored, counted in `config_layers`. `ask.model` validates like the other models; missing named models warn at start instead of refusing.
+- **Unclean stop** (`restart.py`, `api/main.py`, `api/routes.py`, `notifications/events.py`): `unclean_summary` computes "Last alive 18:46:35 · down 61 min · missed 3 position checks and the 19:46 cycle" (or "missed nothing") from the run-lock heartbeat and the trading calendar; it appears in the banner, a WARNING log line and the `restart_paused` notification.
+- **Ops** (`ops/service.py`): without `backup_password`/`backup_credentials` the offsite copy and restore test record `not_set_up` — no failure notification.
+- **Analysis**: the 4 Nov verdict `number_check_failed` burst was the pre-`bc81993` check counting `1` in `1-hour` (and `7` in `L7`) as numbers; fixed the same morning, no new code — see the analysis doc's "Verdict number check".
+
 ## 2026-11-07 — [045] GUI decisions (spec)
 
 Marc's answers to the five open questions of the 045 kickoff; the spec now matches the 045 design.

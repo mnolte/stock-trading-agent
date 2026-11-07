@@ -5,26 +5,26 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, cast
 
-from pathlib import Path
 import pytest
-from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
-
+from app.broker.fake import FakeBroker
+from app.config import AppConfig
 from app.db.models import Event, Position
 from app.engine.state import ExecutionState, record_event
+from app.market.calendar import CalendarProvider
 from app.market.clock import UTC, FakeClock
 from app.readiness.service import (
     ReadinessError,
     apply_auto_resolution,
     dismiss_error,
 )
+from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
+
 from tests.helpers import NOW, events_of, open_position
 from tests.test_stop_check import _executor, _holding, _position_row
-from app.broker.fake import FakeBroker
-from app.config import AppConfig
-from app.market.calendar import CalendarProvider
 
 pytestmark = pytest.mark.anyio
 
@@ -50,7 +50,7 @@ def test_quiet_time_never_resolves_state_errors(
 ) -> None:
     """Every listed state error stays open after two quiet hours."""
     clock = FakeClock(NOW)
-    kinds = [
+    kinds: list[tuple[str, dict[str, object]]] = [
         ("stop_missing", {"symbol": "MSFT", "reason": "rejected: x"}),
         ("protective_stop_failed", {"symbol": "MSFT", "error": "x"}),
         ("pending_exit", {"symbol": "MSFT"}),
@@ -68,7 +68,9 @@ def test_quiet_time_never_resolves_state_errors(
         apply_auto_resolution(session, now=later, minutes=60)
         session.commit()
         for event_id in ids:
-            assert session.get(Event, event_id).resolved_at is None  # type: ignore[union-attr]
+            assert session.execute(
+                select(Event).where(Event.id == event_id)
+            ).scalar_one().resolved_at is None
 
 
 async def test_dismiss_open_stop_missing_is_refused(
@@ -289,10 +291,10 @@ def test_backup_not_set_up_sends_nothing(
             return None
 
     config = AppConfig()
-    config.env.sa_data_dir = str(tmp_path)  # type: ignore[misc]
-    config.env.sa_db_path = str(tmp_path / "db.sqlite")  # type: ignore[misc]
+    config.env.sa_data_dir = str(tmp_path)
+    config.env.sa_db_path = str(tmp_path / "db.sqlite")
     ops = OpsService(
-        config, FakeClock(NOW), notifier=_Notifier(), secrets=_Secrets()
+        config, FakeClock(NOW), notifier=cast(Any, _Notifier()), secrets=cast(Any, _Secrets())
     )
 
     import asyncio
