@@ -1,6 +1,6 @@
 # Analysis — IEX quote plausibility
 
-Kickoff for Devin. Start the session with: "Build docs/kickoffs/quote-plausibility.md."
+Kickoff for Devin. Start the session with: "Build docs/kickoffs/archive/quote-plausibility.md."
 
 ```text
 Analysis, read-only: how often is the IEX quote implausible, and is the

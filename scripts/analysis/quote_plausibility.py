@@ -1,5 +1,5 @@
 # ruff: noqa: S608 - the only interpolated value is a whitelisted table name
-"""IEX quote plausibility analysis (docs/kickoffs/quote-plausibility.md).
+"""IEX quote plausibility analysis (docs/kickoffs/archive/quote-plausibility.md).
 
 Read-only. Prints the markdown report to stdout.
 

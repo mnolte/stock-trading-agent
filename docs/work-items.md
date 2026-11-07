@@ -75,15 +75,15 @@ The examples use 099 as a made-up number.
 | 026 | fix | Day-trade rule retired | `DEVIN_KICKOFF.md` | — | #41 | merged |
 | 027 | fix | Protective stops hardened | `DEVIN_KICKOFF.md` | — | — | merged |
 | 028 | fix | Security hardening | `DEVIN_KICKOFF.md` | — | #47 | merged |
-| 029 | feat | Model providers | `pr-29.md` | — | #61 | merged |
-| 030 | feat | Decision v3 | `pr-30.md` | #50, #51, #53 | #54 | merged |
-| 031 | fix | Exit fills and reconciliation | `pr-31.md` | #55 | #58 | merged |
-| 032 | feat | Review attribution | `pr-32.md` | #57 | #59, #75 | merged |
-| 033 | feat | Entry selection | `pr-33.md` | #67 | #78 | merged |
-| 034 | feat | Decision v4 | `pr-34.md` | #79, #83 | #82 | merged |
-| 035 | feat | Needs you and positions at a glance | `pr-35.md` | #84 | #90 | merged |
-| 036 | feat | Ask the agent | `pr-36.md` | #91, #92 | #98, #99 | merged |
-| 037 | feat | Decision v5 | `pr-37.md` | #103, #105 | #106 | merged |
+| 029 | feat | Model providers | `archive/pr-29.md` | — | #61 | merged |
+| 030 | feat | Decision v3 | `archive/pr-30.md` | #50, #51, #53 | #54 | merged |
+| 031 | fix | Exit fills and reconciliation | `archive/pr-31.md` | #55 | #58 | merged |
+| 032 | feat | Review attribution | `archive/pr-32.md` | #57 | #59, #75 | merged |
+| 033 | feat | Entry selection | `archive/pr-33.md` | #67 | #78 | merged |
+| 034 | feat | Decision v4 | `archive/pr-34.md` | #79, #83 | #82 | merged |
+| 035 | feat | Needs you and positions at a glance | `archive/pr-35.md` | #84 | #90 | merged |
+| 036 | feat | Ask the agent | `archive/pr-36.md` | #91, #92 | #98, #99 | merged |
+| 037 | feat | Decision v5 | `archive/pr-37.md` | #103, #105 | #106 | merged |
 | 038 | spec | Naming convention for work items | — | #107 | — | planned |
 | 039 | fix | Protective stop repair | — | — | #111, #112 | building |
 | 040 | fix | EP shadow gate_detail crash | — | — | #113 | building |
@@ -102,12 +102,12 @@ Work with a kickoff but no number, kept under its old file name. The old names s
 
 | Kickoff | What | Spec PRs | Build PRs |
 | --- | --- | --- | --- |
-| `fix-live-2026-10-29.md` | Live fixes of 29 Oct: stream envelope, clock check, break-even guard | #55 | #56 |
-| `fix-live-2026-10-30.md` | Live fixes of 30 Oct: decisions failing, fill settling, GUI timeouts | #65 | #64, #66 |
-| `ops-alerts.md` | Alerts, log volume, small fixes | #55 | #62 |
-| `quote-plausibility.md` | Analysis: IEX quote plausibility | — | #63 |
-| `fix-scan-2026-10-31.md` | Repository scan fixes | #71 | #72, #74 |
+| `archive/fix-live-2026-10-29.md` | Live fixes of 29 Oct: stream envelope, clock check, break-even guard | #55 | #56 |
+| `archive/fix-live-2026-10-30.md` | Live fixes of 30 Oct: decisions failing, fill settling, GUI timeouts | #65 | #64, #66 |
+| `archive/ops-alerts.md` | Alerts, log volume, small fixes | #55 | #62 |
+| `archive/quote-plausibility.md` | Analysis: IEX quote plausibility | — | #63 |
+| `archive/fix-scan-2026-10-31.md` | Repository scan fixes | #71 | #72, #74 |
 | — | Analysis: decision v4 candidates | — | #73 |
 | — | Decision bookkeeping B1–B4 | — | #80, #81 |
-| `fix-v4-2026-11-03.md` | Decision v4 code fixes of 3 Nov | #103 | #104 |
+| `archive/fix-v4-2026-11-03.md` | Decision v4 code fixes of 3 Nov | #103 | #104 |
 | — | Trading path audit fixes; Ask number check | — | #100, #102 |

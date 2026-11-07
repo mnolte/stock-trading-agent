@@ -1,6 +1,6 @@
 # Devin kickoff messages
 
-> **Archive.** Kickoffs up to PR 28 and the small fixes live in this file. From PR 29 on, each kickoff is its own file in `docs/kickoffs/` (for example `docs/kickoffs/pr-29.md`); start Devin with "Build docs/kickoffs/pr-29.md."
+> **Archive.** Kickoffs up to PR 28 and the small fixes live in this file. From PR 29 on, each kickoff is its own file in `docs/kickoffs/` (for example `docs/kickoffs/archive/pr-29.md`); start Devin with "Build docs/kickoffs/archive/pr-29.md."
 
 ## First message (PR 1)
 
