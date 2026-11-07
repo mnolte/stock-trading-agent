@@ -245,6 +245,7 @@ export function Layout() {
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
           needsYou={needsYou}
+          narrow={narrow}
         />
         <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
           {liveStatus === 'paused' && (
