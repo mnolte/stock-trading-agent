@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-07 — [050] Stop invariant
+
+- `States.dc.html`: new "Position without a stop at Alpaca · stop-missing episode" (KO, 7 shares, red chip "No stop at Alpaca since 15:46 · 1 h 30 min", legs line "stop none", the closing line); a first Needs you reference row "KO has no stop at Alpaca since 15:46" that leaves only when a check finds a stop or the position flat; the unclean-restart banner says "Last alive 18:46:35 · down 61 min · missed 3 position checks and the 19:46 cycle". `States.png` re-rendered.
+
 ## 2026-11-05 — [045] GUI catch-up
 
 From the design review in `docs/analysis/045-gui-catch-up.md`. Every screen with the app shell is re-rendered at 1440 and 390; Main, Positions and Settings also at 1024.

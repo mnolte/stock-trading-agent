@@ -57,7 +57,7 @@ One Python backend process runs the scheduler, the agent and the API; a React ap
 | Indicators | pandas + own implementations (no TA-Lib dependency) |
 | Frontend | React + TypeScript + Vite; Lightweight Charts for price charts |
 | Live updates | WebSocket from backend to GUI sending `{"type": "update", "topics": [...]}` (header, positions, orders, decisions, banners, watchlist, performance, approvals); the GUI refetches those REST endpoints, debounced 300 ms, refetches everything after a reconnect, and polls every 60 s with a "live updates paused" note while the socket is down |
-| Config | `.env` for mode, host, port and paths; `config.yaml` for defaults; API keys entered in Settings and stored encrypted (see API keys) |
+| Config | `.env` for mode, host, port and paths; `config.example.yaml` for defaults, `config.yaml` for local overrides, saved settings on top (see Config layers); API keys entered in Settings and stored encrypted (see API keys) |
 
 Repo layout:
 
@@ -172,7 +172,7 @@ Alpaca is the source of truth for cash, positions and orders; the local database
 - At startup and at the start of every cycle, compare Alpaca positions and open orders with the database.
 - **Fills still settling.** An entry fills in several prints over a few seconds, and Alpaca's positions endpoint can lag the fills by a second or two. A quantity difference for a symbol with a working entry order, or a fill in the last `execution.fill_settle_seconds` (10), is not compared yet: it's logged at INFO and checked again at the next reconcile, or 10 seconds later when the entry order reaches a final state. Only a difference that remains after the order is final and the settle time has passed is a mismatch.
 - **Mismatches** are what the stream and Alpaca's order history can't explain: a position flat with no explaining fill, a quantity that differs, an unknown order, an order of another instance, or a position the agent never recorded. On any mismatch: record it as an event, log CRITICAL, show a banner, adopt Alpaca's state, and block new entries until Marc acknowledges it. Every mismatch path does all of these; none of them may just close a row silently. A position found at Alpaca that the agent never recorded is adopted: it immediately gets a standalone gtc stop at the current price minus 3 × the 1h ATR (3% below the current price if ATR is unavailable), with no target. The agent makes no model calls or exits for it until Marc acknowledges; after that it is a normal position with Alpaca's average price as its entry. It is marked as adopted, and its P&L is shown apart from the agent's own trades.
-- A position without a live stop order is a critical error, repaired as described in **Protective stops** below, then alerted.
+- A position without a live stop order is a critical error, repaired as described in **Protective stops** below, then alerted. Whether a position is protected is decided by the **Stop check** below, not by the path that tried to repair it.
 
 **Protective stops** (decided 27 October after the WMT incidents)
 - **Confirm first.** Before any protective order, fetch the symbol's position and open orders from Alpaca again. Do nothing when the position is flat, or when recorded sell fills already cover its quantity (it is exiting; the row closes on the next pass).
@@ -186,6 +186,24 @@ Alpaca is the source of truth for cash, positions and orders; the local database
   The position is briefly without a stop between the cancel and the new order, and that gap is logged at CRITICAL with its length.
 - **Never sell more than is held.** Every sell order the agent sends (exits, protective stops, Stop & flatten) is capped at the position quantity Alpaca confirms right before it is sent. The agent never goes short.
 - **Broker-side guard.** At startup the app sets, and then checks, the account configuration that blocks shorting (`no_shorting`) and limits margin to 1× (`max_margin_multiplier: 1`) where Alpaca offers them. If it can't confirm them, it shows a warning banner; it doesn't refuse to start, because cash-only sizing and the sell cap still protect.
+
+**Stop check** (decided 7 November after KO, 4 November: 7 shares without a stop at Alpaca for 6 hours, while every repair pass logged "already covered" at INFO and the error resolved itself after an hour).
+
+- **When.** At the end of every reconcile: at startup, every cycle and every position check, after the repairs above have run.
+- **Protected** means, for each open position, from Alpaca's open orders and positions fetched in that pass:
+  - working stop orders (a bracket's stop leg, an OCO's stop, a standalone stop) for at least the quantity Alpaca holds; or
+  - stops plus an exit in flight for at least that quantity. An exit is in flight when it is a market sell accepted by Alpaca less than `execution.exit_in_flight_seconds` (60) ago during the session, or a market-on-open sell queued outside it, until 2 minutes after the open.
+  A pending exit (Managing positions → Held-back exits) is not protection; its stop must still stand.
+- **Unprotected.** The protective-stop repair runs once more for that position, sized from the shares Alpaca has free. If the position is still unprotected after it, code opens a **stop-missing episode** on the position: start time, shares without a stop, and the reason (the repair's skip reason, or Alpaca's rejection).
+- **While an episode is open:**
+  - CRITICAL in the log at the start, ERROR at every later pass, with the shares held, the stop quantity at Alpaca and the reason; never INFO;
+  - a critical Needs you item: "KO has no stop at Alpaca since 15:46 · 7 shares · <reason>", with Open position;
+  - the `missing_stop` notification at the start, then again every 30 minutes during the session while it lasts ("still no stop · 1 h 30 min");
+  - a red "No stop at Alpaca since 15:46" on the position card, the position's decision drawers and Positions;
+  - new entries are not blocked (each has its own bracket), but Resume says why if Marc paused.
+- **It closes only when a pass finds the position protected or flat at Alpaca**, never after a quiet time and never by acknowledgement. Closing logs INFO with the length ("KO stop confirmed at 21:46:05 after 6 h 0 min") and sends the info line "stop restored".
+- **Any skip is a reason, not a verdict.** Every repair path that decides not to send a stop (covered by fills, an exit in flight, a sell holding the shares) logs WARNING with the reason and the quantities. Only the stop check decides whether the position is protected.
+- **Stored.** Episodes are `events` of type `stop_missing` with `resolved_at` set by the check, so Readiness and Insights can count hours without a stop.
 
 **Day trades (rule retired)**
 
@@ -240,7 +258,19 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - Regime is not Down + High.
 - Not the 15:46 cycle (no new entries in the last cycle of a session).
 
-All thresholds live in `config.yaml`.
+All thresholds live in config (see Config layers).
+
+**Config layers** (from the live data of 4–5 November). Three layers, each overriding the one before, key by key:
+
+1. `backend/config.example.yaml`, in the repo: every key with its default. It is always read.
+2. `config.yaml`, local and optional: only what this install changes.
+3. The active settings version.
+
+So a key added to the example in a release reaches every install, even one whose `config.yaml` or saved settings predate it. (Until now the first file found was the only one read, so a local `config.yaml` hid every later default: `supports_temperature` for gpt-6.1-sol and the email channel for `missing_stop` were both missing on 4 November.) At start the app logs at WARNING, once per key:
+- a key in `config.yaml` or the active settings that the example doesn't have (for example a retired `pdt_max_day_trades`); it is ignored;
+- a model id used by live decisions, a review task, Ask or a strategy that is not in the merged `models` list. Saving such a setting is refused.
+
+Settings → Server shows "Config: n local overrides · n unknown keys", and Settings' "Changed from default" filter compares with layers 1 and 2.
 
 **Model output.** Strict JSON through the provider's structured outputs (a strict JSON schema; see Model providers for Anthropic), validated again with Pydantic. Allowed actions depend on context: for a candidate `enter` or `skip`; for a held position `hold`, `tighten_stop` or `exit`.
 
@@ -351,7 +381,8 @@ The layout must also work at phone width, so the VPS version can be checked from
 
 | Order | Item | Leaves when |
 | --- | --- | --- |
-| 1 | Critical banners waiting for acknowledgement: reconciliation mismatch, adopted position, position without a stop, another instance, kill switch turned on automatically | acknowledged or resumed |
+| 1 | A position without a stop at Alpaca right now (an open stop-missing episode, Alpaca integration → Stop check) | a stop check finds it protected or flat |
+| 1 | Critical banners waiting for acknowledgement: reconciliation mismatch, adopted position, a protective stop that was placed, another instance, kill switch turned on automatically | acknowledged or resumed |
 | 2 | Live decisions failing; trade-updates stream degraded; a key failing | the episode clears |
 | 3 | Entries waiting for approval (supervised mode), with their expiry | approved, rejected or expired |
 | 4 | A notification channel failing (email or browser permission) | a send succeeds |
@@ -432,7 +463,7 @@ The agent tells Marc about what matters while he is away from the screen. Every 
 | Event | Severity | Browser | Email |
 | --- | --- | --- | --- |
 | Kill switch turned on (manual, drawdown kill, failed cycles) | Critical | always | on |
-| Position without a stop at Alpaca (protective stop placed) | Critical | always | on |
+| Position without a stop at Alpaca (protective stop placed; or still none, repeated every 30 minutes while it lasts) | Critical | always | on |
 | Reconciliation mismatch or adopted position | Critical | always | on |
 | Order rejected by Alpaca (including a Stop & flatten sale) | Critical | always | on |
 | Daily loss limit reached | Warning | on | on |
@@ -699,6 +730,7 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 **Counts and dates.** For counts that aren't reached yet, the screen shows an estimate at the current pace (closed trades per session) and, for sessions, the date from the trading calendar. "Earliest possible" is the latest of those estimates.
 
 **Errors.** An error resolves itself after 1 hour without recurring, or Marc dismisses it with a note from its banner or the events list. Only errors linked to a decision, order or fill count for this criterion.
+- **Errors that describe a state don't resolve by time.** A stop-missing episode, a protective stop that failed, a pending exit, a reconciliation mismatch, the stream `degraded`, live decisions failing and a key failing resolve only when code sees the state cleared (or, for a mismatch, when Marc acknowledges it). An hour of silence says nothing about whether a position has its stop again. Dismissing one of these is refused while the state lasts.
 
 **Errors in the log** (from PR 20).
 - **Why a review and not "zero ERROR lines".** Some errors come from outside and are handled as specified (an OpenAI outage, a mail server refusing a login). Zero ERROR lines would never pass, so every recurring error problem needs a review instead.
@@ -890,7 +922,7 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
   7. The log listener is flushed and closed last. The final line is "Shutdown complete in n s".
 - **Second Ctrl+C.** A second Ctrl+C logs a WARNING and skips the wait in step 2. Steps 6 and 7 always run.
 - **Data stays whole.** Every unit of work writes in one short transaction: a decision with its `llm_calls` row, gates and order rows; a fill with its position update. Shutdown can't leave half of it behind. Stops at Alpaca protect positions while the app is down.
-- **Unclean stop detection.** At start the app writes `data/run.lock` (pid, start time) and a heartbeat every 30 s; a clean shutdown deletes the file. If the file is still there at the next start, the app logs a WARNING and runs `PRAGMA quick_check`. It marks running cycles as `interrupted`, reconciles with Alpaca as usual, and shows "The previous run did not shut down cleanly" with the results. If the pid in the file is still running, startup is refused (CRITICAL), so two instances never share the database.
+- **Unclean stop detection.** At start the app writes `data/run.lock` (pid, start time) and a heartbeat every 30 s; a clean shutdown deletes the file. If the file is still there at the next start, the app logs a WARNING and runs `PRAGMA quick_check`. It marks running cycles as `interrupted`, reconciles with Alpaca as usual, and shows "The previous run did not shut down cleanly" with the results. The banner, the log line and the restart notification also say how long the app was down and what it missed, from the file's last heartbeat: "Last alive 18:46:35 · down 61 min · missed 3 position checks and the 19:46 cycle" (from the trading calendar; outside a session "missed nothing"). If the pid in the file is still running, startup is refused (CRITICAL), so two instances never share the database.
 
 **Log index and API.**
 - **Index.** The listener thread also writes each line, in batches every second, to a separate SQLite file, `data/logs/logs.db`. It has a `log_lines` table with the fields above plus a fingerprint, full-text search on the message, and indexes on (ts), (level, ts), (logger, ts), (cycle, ts) and (symbol, ts). It is never the trading database: it isn't in the 03:00 backup and is pruned with the files.
@@ -1245,13 +1277,14 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
 - **Offsite.** The backup is then encrypted (restic) and uploaded to S3-compatible storage at another provider. 30 daily and 12 weekly copies are kept. It includes `secret.key`, protected by the backup password, so a restore works on a new server.
 - **Restore test.** Monthly, the latest offsite copy is restored to a temporary folder and checked with `PRAGMA integrity_check`.
 - **Failures.** A failed backup or restore test is a warning notification.
+- **Not set up.** Without the backup password and storage credentials, offsite backup and the restore test show "not set up" in Settings → Server and send nothing. That is not a failure; the Readiness item "Hosting with login (VPS)" still needs a passing restore test.
 - **Manual.** "Back up now" and "Download latest backup" are in Settings → Server. Restoring is done on the server with `deploy/restore.sh` and is described in `docs/DEPLOY.md`.
 - **Download.** Asks "Confirm it is you". The file is the database only, never `secret.key`, so a downloaded copy can't decrypt the keys. Every download is an event and an email ("Backup downloaded", info, email on).
 - **Order.** The offsite upload starts when the local backup has finished, not at a fixed time, so it never copies a half-written file.
 - **Backup credentials.** Write-only like the API keys and saved behind "Confirm it is you"; changing the endpoint needs the credentials again in the same request (hard rule 20).
 
 **Monitoring (PR 24).**
-- **Heartbeat.** After every cycle and position check the app pings `ops.heartbeat_url`, an outside dead-man's-switch service. If the pings stop, that service emails Marc. It is the only alert that still works when the server itself is down.
+- **Heartbeat.** After every cycle and position check the app pings `ops.heartbeat_url`, an outside dead-man's-switch service. If the pings stop, that service emails Marc. It is the only alert that still works when the server itself is down. It works the same on a local install and should be set there too; while it is empty, Settings → Server and the Needs you health line say "Heartbeat not set".
 - **Uptime.** An outside uptime check watches `/healthz`.
 - **Settings → Server** shows:
   - version, address and certificate expiry;
@@ -1425,7 +1458,8 @@ Decisions (live and shadows), the weekly review, the daily briefing, verdicts, r
 - prices in USD per million tokens (`input`, `output`), the only price source;
 - `cutoff`: the model's reliable knowledge cutoff, used by the backtest lookahead check;
 - for Anthropic models, `effort` (`low`, `medium` or `high`; default `low`);
-- optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model.
+- optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model;
+- for OpenAI models, `supports_temperature` (default true). With false, no temperature is sent, as for Claude models.
 
 Settings, the shadow dialog, backtests and replays only offer models from this list. `model_prices` and `backtest.model_cutoffs` are folded into it, and `reviews.model` becomes `reviews.models` (one per task); the old keys are read for one release with a warning.
 
