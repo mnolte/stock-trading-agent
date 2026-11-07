@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-07 — [046] Spec alignment: position-check severity, gate-order wording, PID-reuse test
+
+Phase 2 of item 046, the backend group of the gap report (`docs/analysis/046-spec-alignment.md`).
+
+- **Position checks failing (G5)**: the durable `position_check_failed` event is recorded at `error` instead of `critical` — the spec's notification row is Warning, so the banner no longer renders critical. The notification mapping (`position_checks_failing`, Warning) is unchanged.
+- **Gate order (G7, code half)**: `risk/gates.py` docstrings describe the code's order as the order of record; the spec's gate table is rewritten to match in Marc's spec PR.
+- **Backtest PID reuse (G11)**: verified every `os.kill` site in `backtests/manager.py` is `_pid_same`-guarded; a new test pins the cancel path — a live pid with a different start time is never signalled.
+- **G8 verified built, no change**: the `missing_stop` repeat already carries the elapsed time ("still no stop · 1 h 30 min", `executor.py` + `test_stop_check.py`); the report's citation was a different notification.
+
 ## 2026-11-07 — [051] Kickoffs move to the archive with the build
 
 - The build PR now moves its kickoff to `docs/kickoffs/archive/`, in the same PR as the code (`git mv`, unchanged). An item built in several PRs: the first moves it, the later ones read it from `archive/`. Before (048), the move waited for the PR that set the item to `merged`. So `docs/kickoffs/` lists only work nobody has started; the register's Status still says `building` or `merged`.
