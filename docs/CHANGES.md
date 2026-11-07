@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-07 — [046] Spec alignment: config keys and model defaults
+
+Phase 2 of item 046, the config group of the gap report (`docs/analysis/046-spec-alignment.md`).
+
+- **Notification defaults (G1)**: the 11 events missing from `notifications.events` now carry the spec table's channels — `readiness_changed` and `restarted_resumed` get browser, the nine VPS/security events get browser + email. They previously fell back to app-only (+browser when critical).
+- **Inspector (G2)**: `inspector.default_sources` is `[live, review, ask]` per the spec's filter table; shadows and backtests stay opt-in.
+- **Reviews (G4, G9)**: `reviews.skip_flat_pct: 2` added (the code fallback, confirmed by Marc); `reviews.prompts.briefing` back to `briefing.v2` — the v1 default was an accidental revert.
+- **Models (G3, config half)**: `decision.model` and the briefing/verdict review models default to `gpt-4.1-mini`; weekly stays `gpt-4o-mini`. The spec text moves in Marc's spec PR.
+
 ## 2026-11-07 — [051] Kickoffs move to the archive with the build
 
 - The build PR now moves its kickoff to `docs/kickoffs/archive/`, in the same PR as the code (`git mv`, unchanged). An item built in several PRs: the first moves it, the later ones read it from `archive/`. Before (048), the move waited for the PR that set the item to `merged`. So `docs/kickoffs/` lists only work nobody has started; the register's Status still says `building` or `merged`.
