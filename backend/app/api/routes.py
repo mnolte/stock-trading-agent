@@ -3073,6 +3073,7 @@ def settings(request: Request) -> dict[str, object]:
             if _notifications(request) is not None
             else None
         ),
+        "config_layers": config.layer_counts(),
         "mode": config.env.mode,
     }
 

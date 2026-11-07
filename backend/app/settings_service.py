@@ -644,6 +644,9 @@ async def validate_settings(
                 f"{LABELS.get(('reviews', f'models.{task}'))}: "
                 f"{rmodel!r} is not in the models list"
             )
+    ask_model = str((merged.get("ask") or {}).get("model", ""))
+    if ask_model and not known_model(_MergedConfig(merged), ask_model):
+        errors.append(f"Ask model {ask_model!r} is not in the models list")
     prompt = str(decision.get("prompt", ""))
     if prompt:
         # Known prompt versions only: a version without a registered

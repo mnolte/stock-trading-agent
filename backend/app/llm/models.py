@@ -150,10 +150,12 @@ def review_model(config: ConfigLike, kind: str) -> str:
 
 def named_models(config: ConfigLike, session: Session | None = None) -> list[tuple[str, str]]:
     """Every (what, model) the app is configured to call — live decisions,
-    the three review tasks and every non-archived llm strategy."""
+    Ask, the three review tasks and every non-archived llm strategy."""
     out: list[tuple[str, str]] = [
         ("Live decisions", str(config.get("decision", "model", default="")))
     ]
+    if str(config.get("ask", "model", default="")).strip():
+        out.append(("Ask", str(config.get("ask", "model"))))
     review_models = config.get("reviews", "models", default=None)
     if isinstance(review_models, dict) and review_models:
         for task in REVIEW_TASKS:
@@ -179,6 +181,15 @@ def check_models(config: ConfigLike, session: Session | None = None) -> None:
     Raises :class:`UnknownModelError`/`ValueError` with a clear message;
     the startup wrapper turns it into a refusal.
     """
+    validate_models_table(config)
+    missing = missing_named_models(config, session)
+    if missing:
+        what, model = missing[0]
+        raise UnknownModelError(f"{what} model {model!r} is not in the models list")
+
+
+def validate_models_table(config: ConfigLike) -> None:
+    """The ``models`` block itself: provider, prices, effort, cutoff."""
     table = models_table(config)
     for name, entry in table.items():
         if str(entry.get("provider")) not in PROVIDERS:
@@ -192,14 +203,28 @@ def check_models(config: ConfigLike, session: Session | None = None) -> None:
                 date.fromisoformat(str(entry["cutoff"]))
             except ValueError:
                 raise ValueError(f"models.{name}: cutoff must be an ISO date") from None
-    for what, model in named_models(config, session):
-        if not known_model(config, model):
-            raise UnknownModelError(f"{what} model {model!r} is not in the models list")
+
+
+def missing_named_models(
+    config: ConfigLike, session: Session | None = None
+) -> list[tuple[str, str]]:
+    """Every configured model name with no entry in ``models``."""
+    return [
+        (what, model)
+        for what, model in named_models(config, session)
+        if not known_model(config, model)
+    ]
 
 
 def check_models_at_startup(config: ConfigLike, session: Session) -> None:
-    """Refuse to start when a configured model is unknown or misconfigured."""
-    check_models(config, session)
+    """Refuse to start on a malformed ``models`` entry; warn once per
+    configured model missing from the merged list (docs/SPEC.md, Config
+    layers)."""
+    validate_models_table(config)
+    for what, model in missing_named_models(config, session):
+        logger.warning(
+            "%s model %r is not in the models list", what, model
+        )
 
 
 def model_price(prices: dict[str, Any] | None, model: str) -> tuple[Decimal, Decimal] | None:
