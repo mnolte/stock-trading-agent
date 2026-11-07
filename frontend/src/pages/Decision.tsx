@@ -880,10 +880,11 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
   // decision.v5: options carry target_atr and min_confidence; v3/v4
   // options don't, and their drawer stays unchanged (docs/SPEC.md).
   const v5Cols = options.some(
-    (o) => o.min_confidence != null || o.target_atr != null,
+    (o) => o.min_confidence != null || o.target_atr != null || o.base_rate != null || o.base_n != null,
   );
+  const confidence = decision.model_output?.confidence ?? null;
   const headers = v5Cols
-    ? ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even', 'Min conf', 'Target ATR']
+    ? ['', 'Stop', 'Target · ATR · in the way', 'R/R', 'Min conf', 'Base rate', 'Model']
     : ['', 'Stop', 'Target · levels in the way (ATR above the limit)', 'R/R', 'Break-even'];
   return (
     <Section
@@ -958,27 +959,37 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                   </div>
                 </td>
                 <td style={{ padding: '8px 10px', fontSize: 'var(--sa-text-sm)' }}>
-                  <div style={{ fontFamily: MONO }}>{o.target.toFixed(2)}</div>
+                  <div style={{ fontFamily: MONO }}>
+                    {o.target.toFixed(2)}
+                    {v5Cols && o.target_atr != null && (
+                      <span style={{ fontSize: 'var(--sa-text-xs, 11px)', color: 'var(--sa-text-2)' }}>
+                        {' '}{o.target_atr.toFixed(1)} ATR
+                      </span>
+                    )}
+                  </div>
                   <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-xs, 11px)' }}>
-                    {o.target_basis}
-                    {(o.levels_in_way ?? []).length > 0
-                      ? ` · in the way ${_v3WayText(o.levels_in_way)}`
-                      : ''}
+                    {v5Cols
+                      ? (o.levels_in_way ?? []).length > 0
+                        ? _v3WayText(o.levels_in_way)
+                        : o.target_basis
+                      : `${o.target_basis}${(o.levels_in_way ?? []).length > 0 ? ` · in the way ${_v3WayText(o.levels_in_way)}` : ''}`}
                   </div>
                 </td>
                 <td style={{ padding: '8px 10px', fontFamily: MONO, fontSize: 'var(--sa-text-sm)', textAlign: 'right' }}>
-                  {o.rr.toFixed(2)}
+                  {o.rr.toFixed(v5Cols ? 1 : 2)}
                 </td>
-                <td
-                  style={{
-                    padding: '8px 10px',
-                    fontFamily: MONO,
-                    fontSize: 'var(--sa-text-sm)',
-                    color: 'var(--sa-text-2)',
-                  }}
-                >
-                  {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
-                </td>
+                {!v5Cols && (
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      fontFamily: MONO,
+                      fontSize: 'var(--sa-text-sm)',
+                      color: 'var(--sa-text-2)',
+                    }}
+                  >
+                    {o.breakeven_confidence != null ? o.breakeven_confidence.toFixed(2) : '—'}
+                  </td>
+                )}
                 {v5Cols && (
                   <>
                     <td
@@ -996,12 +1007,52 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
                       style={{
                         padding: '8px 10px',
                         fontFamily: MONO,
-                        fontSize: 'var(--sa-text-sm)',
+                        fontSize: 'var(--sa-text-xs, 11px)',
                         textAlign: 'right',
                         color: 'var(--sa-text-2)',
                       }}
                     >
-                      {o.target_atr != null ? `${o.target_atr.toFixed(2)}` : '—'}
+                      {o.base_rate != null && (o.base_n ?? 0) >= 30 ? (
+                        <>
+                          {o.base_rate.toFixed(2)}{' '}
+                          <span style={{ color: 'var(--sa-text-muted)' }}>n {o.base_n}</span>
+                        </>
+                      ) : (
+                        <span
+                          title="Fewer than 30 comparable cases: no base rate yet"
+                          style={{ color: 'var(--sa-text-muted)' }}
+                        >
+                          —{o.base_n != null ? ` n ${o.base_n}` : ''}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      style={{
+                        padding: '8px 10px',
+                        fontFamily: MONO,
+                        fontSize: 'var(--sa-text-sm)',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {o.id === chosen && confidence !== null ? (
+                        <span
+                          style={{
+                            color:
+                              o.min_confidence != null && confidence >= o.min_confidence
+                                ? 'var(--sa-positive)'
+                                : 'var(--sa-negative-text)',
+                          }}
+                        >
+                          {confidence.toFixed(2)}{' '}
+                          {o.min_confidence != null
+                            ? confidence >= o.min_confidence
+                              ? '✓'
+                              : '✗'
+                            : ''}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--sa-text-muted)' }}>—</span>
+                      )}
                     </td>
                   </>
                 )}
@@ -1041,6 +1092,10 @@ interface V4Headline {
 interface V4Previous {
   time?: string | null;
   action?: string | null;
+  /** The final action code took (v5: shown beside the model's action). */
+  final_action?: string | null;
+  /** The gate or check behind a change code made (v5). */
+  change_reason?: string | null;
   option_id?: string | null;
   best_option_id?: string | null;
   confidence?: number | null;
@@ -1115,6 +1170,9 @@ function V4PreviousDecision({ decision }: { decision: DecisionDetail }) {
         {prev.best_option_id ? ` · best option ${prev.best_option_id}` : ''}
         {prev.confidence != null
           ? ` · confidence ${Number(prev.confidence).toFixed(2)}`
+          : ''}
+        {prev.final_action && prev.final_action !== prev.action
+          ? ` · final ${prev.final_action}${prev.change_reason ? ` · ${prev.change_reason}` : ''}`
           : ''}
       </div>
       {(prev.conflicts ?? []).length > 0 && (

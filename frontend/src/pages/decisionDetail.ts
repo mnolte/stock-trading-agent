@@ -28,9 +28,56 @@ const GATE_LABELS: Record<string, string> = {
   reentry: 'Not traded today',
 };
 
+/** decision.v5 rows ahead of the stored checks: the trend gate that ran
+ * in code before the model, and the session time left against the
+ * chosen option's target distance (docs/SPEC.md, Decision v5 — GUI). */
+function v5FirstRows(decision: DecisionDetail): GateRow[] {
+  if (decision.prompt_version !== 'decision.v5') return [];
+  const rows: GateRow[] = [];
+  const checks = (decision.input_snapshot?.checks ?? {}) as {
+    trend_1h?: string;
+    trend_daily?: string;
+    regime_trend?: string;
+  };
+  const trendPass = checks.trend_1h === 'up' && checks.regime_trend === 'up';
+  rows.push({
+    name: 'Trend gate (code, before the model)',
+    detail:
+      decision.model_output === null
+        ? `the model was not called · ${decision.no_call_reason ?? 'checks'}`
+        : `trend 1h ${checks.trend_1h ?? '—'} · regime ${checks.regime_trend ?? '—'} · ${trendPass ? 'pass' : 'fail'}`,
+    state: decision.model_output === null ? 'fail' : trendPass ? 'pass' : 'warning',
+  });
+  const session = decision.input_snapshot?.session as
+    | { minutes_left?: number | null; last_cycle?: boolean }
+    | undefined;
+  const options = (decision.options?.options ?? []) as {
+    id: string;
+    target_atr?: number | null;
+  }[];
+  const chosen = options.find(
+    (o) =>
+      o.id ===
+      (decision.chosen_option ??
+        decision.model_output?.option_id ??
+        decision.model_output?.best_option_id),
+  );
+  if (session?.minutes_left != null) {
+    const last = session.last_cycle === true ? ' · last cycle' : '';
+    rows.push({
+      name: 'Time left',
+      detail: `${session.minutes_left} min · target ${
+        chosen?.target_atr != null ? `${chosen.target_atr.toFixed(1)} ATR` : '—'
+      }${last}`,
+      state: 'pass',
+    });
+  }
+  return rows;
+}
+
 /** Code checks then risk gates, each pass / fail / reduced. */
 export function gateRows(decision: DecisionDetail): GateRow[] {
-  const rows: GateRow[] = [];
+  const rows: GateRow[] = v5FirstRows(decision);
   for (const check of decision.validation_result?.checks ?? []) {
     rows.push({
       name: check.name,
