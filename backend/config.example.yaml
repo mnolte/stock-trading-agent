@@ -318,7 +318,7 @@ insights:                       # PR 22
 inspector:                      # PR 18, LLM call history
   page_size: 50                 # calls per page; the API allows up to 100
   slow_call_seconds: 15         # a returned call slower than this gets the warning "slow"
-  default_sources: [live, review]   # shadows off by default (they triple the volume)
+  default_sources: [live, review, ask]   # shadows and backtests off by default (they multiply the volume)
 
 logging:                        # PR 20, Logging, error handling and shutdown
   dir: data/logs
