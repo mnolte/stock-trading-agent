@@ -2409,6 +2409,27 @@ def banners(request: Request) -> dict[str, object]:
                 "actions": [],
             }
         )
+    # EUR is display-only: a failed ECB read shows USD only, trading
+    # never uses the rate (docs/SPEC.md, GUI — States).
+    fx = getattr(
+        getattr(request.app.state, "market_data", None), "latest_fx", None
+    )
+    if fx is not None and (fx.error is not None or fx.data is None):
+        items.append(
+            {
+                "id": None,
+                "kind": "eur_unavailable",
+                "level": "info",
+                "message": (
+                    "EUR unavailable: the ECB rate could not be fetched. "
+                    "Amounts show in USD only until it is back; trading "
+                    "never uses the rate."
+                ),
+                "details": {"error": fx.error} if fx.error else {},
+                "time": "",
+                "actions": [],
+            }
+        )
     health = (last_cycle.data_source_health or {}) if last_cycle else {}
     bars_health = str(health.get("bars", ""))
     if bars_health.startswith("failed"):
