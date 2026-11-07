@@ -1834,7 +1834,16 @@ export interface ReadinessResponse {
 // --- LLM call history (PR 18) --------------------------------------------
 
 export type LlmCallOutcome = 'success' | 'warning' | 'error';
-export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask';
+export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask' | 'backtest';
+
+/** The ask metadata on an ask call: its thread and the question it
+ * served ("Question k of n") with the screen it was asked on. */
+export interface LlmCallAsk {
+  thread_id: number;
+  question_index: number | null;
+  question_count: number;
+  screen: string | null;
+}
 
 export interface LlmCallRow {
   id: number;
@@ -1848,6 +1857,8 @@ export interface LlmCallRow {
   shadow_decision_id: number | null;
   review_id: number | null;
   verdict_id: number | null;
+  ask_message_id?: number | null;
+  ask?: LlmCallAsk | null;
   cycle_id: number | null;
   symbol: string | null;
   context: string | null;
@@ -1902,6 +1913,9 @@ export interface LlmCallsSummary {
     reason: Record<string, number>;
     strategy: Record<string, number>;
   };
+  /** Every prompt version and kind from the manifest — the prompt
+   * filter lists all of them, not only ones with calls. */
+  prompt_manifest?: string[];
 }
 
 export interface LlmCallDetail extends LlmCallRow {
@@ -1925,6 +1939,8 @@ export interface LlmCallDetail extends LlmCallRow {
   result: string;
   explanation: string | null;
   link: string | null;
+  /** The model's configured effort — Claude models only. */
+  effort?: string | null;
 }
 
 
