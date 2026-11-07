@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-11-07 — [045] GUI decisions (spec)
+
+Marc's answers to the five open questions of the 045 kickoff; the spec now matches the 045 design.
+
+- **Ask button** in the sidebar and the phone top bar, not the header (GUI → Header, now two fixed rows; Ask the agent → Opening it and GUI). The app already had it there (cea419d).
+- **EUR** beside equity, today's P&L and card totals only; other amounts USD with EUR in a tooltip (Overview → Currency, the decisions table, GUI).
+- **Decision detail** row: one drawer order for every version, with What happened (final action, code changes, warnings, order, verdict, Ask about this) and an outcome for skips, holds and exits.
+- **Decision v5 → GUI** (new paragraph): candidate drawer columns (`target_atr`, `min_confidence`, `base_rate · n`), trend gate and ev gate rows, time-left row; held Hold or exit block; the overnight Needs you item; Insights "What each filter removed".
+- **LLM call history**: Source adds Ask and Backtests (Ask on by default); the Outcome table lists `unresolved_conflict`, `confidence_outlier`, `best_option_missing`, `best_option_mismatch`, `hold_below_breakeven`, and the change reasons stored with `changed_by_code`; the reason filter splits `changed_by_code` by change reason.
+- **Settings screen**: the section list with Entry selection, Decision gates, Display, Trading → Prices and timeouts, and Model and reviews with three groups; every "Settings → Decisions / Reviews / Ask the agent" now reads "Settings → Model and reviews → …".
+
 ## 2026-11-07 — [050] Stop invariant (spec)
 
 From the live data of 4–5 November (`docs/analysis/050-live-data-2026-11-04.md`): KO kept 7 shares without a stop at Alpaca for 6 hours, the error resolved itself after an hour, and the app was down for an hour unnoticed.

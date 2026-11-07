@@ -76,7 +76,7 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 
 ## Rules
 
-- **Numbers:** IBM Plex Mono, right-aligned in tables. Money in USD with the EUR figure beside it in muted text, using the ECB daily rate.
+- **Numbers:** IBM Plex Mono, right-aligned in tables. Money in USD. The EUR figure (ECB daily rate) sits beside equity, today's P&L and card totals in muted text; every other amount (rows, tables, drawers) is USD alone with EUR in its tooltip (spec, Currency; decided 7 Nov).
 - **Times:** Amsterdam time, with New York time in a tooltip. Never compute the offset by hand; the US and EU change clocks on different dates.
 - **Colour means something:** green is a gain or a pass, red a loss, a stop or a failure, amber a warning or a skip, blue a stop raised or an info note. Never use colour alone; there is always a word or icon.
 - **Controls:** buttons, nav items and clickable rows are at least 44 px high.

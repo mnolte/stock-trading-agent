@@ -97,7 +97,10 @@ Build in this order, one commit per step, each step shippable on its own:
 
 8. LLM inspector. Source filter: Ask and Backtests (counts); prompt list
    from the manifest (every version, every kind); reason list: every
-   warning and error reason the spec names (see the design's select); Ask
+   warning and error reason of the spec's Outcome table, and
+   changed_by_code also by its stored change reason ("changed_by_code ·
+   flip_flop"), as in the design's select. no_options, call cap and other
+   no-call reasons never appear: no call was sent. Ask
    calls in the list and details ("Question k of n · context <screen>",
    effort for Claude models, "Open the chat"); user message labelled "input
    snapshot as sent to the model" with a "Stored input" link to the saved
@@ -136,18 +139,26 @@ Build in this order, one commit per step, each step shippable on its own:
     touched, plus 1024 for Main, Positions and Settings; each next to its
     design PNG in the PR description, with design differences listed.
 
-Not in this item: any spec text change (listed in the issue for Marc),
-Strategies rows for shadows F/G/H, the Trading-days watchlist search.
+The spec now says what the design shows (decided 7 Nov, see below): the
+header without Ask, the EUR rule, the Settings sections, the Decision
+detail order, the v5 GUI paragraph, the inspector's sources and reasons.
+
+Not in this item: Strategies rows for shadows F/G/H, the Trading-days
+watchlist search.
 ```
 
 ## Why
 
 `docs/analysis/045-gui-catch-up.md`. Ten screens were drawn at PR 6–22 and never caught up with the spec sections written since; the header wrapped to 2–4 rows on every screen; only the v1 drawer had Outcome and Verdict blocks.
 
-## Open questions for Marc (answered in the issue, not blocking steps 1–8)
+## Decided by Marc, 7 November
 
-1. Spec line 328 still says the Ask button is in the header; the app and the design now have it in the sidebar. Amend the spec, or revert both.
-2. The EUR rule (spec line 326): the design shows EUR beside equity, today's P&L and card totals only. Amend the spec to that, or add EUR to every money figure.
-3. Decision v5 has no GUI paragraph in the spec; the design now has one drawer and one Insights card for it. Add the paragraph.
-4. The spec's inspector filter table (line 756) lacks Ask; its reasons table (line 731) lacks the v3–v5 reasons.
-5. Settings section names: the spec says "Settings → Decisions" and "Settings → Reviews"; the design has them as groups of "Model and reviews" plus the new sections. Pick one naming.
+All five are in `docs/SPEC.md` (entry [045] of 7 Nov in `docs/CHANGES.md`); the design already matched.
+
+1. **Ask button**: in the sidebar and the phone top bar, not the header (GUI → Header; Ask the agent → Opening it, GUI).
+2. **EUR**: beside equity, today's P&L and card totals; every other amount is USD alone with EUR in its tooltip (Overview → Currency; GUI). `design/DESIGN.md` → Numbers says the same.
+3. **Decision v5**: the GUI paragraph is in Decision v5 → GUI (candidate drawer columns, held Hold or exit block, the overnight Needs you item, "What each filter removed").
+4. **Inspector**: Source adds Ask and Backtests (default on: live, reviews, Ask); the Outcome table lists every v2–v5 warning; the reason filter splits `changed_by_code` by change reason. The design's reason list was corrected to match (no no-call reasons).
+5. **Settings**: one section "Model and reviews" with the groups Decisions, Reviews and Ask the agent, plus the new sections Entry selection, Decision gates and Display, and Trading → Prices and timeouts (GUI → Settings screen). Every reference reads "Settings → Model and reviews → …".
+
+The Decision detail row of the GUI table now describes the drawer order with What happened, too.
