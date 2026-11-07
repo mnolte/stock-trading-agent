@@ -21,13 +21,13 @@ test('LLM inspector: filters, list and call details', async ({ page, request }, 
   const rows = page.locator('[aria-label="Model calls"] button.sa-row');
   await expect(rows.first()).toBeVisible({ timeout: 60_000 });
 
-  // Defaults: Last session, all outcomes, Live decisions + Reviews —
-  // defaults stay out of the URL until the user changes a filter.
+  // Defaults: Last session, all outcomes, Live decisions + Reviews +
+  // Ask — defaults stay out of the URL until the user changes a filter.
   await expect(page.locator('[aria-label="Period"] [aria-pressed="true"]')).toHaveText(/Last session/);
   await expect(page.locator('[aria-label="Outcome"] [aria-pressed="true"]')).toHaveText(/All/);
   await expect(
     page.locator('[aria-label="Source · pick one or more"] [aria-pressed="true"]'),
-  ).toHaveCount(2);
+  ).toHaveCount(3);
 
   await page.screenshot({
     path: path.join(outDir, `Inspector-${suffix}.png`),

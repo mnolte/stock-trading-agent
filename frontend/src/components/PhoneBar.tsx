@@ -51,10 +51,11 @@ export function PhoneBar({
       >
         SA
       </div>
-      <span
+      <h1
         style={{
           flex: 1,
           minWidth: 0,
+          margin: 0,
           fontWeight: 600,
           fontSize: 'var(--sa-text-lg)',
           whiteSpace: 'nowrap',
@@ -63,7 +64,7 @@ export function PhoneBar({
         }}
       >
         {title}
-      </span>
+      </h1>
       <NeedsChip count={needsYou} compact />
       {onAsk && (
         <button

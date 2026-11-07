@@ -88,7 +88,7 @@ for (const version of ['decision.v1', 'decision.v2', 'decision.v3', 'decision.v4
       if (context === 'held' && ['decision.v3', 'decision.v4', 'decision.v5'].includes(version)) {
         await expect(drawer.getByRole('heading', { name: 'Position', exact: true })).toBeVisible();
         await expect(drawer.getByText('earnings exit next session')).toBeVisible();
-        await expect(drawer.getByText('Neutral probability', { exact: true })).toBeVisible();
+        await expect(drawer.getByText('Neutral probability', { exact: true }).first()).toBeVisible();
       }
       if (['decision.v4', 'decision.v5'].includes(version)) {
         if (context === 'candidate') await expect(drawer.getByText(/Compared with previous cycle:/)).toBeVisible();
@@ -101,7 +101,7 @@ for (const version of ['decision.v1', 'decision.v2', 'decision.v3', 'decision.v4
       }
       if (version === 'decision.v5' && context === 'candidate') {
         await expect(drawer.getByText('Min conf')).toBeVisible();
-        await expect(drawer.getByText('Target ATR')).toBeVisible();
+        await expect(drawer.getByText('Base rate')).toBeVisible();
       }
       expect(await drawer.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
       const body = drawer.locator('div').filter({ has: page.getByRole('heading', { name: 'Agent reasoning', exact: true }) });
@@ -225,21 +225,22 @@ test('price lines remain visible above, below and between levels', async ({ page
   for (const context of ['candidate', 'held']) {
     for (const prices of [[90, 80], [120, 110], [110, 90]]) {
       id += 1;
-      const payload = { ...detail(id, 'decision.v4', context), levels: { levels: prices.map((price, index) => ({
+      const payload = { ...detail(id, 'decision.v2', context), levels: { levels: prices.map((price, index) => ({
         id: `L${index}`, price, kind: 'swing_high', timeframe: '1h', time: null,
       })) } };
       await page.route(`**/api/decisions/${id}`, (route) => route.fulfill({ json: payload }));
       if (id === 9101) await page.goto(`/decisions/${id}`);
       else await navigate(page, `/decisions/${id}`);
       await expect(page.getByRole('heading', { name: `TEST${id} decision` })).toBeVisible();
-      const section = page.getByRole('dialog').getByRole('region', { name: 'Levels', exact: true });
+      await page.locator('summary', { hasText: 'Levels' }).click();
+      const section = page.getByRole('dialog').locator('details').filter({ hasText: 'Levels' });
       const label = context === 'held' ? 'price' : 'entry limit';
       await expect(section.getByText(label, { exact: true })).toHaveCount(1);
       const content = await section.innerText();
       const anchor = context === 'held' ? 105 : 100;
       await expect(section.getByText(label, { exact: true }).locator('..')).toContainText(anchor.toFixed(2));
       for (const price of prices) {
-        expect(content.indexOf(price.toFixed(2)) < content.lastIndexOf(label)).toBe(price >= anchor);
+        expect(content.indexOf(price.toFixed(2)) < content.indexOf(label)).toBe(price >= anchor);
       }
     }
   }
