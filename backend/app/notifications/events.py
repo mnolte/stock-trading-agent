@@ -275,6 +275,7 @@ EVENT_TYPE_MAP: dict[str, str] = {
     "kill_switch": "kill_switch",
     "protective_stop": "missing_stop",
     "protective_stop_failed": "missing_stop",
+    "stop_missing": "missing_stop",
     "reconciliation": "reconciliation",
     "order_submit_failed": "order_rejected",
     "order_sanity": "order_rejected",
@@ -330,6 +331,13 @@ def format_recorded(
         return (
             key,
             f"{symbol}: no stop at Alpaca — protective stop placed",
+            "/positions",
+        )
+    if event_type == "stop_missing":
+        return (
+            key,
+            f"{symbol}: no stop at Alpaca — "
+            f"{details.get('reason', 'the stop check keeps retrying')}",
             "/positions",
         )
     if event_type == "protective_stop_failed":
@@ -439,6 +447,8 @@ def format_recorded(
         line = "stayed paused"
         if isinstance(reasons, list) and reasons:
             line = "stayed paused: " + "; ".join(str(r) for r in reasons)
+        if details.get("downtime"):
+            line = f"{line} ({details['downtime']})"
         return key, line, "/logs"
     if event_type == "backup_downloaded":
         return key, "downloaded the latest backup", "/settings"

@@ -440,6 +440,20 @@ class SecretsStore:
         row = self._meta.get(name)
         tail = last4 or (row.last4 if row is not None else None)
         with self._factory() as session:
+            if ok:
+                # A passing key resolves the state error (docs/SPEC.md,
+                # Readiness — Errors).
+                from app.db.models import Event
+
+                for event in session.execute(
+                    select(Event).where(
+                        Event.event_type == "api_key",
+                        Event.resolved_at.is_(None),
+                    )
+                ).scalars():
+                    if str((event.details or {}).get("name") or "") == name:
+                        event.resolved_at = _naive_utc(self._clock.now())
+                        event.resolution = "condition"
             record_event(
                 session,
                 self._clock,

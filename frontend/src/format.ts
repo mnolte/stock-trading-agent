@@ -115,6 +115,12 @@ export function sessionDayShort(isoDate: string | null | undefined): string {
 
 /** "+1.23" / "−1.23" — signed number with the real minus sign (U+2212,
  * design/DESIGN.md numbers rule). Zero has no sign. */
+/** "6 h 0 min" — the stop-missing chip's elapsed time (item 050). */
+export function elapsedHm(iso: string): string {
+  const mins = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  return `${Math.floor(mins / 60)} h ${mins % 60} min`;
+}
+
 export function signed(n: number, digits = 2): string {
   const sign = n > 0 ? '+' : n < 0 ? '−' : '';
   return `${sign}${Math.abs(n).toFixed(digits)}`;

@@ -802,11 +802,12 @@ def test_config_accepts_screened_mode(
     """Screened mode is a valid config — from the YAML file and from a
     stored settings version (docs/SPEC.md, Larger universe)."""
     monkeypatch.setattr(
-        AppConfig, "_load_yaml", lambda self: {"universe": {"mode": "screened"}}
+        AppConfig,
+        "_read_first",
+        staticmethod(lambda *c: {"universe": {"mode": "screened"}}),
     )
     config = AppConfig()
     assert config.get("universe", "mode") == "screened"
-    monkeypatch.setattr(AppConfig, "_load_yaml", lambda self: {})
     config = AppConfig()
     config.apply_saved({"universe": {"mode": "screened"}}, version=1)
     assert config.get("universe", "mode") == "screened"

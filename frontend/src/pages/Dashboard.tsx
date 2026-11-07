@@ -40,6 +40,7 @@ import {
   displayTime,
   displayWeekdayDateTime,
   displayWeekdayTime,
+  elapsedHm,
   nyTime,
   sessionDayLabel,
   sessionDayShort,
@@ -582,6 +583,18 @@ function OpenPositionsMini({
               >
                 <span style={{ minWidth: 0 }}>
                   <b style={{ fontWeight: 600 }}>{p.symbol}</b>{' '}
+                  {p.stop_missing && (
+                    <span
+                      style={{
+                        fontFamily: 'var(--sa-font-mono)',
+                        fontSize: 'var(--sa-text-sm)',
+                        color: 'var(--sa-negative-text)',
+                      }}
+                    >
+                      No stop at Alpaca since {displayTime(p.stop_missing.since)}{' '}
+                      · {elapsedHm(p.stop_missing.since)}{' '}
+                    </span>
+                  )}
                   <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                     {p.qty} sh{p.opened_today ? ' · today' : ''}
                   </span>{' '}

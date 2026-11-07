@@ -108,7 +108,7 @@ So: a file in `docs/kickoffs/` is open work; the register's Status says how far 
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
 | 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |
-| 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | — | ready |
+| 050 | fix | Stop invariant | `050-fix-stop-invariant.md` | #144 | #148 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

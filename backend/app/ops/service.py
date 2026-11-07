@@ -311,6 +311,10 @@ class OpsService:
             )
         offsite = self._status.get("offsite_backup")
         restore_test = self._status.get("restore_test")
+        if self._creds_missing():
+            # "not set up" — never a failure notification (item 050).
+            offsite = {"not_set_up": True}
+            restore_test = {"not_set_up": True}
         stale_days = int(
             self._config.get("ops", "restore_test_stale_days", default=45)
         )
@@ -357,6 +361,17 @@ class OpsService:
             },
         )
 
+    def _creds_missing(self) -> bool:
+        """Offsite backup needs both stored secrets (docs/SPEC.md,
+        Backups). Without them the state is 'not set up' — no failure,
+        no notification."""
+        if self._secrets is None:
+            return True
+        return not (
+            self._secrets.get("backup_password")
+            and self._secrets.get("backup_credentials")
+        )
+
     # ------------------------------------------------------------------
     # offsite jobs
 
@@ -365,6 +380,12 @@ class OpsService:
         from app.ops.offsite import offsite_backup
 
         if self._secrets is None:
+            return
+        if self._creds_missing():
+            self._set(
+                "offsite_backup",
+                {"at": self._clock.now().isoformat(), "not_set_up": True},
+            )
             return
         try:
             offsite_backup(self._config, self._secrets)
@@ -394,6 +415,12 @@ class OpsService:
         """Monthly: restore the newest offsite snapshot into a temp folder
         and run PRAGMA integrity_check on it."""
         if self._secrets is None:
+            return False
+        if self._creds_missing():
+            self._set(
+                "restore_test",
+                {"at": self._clock.now().isoformat(), "not_set_up": True},
+            )
             return False
         import sqlite3
         import tempfile

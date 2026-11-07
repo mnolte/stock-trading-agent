@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
 
 from app.config import get_config
+from app.data.cache import _aware_utc
 from app.db.base import get_session_maker
 from app.db.models import (
     Approval,
@@ -126,6 +127,33 @@ def build_attention(request: Request) -> dict[str, Any]:
     email_failures = notifier.email_failures if notifier is not None else 0
 
     with get_session_maker()() as session:
+        # 0. Open stop-missing episodes — first, critical, and they
+        # leave only when the episode closes; no acknowledgement
+        # (design/screens/States.dc.html).
+        episodes = session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            ).order_by(Event.time)
+        ).scalars().all()
+        for event in episodes:
+            details = event.details or {}
+            symbol = str(details.get("symbol") or "?")
+            shares = str(details.get("shares") or "")
+            since = _aware_utc(event.time).astimezone(app_tz).strftime("%H:%M")
+            reason = str(details.get("reason") or "no live stop at Alpaca")
+            items.append(
+                _item(
+                    "stop_missing",
+                    "critical",
+                    f"{symbol} has no stop at Alpaca since {since}",
+                    f"{shares} shares · {reason}. "
+                    "Code retries at every check.",
+                    "Open position",
+                    "/positions",
+                    event.time,
+                )
+            )
         # 1. Critical banners waiting for acknowledgement.
         unacked = session.execute(
             select(Event)
@@ -555,5 +583,10 @@ def build_attention(request: Request) -> dict[str, Any]:
             "keys": keys,
             "email": email,
             "email_since": email_since,
+            "heartbeat": (
+                "Heartbeat not set"
+                if ops is None or not ops.heartbeat_url()
+                else "set"
+            ),
         },
     }

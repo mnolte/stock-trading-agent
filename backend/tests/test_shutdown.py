@@ -266,7 +266,12 @@ def test_unclean_run_banner(client: TestClient) -> None:
     try:
         banner = _unclean_banner(client)
         message = str(banner["message"])
-        assert "The previous run did not shut down cleanly (14 Oct 23:12)" in message
+        # Design wording: last-alive time in the app zone, downtime and
+        # the missed-work summary (item 050).
+        assert "The previous run did not shut down cleanly." in message
+        assert "Last alive 23:12:00" in message
+        assert "· down " in message
+        assert "· missed " in message
         assert "Database integrity check ok" in message
         assert "reconciliation with Alpaca: no differences" in message
         assert "0 cycles marked interrupted" in message

@@ -686,6 +686,21 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             .order_by(LlmCall.id)
             .limit(1)
         ).first()
+        episode_row = session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars()
+        open_episode = next(
+            (
+                e
+                for e in episode_row
+                if str((e.details or {}).get("symbol") or "")
+                == decision.symbol
+            ),
+            None,
+        )
         llm_call_id = llm_call_row[0] if llm_call_row else None
         llm_call_reasons = (
             [str(r) for r in llm_call_row[1]] if llm_call_row else []
@@ -752,6 +767,14 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
         "validation_result": decision.validation_result,
         "gates_result": decision.gates_result,
         "trade": trade,
+        "stop_missing": (
+            {
+                "since": open_episode.time.replace(tzinfo=UTC).isoformat(),
+                "reason": (open_episode.details or {}).get("reason"),
+            }
+            if open_episode is not None
+            else None
+        ),
         "outcome": (
             {
                 "price_1h": str(outcome.price_1h) if outcome.price_1h else None,
@@ -1086,7 +1109,12 @@ def dismiss_event(
     with get_session_maker()() as session:
         try:
             event = dismiss_error(
-                session, clock=_clock(request), event_id=event_id, note=note
+                session,
+                clock=_clock(request),
+                event_id=event_id,
+                note=note,
+                exec_state=getattr(request.app.state, "exec_state", None),
+                secrets=getattr(request.app.state, "secrets", None),
             )
             session.commit()
             dismissed_id = event.id
@@ -1326,6 +1354,18 @@ async def positions(request: Request) -> dict[str, object]:
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
         legs = {p.id: _position_legs(session, p) for p in open_rows}
+        # Open stop-missing episodes by symbol — the position card's
+        # "No stop at Alpaca since …" chip (item 050).
+        episodes: dict[str, Event] = {}
+        for open_ep in session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            symbol = str((open_ep.details or {}).get("symbol") or "")
+            if symbol:
+                episodes.setdefault(symbol, open_ep)
         earnings_next = session.execute(
             select(Earning.symbol, func.min(Earning.date))
             .where(
@@ -1400,6 +1440,16 @@ async def positions(request: Request) -> dict[str, object]:
     for p in open_rows:
         item = _position_json(p, marks.get(p.symbol))
         item["legs"] = legs[p.id]
+        episode = episodes.get(p.symbol)
+        if episode is not None:
+            details = episode.details or {}
+            item["stop_missing"] = {
+                "since": episode.time.replace(tzinfo=UTC).isoformat(),
+                "reason": details.get("reason"),
+                "stop_qty": details.get("stop_qty"),
+            }
+        else:
+            item["stop_missing"] = None
         item["last_price"] = (
             str(last_prices.get(p.symbol))
             if last_prices.get(p.symbol) is not None
@@ -1840,24 +1890,25 @@ def banners(request: Request) -> dict[str, object]:
             getattr(request.app.state, "unclean_interrupted", 0) or 0
         )
         stopped = getattr(request.app.state, "unclean_stopped_at", None)
-        when = ""
+        downtime = ""
         if isinstance(stopped, datetime):
-            app_tz = ZoneInfo(
-                str(
-                    get_config().get(
-                        "app", "timezone", default="Europe/Amsterdam"
-                    )
-                )
+            from app.restart import unclean_summary
+
+            summary = unclean_summary(
+                stopped,
+                _clock(request).now(),
+                config=get_config(),
+                calendar=_calendar(request),
             )
-            local = stopped.astimezone(app_tz)
-            when = f" ({local.day} {local.strftime('%b %H:%M')})"
+            downtime = f" {summary['summary']}."
         items.append(
             {
                 "id": None,
                 "kind": "unclean_run",
                 "level": "warning",
                 "message": (
-                    f"The previous run did not shut down cleanly{when}. "
+                    "The previous run did not shut down cleanly."
+                    f"{downtime} "
                     f"Database integrity check {integrity} · "
                     f"reconciliation with Alpaca: {reconcile_text} · "
                     f"{interrupted} "
@@ -2165,11 +2216,20 @@ def banners(request: Request) -> dict[str, object]:
             window_start=None,
             minutes=minutes,
         )
+        from app.readiness.service import STATE_ERROR_TYPES
+
         open_ids = {e.id for e in open_errors}
+        state_ids = {
+            e.id for e in open_errors if e.event_type in STATE_ERROR_TYPES
+        }
         shown_ids = {item["id"] for item in items if "id" in item}
         for item in items:
             actions = cast("list[str]", item.get("actions") or [])
-            if item.get("id") in open_ids and "dismiss" not in actions:
+            if (
+                item.get("id") in open_ids
+                and item.get("id") not in state_ids
+                and "dismiss" not in actions
+            ):
                 item["actions"] = [*actions, "dismiss"]
         for event in open_errors:
             if event.id in shown_ids:
@@ -2180,18 +2240,27 @@ def banners(request: Request) -> dict[str, object]:
                 if mapped is not None
                 else event.event_type.replace("_", " ")
             )
+            if event.event_type in STATE_ERROR_TYPES:
+                message = (
+                    f"{line}. It resolves when the state clears; "
+                    "a dismiss while it lasts is refused."
+                )
+                event_actions: list[str] = []
+            else:
+                message = (
+                    f"{line}. Dismiss with a note or it resolves "
+                    f"itself after {minutes} minutes without recurring."
+                )
+                event_actions = ["dismiss"]
             items.append(
                 {
                     "id": event.id,
                     "kind": "unresolved_error",
                     "level": event.level,
-                    "message": (
-                        f"{line}. Dismiss with a note or it resolves "
-                        f"itself after {minutes} minutes without recurring."
-                    ),
+                    "message": message,
                     "details": event.details or {},
                     "time": event.time.replace(tzinfo=UTC).isoformat(),
-                    "actions": ["dismiss"],
+                    "actions": event_actions,
                 }
             )
 
@@ -3073,6 +3142,7 @@ def settings(request: Request) -> dict[str, object]:
             if _notifications(request) is not None
             else None
         ),
+        "config_layers": config.layer_counts(),
         "mode": config.env.mode,
     }
 
@@ -5851,6 +5921,8 @@ def server_status(request: Request) -> dict[str, object]:
             "configured": bool(ops and ops.heartbeat_url()),
         },
         "latest_backup": backups[-1].name if backups else None,
+        # "Config: n local overrides · n unknown keys" (item 050).
+        "config_layers": config.layer_counts(),
     }
 
 

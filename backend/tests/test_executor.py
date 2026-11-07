@@ -623,17 +623,30 @@ async def test_failed_protective_stop_alerts_and_retries(
         o for o in broker.orders.values() if o.order_type == "stop"
     ]
     with session_factory() as session:
+        # Step 5's repair and the stop check's second attempt each fail:
+        # two events, then the stop-missing episode opens.
         events = events_of(session, "protective_stop_failed")
-        assert len(events) == 1
-        assert events[0].level == "critical"
+        assert len(events) == 2
+        assert all(e.level == "critical" for e in events)
         assert events[0].details is not None
         assert events[0].details["symbol"] == "MSFT"
+        episodes = events_of(session, "stop_missing")
+        assert len(episodes) == 1
+        assert episodes[0].resolved_at is None
 
     # A later pass with the broker healthy repairs it — no resend of
-    # the failed write, a fresh submission at the same level.
+    # the failed write, a fresh submission at the same level — and the
+    # stop check closes the episode and the failures.
     broker.fail_writes = False
     report = await executor.reconcile()
     assert report.protective_stops == ["MSFT"]
+    with session_factory() as session:
+        for event in events_of(session, "stop_missing"):
+            assert event.resolution == "condition"
+        assert all(
+            e.resolution == "condition"
+            for e in events_of(session, "protective_stop_failed")
+        )
 
 
 async def test_position_with_live_stop_needs_no_new_order(
@@ -3775,7 +3788,7 @@ async def test_flat_symbol_is_not_refetched_within_a_pass(
         position = session.execute(
             select(Position).where(Position.symbol == "MSFT")
         ).scalar_one()
-        placed = await executor._place_protective_stop(
+        placed, _reason = await executor._place_protective_stop(
             session, position, None, report
         )
     # The flat marker answered it — no second broker ask this pass.

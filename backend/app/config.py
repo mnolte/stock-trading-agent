@@ -80,6 +80,66 @@ class EnvSettings(BaseSettings):
         return value
 
 
+def _leaf_paths(tree: dict[str, Any], prefix: tuple[str, ...] = ()) -> list[tuple[str, ...]]:
+    """Every leaf path in ``tree`` — a dict recurses, anything else is a leaf."""
+    paths: list[tuple[str, ...]] = []
+    for key, value in tree.items():
+        if isinstance(value, dict):
+            paths.extend(_leaf_paths(value, prefix + (key,)))
+        else:
+            paths.append(prefix + (key,))
+    return paths
+
+
+def _get(tree: dict[str, Any], path: tuple[str, ...]) -> Any:
+    node: Any = tree
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            return None
+        node = node[key]
+    return node
+
+
+def _filter_known(
+    base: dict[str, Any], override: dict[str, Any]
+) -> tuple[dict[str, Any], list[tuple[str, ...]]]:
+    """``override`` without keys ``base`` doesn't have; returns (kept, dropped).
+
+    A dict unknown at a level is dropped whole: every leaf under it is
+    unknown. ``models`` stays open-ended — a local install may add a
+    model the example doesn't ship yet.
+    """
+    dropped: list[tuple[str, ...]] = []
+
+    def walk(
+        base_node: dict[str, Any],
+        over_node: dict[str, Any],
+        prefix: tuple[str, ...],
+    ) -> dict[str, Any]:
+        kept: dict[str, Any] = {}
+        for key, value in over_node.items():
+            if prefix == () and key == "models":
+                kept[key] = value
+                continue
+            known = base_node.get(key)
+            if key not in base_node:
+                dropped.extend(_leaf_paths({key: value}, prefix))
+                continue
+            if isinstance(known, dict) and isinstance(value, dict):
+                kept[key] = walk(known, value, prefix + (key,))
+            else:
+                kept[key] = value
+        return kept
+
+    return walk(base, override, ()), dropped
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    return data if isinstance(data, dict) else {}
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """Recursively merge ``override`` onto ``base``.
 
@@ -114,7 +174,28 @@ class AppConfig:
 
     def __init__(self) -> None:
         self.env = EnvSettings()
-        self._yaml = self._load_yaml()
+        # Layer 1: the example always loads — every default reaches every
+        # install. Layer 2: an optional local config.yaml overrides it key
+        # by key. Unknown keys are warned once and ignored (docs/SPEC.md,
+        # Config layers).
+        self._example = self._read_first(
+            ROOT / "backend" / "config.example.yaml",
+            ROOT / "config.example.yaml",
+        )
+        self._local_path: Path | None = None
+        self._local: dict[str, Any] = {}
+        for path in (ROOT / "backend" / "config.yaml", ROOT / "config.yaml"):
+            if path.exists():
+                self._local_path = path
+                self._local = _read_yaml(path)
+                break
+        self._warned_unknown: set[str] = set()
+        local_kept, unknown = _filter_known(self._example, self._local)
+        self._local_override_count = len(_leaf_paths(local_kept))
+        self._unknown_keys: set[str] = set()
+        for key_path in unknown:
+            self._warn_unknown(key_path, "config.yaml")
+        self._yaml = _deep_merge(self._example, local_kept)
         # The settings in force right now (YAML + last promoted version).
         self._active: dict[str, Any] = self._yaml
         # Saved-but-not-yet-promoted settings (YAML + pending version).
@@ -124,18 +205,30 @@ class AppConfig:
         # Set by the API when saved settings move cycle times.
         self.reschedule_cycles: bool = False
 
-    def _load_yaml(self) -> dict[str, Any]:
-        candidates = (
-            ROOT / "backend" / "config.yaml",
-            ROOT / "config.yaml",
-            ROOT / "backend" / "config.example.yaml",
-            ROOT / "config.example.yaml",
-        )
+    @staticmethod
+    def _read_first(*candidates: Path) -> dict[str, Any]:
         for path in candidates:
             if path.exists():
-                with path.open("r", encoding="utf-8") as fh:
-                    return yaml.safe_load(fh) or {}
+                return _read_yaml(path)
         return {}
+
+    def _warn_unknown(self, path: tuple[str, ...], source: str) -> None:
+        """WARN once per unknown key; it is ignored (docs/SPEC.md)."""
+        dotted = ".".join(path)
+        if dotted in self._warned_unknown:
+            return
+        self._warned_unknown.add(dotted)
+        self._unknown_keys.add(dotted)
+        logging.getLogger(__name__).warning(
+            "config key %s in %s is not in config.example.yaml — ignored",
+            dotted, source,
+        )
+
+    def _known_only(self, tree: dict[str, Any], source: str) -> dict[str, Any]:
+        kept, unknown = _filter_known(self._example, tree)
+        for path in unknown:
+            self._warn_unknown(path, source)
+        return kept
 
     def get(self, *keys: str, default: Any = None) -> Any:
         node: Any = self._active
@@ -192,14 +285,23 @@ class AppConfig:
 
     def apply_saved(self, settings: dict[str, Any], version: int) -> None:
         """Make a stored settings version active (startup / promotion)."""
-        merged = _deep_merge(self._yaml, settings)
+        merged = _deep_merge(self._yaml, self._known_only(settings, "settings"))
         self._active = merged
         self.active_version = version
 
     def set_pending(self, settings: dict[str, Any], version: int) -> None:
         """Store a newly saved version; it applies at the next cycle."""
-        self._pending = _deep_merge(self._yaml, settings)
+        self._pending = _deep_merge(
+            self._yaml, self._known_only(settings, "settings")
+        )
         self.pending_version = version
+
+    def layer_counts(self) -> dict[str, int]:
+        """Settings → Server: "Config: n local overrides · n unknown keys"."""
+        return {
+            "local_overrides": self._local_override_count,
+            "unknown_keys": len(self._unknown_keys),
+        }
 
     def promote_pending(self) -> int | None:
         """Promote the pending version to active; returns its version."""

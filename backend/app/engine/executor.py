@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any, cast
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -37,7 +38,7 @@ from app.broker.models import (
     TradeUpdateInfo,
 )
 from app.data.aggregate import session_bars
-from app.data.cache import _naive_utc
+from app.data.cache import _aware_utc, _naive_utc
 from app.data.models import CalendarDay, Quote
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
@@ -1234,6 +1235,11 @@ class Executor:
             if event is None:
                 return False
             event.acknowledged_at = _naive_utc(self.clock.now())
+            if event.event_type == "reconciliation":
+                # A mismatch resolves on acknowledgement (docs/SPEC.md,
+                # Readiness — Errors).
+                event.resolved_at = event.acknowledged_at
+                event.resolution = "acknowledged"
             session.commit()
         self._notify({"banners", "header", "attention"})
         return True
@@ -1948,7 +1954,7 @@ class Executor:
                     continue
                 # Hard rule 13.
                 session.commit()
-                placed = await self._place_protective_stop(
+                placed, _skip_reason = await self._place_protective_stop(
                     session, position, broker_positions.get(position.symbol), report
                 )
                 if placed is not None:
@@ -1994,6 +2000,12 @@ class Executor:
                         f"cancel {row.alpaca_order_id}: {result.error}"
                     )
             session.commit()
+            # 7. The stop invariant (docs/SPEC.md, Alpaca integration —
+            # Stop check): every open position has a live stop at
+            # Alpaca, verified from this pass's reads after the repairs.
+            await self._stop_check(
+                session, report, broker_positions, open_stops, broker_open
+            )
         if foreign_instance is not None:
             # Another agent copy is trading this account: stop everything.
             await self.activate_kill_switch(
@@ -2537,7 +2549,7 @@ class Executor:
         position: Position,
         bp: BrokerPosition | None,
         report: ReconcileReport,
-    ) -> Decimal | None:
+    ) -> tuple[Decimal | None, str | None]:
         """A known position has no live stop: repair per spec and alert.
 
         Confirm first (fresh position and open orders for the symbol),
@@ -2547,21 +2559,23 @@ class Executor:
         broker releases the cancelled holders' shares, else a plain gtc
         stop — every sell capped at the qty Alpaca reports free right
         before it is sent (docs/SPEC.md, Protective stops). Returns the
-        protected/sold qty, or None on a failed write.
+        ``(protected/sold qty, skip reason)`` — qty is None on a
+        failed write, and every branch that sends no stop returns its
+        reason for the stop check to store on the episode.
         """
         # Confirm first: the symbol's position and open orders straight
         # from the broker, never the state this reconcile fetched. A
         # symbol this pass already found flat is skipped — asking again
         # only repeats the same 404.
         if position.symbol in self._flat_symbols:
-            return Decimal(0)
+            return Decimal(0), "flat at Alpaca"
         pos_r = await self.broker.get_position(position.symbol)
         orders_r = await self.broker.get_open_orders()
         if pos_r.error is not None:
             report.errors.append(
                 f"protective check {position.symbol}: {pos_r.error}"
             )
-            return None
+            return None, f"position read failed: {pos_r.error}"
         if orders_r.error is not None:
             # Unconfirmed order state is not "no live sells": placing a
             # stop now could duplicate one it can't see or collide with
@@ -2569,13 +2583,13 @@ class Executor:
             report.errors.append(
                 f"protective check {position.symbol}: {orders_r.error}"
             )
-            return None
+            return None, f"open orders read failed: {orders_r.error}"
         confirmed = pos_r.data
         if confirmed is None or confirmed.qty == 0:
             # Flat at the broker — nothing to protect. The row closes on
             # the next pass; remember it so nothing asks again this pass.
             self._flat_symbols.add(position.symbol)
-            return Decimal(0)
+            return Decimal(0), "flat at Alpaca"
         if confirmed.qty < 0:
             # A short can never be protected by a sell stop — surface it
             # instead of pretending coverage exists.
@@ -2594,7 +2608,7 @@ class Executor:
                 },
                 affects="order",
             )
-            return None
+            return None, f"negative qty {confirmed.qty} at the broker"
         # Each live sell leg paired with the id that cancels it: for a
         # nested leg that is the parent order, for a standalone order
         # the order itself.
@@ -2627,7 +2641,7 @@ class Executor:
             if leg.order_type in ("stop", "stop_limit")
         )
         if covered >= qty:
-            return Decimal(0)  # a live stop appeared on the fresh read
+            return Decimal(0), "already covered"  # live stop on the fresh read
         # A fresh market sell is an exit already executing — its fills
         # are landing right now. Cancelling it mid-fill truncates the
         # exit and can leave a remainder with no legs at all (KO,
@@ -2644,12 +2658,12 @@ class Executor:
 
         if any(in_flight(leg) for leg, _ in live_sells):
             ev(
-                log_reconcile, logging.INFO, "reconcile.exit_in_flight",
+                log_reconcile, logging.WARNING, "reconcile.exit_in_flight",
                 f"{position.symbol}: market sell still working — "
                 "protective repair deferred to the next pass",
                 symbol=position.symbol,
             )
-            return Decimal(0)
+            return Decimal(0), "exit in flight"
         sold = session.execute(
             select(func.coalesce(func.sum(Fill.qty), 0))
             .join(Order, Fill.order_id == Order.id)
@@ -2672,12 +2686,12 @@ class Executor:
                 original = max(original, int(entry_qty))
         if int(sold) >= original:
             ev(
-                log_reconcile, logging.INFO, "reconcile.protective_skip",
+                log_reconcile, logging.WARNING, "reconcile.protective_skip",
                 f"{position.symbol}: sell fills already cover "
                 f"{original} — nothing sent",
                 symbol=position.symbol,
             )
-            return Decimal(0)
+            return Decimal(0), "sell fills cover the position"
         # No order may ask for more than Alpaca frees: live sells hold
         # shares and fills can land between the confirm and the send
         # (KO, 4 Nov — 21 requested while 7 were free). qty_available
@@ -2710,7 +2724,7 @@ class Executor:
                     "— live orders hold them; retried next pass",
                     symbol=position.symbol,
                 )
-                return Decimal(0)
+                return Decimal(0), "no free shares"
             # The stored stop is at or above the market: the level was
             # already breached, so the repair is the market sale itself
             # (MOO outside the session) — the only sale a check may make.
@@ -2740,7 +2754,7 @@ class Executor:
                         details={"symbol": position.symbol, "error": result.error},
                         affects="order",
                     )
-                    return None
+                    return None, f"rejected: {result.error}"
                 self._store_broker_order(session, result.data, None, leg="exit")
                 session.flush()
             record_event(
@@ -2757,7 +2771,7 @@ class Executor:
                 },
                 affects="order",
             )
-            return Decimal(sell_qty)
+            return Decimal(sell_qty), None
         if position.initial_stop is None:
             position.initial_stop = stop
         # Orphaned stop leg while sibling sell orders hold the shares: a
@@ -2790,7 +2804,7 @@ class Executor:
                         },
                         affects="order",
                     )
-                    return None
+                    return None, f"target cancel: {error or 'still live'}"
                 row = session.execute(
                     select(Order).where(Order.alpaca_order_id == cancel_id)
                 ).scalar_one_or_none()
@@ -2851,11 +2865,11 @@ class Executor:
                     },
                     affects="order",
                 )
-                return None
+                return None, read_error
             if fresh is None:
                 # The cancelled sells had already filled the position.
                 self._flat_symbols.add(position.symbol)
-                return Decimal(0)
+                return Decimal(0), "flat at Alpaca"
             sell_qty = min(qty, fresh.qty, self._free_qty(fresh))
             if sell_qty <= 0:
                 ev(
@@ -2865,7 +2879,7 @@ class Executor:
                     "cancels confirmed — retried next pass",
                     symbol=position.symbol,
                 )
-                return Decimal(0)
+                return Decimal(0), "shares still held"
             target = position.target_price or stop
             # One slot, send through store (rule 16).
             with self._order_slot():
@@ -2900,10 +2914,10 @@ class Executor:
                             },
                             affects="order",
                         )
-                        return None
+                        return None, again.error
                     if again.data is None or again.data.qty <= 0:
                         self._flat_symbols.add(position.symbol)
-                        return Decimal(0)
+                        return Decimal(0), "flat at Alpaca"
                     sell_qty = min(
                         sell_qty, again.data.qty, self._free_qty(again.data)
                     )
@@ -2915,7 +2929,7 @@ class Executor:
                             "the cancels confirmed — retried next pass",
                             symbol=position.symbol,
                         )
-                        return Decimal(0)
+                        return Decimal(0), "shares still held"
                     result = await self.broker.submit_stop_order(
                         symbol=position.symbol,
                         qty=sell_qty,
@@ -2937,7 +2951,7 @@ class Executor:
                         details={"symbol": position.symbol, "error": result.error},
                         affects="order",
                     )
-                    return None
+                    return None, f"rejected: {result.error}"
                 self._store_broker_order(session, result.data, None, leg="stop")
                 session.flush()
             gap = (self.clock.now() - unprotected_since).total_seconds()
@@ -2964,7 +2978,7 @@ class Executor:
                 affects="order",
             )
             report.protective_stops.append(position.symbol)
-            return Decimal(sell_qty)
+            return Decimal(sell_qty), None
         sell_qty = min(qty, available)
         if sell_qty <= 0:
             ev(
@@ -2974,7 +2988,7 @@ class Executor:
                 "stop — live orders hold them; retried next pass",
                 symbol=position.symbol,
             )
-            return Decimal(0)
+            return Decimal(0), "no free shares"
         # Hard rule 13: the chosen stop is durable before the order call.
         session.commit()
         # One slot, send through store (rule 16).
@@ -3002,7 +3016,7 @@ class Executor:
                     },
                     affects="order",
                 )
-                return None
+                return None, f"rejected: {result.error}"
             self._store_broker_order(session, result.data, None, leg="stop")
             session.flush()
         report.protective_stops.append(position.symbol)
@@ -3017,7 +3031,7 @@ class Executor:
                 "stop": str(stop),
             },
         )
-        return Decimal(sell_qty)
+        return Decimal(sell_qty), None
 
     @staticmethod
     def _free_qty(position: BrokerPosition) -> int:
@@ -3027,6 +3041,310 @@ class Executor:
             if position.qty_available is not None
             else position.qty
         )
+
+    # ------------------------------------------------------------------
+    # the stop invariant
+
+    _STOP_STATUSES = {"new", "accepted", "held", "partially_filled"}
+
+    def _market_exit_in_flight(self, order: BrokerOrder) -> bool:
+        """An open market sell counts as temporary protection (docs/
+        SPEC.md, Alpaca integration — Stop check): accepted less than
+        ``execution.exit_in_flight_seconds`` ago during the session, or
+        queued for the open outside it — until two minutes after it."""
+        if order.created_at is None:
+            return False
+        now = self.clock.now()
+        ny_now = now.astimezone(NY_TZ)
+        day = self.calendar.session_for(ny_now.date())
+        if day is None or not (day.open <= ny_now < day.close):
+            # Outside the session a working market sell can only be
+            # waiting for the open — it is protection until then.
+            return True
+        window = timedelta(
+            seconds=int(
+                self.config.get(
+                    "execution", "exit_in_flight_seconds", default=60
+                )
+            )
+        )
+        if now - order.created_at <= window:
+            return True
+        return (
+            ny_now < day.open + timedelta(minutes=2)
+            and order.created_at.astimezone(NY_TZ) < day.open
+        )
+
+    def _protection_for(
+        self, symbol: str, orders: Iterable[BrokerOrder]
+    ) -> tuple[Decimal, Decimal]:
+        """(stop qty, in-flight exit qty) the broker shows for ``symbol``.
+
+        Stops are bracket stop legs, OCO stops and standalone stops in
+        ``new``, ``accepted``, ``held`` or ``partially_filled``; held
+        legs under an unfilled parent are inactive and never count.
+        A pending (held-back) exit is not protection — it is a database
+        record, not a broker order (docs/SPEC.md, Alpaca integration).
+        """
+        orders = list(orders)
+        held_inactive = {
+            leg.id
+            for order in orders
+            if order.is_open and order.filled_qty == 0
+            for leg in order.legs
+        }
+        stop_qty = Decimal(0)
+        in_flight = Decimal(0)
+        for order in orders:
+            if (
+                order.symbol != symbol
+                or order.side != "sell"
+                or order.id in held_inactive
+                or order.status not in self._STOP_STATUSES
+            ):
+                continue
+            remaining = Decimal(order.qty - order.filled_qty)
+            if remaining <= 0:
+                continue
+            if order.order_type in ("stop", "stop_limit"):
+                stop_qty += remaining
+            elif order.order_type == "market" and self._market_exit_in_flight(
+                order
+            ):
+                in_flight += remaining
+        return stop_qty, in_flight
+
+    async def _symbol_protection(
+        self, symbol: str
+    ) -> tuple[Decimal, Decimal, Decimal] | None:
+        """Fresh (held, stop qty, in-flight exit qty) for one symbol."""
+        pos_r = await self.broker.get_position(symbol)
+        if pos_r.error is not None:
+            return None
+        orders_r = await self.broker.get_open_orders()
+        if orders_r.error is not None:
+            return None
+        orders: list[BrokerOrder] = []
+        for order in orders_r.data or []:
+            orders.append(order)
+            orders.extend(order.legs)
+        held = (
+            Decimal(pos_r.data.qty)
+            if pos_r.data is not None
+            else Decimal(0)
+        )
+        stop_qty, in_flight = self._protection_for(symbol, orders)
+        return held, stop_qty, in_flight
+
+    @staticmethod
+    def _hm(delta: timedelta) -> str:
+        total = max(0, int(delta.total_seconds() // 60))
+        return f"{total // 60} h {total % 60} min"
+
+    def _close_stop_episode(
+        self, session: Session, episode: Event, now: datetime
+    ) -> None:
+        """A pass found the position protected or flat: the episode
+        closes with resolution ``condition`` — never by acknowledgement
+        or quiet time (docs/SPEC.md, Readiness — Errors)."""
+        details = dict(episode.details or {})
+        symbol = str(details.get("symbol", "?"))
+        episode.resolved_at = _naive_utc(now)
+        episode.resolution = "condition"
+        app_tz = ZoneInfo(
+            str(self.config.get("app", "timezone", default="Europe/Amsterdam"))
+        )
+        duration = self._hm(now - _aware_utc(episode.time))
+        ev(
+            logger, logging.INFO, "reconcile.stop_confirmed",
+            f"{symbol} stop confirmed at "
+            f"{now.astimezone(app_tz):%H:%M:%S} after {duration}",
+            symbol=symbol,
+        )
+        self._notifier.notify(
+            "missing_stop",
+            f"{symbol}: stop restored after {duration}",
+            link="/positions",
+            severity="info",
+        )
+
+    def _resolve_stop_failures(
+        self, session: Session, symbol: str, now: datetime
+    ) -> None:
+        """A protective_stop_failed resolves when the stop check finds
+        that position protected — not after quiet time (docs/SPEC.md,
+        Readiness — Errors)."""
+        for event in session.execute(
+            select(Event).where(
+                Event.event_type == "protective_stop_failed",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            if str((event.details or {}).get("symbol") or "") == symbol:
+                event.resolved_at = _naive_utc(now)
+                event.resolution = "condition"
+
+    def _resolve_state_errors(
+        self,
+        session: Session,
+        positions: Iterable[Position],
+        now: datetime,
+    ) -> None:
+        """State errors resolve only from their own clearing code
+        (docs/SPEC.md, Readiness — Errors): a pending exit resolves when
+        no open position holds it back, stream_degraded when the flag
+        cleared, live_decisions_failing when calls run again."""
+        held_back = {
+            p.symbol for p in positions if p.pending_exit
+        }
+        for event in session.execute(
+            select(Event).where(
+                Event.event_type.in_(
+                    (
+                        "pending_exit",
+                        "stream_degraded",
+                        "live_decisions_failing",
+                    )
+                ),
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            if event.event_type == "pending_exit":
+                symbol = str((event.details or {}).get("symbol") or "")
+                if symbol not in held_back:
+                    event.resolved_at = _naive_utc(now)
+                    event.resolution = "condition"
+            elif event.event_type == "stream_degraded":
+                if not self.state.stream_degraded:
+                    event.resolved_at = _naive_utc(now)
+                    event.resolution = "condition"
+            elif (
+                event.event_type == "live_decisions_failing"
+                and self.state.live_calls_failing_since is None
+            ):
+                event.resolved_at = _naive_utc(now)
+                event.resolution = "condition"
+
+    async def _stop_check(
+        self,
+        session: Session,
+        report: ReconcileReport,
+        broker_positions: dict[str, BrokerPosition],
+        open_stops: dict[str, Decimal],
+        broker_open: dict[str, BrokerOrder],
+    ) -> None:
+        """The stop invariant, run at the end of every reconcile —
+        startup, every cycle and every position check — after the
+        repairs have run (docs/SPEC.md, Alpaca integration — Stop
+        check)."""
+        now = self.clock.now()
+        positions = session.execute(
+            select(Position).where(Position.closed_at.is_(None))
+        ).scalars().all()
+        episodes: dict[str, Event] = {}
+        for event in session.execute(
+            select(Event).where(
+                Event.event_type == "stop_missing",
+                Event.resolved_at.is_(None),
+            )
+        ).scalars():
+            symbol = str((event.details or {}).get("symbol") or "")
+            if symbol:
+                episodes.setdefault(symbol, event)
+        checked: set[str] = set()
+        for position in positions:
+            checked.add(position.symbol)
+            bp = broker_positions.get(position.symbol)
+            held = Decimal(bp.qty) if bp is not None else Decimal(0)
+            stop_qty, in_flight = self._protection_for(
+                position.symbol, broker_open.values()
+            )
+            reason: str | None = None
+            if held > 0 and stop_qty + in_flight < held:
+                # One more repair, sized from Alpaca's free shares —
+                # then refetch and check again.
+                session.commit()
+                _placed, reason = await self._place_protective_stop(
+                    session, position, bp, report
+                )
+                session.commit()
+                fresh = await self._symbol_protection(position.symbol)
+                if fresh is not None:
+                    held, stop_qty, in_flight = fresh
+                else:
+                    report.errors.append(
+                        f"stop check {position.symbol}: refetch failed"
+                    )
+            protected = held > 0 and stop_qty + in_flight >= held
+            episode = episodes.get(position.symbol)
+            if protected or held <= 0:
+                if episode is not None:
+                    self._close_stop_episode(session, episode, now)
+                self._resolve_stop_failures(session, position.symbol, now)
+                continue
+            details: dict[str, object] = {
+                "symbol": position.symbol,
+                "shares": str(int(held)),
+                "stop_qty": str(stop_qty),
+                "reason": reason or "no live stop at Alpaca",
+            }
+            if episode is None:
+                details["started_at"] = now.isoformat()
+                details["last_notified"] = now.isoformat()
+                episode = record_event(
+                    session,
+                    self.clock,
+                    level="critical",
+                    event_type="stop_missing",
+                    details=details,
+                    affects="order",
+                )
+                episodes[position.symbol] = episode
+                ev(
+                    logger, logging.CRITICAL, "reconcile.stop_missing",
+                    f"{position.symbol}: {held:g} shares, stop {stop_qty:g} "
+                    f"— episode opened ({details['reason']})",
+                    symbol=position.symbol,
+                )
+                self._notify({"banners", "attention"})
+                continue
+            stored = dict(episode.details or {})
+            stored.update(details)
+            last_notified: datetime | None = None
+            raw_notified = stored.get("last_notified")
+            if isinstance(raw_notified, str) and raw_notified:
+                last_notified = _aware_utc(
+                    datetime.fromisoformat(raw_notified)
+                )
+            ev(
+                logger, logging.ERROR, "reconcile.stop_missing",
+                f"{position.symbol}: {held:g} shares, stop {stop_qty:g} "
+                f"— episode still open ({stored['reason']})",
+                symbol=position.symbol,
+            )
+            if self._market_in_session() and (
+                last_notified is None
+                or now - last_notified >= timedelta(minutes=30)
+            ):
+                duration = self._hm(now - _aware_utc(episode.time))
+                self._notifier.notify(
+                    "missing_stop",
+                    f"{position.symbol}: still no stop · {duration}",
+                    link="/positions",
+                )
+                stored["last_notified"] = now.isoformat()
+            episode.details = stored
+        # Episodes whose position row already closed this pass: the
+        # state cleared when the broker went flat.
+        for symbol, episode in episodes.items():
+            if symbol in checked:
+                continue
+            bp = broker_positions.get(symbol)
+            if bp is None or Decimal(bp.qty) <= 0:
+                self._close_stop_episode(session, episode, now)
+                self._resolve_stop_failures(session, symbol, now)
+        self._resolve_state_errors(session, positions, now)
+        session.commit()
 
     async def _await_released(
         self, symbol: str

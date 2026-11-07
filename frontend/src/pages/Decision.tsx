@@ -8,7 +8,7 @@ import { ApiError } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
 import { RecordNotFound } from '../components/errorPages';
 import { Chip } from '../components/Chip';
-import { displayDayTime, displayTime, signed } from '../format';
+import { displayDayTime, displayTime, elapsedHm, signed } from '../format';
 import { DialogButton } from '../components/Modal';
 import { SkeletonLines } from '../components/cardState';
 import type { DecisionDetail, VerdictValue, V2Level, V2Option, V2StopOption, V3Checks, V3Position } from '../types/api';
@@ -1949,6 +1949,18 @@ function WhatHappened({
           ),
         )}
         {_whRow('Order', orderStatusText(decision, backtest))}
+        {decision.stop_missing && (
+          _whRow(
+            'Stop at Alpaca',
+            <span style={{ color: 'var(--sa-negative-text)' }}>
+              none since {displayTime(decision.stop_missing.since)} ·{' '}
+              {elapsedHm(decision.stop_missing.since)}
+              {decision.stop_missing.reason
+                ? ` — ${decision.stop_missing.reason}`
+                : ''}
+            </span>,
+          )
+        )}
         {_whRow(
           'Verdict',
           <VerdictCell decision={decision} onResolved={onVerdictResolved} />,

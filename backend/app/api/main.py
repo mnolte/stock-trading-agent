@@ -63,7 +63,11 @@ from app.llm.clients import make_model_clients
 from app.llm.fake import FakeModelClient
 from app.llm.models import check_models
 from app.logging_config import setup_logging
-from app.market.calendar import CalendarProvider, CalendarStore
+from app.market.calendar import (
+    CalendarProvider,
+    CalendarStore,
+    WeekdayCalendarProvider,
+)
 from app.market.clock import NY_TZ, UTC, Clock, make_clock
 from app.notifications.service import NotificationService, Notifier
 from app.ops.offsite import OffsiteError
@@ -1162,6 +1166,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if getattr(app.state, "unclean_previous_run", False):
         # The unclean-run banner reports this pass (design: States).
         app.state.unclean_reconcile = report
+        stopped = getattr(app.state, "unclean_stopped_at", None)
+        if isinstance(stopped, datetime):
+            from app.restart import unclean_summary
+
+            try:
+                summary = unclean_summary(
+                    stopped,
+                    clock.now(),
+                    config=config,
+                    calendar=app.state.calendar_store
+                    if getattr(app.state, "calendar_store", None) is not None
+                    else WeekdayCalendarProvider(),
+                )
+            except Exception:  # noqa: BLE001 — a wording bug must not
+                summary = None  # block startup
+                logger.exception("unclean-run summary failed")
+            if summary is not None:
+                app.state.unclean_downtime = summary["summary"]
+                logger.warning(
+                    "previous run did not shut down cleanly: %s",
+                    summary["summary"],
+                    extra={"event": "app.unclean_previous_run"},
+                )
     if exec_state.account is None:
         await executor.refresh_account()
     ensure_run_row(broker, clock, config)
@@ -1271,12 +1298,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     details={},
                 )
             else:
+                downtime = getattr(app.state, "unclean_downtime", None)
                 record_event(
                     session,
                     clock,
                     level="warning",
                     event_type="restart_paused",
-                    details={"reasons": decision.reasons},
+                    details={
+                        "reasons": decision.reasons,
+                        **(
+                            {"downtime": downtime}
+                            if downtime is not None
+                            else {}
+                        ),
+                    },
                 )
             session.commit()
         app.state.restart_resumed = decision.resume
