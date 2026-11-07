@@ -1442,6 +1442,7 @@ export interface ChartResponse {
 export interface UniverseFixedSymbol {
   symbol: string;
   sector: string;
+  name?: string | null;
 }
 
 export interface UniverseThresholds {
@@ -1475,6 +1476,7 @@ export type UniverseRowStatus =
 
 export interface UniverseRow {
   symbol: string;
+  name?: string | null;
   sector: string;
   added_at: string | null;
   status: UniverseRowStatus;

@@ -255,6 +255,24 @@ class UniverseService:
         with self._sf() as session:
             return self._active_pool(session)
 
+    def _pool_names(self) -> dict[str, str]:
+        """symbol → cleaned company name, for name columns the screen
+        shows. ``universe.names`` in config overrides the stored name
+        (docs/SPEC.md, GUI — Universe)."""
+        names_cfg = self._cfg().get("names") or {}
+        with self._sf() as session:
+            names = {
+                row.symbol: row.name
+                for row in session.execute(
+                    select(
+                        UniversePoolRow.symbol, UniversePoolRow.name
+                    )
+                )
+                if row.name
+            }
+        names.update({s: str(n) for s, n in names_cfg.items()})
+        return names
+
     async def _check_symbol_add(
         self, session: Session, symbol: str, sector: str
     ) -> tuple[list[str], str | None]:
@@ -983,8 +1001,13 @@ class UniverseService:
         cfg = self._cfg()
         screen_cfg = self._screen_cfg()
         now = self._clock.now()
+        names = self._pool_names()
         fixed = [
-            {"symbol": s, "sector": (cfg.get("sectors") or {}).get(s, "")}
+            {
+                "symbol": s,
+                "sector": (cfg.get("sectors") or {}).get(s, ""),
+                "name": names.get(s),
+            }
             for s in (cfg.get("symbols") or [])
         ]
         payload: dict[str, Any] = {
@@ -1051,6 +1074,7 @@ class UniverseService:
             rows.append(
                 {
                     "symbol": entry.symbol,
+                    "name": entry.name,
                     "sector": entry.sector,
                     "added_at": entry.added_at.isoformat(),
                     "status": status,
@@ -1079,6 +1103,7 @@ class UniverseService:
             rows.append(
                 {
                     "symbol": symbol,
+                    "name": names.get(symbol),
                     "sector": "",
                     "added_at": None,
                     "status": "held",
