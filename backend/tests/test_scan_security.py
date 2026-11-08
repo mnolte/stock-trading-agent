@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -230,3 +231,14 @@ def test_literal_multicast_ip_rejected() -> None:
         validate_public_https_url("https://239.1.2.3/hook")
     with pytest.raises(UrlRejected, match="private address"):
         validate_public_https_url("https://[ff02::1]/hook")
+
+
+# ----------------------------------------------------------------------
+# run-audits.sh: the audit tool runs under the repo's Python
+
+
+def test_run_audits_pins_python_312() -> None:
+    script = (
+        Path(__file__).resolve().parents[2] / "security" / "run-audits.sh"
+    )
+    assert "--python 3.12" in script.read_text()
