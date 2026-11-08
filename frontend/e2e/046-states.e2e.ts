@@ -198,7 +198,7 @@ const BANNER_CASES: {
     item: { id: null, kind: 'kill_switch', level: 'critical', automatic: false,
       actions: ['resume', 'flatten'] },
     expect: 'Kill switch is on — no new entries. Open positions stay protected at Alpaca.',
-    actions: ['Resume…'],
+    actions: ['Resume…', 'Stop & flatten'],
   },
   {
     kind: 'kill_switch (automatic)',
@@ -206,7 +206,7 @@ const BANNER_CASES: {
       reason: 'drawdown −8.1% from peak',
       actions: ['resume', 'flatten'] },
     expect: 'Trading halted — drawdown −8.1% from peak',
-    actions: ['Resume…'],
+    actions: ['Resume…', 'Stop & flatten'],
   },
   {
     kind: 'shock_brake',

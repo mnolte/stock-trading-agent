@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-07 — [046] Spec alignment: kill-switch banner flatten action (G18)
+
+- The kill-switch banner advertised a `flatten` action that rendered no button — `BannerStrip` now maps it to "Stop & flatten", opening the same confirmation dialog as the header's Kill switch menu. Gap G18 from `docs/analysis/046-spec-alignment.md`.
+
 ## 2026-11-07 — [046] Spec alignment: position-check severity, gate-order wording, PID-reuse test
 
 Phase 2 of item 046, the backend group of the gap report (`docs/analysis/046-spec-alignment.md`).

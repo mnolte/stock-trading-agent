@@ -35,10 +35,12 @@ function bannerText(item: BannerItem): string {
 /** Renders the banner stack from /api/banners above the page content. */
 export function BannerStrip({
   onResumeRequest,
+  onFlattenRequest,
   onChanged,
   refreshKey = 0,
 }: {
   onResumeRequest: (item: BannerItem) => void;
+  onFlattenRequest?: () => void;
   onChanged?: () => void;
   refreshKey?: number;
 }) {
@@ -134,6 +136,10 @@ export function BannerStrip({
         }
         if (item.actions.includes('resume_pause') && !item.resume_blocked) {
           actions.push({ label: 'Resume', onClick: resumePause });
+        }
+        if (item.actions.includes('flatten') && onFlattenRequest) {
+          // Stop & flatten — same dialog the header's Kill switch menu opens.
+          actions.push({ label: 'Stop & flatten', onClick: onFlattenRequest });
         }
         if (item.actions.includes('open_settings')) {
           actions.push({ label: 'Settings', onClick: () => navigate('/settings') });
