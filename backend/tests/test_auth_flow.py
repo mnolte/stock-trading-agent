@@ -53,6 +53,36 @@ def test_sign_in_password_then_code(app_auth: Any) -> None:
         assert client.get("/api/header").status_code == 200
 
 
+def test_https_accepts_only_the_host_session_cookie(app_auth: Any) -> None:
+    """Over HTTPS a planted/plain ``sa_session`` must not authenticate —
+    only ``__Host-sa_session`` does (the __Host- guarantee is not diluted)."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        token = client.cookies.get("__Host-sa_session") or ""
+        assert token
+        client.cookies.clear()
+        client.cookies.set("sa_session", token)
+        assert client.get("/api/header").status_code == 401
+        assert client.get("/api/auth/status").json()["signed_in"] is False
+
+
+def test_http_accepts_only_the_plain_session_cookie(app_auth: Any) -> None:
+    """The mirror of the HTTPS rule: on plain HTTP only ``sa_session``
+    counts — the ``__Host-`` name is refused there too."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="http://testserver") as client:
+        sign_in(client, secret, remember=True)
+        token = client.cookies.get("sa_session") or ""
+        assert token
+        client.cookies.clear()
+        client.cookies.set("__Host-sa_session", token)
+        assert client.get("/api/header").status_code == 401
+        client.cookies.clear()
+        client.cookies.set("sa_session", token)
+        assert client.get("/api/header").status_code == 200
+
+
 def test_wrong_password_and_wrong_code_same_message(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
@@ -118,6 +148,16 @@ def test_global_pause_after_twenty_failures(app_auth: Any) -> None:
         # While paused even a correct password is refused.
         r = client.post("/api/auth/sign-in", json={"password": PASSWORD})
         assert r.status_code == 429
+        # The pause lives in the database: a fresh AuthService (a restart)
+        # still refuses, and it lifts once the hour is up.
+        from app.auth.service import AuthError, AuthService
+
+        restarted = AuthService(get_config(), app.state.clock)
+        with pytest.raises(AuthError) as err:
+            restarted.start_sign_in("nope", False, "10.1.2.3", "pytest")
+        assert err.value.status == 429
+        app.state.clock.advance(timedelta(minutes=61))
+        assert restarted.start_sign_in(PASSWORD, False, "10.1.2.3", "pytest")
 
 
 def test_idle_and_absolute_expiry(app_auth: Any) -> None:
@@ -266,6 +306,30 @@ def test_risky_writes_require_confirm(
         assert r.json()["error"]["code"] == "confirm_required"
 
 
+def test_first_smtp_save_requires_confirm(app_auth: Any) -> None:
+    """Configuring SMTP for the first time redirects every future alert —
+    it needs 'Confirm it is you' just like changing a saved destination."""
+    app, secret, _codes = app_auth
+    body = {
+        "host": "smtp.test",
+        "port": 587,
+        "username": "agent@test",
+        "from_addr": "agent@test",
+        "to_addr": "marc@test",
+        "password": "smtp-secret-123",
+    }
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        r = client.post("/api/notifications/smtp", json=body, headers=csrf_headers(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client)
+        )
+        r = client.post("/api/notifications/smtp", json=body, headers=csrf_headers(client))
+        assert r.status_code == 200, r.text
+
+
 def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
     """Loosening a numeric risk limit needs 'Confirm it is you';
     tightening never asks (design, Settings → Access)."""
@@ -324,6 +388,31 @@ def test_csrf_required_on_writes(app_auth: Any) -> None:
         assert r.status_code == 200
 
 
+def test_csrf_check_uses_constant_time_compare(
+    app_auth: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for #156: the double-submit check must go through
+    hmac.compare_digest — a plain != passes every behavioural test."""
+    import hmac
+
+    app, secret, _codes = app_auth
+    calls: list[tuple[bytes, bytes]] = []
+    real = hmac.compare_digest
+
+    def spy(a: bytes, b: bytes) -> bool:
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(hmac, "compare_digest", spy)
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        calls.clear()  # sign-in itself compares TOTP/recovery hashes
+        token = client.cookies.get("sa_csrf") or ""
+        r = client.post("/api/pause", headers=csrf_headers(client))
+        assert r.status_code == 200
+    assert (token.encode(), token.encode()) in calls
+
+
 # ---------------------------------------------------------------------
 # the route-table walk + websocket
 
@@ -369,20 +458,33 @@ def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
             client.websocket_connect("/ws/ws").__enter__()
         # A foreign Origin is refused even with a session.
         sign_in(client, secret, remember=True)
-        session_cookie = client.cookies.get("__Host-sa_session") or ""
-        ws_headers = {"Cookie": f"__Host-sa_session={session_cookie}"}
+        token = client.cookies.get("__Host-sa_session") or ""
+        # websocket_connect always dials ws:// — a plain scheme, so the
+        # plain sa_session name is the one that counts here (the __Host-
+        # name is for https/wss scopes, covered by the http tests).
         with pytest.raises(WebSocketDisconnect):
             client.websocket_connect(
                 "/ws/ws",
                 headers={
-                    "Cookie": f"__Host-sa_session={session_cookie}",
+                    "Cookie": f"__Host-sa_session={token}",
+                    "Origin": "https://testserver",
+                },
+            ).__enter__()
+        with pytest.raises(WebSocketDisconnect):
+            client.websocket_connect(
+                "/ws/ws",
+                headers={
+                    "Cookie": f"sa_session={token}",
                     "Origin": "https://evil.example",
                 },
             ).__enter__()
         # The app's own origin works.
         ws = client.websocket_connect(
             "/ws/ws",
-            headers={**ws_headers, "Origin": "https://testserver"},
+            headers={
+                "Cookie": f"sa_session={token}",
+                "Origin": "https://testserver",
+            },
         )
         with ws:
             ws.send_text("ping")

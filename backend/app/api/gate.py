@@ -123,6 +123,10 @@ def _origin_allowed(origin: str, config: AppConfig) -> bool:
     host = (parsed.hostname or "").lower()
     if not host:
         return False
+    # A port-less loopback Origin means :80/:443 — never the app's own
+    # loopback origin, which always carries SA_PORT (or the dev port).
+    if host in _LOOPBACK_NAMES and parsed.port is None:
+        return False
     return host_allowed(
         f"{host}:{parsed.port}" if parsed.port is not None else host, config
     )
@@ -141,6 +145,12 @@ def _int_header(scope: Scope, name: bytes) -> int | None:
         return int(raw) if raw.strip() else None
     except ValueError:
         return None
+
+
+def _chunked_transfer_encoding(scope: Scope) -> bool:
+    """True when Transfer-Encoding lists chunked among its tokens."""
+    raw = _header(scope, b"transfer-encoding").lower()
+    return "chunked" in [part.strip() for part in raw.split(",")]
 
 
 async def _send_error(send: Send, status: int, code: str) -> None:
@@ -240,7 +250,7 @@ class RequestGateMiddleware:
         if is_write_http:
             content_type = _header(scope, b"content-type").split(";")[0].strip()
             declared = _int_header(scope, b"content-length")
-            chunked = _header(scope, b"transfer-encoding") == "chunked"
+            chunked = _chunked_transfer_encoding(scope)
             cap = int(
                 config.get(
                     "security",

@@ -142,6 +142,22 @@ def test_credentials_read_is_write_only(vps_app: TestClient) -> None:
     assert "repo-password-123" not in text
 
 
+def test_backup_credentials_nested_keys_are_scrub_values(vps_app: TestClient) -> None:
+    """The JSON blob is one stored value; its access keys must be scrub
+    values too, or a lone key in a log message survives."""
+    from app.secrets_service import scrub
+
+    store = cast(FastAPI, vps_app.app).state.secrets_store
+    _store_creds(cast(FastAPI, vps_app.app))
+    values = store.scrub_values()
+    assert "AKIA-VERY-SECRET-KEY-ID" in values
+    assert "THE-SECRET-ACCESS-KEY" in values
+    leaked = "backup failed key=AKIA-VERY-SECRET-KEY-ID secret=THE-SECRET-ACCESS-KEY"
+    cleaned = scrub(leaked, values)
+    assert "AKIA-VERY-SECRET-KEY-ID" not in cleaned
+    assert "THE-SECRET-ACCESS-KEY" not in cleaned
+
+
 def test_credentials_destination_change_needs_all_secrets(
     vps_app: TestClient,
 ) -> None:

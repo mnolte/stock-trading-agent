@@ -86,10 +86,25 @@ function csrfToken(): string | null {
   return match ? match[1] : null;
 }
 
+/** Only same-origin paths may be used as a post-sign-in destination. */
+export function safeNextPath(next: string | null): string {
+  if (!next) return '/';
+  try {
+    const url = new URL(next, window.location.origin);
+    if (url.origin !== window.location.origin) return '/';
+    const path = `${url.pathname}${url.search}${url.hash}`;
+    // '..' and '\' normalize into a leading '//' — protocol-relative to
+    // location.assign even though the URL stayed on this origin.
+    return path.startsWith('//') ? '/' : path;
+  } catch {
+    return '/';
+  }
+}
+
 /** 401 → the sign-in page, coming back to the same page after. */
 function redirectToSignIn(expired: boolean): void {
   if (window.location.pathname === '/login') return;
-  const next = window.location.pathname + window.location.search;
+  const next = safeNextPath(window.location.pathname + window.location.search);
   const flag = expired ? '&expired=1' : '';
   window.location.assign(`/login?next=${encodeURIComponent(next)}${flag}`);
 }

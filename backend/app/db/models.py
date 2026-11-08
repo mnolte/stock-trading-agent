@@ -1148,6 +1148,8 @@ class User(Base):
     password_changed_at: Mapped[datetime] = mapped_column(nullable=False)
     # Last accepted TOTP step — a code at or below it is a replay.
     last_totp_step: Mapped[int] = mapped_column(nullable=False, default=-1)
+    # Global sign-in pause end (naive UTC); survives a restart.
+    global_locked_until: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False)
 
 

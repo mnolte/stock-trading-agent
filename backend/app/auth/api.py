@@ -202,11 +202,10 @@ def mask_log_ip(ip: str) -> str:
 
 
 def _session_token(request: Request) -> str:
-    """The session cookie — ``__Host-sa_session`` over HTTPS, else
-    ``sa_session``; both are accepted on read."""
-    return request.cookies.get(session_cookie_name(request)) or request.cookies.get(
-        SESSION_COOKIE
-    ) or ""
+    """The session cookie for this request's scheme: ``__Host-sa_session``
+    over HTTPS, ``sa_session`` on plain-http loopback. The other name is
+    never accepted, so a planted cookie can't cross schemes."""
+    return request.cookies.get(session_cookie_name(request)) or ""
 
 
 def _session_row(request: Request) -> tuple[AuthService, AuthSession]:

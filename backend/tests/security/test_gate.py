@@ -8,7 +8,8 @@ proxy's forwarded Host/Origin pass).
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import asyncio
+from collections.abc import Generator, MutableMapping
 from typing import Any
 
 import pytest
@@ -71,6 +72,24 @@ def test_own_origin_write_passes(client: TestClient) -> None:
     assert r.json() == {"paused": True}
 
 
+@pytest.mark.parametrize(
+    "origin", ["http://localhost", "http://127.0.0.1", "http://[::1]"]
+)
+def test_portless_loopback_origin_refused(client: TestClient, origin: str) -> None:
+    """Port-less loopback Origins mean :80/:443 — a page served by another
+    local process must not pass as the app's own origin."""
+    r = client.post("/api/pause", headers={"Origin": origin})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "origin_refused"
+
+
+def test_loopback_origin_with_explicit_port_passes(client: TestClient) -> None:
+    # Simulated mode counts any loopback port as a dev server; the port is
+    # what makes the Origin attributable to a specific local server.
+    r = client.post("/api/pause", headers={"Origin": "http://localhost:8000"})
+    assert r.status_code == 200
+
+
 def test_no_headers_write_passes(client: TestClient) -> None:
     """curl-style requests carry no Origin or fetch metadata — allowed."""
     r = client.post("/api/pause")
@@ -118,6 +137,48 @@ def test_form_encoded_write_refused(client: TestClient) -> None:
     r = client.post("/api/pause", data={"on": "true"})
     assert r.status_code == 415
     assert r.json()["error"]["code"] == "unsupported_media_type"
+
+
+@pytest.mark.parametrize("encoding", ["Chunked", "gzip, chunked", "gzip,Chunked"])
+def test_chunked_transfer_encoding_counts_as_a_body(encoding: str) -> None:
+    """A TE token list with no Content-Type/Length still has a body: the
+    gate must apply the JSON-only rule instead of letting it through."""
+    from app.api.gate import RequestGateMiddleware
+
+    called = False
+
+    async def app(
+        scope: MutableMapping[str, Any], receive: Any, send: Any
+    ) -> None:
+        nonlocal called
+        called = True
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    messages: list[MutableMapping[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/pause",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 123),
+        "headers": [
+            (b"host", b"testserver"),
+            (b"transfer-encoding", encoding.encode()),
+        ],
+    }
+    asyncio.run(RequestGateMiddleware(app)(scope, receive, send))
+
+    assert called is False
+    assert messages[0]["status"] == 415
 
 
 def test_json_write_accepted(client: TestClient) -> None:

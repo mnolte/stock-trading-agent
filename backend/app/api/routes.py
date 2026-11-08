@@ -3360,8 +3360,8 @@ async def save_smtp(
         errors.append(SECRET_TOO_SHORT)
     if errors:
         raise HTTPException(status_code=422, detail=errors)
-    # Changing where the stored password is sent (host, port, username)
-    # or where alerts go (To) needs "Confirm it is you" (design, Access).
+    # First-time setup and any change of where alerts or the stored
+    # password go needs "Confirm it is you" (design, Access).
     from app.auth.api import require_confirmed
 
     current = service.smtp_status()
@@ -3371,8 +3371,10 @@ async def save_smtp(
         or current.get("username") != username
     )
     if (
-        destination_changed or current.get("to_addr") != to_addr
-    ) and current.get("configured"):
+        not current.get("configured")
+        or destination_changed
+        or current.get("to_addr") != to_addr
+    ):
         require_confirmed(request)
     # The stored password never travels to a new server: a changed host,
     # port or username needs the password again in the same request —

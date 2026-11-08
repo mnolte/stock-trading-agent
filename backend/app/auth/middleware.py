@@ -20,14 +20,20 @@ app behaves exactly as before.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from http.cookies import SimpleCookie
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from app.auth.guard import OPEN_PATHS, auth_required, is_guarded_path
-from app.auth.service import CSRF_COOKIE, CSRF_HEADER, SESSION_COOKIE
+from app.auth.guard import OPEN_PATHS, auth_required, is_guarded_path, scope_is_https
+from app.auth.service import (
+    CSRF_COOKIE,
+    CSRF_HEADER,
+    SESSION_COOKIE,
+    SESSION_COOKIE_SECURE,
+)
 from app.config import get_config
 
 logger = logging.getLogger(__name__)
@@ -107,8 +113,14 @@ class AuthMiddleware:
         # app.state is populated by the lifespan; during the brief window
         # before it, treat everything as not signed in.
         cookies = _cookies(scope)
-        # __Host-sa_session over HTTPS, sa_session on loopback.
-        token = cookies.get("__Host-sa_session") or cookies.get(SESSION_COOKIE)
+        # Over HTTPS only the __Host- name authenticates; the plain name
+        # is for plain-http loopback, so a planted sa_session can't
+        # substitute a session the attacker holds.
+        token = (
+            cookies.get(SESSION_COOKIE_SECURE)
+            if scope_is_https(scope, config)
+            else cookies.get(SESSION_COOKIE)
+        )
         row, reason = (
             auth.authenticate(token)
             if auth is not None
@@ -133,7 +145,9 @@ class AuthMiddleware:
         if scope.get("method", "GET") not in _SAFE_METHODS:
             presented = _header(scope, CSRF_HEADER.encode())
             expected = cookies.get(CSRF_COOKIE, "")
-            if not expected or presented != expected:
+            if not expected or not hmac.compare_digest(
+                presented.encode(), expected.encode()
+            ):
                 await _send_error(send, 403, "forbidden")
                 return
         scope["state"] = {**scope.get("state", {}), "session": row}

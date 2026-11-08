@@ -12,7 +12,7 @@ allowed() { grep -E '^\s*-?\s*id:' "$AL" | sed 's/.*id:\s*//; s/\s*$//' || true;
 export UV_FROZEN=${UV_FROZEN:-1}
 uv export --frozen --no-dev --no-emit-project -o /tmp/sa-reqs.txt
 mapfile -t IGNORES < <(allowed | sed 's/^/--ignore-vuln /')
-uvx --from pip-audit pip-audit -r /tmp/sa-reqs.txt "${IGNORES[@]}" \
+uvx --from pip-audit --python 3.12 pip-audit -r /tmp/sa-reqs.txt "${IGNORES[@]}" \
     --skip-editable || {
         echo "pip-audit found high/critical advisories (allowlist: $AL)"; exit 1; }
 
