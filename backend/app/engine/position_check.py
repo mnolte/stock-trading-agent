@@ -122,7 +122,7 @@ class PositionChecker:
                     record_event(
                         session,
                         self.clock,
-                        level="critical",
+                        level="error",
                         event_type="position_check_failed",
                         details={
                             "consecutive": self.state.failed_checks,

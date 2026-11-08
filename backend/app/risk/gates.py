@@ -1,10 +1,11 @@
 """Risk gates for entries (docs/SPEC.md, Risk management).
 
-Gates run in code after the model answers, in the spec's order; the first
-gate that fails blocks the action and is recorded by name on the
-decision's ``gates_result``. Sizing limits never block — they shrink the
-share count through the shared ``position_size`` function; a size of zero
-blocks with the name of the limit that hit zero.
+Gates run in code after the model answers, in the order below; the spec's
+gate table records this order. The first gate that fails blocks the
+action and is recorded by name on the decision's ``gates_result``.
+Sizing limits never block — they shrink the share count through the
+shared ``position_size`` function; a size of zero blocks with the name of
+the limit that hit zero.
 """
 
 from __future__ import annotations
@@ -116,7 +117,7 @@ def evaluate_entry_gates(
     stop: Decimal,
     config: AppConfig,
 ) -> GateResult:
-    """Run every gate in spec order; return the first blocker by name."""
+    """Run every gate in the order below; return the first blocker by name."""
     checks: list[GateCheck] = []
 
     def block(name: str, detail: str) -> GateResult:
