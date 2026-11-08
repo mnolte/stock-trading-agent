@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-08 — [046] Spec alignment: default models and gate order (G3, G7 spec halves)
+
+- The default live model is `gpt-4.1-mini` in the overview, comparison table, model-providers item and Settings text; review defaults read `gpt-4o-mini` weekly, `gpt-4.1-mini` briefing and verdict — matching `config.example.yaml`.
+- The risk-gate table is rewritten in the order `gates.py` evaluates: pre-checks (kill switch, paused, reconciliation, same symbol), then max positions, sector, daily loss, shock brake, earnings blackout, re-entry, drawdown, losing streak (halves risk, never blocks), the sizing limits (risk per trade, position size, open risk, cash) and order sanity. Earnings exits noted as not an entry gate.
+
 ## 2026-11-08 — [046] Spec alignment: no_call reasons and the data-model table (G6, G10)
 
 - The `no_call` reason list at "Decision" now names the reasons the code actually stores — `price_stale`, `price_suspect`, `reference_missing` and `checks` replace the stale `quote_missing`; `no_options` stays (spec 298).
