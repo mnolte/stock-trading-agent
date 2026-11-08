@@ -20,6 +20,7 @@ app behaves exactly as before.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from http.cookies import SimpleCookie
@@ -133,7 +134,9 @@ class AuthMiddleware:
         if scope.get("method", "GET") not in _SAFE_METHODS:
             presented = _header(scope, CSRF_HEADER.encode())
             expected = cookies.get(CSRF_COOKIE, "")
-            if not expected or presented != expected:
+            if not expected or not hmac.compare_digest(
+                presented.encode(), expected.encode()
+            ):
                 await _send_error(send, 403, "forbidden")
                 return
         scope["state"] = {**scope.get("state", {}), "session": row}

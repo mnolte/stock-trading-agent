@@ -324,6 +324,31 @@ def test_csrf_required_on_writes(app_auth: Any) -> None:
         assert r.status_code == 200
 
 
+def test_csrf_check_uses_constant_time_compare(
+    app_auth: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for #156: the double-submit check must go through
+    hmac.compare_digest — a plain != passes every behavioural test."""
+    import hmac
+
+    app, secret, _codes = app_auth
+    calls: list[tuple[bytes, bytes]] = []
+    real = hmac.compare_digest
+
+    def spy(a: bytes, b: bytes) -> bool:
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(hmac, "compare_digest", spy)
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        calls.clear()  # sign-in itself compares TOTP/recovery hashes
+        token = client.cookies.get("sa_csrf") or ""
+        r = client.post("/api/pause", headers=csrf_headers(client))
+        assert r.status_code == 200
+    assert (token.encode(), token.encode()) in calls
+
+
 # ---------------------------------------------------------------------
 # the route-table walk + websocket
 
