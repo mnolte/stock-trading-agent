@@ -105,12 +105,13 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 043 | fix | Trading path audit fixes | — | — | #123 | merged |
 | 044 | spec | Spec rulings from the 043 audit | — | #135 | — | merged |
 | 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | #146 | merged |
-| 046 | fix | Spec and design alignment | `archive/046-fix-spec-alignment.md` | #140 | #150, #152 | building |
+| 046 | fix | Spec and design alignment | `archive/046-fix-spec-alignment.md` | #140 | #150, #151, #152 | building |
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
 | 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |
 | 050 | fix | Stop invariant | `archive/050-fix-stop-invariant.md` | #144 | #148 | merged |
 | 051 | spec | Archive kickoffs with the build | — | — | — | merged |
+| 053 | docs | Security audit | — | — | #164 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

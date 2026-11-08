@@ -101,7 +101,7 @@ indicators:                     # signal indicator periods (docs/SPEC.md, Indica
   atr_percentile_sessions: 60   # daily ATR percentile window
 
 decision:
-  model: gpt-4o-mini            # live decisions; any entry in models, OpenAI or Anthropic
+  model: gpt-4.1-mini           # live decisions; any entry in models, OpenAI or Anthropic
   temperature: 0                # OpenAI models only; Claude models use the effort in models
   prompt: decision.v1
   min_confidence_enter: 0.55
@@ -198,12 +198,13 @@ reviews:
   briefing_enabled: true
   briefing_time_ny: "09:00"       # trading days only
   verdict_after_sessions: 5
+  skip_flat_pct: 2                # v1-skip verdict draft: |outcome| under this % of entry counts as flat
   models:                       # PR 29; any entry in models, OpenAI or Anthropic, per task
     weekly: gpt-4o-mini
-    briefing: gpt-4o-mini
-    verdict: gpt-4o-mini
+    briefing: gpt-4.1-mini
+    verdict: gpt-4.1-mini
   temperature: 0.2              # OpenAI models only
-  prompts: {weekly: weekly.v2, briefing: briefing.v1, verdict: verdict.v2}
+  prompts: {weekly: weekly.v2, briefing: briefing.v2, verdict: verdict.v2}
   min_closed_trades_for_suggestion: 10
   max_words: {weekly_summary: 120, briefing: 80}
   monthly_cost_cap_usd: 2         # separate from trading decisions
@@ -238,6 +239,17 @@ notifications:
     daily_briefing: [email]
     weekly_review: [email]
     verdicts_waiting: []
+    readiness_changed: [browser]
+    another_instance: [browser, email]
+    new_sign_in: [browser, email]
+    sign_in_lockout: [browser, email]
+    restarted_resumed: [browser]
+    restarted_paused: [browser, email]
+    backup_failed: [browser, email]
+    backup_downloaded: [browser, email]   # not in the spec table; a sign-in-class security signal
+    disk_space: [browser, email]          # 80% warning; 90% is critical
+    cert_expiring: [browser, email]
+    clock_offset: [browser, email]
 
 ask:                            # PR 36, Ask the agent
   enabled: true
@@ -307,7 +319,7 @@ insights:                       # PR 22
 inspector:                      # PR 18, LLM call history
   page_size: 50                 # calls per page; the API allows up to 100
   slow_call_seconds: 15         # a returned call slower than this gets the warning "slow"
-  default_sources: [live, review]   # shadows off by default (they triple the volume)
+  default_sources: [live, review, ask]   # shadows and backtests off by default (they multiply the volume)
 
 logging:                        # PR 20, Logging, error handling and shutdown
   dir: data/logs
