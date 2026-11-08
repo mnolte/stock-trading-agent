@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-11-08 — [045] Notifications: drain waits for in-flight sends
+
+`NotificationService.drain()` used to return as soon as the queue looked
+empty — but the background worker and a manual drain can run at once, so
+the last item could still be inside `_process` (mid-commit) when the
+caller read the table. `drain()` now also waits for items other drains
+are processing (`_inflight` counter), which makes "drained" mean every
+queued notification's row has actually landed. This flaked
+`test_new_error_notification_once_per_fingerprint` in the image CI job;
+a regression test (`test_drain_waits_for_an_in_flight_item`) pins the
+semantics.
+
 ## 2026-11-08 — [045] GUI catch-up: remaining spec gaps closed
 
 Audit of issue #139 against `main` after #146 found five leftovers; all now match `docs/SPEC.md` and `design/`:
