@@ -143,6 +143,12 @@ def _int_header(scope: Scope, name: bytes) -> int | None:
         return None
 
 
+def _chunked_transfer_encoding(scope: Scope) -> bool:
+    """True when Transfer-Encoding lists chunked among its tokens."""
+    raw = _header(scope, b"transfer-encoding").lower()
+    return "chunked" in [part.strip() for part in raw.split(",")]
+
+
 async def _send_error(send: Send, status: int, code: str) -> None:
     from app.errors import error_body
 
@@ -240,7 +246,7 @@ class RequestGateMiddleware:
         if is_write_http:
             content_type = _header(scope, b"content-type").split(";")[0].strip()
             declared = _int_header(scope, b"content-length")
-            chunked = _header(scope, b"transfer-encoding") == "chunked"
+            chunked = _chunked_transfer_encoding(scope)
             cap = int(
                 config.get(
                     "security",

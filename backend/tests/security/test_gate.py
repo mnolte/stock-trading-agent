@@ -8,7 +8,8 @@ proxy's forwarded Host/Origin pass).
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import asyncio
+from collections.abc import Generator, MutableMapping
 from typing import Any
 
 import pytest
@@ -118,6 +119,48 @@ def test_form_encoded_write_refused(client: TestClient) -> None:
     r = client.post("/api/pause", data={"on": "true"})
     assert r.status_code == 415
     assert r.json()["error"]["code"] == "unsupported_media_type"
+
+
+@pytest.mark.parametrize("encoding", ["Chunked", "gzip, chunked", "gzip,Chunked"])
+def test_chunked_transfer_encoding_counts_as_a_body(encoding: str) -> None:
+    """A TE token list with no Content-Type/Length still has a body: the
+    gate must apply the JSON-only rule instead of letting it through."""
+    from app.api.gate import RequestGateMiddleware
+
+    called = False
+
+    async def app(
+        scope: MutableMapping[str, Any], receive: Any, send: Any
+    ) -> None:
+        nonlocal called
+        called = True
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    messages: list[MutableMapping[str, Any]] = []
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/pause",
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 123),
+        "headers": [
+            (b"host", b"testserver"),
+            (b"transfer-encoding", encoding.encode()),
+        ],
+    }
+    asyncio.run(RequestGateMiddleware(app)(scope, receive, send))
+
+    assert called is False
+    assert messages[0]["status"] == 415
 
 
 def test_json_write_accepted(client: TestClient) -> None:
