@@ -273,7 +273,7 @@ def test_unclean_summary_counts_missed_work(
 
 
 def test_backup_not_set_up_sends_nothing(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Without backup credentials the offsite copy and the monthly
     restore test show 'not set up' — no failure notification
@@ -307,4 +307,11 @@ def test_backup_not_set_up_sends_nothing(
     # may still alert.
     assert not [
         n for n in sent if "offsite" in n[1] or "restore" in n[1]
+    ]
+    # 'not set up' carries no timestamp — the staleness parse must not
+    # log "unparseable restore_test.at" every hour (item 054).
+    assert not [
+        r
+        for r in caplog.records
+        if "unparseable restore_test.at" in r.getMessage()
     ]

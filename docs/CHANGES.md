@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-08 — [054] Restore-test 'not set up' warning
+
+- With offsite credentials unset, `check_backups` replaced the stored
+  `restore_test` status with `{"not_set_up": true}` — no `at` — and the
+  staleness check then logged `unparseable restore_test.at None —
+  ignored` on every hourly run. The staleness parse now skips the
+  `not_set_up` state; a genuinely unparseable `at` still warns.
+
 ## 2026-11-08 — [052] Symbol-keyed config keys
 
 Config layers: `models` and the symbol-keyed `universe.sectors` and

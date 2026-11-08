@@ -318,7 +318,7 @@ class OpsService:
         stale_days = int(
             self._config.get("ops", "restore_test_stale_days", default=45)
         )
-        if restore_test:
+        if restore_test and not restore_test.get("not_set_up"):
             ran = restore_test.get("at")
             try:
                 ran_at = datetime.fromisoformat(str(ran))

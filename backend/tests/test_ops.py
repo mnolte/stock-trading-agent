@@ -150,6 +150,23 @@ def test_backup_check_warns_without_fresh_copy(tmp_path: Path) -> None:
     assert result["local"]["level"] == "ok"
 
 
+def test_backup_check_warns_on_unparseable_restore_test_at(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A stored restore_test.at that is not a timestamp still logs the
+    warning — only the 'not set up' override skips the parse (item 054)."""
+    ops = _ops(
+        tmp_path,
+        values={"backup_password": "pw", "backup_credentials": "{}"},
+    )
+    ops._status["restore_test"] = {"at": "not-a-date", "ok": True}
+    with caplog.at_level("WARNING", logger="app.ops.service"):
+        ops.check_backups()
+    assert any(
+        "unparseable restore_test.at" in r.getMessage() for r in caplog.records
+    )
+
+
 def test_status_persists_to_disk(tmp_path: Path) -> None:
     ops = _ops(tmp_path)
     ops.check_disk()
