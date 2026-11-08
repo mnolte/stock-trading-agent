@@ -113,6 +113,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 051 | spec | Archive kickoffs with the build | — | — | — | merged |
 | 052 | fix | Symbol-keyed config keys | `archive/052-fix-symbol-config-keys.md` | #177 | #178 | building |
 | 053 | docs | Security audit | — | — | #164, #171 | building |
+| 054 | fix | Restore-test 'not set up' logs unparseable-at warning hourly | — | — | — | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
