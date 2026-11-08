@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-import { post, errorMessages } from '../api/client';
+import { post, errorMessages, safeNextPath } from '../api/client';
 
 /**
  * Sign in (design/screens/Login.dc.html): password → authenticator or
@@ -10,7 +10,7 @@ import { post, errorMessages } from '../api/client';
  */
 export default function Login() {
   const [params] = useSearchParams();
-  const next = params.get('next') || '/';
+  const next = safeNextPath(params.get('next'));
   const expired = params.get('expired') === '1';
 
   const [password, setPassword] = useState('');

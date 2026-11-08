@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, errorMessages, get, post } from './client';
+import { ApiError, errorMessages, get, post, safeNextPath } from './client';
 import { getBackendState } from './backend';
 import { getApiToasts } from './toasts';
 
@@ -9,7 +9,12 @@ const assign = vi.fn();
 beforeAll(() => {
   // client.ts touches browser globals; the tests run in node.
   vi.stubGlobal('window', {
-    location: { pathname: '/settings', search: '', assign },
+    location: {
+      pathname: '/settings',
+      search: '',
+      origin: 'http://testserver',
+      assign,
+    },
     addEventListener: vi.fn(),
   });
   vi.stubGlobal('document', { cookie: '' });
@@ -34,6 +39,20 @@ function jsonResponse(
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('safeNextPath', () => {
+  it.each([
+    ['/settings?tab=positions#top', '/settings?tab=positions#top'],
+    ['https://evil.example/', '/'],
+    ['//evil.example/', '/'],
+    ['/./\\evil.example/', '/'],
+    ['javascript:alert(1)', '/'],
+    ['', '/'],
+    [null, '/'],
+  ])('sanitises %s', (input, expected) => {
+    expect(safeNextPath(input)).toBe(expected);
+  });
 });
 
 describe('get', () => {
