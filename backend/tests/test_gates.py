@@ -79,6 +79,18 @@ def test_unknown_sector_blocks_instead_of_bypassing_cap() -> None:
     assert result.blocked_by == "sector_unknown"
 
 
+def test_saved_sector_for_added_symbol_reaches_the_gate() -> None:
+    """Item 052: a sector saved for a symbol the example doesn't list
+    is kept (open map) — sector_unknown must not fire for it."""
+    config = AppConfig()
+    config.apply_saved(
+        {"universe": {"sectors": {"TSLA": "Consumer Discretionary"}}}, 2
+    )
+    result = _run(_ctx(symbol="TSLA"), config=config)
+    check = next(c for c in result.checks if c.name == "sector_cap")
+    assert check.passed
+
+
 def test_screened_ibm_cannot_bypass_two_technology_positions() -> None:
     config = AppConfig()
     config.yaml["universe"]["mode"] = "screened"

@@ -91,6 +91,76 @@ def test_local_model_flag_falls_back_to_example(
     assert config.get("models", "gpt-6.1-sol", "supports_temperature") is False
 
 
+def test_symbol_keyed_maps_keep_unknown_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """universe.sectors and universe.names are open maps (item 052): a
+    ticker the example doesn't list is kept at every layer, silently —
+    it is user data, not an unknown key."""
+    _write(
+        tmp_path / "backend" / "config.example.yaml",
+        "universe:\n  sectors: {MSFT: Technology}\n  names: {MSFT: Microsoft}\n",
+    )
+    _write(
+        tmp_path / "backend" / "config.yaml",
+        "universe:\n  sectors: {TSLA: Consumer Discretionary}\n",
+    )
+    config = _config(tmp_path, monkeypatch)
+    assert config.get("universe", "sectors", "TSLA") == "Consumer Discretionary"
+    config.apply_saved(
+        {
+            "universe": {
+                "sectors": {"ACN": "Technology"},
+                "names": {"ACN": "Accenture"},
+            }
+        },
+        2,
+    )
+    assert config.get("universe", "sectors", "ACN") == "Technology"
+    assert config.get("universe", "names", "ACN") == "Accenture"
+    assert config.get("universe", "sectors", "TSLA") == "Consumer Discretionary"
+    assert config.layer_counts()["unknown_keys"] == 0
+
+
+def test_open_maps_do_not_leak_to_siblings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Only the listed maps are open: a misspelt sibling and a retired
+    key are still dropped and warned once (item 052)."""
+    _write(
+        tmp_path / "backend" / "config.example.yaml",
+        "universe:\n  sectors: {MSFT: Technology}\n  names: {MSFT: Microsoft}\n"
+        "risk:\n  drawdown_kill_pct: 8\n",
+    )
+    _write(
+        tmp_path / "backend" / "config.yaml",
+        "universe:\n  sector: {TSLA: Energy}\nrisk:\n  pdt_max_day_trades: 3\n",
+    )
+    with caplog.at_level(logging.WARNING, logger="app.config"):
+        config = _config(tmp_path, monkeypatch)
+    assert config.get("universe", "sector") is None
+    assert config.get("risk", "pdt_max_day_trades") is None
+    assert config.get("universe", "sectors", "MSFT") == "Technology"
+    warned = " ".join(r.getMessage() for r in caplog.records)
+    assert "universe.sector.TSLA" in warned
+    assert "risk.pdt_max_day_trades" in warned
+    assert config.layer_counts()["unknown_keys"] == 2
+
+
+def test_universe_symbols_list_is_kept_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """universe.symbols is a plain list: elements the example doesn't
+    have are kept — lists were never key-filtered (item 052)."""
+    _write(
+        tmp_path / "backend" / "config.example.yaml",
+        "universe:\n  symbols: [MSFT]\n  sectors: {MSFT: Technology}\n",
+    )
+    config = _config(tmp_path, monkeypatch)
+    config.apply_saved({"universe": {"symbols": ["MSFT", "TSLA"]}}, 2)
+    assert config.get("universe", "symbols") == ["MSFT", "TSLA"]
+
+
 def test_local_only_model_is_kept(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
