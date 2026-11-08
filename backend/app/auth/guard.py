@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from starlette.requests import Request
+from starlette.types import Scope
 from starlette.websockets import WebSocket
 
 if TYPE_CHECKING:
@@ -72,22 +73,32 @@ def client_ip(request: Request | WebSocket, config: AppConfig) -> str:
     return peer
 
 
-def request_is_https(request: Request | WebSocket, config: AppConfig) -> bool:
-    """"Is this request HTTPS" as the browser sees it.
+def scope_is_https(scope: Scope, config: AppConfig) -> bool:
+    """"Is this request HTTPS" as the browser sees it, from the raw scope.
 
     On the VPS the app talks plain HTTP to Caddy, so the scheme comes
     from ``X-Forwarded-Proto`` — believed only when the direct peer is a
     trusted proxy, or when ``SA_PUBLIC_URL`` is https (then the browser
     is on HTTPS by definition; the Caddy hop stays internal).
     """
-    if request.url.scheme == "https":
+    if scope.get("scheme") in ("https", "wss"):
         return True
     if config.env.sa_public_url.strip().lower().startswith("https://"):
         return True
-    peer = request.client.host if request.client is not None else ""
+    client = scope.get("client") or ("", 0)
+    peer = client[0] if client else ""
     if not _is_trusted_proxy(peer, config):
         return False
-    return request.headers.get("x-forwarded-proto", "").lower() == "https"
+    headers = cast("list[tuple[bytes, bytes]]", scope.get("headers") or [])
+    for key, value in headers:
+        if key == b"x-forwarded-proto":
+            return value.decode("latin-1").lower() == "https"
+    return False
+
+
+def request_is_https(request: Request | WebSocket, config: AppConfig) -> bool:
+    """"Is this request HTTPS" as the browser sees it."""
+    return scope_is_https(request.scope, config)
 
 
 def host_is_loopback(host: str) -> bool:

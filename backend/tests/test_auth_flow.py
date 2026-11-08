@@ -53,6 +53,36 @@ def test_sign_in_password_then_code(app_auth: Any) -> None:
         assert client.get("/api/header").status_code == 200
 
 
+def test_https_accepts_only_the_host_session_cookie(app_auth: Any) -> None:
+    """Over HTTPS a planted/plain ``sa_session`` must not authenticate —
+    only ``__Host-sa_session`` does (the __Host- guarantee is not diluted)."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        token = client.cookies.get("__Host-sa_session") or ""
+        assert token
+        client.cookies.clear()
+        client.cookies.set("sa_session", token)
+        assert client.get("/api/header").status_code == 401
+        assert client.get("/api/auth/status").json()["signed_in"] is False
+
+
+def test_http_accepts_only_the_plain_session_cookie(app_auth: Any) -> None:
+    """The mirror of the HTTPS rule: on plain HTTP only ``sa_session``
+    counts — the ``__Host-`` name is refused there too."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="http://testserver") as client:
+        sign_in(client, secret, remember=True)
+        token = client.cookies.get("sa_session") or ""
+        assert token
+        client.cookies.clear()
+        client.cookies.set("__Host-sa_session", token)
+        assert client.get("/api/header").status_code == 401
+        client.cookies.clear()
+        client.cookies.set("sa_session", token)
+        assert client.get("/api/header").status_code == 200
+
+
 def test_wrong_password_and_wrong_code_same_message(app_auth: Any) -> None:
     app, secret, _codes = app_auth
     with TestClient(app, base_url="https://testserver") as client:
@@ -394,20 +424,33 @@ def test_websocket_needs_session_and_own_origin(app_auth: Any) -> None:
             client.websocket_connect("/ws/ws").__enter__()
         # A foreign Origin is refused even with a session.
         sign_in(client, secret, remember=True)
-        session_cookie = client.cookies.get("__Host-sa_session") or ""
-        ws_headers = {"Cookie": f"__Host-sa_session={session_cookie}"}
+        token = client.cookies.get("__Host-sa_session") or ""
+        # websocket_connect always dials ws:// — a plain scheme, so the
+        # plain sa_session name is the one that counts here (the __Host-
+        # name is for https/wss scopes, covered by the http tests).
         with pytest.raises(WebSocketDisconnect):
             client.websocket_connect(
                 "/ws/ws",
                 headers={
-                    "Cookie": f"__Host-sa_session={session_cookie}",
+                    "Cookie": f"__Host-sa_session={token}",
+                    "Origin": "https://testserver",
+                },
+            ).__enter__()
+        with pytest.raises(WebSocketDisconnect):
+            client.websocket_connect(
+                "/ws/ws",
+                headers={
+                    "Cookie": f"sa_session={token}",
                     "Origin": "https://evil.example",
                 },
             ).__enter__()
         # The app's own origin works.
         ws = client.websocket_connect(
             "/ws/ws",
-            headers={**ws_headers, "Origin": "https://testserver"},
+            headers={
+                "Cookie": f"sa_session={token}",
+                "Origin": "https://testserver",
+            },
         )
         with ws:
             ws.send_text("ping")
