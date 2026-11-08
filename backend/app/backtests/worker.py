@@ -530,7 +530,9 @@ async def _run_sessions(
 ) -> str | None:
     """Lockstep replay; returns a final status or None when it finished."""
     session_clock = SessionClock(clock, config, bundles[0].calendar)
-    screener_time = str(config.get("universe", "screen_time", default="08:10"))
+    screener_time = str(
+        config.get("universe", "screen", "time_ny", default="08:10")
+    )
     sh, sm = (int(p) for p in screener_time.split(":")[:2])
     cap = config.get_decimal("backtest", "monthly_cost_cap_usd", default=20)
     total = len(days)
