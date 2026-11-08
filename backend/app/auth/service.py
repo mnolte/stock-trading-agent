@@ -155,7 +155,6 @@ class AuthService:
         # a restart just means typing the password again.
         self._pending: dict[str, dict[str, object]] = {}
         self._totp_cache: tuple[str, str] | None = None
-        self._global_locked_until: datetime | None = None
         self._lockout_notified: set[str] = set()
         # Wrong "Confirm it is you"/current-password guesses per session
         # token hash (spec, Sign-in — Confirm and password change).
@@ -232,11 +231,19 @@ class AuthService:
         wait = int(self._config.get("auth", "lockout_minutes", default=15))
         return max(failures).replace(tzinfo=UTC) + timedelta(minutes=wait)
 
+    @staticmethod
+    def _global_pause_until(user: User | None) -> datetime | None:
+        """The persisted global pause end as an aware UTC datetime."""
+        if user is None or user.global_locked_until is None:
+            return None
+        return user.global_locked_until.replace(tzinfo=UTC)
+
     def _check_allowed(self, session: Session, ip: str) -> None:
         """Raise 429 when sign-in is paused globally or this address waits."""
         now = self._now()
-        if self._global_locked_until is not None and now < self._global_locked_until:
-            retry = int((self._global_locked_until - now).total_seconds())
+        pause = self._global_pause_until(self._user(session))
+        if pause is not None and now < pause:
+            retry = int((pause - now).total_seconds())
             self._record_attempt(session, ip, "locked")
             session.commit()
             raise AuthError(
@@ -288,17 +295,20 @@ class AuthService:
             )
         ).scalar_one()
         if total >= cap:
-            if (
-                self._global_locked_until is None
-                or self._global_locked_until <= self._now()
-            ):
+            user = self._user(session)
+            pause = self._global_pause_until(user)
+            if pause is None or pause <= self._now():
+                if user is not None:
+                    user.global_locked_until = _naive_utc(
+                        self._now() + timedelta(hours=1)
+                    )
                 self._notifier.notify(
                     "sign_in_lockout",
                     f"{total} failed sign-ins in an hour across all "
                     "addresses — sign-in is paused for an hour",
                     link="/settings",
                 )
-            self._global_locked_until = self._now() + timedelta(hours=1)
+            session.commit()
             raise AuthError(
                 429,
                 "rate_limited",

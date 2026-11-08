@@ -148,6 +148,16 @@ def test_global_pause_after_twenty_failures(app_auth: Any) -> None:
         # While paused even a correct password is refused.
         r = client.post("/api/auth/sign-in", json={"password": PASSWORD})
         assert r.status_code == 429
+        # The pause lives in the database: a fresh AuthService (a restart)
+        # still refuses, and it lifts once the hour is up.
+        from app.auth.service import AuthError, AuthService
+
+        restarted = AuthService(get_config(), app.state.clock)
+        with pytest.raises(AuthError) as err:
+            restarted.start_sign_in("nope", False, "10.1.2.3", "pytest")
+        assert err.value.status == 429
+        app.state.clock.advance(timedelta(minutes=61))
+        assert restarted.start_sign_in(PASSWORD, False, "10.1.2.3", "pytest")
 
 
 def test_idle_and_absolute_expiry(app_auth: Any) -> None:
