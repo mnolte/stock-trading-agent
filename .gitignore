@@ -36,6 +36,8 @@ data/server-status.json
 *.bak
 backups/
 logs/
+data/replays/
+data/backtests/
 
 # Editors / OS
 .idea/
