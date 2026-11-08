@@ -2264,11 +2264,7 @@ def banners(request: Request) -> dict[str, object]:
                 }
             )
 
-    if (
-        state is not None
-        and getattr(state, "paused", False)
-        and getattr(state, "paused_at_startup", False)
-    ):
+    if state is not None and getattr(state, "paused", False):
         app_tz = ZoneInfo(
             str(get_config().get("app", "timezone", default="Europe/Amsterdam"))
         )
@@ -2315,9 +2311,14 @@ def banners(request: Request) -> dict[str, object]:
                     else None
                 ),
                 "message": (
-                    f"Started paused at {at}. {reconciled}Held positions "
-                    "are still reviewed each cycle; no new entries until "
-                    "you resume."
+                    (
+                        f"Started paused at {at}. "
+                        if getattr(state, "paused_at_startup", False)
+                        else f"Paused at {at} — you paused it. "
+                    )
+                    + reconciled
+                    + "Held positions are still reviewed each cycle; "
+                    "no new entries until you resume."
                 ),
                 "resume_blocked": _keys_issue(request) is not None,
                 "actions": ["resume_pause"],
