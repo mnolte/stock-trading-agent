@@ -121,6 +121,7 @@ async function send(
   path: string,
   body: unknown | undefined,
   retrying: boolean,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -135,10 +136,11 @@ async function send(
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     });
   } catch (e) {
     // No answer at all — the backend banner / isn't-answering page.
-    noteBackendAnswer(false);
+    if (!signal?.aborted) noteBackendAnswer(false);
     throw e;
   }
   noteBackendAnswer(response.status !== 503);
@@ -153,7 +155,7 @@ async function send(
     if (code === 'confirm_required') {
       // "Confirm it is you" — then repeat the request once (spec).
       const ok = await requestConfirmation(actionName(path));
-      if (ok) return send(method, path, body, true);
+      if (ok) return send(method, path, body, true, signal);
     }
   }
   if (!response.ok) {
@@ -183,13 +185,17 @@ function actionName(path: string): string {
   return 'This action';
 }
 
-export async function get<T>(path: string): Promise<T> {
-  const response = await send('GET', path, undefined, false);
+export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await send('GET', path, undefined, false, signal);
   return response.json() as Promise<T>;
 }
 
-export async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await send('POST', path, body, false);
+export async function post<T>(
+  path: string,
+  body: unknown,
+  signal?: AbortSignal,
+): Promise<T> {
+  const response = await send('POST', path, body, false, signal);
   return response.json() as Promise<T>;
 }
 

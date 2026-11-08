@@ -1,4 +1,4 @@
-/* Stock Trading Agent design tokens.
+/* Stock Trading Agent design tokens. Same palette as Trading Agent.
    Use these variables for every colour, size and font; never hard-code a value. */
 :root {
   /* surfaces, text, status */
@@ -79,6 +79,17 @@
   --sa-focus-offset: 2px;
   --sa-hover-row: var(--sa-subtle);               /* clickable rows and list items */
   --sa-hover-card: var(--sa-raised);              /* linked tiles and cards */
-  --sa-skeleton: var(--sa-subtle);                /* loading placeholders, pulse 1.4 s, none with reduced motion */
+  --sa-skeleton: var(--sa-subtle);                /* loading placeholders (055: shimmer 1.6 s, flat with reduced motion) */
+  --sa-skeleton-shine: #28303C;                   /* the light band that sweeps across a skeleton */
+
+  /* loading and motion (055, design/screens/Loading.dc.html) */
+  --sa-ease: cubic-bezier(.2, 0, 0, 1);
+  --sa-fade: 200ms;                               /* data replacing a skeleton */
+  --sa-skeleton-delay: 200ms;                     /* no skeleton for answers faster than this */
+  --sa-skeleton-min: 400ms;                       /* once shown, a skeleton stays at least this long */
+  --sa-refresh-delay: 400ms;                      /* refresh bar on a card that already shows data */
+  --sa-load-slow: 8s;                             /* "Still loading · 8 s" under a skeleton; buttons: 10 s */
+  --sa-load-timeout: 20s;                         /* first load or action: stop waiting, show the error state */
+  --sa-new-row: 1.6s;                             /* accent tint on a row that arrived live */
   --sa-toast-auto-close: 10s;                     /* info and warning toasts; critical toasts never auto-close */
 }

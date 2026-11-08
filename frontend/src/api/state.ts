@@ -49,42 +49,54 @@ import type {
   WatchlistResponse,
 } from '../types/api';
 
-export function getHeaderState(): Promise<HeaderState> {
-  return get<HeaderState>('/api/header');
+export function getHeaderState(signal?: AbortSignal): Promise<HeaderState> {
+  return get<HeaderState>('/api/header', signal);
 }
 
-export function getWatchlist(): Promise<WatchlistResponse> {
-  return get<WatchlistResponse>('/api/watchlist');
+export function getWatchlist(signal?: AbortSignal): Promise<WatchlistResponse> {
+  return get<WatchlistResponse>('/api/watchlist', signal);
 }
 
-export function getDecisions(cycle?: string): Promise<DecisionsResponse> {
+export function getDecisions(
+  cycle?: string,
+  signal?: AbortSignal,
+): Promise<DecisionsResponse> {
   const query =
     cycle === undefined ? '' : `?cycle=${encodeURIComponent(cycle)}`;
-  return get<DecisionsResponse>(`/api/decisions${query}`);
+  return get<DecisionsResponse>(`/api/decisions${query}`, signal);
 }
 
-export function getDecision(id: number): Promise<DecisionDetail> {
-  return get<DecisionDetail>(`/api/decisions/${id}`);
+export function getDecision(
+  id: number,
+  signal?: AbortSignal,
+): Promise<DecisionDetail> {
+  return get<DecisionDetail>(`/api/decisions/${id}`, signal);
 }
 
-export function getBanners(): Promise<BannersResponse> {
-  return get<BannersResponse>('/api/banners');
+export function getBanners(signal?: AbortSignal): Promise<BannersResponse> {
+  return get<BannersResponse>('/api/banners', signal);
 }
 
-export function getAttention(): Promise<AttentionResponse> {
-  return get<AttentionResponse>('/api/attention');
+export function getAttention(signal?: AbortSignal): Promise<AttentionResponse> {
+  return get<AttentionResponse>('/api/attention', signal);
 }
 
-export function getPositions(): Promise<PositionsResponse> {
-  return get<PositionsResponse>('/api/positions');
+export function getPositions(signal?: AbortSignal): Promise<PositionsResponse> {
+  return get<PositionsResponse>('/api/positions', signal);
 }
 
-export function getOrders(): Promise<OrdersResponse> {
-  return get<OrdersResponse>('/api/orders');
+export function getOrders(signal?: AbortSignal): Promise<OrdersResponse> {
+  return get<OrdersResponse>('/api/orders', signal);
 }
 
-export function postKillSwitch(action: 'entries' | 'flatten'): Promise<KillSwitchResponse> {
-  return post<KillSwitchResponse>('/api/kill-switch', { action });
+export function postKillSwitch(
+  action: 'entries' | 'flatten',
+  requestId?: string,
+): Promise<KillSwitchResponse> {
+  return post<KillSwitchResponse>('/api/kill-switch', {
+    action,
+    ...(requestId ? { request_id: requestId } : {}),
+  });
 }
 
 export function postKillSwitchResume(reason: string): Promise<KillSwitchResponse> {
@@ -107,25 +119,31 @@ export function postAcknowledgePosition(id: number): Promise<{ acknowledged: boo
   return post(`/api/positions/${id}/acknowledge`, {});
 }
 
-export function getDashboard(symbol?: string): Promise<DashboardResponse> {
+export function getDashboard(
+  symbol?: string,
+  signal?: AbortSignal,
+): Promise<DashboardResponse> {
   const query = symbol === undefined ? '' : `?symbol=${encodeURIComponent(symbol)}`;
-  return get<DashboardResponse>(`/api/dashboard${query}`);
+  return get<DashboardResponse>(`/api/dashboard${query}`, signal);
 }
 
-export function getChart(symbol: string): Promise<ChartResponse | null> {
+export function getChart(
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<ChartResponse | null> {
   // No symbol must never reach the wire: 30 Oct logged GET /api/chart/
   // (empty segment) from a stale bundle whose Dashboard guard didn't
   // exist yet — the API layer is the last line of defence.
   if (!symbol.trim()) return Promise.resolve(null);
-  return get<ChartResponse>(`/api/chart/${symbol}`);
+  return get<ChartResponse>(`/api/chart/${symbol}`, signal);
 }
 
-export function getRiskBudget(): Promise<RiskBudgetResponse> {
-  return get<RiskBudgetResponse>('/api/risk-budget');
+export function getRiskBudget(signal?: AbortSignal): Promise<RiskBudgetResponse> {
+  return get<RiskBudgetResponse>('/api/risk-budget', signal);
 }
 
-export function getApprovals(): Promise<ApprovalsResponse> {
-  return get<ApprovalsResponse>('/api/approvals');
+export function getApprovals(signal?: AbortSignal): Promise<ApprovalsResponse> {
+  return get<ApprovalsResponse>('/api/approvals', signal);
 }
 
 export function postApprove(id: number): Promise<ApproveResult> {
@@ -136,8 +154,8 @@ export function postRejectApproval(id: number): Promise<{ rejected: boolean }> {
   return post(`/api/approvals/${id}/reject`, {});
 }
 
-export function getSettings(): Promise<SettingsResponse> {
-  return get<SettingsResponse>('/api/settings');
+export function getSettings(signal?: AbortSignal): Promise<SettingsResponse> {
+  return get<SettingsResponse>('/api/settings', signal);
 }
 
 export function postSettings(
@@ -155,9 +173,11 @@ export function postSettings(
 export function getNotifications(
   afterId = 0,
   limit = 20,
+  signal?: AbortSignal,
 ): Promise<NotificationsResponse> {
   return get<NotificationsResponse>(
     `/api/notifications?after_id=${afterId}&limit=${limit}`,
+    signal,
   );
 }
 
@@ -179,8 +199,8 @@ export function postSmtpSettings(body: {
   );
 }
 
-export function getKeys(): Promise<KeysResponse> {
-  return get<KeysResponse>('/api/keys');
+export function getKeys(signal?: AbortSignal): Promise<KeysResponse> {
+  return get<KeysResponse>('/api/keys', signal);
 }
 
 export function postKey(
@@ -206,38 +226,53 @@ export function postStartRun(): Promise<StartRunResult> {
   return post<StartRunResult>('/api/runs', {});
 }
 
-export function getRuns(): Promise<RunsResponse> {
-  return get<RunsResponse>('/api/runs');
+export function getRuns(signal?: AbortSignal): Promise<RunsResponse> {
+  return get<RunsResponse>('/api/runs', signal);
 }
 
-export function getPerformance(runId?: number): Promise<PerformanceResponse> {
+export function getPerformance(
+  runId?: number,
+  signal?: AbortSignal,
+): Promise<PerformanceResponse> {
   const query = runId === undefined ? '' : `?run=${runId}`;
-  return get<PerformanceResponse>(`/api/performance${query}`);
+  return get<PerformanceResponse>(`/api/performance${query}`, signal);
 }
 
-export function getPerformanceTails(runId?: number): Promise<PerformanceTailsResponse> {
+export function getPerformanceTails(
+  runId?: number,
+  signal?: AbortSignal,
+): Promise<PerformanceTailsResponse> {
   const query = runId === undefined ? '' : `?run=${runId}`;
-  return get<PerformanceTailsResponse>(`/api/performance/tails${query}`);
+  return get<PerformanceTailsResponse>(`/api/performance/tails${query}`, signal);
 }
 
-export function getReviews(kind: 'weekly' | 'briefing'): Promise<ReviewsResponse> {
-  return get<ReviewsResponse>(`/api/reviews?kind=${kind}`);
+export function getReviews(
+  kind: 'weekly' | 'briefing',
+  signal?: AbortSignal,
+): Promise<ReviewsResponse> {
+  return get<ReviewsResponse>(`/api/reviews?kind=${kind}`, signal);
 }
 
-export function getReview(id: number): Promise<ReviewDetail> {
-  return get<ReviewDetail>(`/api/reviews/${id}`);
+export function getReview(
+  id: number,
+  signal?: AbortSignal,
+): Promise<ReviewDetail> {
+  return get<ReviewDetail>(`/api/reviews/${id}`, signal);
 }
 
-export function getVerdicts(status: 'draft' | 'confirmed' | 'all' = 'draft'): Promise<VerdictsResponse> {
-  return get<VerdictsResponse>(`/api/verdicts?status=${status}`);
+export function getVerdicts(
+  status: 'draft' | 'confirmed' | 'all' = 'draft',
+  signal?: AbortSignal,
+): Promise<VerdictsResponse> {
+  return get<VerdictsResponse>(`/api/verdicts?status=${status}`, signal);
 }
 
 export function postVerdict(id: number, verdict: VerdictValue): Promise<VerdictResolved> {
   return post<VerdictResolved>(`/api/verdicts/${id}`, { verdict });
 }
 
-export function getUniverse(): Promise<UniverseResponse> {
-  return get<UniverseResponse>('/api/universe');
+export function getUniverse(signal?: AbortSignal): Promise<UniverseResponse> {
+  return get<UniverseResponse>('/api/universe', signal);
 }
 
 export function postUniverseAdd(
@@ -264,8 +299,8 @@ export function postUniverseScreen(): Promise<Record<string, unknown>> {
   return post<Record<string, unknown>>('/api/universe/screen', {});
 }
 
-export function getStrategies(): Promise<StrategiesResponse> {
-  return get<StrategiesResponse>('/api/strategies');
+export function getStrategies(signal?: AbortSignal): Promise<StrategiesResponse> {
+  return get<StrategiesResponse>('/api/strategies', signal);
 }
 
 export function postStrategy(body: NewStrategyBody): Promise<{ id: number }> {
@@ -279,14 +314,17 @@ export function postStrategyAction(
   return post<{ id: number; status: string }>(`/api/strategies/${id}/${action}`, {});
 }
 
-export function getStrategyPromotion(id: number): Promise<StrategyPromotion> {
-  return get<StrategyPromotion>(`/api/strategies/${id}/promotion`);
+export function getStrategyPromotion(
+  id: number,
+  signal?: AbortSignal,
+): Promise<StrategyPromotion> {
+  return get<StrategyPromotion>(`/api/strategies/${id}/promotion`, signal);
 }
 
 // --- Backtesting (PR 14) ---------------------------------------------------
 
-export function getBacktests(): Promise<BacktestsResponse> {
-  return get<BacktestsResponse>('/api/backtests');
+export function getBacktests(signal?: AbortSignal): Promise<BacktestsResponse> {
+  return get<BacktestsResponse>('/api/backtests', signal);
 }
 
 export function postBacktestEstimate(
@@ -321,18 +359,22 @@ export function postClearBarStore(): Promise<{ ok: boolean }> {
 export function getBacktestTrades(
   id: number,
   slug: string,
+  signal?: AbortSignal,
 ): Promise<{ trades: BacktestTrade[] }> {
   return get<{ trades: BacktestTrade[] }>(
     `/api/backtests/${id}/strategies/${slug}/trades`,
+    signal,
   );
 }
 
 export function getBacktestDecisions(
   id: number,
   slug: string,
+  signal?: AbortSignal,
 ): Promise<{ items: BacktestDecisionRow[] }> {
   return get<{ items: BacktestDecisionRow[] }>(
     `/api/backtests/${id}/strategies/${slug}/decisions`,
+    signal,
   );
 }
 
@@ -340,14 +382,16 @@ export function getBacktestDecision(
   id: number,
   slug: string,
   decisionId: number,
+  signal?: AbortSignal,
 ): Promise<DecisionDetail> {
   return get<DecisionDetail>(
     `/api/backtests/${id}/strategies/${slug}/decisions/${decisionId}`,
+    signal,
   );
 }
 
-export function getReadiness(): Promise<ReadinessResponse> {
-  return get<ReadinessResponse>('/api/readiness');
+export function getReadiness(signal?: AbortSignal): Promise<ReadinessResponse> {
+  return get<ReadinessResponse>('/api/readiness', signal);
 }
 
 export function postReadinessManual(
@@ -392,22 +436,27 @@ export function getLlmCalls(
   cursor?: string,
   limit = 50,
   order: 'desc' | 'asc' = 'desc',
+  signal?: AbortSignal,
 ): Promise<LlmCallsPage> {
   const params = new URLSearchParams(llmCallsQuery(filters));
   params.set('limit', String(limit));
   params.set('order', order);
   if (cursor) params.set('cursor', cursor);
-  return get<LlmCallsPage>(`/api/llm-calls?${params}`);
+  return get<LlmCallsPage>(`/api/llm-calls?${params}`, signal);
 }
 
 export function getLlmCallsSummary(
   filters: LlmCallFilters,
+  signal?: AbortSignal,
 ): Promise<LlmCallsSummary> {
-  return get<LlmCallsSummary>(`/api/llm-calls/summary${llmCallsQuery(filters)}`);
+  return get<LlmCallsSummary>(`/api/llm-calls/summary${llmCallsQuery(filters)}`, signal);
 }
 
-export function getLlmCall(id: number): Promise<LlmCallDetail> {
-  return get<LlmCallDetail>(`/api/llm-calls/${id}`);
+export function getLlmCall(
+  id: number,
+  signal?: AbortSignal,
+): Promise<LlmCallDetail> {
+  return get<LlmCallDetail>(`/api/llm-calls/${id}`, signal);
 }
 
 /** The filtered calls' metadata as CSV — never prompts or responses. */

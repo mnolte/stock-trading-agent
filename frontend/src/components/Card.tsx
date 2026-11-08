@@ -5,17 +5,22 @@ export interface CardProps {
   right?: ReactNode;
   children?: ReactNode;
   style?: CSSProperties;
-  /** Sets aria-busy while the first load is in flight. */
+  /** Sets aria-busy while the first load is in flight and announces
+   * "Loading <label>" to screen readers (design/DESIGN.md → Loading). */
   busy?: boolean;
+  /** A refresh of already-shown data is in flight: the 2 px accent bar
+   * runs along the card's top edge (the rows dim via `.sa-stale-rows`). */
+  refreshing?: boolean;
   ariaLabel?: string;
 }
 
-export function Card({ label, right, children, style, busy, ariaLabel }: CardProps) {
+export function Card({ label, right, children, style, busy, refreshing, ariaLabel }: CardProps) {
   return (
     <section
       aria-label={ariaLabel}
-      aria-busy={busy || undefined}
+      aria-busy={busy || refreshing || undefined}
       style={{
+        position: refreshing ? 'relative' : undefined,
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',
         borderRadius: 'var(--sa-radius-lg)',
@@ -26,6 +31,8 @@ export function Card({ label, right, children, style, busy, ariaLabel }: CardPro
         ...style,
       }}
     >
+      {refreshing && <span className="sa-refresh" aria-hidden="true" />}
+      {busy && label && <span className="sa-sr">Loading {label}</span>}
       {(label || right) && (
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
           <h2
