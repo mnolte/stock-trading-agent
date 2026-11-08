@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-08 — [046] Spec alignment: step 6 — card-level states in e2e (G12)
+
+- `e2e/046-position-states.e2e.ts` covers the states the standard seed can't reach: broker-stale positions ("Alpaca not answering · as of …"), the no-stop-at-Alpaca chip with its reason, and a held-back exit with tries and failure — all mocked `/api/positions`, both viewports. G12 from `docs/analysis/046-spec-alignment.md`.
+
 ## 2026-11-08 — [046] Spec alignment: paused banner says why (G17)
 
 - A manual pause now shows the paused banner — "Paused at HH:MM — you paused it." — with the same reconcile detail and Resume action as the startup banner. "Started paused" still marks only a fresh start. Gap G17 from `docs/analysis/046-spec-alignment.md`; spec row 203 ("Resume says why if Marc paused").
