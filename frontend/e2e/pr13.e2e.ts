@@ -30,7 +30,7 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
     },
   });
   await request.post('/api/strategies', {
-    data: { name: 'B · Bigger model', kind: 'llm', model: 'gpt-4.1-mini' },
+    data: { name: 'B · Bigger model', kind: 'llm', model: 'gpt-6.1-sol' },
   });
 
   await page.goto('/strategies');
@@ -75,7 +75,7 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
   // Select B: what differs from live, and Promote disabled under 20 trades.
   await table.locator('tbody tr', { hasText: 'B · Bigger model' }).click();
   const card = page.locator('section', { has: page.getByRole('heading', { name: 'B · Bigger model' }) });
-  await expect(card).toContainText('model gpt-4o-mini → gpt-4.1-mini');
+  await expect(card).toContainText('model gpt-4.1-mini → gpt-6.1-sol');
   const promote = card.getByRole('button', { name: 'Promote to live…' });
   await expect(promote).toBeDisabled();
   await expect(promote).toHaveAttribute('title', 'Needs at least 20 closed trades (has 0)');

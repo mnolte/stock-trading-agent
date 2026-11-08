@@ -9,9 +9,12 @@ branch can't silently disappear again.
 """
 
 from collections.abc import Generator
+from datetime import datetime
 from typing import Any
 
 import pytest
+from app.db.base import get_session_maker
+from app.db.models import Strategy
 from fastapi.testclient import TestClient
 
 
@@ -172,3 +175,37 @@ def test_every_settings_form_key_round_trips(client: TestClient) -> None:
     for path, settings in bodies:
         resp = _save(client, settings)
         assert resp.status_code == 200, f"{path}: {resp.text}"
+
+
+def test_prompt_options_marks_versions_a_shadow_runs(
+    client: TestClient,
+) -> None:
+    """The decision-prompt picker marks a version an active or paused
+    shadow uses (design/screens/Settings.dc.html); archived shadows do
+    not mark it."""
+    with get_session_maker()() as session:
+        for name, version, status in (
+            ("E · EV shadow", "decision.v5", "active"),
+            ("F · Floor shadow", "decision.v5", "paused"),
+            ("G · Gone shadow", "decision.v4", "archived"),
+        ):
+            session.add(
+                Strategy(
+                    name=name,
+                    kind="llm",
+                    prompt_version=version,
+                    model="gpt-4o-mini",
+                    temperature=0.0,
+                    status=status,
+                    created_at=datetime(2026, 10, 15, 18, 0),
+                )
+            )
+        session.commit()
+
+    body = client.get("/api/settings").json()
+    options = {
+        p["version"]: p for p in body["prompt_options"]["decision"]
+    }
+    assert options["decision.v5"]["shadows"] == ["E", "F"]
+    assert options["decision.v4"]["shadows"] == []
+    assert options["decision.v3"]["shadows"] == []

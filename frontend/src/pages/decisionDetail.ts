@@ -75,13 +75,43 @@ function v5FirstRows(decision: DecisionDetail): GateRow[] {
   return rows;
 }
 
+/** The ev gate's expected value in R: p·rr − (1−p) = p·(rr+1) − 1, with
+ * p the model's confidence and rr the chosen option's (docs/SPEC.md,
+ * Decision v5 — GUI: "the ev gate row shows confidence against
+ * min_confidence and the expected value in R"). */
+function expectedValueR(
+  decision: DecisionDetail,
+  checkValue?: string | null,
+): string | null {
+  const parsed = checkValue != null ? Number(checkValue) : NaN;
+  const confidence = Number.isFinite(parsed)
+    ? parsed
+    : decision.model_output?.confidence;
+  const chosenId =
+    decision.chosen_option ??
+    decision.model_output?.option_id ??
+    decision.model_output?.best_option_id;
+  const rr = (decision.options?.options ?? []).find((o) => o.id === chosenId)?.rr;
+  if (confidence == null || !Number.isFinite(confidence) || rr == null || rr <= 0) {
+    return null;
+  }
+  const ev = confidence * (rr + 1) - 1;
+  return `${ev < 0 ? '−' : '+'}${Math.abs(ev).toFixed(2)}R`;
+}
+
+const EV_GATE_PREFIX = 'Confidence ≥ min_confidence';
+
 /** Code checks then risk gates, each pass / fail / reduced. */
 export function gateRows(decision: DecisionDetail): GateRow[] {
   const rows: GateRow[] = v5FirstRows(decision);
   for (const check of decision.validation_result?.checks ?? []) {
+    const isEvGate = check.name.startsWith(EV_GATE_PREFIX);
+    const ev = isEvGate ? expectedValueR(decision, check.value) : null;
     rows.push({
       name: check.name,
-      detail: [...new Set([check.value, check.detail].filter(Boolean))].join(' · '),
+      detail:
+        [...new Set([check.value, check.detail].filter(Boolean))].join(' · ') +
+        (ev !== null ? ` · EV ${ev}` : ''),
       state: check.passed ? 'pass' :
         ['Explanation check', 'Claim checks', 'Confidence sanity', 'Conflicts resolved'].includes(check.name)
           ? 'warning' : 'fail',

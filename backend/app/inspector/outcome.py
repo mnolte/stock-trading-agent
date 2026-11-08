@@ -27,6 +27,7 @@ WARNING_REASONS = (
     "unresolved_conflict",
     "best_option_mismatch",
     "best_option_missing",
+    "hold_below_breakeven",
     "slow",
 )
 ERROR_REASONS = ("timeout", "api_error", "invalid_output", "refusal")
