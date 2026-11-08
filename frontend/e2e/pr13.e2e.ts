@@ -14,8 +14,11 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
   page,
   request,
 }, testInfo) => {
-  // The e2e database is shared between runs: free every slot first.
+  // The e2e database is shared between runs (and CI restores a cached
+  // copy): the live model is whatever the active settings version says,
+  // not necessarily the config.example.yaml default — read it.
   const before = await (await request.get('/api/strategies')).json();
+  const liveModel = before.options.live.model as string;
   for (const row of before.rows) {
     if (row.id !== null) await request.post(`/api/strategies/${row.id}/archive`);
   }
@@ -75,7 +78,7 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
   // Select B: what differs from live, and Promote disabled under 20 trades.
   await table.locator('tbody tr', { hasText: 'B · Bigger model' }).click();
   const card = page.locator('section', { has: page.getByRole('heading', { name: 'B · Bigger model' }) });
-  await expect(card).toContainText('model gpt-4.1-mini → gpt-6.1-sol');
+  await expect(card).toContainText(`model ${liveModel} → gpt-6.1-sol`);
   const promote = card.getByRole('button', { name: 'Promote to live…' });
   await expect(promote).toBeDisabled();
   await expect(promote).toHaveAttribute('title', 'Needs at least 20 closed trades (has 0)');
