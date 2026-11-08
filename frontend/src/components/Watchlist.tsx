@@ -5,6 +5,7 @@ import type { Resource } from '../api/useResource';
 import type { WatchlistResponse } from '../types/api';
 import { Card } from './Card';
 import { CardBody } from './cardState';
+import { SkeletonTable } from './skeletons';
 import { formatNyTitle } from './decisionFormat';
 import {
   filterCounts,
@@ -116,6 +117,7 @@ export function Watchlist({
     <Card
       label="Watchlist"
       busy={res.loading}
+      refreshing={res.refreshing}
       right={
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
           {rows.length} symbols · <Link to="/universe">Universe</Link> · click a row
@@ -126,6 +128,20 @@ export function Watchlist({
       <CardBody
         res={res}
         what="the watchlist"
+        skeleton={
+          <SkeletonTable
+            columns={[
+              { label: 'Symbol' },
+              { label: 'Price', align: 'right' },
+              { label: 'Day', align: 'right' },
+              { label: 'Rules' },
+              { label: 'Last action' },
+              { label: 'Earnings' },
+            ]}
+            rows={8}
+            track={GRID}
+          />
+        }
         isEmpty={(d) => d.rows.length === 0}
         empty={
           <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>

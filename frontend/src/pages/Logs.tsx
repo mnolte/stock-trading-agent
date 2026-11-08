@@ -827,7 +827,11 @@ export default function Logs() {
           </span>
         }
       >
-        {loading && lines.length === 0 && <SkeletonLines bars={3} />}
+        {loading && lines.length === 0 && (
+          <div className="sa-loading">
+            <SkeletonLines bars={3} />
+          </div>
+        )}
         {loadError && (
           <FetchError
             what="the log"

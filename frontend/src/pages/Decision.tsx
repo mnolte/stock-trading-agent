@@ -2480,7 +2480,9 @@ export default function Decision() {
       <DrawerShell label="Decision detail" onClose={close}>
         {stateHeader}
         <div aria-busy="true" aria-label="Loading decision" style={{ padding: 'var(--sa-space-6)' }}>
-          <SkeletonLines />
+          <div className="sa-loading">
+            <SkeletonLines />
+          </div>
         </div>
       </DrawerShell>
     );

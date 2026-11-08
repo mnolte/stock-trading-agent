@@ -5,6 +5,7 @@ import type { AttentionItem, AttentionResponse } from '../types/api';
 import type { Resource } from '../api/useResource';
 import { displayTime } from '../format';
 import { CardBody } from './cardState';
+import { SkeletonText } from './skeletons';
 
 const ICONS = {
   warn: (
@@ -92,7 +93,9 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
     <section
       id="needs"
       aria-label="Needs you"
+      aria-busy={res.loading || res.refreshing || undefined}
       style={{
+        position: res.refreshing ? 'relative' : undefined,
         background: 'var(--sa-panel)',
         border: `1px solid ${items.length ? 'var(--sa-warning-border)' : 'var(--sa-border)'}`,
         borderLeft: items.length ? '3px solid var(--sa-warning-text)' : undefined,
@@ -103,6 +106,8 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
         gap: 4,
       }}
     >
+      {res.refreshing && <span className="sa-refresh" aria-hidden="true" />}
+      {res.loading && <span className="sa-sr">Loading Needs you</span>}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px 12px', paddingBottom: 6 }}>
         <h2 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
           Needs you{' '}
@@ -119,6 +124,29 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
       <CardBody
         res={res}
         what="the Needs you list"
+        skeleton={
+          <>
+            <SkeletonText lines={3} />
+            <div
+              aria-hidden="true"
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '8px 18px',
+                paddingTop: 8,
+                borderTop: '1px solid var(--sa-border)',
+              }}
+            >
+              {[120, 90, 140, 80].map((w, i) => (
+                <span
+                  key={i}
+                  className="sa-skel"
+                  style={{ display: 'inline-block', height: 10, width: w, borderRadius: 4 }}
+                />
+              ))}
+            </div>
+          </>
+        }
         isEmpty={() => false}
         empty={null}
       >

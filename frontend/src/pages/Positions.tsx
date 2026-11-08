@@ -5,6 +5,7 @@ import { StopTargetBar } from '../components/StopTargetBar';
 import { useLiveUpdates } from '../api/liveContext';
 import { getOrders, getPositions } from '../api/state';
 import { useApiResource, type Resource } from '../api/useResource';
+import { useNewIds } from '../api/useNewIds';
 import type {
   OrderRow,
   OrdersResponse,
@@ -14,6 +15,7 @@ import type {
 import { Card } from '../components/Card';
 import { AlpacaStaleNote, CardBody } from '../components/cardState';
 import { Chip } from '../components/Chip';
+import { SkeletonList, SkeletonTable, SkeletonText } from '../components/skeletons';
 import { formatPrice } from '../components/watchlistFormat';
 import {
   displayDateTime,
@@ -92,7 +94,7 @@ function Fact({ label, value, sub, color }: { label: string; value: string; sub:
   );
 }
 
-function PositionCard({ p, near }: { p: PositionRow; near: number }) {
+function PositionCard({ p, near, fresh }: { p: PositionRow; near: number; fresh?: boolean }) {
   const location = useLocation();
   const pnl = fmtPnl(p.unrealized_pnl);
   const last = p.last_price != null ? Number(p.last_price) : null;
@@ -104,6 +106,7 @@ function PositionCard({ p, near }: { p: PositionRow; near: number }) {
   const legsProblem = p.legs_problem === true || pendingExit !== null || noStop;
   return (
     <div
+      className={fresh ? 'sa-new' : undefined}
       style={{
         border: '1px solid var(--sa-border)',
         borderRadius: 'var(--sa-radius-md)',
@@ -302,7 +305,7 @@ function lastWeekdayDays(n: number): Set<string> {
 
 type Period = 'today' | '5' | '20' | 'all';
 
-function OrderHistoryRow({ o, problem }: { o: OrderRow; problem: string[] }) {
+function OrderHistoryRow({ o, problem, fresh }: { o: OrderRow; problem: string[]; fresh?: boolean }) {
   const fill = o.fills[0];
   const rejected = o.status === 'rejected';
   const cells = [
@@ -317,7 +320,7 @@ function OrderHistoryRow({ o, problem }: { o: OrderRow; problem: string[] }) {
     fill?.slippage !== null && fill?.slippage !== undefined ? signed(Number(fill.slippage)) : '—',
   ];
   return (
-    <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
+    <tr className={fresh ? 'sa-new' : undefined} style={{ borderBottom: '1px solid var(--sa-border)' }}>
       {cells.map((cell, i) => (
         <td
           key={i}
@@ -356,6 +359,7 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
   const [period, setPeriod] = useState<Period>('today');
   const [shown, setShown] = useState(20);
   const orders = res.data?.orders ?? [];
+  const freshOrders = useNewIds(orders.map((o) => o.id));
   const periodDays =
     period === 'today'
       ? lastWeekdayDays(1)
@@ -400,6 +404,19 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
       <CardBody
         res={res}
         what="the order history"
+        skeleton={
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ minWidth: '860px' }}>
+              <SkeletonTable
+                columns={['Time', 'Symbol', 'Side', 'Leg', 'Type', 'Qty', 'Price', 'Fill', 'Slippage', 'Status'].map(
+                  (label, i) => ({ label, align: i === 0 ? 'left' : 'right' }),
+                )}
+                rows={8}
+                track="repeat(10, minmax(64px, 1fr))"
+              />
+            </div>
+          </div>
+        }
         isEmpty={() => visible.length === 0}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
@@ -431,7 +448,7 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
               </thead>
               <tbody>
                 {visible.map((o) => (
-                  <OrderHistoryRow key={o.id} o={o} problem={orderProblems(o)} />
+                  <OrderHistoryRow key={o.id} o={o} problem={orderProblems(o)} fresh={freshOrders.has(o.id)} />
                 ))}
               </tbody>
             </table>
@@ -469,8 +486,8 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
 }
 
 export default function Positions() {
-  const positionsRes = useApiResource(getPositions);
-  const ordersRes = useApiResource(getOrders);
+  const positionsRes = useApiResource((signal) => getPositions(signal));
+  const ordersRes = useApiResource((signal) => getOrders(signal));
 
   const reloadAll = () => {
     positionsRes.reload();
@@ -480,18 +497,8 @@ export default function Positions() {
 
   const positions = positionsRes.data;
   const open = positions?.open ?? [];
+  const freshPositions = useNewIds(open.map((p) => p.id));
   const closedToday = positions?.closed_today ?? [];
-  const today = positions?.today;
-  // Symbols behind the counts: entries are positions opened this session,
-  // open or already closed (design/screens/Positions.dc.html, "Today").
-  const entrySymbols = [
-    ...open.filter((p) => p.opened_today).map((p) => p.symbol),
-    ...closedToday
-      .filter((p) => openedTodayNy(p.opened_at))
-      .map((p) => p.symbol),
-  ];
-  const exitSymbols = closedToday.map((p) => p.symbol);
-  const account = positions?.account;
   const recon = positions?.reconciliation;
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -544,11 +551,16 @@ export default function Positions() {
         </div>
       )}
 
-      <Card label={`Open positions · ${open.length} of ${positions?.max_open_positions ?? '—'}`} busy={positionsRes.loading}>
+      <Card
+        label={`Open positions · ${open.length} of ${positions?.max_open_positions ?? '—'}`}
+        busy={positionsRes.loading}
+        refreshing={positionsRes.refreshing}
+      >
         {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
         <CardBody
           res={positionsRes}
           what="positions"
+          skeleton={<SkeletonList rows={3} />}
           isEmpty={(d) => d.open.length === 0}
           empty={
             <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
@@ -556,7 +568,7 @@ export default function Positions() {
             </div>
           }
         >
-          {() => <>{open.map((p) => <PositionCard key={p.id} p={p} near={Number(positions?.near_stop_atr ?? 1.5)} />)}</>}
+          {() => <>{open.map((p) => <PositionCard key={p.id} p={p} near={Number(positions?.near_stop_atr ?? 1.5)} fresh={freshPositions.has(p.id)} />)}</>}
         </CardBody>
       </Card>
 
@@ -577,7 +589,23 @@ export default function Positions() {
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)', alignItems: 'stretch' }}>
         <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column' }}>
-          <Card label="Today" busy={positionsRes.loading} style={{ flex: 1 }}>
+          <Card label="Today" busy={positionsRes.loading} refreshing={positionsRes.refreshing} style={{ flex: 1 }}>
+            <CardBody
+              res={positionsRes}
+              what="today's counts"
+              skeleton={<SkeletonText lines={4} />}
+            >
+              {(d) => {
+                const t = d.today;
+                const entries = [
+                  ...d.open.filter((p) => p.opened_today).map((p) => p.symbol),
+                  ...d.closed_today
+                    .filter((p) => openedTodayNy(p.opened_at))
+                    .map((p) => p.symbol),
+                ];
+                const exits = d.closed_today.map((p) => p.symbol);
+                return (
+            <>
             <div
               style={{
                 display: 'grid',
@@ -588,27 +616,27 @@ export default function Positions() {
             >
               <span style={{ color: 'var(--sa-text-muted)' }}>Entries</span>
               <span style={{ ...mono, textAlign: 'right' }}>
-                {today
-                  ? `${today.entries}${entrySymbols.length ? ` · ${entrySymbols.join(', ')}` : ''}`
+                {t
+                  ? `${t.entries}${entries.length ? ` · ${entries.join(', ')}` : ''}`
                   : '—'}
               </span>
               <span style={{ color: 'var(--sa-text-muted)' }}>Exits</span>
               <span style={{ ...mono, textAlign: 'right' }}>
-                {today
-                  ? `${today.exits}${exitSymbols.length ? ` · ${exitSymbols.join(', ')}` : ''}`
+                {t
+                  ? `${t.exits}${exits.length ? ` · ${exits.join(', ')}` : ''}`
                   : '—'}
               </span>
               <span style={{ color: 'var(--sa-text-muted)' }}>
                 Bought and sold the same session
               </span>
               <span style={{ ...mono, textAlign: 'right' }}>
-                {today?.round_trips ?? '—'}
+                {t?.round_trips ?? '—'}
               </span>
               <span style={{ color: 'var(--sa-text-muted)' }}>
                 Not to be bought again today
               </span>
               <span style={{ ...mono, textAlign: 'right' }}>
-                {today ? today.reentry_blocked.join(', ') || '—' : '—'}
+                {t ? t.reentry_blocked.join(', ') || '—' : '—'}
               </span>
             </div>
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
@@ -617,33 +645,48 @@ export default function Positions() {
               bought it. A symbol it closed today isn't bought again until the
               next session.
             </div>
+            </>
+                );
+              }}
+            </CardBody>
           </Card>
         </div>
         <div style={{ flex: '1 1 320px', display: 'flex', flexDirection: 'column' }}>
-          <Card label="Account at Alpaca" busy={positionsRes.loading} style={{ flex: 1 }}>
+          <Card label="Account at Alpaca" busy={positionsRes.loading} refreshing={positionsRes.refreshing} style={{ flex: 1 }}>
             {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
+            <CardBody
+              res={positionsRes}
+              what="the account"
+              skeleton={<SkeletonText lines={5} />}
+            >
+              {(d) => {
+                const a = d.account;
+                return (
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: '6px var(--sa-space-4)', fontSize: 'var(--sa-text-md)' }}>
               <span style={{ color: 'var(--sa-text-muted)' }}>Equity</span>
               <span style={{ ...mono, textAlign: 'right' }}>
-                ${account?.equity ?? '—'}
-                {account?.equity_eur && <span style={{ color: 'var(--sa-text-muted)' }}> · €{account.equity_eur}</span>}
+                ${a?.equity ?? '—'}
+                {a?.equity_eur && <span style={{ color: 'var(--sa-text-muted)' }}> · €{a.equity_eur}</span>}
               </span>
               <span style={{ color: 'var(--sa-text-muted)' }}>Cash</span>
-              <span style={{ ...mono, textAlign: 'right' }}>${account?.cash ?? '—'}</span>
+              <span style={{ ...mono, textAlign: 'right' }}>${a?.cash ?? '—'}</span>
               <span style={{ color: 'var(--sa-text-muted)' }}>Positions value</span>
-              <span style={{ ...mono, textAlign: 'right' }}>${account?.positions_value ?? '—'}</span>
+              <span style={{ ...mono, textAlign: 'right' }}>${a?.positions_value ?? '—'}</span>
               <span style={{ color: 'var(--sa-text-muted)' }}>Margin used</span>
-              <span style={{ ...mono, textAlign: 'right' }}>{account?.margin ?? '—'}</span>
+              <span style={{ ...mono, textAlign: 'right' }}>{a?.margin ?? '—'}</span>
               <span style={{ color: 'var(--sa-text-muted)' }}>
-                EUR/USD{account?.eur_usd_date ? ` (ECB, ${account.eur_usd_date})` : ''}
+                EUR/USD{a?.eur_usd_date ? ` (ECB, ${a.eur_usd_date})` : ''}
               </span>
-              <span style={{ ...mono, textAlign: 'right' }}>{account?.eur_usd_rate ?? '—'}</span>
+              <span style={{ ...mono, textAlign: 'right' }}>{a?.eur_usd_rate ?? '—'}</span>
             </div>
+                );
+              }}
+            </CardBody>
           </Card>
         </div>
       </div>
 
-      <Card label="Order history" right="times in Amsterdam" busy={ordersRes.loading}>
+      <Card label="Order history" right="times in Amsterdam" busy={ordersRes.loading} refreshing={ordersRes.refreshing}>
         <OrderHistory res={ordersRes} />
       </Card>
     </div>

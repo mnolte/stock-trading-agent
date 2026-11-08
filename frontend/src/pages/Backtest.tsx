@@ -625,7 +625,14 @@ function NewBacktestCard({
             boxSizing: 'border-box',
           }}
         >
-          {running ? 'Queuing…' : 'Run backtest'}
+          {running ? (
+            <>
+              <span className="sa-spin" aria-hidden="true" />
+              Queuing…
+            </>
+          ) : (
+            'Run backtest'
+          )}
         </button>
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
           Runs as a separate background process, one at a time, with one
@@ -738,6 +745,7 @@ function RunsCard({
             <>
               <div style={{ height: '6px', borderRadius: '3px', background: 'var(--sa-border)' }}>
                 <div
+                  className="sa-bar-fill"
                   style={{
                     width: `${Math.round((progressFraction(r.progress) ?? 0) * 100)}%`,
                     height: '6px',

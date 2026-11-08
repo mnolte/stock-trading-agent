@@ -12,6 +12,8 @@ export type { FetchFailure } from './resourceLoader';
 
 export interface Resource<T> {
   data: T | null;
+  /** True once a fetch has answered (the value itself may be null). */
+  loaded: boolean;
   /** Last successful load — stale data keeps this timestamp. */
   updatedAt: Date | null;
   /** True while the first data is still in flight (the skeleton phase or
@@ -43,6 +45,9 @@ export function useApiResource<T>(
   deps: readonly unknown[] = [],
   enabled = true,
 ): Resource<T> {
+  // The loader is created once; setFetcher keeps the latest fetcher so
+  // inline arrows don't recreate it (and drop in-flight requests).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const loader: ResourceLoader<T> = useMemo(() => createResourceLoader(fetcher), []);
   useEffect(() => {
     loader.setFetcher(fetcher);
@@ -63,8 +68,13 @@ export function useApiResource<T>(
 
   return {
     data: state.data,
+    loaded: state.loaded,
     updatedAt: state.updatedAt,
-    loading: enabled && state.data === null && state.failure === null,
+    loading:
+      enabled &&
+      !state.loaded &&
+      state.data === null &&
+      state.failure === null,
     showSkeleton: state.showSkeleton,
     slow: state.slow,
     slowSeconds: state.slowSeconds,

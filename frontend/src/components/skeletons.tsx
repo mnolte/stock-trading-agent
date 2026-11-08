@@ -71,8 +71,6 @@ export function SkeletonText({ lines = 4 }: { lines?: number }) {
 export interface SkeletonColumn {
   /** Real header text — column headers are never bars. */
   label: ReactNode;
-  /** Grid track, e.g. '90px', '1fr', 'minmax(0,1fr)'. */
-  track: string;
   align?: 'left' | 'right';
 }
 

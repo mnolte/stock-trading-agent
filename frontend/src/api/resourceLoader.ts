@@ -21,6 +21,9 @@ export type ResourceFetcher<T> = (signal?: AbortSignal) => Promise<T>;
 
 export interface ResourceState<T> {
   data: T | null;
+  /** True once a fetch has answered — `data` may still be null when the
+   * fetcher itself resolves null (e.g. no symbol picked). */
+  loaded: boolean;
   updatedAt: Date | null;
   showSkeleton: boolean;
   slow: boolean;
@@ -43,6 +46,7 @@ const NO_ANSWER = 'No answer after 20 s';
 function initialState<T>(): ResourceState<T> {
   return {
     data: null,
+    loaded: false,
     updatedAt: null,
     showSkeleton: false,
     slow: false,
@@ -196,6 +200,7 @@ export function createResourceLoader<T>(
             data = result;
             patch({
               data: result,
+              loaded: true,
               updatedAt: new Date(),
               failure: null,
               showSkeleton: false,

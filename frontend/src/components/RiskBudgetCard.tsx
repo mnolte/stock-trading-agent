@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Resource } from '../api/useResource';
 import type { BudgetMeter, BudgetMeterLevel, RiskBudgetResponse } from '../types/api';
 import { AlpacaStaleNote, CardBody } from './cardState';
+import { SkeletonText } from './skeletons';
 import {
   budgetHints,
   drawdownUsed,
@@ -64,6 +65,7 @@ function MeterRow({
         }}
       >
         <div
+          className="sa-bar-fill"
           style={{
             width: `${meter?.fill_pct ?? '0'}%`,
             height: '8px',
@@ -131,8 +133,9 @@ export function RiskBudgetCard({
   return (
     <section
       aria-label="Risk budget"
-      aria-busy={res.loading || undefined}
+      aria-busy={res.loading || res.refreshing || undefined}
       style={{
+        position: res.refreshing ? 'relative' : undefined,
         flex: '1 1 560px',
         minWidth: 0,
         background: 'var(--sa-panel)',
@@ -145,6 +148,8 @@ export function RiskBudgetCard({
         boxSizing: 'border-box',
       }}
     >
+      {res.refreshing && <span className="sa-refresh" aria-hidden="true" />}
+      {res.loading && <span className="sa-sr">Loading risk budget</span>}
       <div
         style={{
           display: 'flex',
@@ -173,7 +178,11 @@ export function RiskBudgetCard({
         </span>
       </div>
       {budget?.stale && <AlpacaStaleNote asOf={budget.as_of ?? null} />}
-      <CardBody res={res} what="the risk budget">
+      <CardBody
+        res={res}
+        what="the risk budget"
+        skeleton={<SkeletonText lines={6} />}
+      >
         {() => (
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4) 28px' }}>
         <div

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from 'react';
 
 import {
@@ -55,35 +55,31 @@ export function Button({
   style,
   ...props
 }: ButtonProps) {
-  const [phase, setPhase] = useState<BusyPhase>('working');
-  const [elapsed, setElapsed] = useState(0);
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-  const idleWidth = useRef<number | null>(null);
-
-  // Measure the idle width so the busy label never shrinks the button.
-  useLayoutEffect(() => {
-    if (!busy && btnRef.current) {
-      idleWidth.current = btnRef.current.offsetWidth;
-    }
-  }, [busy, children]);
+  const [cycle, setCycle] = useState<{
+    active: boolean;
+    phase: BusyPhase;
+    elapsed: number;
+  }>({ active: false, phase: 'working', elapsed: 0 });
+  if (cycle.active !== busy) {
+    setCycle({ active: busy, phase: 'working', elapsed: 0 });
+  }
+  const { phase, elapsed } = cycle;
 
   useEffect(() => {
-    if (!busy) {
-      setPhase('working');
-      setElapsed(0);
-      return;
-    }
+    if (!busy) return;
     const start = Date.now();
     const tick = window.setInterval(() => {
       const seconds = Math.floor((Date.now() - start) / 1000);
-      setElapsed(seconds);
-      setPhase(
-        seconds * 1000 >= ACTION_TIMEOUT_MS
-          ? 'noanswer'
-          : seconds * 1000 >= BUTTON_WAIT_MS
-            ? 'waiting'
-            : 'working',
-      );
+      setCycle((c) => ({
+        ...c,
+        elapsed: seconds,
+        phase:
+          seconds * 1000 >= ACTION_TIMEOUT_MS
+            ? 'noanswer'
+            : seconds * 1000 >= BUTTON_WAIT_MS
+              ? 'waiting'
+              : 'working',
+      }));
     }, 500);
     return () => window.clearInterval(tick);
   }, [busy]);
@@ -92,7 +88,6 @@ export function Button({
   const button = (
     <button
       {...props}
-      ref={btnRef}
       type={props.type ?? 'button'}
       aria-busy={working || undefined}
       aria-disabled={working || undefined}
@@ -112,15 +107,38 @@ export function Button({
         justifyContent: 'center',
         gap: 'var(--sa-space-2)',
         whiteSpace: 'nowrap',
-        minWidth: busy && idleWidth.current ? idleWidth.current : undefined,
         ...style,
       }}
     >
       {working ? (
-        <>
-          <span className="sa-spin" aria-hidden="true" />
-          <span>{busyLabel ?? <>{children}…</>}</span>
-        </>
+        // The invisible idle label keeps the button at its idle width;
+        // the busy label overlays it (055 → Loading).
+        <span style={{ position: 'relative', display: 'inline-flex' }}>
+          <span
+            aria-hidden="true"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 'var(--sa-space-2)',
+              visibility: 'hidden',
+            }}
+          >
+            {children}
+          </span>
+          <span
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 'var(--sa-space-2)',
+            }}
+          >
+            <span className="sa-spin" aria-hidden="true" />
+            <span>{busyLabel ?? <>{children}…</>}</span>
+          </span>
+        </span>
       ) : (
         children
       )}

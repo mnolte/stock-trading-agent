@@ -32,7 +32,9 @@ export function Card({ label, right, children, style, busy, refreshing, ariaLabe
       }}
     >
       {refreshing && <span className="sa-refresh" aria-hidden="true" />}
-      {busy && label && <span className="sa-sr">Loading {label}</span>}
+      {busy && (label ?? ariaLabel) && (
+        <span className="sa-sr">Loading {label ?? ariaLabel}</span>
+      )}
       {(label || right) && (
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
           <h2

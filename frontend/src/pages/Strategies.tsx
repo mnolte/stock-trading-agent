@@ -11,6 +11,7 @@ import { Chip } from '../components/Chip';
 import type { ChipVariant } from '../components/Chip';
 import { DialogButton, Modal } from '../components/Modal';
 import { SegmentedControl } from '../components/SegmentedControl';
+import { SkeletonTable, SkeletonTiles } from '../components/skeletons';
 import { StrategyEquityChart } from '../components/StrategyEquityChart';
 import type { StrategySeries } from '../components/StrategyEquityChart';
 import type { NewStrategyBody, StrategiesResponse, StrategyRow } from '../types/api';
@@ -344,7 +345,29 @@ export default function Strategies() {
   }, [rows, colours, data]);
 
   if (!data) {
-    return errors.length > 0 ? <Banner variant="negative">{errors.join(' ')}</Banner> : null;
+    if (errors.length > 0) return <Banner variant="negative">{errors.join(' ')}</Banner>;
+    return (
+      <div
+        role="status"
+        aria-label="Loading strategies"
+        style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}
+      >
+        <span className="sa-sr">Loading strategies</span>
+        <div className="sa-loading">
+          <SkeletonTiles count={4} />
+          <SkeletonTable
+            columns={[
+              { label: 'Strategy' },
+              { label: 'Kind' },
+              { label: 'Status' },
+              { label: 'Return', align: 'right' },
+            ]}
+            track="1.4fr 110px 110px 110px"
+            rows={6}
+          />
+        </div>
+      </div>
+    );
   }
 
   const since = data.run ? shortDate(data.run.started_at) : '—';

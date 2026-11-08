@@ -8,6 +8,7 @@ import { AskProvider } from './ask/AskContext';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { RouteNotFound } from './components/errorPages';
+import { SkeletonTable, SkeletonTiles } from './components/skeletons';
 
 const Backtest = lazy(() => import('./pages/Backtest'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -28,8 +29,26 @@ const Universe = lazy(() => import('./pages/Universe'));
 
 function PageFallback() {
   return (
-    <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-      Loading…
+    <div
+      role="status"
+      aria-label="Loading page"
+      style={{
+        maxWidth: 'var(--sa-page-max)',
+        margin: '0 auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--sa-space-5)',
+      }}
+    >
+      <span className="sa-sr">Loading page</span>
+      <div className="sa-loading">
+        <SkeletonTiles count={4} />
+        <SkeletonTable
+          columns={[{ label: '' }, { label: '', align: 'right' }, { label: '', align: 'right' }]}
+          track="1fr 120px 120px"
+          rows={5}
+        />
+      </div>
     </div>
   );
 }

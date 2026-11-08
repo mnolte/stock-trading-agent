@@ -40,6 +40,7 @@ import { ServerSection } from '../components/ServerSection';
 import { useAuthStatus } from '../api/auth';
 import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
+import { SkeletonText } from '../components/skeletons';
 import { displayDateTime, displayDayTime, displayTime } from '../format';
 import { diffMap, diffSettings, fmtPath } from './settingsDiff';
 import { validateForm } from './settingsValidation';
@@ -835,8 +836,16 @@ function KeysSection({
               </div>
               <div style={{ flex: '0 0 auto', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                 {row.set && (
-                  <Button variant="ghost" onClick={() => testStored(row.name)} disabled={busy !== null} style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}>
-                    {busy === row.name ? 'Testing…' : 'Test'}
+                  <Button
+                    variant="ghost"
+                    onClick={() => testStored(row.name)}
+                    busy={busy === row.name}
+                    busyLabel="Testing…"
+                    waitingFor="the provider"
+                    disabled={busy !== null && busy !== row.name}
+                    style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border)' }}
+                  >
+                    Test
                   </Button>
                 )}
                 {isModelKey && row.set && (
@@ -895,10 +904,13 @@ function KeysSection({
                   <Button
                     variant="primary"
                     onClick={() => saveKey(row.name)}
-                    disabled={busy !== null || (isAlpaca ? !keyId.trim() || !secret.trim() : !value.trim())}
+                    busy={busy === row.name}
+                    busyLabel="Testing…"
+                    waitingFor="the provider"
+                    disabled={busy !== row.name || (isAlpaca ? !keyId.trim() || !secret.trim() : !value.trim())}
                     style={{ height: 40, padding: '0 16px' }}
                   >
-                    {busy === row.name ? 'Testing…' : 'Test and save'}
+                    Test and save
                   </Button>
                 </div>
                 <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{KEY_FORM_NOTES[row.name]}</span>
@@ -1283,20 +1295,26 @@ function SmtpCard({
         <Button
           variant="ghost"
           onClick={sendTest}
-          disabled={busy !== null || !smtp?.configured}
+          busy={busy === 'test'}
+          busyLabel="Sending…"
+          waitingFor="the mail server"
+          disabled={busy === 'save' || !smtp?.configured}
           title={!smtp?.configured ? 'Save the SMTP details first' : undefined}
           style={{ height: 36, padding: '0 16px', border: '1px solid var(--sa-border-strong)', background: 'var(--sa-raised)' }}
         >
-          {busy === 'test' ? 'Sending…' : 'Send test'}
+          Send test
         </Button>
         <Button
           variant="ghost"
           onClick={save}
-          disabled={busy !== null || !form.host.trim() || !form.to_addr.trim() || passwordRequired}
+          busy={busy === 'save'}
+          busyLabel="Testing…"
+          waitingFor="the mail server"
+          disabled={busy === 'test' || !form.host.trim() || !form.to_addr.trim() || passwordRequired}
           title={passwordRequired ? 'The server changed — enter the password again' : undefined}
           style={{ height: 36, padding: '0 16px' }}
         >
-          {busy === 'save' ? 'Testing…' : 'Test and save'}
+          Test and save
         </Button>
       </div>
     </div>
@@ -1697,7 +1715,21 @@ export default function Settings() {
       .finally(() => setResetBusy(false));
   };
 
-  if (!data || !form) return null;
+  if (!data || !form) {
+    return (
+      <div
+        role="status"
+        aria-label="Loading settings"
+        style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}
+      >
+        <span className="sa-sr">Loading settings</span>
+        <div className="sa-loading">
+          <SkeletonText lines={6} />
+          <SkeletonText lines={4} />
+        </div>
+      </div>
+    );
+  }
   const s = form;
   const held = new Set(data.held_symbols);
 

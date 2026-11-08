@@ -11,6 +11,8 @@ import {
   postVerdict,
 } from '../api/state';
 import { Card } from '../components/Card';
+import { SkeletonLines } from '../components/cardState';
+import { SkeletonList } from '../components/skeletons';
 import { Chip } from '../components/Chip';
 import type {
   BriefingFacts,
@@ -755,6 +757,7 @@ export default function Reviews() {
   const [tab, setTab] = useState<'Weekly' | 'Briefings'>('Weekly');
   const kind = tab === 'Weekly' ? 'weekly' : 'briefing';
   const [items, setItems] = useState<ReviewListItem[]>([]);
+  const [listLoading, setListLoading] = useState(true);
   const [nextDue, setNextDue] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<string | null>(null);
   // The selection lives in the URL (?review=<id>) so a review is a
@@ -797,7 +800,8 @@ export default function Reviews() {
         setSchedule(r.schedule);
         setError(null);
       })
-      .catch(() => setError('Reviews could not be loaded.'));
+      .catch(() => setError('Reviews could not be loaded.'))
+      .finally(() => setListLoading(false));
     getVerdicts('draft')
       .then((r) => setVerdicts(r.items))
       .catch(() => setVerdicts([]));
@@ -808,6 +812,7 @@ export default function Reviews() {
     setPrevKind(kind);
     setDetail(null);
     setMissingId(null);
+    setListLoading(true);
   }
   useEffect(() => {
     refresh();
@@ -1003,6 +1008,11 @@ export default function Reviews() {
               <span style={{ fontSize: 'var(--sa-text-sm)' }}>{upcoming.due}</span>
             </div>
           )}
+          {listLoading && (
+            <div className="sa-loading" style={{ padding: 'var(--sa-space-3)' }}>
+              <SkeletonList rows={5} />
+            </div>
+          )}
           {items.map((item) => (
             <button
               key={item.id}
@@ -1108,6 +1118,12 @@ export default function Reviews() {
             ) : (
               <BriefingView review={detail} />
             )
+          ) : selectedId !== null && items.length > 0 ? (
+            <Card ariaLabel="Review details" busy>
+              <div className="sa-loading">
+                <SkeletonLines bars={8} />
+              </div>
+            </Card>
           ) : (
             <Card>
               <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>

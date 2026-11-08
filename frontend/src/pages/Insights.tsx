@@ -7,6 +7,13 @@ import { Card } from '../components/Card';
 import { Chip } from '../components/Chip';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatCard } from '../components/StatCard';
+import { ErrorBanner } from '../components/cardState';
+import {
+  SkeletonList,
+  SkeletonTable,
+  SkeletonText,
+  SkeletonTiles,
+} from '../components/skeletons';
 
 /** One insights snapshot as the API serves it (docs/SPEC.md, Insights). */
 
@@ -202,7 +209,7 @@ function filterLabel(key: string): string {
  * slices (design/screens/Insights.dc.html). Percentages are of the
  * decided counterfactual touches; under 30 decided the cells show — and
  * the row badge reads "too few", under 100 "early", else "counts". */
-function FilterRemovedCard({ filters }: { filters: FilterRemovedRow[] }) {
+function FilterRemovedCard({ filters, refreshing }: { filters: FilterRemovedRow[]; refreshing?: boolean }) {
   const total = filters.reduce((n, f) => n + f.count, 0);
   const monoCell: React.CSSProperties = {
     fontFamily: 'var(--sa-font-mono)',
@@ -220,6 +227,7 @@ function FilterRemovedCard({ filters }: { filters: FilterRemovedRow[] }) {
   return (
     <Card
       label="What each filter removed"
+      refreshing={refreshing}
       right={`this run · ${total} candidates stopped before the model · decided touches only`}
     >
       {filters.length === 0 ? (
@@ -330,13 +338,18 @@ export default function Insights() {
   const [tradeSlice, setTradeSlice] = useState<string | null>(null);
   const navigate = useNavigate();
   const res = useApiResource<InsightsResponse>(
-    () => get<InsightsResponse>(`/api/insights?strategy=${strategy}&period=${period}`),
+    (signal) =>
+      get<InsightsResponse>(
+        `/api/insights?strategy=${strategy}&period=${period}`,
+        signal,
+      ),
     [strategy, period],
   );
   const tradesRes = useApiResource<InsightTradesResponse>(
-    () =>
+    (signal) =>
       get<InsightTradesResponse>(
         `/api/insights/trades?strategy=${strategy}&period=${period}&dimension=${dimension}&slice=${encodeURIComponent(tradeSlice ?? '')}`,
+        signal,
       ),
     [strategy, period, dimension, tradeSlice],
     tradeSlice !== null,
@@ -376,7 +389,14 @@ export default function Insights() {
         {snap && <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>{snap.trades} closed trades · snapshot {snap.session_date}</span>}
       </div>
 
-      {res.failure && <Card><div role="alert">{res.failure.message}</div></Card>}
+      {res.failure && res.data === null && (
+        <ErrorBanner
+          what="insights"
+          failure={res.failure}
+          updatedAt={res.updatedAt}
+          onRetry={res.reload}
+        />
+      )}
       {res.data?.empty && !res.loading && <Card><div>No insights snapshot yet — the daily job writes one after each session close.</div></Card>}
 
       {snap && (
@@ -424,7 +444,7 @@ export default function Insights() {
           )}
 
           {/* findings */}
-          <Card label="Findings">
+          <Card label="Findings" refreshing={res.refreshing}>
             {snap.findings.length === 0 && <div style={{ color: 'var(--sa-text-muted)' }}>No findings in this period. Nothing differed by more than two standard errors on a big enough sample.</div>}
             {snap.findings.map((f) => (
               <div key={`${f.dimension}|${f.slice}`} style={{ border: '1px solid var(--sa-border)', borderLeft: `3px solid ${f.status === 'finding' ? 'var(--sa-accent)' : 'var(--sa-border)'}`, borderRadius: 'var(--sa-radius-md)', padding: 'var(--sa-space-3)', opacity: f.status === 'early' ? 0.65 : 1, display: 'flex', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
@@ -446,7 +466,7 @@ export default function Insights() {
 
           {/* funnel + skipped setups */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--sa-space-3)' }}>
-            <Card label="Where trades come from">
+            <Card label="Where trades come from" refreshing={res.refreshing}>
               {snap.funnel.steps.map((s, i) => {
                 const prev = i > 0 ? snap.funnel.steps[i - 1].count : s.count;
                 return (
@@ -466,7 +486,7 @@ export default function Insights() {
                 );
               })}
             </Card>
-            <Card label="Skipped setups">
+            <Card label="Skipped setups" refreshing={res.refreshing}>
               {snap.skipped.na ? (
                 <div style={{ color: 'var(--sa-text-muted)' }}>{snap.skipped.na}</div>
               ) : (
@@ -482,16 +502,20 @@ export default function Insights() {
             </Card>
           </div>
 
-          <FilterRemovedCard filters={snap.filters_removed ?? []} />
+          <FilterRemovedCard filters={snap.filters_removed ?? []} refreshing={res.refreshing} />
 
           {/* slices */}
-          <Card label="Slices" right={
-            <select aria-label="Dimension" value={dimension} onChange={(e) => setDimension(e.target.value)} style={{ background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', color: 'var(--sa-text)', borderRadius: 'var(--sa-radius-md)', height: 32, padding: '0 8px' }}>
-              {Object.entries(snap.slices).map(([key, d]) => (
-                <option key={key} value={key}>{d.label}</option>
-              ))}
-            </select>
-          }>
+          <Card
+            label="Slices"
+            refreshing={res.refreshing}
+            right={
+              <select aria-label="Dimension" value={dimension} onChange={(e) => setDimension(e.target.value)} style={{ background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', color: 'var(--sa-text)', borderRadius: 'var(--sa-radius-md)', height: 32, padding: '0 8px' }}>
+                {Object.entries(snap.slices).map(([key, d]) => (
+                  <option key={key} value={key}>{d.label}</option>
+                ))}
+              </select>
+            }
+          >
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {Object.entries(snap.slices).map(([key, d]) => (
                 <button key={key} type="button" aria-pressed={key === dimension} onClick={() => setDimension(key)} style={{ padding: '4px 10px', borderRadius: 'var(--sa-radius-sm)', border: '1px solid var(--sa-border)', background: key === dimension ? 'var(--sa-raised)' : 'transparent', color: 'var(--sa-text)', cursor: 'pointer', fontSize: 'var(--sa-text-sm)' }}>
@@ -556,7 +580,17 @@ export default function Insights() {
                       <strong>Trades in {tradeSlice}</strong>
                       <button type="button" onClick={() => setTradeSlice(null)} style={{ fontSize: 'var(--sa-text-sm)' }}>Close</button>
                     </div>
-                    {tradesRes.loading && <div style={{ color: 'var(--sa-text-muted)' }}>Loading…</div>}
+                    {tradesRes.loading && (
+                      <div className="sa-loading">
+                        <SkeletonTable
+                          columns={['Closed', 'Symbol', 'Qty', 'R', 'P&L', 'Exit', ''].map(
+                            (label, i) => ({ label, align: i === 0 || i === 1 ? 'left' : 'right' }),
+                          )}
+                          rows={4}
+                          track="0.9fr 0.7fr 0.5fr 0.5fr 0.7fr 0.9fr 0.6fr"
+                        />
+                      </div>
+                    )}
                     {tradesRes.failure && <div role="alert">{tradesRes.failure.message}</div>}
                     {tradesRes.data && tradesRes.data.trades.length === 0 && !tradesRes.loading && (
                       <div style={{ color: 'var(--sa-text-muted)' }}>No trades in this slice.</div>
@@ -601,7 +635,11 @@ export default function Insights() {
 
           {/* calibration */}
           {snap.calibration.buckets && (
-            <Card label="Calibration" right={snap.calibration.weighted_gap_pts != null ? <span style={{ color: 'var(--sa-text-muted)' }}>weighted gap {snap.calibration.weighted_gap_pts} pts · target before stop</span> : undefined}>
+            <Card
+              label="Calibration"
+              refreshing={res.refreshing}
+              right={snap.calibration.weighted_gap_pts != null ? <span style={{ color: 'var(--sa-text-muted)' }}>weighted gap {snap.calibration.weighted_gap_pts} pts · target before stop</span> : undefined}
+            >
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
                 <thead><tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
                   <th style={{ padding: '6px 8px' }}>Confidence</th><th style={{ padding: '6px 8px' }}>Stated</th><th style={{ padding: '6px 8px' }}>Reached target first</th><th style={{ padding: '6px 8px' }}>n</th>
@@ -623,7 +661,11 @@ export default function Insights() {
 
           {/* execution + overnight */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--sa-space-3)' }}>
-            <Card label="Execution" right={strategy !== 'live' ? <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>virtual fills{strategyKind === 'rules_only' ? ' · rules only' : ''}</span> : undefined}>
+            <Card
+              label="Execution"
+              refreshing={res.refreshing}
+              right={strategy !== 'live' ? <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>virtual fills{strategyKind === 'rules_only' ? ' · rules only' : ''}</span> : undefined}
+            >
               <div>Entry fill rate: <strong>{fmtPct(snap.execution.fill_rate)}</strong> ({snap.execution.filled} of {snap.execution.placed}){snap.execution.worst_cycle && ` · worst ${snap.execution.worst_cycle.cycle}`}</div>
               <div>Entry slippage: <strong>{snap.execution.entry_slippage_bps ?? '—'} bps</strong></div>
               <div>Exit slippage: <strong>{snap.execution.exit_slippage_bps ?? '—'} bps</strong>{snap.execution.exit_slippage_splits.length > 0 && ` (${snap.execution.exit_slippage_splits.map((s) => `${s.reason} ${s.bps ?? '—'}`).join(' · ')})`}</div>
@@ -632,7 +674,7 @@ export default function Insights() {
               <div>Earnings exits: <strong>{snap.execution.earnings_exits}</strong>{snap.execution.earnings_avg_r != null && ` · avg ${fmtR(snap.execution.earnings_avg_r)}`}{snap.execution.earnings_median_move_pct != null && ` · median ${fmtPct(snap.execution.earnings_median_move_pct)} after`}</div>
               <div>Dividends: <strong>{fmtUsd(snap.execution.dividends_usd)}</strong>{snap.execution.dividend_positions > 0 && ` across ${snap.execution.dividend_positions} positions`}</div>
             </Card>
-            <Card label="Overnight">
+            <Card label="Overnight" refreshing={res.refreshing}>
               <div>In session: <strong>{fmtUsd(snap.overnight.in_session_usd)}</strong> · overnight: <strong>{fmtUsd(snap.overnight.overnight_usd)}</strong></div>
               <div>Nights held: <strong>{snap.overnight.nights}</strong>{snap.overnight.gapped_pct != null && ` · ${fmtPct(snap.overnight.gapped_pct)} gapped against`}</div>
               {snap.overnight.largest_gap && <div>Largest gap: <strong>{fmtR(snap.overnight.largest_gap.r)}</strong> {snap.overnight.largest_gap.symbol} on {snap.overnight.largest_gap.date}</div>}
@@ -640,7 +682,30 @@ export default function Insights() {
           </div>
         </>
       )}
-      {res.loading && !snap && <Card busy><div>Loading…</div></Card>}
+      {res.loading && !snap && (
+        <div className="sa-loading" aria-hidden="true">
+          <SkeletonTiles count={6} />
+          <Card ariaLabel="Findings">
+            <SkeletonList rows={3} />
+          </Card>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 'var(--sa-space-3)' }}>
+            {[0, 1].map((i) => (
+              <Card key={i} ariaLabel="Card">
+                <SkeletonText lines={4} />
+              </Card>
+            ))}
+          </div>
+          <Card ariaLabel="Slices">
+            <SkeletonTable
+              columns={['Slice', 'Trades', 'Win rate', 'Avg R', '90% range', 'Total R', 'Skips', 'Status'].map(
+                (label, i) => ({ label, align: i === 0 ? 'left' : 'right' }),
+              )}
+              rows={6}
+              track="1.4fr 0.6fr 0.7fr 0.6fr 1fr 0.7fr 0.8fr 0.7fr"
+            />
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 import type { Resource } from '../api/useResource';
@@ -208,12 +208,10 @@ export function CardBody<T>({
   children: (data: T) => ReactNode;
 }) {
   // Data that replaces a shown skeleton fades in once (`.sa-in`).
-  const hadSkeleton = useRef(false);
-  useEffect(() => {
-    if (res.showSkeleton) hadSkeleton.current = true;
-  }, [res.showSkeleton]);
+  const [hadSkeleton, setHadSkeleton] = useState(false);
+  if (res.showSkeleton && !hadSkeleton) setHadSkeleton(true);
 
-  if (res.data === null) {
+  if (res.data === null && !res.loaded) {
     if (res.failure) {
       return <FetchError what={what} failure={res.failure} updatedAt={null} onRetry={res.reload} />;
     }
@@ -228,9 +226,14 @@ export function CardBody<T>({
       </div>
     );
   }
+  if (res.data === null) {
+    // The fetcher answered null (e.g. nothing picked yet) — the empty
+    // state, never a skeleton.
+    return <>{res.failure ? <FetchError what={what} failure={res.failure} updatedAt={res.updatedAt} onRetry={res.reload} /> : empty}</>;
+  }
   const rowClass = [
     res.refreshing || res.failure ? 'sa-stale-rows' : '',
-    hadSkeleton.current ? 'sa-in' : '',
+    hadSkeleton ? 'sa-in' : '',
   ]
     .filter(Boolean)
     .join(' ');
