@@ -15,6 +15,7 @@ environment are imported once, then ignored with a warning and a banner.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -113,6 +114,28 @@ def scrub(text: str, secrets: list[str]) -> str:
         if value and len(value) >= 8:
             text = text.replace(value, "••••")
     return text
+
+
+def _backup_credential_scrub_values(raw: str | None) -> list[str]:
+    """The sensitive fields inside the ``backup_credentials`` JSON blob.
+
+    That row stores one JSON string, so scrub_values would otherwise only
+    match the whole blob — a lone access key in a log message would
+    survive unless it happened to match a key shape.
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    return [
+        str(data[key])
+        for key in ("access_key_id", "secret_access_key")
+        if data.get(key)
+    ]
 
 
 def read_env_keys() -> dict[str, str]:
@@ -339,6 +362,7 @@ class SecretsStore:
         self._fernet = _load_or_create_key(path)
         self._values: dict[str, str] = {}
         self._meta: dict[str, Secret] = {}
+        self._scrub_extras: list[str] = []
         self._load_rows()
         # Filled by import_env_keys: what .env still contains and what this
         # startup imported. Drives the "remove them from .env" banner.
@@ -359,6 +383,9 @@ class SecretsStore:
                 ).decode()
                 for row in rows
             }
+            self._scrub_extras = _backup_credential_scrub_values(
+                self._values.get("backup_credentials")
+            )
 
     def get(self, name: str) -> str | None:
         """Plaintext for backend wiring only; never crosses the API."""
@@ -370,7 +397,11 @@ class SecretsStore:
     def scrub_values(self) -> list[str]:
         """Everything the log scrubber must strip: stored keys plus any
         plaintext still seen in .env this boot."""
-        return [*self._values.values(), *self._env_leftovers]
+        return [
+            *self._values.values(),
+            *self._scrub_extras,
+            *self._env_leftovers,
+        ]
 
     def save(
         self,
