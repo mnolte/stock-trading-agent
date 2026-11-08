@@ -105,7 +105,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 043 | fix | Trading path audit fixes | — | — | #123 | merged |
 | 044 | spec | Spec rulings from the 043 audit | — | #135 | — | merged |
 | 045 | feat | GUI catch-up | `045-feat-gui-catch-up.md` | #138 | #146 | merged |
-| 046 | fix | Spec and design alignment | `archive/046-fix-spec-alignment.md` | #140 | #150 | building |
+| 046 | fix | Spec and design alignment | `archive/046-fix-spec-alignment.md` | #140 | #150, #151 | building |
 | 047 | fix | Drawer model-call e2e flake | — | — | #141 | merged |
 | 048 | spec | Kickoff archive | — | #142 | — | merged |
 | 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |

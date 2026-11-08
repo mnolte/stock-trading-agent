@@ -167,7 +167,7 @@ const DEFAULTS: Record<string, string> = {
   'execution.entry_limit_offset_pct': '0.05%',
   'execution.entry_timeout_minutes': '10 min',
   'execution.max_spread_pct': '0.15%',
-  'decision.model': 'gpt-4o-mini',
+  'decision.model': 'gpt-4.1-mini',
   'decision.temperature': '0',
   'decision.min_confidence_enter': '0.55',
   'decision.min_reward_risk': '1.5',

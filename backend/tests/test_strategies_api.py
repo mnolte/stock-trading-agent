@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 
 def _new(client: TestClient, **body: object) -> int:
-    payload = {"name": "B · Bigger model", "kind": "llm", "model": "gpt-4.1-mini", **body}
+    payload = {"name": "B · Bigger model", "kind": "llm", "model": "gpt-4o-mini", **body}
     response = client.post("/api/strategies", json=payload)
     assert response.status_code == 200, response.text
     return int(response.json()["id"])
@@ -130,7 +130,7 @@ def test_promote_opens_settings_change_and_archives(client: TestClient) -> None:
     _closed_trades(sid, 20)
     promotion = client.get(f"/api/strategies/{sid}/promotion").json()
     assert promotion["allowed"] is True
-    assert promotion["changes"] == {"decision": {"model": "gpt-4.1-mini"}}
+    assert promotion["changes"] == {"decision": {"model": "gpt-4o-mini"}}
     # Nothing is promoted until Marc saves it with a reason.
     with get_session_maker()() as session:
         assert session.get(Strategy, sid).status == "active"  # type: ignore[union-attr]
