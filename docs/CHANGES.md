@@ -10,6 +10,9 @@ Phase 2 of item 046, the config group of the gap report (`docs/analysis/046-spec
 - **Inspector (G2)**: `inspector.default_sources` is `[live, review, ask]` per the spec's filter table; shadows and backtests stay opt-in.
 - **Reviews (G4, G9)**: `reviews.skip_flat_pct: 2` added (the code fallback, confirmed by Marc); `reviews.prompts.briefing` back to `briefing.v2` — the v1 default was an accidental revert.
 - **Models (G3, config half)**: `decision.model` and the briefing/verdict review models default to `gpt-4.1-mini`; weekly stays `gpt-4o-mini`. The spec text moves in Marc's spec PR.
+- **Missing keys (G13, G15)**: `alpaca.max_calls_per_minute: 150`, `backtest.cancel_kill_wait_seconds: 5`, `ops.backup_stale_hours: 36`, `ops.restore_test_stale_days: 45`, `performance.tail.after_exit_max_failures: 3` and `performance.tail.after_exit_bar_delay_minutes: 16` added with the values the code fallbacks already carried — same behaviour, now visible in config.
+- **Screen time (G14)**: the backtest lockstep worker reads `universe.screen.time_ny` (the live screen's key) instead of the nonexistent `universe.screen_time` — same 08:10 value, no longer silently divergent.
+- **Guard test**: `test_config_keys.py` fails on any literal `config.get*` path absent from the example, so this class of drift can't return.
 
 ## 2026-11-07 — [052] Browser console warnings
 
