@@ -884,19 +884,20 @@ def _finish(
             )
     row.summary = summary
     row.warnings = (row.warnings or []) + warnings + _read_with_care(
-        bundles_hint
+        bundles_hint,
+        str(config.get("backtest", "same_bar_stop_and_target", default="stop")),
     )
     row.size_bytes = dir_size(run_dir)
     row.status = status
     row.finished_at = _naive_utc(wall.now())
 
 
-def _read_with_care(run: RunParams) -> list[str]:
+def _read_with_care(run: RunParams, same_bar: str = "stop") -> list[str]:
     """Every assumption the run relied on (docs/SPEC.md, Results)."""
     notes = [
         "Spreads are assumed, not measured — the free data plan has no "
         "historical quotes.",
-        "A bar that touches both stop and target counts the stop first.",
+        f"A bar that touches both stop and target counts the {same_bar} first.",
     ]
     if run.universe_mode == "screened":
         notes.append(
