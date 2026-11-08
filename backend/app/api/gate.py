@@ -123,6 +123,10 @@ def _origin_allowed(origin: str, config: AppConfig) -> bool:
     host = (parsed.hostname or "").lower()
     if not host:
         return False
+    # A port-less loopback Origin means :80/:443 — never the app's own
+    # loopback origin, which always carries SA_PORT (or the dev port).
+    if host in _LOOPBACK_NAMES and parsed.port is None:
+        return False
     return host_allowed(
         f"{host}:{parsed.port}" if parsed.port is not None else host, config
     )

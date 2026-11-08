@@ -72,6 +72,24 @@ def test_own_origin_write_passes(client: TestClient) -> None:
     assert r.json() == {"paused": True}
 
 
+@pytest.mark.parametrize(
+    "origin", ["http://localhost", "http://127.0.0.1", "http://[::1]"]
+)
+def test_portless_loopback_origin_refused(client: TestClient, origin: str) -> None:
+    """Port-less loopback Origins mean :80/:443 — a page served by another
+    local process must not pass as the app's own origin."""
+    r = client.post("/api/pause", headers={"Origin": origin})
+    assert r.status_code == 403
+    assert r.json()["error"]["code"] == "origin_refused"
+
+
+def test_loopback_origin_with_explicit_port_passes(client: TestClient) -> None:
+    # Simulated mode counts any loopback port as a dev server; the port is
+    # what makes the Origin attributable to a specific local server.
+    r = client.post("/api/pause", headers={"Origin": "http://localhost:8000"})
+    assert r.status_code == 200
+
+
 def test_no_headers_write_passes(client: TestClient) -> None:
     """curl-style requests carry no Origin or fetch metadata — allowed."""
     r = client.post("/api/pause")
