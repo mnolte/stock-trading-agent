@@ -267,6 +267,7 @@ export function Layout() {
           <BannerStrip
             refreshKey={bannerRefresh}
             onResumeRequest={() => setDialog('resume')}
+            onFlattenRequest={() => setDialog('flatten')}
             onChanged={refreshAll}
           />
           {backend.offline && <OfflineBanner />}
