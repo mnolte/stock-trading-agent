@@ -266,7 +266,11 @@ All thresholds live in config (see Config layers).
 2. `config.yaml`, local and optional: only what this install changes.
 3. The active settings version.
 
-So a key added to the example in a release reaches every install, even one whose `config.yaml` or saved settings predate it. (Until now the first file found was the only one read, so a local `config.yaml` hid every later default: `supports_temperature` for gpt-6.1-sol and the email channel for `missing_stop` were both missing on 4 November.) At start the app logs at WARNING, once per key:
+So a key added to the example in a release reaches every install, even one whose `config.yaml` or saved settings predate it. (Until now the first file found was the only one read, so a local `config.yaml` hid every later default: `supports_temperature` for gpt-6.1-sol and the email channel for `missing_stop` were both missing on 4 November.)
+
+Open-ended maps: `models` and the symbol-keyed `universe.sectors` and `universe.names` keep entries the example doesn't list — a model id or ticker is user data, not a config key. Every other dict stays strict.
+
+At start the app logs at WARNING, once per key:
 - a key in `config.yaml` or the active settings that the example doesn't have (for example a retired `pdt_max_day_trades`); it is ignored;
 - a model id used by live decisions, a review task, Ask or a strategy that is not in the merged `models` list. Saving such a setting is refused.
 
