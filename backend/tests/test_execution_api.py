@@ -117,10 +117,9 @@ def test_kill_switch_api_flow(client: TestClient) -> None:
 
 def test_kill_switch_request_id_runs_once(client: TestClient) -> None:
     """Resends under one request_id activate the switch once."""
-    from sqlalchemy import func, select
-
     from app.db.base import get_session_maker
     from app.db.models import Event
+    from sqlalchemy import func, select
 
     def kill_events() -> int:
         with get_session_maker()() as session:

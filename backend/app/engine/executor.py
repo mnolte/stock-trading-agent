@@ -427,7 +427,10 @@ class Executor:
             return self._request_once_done[request_id]
         task = self._request_once.get(request_id)
         if task is None:
-            task = asyncio.create_task(make())
+            async def run() -> dict[str, object]:
+                return await make()
+
+            task = asyncio.create_task(run())
             self._request_once[request_id] = task
             if len(self._request_once) > 256:
                 self._request_once.pop(next(iter(self._request_once)))
