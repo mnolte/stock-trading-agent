@@ -2,6 +2,35 @@
 
 Newest first.
 
+## 2026-11-08 — [053] Security audit findings fixed
+
+Follow-up to the 053 audit (#164): all ten open findings #153–#162 are
+fixed, one commit each.
+
+- Post-sign-in `next` redirects are constrained to same-origin paths —
+  absolute, protocol-relative and backslash-normalised URLs fall back to
+  `/` (`safeNextPath` in the API client, used by Login and the 401
+  redirect).
+- The request gate reads `Transfer-Encoding` case-insensitively and
+  detects `chunked` inside comma-separated token lists, so
+  `gzip, chunked` can no longer skip the body cap or JSON-only checks.
+- Loopback `Origin` headers must carry an explicit port; port-less
+  `http://localhost` origins are refused (Host handling unchanged).
+- The CSRF double-submit comparison uses `hmac.compare_digest`.
+- Over HTTPS only `__Host-sa_session` authenticates; the plain
+  `sa_session` name is accepted only on plain HTTP/loopback.
+- `backup_credentials` scrubbing now registers the nested
+  `access_key_id`/`secret_access_key` values, not only the whole blob.
+- Saving the SMTP card always requires "Confirm it is you", including
+  first-time setup.
+- Backtest CSV export whitelists `kind` to `trades`/`decisions`; anything
+  else is a 422 before it reaches `Content-Disposition`.
+- The global sign-in pause persists on the user row
+  (`users.global_locked_until`, migration `r1a2b3c4d5e6`) instead of
+  living only in memory, so a restart no longer lifts it early.
+- `security/run-audits.sh` pins `uvx --python 3.12` so pip-audit does not
+  resolve under an older interpreter.
+
 ## 2026-11-08 — [045] Notifications: drain waits for in-flight sends
 
 `NotificationService.drain()` used to return as soon as the queue looked
