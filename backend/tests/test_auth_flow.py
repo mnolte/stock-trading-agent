@@ -296,6 +296,30 @@ def test_risky_writes_require_confirm(
         assert r.json()["error"]["code"] == "confirm_required"
 
 
+def test_first_smtp_save_requires_confirm(app_auth: Any) -> None:
+    """Configuring SMTP for the first time redirects every future alert —
+    it needs 'Confirm it is you' just like changing a saved destination."""
+    app, secret, _codes = app_auth
+    body = {
+        "host": "smtp.test",
+        "port": 587,
+        "username": "agent@test",
+        "from_addr": "agent@test",
+        "to_addr": "marc@test",
+        "password": "smtp-secret-123",
+    }
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        r = client.post("/api/notifications/smtp", json=body, headers=csrf_headers(client))
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "confirm_required"
+        client.post(
+            "/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client)
+        )
+        r = client.post("/api/notifications/smtp", json=body, headers=csrf_headers(client))
+        assert r.status_code == 200, r.text
+
+
 def test_settings_risk_loosening_requires_confirm(app_auth: Any) -> None:
     """Loosening a numeric risk limit needs 'Confirm it is you';
     tightening never asks (design, Settings → Access)."""
