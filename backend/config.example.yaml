@@ -63,6 +63,9 @@ gui:
 api:
   broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
 
+alpaca:
+  max_calls_per_minute: 150   # one shared limiter across data and broker clients; Alpaca allows 200 (backtest gets 40)
+
 execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)
   entry_limit_offset_pct: 0.05
@@ -190,6 +193,8 @@ performance:
     bucket_r: 0.5               # R distribution bucket width
     top_share_pct: 20           # "top 20% of trades"
     after_exit_sessions: 5      # window for best and close after exit
+    after_exit_max_failures: 3  # bar fetches that may fail before a row is marked unavailable
+    after_exit_bar_delay_minutes: 16   # delay before trusting a closed session's bars (SIP delay)
     min_trades: 20              # below this the card shows the small-sample banner
 
 reviews:
@@ -289,6 +294,7 @@ backtest:                         # v0.2, PR 14
   data_dir: data/backtests        # run-<id>/<strategy>.db + market.db per run
   bar_store: data/backtests/bars.db   # never pruned automatically; not in the 03:00 backup
   cancel_grace_seconds: 60        # then the app stops the child by PID
+  cancel_kill_wait_seconds: 5     # between SIGTERM and SIGKILL on the child
   process_nice: 10
 
 readiness:                      # PR 16; evidence from the current run, adjusted P&L
@@ -360,6 +366,8 @@ ops:                            # PR 24, VPS
   disk_critical_pct: 90
   clock_max_offset_seconds: 1
   cert_warn_days: 14
+  backup_stale_hours: 36          # local backup older than this warns "may be failing"
+  restore_test_stale_days: 45     # restore test older than this warns
   offsite_backup: {enabled: false, time: "03:05", keep_daily: 30, keep_weekly: 12, restore_test_day: 1}
   deploy_guard_market_hours: true
 
