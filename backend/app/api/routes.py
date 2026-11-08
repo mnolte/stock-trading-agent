@@ -5703,7 +5703,13 @@ def _log_where(
 def api_logs(request: Request) -> dict[str, object]:
     """Newest-first keyset paging (cursor = last id), limit ≤ 200."""
     where, args = _log_where(request.query_params)
-    limit = _int_param(request, "limit", 100, 1, 200)
+    limit = _int_param(
+        request,
+        "limit",
+        get_config().get_int("logging", "page_size", default=100),
+        1,
+        200,
+    )
     conn = _log_db(request)
     if conn is None:
         return {"lines": [], "next_cursor": None, "index_available": False}
