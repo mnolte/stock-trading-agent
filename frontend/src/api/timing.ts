@@ -25,3 +25,5 @@ export const NEW_ROW_MS = 1_600;
 export const KILL_RESEND_MS = 5_000;
 /** Kill switch: critical banner after this long without an answer. */
 export const KILL_BANNER_MS = 30_000;
+/** Confirmation toasts auto-close. */
+export const TOAST_AUTO_CLOSE_MS = 10_000;

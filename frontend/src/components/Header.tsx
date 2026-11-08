@@ -38,11 +38,24 @@ const statValue: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
+/** A shimmer bar shaped like the text it stands in for (055 → Loading). */
+function Bar({ width, height = 14 }: { width: number | string; height?: number }) {
+  return (
+    <span
+      className="sa-skel sa-loading"
+      aria-hidden="true"
+      style={{ display: 'inline-block', width, height, borderRadius: 4, verticalAlign: 'middle' }}
+    />
+  );
+}
+
 export function Header({
   state,
   title,
   onKillSwitch,
   onPauseToggle,
+  killBusy = false,
+  killBusyLabel = 'Turning on…',
   needsYou = 0,
   narrow = false,
 }: {
@@ -50,6 +63,10 @@ export function Header({
   title: string;
   onKillSwitch: () => void;
   onPauseToggle: () => void;
+  /** A kill-switch request is unanswered: the button shows the spinner
+   * and the present-participle label, never disabled (055 → Loading). */
+  killBusy?: boolean;
+  killBusyLabel?: string;
   /** Needs-you count for the header chip (0 hides it; the phone bar
    * carries the count at ≤820 px, so the chip is not rendered there). */
   needsYou?: number;
@@ -74,6 +91,7 @@ export function Header({
 
   const sessionState = state?.session.state ?? 'closed';
   const paused = state?.paused ?? false;
+  const loading = state === null;
   const pillState = paused ? 'paused' : sessionState;
   const estNow = new Date(nowMs).toISOString();
   const tail = state ? sessionTail(pillState, state.session, estNow) : '';
@@ -99,14 +117,17 @@ export function Header({
   const pauseButton = (
     <button
       type="button"
-      onClick={onPauseToggle}
-      disabled={paused && !!state?.resume_blocked}
+      onClick={loading ? undefined : onPauseToggle}
+      disabled={!loading && paused && !!state?.resume_blocked}
+      aria-disabled={loading || undefined}
       title={
-        paused && state?.resume_blocked
-          ? `Resume needs all three keys set and passing — ${state.keys_issue ?? 'open Settings'}`
-          : paused
-            ? undefined
-            : 'Pause new entries. Stops, targets and position checks keep working.'
+        loading
+          ? "Waiting for the agent's state"
+          : paused && state?.resume_blocked
+            ? `Resume needs all three keys set and passing — ${state.keys_issue ?? 'open Settings'}`
+            : paused
+              ? undefined
+              : 'Pause new entries. Stops, targets and position checks keep working.'
       }
       style={{
         height: 'var(--sa-control-height)',
@@ -118,10 +139,17 @@ export function Header({
         borderRadius: 'var(--sa-radius-md)',
         border: paused ? '1px solid var(--sa-accent)' : '1px solid var(--sa-border-strong)',
         background: paused ? 'var(--sa-accent)' : 'var(--sa-raised)',
-        color: paused ? 'var(--sa-bg)' : 'var(--sa-text)',
+        color: loading
+          ? 'var(--sa-text-disabled)'
+          : paused
+            ? 'var(--sa-bg)'
+            : 'var(--sa-text)',
         fontSize: 'var(--sa-text-base)',
         fontWeight: paused ? 600 : 500,
-        cursor: paused && state?.resume_blocked ? 'not-allowed' : 'pointer',
+        cursor:
+          loading || (paused && state?.resume_blocked)
+            ? 'not-allowed'
+            : 'pointer',
         opacity: paused && state?.resume_blocked ? 0.55 : 1,
         whiteSpace: 'nowrap',
       }}
@@ -155,19 +183,27 @@ export function Header({
         borderRadius: 'var(--sa-radius-md)',
         border: '1px solid var(--sa-negative-border)',
         background: state?.kill_switch ? 'var(--sa-negative)' : 'var(--sa-negative-bg)',
-        color: state?.kill_switch ? 'var(--sa-bg)' : 'var(--sa-negative-soft)',
+        color: killBusy
+          ? 'var(--sa-negative)'
+          : state?.kill_switch
+            ? 'var(--sa-bg)'
+            : 'var(--sa-negative-soft)',
         fontSize: 'var(--sa-text-base)',
         fontWeight: 600,
         cursor: 'pointer',
         whiteSpace: 'nowrap',
       }}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="9" />
-        <line x1="12" y1="7" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12" y2="17" />
-      </svg>
-      <span>{state?.kill_switch ? 'Trading halted' : 'Kill switch'}</span>
+      {killBusy ? (
+        <span className="sa-spin" aria-hidden="true" />
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="7" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12" y2="17" />
+        </svg>
+      )}
+      <span>{killBusy ? killBusyLabel : state?.kill_switch ? 'Trading halted' : 'Kill switch'}</span>
     </button>
   );
 
@@ -217,7 +253,7 @@ export function Header({
               textOverflow: 'ellipsis',
             }}
           >
-            {state?.session.display_time ?? '—'}
+            {loading ? <Bar width={220} /> : state.session.display_time}
           </span>
         </div>
       )}
@@ -248,19 +284,25 @@ export function Header({
             overflow: 'hidden',
           }}
         >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              flex: '0 0 8px',
-              borderRadius: '50%',
-              background: paused ? 'var(--sa-accent)' : sessionDot(sessionState),
-            }}
-          />
-          <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {sessionLabel(pillState)}
-            <span style={{ color: 'var(--sa-text-muted)' }}>{tail}</span>
-          </span>
+          {loading ? (
+            <Bar width={150} />
+          ) : (
+            <>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  flex: '0 0 8px',
+                  borderRadius: '50%',
+                  background: paused ? 'var(--sa-accent)' : sessionDot(sessionState),
+                }}
+              />
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {sessionLabel(pillState)}
+                <span style={{ color: 'var(--sa-text-muted)' }}>{tail}</span>
+              </span>
+            </>
+          )}
         </div>
         {!narrow && <NeedsChip count={needsYou} />}
 
@@ -276,20 +318,32 @@ export function Header({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
               <span style={statLabel}>Equity</span>
               <span style={{ ...statValue, color: 'var(--sa-text)' }}>
-                ${state?.equity_usd ?? '—'}{' '}
-                <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
-                  {state ? (state.equity_eur ? `€${state.equity_eur}` : 'EUR unavailable') : '—'}
-                </span>
+                {loading ? (
+                  <Bar width={120} />
+                ) : (
+                  <>
+                    ${state.equity_usd}{' '}
+                    <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+                      {state.equity_eur ? `€${state.equity_eur}` : 'EUR unavailable'}
+                    </span>
+                  </>
+                )}
               </span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
               <span style={statLabel}>Today</span>
               <span style={{ ...statValue, color: todayColor }}>
-                {state ? signedMoney(state.today_usd, '$') : '—'}{' '}
-                <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
-                  {state ? (state.today_eur ? signedMoney(state.today_eur, '€') : 'EUR unavailable') : '—'}
-                </span>
+                {loading ? (
+                  <Bar width={90} />
+                ) : (
+                  <>
+                    {signedMoney(state.today_usd, '$')}{' '}
+                    <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+                      {state.today_eur ? signedMoney(state.today_eur, '€') : 'EUR unavailable'}
+                    </span>
+                  </>
+                )}
               </span>
             </div>
 
@@ -306,7 +360,7 @@ export function Header({
               >
                 Regime
               </span>
-              <Chip variant={regimeVariant(state?.regime)}>{state?.regime ?? '—'}</Chip>
+              {loading ? <Bar width={72} height={22} /> : <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>}
             </div>
           </div>
         )}
@@ -324,19 +378,29 @@ export function Header({
               minWidth: 0,
             }}
           >
-            <span
-              title={`Equity · ${state?.equity_eur ? `€${state.equity_eur}` : 'EUR unavailable'}`}
-              style={{ color: 'var(--sa-text)' }}
-            >
-              ${state?.equity_usd ?? '—'}
-            </span>
-            <span
-              title={`Today · ${state?.today_eur ? signedMoney(state.today_eur, '€') : 'EUR unavailable'}`}
-              style={{ color: todayColor }}
-            >
-              {state ? signedMoney(state.today_usd, '$') : '—'}
-            </span>
-            <Chip variant={regimeVariant(state?.regime)}>{state?.regime ?? '—'}</Chip>
+            {loading ? (
+              <>
+                <Bar width={90} />
+                <Bar width={80} />
+                <Bar width={72} height={22} />
+              </>
+            ) : (
+              <>
+                <span
+                  title={`Equity · ${state.equity_eur ? `€${state.equity_eur}` : 'EUR unavailable'}`}
+                  style={{ color: 'var(--sa-text)' }}
+                >
+                  ${state.equity_usd}
+                </span>
+                <span
+                  title={`Today · ${state.today_eur ? signedMoney(state.today_eur, '€') : 'EUR unavailable'}`}
+                  style={{ color: todayColor }}
+                >
+                  {signedMoney(state.today_usd, '$')}
+                </span>
+                <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>
+              </>
+            )}
           </div>
         )}
 

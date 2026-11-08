@@ -130,6 +130,20 @@ export function createResourceLoader<T>(
         }, ms);
         timers.push(() => clearTimeout(id));
       };
+      // Reveal respects the skeleton's minimum on-screen time; `reveal`
+      // uses `later`, which is bound to this load through `schedule`.
+      const revealNow = (fn: () => void) => {
+        const shownAt = skeletonShownAt;
+        const wait =
+          shownAt === null
+            ? 0
+            : Math.max(0, SKELETON_MIN_MS - (Date.now() - shownAt));
+        if (wait === 0) {
+          fn();
+        } else {
+          scheduleReveal(wait, fn);
+        }
+      };
 
       patch({
         showSkeleton: false,
@@ -150,23 +164,28 @@ export function createResourceLoader<T>(
           if (live()) patch({ slowSeconds: state.slowSeconds + 1 });
         }, 1000);
         timers.push(() => clearInterval(tick));
-        schedule(LOAD_TIMEOUT_MS, () => controller.abort());
+        // The client stops waiting at LOAD_TIMEOUT_MS whether or not the
+        // fetcher honours the abort signal.
+        schedule(LOAD_TIMEOUT_MS, () => {
+          controller.abort();
+          if (!live()) return;
+          finish();
+          clearTimers();
+          revealNow(() => {
+            patch({
+              failure: {
+                at: new Date(),
+                message: NO_ANSWER,
+                unreachable: true,
+              },
+              showSkeleton: false,
+              slow: false,
+              refreshing: false,
+            });
+          });
+          skeletonShownAt = null;
+        });
       }
-
-      // Reveal respects the skeleton's minimum on-screen time; `reveal`
-      // uses `later`, which is bound to this load through `schedule`.
-      const revealNow = (fn: () => void) => {
-        const shownAt = skeletonShownAt;
-        const wait =
-          shownAt === null
-            ? 0
-            : Math.max(0, SKELETON_MIN_MS - (Date.now() - shownAt));
-        if (wait === 0) {
-          fn();
-        } else {
-          scheduleReveal(wait, fn);
-        }
-      };
 
       void fetcherRef(controller.signal)
         .then((result: T) => {

@@ -3,6 +3,13 @@ import { Outlet, useLocation } from 'react-router-dom';
 
 import { useLiveStatus, useLiveUpdates } from '../api/liveContext';
 import { useApiResource } from '../api/useResource';
+import { ApiError } from '../api/client';
+import {
+  KILL_BANNER_MS,
+  KILL_RESEND_MS,
+  TOAST_AUTO_CLOSE_MS,
+} from '../api/timing';
+import { displayTime } from '../format';
 import {
   getAttention,
   getHeaderState,
@@ -35,11 +42,22 @@ import { AppNotAnswering, BackendDownBanner, OfflineBanner } from './errorPages'
 
 type DialogKind = 'menu' | 'flatten' | 'resume';
 
+/** A kill-switch request the backend has not confirmed yet (055 → Loading):
+ * resent every KILL_RESEND_MS under the same request_id until it answers. */
+interface KillSend {
+  action: 'entries' | 'flatten';
+  requestId: string;
+  since: number;
+}
+
 export function Layout() {
   const [state, setState] = useState<HeaderState | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [positions, setPositions] = useState<PositionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [ksSend, setKsSend] = useState<KillSend | null>(null);
+  const [ksBanner, setKsBanner] = useState(false);
+  const [ksToast, setKsToast] = useState<string | null>(null);
   const [bannerRefresh, setBannerRefresh] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuWrapRef = useRef<HTMLDivElement | null>(null);
@@ -92,6 +110,59 @@ export function Layout() {
     refreshHeader();
     setBannerRefresh((n) => n + 1);
   }, [refreshHeader]);
+
+  // Kill switch (055 → Loading): the press is sent at once and resent
+  // every KILL_RESEND_MS under one request_id — the backend runs it once.
+  // A real HTTP answer stops the loop; a network failure keeps resending.
+  // After KILL_BANNER_MS a critical banner shows while resends continue.
+  useEffect(() => {
+    if (!ksSend) return;
+    let finished = false;
+    const finish = (confirmed: boolean) => {
+      if (finished) return;
+      finished = true;
+      const send = ksSend;
+      setKsSend(null);
+      setKsBanner(false);
+      refreshAll();
+      if (confirmed && Date.now() - send.since >= KILL_RESEND_MS) {
+        setKsToast(
+          `Kill switch on since ${displayTime(new Date(send.since).toISOString())}`,
+        );
+      }
+    };
+    const attempt = () => {
+      postKillSwitch(ksSend.action, ksSend.requestId).then(
+        () => finish(true),
+        (e: Error) => {
+          if (finished) return;
+          if (e instanceof ApiError) {
+            // The backend answered — a real failure, not a lost packet.
+            finished = true;
+            setKsSend(null);
+            setKsBanner(false);
+            setError(e.message);
+          }
+          // Otherwise the next interval tick resends the same request_id.
+        },
+      );
+    };
+    attempt();
+    const resend = window.setInterval(attempt, KILL_RESEND_MS);
+    const bannerTimer = window.setTimeout(() => setKsBanner(true), KILL_BANNER_MS);
+    return () => {
+      finished = true;
+      window.clearInterval(resend);
+      window.clearTimeout(bannerTimer);
+    };
+  }, [ksSend, refreshAll]);
+
+  // The confirmation toast closes itself.
+  useEffect(() => {
+    if (!ksToast) return;
+    const t = window.setTimeout(() => setKsToast(null), TOAST_AUTO_CLOSE_MS);
+    return () => window.clearTimeout(t);
+  }, [ksToast]);
 
   // Topics that change the header strip or banners; page data is fetched by
   // the pages themselves via their own useLiveUpdates subscriptions.
@@ -162,6 +233,9 @@ export function Layout() {
   }, [menuOpen]);
 
   const onKillSwitchButton = () => {
+    // While a request is unconfirmed the button is busy; a second press
+    // must not start a second request (055 → Kill switch).
+    if (ksSend) return;
     if (state?.kill_switch) {
       setDialog('resume');
     } else {
@@ -169,14 +243,18 @@ export function Layout() {
     }
   };
 
+  const beginKillSend = (action: 'entries' | 'flatten') => {
+    setDialog(null);
+    setKsSend({
+      action,
+      requestId: crypto.randomUUID(),
+      since: Date.now(),
+    });
+  };
+
   const onMenuConfirm = (scope: 'entries' | 'flatten') => {
     if (scope === 'entries') {
-      postKillSwitch('entries')
-        .then(() => {
-          setDialog(null);
-          refreshAll();
-        })
-        .catch((e: Error) => setError(e.message));
+      beginKillSend('entries');
     } else {
       getPositions()
         .then((p) => {
@@ -188,12 +266,7 @@ export function Layout() {
   };
 
   const onFlattenConfirm = () => {
-    postKillSwitch('flatten')
-      .then(() => {
-        setDialog(null);
-        refreshAll();
-      })
-      .catch((e: Error) => setError(e.message));
+    beginKillSend('flatten');
   };
 
   // Pause/Resume is one click in both directions — no dialog, no reason.
@@ -244,6 +317,8 @@ export function Layout() {
           title={pageTitle(location.pathname)}
           onKillSwitch={onKillSwitchButton}
           onPauseToggle={onPauseToggle}
+          killBusy={ksSend !== null}
+          killBusyLabel={ksSend?.action === 'flatten' ? 'Flattening…' : 'Turning on…'}
           needsYou={needsYou}
           narrow={narrow}
         />
@@ -262,6 +337,13 @@ export function Layout() {
           {error && (
             <div style={{ marginBottom: 'var(--sa-space-4)' }}>
               <Banner variant="negative">Action failed: {error}</Banner>
+            </div>
+          )}
+          {ksBanner && (
+            <div style={{ marginBottom: 'var(--sa-space-4)' }}>
+              <Banner variant="negative" role="alert">
+                Kill switch not confirmed
+              </Banner>
             </div>
           )}
           <BannerStrip
@@ -286,6 +368,27 @@ export function Layout() {
       <AskDrawer />
       <NotificationToasts />
       <ApiErrorToasts />
+      {ksToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            right: 'var(--sa-space-5)',
+            bottom: 'var(--sa-space-5)',
+            zIndex: 70,
+            maxWidth: 420,
+            padding: '12px 16px',
+            borderRadius: 'var(--sa-radius-md)',
+            background: 'var(--sa-positive-bg)',
+            border: '1px solid var(--sa-positive-border)',
+            color: 'var(--sa-positive)',
+            fontSize: 'var(--sa-text-md)',
+            lineHeight: 1.5,
+          }}
+        >
+          {ksToast}
+        </div>
+      )}
 
       <KillSwitchDialog
         open={dialog === 'menu'}

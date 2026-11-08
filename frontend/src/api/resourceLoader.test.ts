@@ -89,6 +89,13 @@ describe('resourceLoader timing (055)', () => {
     expect(state().showSkeleton).toBe(false);
   });
 
+  it('a fetcher that ignores the signal still fails at 20 s', async () => {
+    const { state } = setup(() => new Promise<string>(() => {}));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(state().failure?.message).toBe('No answer after 20 s');
+    expect(state().data).toBeNull();
+  });
+
   it('refresh keeps rows; refreshing goes true at 400 ms', async () => {
     const first = deferred<string>();
     const second = deferred<string>();
