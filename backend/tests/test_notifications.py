@@ -6,6 +6,7 @@ exactly the rows and sends it asked for. Times: 15 Oct 2026 is inside
 CEST, so Amsterdam is UTC+2 (quiet hours 23:00–08:00 = 21:00–06:00 UTC).
 """
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -526,3 +527,37 @@ async def test_notifications_api_lists_rows(client: TestClient) -> None:
     body = response.json()
     assert body["items"][0]["event"] == "test"
     assert body["latest_id"] == body["items"][0]["id"]
+
+
+async def test_drain_waits_for_an_in_flight_item(
+    service: NotificationService,
+    session_factory: SessionFactory,
+) -> None:
+    """Regression: the app's worker drain and a manual drain can run at
+    once. drain() must not return while another drain still holds the
+    last item inside _process — its commit may not be visible to the
+    caller yet (this flaked
+    test_new_error_notification_once_per_fingerprint in CI)."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+    original = service._process
+
+    async def gated_process(item: Any) -> None:
+        if not started.is_set():
+            started.set()
+            await release.wait()
+        await original(item)
+
+    service._process = gated_process  # type: ignore[method-assign]
+    service.notify("new_error", "in-flight regression item")
+
+    first = asyncio.create_task(service.drain())
+    await started.wait()
+    second = asyncio.create_task(service.drain())
+    await asyncio.sleep(0.05)
+    assert not second.done()
+    release.set()
+    await asyncio.gather(first, second)
+    (row,) = _rows(session_factory)
+    assert row.event == "new_error"
+    assert "in-flight regression item" in (row.subject or "")

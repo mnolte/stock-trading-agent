@@ -79,6 +79,19 @@ describe('sortByRank', () => {
       'SPY',
     ]);
   });
+
+  it('unranked held rows come before other unranked rows', () => {
+    const rows = [
+      row('AAPL', 'fail'),
+      row('ZZZ', 'held'),
+      row('MSFT', 'pass', { rank: 2 }),
+    ];
+    expect(sortByRank(rows).map((r) => r.symbol)).toEqual([
+      'MSFT',
+      'ZZZ',
+      'AAPL',
+    ]);
+  });
 });
 
 describe('searchRows', () => {

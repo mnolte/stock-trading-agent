@@ -2,6 +2,28 @@
 
 Newest first.
 
+## 2026-11-08 — [045] Notifications: drain waits for in-flight sends
+
+`NotificationService.drain()` used to return as soon as the queue looked
+empty — but the background worker and a manual drain can run at once, so
+the last item could still be inside `_process` (mid-commit) when the
+caller read the table. `drain()` now also waits for items other drains
+are processing (`_inflight` counter), which makes "drained" mean every
+queued notification's row has actually landed. This flaked
+`test_new_error_notification_once_per_fingerprint` in the image CI job;
+a regression test (`test_drain_waits_for_an_in_flight_item`) pins the
+semantics.
+
+## 2026-11-08 — [045] GUI catch-up: remaining spec gaps closed
+
+Audit of issue #139 against `main` after #146 found five leftovers; all now match `docs/SPEC.md` and `design/`:
+
+- **v5 drawer ev gate**: the `Confidence ≥ min_confidence` check row now appends the expected value in R (`EV +0.35R`, p·(rr+1) − 1 on the chosen option) — SPEC "Decision v5 — GUI".
+- **Screened watchlist**: the 15-row cut never hides a held symbol ("held symbols always listed"); unranked held rows sort before other unranked rows.
+- **LLM inspector**: `hold_below_breakeven` joins the reason filter labels/options (the reason the v3+ validators already store).
+- **Settings prompt picker**: decision versions an active or paused shadow runs are marked `· shadow E` (prompt_options carries `shadows`).
+- **Held-back exit Needs-you item**: its own `pending_exit` kind with the States.dc.html wording — "KO exit held back since 15:46." plus "Quantity not confirmed at Alpaca after 3 tries; the stop at 94.22 still stands. Retried at every check; market-on-open if still pending." — "Open position" action, and the item leaves when the exit fills rather than when acknowledged (the event still resolves by condition in the executor).
+
 ## 2026-11-08 — [046] Spec alignment: default models and gate order (G3, G7 spec halves)
 
 - The default live model is `gpt-4.1-mini` in the overview, comparison table, model-providers item and Settings text; review defaults read `gpt-4o-mini` weekly, `gpt-4.1-mini` briefing and verdict — matching `config.example.yaml`.

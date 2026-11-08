@@ -19,12 +19,14 @@ import app.readiness.service as readiness
 import pytest
 from app.config import get_config
 from app.db.base import get_session_maker
-from app.db.models import Approval, Cycle, Decision, Event, Verdict
+from app.db.models import Approval, Cycle, Decision, Event, Position, Verdict
 from app.log_index import LogIndexHandler
 from app.notifications.service import NotificationService
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from tests.helpers import open_position
 
 
 def _attention(client: TestClient) -> dict[str, Any]:
@@ -149,6 +151,66 @@ def test_stop_missing_episode_first_until_it_closes(
         event.resolution = "condition"  # type: ignore[union-attr]
         session.commit()
     assert _kinds(_attention(client))[:1] != ["stop_missing"]
+
+
+def test_pending_exit_item_until_the_exit_fills(client: TestClient) -> None:
+    """A held-back exit is its own Needs-you kind with the design
+    wording; acknowledgement does not clear it — the item leaves when
+    the exit fills (design/screens/States.dc.html)."""
+    with get_session_maker()() as session:
+        position = open_position(
+            session, "KO", qty=21, entry="95.37", stop="94.22"
+        )
+        position.pending_exit = {
+            "reason": "exit",
+            "decision_id": 1,
+            "since": "2026-10-15T19:46:00+00:00",
+            "failure": "quantity not confirmed",
+            "tries": 3,
+        }
+        session.add(
+            Event(
+                time=datetime(2026, 10, 15, 20, 0),
+                level="critical",
+                event_type="pending_exit",
+                details={
+                    "symbol": "KO",
+                    "message": "KO exit held back since 15:46: "
+                    "quantity not confirmed",
+                },
+                affects="order",
+            )
+        )
+        session.commit()
+        event_id = session.execute(
+            select(Event.id).where(Event.event_type == "pending_exit")
+        ).scalar_one()
+
+    payload = _attention(client)
+    item = next(i for i in payload["items"] if i["kind"] == "pending_exit")
+    assert item["severity"] == "critical"
+    assert "KO exit held back since" in item["text"]
+    assert "Quantity not confirmed at Alpaca after 3 tries" in item["detail"]
+    assert "the stop at 94.22 still stands" in item["detail"]
+    assert "Retried at every check; market-on-open if still pending." in (
+        item["detail"]
+    )
+    assert item["action_label"] == "Open position"
+    assert item["link"] == "/positions"
+
+    # Acknowledgement is not the exit: the item stays while the exit is
+    # still held back.
+    client.post(f"/api/events/{event_id}/acknowledge")
+    assert "pending_exit" in _kinds(_attention(client))
+
+    with get_session_maker()() as session:
+        position = session.execute(
+            select(Position).where(Position.symbol == "KO")
+        ).scalar_one()
+        position.pending_exit = None
+        position.closed_at = datetime(2026, 10, 15, 20, 30)
+        session.commit()
+    assert "pending_exit" not in _kinds(_attention(client))
 
 
 def test_episode_leaves_when_it_clears(client: TestClient) -> None:

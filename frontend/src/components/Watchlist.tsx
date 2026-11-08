@@ -91,8 +91,15 @@ export function Watchlist({
     const searched = searchRows(filtered, query);
     return screened ? sortByRank(searched) : searched;
   }, [rows, filter, query, screened, earningsBlackoutDays]);
-  const truncated = screened && !showAll && visible.length > watchlistRows;
-  const shown = truncated ? visible.slice(0, watchlistRows) : visible;
+  // The 15-row cut never hides a held symbol (design: "held symbols
+  // always listed") — held rows past the cut stay in, in rank order.
+  const hiddenNonHeld = visible
+    .slice(watchlistRows)
+    .filter((r) => r.rules.status !== 'held').length;
+  const truncated = screened && !showAll && hiddenNonHeld > 0;
+  const shown = truncated
+    ? visible.filter((r, i) => i < watchlistRows || r.rules.status === 'held')
+    : visible;
 
   const tabs: { key: WatchlistFilter; label: string; count: number }[] = [
     { key: 'all', label: 'All', count: counts.all },

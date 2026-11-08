@@ -19,7 +19,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from app.api.strategies import check_promotion, finish_promotion
+from app.api.strategies import check_promotion, finish_promotion, short_name
 from app.ask.service import monthly_spend as ask_monthly_spend
 from app.broker.models import OPEN_ORDER_STATUSES
 from app.config import AppConfig, get_config
@@ -39,6 +39,7 @@ from app.db.models import (
     Review,
     Run,
     SettingsVersion,
+    Strategy,
     Verdict,
 )
 from app.decide.client import priced_models
@@ -2949,22 +2950,42 @@ def _settings_form(config: object) -> dict[str, object]:
     }
 
 
-def _prompt_options() -> dict[str, list[dict[str, str]]]:
+def _prompt_options() -> dict[str, list[dict[str, object]]]:
     """Selectable prompt versions per family: decision prompts plus the
     review-task prompts each contract allows (docs/SPEC.md, Settings —
-    Reviews)."""
-    out: dict[str, list[dict[str, str]]] = {"decision": []}
+    Reviews). Decision versions a live or paused shadow runs carry its
+    short name so the picker can mark them (design/screens/Settings)."""
+    out: dict[str, list[dict[str, object]]] = {"decision": []}
+    shadow_names: dict[str, list[str]] = {}
+    with get_session_maker()() as session:
+        for name, prompt_version in session.execute(
+            select(Strategy.name, Strategy.prompt_version)
+            .where(
+                Strategy.status.in_(("active", "paused")),
+                Strategy.prompt_version.is_not(None),
+            )
+            .order_by(Strategy.id)
+        ):
+            shadow_names.setdefault(str(prompt_version), []).append(
+                short_name(str(name))
+            )
     for path in sorted(PROMPTS_DIR.glob("decision.*.md")):
         version = path.stem
         try:
             prompt = load_prompt(version)
         except (OSError, PromptError):
             continue
-        out["decision"].append({"version": version, "hash": prompt.short_hash})
+        out["decision"].append(
+            {
+                "version": version,
+                "hash": prompt.short_hash,
+                "shadows": shadow_names.get(version, []),
+            }
+        )
     from app.reviews.service import ReviewService
 
     for task, versions in ReviewService._REVIEW_CONTRACTS.items():
-        rows = []
+        rows: list[dict[str, object]] = []
         for version in sorted(versions):
             try:
                 prompt = load_prompt(version)

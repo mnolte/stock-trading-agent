@@ -904,7 +904,10 @@ export interface SettingsResponse {
   held_symbols: string[];
   priced_models?: string[];
   model_options?: ModelOption[];
-  prompt_options: Record<string, { version: string; hash: string }[]>;
+  prompt_options: Record<
+    string,
+    { version: string; hash: string; shadows?: string[] }[]
+  >;
   schedule: {
     rows: ScheduleRow[];
     shifted_label: string | null;

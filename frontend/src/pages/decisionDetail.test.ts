@@ -148,6 +148,62 @@ describe('gateRows', () => {
     expect(rows[0]).toEqual({ name: 'Not traded today', detail: 'MSFT', state: 'pass' });
   });
 
+  it('appends the expected value in R to the ev gate row', () => {
+    const rows = gateRows(
+      detail({
+        model_output: {
+          confidence: 0.45,
+          option_id: 'O1',
+        } as unknown as DecisionDetail['model_output'],
+        options: {
+          options: [{ id: 'O1', rr: 2 }],
+        } as unknown as DecisionDetail['options'],
+        validation_result: {
+          valid: true,
+          model_action: 'enter',
+          final_action: 'enter',
+          changed_by_code: false,
+          error: null,
+          note: '',
+          checks: [
+            {
+              name: 'Confidence ≥ min_confidence 0.42 (ev ≥ 0.25R)',
+              passed: true,
+              detail: '0.45 ≥ 0.42',
+              value: '0.45',
+            },
+          ],
+        },
+      }),
+    );
+    // EV = p·(rr+1) − 1 = 0.45·3 − 1 = +0.35R (docs/SPEC.md, Decision v5).
+    expect(rows[0].detail).toContain('EV +0.35R');
+  });
+
+  it('leaves the ev gate row without EV when no option is chosen', () => {
+    const rows = gateRows(
+      detail({
+        validation_result: {
+          valid: true,
+          model_action: 'skip',
+          final_action: 'skip',
+          changed_by_code: false,
+          error: null,
+          note: '',
+          checks: [
+            {
+              name: 'Confidence ≥ min_confidence 0.42 (ev ≥ 0.25R)',
+              passed: false,
+              detail: '0.30 ≥ 0.42',
+              value: '0.30',
+            },
+          ],
+        },
+      }),
+    );
+    expect(rows[0].detail).not.toContain('EV');
+  });
+
   it('keeps the reason when re-entry blocks an entry', () => {
     const rows = gateRows(
       detail({

@@ -12,8 +12,8 @@ const PROMOTION = {
   allowed: true,
   closed: 20,
   needed: 20,
-  changes: { decision: { model: 'gpt-4.1-mini' } },
-  lines: ['Model: gpt-4o-mini → gpt-4.1-mini'],
+  changes: { decision: { model: 'gpt-6.1-sol' } },
+  lines: ['Model: gpt-4.1-mini → gpt-6.1-sol'],
   reason: "Promote shadow 'B · Bigger model' to live",
 };
 
@@ -35,10 +35,10 @@ test('promote pre-fills Settings as a new version and saves with the shadow id',
 
   await page.goto('/settings?promote=42');
   await expect(
-    page.getByText('Promote B · Bigger model to live: Model: gpt-4o-mini → gpt-4.1-mini'),
+    page.getByText('Promote B · Bigger model to live: Model: gpt-4.1-mini → gpt-6.1-sol'),
   ).toBeVisible({ timeout: 60_000 });
   // The difference is filled in as an unsaved change, with a suggested reason.
-  await expect(page.locator('select#model')).toHaveValue('gpt-4.1-mini');
+  await expect(page.locator('select#model')).toHaveValue('gpt-6.1-sol');
   const reason = page.getByLabel('Reason for this change');
   await expect(reason).toHaveValue(PROMOTION.reason);
 
@@ -47,7 +47,7 @@ test('promote pre-fills Settings as a new version and saves with the shadow id',
   await page.getByRole('button', { name: /^Save as v/ }).click();
   await expect(page.getByText('B · Bigger model is archived.')).toBeVisible();
   expect(saved).toEqual({
-    settings: { decision: { model: 'gpt-4.1-mini' } },
+    settings: { decision: { model: 'gpt-6.1-sol' } },
     reason: PROMOTION.reason,
     promote_strategy_id: 42,
   });

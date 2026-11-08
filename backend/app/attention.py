@@ -160,7 +160,7 @@ def build_attention(request: Request) -> dict[str, Any]:
             .where(
                 Event.acknowledged_at.is_(None),
                 Event.event_type.in_(
-                    ("reconciliation", "protective_stop", "another_instance", "pending_exit")
+                    ("reconciliation", "protective_stop", "another_instance")
                 ),
             )
             .order_by(Event.id.desc())
@@ -181,12 +181,6 @@ def build_attention(request: Request) -> dict[str, Any]:
                         event.time,
                     )
                 )
-            elif event.event_type == "pending_exit":
-                items.append(_item(
-                    "banner_ack", "critical", str(details.get("message", "Exit pending")),
-                    "Check the position and orders at Alpaca.", "Acknowledge",
-                    "/positions", event.time,
-                ))
             elif event.event_type == "protective_stop":
                 items.append(
                     _item(
@@ -226,6 +220,102 @@ def build_attention(request: Request) -> dict[str, Any]:
                         event.time,
                     )
                 )
+        # Held-back exits are their own Needs-you kind
+        # (design/screens/States.dc.html): "exit held back since …",
+        # Open position — and the item leaves when the exit fills. The
+        # event's resolved_at clears by condition in the executor; the
+        # position check covers the gap until the next reconcile.
+        held_back_events = session.execute(
+            select(Event)
+            .where(
+                Event.event_type == "pending_exit",
+                Event.resolved_at.is_(None),
+            )
+            .order_by(Event.id.desc())
+            .limit(20)
+        ).scalars().all()
+        seen_pending: set[str] = set()
+        for event in held_back_events:
+            details = event.details or {}
+            symbol = str(details.get("symbol") or "")
+            if not symbol or symbol in seen_pending:
+                continue
+            seen_pending.add(symbol)
+            held_position = session.execute(
+                select(Position)
+                .where(Position.symbol == symbol)
+                .order_by(Position.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            exit_pending = (
+                dict(held_position.pending_exit)
+                if held_position is not None and held_position.pending_exit
+                else {}
+            )
+            if held_position is not None and (
+                held_position.closed_at is not None or not exit_pending
+            ):
+                continue
+            held_since = event.time
+            since_raw = exit_pending.get("since")
+            if since_raw:
+                try:
+                    held_since = datetime.fromisoformat(str(since_raw))
+                except ValueError:
+                    logger.debug(
+                        "pending_exit since unparsable for %s: %r",
+                        symbol,
+                        since_raw,
+                    )
+            since_hm = (
+                _aware_utc(held_since).astimezone(app_tz).strftime("%H:%M")
+            )
+            failure = str(exit_pending.get("failure") or "")
+            tries = int(str(exit_pending.get("tries") or 0))
+            stop = (
+                held_position.current_stop_price
+                if held_position is not None
+                else None
+            )
+            if exit_pending:
+                what = (
+                    failure[:1].upper() + failure[1:]
+                    if failure
+                    else "Exit held back"
+                )
+                text = f"{symbol} exit held back since {since_hm}."
+                detail = (
+                    f"{what} at Alpaca"
+                    + (
+                        f" after {tries} tr{'y' if tries == 1 else 'ies'}"
+                        if tries
+                        else ""
+                    )
+                    + (
+                        f"; the stop at {stop:.2f} still stands"
+                        if stop is not None
+                        else ""
+                    )
+                    + ". Retried at every check; market-on-open if still "
+                    "pending."
+                )
+            else:
+                text = str(
+                    details.get("message")
+                    or f"{symbol} exit held back since {since_hm}."
+                )
+                detail = "Check the position and orders at Alpaca."
+            items.append(
+                _item(
+                    "pending_exit",
+                    "critical",
+                    text,
+                    detail,
+                    "Open position",
+                    "/positions",
+                    _aware_utc(held_since).astimezone(UTC),
+                )
+            )
         if (
             state is not None
             and state.kill_switch_on

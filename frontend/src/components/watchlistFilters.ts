@@ -40,11 +40,15 @@ export function filterCounts(
 }
 
 // Screened mode: the eligible list is ranked by the daily screen; rows
-// without a rank (held extras, SPY off-list) come last, then by symbol.
+// without a rank (held extras, SPY off-list) come last — held before the
+// other unranked rows, then by symbol (design: "held symbols always
+// listed").
 export function sortByRank(rows: WatchlistRow[]): WatchlistRow[] {
+  const held = (r: WatchlistRow) => (r.rules.status === 'held' ? 0 : 1);
   return [...rows].sort(
     (a, b) =>
       (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER) ||
+      held(a) - held(b) ||
       a.symbol.localeCompare(b.symbol),
   );
 }

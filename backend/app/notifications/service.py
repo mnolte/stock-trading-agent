@@ -146,6 +146,10 @@ class NotificationService:
         self._worker: asyncio.Task[None] | None = None
         self._wake: asyncio.Event | None = None
         self._lock = threading.Lock()
+        # Items popped by a drain and still inside _process. Guarded by
+        # _lock; drain() waits for this to reach zero so "drained" means
+        # every commit has landed, not just that the queue looks empty.
+        self._inflight = 0
         self._hydrate()
 
     # ------------------------------------------------------------------
@@ -368,13 +372,29 @@ class NotificationService:
             await self.drain()
 
     async def drain(self) -> None:
-        """Process every queued item now (tests, send-test, shutdown)."""
+        """Process every queued item now (tests, send-test, shutdown).
+
+        Returns only when the queue is empty *and* no other drain is
+        still inside ``_process``: the background worker and a manual
+        drain can run at once, and the last item's commit may still be
+        in flight when the queue first looks empty."""
         while True:
             with self._lock:
-                item = self._pending.popleft() if self._pending else None
+                if self._pending:
+                    item = self._pending.popleft()
+                    self._inflight += 1
+                elif self._inflight:
+                    item = None
+                else:
+                    return
             if item is None:
-                return
-            await self._process(item)
+                await asyncio.sleep(0.01)
+                continue
+            try:
+                await self._process(item)
+            finally:
+                with self._lock:
+                    self._inflight -= 1
 
     async def stop(self) -> None:
         await self.drain()

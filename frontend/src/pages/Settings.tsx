@@ -2793,7 +2793,10 @@ export default function Settings() {
                     .filter((v, i, a) => a.indexOf(v) === i)
                     .map((v) => {
                       const opt = (data.prompt_options.decision ?? []).find((p) => p.version === v);
-                      return <option key={v} value={v}>{opt ? `${opt.version} · ${opt.hash}` : v}</option>;
+                      const shadow = opt?.shadows?.length
+                        ? ` · shadow ${opt.shadows.join(' + ')}`
+                        : '';
+                      return <option key={v} value={v}>{opt ? `${opt.version} · ${opt.hash}${shadow}` : v}</option>;
                     })}
                 </select>
               ),
