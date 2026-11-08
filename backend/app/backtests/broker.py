@@ -47,10 +47,14 @@ class BacktestBroker(FakeBroker):
         *,
         cash: Decimal,
         slippage_pct: Decimal,
+        same_bar_target_first: bool = False,
     ) -> None:
         super().__init__(clock, cash=cash)
         self._bars = bars
         self._slip = slippage_pct / Decimal(100)
+        # backtest.same_bar_stop_and_target: which leg a bar touching both
+        # counts first (default stop; docs/SPEC.md).
+        self._target_first = same_bar_target_first
         # Per-symbol replay cursor: the last bar start already applied.
         self._replayed: dict[str, datetime] = {}
 
@@ -109,9 +113,12 @@ class BacktestBroker(FakeBroker):
                 for rec in self.orders.values()
                 if rec.symbol == symbol and rec.status in _WORKING
             ),
-            # Stop legs before target legs on the same bar: a bar that
-            # touches both resolves to the stop (docs/SPEC.md).
-            key=lambda r: (str(r.created_at), 0 if r.order_type == "stop" else 1),
+            # The configured leg fills first on a bar touching both
+            # (backtest.same_bar_stop_and_target; default stop).
+            key=lambda r: (
+                str(r.created_at),
+                0 if r.order_type == ("limit" if self._target_first else "stop") else 1,
+            ),
         )
         filled_parents: set[str] = set()
         for rec in recs:

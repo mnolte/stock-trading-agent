@@ -179,6 +179,16 @@ const BANNER_CASES: {
     actions: ['Resume'],
   },
   {
+    kind: 'paused_manual',
+    item: { id: null, kind: 'paused', level: 'info',
+      message: 'Paused at 15:31 — you paused it. Reconciled with Alpaca: 2 positions, all with a stop. Held positions are still reviewed each cycle; no new entries until you resume.',
+      since: '2026-10-15T19:31:00Z',
+      resume_blocked: false,
+      actions: ['resume_pause'] },
+    expect: 'Paused at 15:31 — you paused it',
+    actions: ['Resume'],
+  },
+  {
     kind: 'missing_keys',
     item: { id: null, kind: 'missing_keys', level: 'warning',
       message: 'Alpaca API key not set — the agent stays paused until all three keys are set and passing.',
@@ -198,7 +208,7 @@ const BANNER_CASES: {
     item: { id: null, kind: 'kill_switch', level: 'critical', automatic: false,
       actions: ['resume', 'flatten'] },
     expect: 'Kill switch is on — no new entries. Open positions stay protected at Alpaca.',
-    actions: ['Resume…'],
+    actions: ['Resume…', 'Stop & flatten'],
   },
   {
     kind: 'kill_switch (automatic)',
@@ -206,7 +216,7 @@ const BANNER_CASES: {
       reason: 'drawdown −8.1% from peak',
       actions: ['resume', 'flatten'] },
     expect: 'Trading halted — drawdown −8.1% from peak',
-    actions: ['Resume…'],
+    actions: ['Resume…', 'Stop & flatten'],
   },
   {
     kind: 'shock_brake',

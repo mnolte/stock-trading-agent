@@ -307,6 +307,35 @@ async def test_broker_target_next_bar_same_bar_stop_wins() -> None:
     assert legs["stop"].filled_avg_price is not None
 
 
+async def test_broker_same_bar_target_first_config() -> None:
+    """same_bar_stop_and_target: target flips which leg a shared bar counts."""
+    clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
+    config = AppConfig()
+    store = make_bar_store(bar_store_path(config), config)
+    t0 = datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ)
+    _store_bars(
+        store,
+        [
+            _bar("AAA", t0, "100.5", "111", "99.9", "100.5"),
+            # next bar touches both legs → target wins under target_first
+            _bar("AAA", t0 + timedelta(minutes=5), "100", "112", "94", "95"),
+        ],
+    )
+    broker = BacktestBroker(
+        clock,
+        store.get,
+        cash=Decimal(10000),
+        slippage_pct=Decimal("0.05"),
+        same_bar_target_first=True,
+    )
+    e1 = await _entry(broker)
+    clock.set(t0 + timedelta(minutes=10))
+    await broker.replay(clock.now())
+    legs = {o.order_type: o for o in (broker.orders[i] for i in broker.orders[e1].legs)}
+    assert legs["limit"].status == "filled"
+    assert legs["stop"].status == "canceled"
+
+
 async def test_broker_gap_through_stop_fills_at_open() -> None:
     clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
     config = AppConfig()

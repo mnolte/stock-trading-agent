@@ -135,6 +135,10 @@ def build_bundle(
         store.get,
         cash=starting_equity,
         slippage_pct=slippage_pct,
+        same_bar_target_first=(
+            str(config.get("backtest", "same_bar_stop_and_target", default="stop"))
+            == "target"
+        ),
     )
     executor = Executor(
         broker=broker,

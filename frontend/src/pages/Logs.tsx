@@ -458,7 +458,7 @@ export default function Logs() {
         lines: LogLine[];
         next_cursor: number | null;
         index_available: boolean;
-      }>(`/api/logs?${buildQuery()}&limit=200`);
+      }>(`/api/logs?${buildQuery()}`);
       setLines(data.lines);
       setCursor(data.next_cursor);
       const s = await get<Summary>(`/api/logs/summary`);
@@ -893,7 +893,7 @@ export default function Logs() {
             type="button"
             onClick={async () => {
               const data = await get<{ lines: LogLine[]; next_cursor: number | null }>(
-                `/api/logs?${buildQuery({ cursor: String(cursor) })}&limit=200`,
+                `/api/logs?${buildQuery({ cursor: String(cursor) })}`,
               );
               setLines((prev) => [...prev, ...data.lines]);
               setCursor(data.next_cursor);
