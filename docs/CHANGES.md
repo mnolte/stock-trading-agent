@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-11-08 — [046] Spec alignment: no_call reasons and the data-model table (G6, G10)
+
+- The `no_call` reason list at "Decision" now names the reasons the code actually stores — `price_stale`, `price_suspect`, `reference_missing` and `checks` replace the stale `quote_missing`; `no_options` stays (spec 298).
+- The data-model table lists the eight tables it omitted: `smtp_settings`, `bars_1h`, `bars_1h_state`, `daily_source_gaps`, `approvals`, `runs`, `reviews`, `verdicts` — all in use (G10 from `docs/analysis/046-spec-alignment.md`).
+
 ## 2026-11-08 — [046] Spec alignment: step 6 — card-level states in e2e (G12)
 
 - `e2e/046-position-states.e2e.ts` covers the states the standard seed can't reach: broker-stale positions ("Alpaca not answering · as of …"), the no-stop-at-Alpaca chip with its reason, and a held-back exit with tries and failure — all mocked `/api/positions`, both viewports. G12 from `docs/analysis/046-spec-alignment.md`.
