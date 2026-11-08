@@ -210,6 +210,15 @@ def test_keys_route_refuses_short_secret(app_auth: Any) -> None:
         assert "Too short" in r.text
 
 
+def test_backtest_export_kind_is_whitelisted(client: TestClient) -> None:
+    """Only the two export kinds exist; anything else is a 422 before it
+    can reach the filename header."""
+    base = "/api/backtests/1/strategies/live/export.csv"
+    assert client.get(f"{base}?kind=bogus").status_code == 422
+    assert client.get(f"{base}?kind=trades").status_code == 404
+    assert client.get(f"{base}?kind=decisions").status_code == 404
+
+
 # ----------------------------------------------------------------------
 # urls.py: multicast literal IP
 

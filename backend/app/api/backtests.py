@@ -761,6 +761,8 @@ def run_decision_detail(
 def export_csv(
     request: Request, run_id: int, slug: str, kind: str = "trades"
 ) -> StreamingResponse:
+    if kind not in ("trades", "decisions"):
+        raise HTTPException(422, "kind must be trades or decisions")
     sf = _strategy_sf(request, run_id, slug)
     cap = int(
         get_config().get("security", "export_max_rows", default=100000)
