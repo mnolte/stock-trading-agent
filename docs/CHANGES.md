@@ -6,6 +6,30 @@ Newest first.
 
 - The kill-switch banner advertised a `flatten` action that rendered no button — `BannerStrip` now maps it to "Stop & flatten", opening the same confirmation dialog as the header's Kill switch menu. Gap G18 from `docs/analysis/046-spec-alignment.md`.
 
+## 2026-11-07 — [046] Spec alignment: position-check severity, gate-order wording, PID-reuse test
+
+Phase 2 of item 046, the backend group of the gap report (`docs/analysis/046-spec-alignment.md`).
+
+- **Position checks failing (G5)**: the durable `position_check_failed` event is recorded at `error` instead of `critical` — the spec's notification row is Warning, so the banner no longer renders critical. The notification mapping (`position_checks_failing`, Warning) is unchanged.
+- **Gate order (G7, code half)**: `risk/gates.py` docstrings describe the code's order as the order of record; the spec's gate table is rewritten to match in Marc's spec PR.
+- **Backtest PID reuse (G11)**: verified every `os.kill` site in `backtests/manager.py` is `_pid_same`-guarded; a new test pins the cancel path — a live pid with a different start time is never signalled.
+- **G8 verified built, no change**: the `missing_stop` repeat already carries the elapsed time ("still no stop · 1 h 30 min", `executor.py` + `test_stop_check.py`); the report's citation was a different notification.
+
+## 2026-11-07 — [046] Spec alignment: config keys and model defaults
+
+Phase 2 of item 046, the config group of the gap report (`docs/analysis/046-spec-alignment.md`).
+
+- **Notification defaults (G1)**: the 11 events missing from `notifications.events` now carry the spec table's channels — `readiness_changed` and `restarted_resumed` get browser, the nine VPS/security events get browser + email. They previously fell back to app-only (+browser when critical).
+- **Inspector (G2)**: `inspector.default_sources` is `[live, review, ask]` per the spec's filter table; shadows and backtests stay opt-in.
+- **Reviews (G4, G9)**: `reviews.skip_flat_pct: 2` added (the code fallback, confirmed by Marc); `reviews.prompts.briefing` back to `briefing.v2` — the v1 default was an accidental revert.
+- **Models (G3, config half)**: `decision.model` and the briefing/verdict review models default to `gpt-4.1-mini`; weekly stays `gpt-4o-mini`. The spec text moves in Marc's spec PR.
+
+## 2026-11-07 — [052] Browser console warnings
+
+- **Favicon**: `frontend/public/favicon.svg` (the SA app mark) linked from `index.html`; the browser no longer requests `/favicon.ico` and 404s.
+- **Router**: the decision-drawer `<Routes>` in `App.tsx` gets a catch-all that renders nothing, ending the dev warning "No routes matched location" on every page that isn't a decision deep link.
+- **CSP**: the Settings section-nav phone media query moved from an inline `<style>` element to `styles/global.css`; the strict CSP (`default-src 'self'`, no `style-src`) no longer blocks it. The rules and their `!important` use are unchanged.
+
 ## 2026-11-07 — [051] Kickoffs move to the archive with the build
 
 - The build PR now moves its kickoff to `docs/kickoffs/archive/`, in the same PR as the code (`git mv`, unchanged). An item built in several PRs: the first moves it, the later ones read it from `archive/`. Before (048), the move waited for the PR that set the item to `merged`. So `docs/kickoffs/` lists only work nobody has started; the register's Status still says `building` or `merged`.
