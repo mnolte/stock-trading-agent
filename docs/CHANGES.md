@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-08 — [052] Symbol-keyed config keys
+
+Config layers: `models` and the symbol-keyed `universe.sectors` and
+`universe.names` are open-ended — entries the example doesn't list are
+kept, like model ids. Before this, a sector saved for an added symbol
+(TSLA, ACN, WMT, COST, COP on 8 Nov) was dropped at every layer and the
+`sector_unknown` gate blocked all entries for it.
+
 ## 2026-11-08 — [053] Security audit findings fixed
 
 Follow-up to the 053 audit (#164): all ten open findings #153–#162 are

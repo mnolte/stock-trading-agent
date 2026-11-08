@@ -111,6 +111,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 049 | fix | Log routes 503 on schema-less index (merged as [048]; renumbered 7 Nov, the number was taken) | — | — | #143 | merged |
 | 050 | fix | Stop invariant | `archive/050-fix-stop-invariant.md` | #144 | #148 | merged |
 | 051 | spec | Archive kickoffs with the build | — | — | — | merged |
+| 052 | fix | Symbol-keyed config keys | `052-fix-symbol-config-keys.md` | — | — | planned |
 | 053 | docs | Security audit | — | — | #164, #171 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
