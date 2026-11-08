@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-08 — [046] Spec alignment: paused banner says why (G17)
+
+- A manual pause now shows the paused banner — "Paused at HH:MM — you paused it." — with the same reconcile detail and Resume action as the startup banner. "Started paused" still marks only a fresh start. Gap G17 from `docs/analysis/046-spec-alignment.md`; spec row 203 ("Resume says why if Marc paused").
+
 ## 2026-11-07 — [046] Spec alignment: kill-switch banner flatten action (G18)
 
 - The kill-switch banner advertised a `flatten` action that rendered no button — `BannerStrip` now maps it to "Stop & flatten", opening the same confirmation dialog as the header's Kill switch menu. Gap G18 from `docs/analysis/046-spec-alignment.md`.

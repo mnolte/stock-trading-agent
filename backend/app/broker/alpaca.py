@@ -185,11 +185,14 @@ class AlpacaPaperBroker:
         secret_key: str,
         rate_limiter: RateLimiter | None = None,
         keyed: bool = True,
+        time_in_force: TimeInForce = TimeInForce.GTC,
     ) -> None:
         self.limiter = rate_limiter or RateLimiter()
         # False when no Alpaca keys are stored: the clients still exist so
         # calls fail as ordinary errors, but the trade stream stays off.
         self._keyed = keyed
+        # Bracket and leg orders from execution.time_in_force (G16).
+        self._tif = time_in_force
         self._handlers: list[TradeUpdateHandler] = []
         self._failure_handlers: list[StreamFailureHandler] = []
         self._stream_started = False
@@ -426,7 +429,7 @@ class AlpacaPaperBroker:
             qty=qty,
             side=OrderSide.BUY,
             type="limit",
-            time_in_force=TimeInForce.GTC,
+            time_in_force=self._tif,
             order_class=OrderClass.BRACKET,
             limit_price=float(limit_price),
             take_profit=TakeProfitRequest(limit_price=float(target_price)),
@@ -454,7 +457,7 @@ class AlpacaPaperBroker:
             qty=qty,
             side=OrderSide.SELL,
             type="stop",
-            time_in_force=TimeInForce.GTC,
+            time_in_force=self._tif,
             stop_price=float(stop_price),
             client_order_id=client_order_id,
         )
@@ -480,7 +483,7 @@ class AlpacaPaperBroker:
             qty=qty,
             side=OrderSide.SELL,
             type="limit",
-            time_in_force=TimeInForce.GTC,
+            time_in_force=self._tif,
             order_class=OrderClass.OCO,
             limit_price=float(limit_price),
             take_profit=TakeProfitRequest(limit_price=float(limit_price)),

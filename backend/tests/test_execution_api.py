@@ -139,9 +139,13 @@ def test_app_starts_paused_and_resume_needs_no_reason(
     # Pause can be used any time — also one click.
     assert client.post("/api/pause", json={}).json()["paused"] is True
     assert client.get("/api/header").json()["paused"] is True
-    # A manual pause shows no "Started paused" banner.
+    # A manual pause shows the paused banner saying why — never the
+    # "Started paused" wording, which only marks a fresh start.
     items = client.get("/api/banners").json()["items"]
-    assert not any(b["kind"] == "paused" for b in items)
+    paused_banner = next(b for b in items if b["kind"] == "paused")
+    assert "Paused at" in paused_banner["message"]
+    assert "you paused it" in paused_banner["message"]
+    assert "Started paused" not in paused_banner["message"]
     assert client.post("/api/pause/resume", json={}).json()["paused"] is False
 
 

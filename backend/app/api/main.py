@@ -569,14 +569,23 @@ def make_broker(
         return FakeBroker(clock)
     if sources.alpaca is None:  # pragma: no cover - guarded by factory
         raise RuntimeError("paper mode needs the Alpaca data client")
+    from alpaca.trading.enums import TimeInForce
+
     from app.broker.alpaca import AlpacaPaperBroker
 
     key_id, secret = secrets.alpaca_pair() if secrets is not None else (None, None)
+    raw_tif = str(get_config().get("execution", "time_in_force", default="gtc"))
+    try:
+        tif = TimeInForce(raw_tif)
+    except ValueError:
+        logger.warning("execution.time_in_force %r invalid; using gtc", raw_tif)
+        tif = TimeInForce.GTC
     return AlpacaPaperBroker(
         key_id or MISSING_KEY,
         secret or MISSING_KEY,
         rate_limiter=sources.alpaca.limiter,
         keyed=bool(key_id and secret),
+        time_in_force=tif,
     )
 
 
