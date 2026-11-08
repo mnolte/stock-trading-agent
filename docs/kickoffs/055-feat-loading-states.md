@@ -75,8 +75,14 @@ Steps, one commit each; one PR, or one per step if it grows past ~600 lines:
 7. Kill switch. Its buttons (header and the kill-switch dialog) are never
    aria-disabled or dimmed. Pressed: "Turning on…" with the spinner in full
    red; with no answer it is sent again every 5 s until the backend
-   confirms. Test that a second press and the resends don't create a second
-   event (turning it on is idempotent; check the endpoint is).
+   confirms. Stop & flatten sends one request id with every resend, and the
+   backend acts on an id once (add that if it doesn't). At 30 s without an
+   answer, show the critical banner "Kill switch not confirmed"
+   (States.dc.html → Banners, text as there, role="alert"); resending
+   continues under it, and it clears when the backend confirms, with the
+   toast "Kill switch on since <time>". Tests: a second press and the
+   resends create one event; a flatten resent 3 times sells once; the
+   banner appears at 30 s and clears on the first answer (fake timers).
 
 8. Progress and live rows. Backtest runs and history downloads: the 6 px
    bar with role="progressbar", aria-valuenow and the count in text; Universe
@@ -110,6 +116,6 @@ The app shows three generic bars and "Loading…" in some cards, plain "Loading�
 - The 20 s client timeout is new. It sits above the 5 s broker read timeout (`api.broker_timeout_seconds`) and below the page banner's 15 s retry, which keeps running.
 - These are frontend timings, not trading thresholds, so they live in one frontend module that mirrors `tokens.css`, not in `config.example.yaml`.
 
-## Open questions for Marc
+## Answered questions
 
-1. The kill switch resends every 5 s while it has no answer. Fine, or should it stop after a number of tries and show a red "Not confirmed. Check Alpaca"?
+1. Kill switch with no answer (Marc, 8 Nov): keep resending every 5 s, and after 30 s show a critical banner that says it is not confirmed and how to stop the agent another way. Not "Check Alpaca": the kill switch is the agent's own state, which Alpaca can't show.
