@@ -100,14 +100,22 @@ def _get(tree: dict[str, Any], path: tuple[str, ...]) -> Any:
     return node
 
 
+# Maps whose keys are user data — model ids, tickers — not config keys:
+# entries the example doesn't list are kept at every layer (docs/SPEC.md,
+# Config layers → Open-ended maps). Everything else stays strict.
+OPEN_MAPS = frozenset(
+    {("models",), ("universe", "sectors"), ("universe", "names")}
+)
+
+
 def _filter_known(
     base: dict[str, Any], override: dict[str, Any]
 ) -> tuple[dict[str, Any], list[tuple[str, ...]]]:
     """``override`` without keys ``base`` doesn't have; returns (kept, dropped).
 
     A dict unknown at a level is dropped whole: every leaf under it is
-    unknown. ``models`` stays open-ended — a local install may add a
-    model the example doesn't ship yet.
+    unknown. Open-ended maps (:data:`OPEN_MAPS`) are kept whole — a model
+    id or ticker is user data, not a config key.
     """
     dropped: list[tuple[str, ...]] = []
 
@@ -118,7 +126,7 @@ def _filter_known(
     ) -> dict[str, Any]:
         kept: dict[str, Any] = {}
         for key, value in over_node.items():
-            if prefix == () and key == "models":
+            if prefix + (key,) in OPEN_MAPS:
                 kept[key] = value
                 continue
             known = base_node.get(key)
