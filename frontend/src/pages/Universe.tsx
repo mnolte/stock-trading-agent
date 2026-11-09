@@ -645,7 +645,7 @@ export default function Universe() {
               <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Sorted by rank</span>
             </div>
 
-            <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflowX: 'auto', minWidth: 0 }}>
               <table style={{ width: '100%', minWidth: 860, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr>

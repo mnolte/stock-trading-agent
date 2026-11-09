@@ -997,7 +997,7 @@ function RegimeCard({
   const regimes = [...new Set(summaries.flatMap(([, s]) => Object.keys(s.by_regime)))].sort();
   return (
     <Card label="By market regime">
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', minWidth: '320px', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
@@ -1091,7 +1091,7 @@ function StrategyTrades({ run, ref_ }: { run: BacktestRun; ref_: BacktestStrateg
   }, [run.id, ref_.slug]);
   return (
     <Card label={`Trades · ${ref_.name}`}>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', minWidth: '520px', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
@@ -1166,7 +1166,7 @@ function StrategyDecisions({
   }, [run.id, ref_.slug]);
   return (
     <Card label={`Decisions · ${ref_.name}`}>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', minWidth: '480px', borderCollapse: 'collapse' }}>
           <thead>
             <tr>

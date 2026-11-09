@@ -940,7 +940,7 @@ function MonoPre({ children }: { children: string }) {
         lineHeight: 1.55,
         color: 'var(--sa-text-2)',
         whiteSpace: 'pre-wrap',
-        overflowX: 'auto',
+        overflowX: 'auto', minWidth: 0,
       }}
     >
       {children}

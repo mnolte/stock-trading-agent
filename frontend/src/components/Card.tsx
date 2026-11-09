@@ -34,6 +34,9 @@ export function Card({ label, right, children, style, busy, refreshing, ariaLabe
         display: 'flex',
         flexDirection: 'column',
         gap: 'var(--sa-space-3)',
+        // Cards sit in flex rows/grids: without this a wide table keeps
+        // the card — and the page — wider than a phone screen.
+        minWidth: 0,
         ...style,
       }}
     >

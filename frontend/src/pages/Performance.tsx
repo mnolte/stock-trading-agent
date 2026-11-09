@@ -111,7 +111,7 @@ function StatTip({ children, title }: { children: string; title: string }) {
 
 function AggTable({ rows, stale }: { rows: PerformanceAggRow[]; stale?: boolean }) {
   return (
-    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
+    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto', minWidth: 0 }}>
       <table style={{ width: '100%', minWidth: '420px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
@@ -166,7 +166,7 @@ function ClosedTradesTable({ trades, stale }: { trades: ClosedTradeRow[]; stale?
     );
   }
   return (
-    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
+    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto', minWidth: 0 }}>
       <table style={{ width: '100%', minWidth: '900px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
@@ -503,7 +503,7 @@ export default function Performance() {
           <TailsCard res={tails} />
 
           <Card label="Decisions and outcomes" refreshing={res.refreshing}>
-            <div className={res.refreshing ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
+            <div className={res.refreshing ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto', minWidth: 0 }}>
               <table style={{ width: '100%', minWidth: '520px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>

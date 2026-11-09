@@ -1027,7 +1027,7 @@ function EventChannelTable({
   };
   return (
     <div style={{ flex: '3 1 420px', minWidth: 0 }}>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
@@ -1371,7 +1371,7 @@ function RecentNotifications() {
             <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               {displayDayTime(item.time)}
             </span>
-            <span style={{ color: 'var(--sa-text-2)' }}>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--sa-text-2)' }}>
               {item.subject.replace(/^\[Stock(?: Trading)? Agent[^\]]*\]\s*/, '')}
             </span>
             <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
@@ -3487,7 +3487,7 @@ export default function Settings() {
             blurb="Cycle times follow the New York exchange clock and are fixed by the spec."
           >
             <div style={{ padding: '8px 0 4px' }}>
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ overflowX: 'auto', minWidth: 0 }}>
                 <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>
@@ -3573,7 +3573,7 @@ export default function Settings() {
             blurb="Every saved change is a version with its reason. Decisions record the version they ran under."
           >
             <div style={{ padding: '8px 0 14px' }}>
-              <div style={{ overflowX: 'auto' }}>
+              <div style={{ overflowX: 'auto', minWidth: 0 }}>
                 <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse' }}>
                   <thead>
                     <tr>

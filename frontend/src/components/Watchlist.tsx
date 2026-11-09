@@ -201,7 +201,7 @@ export function Watchlist({
           </span>
         )}
       </div>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <div role="list" aria-label="Watchlist" style={{ minWidth: '760px' }}>
           <div
             aria-hidden="true"

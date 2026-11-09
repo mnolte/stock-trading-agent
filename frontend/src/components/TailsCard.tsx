@@ -417,7 +417,7 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
         {afterTiles.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>{afterTiles}</div>
         )}
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={{ width: '100%', minWidth: 620 }}>
             <thead>
               <tr>

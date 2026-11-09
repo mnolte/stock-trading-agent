@@ -430,7 +430,7 @@ export default function Strategies() {
       </div>
 
       <Card label="Compare" right={<div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>this run · since {since}</div>}>
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse' }}>
             <thead>
               <tr>

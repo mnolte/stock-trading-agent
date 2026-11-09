@@ -206,13 +206,13 @@ function ExpandedLine({ line, around }: { line: LogLine; around: LogLine[] }) {
       {line.traceback && (
         <>
           <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Exception</div>
-          <pre style={{ margin: 0, padding: 'var(--sa-space-3)', background: 'var(--sa-bg)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', ...mono, fontSize: 'var(--sa-text-sm)', lineHeight: 1.55, color: 'var(--sa-negative-soft)', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+          <pre style={{ margin: 0, padding: 'var(--sa-space-3)', background: 'var(--sa-bg)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', ...mono, fontSize: 'var(--sa-text-sm)', lineHeight: 1.55, color: 'var(--sa-negative-soft)', whiteSpace: 'pre-wrap', overflowX: 'auto', minWidth: 0 }}>
             {line.traceback}
           </pre>
         </>
       )}
       <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Stored line</div>
-      <pre style={{ margin: 0, padding: 'var(--sa-space-3)', background: 'var(--sa-bg)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', ...mono, fontSize: 'var(--sa-text-sm)', lineHeight: 1.55, color: 'var(--sa-text-2)', whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+      <pre style={{ margin: 0, padding: 'var(--sa-space-3)', background: 'var(--sa-bg)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', ...mono, fontSize: 'var(--sa-text-sm)', lineHeight: 1.55, color: 'var(--sa-text-2)', whiteSpace: 'pre-wrap', overflowX: 'auto', minWidth: 0 }}>
         {JSON.stringify(line, null, 2)}
       </pre>
       {around.length > 0 && (
@@ -220,7 +220,7 @@ function ExpandedLine({ line, around }: { line: LogLine; around: LogLine[] }) {
           <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
             Surrounding lines · same index order
           </div>
-          <div style={{ border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', padding: 6, overflowX: 'auto' }}>
+          <div style={{ border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', padding: 6, overflowX: 'auto', minWidth: 0 }}>
             <div style={{ minWidth: 560 }}>
               {around.map((a) => (
                 <div
@@ -683,7 +683,7 @@ export default function Logs() {
         {/* Warnings and errors per day — clicking a bar filters to that day. */}
         {dayCounts.length > 0 && (
           <Card label="Warnings and errors per day" right={period} style={{ flex: '1 1 360px' }} ariaLabel="Warnings and errors per day">
-            <div role="group" aria-label="Warnings and errors per day" style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+            <div role="group" aria-label="Warnings and errors per day" style={{ display: 'flex', gap: 6, alignItems: 'flex-end', overflowX: 'auto', minWidth: 0 }}>
               {dayCounts.map(([day, c]) => (
                 <button
                   key={day}
@@ -694,7 +694,7 @@ export default function Logs() {
                     setCustomFrom(day);
                     setCustomTo(day);
                   }}
-                  style={{ flex: '1 1 0', minWidth: 32, display: 'flex', flexDirection: 'column', gap: 6, background: 'transparent', border: 0, padding: 4, borderRadius: 'var(--sa-radius-sm)', cursor: 'pointer' }}
+                  style={{ flex: '1 1 0', minWidth: 48, display: 'flex', flexDirection: 'column', gap: 6, background: 'transparent', border: 0, padding: 4, borderRadius: 'var(--sa-radius-sm)', cursor: 'pointer' }}
                 >
                   <div style={{ height: 90, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1 }}>
                     <div style={{ height: `${(c.error / maxCount) * 100}%`, minHeight: c.error ? 2 : 0, background: 'var(--sa-negative)' }} />
@@ -719,7 +719,7 @@ export default function Logs() {
         {/* Recurring problems (design: a table with a review column). */}
         {(summary?.problems.length ?? 0) > 0 && (
           <Card label="Recurring problems" right={`errors · ${unreviewed} unreviewed`} style={{ flex: '2 1 520px' }} ariaLabel="Recurring problems">
-            <div style={{ overflowX: 'auto' }}>
+            <div style={{ overflowX: 'auto', minWidth: 0 }}>
               <table style={{ width: '100%', minWidth: 560 }}>
                 <thead>
                   <tr>
