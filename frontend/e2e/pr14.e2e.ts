@@ -124,6 +124,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   await expect(page.getByText('Runs', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Strategies to compare')).toBeVisible();
 
+  // Wait for the agent-clock default to land before typing: the To field
+  // rewrites its text when /api/header resolves, which can swallow a fill.
+  await expect(page.getByLabel('To')).toHaveValue(/\S/, { timeout: 30_000 });
+
   // A range after every configured model's cutoff: the estimate fills in
   // sessions, bars, calls, cache hits and cost.
   await page.getByLabel('From').fill('2024-07-01');
