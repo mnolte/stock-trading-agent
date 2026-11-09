@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-09 — [058] Trend gate regimes (build)
+
+Build of the 058 trend-gate change on branch `fix/058-trend-gate-sideways` (PR #201, stacked on #200).
+
+- **`decision.v5.trend_gate_regimes`** (`decide/v5.py`, `engine/cycle.py`, `shadows/`, `settings_service.py`, Settings UI): the daily regimes the v5 trend gate lets through, default `["up", "sideways"]`. `down` is always rejected and `trend_1h` must still be `up`. Shadow strategies can override the list; the v5 prompt itself is unchanged.
+
 ## 2026-11-09 — [058] Live data of 9 November (build, steps 0–4)
 
 Build of the 058 spec entry on branch `fix/058-live-data-9-nov` (PR #200; the trend gate and decision.v6 follow in their own PRs).
