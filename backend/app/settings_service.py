@@ -160,10 +160,18 @@ SUBSPECS: dict[tuple[str, str], dict[str, tuple[str, float | None, float | None]
     },
     ("decision", "v5"): {
         "trend_gate": ("bool", None, None),
+        "trend_gate_regimes": ("strlist", None, None),
         "max_rr": ("number", 0, 20),
         "base_rate_sessions": ("int", 0, 260),
         "price_vs_signal_adverse_atr": ("number", 0, 20),
     },
+}
+
+# Members a "strlist" submap value may contain, keyed (section, key, sub).
+# ``down`` is deliberately absent: the trend gate never passes it
+# (docs/SPEC.md, Decision v5 — Trend gate in code).
+SUBSPEC_LIST_VALUES: dict[tuple[str, str, str], tuple[str, ...]] = {
+    ("decision", "v5", "trend_gate_regimes"): ("up", "sideways"),
 }
 
 # Channels the user may pick per event (``app`` is always on).
@@ -211,6 +219,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "v3.min_edge"): "v3 min edge over break-even",
     ("decision", "v4.near_level_atr"): "v4 near-a-level distance",
     ("decision", "v5.trend_gate"): "v5 trend gate",
+    ("decision", "v5.trend_gate_regimes"): "v5 trend gate regimes",
     ("decision", "v5.max_rr"): "v5 max reward to risk",
     ("decision", "v5.base_rate_sessions"): "v5 base rate window",
     ("decision", "v5.price_vs_signal_adverse_atr"): "v5 adverse price move",
@@ -548,6 +557,25 @@ async def validate_settings(
                                     [f"{sub_label}: must be true or false"]
                                 )
                             merged_subs[sub] = subvalue
+                        elif sub_kind == "strlist":
+                            allowed_values = SUBSPEC_LIST_VALUES.get(
+                                (section, key, sub), ()
+                            )
+                            if (
+                                not isinstance(subvalue, list)
+                                or not subvalue
+                                or not all(
+                                    isinstance(v, str) and v in allowed_values
+                                    for v in subvalue
+                                )
+                            ):
+                                raise SettingsError(
+                                    [
+                                        f"{sub_label}: a non-empty list of "
+                                        f"{', '.join(allowed_values)}"
+                                    ]
+                                )
+                            merged_subs[sub] = list(dict.fromkeys(subvalue))
                         else:
                             num = _clean_number(
                                 subvalue, sub_min, sub_max, sub_label

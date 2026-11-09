@@ -1360,12 +1360,14 @@ class ShadowRunner:
                             v2_cand is not None
                             and v2_cand.fields["options"]
                         ):
+                            v5c = v5_config(cfg)
                             if (
                                 _spec(strategy).is_v5
-                                and v5_config(cfg).trend_gate
+                                and v5c.trend_gate
                             ):
                                 gate_detail = trend_gate_detail(
-                                    v2_cand.fields
+                                    v2_cand.fields,
+                                    regimes=v5c.trend_gate_regimes,
                                 )
                             elif (
                                 _spec(strategy).is_v4
@@ -1680,12 +1682,15 @@ class ShadowRunner:
                     sr.decisions += 1
                     continue
                 gate_detail: str | None = None
+                v5c = v5_config(cfg)
                 if (
                     spec.is_v5
-                    and v5_config(cfg).trend_gate
+                    and v5c.trend_gate
                     and v2_cand.fields["options"]
                 ):
-                    gate_detail = trend_gate_detail(v2_cand.fields)
+                    gate_detail = trend_gate_detail(
+                        v2_cand.fields, regimes=v5c.trend_gate_regimes
+                    )
                 elif (
                     spec.is_v4
                     and not spec.is_v5

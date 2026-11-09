@@ -51,6 +51,7 @@ class V5Config:
     gap_sessions: int = 60
     long_target_minutes: int = 120
     trend_gate: bool = True
+    trend_gate_regimes: tuple[str, ...] = ("up", "sideways")
     max_rr: Decimal = Decimal("3.0")
     base_rate_sessions: int = 60
     base_rate_min_n: int = 30
@@ -69,6 +70,15 @@ def _int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _regimes(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    """The configured ``trend_gate_regimes`` set. ``down`` is never a
+    member, however the yaml reads — the gate must not pass it
+    (docs/SPEC.md, Decision v5 — Trend gate in code)."""
+    if not isinstance(value, list | tuple):
+        return default
+    return tuple(str(r) for r in value if str(r) != "down")
 
 
 def v5_config(config: AppConfig) -> V5Config:
@@ -93,6 +103,10 @@ def v5_config(config: AppConfig) -> V5Config:
         ),
         trend_gate=bool(
             get("decision", "v5", "trend_gate", default=base.trend_gate)
+        ),
+        trend_gate_regimes=_regimes(
+            get("decision", "v5", "trend_gate_regimes", default=None),
+            base.trend_gate_regimes,
         ),
         max_rr=_dec(
             get("decision", "v5", "max_rr", default=None), base.max_rr
@@ -146,19 +160,28 @@ def min_confidence_ev(rr: Decimal | None, ev_r: Decimal) -> Decimal | None:
 # the trend gate
 
 
-def trend_gate_detail(fields: dict[str, Any]) -> str | None:
-    """``trend_gate: trend_1h=mixed`` when a v5 check fails — the v4
-    ``checks_gate`` with ``trend_daily`` left to the model (docs/SPEC.md,
-    Decision v5 — Trend gate in code)."""
+def trend_gate_detail(
+    fields: dict[str, Any],
+    regimes: Sequence[str] = ("up", "sideways"),
+) -> str | None:
+    """``trend_gate: regime_trend=down (allowed up, sideways)`` when a v5
+    check fails — the v4 ``checks_gate`` with ``trend_daily`` left to the
+    model. ``trend_1h`` must be up; ``regime_trend`` must be in
+    ``regimes`` and never ``down`` (docs/SPEC.md, Decision v5 — Trend
+    gate in code)."""
     checks = fields.get("checks") or {}
-    failing = [
-        name for name in ("trend_1h", "regime_trend") if checks.get(name) != "up"
-    ]
+    failing: list[str] = []
+    trend_1h = checks.get("trend_1h")
+    if trend_1h != "up":
+        failing.append(f"trend_1h={trend_1h}")
+    regime = checks.get("regime_trend")
+    if regime == "down" or regime not in regimes:
+        failing.append(
+            f"regime_trend={regime} (allowed {', '.join(regimes) or 'none'})"
+        )
     if not failing:
         return None
-    return "trend_gate: " + ", ".join(
-        f"{name}={checks.get(name)}" for name in failing
-    )
+    return "trend_gate: " + ", ".join(failing)
 
 
 # ----------------------------------------------------------------------
