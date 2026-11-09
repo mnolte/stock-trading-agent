@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-09 — [056] UX pass on the running app
+
+From `docs/analysis/056-ux-review.md`. Behaviour of the GUI only; nothing in trading, risk or data changes.
+
+- **Settings screen:** one section at a time with its own address (`/settings/risk`), a Section select on phones, search and Changed from default across all sections, unsaved changes kept across sections.
+- **Frontend errors:** an error boundary per card; the same error from the same card is logged once per page load; outside Logs an error shows as its group's summary (first line, no URLs or paths, ≤ 120 characters, with a count), never a stack trace.
+- **Dates and codes:** one date format ("14 Sep", "14 Sep 2025") with fixed English month names; stored codes shown as words.
+- **Decision detail:** when no order was sent, What happened says why.
+- **Backtest:** results as one table (a column per strategy and SPY); From and To default from the agent's clock; Run says what is missing.
+
 ## 2026-11-08 — [054] Restore-test 'not set up' warning
 
 - With offsite credentials unset, `check_backups` replaced the stored
