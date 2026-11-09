@@ -436,13 +436,6 @@ export default function Universe() {
               </span>
             ))}
           </div>
-          <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
-            The fixed list is edited in{' '}
-            <Link to="/settings" style={{ color: 'var(--sa-accent)' }}>
-              Settings → Trading
-            </Link>
-            . The screened pool is switched on in Settings → Trading — until then the daily screen runs as a preview below.
-          </p>
         </Card>
       )}
 
@@ -570,11 +563,9 @@ export default function Universe() {
                 <li>
                   A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
                 </li>
-                <li>
-                  {data.preview
-                    ? 'This list is a preview — cycles still trade the fixed list.'
-                    : 'Cycles trade this list — the rank orders the model calls.'}
-                </li>
+                {!data.preview && (
+                  <li>Cycles trade this list — the rank orders the model calls.</li>
+                )}
                 <li>
                   Rank is the return over the last {data.thresholds.lookback_sessions} sessions minus SPY’s, recomputed at the daily screen.
                 </li>

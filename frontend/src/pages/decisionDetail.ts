@@ -7,6 +7,7 @@ import type {
   SelectionRecord,
 } from '../types/api';
 import { actionLabel } from '../components/decisionFormat';
+import { labelFor, REASON_CODES } from '../labels';
 
 export type GateState = 'pass' | 'fail' | 'reduced' | 'warning';
 
@@ -344,6 +345,28 @@ function seconds(iso: string): string {
   });
 }
 
+/** Why the decision sent no order, from what the row stores (056). Reasons
+ * that are never persisted — paused agent, kill switch, market closed,
+ * outside the entry window — have no decision row at all, so they cannot
+ * appear here; the PR lists them. */
+export function noOrderReason(decision: DecisionDetail, backtest = false): string | null {
+  if (backtest) return 'in backtest';
+  const approval = decision.approval;
+  if (approval?.status === 'pending') return 'waiting for approval';
+  if (decision.execution_mode === 'supervised') return 'supervised';
+  if (decision.final_action === 'blocked') return 'blocked by a gate';
+  const stored = decision.validation_result?.error ?? decision.validation_result?.note;
+  if (decision.no_call_reason === 'checks' || decision.no_call_reason === 'no_options') {
+    const detail = stored?.replace(/^No call — /, '');
+    if (detail) return detail;
+  }
+  if (decision.no_call_reason) {
+    const label = labelFor(REASON_CODES, decision.no_call_reason);
+    return label.charAt(0).toLowerCase() + label.slice(1);
+  }
+  return null;
+}
+
 /** The footer's order-status line (design: "Automatic · bracket sent …"). */
 export function orderStatusText(decision: DecisionDetail, backtest = false): string {
   const mode = backtest ? 'Backtest' : decision.execution_mode === 'supervised' ? 'Supervised' : 'Automatic';
@@ -388,8 +411,12 @@ export function orderStatusText(decision: DecisionDetail, backtest = false): str
       approval.reason ? ` — ${approval.reason}` : ''
     }`;
   }
+  const reason = noOrderReason(decision, backtest);
   if (decision.final_action === 'no_call') {
-    return 'No order — no model call';
+    return `No order — ${reason ?? 'no model call'}`;
   }
-  return `${['exit', 'tighten_stop'].includes(decision.final_action) ? 'No order recorded' : 'No order'} — ${actionLabel(decision.final_action).toLowerCase()}`;
+  const prefix = ['exit', 'tighten_stop'].includes(decision.final_action)
+    ? 'No order recorded'
+    : 'No order';
+  return `${prefix} — ${reason ?? actionLabel(decision.final_action).toLowerCase()}`;
 }

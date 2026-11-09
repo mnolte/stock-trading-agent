@@ -1078,6 +1078,16 @@ export default function Inspector() {
     });
   }, []);
 
+  // At 1181 px and up the design opens the newest call in Call details
+  // straight away; narrower screens keep the "select a call" hint (056).
+  useEffect(() => {
+    if (filters.call !== undefined || listLoading || page.calls.length === 0) return;
+    if (!window.matchMedia('(min-width: 1181px)').matches) return;
+    const newest =
+      filters.order === 'asc' ? page.calls[page.calls.length - 1] : page.calls[0];
+    update({ call: newest.id });
+  }, [filters.call, filters.order, listLoading, page.calls, update]);
+
   const sessionGroups = groupBySession(page.calls);
   const lastDate = dates?.[0];
 

@@ -15,6 +15,7 @@ import {
   SkeletonTiles,
 } from '../components/skeletons';
 import { EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
+import { ghostButton } from '../components/errorPageStyles';
 
 /** One insights snapshot as the API serves it (docs/SPEC.md, Insights). */
 
@@ -323,6 +324,20 @@ function FilterRemovedCard({ filters, refreshing }: { filters: FilterRemovedRow[
   );
 }
 
+const raisedButton: React.CSSProperties = {
+  ...ghostButton,
+  border: '1px solid var(--sa-border-strong)',
+  background: 'var(--sa-raised)',
+  color: 'var(--sa-text)',
+  height: 36,
+  fontSize: 'var(--sa-text-md)',
+};
+const findingGhostButton: React.CSSProperties = {
+  ...ghostButton,
+  height: 36,
+  fontSize: 'var(--sa-text-md)',
+};
+
 const DEFS: Record<string, string> = {
   expectancy: 'Average adjusted R per closed trade. The band is the 90% range: ± 1.64 standard errors on the mean.',
   edge: 'Run return minus SPY’s return over the same sessions, at the strategy’s average equity exposure.',
@@ -403,7 +418,7 @@ export default function Insights() {
       {snap && (
         <>
           {/* headline tiles */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
+          <div className="sa-tiles sa-tiles-6">
             <StatCard
               label={tile('Expectancy', DEFS.expectancy)}
               value={fmtR(snap.headline.expectancy.avg_r)}
@@ -457,9 +472,9 @@ export default function Insights() {
                 </div>
                 <div style={{ display: 'flex', gap: 'var(--sa-space-2)', alignItems: 'center' }}>
                   {SHADOWABLE[f.dimension] && f.status === 'finding' && (
-                    <button type="button" onClick={() => navigate(`/strategies?new_shadow=1&exclude_cycle=${encodeURIComponent(f.slice)}`)}>Test in a shadow</button>
+                    <button type="button" style={raisedButton} onClick={() => navigate(`/strategies?new_shadow=1&exclude_cycle=${encodeURIComponent(f.slice)}`)}>Test in a shadow</button>
                   )}
-                  <button type="button" onClick={() => showTrades(f.dimension, f.slice)}>Show the trades</button>
+                  <button type="button" style={findingGhostButton} onClick={() => showTrades(f.dimension, f.slice)}>Show the trades</button>
                 </div>
               </div>
             ))}
@@ -553,7 +568,7 @@ export default function Insights() {
                       <tr key={r.slice} style={{ borderTop: '1px solid var(--sa-border)', opacity: r.status === 'early' ? 0.6 : 1 }}>
                         <td style={{ padding: '6px 8px' }}>
                           {r.status !== 'rule' ? (
-                            <button type="button" onClick={() => showTrades(dimension, r.slice)} style={{ color: 'var(--sa-text)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' }}>{r.slice}</button>
+                            <button type="button" onClick={() => showTrades(dimension, r.slice)} style={{ padding: 0, border: 'none', background: 'transparent', color: 'var(--sa-text)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer', font: 'inherit', textAlign: 'left' }}>{r.slice}</button>
                           ) : (
                             r.slice
                           )}

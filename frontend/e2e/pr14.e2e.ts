@@ -22,11 +22,14 @@ test('backtest: results panels from the seeded finished run', async ({
   await expect(runButton).toContainText('done');
   await runButton.click();
 
-  // Metric row.
+  // Results table (056): metric rows, one column per strategy + SPY.
   await expect(
     page.getByText('Closed trades', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText('vs SPY buy and hold, pts')).toBeVisible();
+  await expect(
+    page.getByText('vs SPY buy and hold', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /SPY buy and hold/ })).toBeVisible();
   await expect(
     page.getByText('Average R', { exact: true }),
   ).toBeVisible();
