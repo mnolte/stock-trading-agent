@@ -15,7 +15,7 @@ Read first:
 2. docs/CHANGES.md [058] and the SPEC.md text it names: Outcome tracking →
    Option outcomes → Missing bars; Alpaca integration → Market price (the
    price_stale warning); Logging → Frontend errors → New version loaded;
-   VPS deployment → offsite backup → Not set up.
+   VPS deployment → Backups → Not set up.
 
 Move this kickoff to docs/kickoffs/archive/ with git mv in your first PR.
 
