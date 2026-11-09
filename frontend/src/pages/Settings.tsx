@@ -1773,6 +1773,9 @@ export default function Settings() {
   }
   const s = form;
   const held = new Set(data.held_symbols);
+  const decisionPromptDesc =
+    (data.prompt_options.decision ?? []).find((p) => p.version === s.decision.prompt)
+      ?.description ?? null;
 
   const sectionChanges = (id: string) =>
     Object.keys(changed).filter((path) => {
@@ -3090,7 +3093,7 @@ export default function Settings() {
             {row('decision.prompt', {
               id: 'prompt',
               label: 'Decision prompt',
-              help: 'Prompts are never edited; a change is a new version.',
+              help: `${decisionPromptDesc ? `${decisionPromptDesc} ` : ''}Prompts are never edited; a change is a new version.`,
               defaultText: undefined,
               children: (
                 <select

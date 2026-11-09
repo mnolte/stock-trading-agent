@@ -33,14 +33,18 @@ const GATE_LABELS: Record<string, string> = {
  * in code before the model, and the session time left against the
  * chosen option's target distance (docs/SPEC.md, Decision v5 — GUI). */
 function v5FirstRows(decision: DecisionDetail): GateRow[] {
-  if (decision.prompt_version !== 'decision.v5') return [];
+  if (decision.prompt_version !== 'decision.v5' && decision.prompt_version !== 'decision.v6') return [];
   const rows: GateRow[] = [];
   const checks = (decision.input_snapshot?.checks ?? {}) as {
     trend_1h?: string;
     trend_daily?: string;
     regime_trend?: string;
   };
-  const trendPass = checks.trend_1h === 'up' && checks.regime_trend === 'up';
+  // trend_gate_regimes defaults to up + sideways; down never passes
+  // (docs/SPEC.md, Decision v5 — Trend gate in code).
+  const trendPass =
+    checks.trend_1h === 'up' &&
+    (checks.regime_trend === 'up' || checks.regime_trend === 'sideways');
   rows.push({
     name: 'Trend gate (code, before the model)',
     detail:

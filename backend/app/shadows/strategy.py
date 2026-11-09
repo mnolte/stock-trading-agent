@@ -129,11 +129,14 @@ def overrides_tree(strategy: Strategy) -> dict[str, Any]:
             value = getattr(strategy, attr)
             if value is not None:
                 tree.setdefault(section, {})[key] = value
-    # decision.v5 defaults to the expected-value gate (docs/SPEC.md,
-    # Decision v5 — entry_gate is floor for v1–v4, ev for v5). An
+    # decision.v5/v6 default to the expected-value gate (docs/SPEC.md,
+    # Decision v5 — entry_gate is floor for v1–v4, ev for v5+). An
     # explicit strategy override still wins.
     overrides = strategy.overrides or {}
-    if strategy.prompt_version == "decision.v5" and "entry_gate" not in overrides:
+    if (
+        strategy.prompt_version in ("decision.v5", "decision.v6")
+        and "entry_gate" not in overrides
+    ):
         tree.setdefault("decision", {})["entry_gate"] = "ev"
     for name, value in overrides.items():
         if name == "entry_cycles" and isinstance(value, list) and value:

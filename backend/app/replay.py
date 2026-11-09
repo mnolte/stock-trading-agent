@@ -652,6 +652,7 @@ async def replay(
                     ),
                     call_error=response.error,
                     config=config,
+                    prompt_version=spec.version,
                 )
             elif spec.is_v4:
                 validation = validate_model_output_v4(
@@ -960,7 +961,7 @@ async def replay(
         for row in rules_rows:
             fh.write(json.dumps(row.to_json()) + "\n")
     v5_lines: list[str] = []
-    if prompt_version == "decision.v5":
+    if prompt_version in ("decision.v5", "decision.v6"):
         v5_lines = _v5_report_lines(
             rows,
             decisions,

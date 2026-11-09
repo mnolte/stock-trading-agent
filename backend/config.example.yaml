@@ -153,6 +153,8 @@ decision:
     base_rate_sessions: 60      # window for per-option base rates
     base_rate_min_n: 30         # base_rate shown from this many comparable decided options
     price_vs_signal_adverse_atr: 0.5  # price_vs_signal this far below zero + below EMA20 = adverse (thesis_holds)
+  v6:                           # decision.v6 only; the v5.* keys above still apply
+    sideways_max_target_atr: 2.0  # sideways_rule: in a high-vol sideways regime the target must be at most this x ATR
   replay:
     confirm_above_usd: 2.0      # make replay refuses above this without --yes; counts toward the backtest cap
 

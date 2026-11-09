@@ -781,6 +781,7 @@ class ShadowRunner:
                     current_stop=current_stop,
                     call_error=response.error,
                     config=cfg,
+                    prompt_version=spec.version,
                 )
             elif spec.is_v4:
                 validation = validate_model_output_v4(

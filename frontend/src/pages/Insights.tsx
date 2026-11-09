@@ -197,6 +197,7 @@ const FILTER_LABELS: Record<string, string> = {
   'rr cap': 'Reward/risk cap',
   'trend gate': 'Trend gate',
   'confidence gate': 'Expected-value gate',
+  'sideways rule': 'Sideways rule',
   spread: 'Spread',
   slots: 'Slots full · not selected',
   rules: 'Rules',

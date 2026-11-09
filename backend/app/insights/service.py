@@ -352,10 +352,11 @@ def _filter_removed_rows(
                 )
 
     # The option code turned down after the model called: the
-    # confidence gate (edge_too_small), spread and slots.
+    # confidence gate (edge_too_small), the v6 sideways rule, spread
+    # and slots.
     if row.context == "candidate":
         reason = (row.validation_result or {}).get("reason")
-        if reason == "edge_too_small" and row.chosen_option:
+        if reason in ("edge_too_small", "sideways_rule") and row.chosen_option:
             raw = column.get("options")
             option = next(
                 (
@@ -369,7 +370,11 @@ def _filter_removed_rows(
             if option is not None:
                 out.append(
                     InsightsFilterOption(
-                        filter="confidence gate",
+                        filter=(
+                            "sideways rule"
+                            if reason == "sideways_rule"
+                            else "confidence gate"
+                        ),
                         touch=_opt_touch(option),
                         r_made=_opt_r(option),
                     )

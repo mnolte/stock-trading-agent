@@ -1694,6 +1694,7 @@ def validate_model_output_v4(
     call_error: str | None = None,
     config: AppConfig,
     v5: bool = False,
+    v6: bool = False,
 ) -> ValidationResult:
     """Parse a decision.v4 answer and run the v4 code checks.
 
@@ -1707,6 +1708,11 @@ def validate_model_output_v4(
     expected-value entry gate (``decision.entry_gate``, default ``ev``
     for v5), the wider path claim and the ``hold_below_breakeven``
     warning (docs/SPEC.md, Decision v5).
+
+    ``v6=True`` (decision.v6, on top of v5) adds the ``sideways_rule``
+    code check: an enter in a sideways regime becomes a skip when the
+    stock doesn't lead or, in high volatility, the target is over
+    ``decision.v6.sideways_max_target_atr`` (docs/SPEC.md, Decision v6).
     """
     from app.decide.v5 import (
         entry_gate,
@@ -2087,6 +2093,44 @@ def validate_model_output_v4(
                 else "no previous decision",
             )
         )
+        # decision.v6 sideways_rule (docs/SPEC.md, Decision v6 — Code
+        # check): an enter in a sideways regime stands only when the
+        # stock leads (trend_daily up, momentum strong); in high
+        # volatility the target must also stay within
+        # decision.v6.sideways_max_target_atr.
+        sideways_reason: str | None = None
+        if v6 and snap_checks.get("regime_trend") == "sideways":
+            leads = (
+                snap_checks.get("trend_daily") == "up"
+                and snap_checks.get("momentum") == "strong"
+            )
+            max_target = config.get_decimal(
+                "decision", "v6", "sideways_max_target_atr",
+                default=Decimal("2.0"),
+            )
+            target_atr = _decimal_or_none(chosen.get("target_atr"))
+            if not leads:
+                sideways_reason = "sideways market: stock not leading"
+            elif (
+                snap_checks.get("regime_volatility") == "high"
+                and (target_atr is None or target_atr > max_target)
+            ):
+                sideways_reason = (
+                    "sideways, high volatility: target over "
+                    f"{_fmt(max_target)} ATR"
+                )
+        if v6:
+            checks.append(
+                CodeCheck(
+                    "Sideways rule",
+                    passed=sideways_reason is None,
+                    detail=(
+                        sideways_reason
+                        if sideways_reason is not None
+                        else "not a sideways-regime enter"
+                    ),
+                )
+            )
         checks.append(flags_check)
         checks.extend(checks_tail)
         gating = [
@@ -2117,12 +2161,16 @@ def validate_model_output_v4(
             label = "flip-flop guard"
         else:
             first_fail = next(c for c in gating if not c.passed)
-            reason = (
-                "edge_too_small"
-                if first_fail.name.startswith("Confidence")
-                else first_fail.name
-            )
-            label = first_fail.name
+            if first_fail.name == "Sideways rule":
+                reason = "sideways_rule"
+                label = sideways_reason or "sideways rule"
+            else:
+                reason = (
+                    "edge_too_small"
+                    if first_fail.name.startswith("Confidence")
+                    else first_fail.name
+                )
+                label = first_fail.name
         return ValidationResult(
             valid=True, output=output, model_action="enter",
             final_action="skip", checks=checks, reason=reason,
@@ -2255,10 +2303,13 @@ def validate_model_output_v5(
     current_stop: Decimal | None,
     call_error: str | None = None,
     config: AppConfig,
+    prompt_version: str | None = None,
 ) -> ValidationResult:
-    """decision.v5: the v4 schema and checks plus the expected-value
+    """decision.v5/v6: the v4 schema and checks plus the expected-value
     entry gate (default), the wider path claim and
-    ``hold_below_breakeven`` (docs/SPEC.md, Decision v5 — Code checks)."""
+    ``hold_below_breakeven`` (docs/SPEC.md, Decision v5 — Code checks).
+    ``prompt_version == "decision.v6"`` adds the ``sideways_rule`` check
+    (docs/SPEC.md, Decision v6)."""
     return validate_model_output_v4(
         raw,
         symbol=symbol,
@@ -2269,6 +2320,7 @@ def validate_model_output_v5(
         call_error=call_error,
         config=config,
         v5=True,
+        v6=prompt_version == "decision.v6",
     )
 
 
