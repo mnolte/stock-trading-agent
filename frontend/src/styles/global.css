@@ -74,24 +74,129 @@ button:not([disabled]):hover {
   background: var(--sa-hover-card);
   border-color: var(--sa-border-strong);
 }
-@keyframes sa-pulse {
-  0% {
-    opacity: 0.45;
+/* Loading (055). Skeletons, spinner, refresh bar, new-row tint.
+ * See design/DESIGN.md → Loading and design/tokens.css. */
+.sa-skel {
+  background: linear-gradient(100deg, var(--sa-skeleton) 40%, var(--sa-skeleton-shine) 50%, var(--sa-skeleton) 60%);
+  background-size: 300% 100%;
+  animation: sa-shimmer 1.6s linear infinite;
+}
+@keyframes sa-shimmer {
+  from {
+    background-position: 100% 0;
   }
-  50% {
-    opacity: 0.9;
-  }
-  100% {
-    opacity: 0.45;
+  to {
+    background-position: 0 0;
   }
 }
-.sa-skel {
-  background: var(--sa-skeleton);
-  animation: sa-pulse 1.4s ease-in-out infinite;
+.sa-loading {
+  animation: sa-fade 150ms ease-out var(--sa-skeleton-delay) both;
+}
+.sa-in {
+  animation: sa-fade var(--sa-fade) ease-out both;
+}
+@keyframes sa-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.sa-spin {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  opacity: 0.85;
+  animation: sa-rot 0.8s linear infinite;
+}
+@keyframes sa-rot {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sa-refresh {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 10px 10px 0 0;
+  pointer-events: none;
+}
+.sa-refresh::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 30%;
+  background: var(--sa-accent);
+  opacity: 0.75;
+  animation: sa-slide 1.2s ease-in-out infinite;
+}
+@keyframes sa-slide {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.sa-stale-rows {
+  opacity: 0.55;
+  transition: opacity var(--sa-fade);
+}
+.sa-new {
+  animation: sa-flash var(--sa-new-row) ease-out;
+}
+@keyframes sa-flash {
+  from {
+    background: var(--sa-accent-bg);
+  }
+  to {
+    background: transparent;
+  }
+}
+.sa-bar-fill {
+  transition: width var(--sa-fade) ease-out;
+}
+.sa-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 @media (prefers-reduced-motion: reduce) {
   .sa-skel {
     animation: none;
+    background: var(--sa-skeleton);
+  }
+  .sa-loading,
+  .sa-in,
+  .sa-new {
+    animation: none;
+  }
+  .sa-spin {
+    display: none;
+  }
+  .sa-refresh::after {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.35;
+  }
+  .sa-stale-rows,
+  .sa-bar-fill {
+    transition: none;
   }
 }
 

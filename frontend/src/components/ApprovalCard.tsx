@@ -147,14 +147,19 @@ export function ApprovalCard({
         </Link>
         <Button
           onClick={() => act(() => postRejectApproval(approval.id))}
-          disabled={busy}
+          busy={busy}
+          busyLabel="Rejecting…"
+          waitingFor="the broker"
         >
           Reject
         </Button>
         <Button
           variant="primary"
           onClick={() => act(() => postApprove(approval.id))}
-          disabled={busy || killSwitchOn || paused}
+          busy={busy}
+          busyLabel="Approving…"
+          waitingFor="the broker"
+          disabled={!busy && (killSwitchOn || paused)}
           title={
             killSwitchOn
               ? 'Kill switch is on'

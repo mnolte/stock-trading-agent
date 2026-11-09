@@ -115,6 +115,40 @@ def test_kill_switch_api_flow(client: TestClient) -> None:
     assert client.get("/api/header").json()["kill_switch"] is False
 
 
+def test_kill_switch_request_id_runs_once(client: TestClient) -> None:
+    """Resends under one request_id activate the switch once."""
+    from app.db.base import get_session_maker
+    from app.db.models import Event
+    from sqlalchemy import func, select
+
+    def kill_events() -> int:
+        with get_session_maker()() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(Event)
+                    .where(Event.event_type == "kill_switch")
+                )
+                or 0
+            )
+
+    before = kill_events()
+    body = {"action": "entries", "reason": "testing", "request_id": "req-1"}
+    first = client.post("/api/kill-switch", json=body).json()
+    second = client.post("/api/kill-switch", json=body).json()
+    # Even a changed payload under the same id replays the first result.
+    third = client.post(
+        "/api/kill-switch", json={**body, "reason": "changed"}
+    ).json()
+    assert first == second == third
+    assert kill_events() == before + 1
+
+    client.post("/api/kill-switch", json={**body, "request_id": "req-2"})
+    assert kill_events() == before + 2
+
+    client.post("/api/kill-switch/resume", json={"reason": "done"})
+
+
 def test_app_starts_paused_and_resume_needs_no_reason(
     client: TestClient,
 ) -> None:

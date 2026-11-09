@@ -33,7 +33,7 @@ test('positions: recon strip, cards, account, order history', async ({ page }, t
   await expect(page.getByText(/In sync with Alpaca|Reconciliation mismatch/)).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText(/Open positions ·/)).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Open positions ·/ })).toBeVisible();
   await expect(page.getByText('Not to be bought again today')).toBeVisible();
   await expect(page.getByText('Account at Alpaca')).toBeVisible();
   await expect(page.getByText('Order history')).toBeVisible();
@@ -43,7 +43,7 @@ test('positions: recon strip, cards, account, order history', async ({ page }, t
 
 test('decision detail: sections render', async ({ page }, testInfo) => {
   await page.goto('/');
-  await expect(page.getByText("Today's decisions")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('heading', { name: "Today's decisions" })).toBeVisible({ timeout: 60_000 });
 
   const items = await page.evaluate(async () => {
     const res = await fetch('/api/decisions');

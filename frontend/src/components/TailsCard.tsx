@@ -8,6 +8,7 @@
 import type { PerformanceTailsResponse, TailsTradeRow } from '../types/api';
 import { Card } from './Card';
 import { CardBody } from './cardState';
+import { SkeletonTable, SkeletonTiles } from './skeletons';
 import type { Resource } from '../api/useResource';
 
 const mono: React.CSSProperties = {
@@ -141,8 +142,28 @@ function Row({ trade }: { trade: TailsTradeRow }) {
 
 export function TailsCard({ res }: { res: Resource<PerformanceTailsResponse> }) {
   return (
-    <Card label="Winners and tails" right="current run · adjusted · closed trades">
-      <CardBody res={res} what="winners and tails">
+    <Card
+      label="Winners and tails"
+      right="current run · adjusted · closed trades"
+      busy={res.loading}
+      refreshing={res.refreshing}
+    >
+      <CardBody
+        res={res}
+        what="winners and tails"
+        skeleton={
+          <>
+            <SkeletonTiles count={3} />
+            <SkeletonTable
+              columns={['Symbol', 'Exit', 'Result', 'Best while open', 'Best after exit', 'Close 5 sessions after'].map(
+                (label, i) => ({ label, align: i < 2 ? 'left' : 'right' }),
+              )}
+              rows={5}
+              track="1fr 1fr 0.8fr 1fr 1fr 1.2fr"
+            />
+          </>
+        }
+      >
         {(data) => <Tails data={data} />}
       </CardBody>
     </Card>

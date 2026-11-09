@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useLiveUpdates } from '../api/liveContext';
 import { getPerformance, getPerformanceTails } from '../api/state';
@@ -9,10 +9,15 @@ import type { EquityCurvePoint } from '../components/EquityCurveChart';
 import { SegmentedControl } from '../components/SegmentedControl';
 import { StatCard } from '../components/StatCard';
 import { TailsCard } from '../components/TailsCard';
+import { ErrorBanner } from '../components/cardState';
+import {
+  SkeletonChart,
+  SkeletonTable,
+  SkeletonTiles,
+} from '../components/skeletons';
 import type {
   ClosedTradeRow,
   PerformanceAggRow,
-  PerformanceResponse,
 } from '../types/api';
 
 const mono: React.CSSProperties = {
@@ -103,9 +108,9 @@ function StatTip({ children, title }: { children: string; title: string }) {
   );
 }
 
-function AggTable({ rows }: { rows: PerformanceAggRow[] }) {
+function AggTable({ rows, stale }: { rows: PerformanceAggRow[]; stale?: boolean }) {
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', minWidth: '420px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
@@ -151,7 +156,7 @@ function AggTable({ rows }: { rows: PerformanceAggRow[] }) {
   );
 }
 
-function ClosedTradesTable({ trades }: { trades: ClosedTradeRow[] }) {
+function ClosedTradesTable({ trades, stale }: { trades: ClosedTradeRow[]; stale?: boolean }) {
   if (trades.length === 0) {
     return (
       <div style={{ color: muted, fontSize: 'var(--sa-text-md)' }}>
@@ -160,7 +165,7 @@ function ClosedTradesTable({ trades }: { trades: ClosedTradeRow[] }) {
     );
   }
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div className={stale ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', minWidth: '900px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
@@ -229,16 +234,15 @@ function ClosedTradesTable({ trades }: { trades: ClosedTradeRow[] }) {
 }
 
 export default function Performance() {
-  const [data, setData] = useState<PerformanceResponse | null>(null);
   const [runId, setRunId] = useState<number | undefined>(undefined);
   const [currency, setCurrency] = useState<'USD' | 'EUR'>('USD');
 
-  const refresh = useCallback(() => {
-    getPerformance(runId).then(setData).catch(console.error);
-  }, [runId]);
-
-  useEffect(refresh, [refresh]);
-  useLiveUpdates(['performance'], refresh);
+  const res = useApiResource(
+    useCallback((signal?: AbortSignal) => getPerformance(runId, signal), [runId]),
+    [runId],
+  );
+  const data = res.data;
+  useLiveUpdates(['performance'], res.reload);
 
   // Winners and tails: same run as the rest of the page; latest request
   // wins when the run changes quickly.
@@ -328,8 +332,36 @@ export default function Performance() {
         )}
       </div>
 
-      {data === null && (
-        <div style={{ color: muted, fontSize: 'var(--sa-text-md)' }}>Loading…</div>
+      {data === null && !res.loaded && res.failure === null && (
+        <div className="sa-loading" aria-hidden="true">
+          <SkeletonTiles count={6} />
+          <Card ariaLabel="Equity curve">
+            <SkeletonChart height={300} />
+          </Card>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)' }}>
+            {[0, 1].map((i) => (
+              <Card key={i} ariaLabel="Table" style={{ flex: '1 1 440px' }}>
+                <SkeletonTable
+                  columns={['', 'Trades', 'Won', 'P&L', 'Avg R'].map((label, j) => ({
+                    label,
+                    align: j === 0 ? 'left' : 'right',
+                  }))}
+                  rows={5}
+                  track="1.4fr 0.7fr 0.6fr 0.8fr 0.7fr"
+                />
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data === null && res.failure !== null && (
+        <ErrorBanner
+          what="performance"
+          failure={res.failure}
+          updatedAt={res.updatedAt}
+          onRetry={res.reload}
+        />
       )}
 
       {data?.empty && (
@@ -402,6 +434,7 @@ export default function Performance() {
           {curve && chartPoints.length > 0 && (
             <Card
               label={`Equity vs ${curve.benchmark} buy-and-hold`}
+              refreshing={res.refreshing}
               right={
                 <SegmentedControl
                   label="Currency"
@@ -442,8 +475,8 @@ export default function Performance() {
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)' }}>
             <div style={{ flex: '1 1 440px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              <Card label="By regime">
-                <AggTable rows={data.by_regime ?? []} />
+              <Card label="By regime" refreshing={res.refreshing}>
+                <AggTable rows={data.by_regime ?? []} stale={res.refreshing} />
                 <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
                   Down + high vol blocks new entries, so it never has trades.
                   {summary.closed < 30 &&
@@ -452,8 +485,8 @@ export default function Performance() {
               </Card>
             </div>
             <div style={{ flex: '1 1 440px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-              <Card label="By symbol">
-                <AggTable rows={data.by_symbol ?? []} />
+              <Card label="By symbol" refreshing={res.refreshing}>
+                <AggTable rows={data.by_symbol ?? []} stale={res.refreshing} />
                 <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
                   Closed trades only, best first.
                   {open && open.count > 0 &&
@@ -466,8 +499,8 @@ export default function Performance() {
 
           <TailsCard res={tails} />
 
-          <Card label="Decisions and outcomes">
-            <div style={{ overflowX: 'auto' }}>
+          <Card label="Decisions and outcomes" refreshing={res.refreshing}>
+            <div className={res.refreshing ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', minWidth: '520px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
@@ -521,8 +554,8 @@ export default function Performance() {
             </div>
           </Card>
 
-          <Card label="Closed trades" right={closedRight}>
-            <ClosedTradesTable trades={data.closed_trades ?? []} />
+          <Card label="Closed trades" right={closedRight} refreshing={res.refreshing}>
+            <ClosedTradesTable trades={data.closed_trades ?? []} stale={res.refreshing} />
           </Card>
         </>
       )}

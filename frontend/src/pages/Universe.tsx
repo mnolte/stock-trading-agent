@@ -17,6 +17,7 @@ import type {
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { SkeletonTable, SkeletonTiles } from '../components/skeletons';
 import { Chip } from '../components/Chip';
 
 // ---------------------------------------------------------------------------
@@ -251,9 +252,33 @@ export default function Universe() {
   };
 
   if (!data) {
+    if (errors.length > 0) {
+      return (
+        <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto' }}>
+          <Banner variant="negative">{errors.join(' ')}</Banner>
+        </div>
+      );
+    }
     return (
-      <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto' }}>
-        {errors.length > 0 && <Banner variant="negative">{errors.join(' ')}</Banner>}
+      <div
+        role="status"
+        aria-label="Loading universe"
+        style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}
+      >
+        <span className="sa-sr">Loading universe</span>
+        <div className="sa-loading">
+          <SkeletonTiles count={3} />
+          <SkeletonTable
+            columns={[
+              { label: 'Symbol' },
+              { label: 'Sector' },
+              { label: 'Price', align: 'right' },
+              { label: 'Volume', align: 'right' },
+            ]}
+            track="1fr 140px 110px 130px"
+            rows={8}
+          />
+        </div>
       </div>
     );
   }
@@ -731,7 +756,13 @@ export default function Universe() {
                   </option>
                 ))}
               </select>
-              <Button onClick={addSymbol} disabled={busy || !newSymbol.trim() || !newSector}>
+              <Button
+                onClick={addSymbol}
+                busy={busy}
+                busyLabel="Adding…"
+                waitingFor="the universe"
+                disabled={!busy && (!newSymbol.trim() || !newSector)}
+              >
                 Add to pool
               </Button>
               <Button variant="ghost" onClick={() => setImportOpen((o) => !o)} style={{ border: '1px solid var(--sa-border)' }}>
@@ -768,7 +799,7 @@ export default function Universe() {
                   }}
                 />
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <Button onClick={importCsv} disabled={busy || !csv.trim()}>
+                  <Button onClick={importCsv} busy={busy} busyLabel="Importing…" waitingFor="the universe" disabled={!busy && !csv.trim()}>
                     Import
                   </Button>
                   <Button variant="ghost" onClick={() => setImportOpen(false)}>

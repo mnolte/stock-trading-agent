@@ -34,6 +34,12 @@ import { PriceChart } from '../components/PriceChart';
 import { RiskBudgetCard } from '../components/RiskBudgetCard';
 import { StatCard } from '../components/StatCard';
 import { Watchlist } from '../components/Watchlist';
+import {
+  SkeletonChart,
+  SkeletonList,
+  SkeletonText,
+  SkeletonTile,
+} from '../components/skeletons';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
 import {
   displayFullDate,
@@ -205,11 +211,13 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
       label={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
+      refreshing={res.refreshing}
       style={{ flex: 1 }}
     >
       <CardBody
         res={res}
         what="the decision feed"
+        skeleton={<SkeletonList rows={6} />}
         isEmpty={(d) => d.feed.length === 0}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
@@ -282,6 +290,7 @@ function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
     <Card
       label={compact ? `Latest decision · ${d.symbol}` : 'Latest decision'}
       busy={res.loading}
+      refreshing={res.refreshing}
       right={
         d && (
           <span
@@ -300,6 +309,7 @@ function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
       <CardBody
         res={res}
         what="the latest decision"
+        skeleton={<SkeletonText lines={4} />}
         isEmpty={(data) => data.latest_decision === null}
         empty={
           <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
@@ -527,11 +537,13 @@ function OpenPositionsMini({
       label="Open positions"
       right={<Link to="/positions">Positions & orders</Link>}
       busy={res.loading}
+      refreshing={res.refreshing}
       style={{ flex: 1 }}
     >
       <CardBody
         res={res}
         what="positions"
+        skeleton={<SkeletonList rows={3} />}
         isEmpty={(d) => d.open.length === 0}
         empty={
           <>
@@ -831,11 +843,11 @@ export default function Dashboard() {
     }
   }, [location.hash]);
 
-  const positionsRes = useApiResource(getPositions);
-  const attentionRes = useApiResource(getAttention);
-  const watchlistRes = useApiResource(getWatchlist);
-  const approvalsRes = useApiResource(getApprovals);
-  const budgetRes = useApiResource(getRiskBudget);
+  const positionsRes = useApiResource((signal) => getPositions(signal));
+  const attentionRes = useApiResource((signal) => getAttention(signal));
+  const watchlistRes = useApiResource((signal) => getWatchlist(signal));
+  const approvalsRes = useApiResource((signal) => getApprovals(signal));
+  const budgetRes = useApiResource((signal) => getRiskBudget(signal));
 
   // The charted symbol persists in the URL (?symbol=): an explicit param
   // wins, else the first held position, else the first watchlist row.
@@ -869,13 +881,16 @@ export default function Dashboard() {
 
   // The latest-decision card tracks the selected symbol.
   const dashboardRes = useApiResource(
-    () => getDashboard(chartSymbol ?? undefined),
+    (signal) => getDashboard(chartSymbol ?? undefined, signal),
     [chartSymbol],
   );
   const chartRes = useApiResource(
     // reload() ignores the enabled flag, so the fetcher itself must not
     // hit /api/chart/ without a symbol.
-    () => (chartSymbol === null ? Promise.resolve(null) : getChart(chartSymbol)),
+    (signal) =>
+      chartSymbol === null
+        ? Promise.resolve(null)
+        : getChart(chartSymbol, signal),
     [chartSymbol],
     chartSymbol !== null,
   );
@@ -1041,7 +1056,7 @@ export default function Dashboard() {
             fontSize: 'var(--sa-text-md)',
           }}
         >
-          <CardBody res={dashboardRes} what="the cycle state">
+          <CardBody res={dashboardRes} what="the cycle state" skeleton={<SkeletonText lines={1} />}>
             {(d) => (
               <>
                 {d.cycle_line && (
@@ -1083,20 +1098,11 @@ export default function Dashboard() {
       {dashboard === null ? (
         dashboardRes.failure === null && (
           <div
+            className="sa-loading"
             style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}
-            aria-hidden="true"
           >
-            {[0, 1, 2].map((i) => (
-              <div
-                key={i}
-                className="sa-skel"
-                style={{
-                  flex: '1 1 190px',
-                  height: 96,
-                  borderRadius: 'var(--sa-radius-lg)',
-                  background: 'var(--sa-panel)',
-                }}
-              />
+            {[0, 1].map((i) => (
+              <SkeletonTile key={i} />
             ))}
           </div>
         )
@@ -1215,7 +1221,11 @@ export default function Dashboard() {
         }}
       >
         <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <Card>
+          <Card
+            ariaLabel={chartSymbol ? `Chart for ${chartSymbol}` : 'Chart'}
+            busy={chartRes.loading}
+            refreshing={chartRes.refreshing}
+          >
             <div
               style={{
                 display: 'flex',
@@ -1336,17 +1346,7 @@ export default function Dashboard() {
               res={chartRes}
               what={chartSymbol ? `the chart for ${chartSymbol}` : 'the chart'}
               isEmpty={(d) => d === null || d.bars.length === 0}
-              skeleton={
-                <div
-                  className="sa-skel"
-                  aria-hidden="true"
-                  style={{
-                    height: '340px',
-                    borderRadius: 'var(--sa-radius-md)',
-                    background: 'var(--sa-subtle)',
-                  }}
-                />
-              }
+              skeleton={<SkeletonChart height={340} />}
               empty={
                 <div style={{ height: '340px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
                   {chartSymbol

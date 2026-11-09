@@ -48,7 +48,7 @@ export function StatCard({ label, value, valueColor, sub, bar, style }: StatCard
       </div>
       {bar && (
         <div style={{ height: '6px', background: 'var(--sa-border)', borderRadius: '3px', overflow: 'hidden' }}>
-          <div style={{ width: bar.width, height: '6px', background: bar.color }} />
+          <div className="sa-bar-fill" style={{ width: bar.width, height: '6px', background: bar.color }} />
         </div>
       )}
       {sub && <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{sub}</div>}

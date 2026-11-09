@@ -12,6 +12,7 @@ import { Chip } from '../components/Chip';
 import type { ChipVariant } from '../components/Chip';
 import { DialogButton, Modal } from '../components/Modal';
 import { StatCard } from '../components/StatCard';
+import { SkeletonList, SkeletonTiles } from '../components/skeletons';
 import { displayDayTime } from '../format';
 import type {
   ReadinessCriterion,
@@ -104,6 +105,7 @@ function CriterionRow({ criterion }: { criterion: ReadinessCriterion }) {
             }}
           >
             <div
+              className="sa-bar-fill"
               style={{
                 width: `${Math.min(Math.max(criterion.progress, 0), 1) * 100}%`,
                 height: '6px',
@@ -188,6 +190,22 @@ export default function Readiness() {
     criteria.length > 0 &&
     data.summary.pass === data.summary.total &&
     data.summary.manual_done === data.summary.manual_total;
+
+  if (!data && !error) {
+    return (
+      <div
+        role="status"
+        aria-label="Loading readiness"
+        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}
+      >
+        <span className="sa-sr">Loading readiness</span>
+        <div className="sa-loading">
+          <SkeletonTiles count={3} />
+          <SkeletonList rows={8} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>

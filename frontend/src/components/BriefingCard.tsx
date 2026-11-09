@@ -4,6 +4,7 @@ import type { Resource } from '../api/useResource';
 import type { BriefingChip as ChipData, DashboardResponse } from '../types/api';
 import { CardBody } from './cardState';
 import { Chip } from './Chip';
+import { SkeletonText } from './skeletons';
 import { formatCost } from './decisionFormat';
 
 const DISPLAY_TZ = 'Europe/Amsterdam';
@@ -47,8 +48,9 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
   return (
     <section
       aria-label="Daily briefing"
-      aria-busy={res.loading || undefined}
+      aria-busy={res.loading || res.refreshing || undefined}
       style={{
+        position: res.refreshing ? 'relative' : undefined,
         flex: '999 1 460px',
         minWidth: 0,
         background: 'var(--sa-panel)',
@@ -61,6 +63,8 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
         boxSizing: 'border-box',
       }}
     >
+      {res.refreshing && <span className="sa-refresh" aria-hidden="true" />}
+      {res.loading && <span className="sa-sr">Loading daily briefing</span>}
       <div
         style={{
           display: 'flex',
@@ -86,7 +90,11 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
           All briefings and reviews
         </Link>
       </div>
-      <CardBody res={res} what="the briefing">
+      <CardBody
+        res={res}
+        what="the briefing"
+        skeleton={<SkeletonText lines={4} />}
+      >
         {() => (
           <>
             {!enabled && (

@@ -1,80 +1,85 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useSyncExternalStore } from 'react';
 
-import { ApiError, errorMessages } from './client';
-import { createSequence } from './latestWins';
+import {
+  createResourceLoader,
+  type FetchFailure,
+  type ResourceFetcher,
+  type ResourceLoader,
+  type ResourceState,
+} from './resourceLoader';
 
-/** A failed fetch: when it happened, what the server/fetch layer said and
- * whether the request never got an answer (backend down or network off). */
-export interface FetchFailure {
-  at: Date;
-  message: string;
-  unreachable: boolean;
-  /** HTTP status when the server answered (e.g. 404 for record pages). */
-  status?: number;
-}
+export type { FetchFailure } from './resourceLoader';
 
 export interface Resource<T> {
   data: T | null;
+  /** True once a fetch has answered (the value itself may be null). */
+  loaded: boolean;
   /** Last successful load — stale data keeps this timestamp. */
   updatedAt: Date | null;
-  /** True until the first response settles: skeletons show, no empty text. */
+  /** True while the first data is still in flight (the skeleton phase or
+   * the first 200 ms before it). */
   loading: boolean;
+  /** The card's own skeleton should render: false for the first
+   * SKELETON_DELAY_MS of a first load, true after that until the data is
+   * in, and held for at least SKELETON_MIN_MS once it went true. */
+  showSkeleton: boolean;
+  /** First load took longer than LOAD_SLOW_MS — show "Still loading · n s". */
+  slow: boolean;
+  /** Whole seconds waited so far while `slow` (for the "· n s" count). */
+  slowSeconds: number;
+  /** A refresh of already-shown data is in flight for more than
+   * REFRESH_DELAY_MS — rows dim and the card's top bar runs. */
+  refreshing: boolean;
   failure: FetchFailure | null;
   reload: () => void;
 }
 
 /**
  * One REST resource on a screen: holds the data plus its freshness and the
- * last failure. `reload` is stable — hand it to useLiveUpdates or a Retry
- * button. Later calls win over in-flight ones.
+ * last failure, and owns the loading timing from design/DESIGN.md →
+ * Loading (see resourceLoader.ts). `reload` is stable — hand it to
+ * useLiveUpdates or a Retry button. Later calls win over in-flight ones.
  */
 export function useApiResource<T>(
-  fetcher: () => Promise<T>,
+  fetcher: ResourceFetcher<T>,
   deps: readonly unknown[] = [],
   enabled = true,
 ): Resource<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
-  const [failure, setFailure] = useState<FetchFailure | null>(null);
-  const [settled, setSettled] = useState(false);
-  const seq = useRef(createSequence());
-  const fetcherRef = useRef(fetcher);
+  // The loader is created once; setFetcher keeps the latest fetcher so
+  // inline arrows don't recreate it (and drop in-flight requests).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const loader: ResourceLoader<T> = useMemo(() => createResourceLoader(fetcher), []);
   useEffect(() => {
-    fetcherRef.current = fetcher;
+    loader.setFetcher(fetcher);
   });
-
-  const reload = useCallback(() => {
-    const isCurrent = seq.current.next();
-    void fetcherRef.current()
-      .then((result: T) => {
-        if (!isCurrent()) return;
-        setData(result);
-        setUpdatedAt(new Date());
-        setFailure(null);
-        setSettled(true);
-      })
-      .catch((e: unknown) => {
-        if (!isCurrent()) return;
-        setSettled(true);
-        setFailure({
-          at: new Date(),
-          message: errorMessages(e)[0] ?? 'request failed',
-          unreachable: !(e instanceof ApiError),
-          status: e instanceof ApiError ? e.status : undefined,
-        });
-      });
-  }, []);
+  const state: ResourceState<T> = useSyncExternalStore(
+    loader.subscribe,
+    loader.getState,
+  );
 
   useEffect(() => {
-    if (enabled) reload();
+    if (enabled) {
+      loader.reload();
+    } else {
+      loader.invalidate();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, reload, ...deps]);
+  }, [enabled, loader, ...deps]);
 
   return {
-    data,
-    updatedAt,
-    loading: enabled && !settled && failure === null,
-    failure,
-    reload,
+    data: state.data,
+    loaded: state.loaded,
+    updatedAt: state.updatedAt,
+    loading:
+      enabled &&
+      !state.loaded &&
+      state.data === null &&
+      state.failure === null,
+    showSkeleton: state.showSkeleton,
+    slow: state.slow,
+    slowSeconds: state.slowSeconds,
+    refreshing: state.refreshing,
+    failure: state.failure,
+    reload: loader.reload,
   };
 }

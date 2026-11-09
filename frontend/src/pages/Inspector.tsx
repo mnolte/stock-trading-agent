@@ -15,6 +15,7 @@ import { useApiResource } from '../api/useResource';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { Card } from '../components/Card';
 import { CardBody, FetchError, SkeletonLines } from '../components/cardState';
+import { SkeletonList } from '../components/skeletons';
 import { RecordNotFound } from '../components/errorPages';
 import {
   actionColor,
@@ -1125,7 +1126,9 @@ export default function Inspector() {
             onRetry={summary.reload}
           />
         ) : (
-          <SkeletonLines bars={4} />
+          <div className="sa-loading">
+            <SkeletonLines bars={4} />
+          </div>
         )}
       </section>
 
@@ -1169,8 +1172,8 @@ export default function Inspector() {
           </div>
           <div style={{ maxHeight: '1060px', overflowY: 'auto', padding: '0 8px 8px' }} tabIndex={0} aria-label="Call list, scrollable">
             {listLoading ? (
-              <div style={{ padding: 'var(--sa-space-4)' }}>
-                <SkeletonLines bars={6} />
+              <div className="sa-loading" style={{ padding: 'var(--sa-space-4)' }}>
+                <SkeletonList rows={8} />
               </div>
             ) : listFailure && page.calls.length === 0 ? (
               <div style={{ padding: 'var(--sa-space-4)' }}>
@@ -1242,9 +1245,14 @@ export default function Inspector() {
                 disabled={loadingMore}
                 style={{ ...GHOST_BUTTON, height: '36px', fontSize: 'var(--sa-text-base)' }}
               >
-                {loadingMore
-                  ? 'Loading…'
-                  : `Load ${Math.min(PAGE_SIZE, page.total - page.calls.length)} more`}
+                {loadingMore ? (
+                  <>
+                    <span className="sa-spin" aria-hidden="true" />
+                    Loading more
+                  </>
+                ) : (
+                  `Load ${Math.min(PAGE_SIZE, page.total - page.calls.length)} more`
+                )}
               </button>
             )}
           </div>
@@ -1269,7 +1277,24 @@ export default function Inspector() {
             <CardBody
               res={detail}
               what="the call"
-              skeleton={<SkeletonLines bars={5} />}
+              skeleton={
+                <section
+                  aria-label="Call details"
+                  aria-busy="true"
+                  style={{
+                    background: 'var(--sa-panel)',
+                    border: '1px solid var(--sa-border)',
+                    borderRadius: 'var(--sa-radius-lg)',
+                    padding: 'var(--sa-space-4) var(--sa-space-5)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 'var(--sa-space-4)',
+                  }}
+                >
+                  <span className="sa-sr">Loading call details</span>
+                  <SkeletonLines bars={6} />
+                </section>
+              }
             >
               {(d) => (
                 <CallDetails

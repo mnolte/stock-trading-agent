@@ -1024,13 +1024,24 @@ async def kill_switch(request: Request, body: dict[str, object]) -> dict[str, ob
 
     executor = _executor(request)
     action = str(body.get("action", "entries"))
+    # The GUI resends an unconfirmed request under the same request_id;
+    # the executor runs the action once and replays the result.
+    request_id = _one_line(str(body.get("request_id") or ""), 64) or None
     if action == "flatten":
         require_confirmed(request)
-        result = await executor.flatten()
-        return {"kill_switch": True, **result}
+
+        async def flatten_once() -> dict[str, object]:
+            result = await executor.flatten()
+            return {"kill_switch": True, **result}
+
+        return await executor.run_request_once(request_id, flatten_once)
     reason = _one_line(str(body.get("reason") or "manual"), 200)
-    await executor.activate_kill_switch(reason=reason, automatic=False)
-    return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
+
+    async def entries_once() -> dict[str, object]:
+        await executor.activate_kill_switch(reason=reason, automatic=False)
+        return {"kill_switch": True, "sold": [], "cancelled_orders": 0}
+
+    return await executor.run_request_once(request_id, entries_once)
 
 
 @router.post("/pause")

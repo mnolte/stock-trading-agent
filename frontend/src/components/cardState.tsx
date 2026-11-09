@@ -1,24 +1,28 @@
+import { useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 import type { Resource } from '../api/useResource';
 import { displayTime } from '../format';
 import { Banner } from './Banner';
+import { SkeletonText } from './skeletons';
 
-const BAR_WIDTHS = ['70%', '90%', '55%'];
-
-/** Skeleton bars + "Loading…" — shown until the first response settles. */
+/** Default skeleton: line bars — replaced per card by the shape of its
+ * data (components/skeletons.tsx). */
 export function SkeletonLines({ bars = 3 }: { bars?: number }) {
+  return <SkeletonText lines={bars} />;
+}
+
+/** "Still loading · n s" — the muted line under a skeleton after 8 s. */
+function StillLoading({ seconds }: { seconds: number }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
-      {BAR_WIDTHS.slice(0, bars).map((w) => (
-        <div
-          key={w}
-          className="sa-skel"
-          aria-hidden="true"
-          style={{ height: 12, width: w, borderRadius: 4, background: 'var(--sa-subtle)' }}
-        />
-      ))}
-      <span style={{ fontSize: 12, color: 'var(--sa-text-muted)' }}>Loading…</span>
+    <div
+      style={{
+        fontSize: 'var(--sa-text-sm)',
+        color: 'var(--sa-text-muted)',
+        lineHeight: 1.45,
+      }}
+    >
+      Still loading · {seconds} s
     </div>
   );
 }
@@ -172,13 +176,18 @@ export function ErrorBanner({
   );
 }
 
-const STALE: CSSProperties = { opacity: 0.55 };
-
 /**
- * Card body driven by a useApiResource result: skeleton before the first
- * response (never empty-state text), the error note (what failed + when +
- * Retry) on failure, stale data dimmed below the note, `empty` copy only
- * after a successful load.
+ * Card body driven by a useApiResource result (design/DESIGN.md → Loading):
+ *
+ * - first load: an empty `.sa-loading` body for the first 200 ms, then the
+ *   card's own skeleton; "Still loading · n s" under it after 8 s; the
+ *   error note (what failed + when + Retry) at 20 s or on any failure —
+ *   never empty-state text.
+ * - data replaces the skeleton in place with `.sa-in`; nothing below moves.
+ * - refresh: rows stay under `.sa-stale-rows` while `res.refreshing` (the
+ *   card's `.sa-refresh` bar comes from the Card's `refreshing` prop); a
+ *   failed refresh keeps them dimmed under the error note, marked stale.
+ * - `empty` copy only after a successful load.
  */
 export function CardBody<T>({
   res,
@@ -193,16 +202,41 @@ export function CardBody<T>({
   what: string;
   isEmpty?: (data: T) => boolean;
   empty?: ReactNode;
-  /** Replaces the default text skeleton (e.g. a chart-sized block). */
+  /** The card's own skeleton shape (components/skeletons.tsx); defaults to
+   * line bars. Only rendered once `res.showSkeleton` is true. */
   skeleton?: ReactNode;
   children: (data: T) => ReactNode;
 }) {
-  if (res.data === null) {
+  // Data that replaces a shown skeleton fades in once (`.sa-in`).
+  const [hadSkeleton, setHadSkeleton] = useState(false);
+  if (res.showSkeleton && !hadSkeleton) setHadSkeleton(true);
+
+  if (res.data === null && !res.loaded) {
     if (res.failure) {
       return <FetchError what={what} failure={res.failure} updatedAt={null} onRetry={res.reload} />;
     }
-    return <>{skeleton ?? <SkeletonLines />}</>;
+    return (
+      <div className="sa-loading">
+        {res.showSkeleton ? (
+          <>
+            {skeleton ?? <SkeletonLines />}
+            {res.slow && <StillLoading seconds={res.slowSeconds} />}
+          </>
+        ) : null}
+      </div>
+    );
   }
+  if (res.data === null) {
+    // The fetcher answered null (e.g. nothing picked yet) — the empty
+    // state, never a skeleton.
+    return <>{res.failure ? <FetchError what={what} failure={res.failure} updatedAt={res.updatedAt} onRetry={res.reload} /> : empty}</>;
+  }
+  const rowClass = [
+    res.refreshing || res.failure ? 'sa-stale-rows' : '',
+    hadSkeleton ? 'sa-in' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   return (
     <>
       {res.failure && (
@@ -211,7 +245,7 @@ export function CardBody<T>({
       {isEmpty && isEmpty(res.data) ? (
         empty
       ) : (
-        <div style={res.failure ? STALE : undefined}>{children(res.data)}</div>
+        <div className={rowClass || undefined}>{children(res.data)}</div>
       )}
     </>
   );

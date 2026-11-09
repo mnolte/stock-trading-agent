@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -66,6 +66,7 @@ from app.risk.math import (
 )
 from app.signals.indicators import atr
 from app.signals.service import SignalService, SymbolEval, trading_days_until
+from app.spawn import spawn
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -204,6 +205,12 @@ class Executor:
         self._approvals_in_flight: set[int] = set()
         # Set by main: closes every shadow's virtual positions on flatten.
         self.on_flatten: Callable[[], object] = lambda: None
+        # Idempotent user actions (docs/SPEC.md, kill switch): the GUI
+        # resends an unconfirmed request with the same request_id, so the
+        # action must run once — duplicates share the in-flight task or
+        # replay the stored result.
+        self._request_once: dict[str, asyncio.Task[dict[str, object]]] = {}
+        self._request_once_done: dict[str, dict[str, object]] = {}
 
     # ------------------------------------------------------------------
     # account + brakes
@@ -403,6 +410,42 @@ class Executor:
             )
             session.commit()
         self._notify({"banners", "header", "approvals", "attention"})
+
+    async def run_request_once(
+        self,
+        request_id: str | None,
+        make: Callable[[], Awaitable[dict[str, object]]],
+    ) -> dict[str, object]:
+        """Run ``make`` at most once per ``request_id``.
+
+        A resent request with the same id joins the in-flight task, or
+        replays the stored result once it finished. Without an id every
+        call runs — callers that cannot resend must not send one.
+        """
+        if not request_id:
+            return await make()
+        if request_id in self._request_once_done:
+            return self._request_once_done[request_id]
+        task = self._request_once.get(request_id)
+        if task is None:
+            async def run() -> dict[str, object]:
+                return await make()
+
+            task = spawn(run(), name="request-once")
+            self._request_once[request_id] = task
+            if len(self._request_once) > 256:
+                self._request_once.pop(next(iter(self._request_once)))
+        try:
+            result = await task
+        except BaseException:
+            # A failed attempt may be retried by the next resend.
+            self._request_once.pop(request_id, None)
+            raise
+        self._request_once.pop(request_id, None)
+        self._request_once_done[request_id] = result
+        if len(self._request_once_done) > 256:
+            self._request_once_done.pop(next(iter(self._request_once_done)))
+        return result
 
     async def pause(self) -> None:
         """Pause new entries (docs/SPEC.md, Paused at startup).
