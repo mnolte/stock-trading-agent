@@ -36,7 +36,7 @@ test('positions: recon strip, cards, account, order history', async ({ page }, t
   await expect(page.getByRole('heading', { name: /Open positions ·/ })).toBeVisible();
   await expect(page.getByText('Not to be bought again today')).toBeVisible();
   await expect(page.getByText('Account at Alpaca')).toBeVisible();
-  await expect(page.getByText('Order history')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Order history' })).toBeVisible();
 
   await page.screenshot({ path: shot('positions', testInfo.project.name), fullPage: true });
 });
