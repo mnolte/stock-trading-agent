@@ -138,8 +138,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   // A start before the live model's knowledge cutoff disables the run and
   // says why, both in the estimate and on the button.
   await page.getByLabel('From').fill('2023-01-02');
+  // Wait for the estimate itself: the per-option cutoff hint renders
+  // synchronously, long before the debounced estimate answers.
   await expect(
-    page.getByText(/knowledge cutoff|cutoff/i).first(),
+    page.getByText(/knowledge cutoff is/i).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole('button', { name: 'Run backtest' }),
