@@ -1,4 +1,7 @@
+import { useId } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+
+import { CardBoundary } from './CardBoundary';
 
 export interface CardProps {
   label?: string;
@@ -15,6 +18,9 @@ export interface CardProps {
 }
 
 export function Card({ label, right, children, style, busy, refreshing, ariaLabel }: CardProps) {
+  // The boundary's dedupe name: the card's own label, else a stable id.
+  const fallbackName = useId();
+  const boundaryName = label ?? ariaLabel ?? `card ${fallbackName}`;
   return (
     <section
       aria-label={ariaLabel}
@@ -52,7 +58,7 @@ export function Card({ label, right, children, style, busy, refreshing, ariaLabe
           {right}
         </div>
       )}
-      {children}
+      <CardBoundary name={boundaryName}>{children}</CardBoundary>
     </section>
   );
 }

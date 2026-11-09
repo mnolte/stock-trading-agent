@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { Resource } from '../api/useResource';
 import type { BriefingChip as ChipData, DashboardResponse } from '../types/api';
 import { CardBody } from './cardState';
+import { CardBoundary } from './CardBoundary';
 import { Chip } from './Chip';
 import { SkeletonText } from './skeletons';
 import { formatCost } from './decisionFormat';
@@ -90,6 +91,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
           All briefings and reviews
         </Link>
       </div>
+      <CardBoundary name="Daily briefing">
       <CardBody
         res={res}
         what="the briefing"
@@ -192,6 +194,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
           </>
         )}
       </CardBody>
+      </CardBoundary>
     </section>
   );
 }

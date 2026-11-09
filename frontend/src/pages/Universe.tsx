@@ -17,6 +17,7 @@ import type {
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { SkeletonTable, SkeletonTiles } from '../components/skeletons';
 import { Chip } from '../components/Chip';
 
@@ -449,6 +450,7 @@ export default function Universe() {
         <>
           {/* summary tiles */}
           <section aria-label="Universe summary" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
+            <CardBoundary name="Universe summary">
             {(
               [
                 ['Pool', String(data.pool.size), `limit ${data.pool.max}`, 'var(--sa-text)'],
@@ -494,6 +496,7 @@ export default function Universe() {
                 </span>
               </div>
             ))}
+            </CardBoundary>
           </section>
 
           {/* today's screen + how it works */}

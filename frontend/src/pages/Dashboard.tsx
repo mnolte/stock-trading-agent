@@ -26,6 +26,7 @@ import { StopTargetBar } from '../components/StopTargetBar';
 import { Banner } from '../components/Banner';
 import { BriefingCard } from '../components/BriefingCard';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { CardBody, ErrorBanner } from '../components/cardState';
 import { Chip } from '../components/Chip';
 import { CycleCounter } from '../components/CycleCounter';
@@ -1056,6 +1057,7 @@ export default function Dashboard() {
             fontSize: 'var(--sa-text-md)',
           }}
         >
+          <CardBoundary name="Cycle state">
           <CardBody res={dashboardRes} what="the cycle state" skeleton={<SkeletonText lines={1} />}>
             {(d) => (
               <>
@@ -1084,6 +1086,7 @@ export default function Dashboard() {
               </>
             )}
           </CardBody>
+          </CardBoundary>
         </div>
       )}
 
@@ -1116,6 +1119,7 @@ export default function Dashboard() {
           opacity: dashboardRes.failure ? 0.55 : 1,
         }}
       >
+        <CardBoundary name="Model calls today">
         <Link
           to="/inspector?source=live"
           className="sa-tile"
@@ -1156,6 +1160,8 @@ export default function Dashboard() {
             style={{ flex: '1 1 auto', width: '100%', cursor: 'pointer' }}
           />
         </Link>
+        </CardBoundary>
+        <CardBoundary name="Since start">
         <Link
           to="/performance"
           className="sa-tile"
@@ -1178,6 +1184,7 @@ export default function Dashboard() {
             style={{ flex: '1 1 auto', width: '100%' }}
           />
         </Link>
+        </CardBoundary>
       </div>
       )}
 

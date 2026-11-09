@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import type { Resource } from '../api/useResource';
 import { displayTime } from '../format';
 import { Banner } from './Banner';
+import { warningButton } from './errorPageStyles';
 import { SkeletonText } from './skeletons';
 
 /** Default skeleton: line bars — replaced per card by the shape of its
@@ -71,18 +72,7 @@ export function AlpacaStaleNote({ asOf }: { asOf: string | null }) {
   );
 }
 
-const RETRY_BUTTON: CSSProperties = {
-  height: 36,
-  padding: '0 var(--sa-space-3)',
-  borderRadius: 'var(--sa-radius-md)',
-  border: '1px solid var(--sa-warning-border)',
-  background: 'transparent',
-  color: 'var(--sa-warning-text)',
-  fontSize: 'var(--sa-text-md)',
-  fontWeight: 500,
-  cursor: 'pointer',
-  whiteSpace: 'nowrap',
-};
+const RETRY_BUTTON = warningButton;
 
 export function FetchErrorText({
   what,

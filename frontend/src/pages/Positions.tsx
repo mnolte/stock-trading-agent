@@ -13,6 +13,7 @@ import type {
   PositionRow,
 } from '../types/api';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { AlpacaStaleNote, CardBody } from '../components/cardState';
 import { Chip } from '../components/Chip';
 import { SkeletonList, SkeletonTable, SkeletonText } from '../components/skeletons';
@@ -527,6 +528,7 @@ export default function Positions() {
 
       {positions?.totals && open.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', padding: '12px 16px', background: 'var(--sa-panel)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-lg)', fontSize: 'var(--sa-text-md)' }}>
+          <CardBoundary name="Position totals">
           {positions?.stale && <AlpacaStaleNote asOf={positions.as_of ?? null} />}
           <span><span style={{ color: 'var(--sa-text-muted)' }}>Unrealized</span>{' '}
             <span style={{ ...mono, color: (positions.totals.unrealized_usd ?? 0) >= 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>{positions.totals.unrealized_usd != null ? signedUsd(positions.totals.unrealized_usd) : '—'}</span></span>
@@ -548,6 +550,7 @@ export default function Positions() {
               </span>{' '}
               <span style={{ color: 'var(--sa-text-muted)' }}>· amber under {positions.near_stop_atr ?? '1.5'} ATR</span></span>
           )}
+          </CardBoundary>
         </div>
       )}
 

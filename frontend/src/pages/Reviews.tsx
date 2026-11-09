@@ -11,6 +11,7 @@ import {
   postVerdict,
 } from '../api/state';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { SkeletonLines } from '../components/cardState';
 import { SkeletonList } from '../components/skeletons';
 import { Chip } from '../components/Chip';
@@ -111,7 +112,7 @@ function MetaLine({ review }: { review: ReviewListItem }) {
 // ---------------------------------------------------------------------------
 // weekly review
 
-function WeeklyView({ review }: { review: ReviewDetail }) {
+export function WeeklyView({ review }: { review: ReviewDetail }) {
   const facts = review.facts as WeeklyFacts | null;
   const content = review.content;
   if (!facts) {
@@ -123,9 +124,12 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
       </Card>
     );
   }
-  const trades = [...(facts.trades ?? [])].sort(
-    (a, b) => (b.r ?? -Infinity) - (a.r ?? -Infinity),
-  );
+  // Older reviews stored trades as a count, not a list (056): accept
+  // both; the count case shows the number without per-trade rows.
+  const tradeList = Array.isArray(facts.trades) ? facts.trades : null;
+  const trades = tradeList
+    ? [...tradeList].sort((a, b) => (b.r ?? -Infinity) - (a.r ?? -Infinity))
+    : [];
   const skips = facts.skips;
   const miss = skips?.biggest_miss;
   const flatPct = facts.limits?.skip_flat_pct ?? 2;
@@ -199,7 +203,13 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)' }}>
         <div style={{ flex: '1 1 380px', minWidth: 0 }}>
           <Card label="Trades closed" right={<span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>best first</span>}>
-            {trades.length === 0 ? (
+            {tradeList === null ? (
+              <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+                {typeof facts.trades === 'number'
+                  ? `${facts.trades} trades closed — the per-trade list isn’t stored for this review.`
+                  : 'No trades closed this week.'}
+              </div>
+            ) : trades.length === 0 ? (
               <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
                 No trades closed this week.
               </div>
@@ -356,6 +366,7 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
             borderRadius: 'var(--sa-radius-lg)',
           }}
         >
+          <CardBoundary name="Suggestion">
           <div
             style={{
               flex: '1 1 480px',
@@ -422,6 +433,7 @@ function WeeklyView({ review }: { review: ReviewDetail }) {
           >
             Open Performance
           </Link>
+          </CardBoundary>
         </section>
       )}
     </>
@@ -934,6 +946,7 @@ export default function Reviews() {
             boxSizing: 'border-box',
           }}
         >
+          <CardBoundary name="Reviews list">
           {/* Real tabs (design/screens/Reviews.dc.html): arrow keys move
            * between tabs, roving tabindex keeps one tab in the Tab order. */}
           <div
@@ -1094,6 +1107,7 @@ export default function Reviews() {
               {kind === 'weekly' ? WEEKLY_EXPLAINER : BRIEFING_EXPLAINER}
             </div>
           </div>
+          </CardBoundary>
         </section>
 
         <div

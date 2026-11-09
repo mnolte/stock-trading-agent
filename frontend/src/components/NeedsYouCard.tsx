@@ -5,6 +5,7 @@ import type { AttentionItem, AttentionResponse } from '../types/api';
 import type { Resource } from '../api/useResource';
 import { displayTime } from '../format';
 import { CardBody } from './cardState';
+import { CardBoundary } from './CardBoundary';
 import { SkeletonText } from './skeletons';
 
 const ICONS = {
@@ -121,6 +122,7 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
           most urgent first · items leave when they're done
         </span>
       </div>
+      <CardBoundary name="Needs you">
       <CardBody
         res={res}
         what="the Needs you list"
@@ -228,6 +230,7 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
           </>
         )}
       </CardBody>
+      </CardBoundary>
     </section>
   );
 }
