@@ -10,6 +10,8 @@ import { Card } from './Card';
 import { CardBody } from './cardState';
 import { SkeletonTable, SkeletonTiles } from './skeletons';
 import type { Resource } from '../api/useResource';
+import { fmtDayMonthIn } from '../format';
+import { EXIT_REASONS, labelFor } from '../labels';
 
 const mono: React.CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
@@ -46,11 +48,7 @@ function money(value: string | null | undefined): string {
 /** "8 Oct" in Amsterdam time. */
 function day(iso: string | null | undefined): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'Europe/Amsterdam',
-  });
+  return fmtDayMonthIn(iso) || '—';
 }
 
 /** Bucket x-axis label: "< −1.5", "−1.5", "0", "≥ 3". */
@@ -185,9 +183,7 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
     .join(', ');
 
   const exitLabel = (reason: string | null): string =>
-    ({ target: 'target', stop: 'stop', exit: 'agent exit' }[reason ?? ''] ??
-    reason ??
-    '—');
+    labelFor(EXIT_REASONS, reason);
 
   const afterTiles = data.after_exit.flatMap((g) => {
     const tiles: React.ReactElement[] = [];

@@ -8,7 +8,7 @@ import { Chip } from '../components/Chip';
 import { DialogButton, Modal } from '../components/Modal';
 import { FetchError, SkeletonLines } from '../components/cardState';
 import { Toggle } from '../components/Toggle';
-import { displayDayTime } from '../format';
+import { displayDayTime, sessionDayShort } from '../format';
 
 interface LogLine {
   id: number;
@@ -94,12 +94,7 @@ function dayOf(ts: string): string {
 
 /** "Thu 15 Oct" — log group and chart labels (design/screens/Logs.dc.html). */
 function dayLabel(isoDate: string, todayIso: string): string {
-  const label = new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
+  const label = sessionDayShort(isoDate);
   return isoDate === todayIso ? `${label} · today` : label;
 }
 

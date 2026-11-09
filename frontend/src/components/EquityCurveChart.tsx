@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { LineSeries, LineStyle, createChart } from 'lightweight-charts';
 import type { IChartApi } from 'lightweight-charts';
 import type { Time } from 'lightweight-charts';
+import { fmtDayMonthIn } from '../format';
 
 export interface EquityCurvePoint {
   /** Session date in New York, YYYY-MM-DD. */
@@ -59,12 +60,7 @@ export function EquityCurveChart({
         tickMarkFormatter: (time: Time) => {
           const day = businessDay(time);
           if (day === points[0].date) return 'Start';
-          const d = new Date(`${day}T12:00:00Z`);
-          return d.toLocaleDateString('en-GB', {
-            day: 'numeric',
-            month: 'short',
-            timeZone: 'UTC',
-          });
+          return fmtDayMonthIn(day);
         },
       },
       rightPriceScale: { borderColor: GRID },

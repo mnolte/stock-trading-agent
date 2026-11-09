@@ -40,6 +40,7 @@ import {
   signedPct,
   sipBarEnd,
 } from './decisionDetail';
+import { ACTIONS, REASON_CODES, labelFor } from '../labels';
 
 // ---------------------------------------------------------------------------
 // shared bits
@@ -1172,7 +1173,7 @@ function V4PreviousDecision({ decision }: { decision: DecisionDetail }) {
           ? ` · confidence ${Number(prev.confidence).toFixed(2)}`
           : ''}
         {prev.final_action && prev.final_action !== prev.action
-          ? ` · final ${prev.final_action}${prev.change_reason ? ` · ${prev.change_reason}` : ''}`
+          ? ` · final ${labelFor(ACTIONS, prev.final_action)}${prev.change_reason ? ` · ${labelFor(REASON_CODES, prev.change_reason)}` : ''}`
           : ''}
       </div>
       {(prev.conflicts ?? []).length > 0 && (

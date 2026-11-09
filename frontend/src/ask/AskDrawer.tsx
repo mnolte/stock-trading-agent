@@ -26,6 +26,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useAsk } from './AskContext';
 import { AskMarkdown } from './AskMarkdown';
 import { refLink, suggestionsFor } from './askFormat';
+import { fmtDay } from '../format';
 
 type View = 'chat' | 'list';
 
@@ -815,7 +816,7 @@ function shortDate(iso: string): string {
     if (d.toDateString() === today.toDateString()) {
       return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
-    return d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+    return fmtDay(iso);
   } catch {
     return iso;
   }

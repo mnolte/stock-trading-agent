@@ -7,28 +7,10 @@ import { CardBoundary } from './CardBoundary';
 import { Chip } from './Chip';
 import { SkeletonText } from './skeletons';
 import { formatCost } from './decisionFormat';
-
-const DISPLAY_TZ = 'Europe/Amsterdam';
+import { displayWeekdayDateTime } from '../format';
 
 /** "Fri 16 Oct 15:00" — next write instant, Amsterdam time. */
-function nextLabel(iso: string): string {
-  const d = new Date(iso);
-  const weekday = d.toLocaleDateString('en-GB', {
-    weekday: 'short',
-    timeZone: DISPLAY_TZ,
-  });
-  const day = d.toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: DISPLAY_TZ,
-  });
-  const time = d.toLocaleTimeString('en-GB', {
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: DISPLAY_TZ,
-  });
-  return `${weekday} ${day} ${time}`;
-}
+const nextLabel = displayWeekdayDateTime;
 
 function chipVariant(tone: ChipData['tone']) {
   return tone;

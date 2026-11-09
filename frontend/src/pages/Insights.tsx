@@ -14,6 +14,7 @@ import {
   SkeletonText,
   SkeletonTiles,
 } from '../components/skeletons';
+import { EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
 
 /** One insights snapshot as the API serves it (docs/SPEC.md, Insights). */
 
@@ -618,7 +619,7 @@ export default function Insights() {
                               <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.qty}</td>
                               <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{fmtR(t.r)}</td>
                               <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{fmtUsd(t.pnl)}</td>
-                              <td style={{ padding: '4px 8px' }}>{t.exit_reason ?? '—'}</td>
+                              <td style={{ padding: '4px 8px' }}>{labelFor(EXIT_REASONS, t.exit_reason)}</td>
                               <td style={{ padding: '4px 8px' }}>
                                 {strategy === 'live' && t.decision_id != null ? (
                                   <Link to={`/decisions/${t.decision_id}`}>decision</Link>
@@ -675,7 +676,7 @@ export default function Insights() {
             >
               <div>Entry fill rate: <strong>{fmtPct(snap.execution.fill_rate)}</strong> ({snap.execution.filled} of {snap.execution.placed}){snap.execution.worst_cycle && ` · worst ${snap.execution.worst_cycle.cycle}`}</div>
               <div>Entry slippage: <strong>{snap.execution.entry_slippage_bps ?? '—'} bps</strong></div>
-              <div>Exit slippage: <strong>{snap.execution.exit_slippage_bps ?? '—'} bps</strong>{snap.execution.exit_slippage_splits.length > 0 && ` (${snap.execution.exit_slippage_splits.map((s) => `${s.reason} ${s.bps ?? '—'}`).join(' · ')})`}</div>
+              <div>Exit slippage: <strong>{snap.execution.exit_slippage_bps ?? '—'} bps</strong>{snap.execution.exit_slippage_splits.length > 0 && ` (${snap.execution.exit_slippage_splits.map((s) => `${labelFor(REASON_CODES, s.reason)} ${s.bps ?? '—'}`).join(' · ')})`}</div>
               <div>Gaps through stop: <strong>{snap.execution.gaps_count}</strong>{snap.execution.gaps_extra_r != null && ` · ${fmtR(snap.execution.gaps_extra_r)} extra`}</div>
               <div>Agent exits on the entry day: <strong>{snap.execution.same_day_exits}</strong>{snap.execution.same_day_avg_r != null && ` · avg ${fmtR(snap.execution.same_day_avg_r)}`}</div>
               <div>Earnings exits: <strong>{snap.execution.earnings_exits}</strong>{snap.execution.earnings_avg_r != null && ` · avg ${fmtR(snap.execution.earnings_avg_r)}`}{snap.execution.earnings_median_move_pct != null && ` · median ${fmtPct(snap.execution.earnings_median_move_pct)} after`}</div>
