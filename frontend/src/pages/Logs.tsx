@@ -678,7 +678,7 @@ export default function Logs() {
         {/* Warnings and errors per day — clicking a bar filters to that day. */}
         {dayCounts.length > 0 && (
           <Card label="Warnings and errors per day" right={period} style={{ flex: '1 1 360px' }} ariaLabel="Warnings and errors per day">
-            <div role="group" aria-label="Warnings and errors per day" style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+            <div role="group" aria-label="Warnings and errors per day" style={{ display: 'flex', gap: 6, alignItems: 'flex-end', overflowX: 'auto', minWidth: 0 }}>
               {dayCounts.map(([day, c]) => (
                 <button
                   key={day}
@@ -689,7 +689,7 @@ export default function Logs() {
                     setCustomFrom(day);
                     setCustomTo(day);
                   }}
-                  style={{ flex: '1 1 0', minWidth: 32, display: 'flex', flexDirection: 'column', gap: 6, background: 'transparent', border: 0, padding: 4, borderRadius: 'var(--sa-radius-sm)', cursor: 'pointer' }}
+                  style={{ flex: '1 1 0', minWidth: 48, display: 'flex', flexDirection: 'column', gap: 6, background: 'transparent', border: 0, padding: 4, borderRadius: 'var(--sa-radius-sm)', cursor: 'pointer' }}
                 >
                   <div style={{ height: 90, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', gap: 1 }}>
                     <div style={{ height: `${(c.error / maxCount) * 100}%`, minHeight: c.error ? 2 : 0, background: 'var(--sa-negative)' }} />

@@ -1371,7 +1371,7 @@ function RecentNotifications() {
             <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               {displayDayTime(item.time)}
             </span>
-            <span style={{ color: 'var(--sa-text-2)' }}>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--sa-text-2)' }}>
               {item.subject.replace(/^\[Stock(?: Trading)? Agent[^\]]*\]\s*/, '')}
             </span>
             <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
