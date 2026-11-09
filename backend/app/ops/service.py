@@ -93,7 +93,18 @@ class OpsService:
 
     @property
     def status(self) -> dict[str, Any]:
-        return dict(self._status)
+        data = dict(self._status)
+        if self._creds_missing():
+            # "Not set up" is the current state, not an old run's stored
+            # result: an earlier failure stays in ``_status`` as the
+            # history but is never shown as current (item 058).
+            backups = dict(data.get("backups") or {})
+            backups["offsite"] = {"not_set_up": True}
+            backups["restore_test"] = {"not_set_up": True}
+            data["backups"] = backups
+            data["offsite_backup"] = {"not_set_up": True}
+            data["restore_test"] = {"not_set_up": True}
+        return data
 
     def _set(self, key: str, value: Any) -> None:
         self._status[key] = value
@@ -382,10 +393,8 @@ class OpsService:
         if self._secrets is None:
             return
         if self._creds_missing():
-            self._set(
-                "offsite_backup",
-                {"at": self._clock.now().isoformat(), "not_set_up": True},
-            )
+            # Not set up — nothing ran, so the stored last-run result
+            # stays as the history (item 058).
             return
         try:
             offsite_backup(self._config, self._secrets)
@@ -417,10 +426,8 @@ class OpsService:
         if self._secrets is None:
             return False
         if self._creds_missing():
-            self._set(
-                "restore_test",
-                {"at": self._clock.now().isoformat(), "not_set_up": True},
-            )
+            # Not set up — nothing ran, so the stored last-run result
+            # stays as the history (item 058).
             return False
         import sqlite3
         import tempfile

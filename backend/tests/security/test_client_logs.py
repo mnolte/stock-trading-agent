@@ -62,3 +62,34 @@ def test_fields_capped_and_single_lined(
     assert "FAKE-LINE" not in message.split("\n")[0]
     assert record.__dict__["context"].get("source") == "frontend"
     assert "\n" not in record.__dict__["context"]["url"]
+
+
+def test_info_level_report_logs_info_not_error(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An expected, self-healing report (the rebuild reload) arrives with
+    level "info" and lands as INFO — no error group, no notification
+    (item 058)."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="frontend"):
+        r = client.post(
+            "/api/logs/client",
+            json={
+                "level": "info",
+                "message": "frontend reloaded after a new build: chunk.js",
+            },
+        )
+    assert r.status_code == 200
+    infos = [
+        rec for rec in caplog.records
+        if rec.name == "frontend" and rec.levelno == logging.INFO
+    ]
+    assert any(
+        "frontend reloaded after a new build" in rec.getMessage()
+        for rec in infos
+    )
+    assert not [
+        rec for rec in caplog.records
+        if rec.name == "frontend" and rec.levelno >= logging.ERROR
+    ]

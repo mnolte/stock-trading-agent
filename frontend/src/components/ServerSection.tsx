@@ -314,7 +314,11 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
             : 'not run yet'
         }
         level={
-          backups?.restore_test ? (backups.restore_test.ok ? 'ok' : 'warning') : 'unknown'
+          backups?.restore_test?.not_set_up
+            ? 'unknown'
+            : backups?.restore_test
+              ? (backups.restore_test.ok ? 'ok' : 'warning')
+              : 'unknown'
         }
       />
 

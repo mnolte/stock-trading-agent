@@ -22,7 +22,7 @@ from app.data.fake import (
     FakeNewsSource,
     FakeQuoteSource,
 )
-from app.data.models import Bar5m
+from app.data.models import Bar5m, DataResult
 from app.data.service import MarketDataService
 from app.db.models import (
     Bar5m as Bar5mRow,
@@ -52,12 +52,13 @@ def _worker(
     session_factory: sessionmaker[Session],
     clock: FakeClock,
     calendar: FakeCalendarSource | None = None,
+    bars: FakeBarSource | None = None,
 ) -> tuple[OutcomeWorker, MarketDataService]:
     config = AppConfig()
     config.yaml["universe"]["symbols"] = ["MSFT", "SPY"]
     calendar = calendar or FakeCalendarSource()
     sources = DataSources(
-        bars=FakeBarSource(calendar),
+        bars=bars or FakeBarSource(calendar),
         quotes=FakeQuoteSource(),
         news=FakeNewsSource(),
         earnings=FakeEarningsSource(),
@@ -982,6 +983,7 @@ async def test_option_touches_use_the_shared_entry_limit(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()
@@ -1022,6 +1024,7 @@ async def test_option_touches_not_filled_past_the_window(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()
@@ -1058,6 +1061,7 @@ async def test_option_touches_fall_back_to_stop_plus_risk(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()
@@ -1092,6 +1096,7 @@ async def test_option_touches_null_without_a_limit(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()
@@ -1148,3 +1153,224 @@ async def test_equity_snapshot_empty_bars(
     with session_factory() as session:
         rows = session.execute(select(EquitySnapshot)).scalars().all()
     assert len(rows) == 1
+
+
+# ----------------------------------------------------------------------
+# option touches: fetch missing bars once per session, then give up
+# (docs/SPEC.md, Option outcomes — Missing bars; item 058)
+
+
+class _EmptyBarSource(FakeBarSource):
+    """A bar source that never returns bars — the window stays uncovered."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def fetch_5m_bars(
+        self,
+        symbols: list[str],
+        start: datetime,
+        end: datetime,
+    ) -> DataResult[list[Bar5m]]:
+        self.calls += 1
+        return DataResult(data=[], source="fake")
+
+
+def _seed_price_bars(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Only the bars the 1h / 1-session / 5-session prices need — the
+    touches window between them stays uncovered."""
+    _seed_bars(
+        session_factory,
+        [
+            (datetime(2026, 10, 15, 15, 40, tzinfo=UTC), 420, 421, 419, 420),
+            (datetime(2026, 10, 16, 14, 40, tzinfo=UTC), 420, 421, 419, 420),
+            (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
+        ],
+    )
+
+
+_ONE_OPTION = [
+    {"id": "A", "stop": 415.0, "target": 430.0, "rr": 3.0, "risk": 5.0}
+]
+
+
+def _seed_window_coverage(session_factory: sessionmaker[Session]) -> None:
+    """One harmless bar per session of the Oct 15→22 touches window, so
+    the stored bars cover it (item 058). Prices stay between every
+    seeded stop and target, so they never change a touch verdict."""
+    for day in (
+        "2026-10-15",
+        "2026-10-16",
+        "2026-10-19",
+        "2026-10-20",
+        "2026-10-21",
+        "2026-10-22",
+    ):
+        _seed_bars(
+            session_factory,
+            [
+                (
+                    datetime.fromisoformat(f"{day}T13:35:00+00:00"),
+                    425,
+                    426,
+                    424,
+                    425,
+                )
+            ],
+        )
+
+
+async def test_option_touches_fetch_missing_window_then_fill(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An uncovered window is fetched once through the data source and
+    the touches fill on the next pass (item 058)."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    target = datetime(2026, 10, 22, 14, 46, tzinfo=UTC)
+    clock = FakeClock(target + DELAY)
+    worker, _market_data = _worker(session_factory, clock)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        entry_limit=400.0,  # below every fake price → "not_filled"
+        options=_ONE_OPTION,
+    )
+    _seed_price_bars(session_factory)
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    # Prices landed; the touches window is uncovered → still NULL.
+    assert _outcome(session_factory, decision_id).option_touches is None
+
+    report = await worker.prefetch_touches(clock.now())
+    assert report.decisions == 1
+    assert report.shadows == 0
+    # Once per session: a second pass the same day fetches nothing.
+    again = await worker.prefetch_touches(clock.now())
+    assert again.decisions == 0
+
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    assert _outcome(session_factory, decision_id).option_touches == {
+        "A": "not_filled"
+    }
+
+
+async def test_option_touches_empty_fetch_gives_up_after_sessions(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A fetch that returns nothing is retried at most once per session;
+    past ``touches_give_up_sessions`` every option is "unavailable" and
+    the row is done so its verdict can draft (item 058)."""
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    bars = _EmptyBarSource()
+    # First session after the 5-session target (Thu 22 Oct).
+    clock = FakeClock(datetime(2026, 10, 23, 15, 0, tzinfo=UTC))
+    worker, _market_data = _worker(session_factory, clock, bars=bars)
+
+    decision_id = _seed_option_decision(
+        session_factory,
+        decision_time,
+        entry_limit=400.0,
+        options=_ONE_OPTION,
+    )
+    _seed_price_bars(session_factory)
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    assert _outcome(session_factory, decision_id).option_touches is None
+
+    await worker.prefetch_touches(clock.now())
+    assert bars.calls == 1
+    await worker.prefetch_touches(clock.now())  # same session: no refetch
+    assert bars.calls == 1
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    # One session after the target — still waiting, not yet unavailable.
+    assert _outcome(session_factory, decision_id).option_touches is None
+
+    # Second session after: fetched again, still nothing.
+    clock.set(datetime(2026, 10, 26, 15, 0, tzinfo=UTC))
+    await worker.prefetch_touches(clock.now())
+    assert bars.calls == 2
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    assert _outcome(session_factory, decision_id).option_touches is None
+
+    # Third session after (more than touches_give_up_sessions = 2):
+    # every option without a result is "unavailable".
+    clock.set(datetime(2026, 10, 27, 15, 0, tzinfo=UTC))
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    assert _outcome(session_factory, decision_id).option_touches == {
+        "A": "unavailable"
+    }
+    # Done — no further fetch attempts.
+    await worker.prefetch_touches(clock.now())
+    assert bars.calls == 2
+
+
+async def test_shadow_option_touches_fetch_and_unavailable(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Shadow decisions get the same fetch-once / give-up path on their
+    own ``option_touches`` column (item 058)."""
+    from app.db.models import ShadowDecision, Strategy
+
+    decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
+    bars = _EmptyBarSource()
+    clock = FakeClock(datetime(2026, 10, 27, 15, 0, tzinfo=UTC))
+    worker, _market_data = _worker(session_factory, clock, bars=bars)
+
+    with session_factory() as session:
+        cycle = Cycle(
+            kind="cycle",
+            scheduled_time=_naive(decision_time),
+            started_at=_naive(decision_time),
+            finished_at=_naive(decision_time + timedelta(minutes=1)),
+            status="done",
+        )
+        session.add(cycle)
+        session.flush()
+        strategy = Strategy(
+            name="shadow",
+            kind="llm",
+            prompt_version="decision.v1",
+            model="fake",
+            temperature=0.0,
+            status="active",
+            created_at=_naive(decision_time),
+        )
+        session.add(strategy)
+        session.flush()
+        session.add(
+            ShadowDecision(
+                strategy_id=strategy.id,
+                cycle_id=cycle.id,
+                symbol="MSFT",
+                context="candidate",
+                final_action="skip",
+                options={"options": _ONE_OPTION},
+                created_at=_naive(decision_time),
+            )
+        )
+        session.commit()
+        shadow_id = session.execute(select(ShadowDecision.id)).scalar_one()
+
+    await worker.prefetch_touches(clock.now())
+    assert bars.calls == 1
+    with session_factory() as session:
+        worker.fill(session, clock.now())
+        session.commit()
+    with session_factory() as session:
+        row = session.get(ShadowDecision, shadow_id)
+        assert row is not None
+        assert row.option_touches == {"A": "unavailable"}

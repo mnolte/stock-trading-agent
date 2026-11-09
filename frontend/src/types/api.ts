@@ -168,7 +168,7 @@ export interface DecisionOutcome {
   worst_price_at: string | null;
   first_touch: 'stop' | 'target' | 'neither' | null;
   /** Per-option first touch of a v2+ decision: id → stop | target |
-   * neither | not_filled | null (pending). */
+   * neither | not_filled | unavailable | null (pending). */
   option_touches?: Record<string, string | null> | null;
   r_1h: string | null;
   r_1session: string | null;

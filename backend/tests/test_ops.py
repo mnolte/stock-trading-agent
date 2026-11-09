@@ -390,3 +390,25 @@ def test_cert_check_uses_url_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     get_config().env.sa_public_url = "https://stock.example.nl:8443"
     assert ops.check_cert()["level"] == "unknown"
     assert seen == [("stock.example.nl", 8443)]
+
+
+def test_restore_test_old_failure_masked_when_not_set_up(
+    tmp_path: Path,
+) -> None:
+    """Without backup credentials an earlier restore-test failure stays
+    in the stored history but never shows as the current status —
+    Settings reads 'not set up' (item 058)."""
+    ops = _ops(tmp_path)
+    ops._status["restore_test"] = {
+        "at": "2026-11-01T00:00:00+00:00",
+        "ok": False,
+    }
+    ops._status["backups"] = {
+        "restore_test": {"at": "2026-11-01T00:00:00+00:00", "ok": False}
+    }
+    assert ops.status["restore_test"]["not_set_up"] is True
+    backups = ops.check_backups()
+    assert backups["restore_test"] == {"not_set_up": True}
+    assert backups["offsite"] == {"not_set_up": True}
+    # The stored failure is kept as the history, not deleted.
+    assert ops._status["restore_test"]["ok"] is False
