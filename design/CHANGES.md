@@ -2,6 +2,17 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-09 — [056] UX pass on the running app
+
+From the review in `docs/analysis/056-ux-review.md` (the app at 1440 and 390 px, seeded).
+
+- **`Settings.dc.html`: one section at a time.** The section list picks the section; its fragment is its address (`#risk`; the file opens on Risk limits, which has the two unsaved changes). On phones a **Section** select with change counts replaces the scrolling row, whose current item was off-screen. Previous/next links end each section. Search and Changed from default still cover every section (described in `DESIGN.md`). `Settings.png`, `Settings-1024.png`, `Settings-390.png`.
+- **`Backtest.dc.html`:** the eight result tiles with two unlabelled numbers each become one table: Metric · Live settings v3 · Rules only · SPY buy and hold. The form's dates read "2 Jan 2024" / "30 Sep 2026". `Backtest.png`, `Backtest-390.png`.
+- **`Performance.dc.html`, `Insights.dc.html`:** the six summary tiles are one grid row (6 / 3 / 2 per row) instead of five plus one stretched. `Performance.png`, `Performance-390.png`, `Insights.png`, `Insights-390.png`.
+- **`States.dc.html` → Card states:** new *Failed to draw* state (Weekly review, error id, Reload card, Open in Logs). `States.png`.
+- **Every screen:** the shared CSS gains `.sa-tiles` and `.sa-tiles-6`; no other change.
+- `DESIGN.md`: rules for dates, words instead of codes, tile rows, error text, failed to draw, card height on phones, and toasts never covering the header; the Settings and Backtest rows.
+
 ## 2026-11-08 — [055] Loading states
 
 - New **`Loading.dc.html`**: the loading reference. Timing (frame at once, skeleton after 200 ms, at least 400 ms once shown, data fades in over 200 ms, "Still loading" at 8 s, error state at 20 s) with a live replay; skeleton shapes for tiles, text, tables, lists, charts and chips; refreshing data already shown (rows dimmed, 2 px refresh bar); buttons while an action runs (Save, Test key, Confirm draft, Resume: idle, working, after 10 s, no answer) and the kill switch, which is never disabled, resends every 5 s and shows a critical "Kill switch not confirmed after 30 s" banner while it keeps trying (decided 8 Nov); progress bars, the unknown-length bar and Ask's live step; the new-row tint; a reduced-motion table. `Loading.png`, `Loading-390.png`.
