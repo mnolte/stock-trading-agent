@@ -13,13 +13,12 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 
-from sqlalchemy import delete
-
 from app.auth.create_user import create_or_reset_user
 from app.config import get_config
 from app.db.base import get_session_maker
 from app.db.models import SignInAttempt
 from app.market.clock import FakeClock
+from sqlalchemy import delete
 
 PASSWORD = "e2e-test-password-14c"
 
