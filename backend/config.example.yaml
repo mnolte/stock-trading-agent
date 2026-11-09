@@ -192,6 +192,9 @@ performance:
     after_exit_sessions: 5      # window for best and close after exit
     min_trades: 20              # below this the card shows the small-sample banner
 
+outcomes:                        # option touches on stored decisions (docs/SPEC.md, Outcome tracking)
+  touches_give_up_sessions: 2     # missing window bars: give up this many sessions after the 5-session time
+
 reviews:
   weekly_day: saturday
   weekly_time: "10:00"            # app timezone

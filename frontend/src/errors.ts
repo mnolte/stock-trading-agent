@@ -48,6 +48,9 @@ export function reportError(report: {
   colno?: number;
   stack?: string;
   error_id?: string;
+  /** "info" for expected, self-healing reports (a rebuild reload) — the
+   * server logs them at INFO so they create no error group. */
+  level?: 'info';
 }): Promise<string | null> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = csrfToken();
@@ -108,10 +111,16 @@ export function installErrorHooks(): void {
     sessionStorage.setItem('sa-chunk-reload', String(Date.now()));
     sessionStorage.setItem('sa-chunk-reload-pending', '1');
     event.preventDefault();
+    // The reload is expected after a rebuild — report it at INFO so it
+    // creates no error group, Needs-you line or notification (item 058).
+    const payload = (event as Event & { payload?: unknown }).payload;
+    const detail =
+      payload instanceof Error
+        ? payload.message
+        : String(payload ?? 'preload failed');
     reportError({
-      message: `stale chunk after rebuild: ${String(
-        (event as Event & { payload?: unknown }).payload ?? 'preload failed',
-      )}`,
+      level: 'info',
+      message: `frontend reloaded after a new build: ${detail}`,
     });
     window.location.reload();
   });

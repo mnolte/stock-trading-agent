@@ -285,8 +285,12 @@ class Outcome(Base):
     # ("stop" | "target" | "neither"). None until a trade's bars were read.
     first_touch: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # decision.v2/v3 options: option id -> first of its stop/target touched
-    # ("stop" | "target" | "neither" | "not_filled" | null for missing bars).
+    # ("stop" | "target" | "neither" | "not_filled" | "unavailable" |
+    # null for missing bars).
     option_touches: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Last session a missing-bars fetch was tried for this row — at most
+    # one try per session (docs/SPEC.md, Option outcomes — Missing bars).
+    option_touches_tried_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class EquitySnapshot(Base):
@@ -927,6 +931,8 @@ class ShadowDecision(Base):
     # Counterfactual touches (PR 37): option id -> first of stop/target
     # touched, same semantics as outcomes.option_touches.
     option_touches: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Last session a missing-bars fetch was tried for this row.
+    option_touches_tried_at: Mapped[datetime | None] = mapped_column(nullable=True)
     # Only for a symbol live made no decision on (held by shadows only):
     # the snapshot live's cycle built for it.
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONOrNull, nullable=True)

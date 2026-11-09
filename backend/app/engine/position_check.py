@@ -165,4 +165,9 @@ class PositionChecker:
                     )
                 )
         if self.outcomes is not None:
-            self.outcomes.fill(session, self.clock.now())
+            fetch_report = await self.outcomes.prefetch_touches(
+                self.clock.now()
+            )
+            self.outcomes.fill(
+                session, self.clock.now(), fetch_report=fetch_report
+            )

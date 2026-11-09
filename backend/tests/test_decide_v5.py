@@ -774,7 +774,13 @@ async def test_removed_and_rules_blocked_options_get_touches(
 
     from app.market.clock import FakeClock
 
-    from tests.test_outcomes import DELAY, _outcome, _seed_bars, _worker
+    from tests.test_outcomes import (
+        DELAY,
+        _outcome,
+        _seed_bars,
+        _seed_window_coverage,
+        _worker,
+    )
 
 
     decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
@@ -813,6 +819,7 @@ async def test_removed_and_rules_blocked_options_get_touches(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()

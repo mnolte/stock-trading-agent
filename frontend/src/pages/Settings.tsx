@@ -1366,15 +1366,15 @@ function RecentNotifications() {
         {items.map((item) => (
           <div
             key={item.id}
-            style={{ display: 'grid', gridTemplateColumns: '92px 1fr auto', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', alignItems: 'baseline' }}
+            style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 10, rowGap: 2, padding: '8px 0', borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)' }}
           >
-            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            <span style={{ flex: '0 0 92px', fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
               {displayDayTime(item.time)}
             </span>
-            <span style={{ minWidth: 0, overflowWrap: 'anywhere', color: 'var(--sa-text-2)' }}>
+            <span style={{ flex: '1 1 140px', minWidth: 0, overflowWrap: 'anywhere', color: 'var(--sa-text-2)' }}>
               {item.subject.replace(/^\[Stock(?: Trading)? Agent[^\]]*\]\s*/, '')}
             </span>
-            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            <span style={{ marginLeft: 'auto', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', minWidth: 0 }}>
               {recentStatus(item)}
             </span>
           </div>

@@ -216,6 +216,8 @@ def _option_touch_text(option_id: object, touch: object, n: int) -> str:
         return "the order never filled"
     if touch == "neither":
         return f"neither stop nor target was reached in {n} sessions"
+    if touch == "unavailable":
+        return "the option touches were unavailable"
     return "the option outcome is unknown"
 
 
@@ -296,6 +298,9 @@ def verdict_plain(facts: dict[str, Any]) -> dict[str, Any]:
             verdict = "unclear"
             ids = ", ".join(str(o.get("option_id")) for o in options)
             happened = f"{ids}: none reached stop or target in {n} sessions"
+        elif all(t == "unavailable" for t in touches):
+            verdict = "unclear"
+            happened = "the option touches were unavailable"
         else:
             verdict = "unclear"
             happened = "the option outcomes were mixed or unknown"

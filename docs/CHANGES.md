@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-09 — [058] Live data of 9 November (build, steps 0–4)
+
+Build of the 058 spec entry on branch `fix/058-live-data-9-nov` (PR #200; the trend gate and decision.v6 follow in their own PRs).
+
+- **Option touches** (`engine/outcomes.py`, `data/alpaca.py`, migration `s1a2b3c4d5e6`): an outcome row whose stored-bar window isn't covered fetches the symbol's 5-minute bars once per session through the historical limiter, stores them and retries; `option_touches_tried_at` records the attempt. Once the five-session window is more than `outcomes.touches_give_up_sessions` (2) sessions old and still uncovered, its options become `unavailable`, the row finishes and its verdict drafts with "option touches unavailable". Shadow decisions behave the same.
+- **`price_stale`** (`data/models.py`, `engine/cycle.py`): the warning names the last IEX trade's age and price; the 60-second threshold is unchanged.
+- **Rebuild reload** (`errors.ts`, `api/main.py`): a stale chunk after a rebuild reloads once and reports at INFO — no error group, no notification.
+- **Restore test** (`ops/service.py`, `ServerSection.tsx`): with backup credentials unset, Settings → Server shows "not set up"; old records stay as history.
+- **Recently sent** (`Settings.tsx`): the notification rows switched from a fixed `92px 1fr auto` grid to a wrapping flex row — a long channel status ("email held back · browser held back") used to squeeze the subject to zero width at phone size.
+
 ## 2026-11-09 — [058] Live data of 9 November
 
 From the live-data report of 9 November (Devin): a quiet day, flat by design under the v5 trend gate. Four small fixes, a change to the trend gate and decision.v6.

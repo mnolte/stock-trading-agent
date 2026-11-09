@@ -5614,23 +5614,42 @@ def log_client_error(request: Request, body: dict[str, object]) -> dict[str, obj
     # minted here; it is on the log line and echoed back (spec →
     # Something went wrong).
     error_id = _one_line(body.get("error_id"), 32) or f"e-{secrets.token_hex(3)}"
-    logging.getLogger("frontend").error(
-        "%s (%s:%s:%s)\n%s",
-        _one_line(body.get("message") or "frontend error", 2048),
-        _one_line(body.get("source"), 512),
-        _one_line(body.get("lineno"), 12),
-        _one_line(body.get("colno"), 12),
-        _multi_line(body.get("stack"), 8192),
-        extra={
-            "event": "frontend.error",
-            "context": {
-                "url": _one_line(body.get("url"), 1024),
-                "tab_id": _one_line(body.get("tab_id"), 64),
-                "source": "frontend",
+    context = {
+        "url": _one_line(body.get("url"), 1024),
+        "tab_id": _one_line(body.get("tab_id"), 64),
+        "source": "frontend",
+    }
+    frontend_log = logging.getLogger("frontend")
+    if body.get("level") == "info":
+        # Expected, self-healing reports (a rebuild reload) arrive as
+        # INFO: no error group, no Needs-you line, no notification
+        # (docs/SPEC.md, Logging — New version loaded; item 058).
+        frontend_log.info(
+            "%s (%s:%s:%s)",
+            _one_line(body.get("message") or "frontend info", 2048),
+            _one_line(body.get("source"), 512),
+            _one_line(body.get("lineno"), 12),
+            _one_line(body.get("colno"), 12),
+            extra={
+                "event": "frontend.info",
+                "context": context,
+                "error_id": error_id,
             },
-            "error_id": error_id,
-        },
-    )
+        )
+    else:
+        frontend_log.error(
+            "%s (%s:%s:%s)\n%s",
+            _one_line(body.get("message") or "frontend error", 2048),
+            _one_line(body.get("source"), 512),
+            _one_line(body.get("lineno"), 12),
+            _one_line(body.get("colno"), 12),
+            _multi_line(body.get("stack"), 8192),
+            extra={
+                "event": "frontend.error",
+                "context": context,
+                "error_id": error_id,
+            },
+        )
     return {"logged": True, "error_id": error_id}
 
 

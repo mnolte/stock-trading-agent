@@ -11,6 +11,7 @@ import json
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 from app.config import AppConfig
@@ -215,6 +216,7 @@ def _seed_decision(
     stop: float | None = None,
     confidence: float = 0.6,
     regime: dict[str, str] | None = None,
+    options: dict[str, Any] | None = None,
 ) -> Decision:
     cycle = Cycle(
         kind="cycle",
@@ -256,6 +258,7 @@ def _seed_decision(
         prompt_hash="abc",
         model="none" if no_call_reason else "fake-decision",
         cost=Decimal("0.001") if no_call_reason is None else None,
+        options=options,
     )
     session.add(decision)
     session.flush()
@@ -845,6 +848,41 @@ async def test_verdict_written_only_after_five_sessions(
     # Idempotent: no second row on the next scan.
     assert await service.write_due_verdicts() == 0
     assert len(_verdicts(session_factory)) == 1
+
+
+async def test_verdict_drafts_after_unavailable_touches(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Bars that never arrived end as "unavailable" — the row is done
+    and the verdict drafts instead of waiting forever (item 058)."""
+    now = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+    with session_factory() as session:
+        decision = _seed_decision(
+            session,
+            _ny(date(2026, 10, 15)),
+            symbol="MSFT",
+            final_action="skip",
+            options={
+                "options": [
+                    {"id": "A", "stop": 415.0, "target": 430.0, "rr": 3.0}
+                ]
+            },
+        )
+        outcome = session.execute(
+            select(Outcome).where(Outcome.decision_id == decision.id)
+        ).scalar_one()
+        outcome.price_5sessions = Decimal("425.00")
+        outcome.price_5sessions_at = _naive(_ny(date(2026, 10, 22)))
+        outcome.option_touches = {"A": "unavailable"}
+        session.commit()
+        decision_id = decision.id
+
+    service = _service(session_factory, FakeClock(now))
+    assert await service.write_due_verdicts() == 1
+    verdicts = _verdicts(session_factory)
+    assert len(verdicts) == 1
+    assert verdicts[0].decision_id == decision_id
+    assert verdicts[0].verdict == "unclear"
 
 
 async def test_no_verdict_for_rules_no_call(
