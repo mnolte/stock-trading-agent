@@ -72,7 +72,9 @@ test('session-expired banner and redirect back', async ({ page }, info) => {
   // redirects to sign-in, then comes back to the same page.
   await page.context().clearCookies();
   await page.goto('/settings');
-  await page.waitForURL('**/login?next=%2Fsettings');
+  // 056: /settings redirects to the last-used section first, so next may
+  // carry /settings/<section> — either way it must come back to Settings.
+  await page.waitForURL(/\/login\?next=%2Fsettings/);
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   await page.screenshot({ path: `${process.env.SCREENSHOT_DIR ?? '/tmp'}/login-redirect.png`, fullPage: true });
 });
