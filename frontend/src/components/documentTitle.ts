@@ -4,6 +4,7 @@ import type { HeaderState } from '../types/api';
 export function pageTitle(pathname: string): string {
   if (pathname.startsWith('/positions')) return 'Positions & orders';
   if (pathname.startsWith('/performance')) return 'Performance';
+  if (pathname.startsWith('/insights')) return 'Insights';
   if (pathname.startsWith('/inspector')) return 'LLM inspector';
   if (pathname.startsWith('/reviews')) return 'Reviews';
   if (pathname.startsWith('/strategies')) return 'Strategies';

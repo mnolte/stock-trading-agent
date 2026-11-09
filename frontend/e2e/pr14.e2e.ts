@@ -22,11 +22,14 @@ test('backtest: results panels from the seeded finished run', async ({
   await expect(runButton).toContainText('done');
   await runButton.click();
 
-  // Metric row.
+  // Results table (056): metric rows, one column per strategy + SPY.
   await expect(
     page.getByText('Closed trades', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText('vs SPY buy and hold, pts')).toBeVisible();
+  await expect(
+    page.getByText('vs SPY buy and hold', { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: /SPY buy and hold/ })).toBeVisible();
   await expect(
     page.getByText('Average R', { exact: true }),
   ).toBeVisible();
@@ -121,6 +124,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   await expect(page.getByText('Runs', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Strategies to compare')).toBeVisible();
 
+  // Wait for the agent-clock default to land before typing: the To field
+  // rewrites its text when /api/header resolves, which can swallow a fill.
+  await expect(page.getByLabel('To')).toHaveValue(/\S/, { timeout: 30_000 });
+
   // A range after every configured model's cutoff: the estimate fills in
   // sessions, bars, calls, cache hits and cost.
   await page.getByLabel('From').fill('2024-07-01');
@@ -135,8 +142,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   // A start before the live model's knowledge cutoff disables the run and
   // says why, both in the estimate and on the button.
   await page.getByLabel('From').fill('2023-01-02');
+  // Wait for the estimate itself: the per-option cutoff hint renders
+  // synchronously, long before the debounced estimate answers.
   await expect(
-    page.getByText(/knowledge cutoff|cutoff/i).first(),
+    page.getByText(/knowledge cutoff is/i).first(),
   ).toBeVisible({ timeout: 30_000 });
   await expect(
     page.getByRole('button', { name: 'Run backtest' }),

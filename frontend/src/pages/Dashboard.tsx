@@ -1082,6 +1082,9 @@ export default function Dashboard() {
                     </span>
                   </>
                 )}
+                {d.cycle_line && d.cycle_counter && (
+                  <span aria-hidden="true" style={{ color: 'var(--sa-text-muted)' }}>·</span>
+                )}
                 {d.cycle_counter && <CycleCounter counter={d.cycle_counter} />}
               </>
             )}
@@ -1111,11 +1114,11 @@ export default function Dashboard() {
         )
       ) : (
       <div
+        className="sa-card-row"
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           gap: 'var(--sa-space-3)',
-          alignItems: 'stretch',
           opacity: dashboardRes.failure ? 0.55 : 1,
         }}
       >
@@ -1189,11 +1192,11 @@ export default function Dashboard() {
       )}
 
       <div
+        className="sa-card-row"
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           gap: 'var(--sa-space-5)',
-          alignItems: 'stretch',
         }}
       >
         <OpenPositionsMini
@@ -1220,11 +1223,11 @@ export default function Dashboard() {
       )}
 
       <div
+        className="sa-card-row"
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           gap: 'var(--sa-space-4)',
-          alignItems: 'stretch',
         }}
       >
         <div style={{ flex: '2 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
@@ -1380,11 +1383,11 @@ export default function Dashboard() {
       </div>
 
       <div
+        className="sa-card-row"
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           gap: 'var(--sa-space-5)',
-          alignItems: 'stretch',
         }}
       >
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>

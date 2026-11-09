@@ -362,7 +362,7 @@ export default function Performance() {
 
       {data && !data.empty && summary && (
         <>
-          <section aria-label="Summary" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
+          <section aria-label="Summary" className="sa-tiles sa-tiles-6">
             <CardBoundary name="Performance summary">
             <StatCard
               label="Return"
@@ -414,7 +414,10 @@ export default function Performance() {
             />
             <StatCard
               label="Max drawdown"
-              value={`−${Math.abs(Number(summary.max_drawdown_pct)).toFixed(2)}%`}
+              value={(() => {
+                const dd = Math.abs(Number(summary.max_drawdown_pct)).toFixed(2);
+                return dd === '0.00' ? '0.00%' : `−${dd}%`;
+              })()}
               valueColor={Number(summary.max_drawdown_pct) > 0 ? negative : 'var(--sa-text)'}
               sub={`close to close · kill at −${summary.kill_pct}%`}
             />

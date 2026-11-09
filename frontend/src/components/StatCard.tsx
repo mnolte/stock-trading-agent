@@ -41,7 +41,7 @@ export function StatCard({ label, value, valueColor, sub, bar, style }: StatCard
           fontSize: 'var(--sa-text-stat)',
           fontWeight: 500,
           color: valueColor ?? 'var(--sa-text)',
-          whiteSpace: 'nowrap',
+          overflowWrap: 'anywhere',
         }}
       >
         {value}

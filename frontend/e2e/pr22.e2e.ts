@@ -131,7 +131,10 @@ test('insights: headline, findings, funnel and slices', async ({ page }, testInf
     }),
   );
   await page.goto('/insights');
-  await expect(page.getByRole('heading', { name: 'Insights' })).toBeVisible({ timeout: 60_000 });
+  // 056: the header shows the page title too — scope to main.
+  await expect(
+    page.locator('main').getByRole('heading', { name: 'Insights' }),
+  ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText('Expectancy')).toBeVisible();
   await expect(page.getByText('+0.31R')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Findings' })).toBeVisible();

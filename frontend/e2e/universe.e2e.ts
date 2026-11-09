@@ -43,8 +43,10 @@ test('universe: fixed mode shows the v0.1 list and points to Settings', async ({
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText('fixed list', { exact: true })).toBeVisible();
   await expect(page.getByText('Fixed list ·')).toBeVisible();
+  // 056: the mode banner says it once — the repeated note under the list
+  // and the preview bullet in "How the screen works" are gone.
   await expect(
-    page.getByText(/The fixed list is edited in/)
+    page.getByText(/The universe is the fixed list below/)
   ).toBeVisible();
   await expect(page.getByRole('link', { name: 'Screen settings' })).toBeVisible();
   // The preview pool table also lists AAPL — target the fixed-list chip.
@@ -82,7 +84,7 @@ test('universe: the daily screen shows as a preview in fixed mode', async ({
   ).toBeVisible();
   await expect(page.getByText('Today’s screen')).toBeVisible();
   await expect(
-    page.getByText(/a preview — cycles still trade the fixed list/i)
+    page.getByText(/daily screen below is a preview/i)
   ).toBeVisible();
   await expect(
     page.getByText('Eligible for the next session', { exact: true })

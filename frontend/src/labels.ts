@@ -65,6 +65,8 @@ export const REASON_CODES: Record<string, string> = {
   checks: 'Checks',
   model_error: 'Model error',
   no_options: 'No options',
+  price_stale: 'Stale price',
+  price_suspect: 'Suspect price',
   rules: 'Rules',
   stop: 'Stop',
   target: 'Target',

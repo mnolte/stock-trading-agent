@@ -55,7 +55,10 @@ test('performance', async ({ page }) => {
 
 test('insights', async ({ page }) => {
   await page.goto('/insights');
-  await expect(page.getByRole('heading', { name: 'Insights' })).toBeVisible({
+  // 056: the header shows the page title too — scope to main.
+  await expect(
+    page.locator('main').getByRole('heading', { name: 'Insights' }),
+  ).toBeVisible({
     timeout: 60_000,
   });
   await shot(page, 'insights.png');

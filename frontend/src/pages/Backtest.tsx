@@ -456,6 +456,9 @@ function NewBacktestCard({
     }
     const ticket = ++seq.current;
     const t = setTimeout(() => {
+      // Drop the previous inputs' estimate as the fetch starts: until it
+      // answers, "Run backtest" must not look enabled on stale data.
+      setEstimate(null);
       setEstimating(true);
       postBacktestEstimate(body)
         .then((est) => {
@@ -500,6 +503,13 @@ function NewBacktestCard({
     !end ||
     picked.length === 0 ||
     estimate?.disabled_reason != null;
+  const missingHint = !start
+    ? 'Pick a start date'
+    : !end
+      ? 'Pick an end date'
+      : picked.length === 0
+        ? 'Pick at least one strategy'
+        : null;
 
   const run = () => {
     setRunning(true);
@@ -716,6 +726,11 @@ function NewBacktestCard({
             'Run backtest'
           )}
         </button>
+        {disabled && !running && missingHint && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            {missingHint}
+          </span>
+        )}
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
           Runs as a separate background process, one at a time, with one
           database per strategy. It never touches the live account, uses at
@@ -959,36 +974,7 @@ function RunDetail({
       </section>
       {summaries.length > 0 && (
         <Card label="Results">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-            <MetricCell label="Return" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), fmtPct(s.return_pct)])} />
-            <MetricCell
-              label="vs SPY buy and hold, pts"
-              title={`SPY returned ${fmtPct(summaries[0]?.[1].spy_return_pct)} over the same sessions`}
-              values={summaries.map(([r, s]) => [strategyColour(run, r.slug), fmtPts(s.vs_spy_pts)])}
-            />
-            <MetricCell label="Max drawdown" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), s.max_drawdown_pct == null ? '—' : `−${Math.abs(s.max_drawdown_pct).toFixed(1)}%`])} />
-            <MetricCell label="Closed trades" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), String(s.closed_trades)])} />
-            <MetricCell label="Win rate" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), s.win_rate == null ? '—' : `${Math.round(s.win_rate * 100)}%`])} />
-            <MetricCell label="Average R" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), fmtR(s.avg_r)])} />
-            <MetricCell label="Profit factor" values={summaries.map(([r, s]) => [strategyColour(run, r.slug), s.profit_factor == null ? '—' : s.profit_factor.toFixed(2)])} />
-            <MetricCell
-              label="Time in market"
-              title="Share of sessions with at least one position open"
-              values={summaries.map(([r, s]) => [strategyColour(run, r.slug), s.time_in_market == null ? '—' : `${Math.round(s.time_in_market * 100)}%`])}
-            />
-          </div>
-          <div style={{ display: 'flex', gap: '16px', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', flexWrap: 'wrap' }}>
-            {summaries.map(([ref]) => (
-              <span key={ref.slug} style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-                <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: strategyColour(run, ref.slug) }} />
-                {ref.name}
-              </span>
-            ))}
-            <span style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
-              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#C9CFD6' }} />
-              SPY buy and hold
-            </span>
-          </div>
+          <ResultsTable run={run} summaries={summaries} />
         </Card>
       )}
       {summaries.length > 0 && (
@@ -1035,36 +1021,175 @@ function RunDetail({
   );
 }
 
-function MetricCell({
-  label,
-  values,
-  title,
+const SPY_COLOUR = '#C9CFD6';
+
+function pctColour(v: number | null | undefined): string | undefined {
+  if (v == null || v === 0) return undefined;
+  return v > 0 ? 'var(--sa-positive)' : 'var(--sa-negative-text)';
+}
+
+/** "−5.2%", "0.0%" for a zero — never "−0.0%" (056). */
+function fmtDrawdown(v: number | null | undefined): string {
+  if (v == null) return '—';
+  const a = Math.abs(v);
+  return a.toFixed(1) === '0.0' ? '0.0%' : `−${a.toFixed(1)}%`;
+}
+
+/** Largest peak-to-trough drop of a buy-and-hold equity curve, in %. */
+function spyDrawdownPct(
+  curve: { equity: number }[],
+  startEquity: number,
+): number | null {
+  if (curve.length === 0 || !(startEquity > 0)) return null;
+  let peak = startEquity;
+  let worst = 0;
+  for (const p of curve) {
+    if (p.equity > peak) peak = p.equity;
+    if (peak > 0) worst = Math.max(worst, ((peak - p.equity) / peak) * 100);
+  }
+  return worst;
+}
+
+function ResultsTable({
+  run,
+  summaries,
 }: {
-  label: string;
-  values: [string, string][];
-  title?: string;
+  run: BacktestRun;
+  summaries: [BacktestStrategyRef, BacktestStrategySummary][];
 }) {
-  return (
-    <div
+  const spySummary = summaries[0]?.[1];
+  const spyReturn = spySummary?.spy_return_pct ?? null;
+  const spyDd = spySummary
+    ? spyDrawdownPct(spySummary.spy_curve, Number(run.starting_equity))
+    : null;
+
+  const dot = (colour: string) => (
+    <span
+      aria-hidden="true"
       style={{
-        flex: '1 1 150px',
-        padding: '12px 14px',
-        border: '1px solid var(--sa-border)',
-        borderRadius: 'var(--sa-radius-md)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        minWidth: 0,
+        display: 'inline-block',
+        width: '10px',
+        height: '10px',
+        marginRight: '6px',
+        borderRadius: '3px',
+        background: colour,
       }}
-    >
-      <span title={title} style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', textDecoration: title ? 'underline dotted' : undefined, textUnderlineOffset: '3px', cursor: title ? 'help' : undefined, alignSelf: 'flex-start' }}>
-        {label}
-      </span>
-      <span style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontFamily: 'var(--sa-font-mono)', fontSize: '15px' }}>
-        {values.map(([colour, v], i) => (
-          <span key={i} style={{ color: colour }}>{v}</span>
-        ))}
-      </span>
+    />
+  );
+
+  type Row = {
+    label: string;
+    title?: string;
+    cell: (s: BacktestStrategySummary) => { text: string; colour?: string };
+    spy: string;
+  };
+
+  const rows: Row[] = [
+    {
+      label: 'Return',
+      cell: (s) => ({ text: fmtPct(s.return_pct), colour: pctColour(s.return_pct) }),
+      spy: fmtPct(spyReturn),
+    },
+    {
+      label: 'vs SPY buy and hold',
+      title: 'Strategy return minus SPY bought on the first session and held',
+      cell: (s) => ({
+        text: s.vs_spy_pts == null ? '—' : `${fmtPts(s.vs_spy_pts)} pts`,
+        colour: pctColour(s.vs_spy_pts),
+      }),
+      spy: '—',
+    },
+    {
+      label: 'Max drawdown',
+      cell: (s) => ({
+        text: fmtDrawdown(s.max_drawdown_pct),
+        colour:
+          s.max_drawdown_pct != null && Math.abs(s.max_drawdown_pct) >= 0.05
+            ? 'var(--sa-negative-text)'
+            : undefined,
+      }),
+      spy: fmtDrawdown(spyDd),
+    },
+    {
+      label: 'Closed trades',
+      cell: (s) => ({ text: String(s.closed_trades) }),
+      spy: '—',
+    },
+    {
+      label: 'Win rate',
+      cell: (s) => ({
+        text: s.win_rate == null ? '—' : `${Math.round(s.win_rate * 100)}%`,
+      }),
+      spy: '—',
+    },
+    {
+      label: 'Average R',
+      cell: (s) => ({ text: fmtR(s.avg_r), colour: pctColour(s.avg_r) }),
+      spy: '—',
+    },
+    {
+      label: 'Profit factor',
+      cell: (s) => ({
+        text: s.profit_factor == null ? '—' : s.profit_factor.toFixed(2),
+      }),
+      spy: '—',
+    },
+    {
+      label: 'Time in market',
+      title: 'Share of sessions with at least one position open',
+      cell: (s) => ({
+        text: s.time_in_market == null ? '—' : `${Math.round(s.time_in_market * 100)}%`,
+      }),
+      spy: '100%',
+    },
+  ];
+
+  return (
+    <div style={{ overflowX: 'auto', minWidth: 0 }}>
+      <table style={{ width: '100%', minWidth: '560px', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...th, textAlign: 'left' }}>Metric</th>
+            {summaries.map(([ref]) => (
+              <th key={ref.slug} style={th}>
+                {dot(strategyColour(run, ref.slug))}
+                {ref.name}
+              </th>
+            ))}
+            <th style={th}>
+              {dot(SPY_COLOUR)}
+              SPY buy and hold
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <td style={{ ...td, textAlign: 'left', fontFamily: 'inherit' }}>
+                <span
+                  title={row.title}
+                  style={{
+                    textDecoration: row.title ? 'underline dotted' : undefined,
+                    textUnderlineOffset: '3px',
+                    cursor: row.title ? 'help' : undefined,
+                  }}
+                >
+                  {row.label}
+                </span>
+              </td>
+              {summaries.map(([ref, s]) => {
+                const c = row.cell(s);
+                return (
+                  <td key={ref.slug} style={{ ...td, color: c.colour }}>
+                    {c.text}
+                  </td>
+                );
+              })}
+              <td style={td}>{row.spy}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1131,7 +1256,7 @@ function ReadWithCare({
   run: BacktestRun;
   summaries: [BacktestStrategyRef, BacktestStrategySummary][];
 }) {
-  const warnings = run.warnings ?? [];
+  const warnings = [...new Set(run.warnings ?? [])];
   const cached = summaries.reduce((n, [, s]) => n + s.cache_hits, 0);
   const calls = summaries.reduce((n, [, s]) => n + s.calls, 0);
   return (
