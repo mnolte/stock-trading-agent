@@ -37,3 +37,18 @@ export const ghostButton: React.CSSProperties = {
   whiteSpace: 'nowrap',
   boxSizing: 'border-box',
 };
+
+/** The small warning-outline button of the card states (Retry, Reload
+ * card, Open in Logs) — design/screens/States.dc.html. */
+export const warningButton: React.CSSProperties = {
+  height: 36,
+  padding: '0 var(--sa-space-3)',
+  borderRadius: 'var(--sa-radius-md)',
+  border: '1px solid var(--sa-warning-border)',
+  background: 'transparent',
+  color: 'var(--sa-warning-text)',
+  fontSize: 'var(--sa-text-md)',
+  fontWeight: 500,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+};

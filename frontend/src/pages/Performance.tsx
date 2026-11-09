@@ -4,6 +4,7 @@ import { useLiveUpdates } from '../api/liveContext';
 import { getPerformance, getPerformanceTails } from '../api/state';
 import { useApiResource } from '../api/useResource';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { EquityCurveChart } from '../components/EquityCurveChart';
 import type { EquityCurvePoint } from '../components/EquityCurveChart';
 import { SegmentedControl } from '../components/SegmentedControl';
@@ -375,6 +376,7 @@ export default function Performance() {
       {data && !data.empty && summary && (
         <>
           <section aria-label="Summary" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
+            <CardBoundary name="Performance summary">
             <StatCard
               label="Return"
               value={signedPct(summary.return_pct)}
@@ -429,6 +431,7 @@ export default function Performance() {
               valueColor={Number(summary.max_drawdown_pct) > 0 ? negative : 'var(--sa-text)'}
               sub={`close to close · kill at −${summary.kill_pct}%`}
             />
+            </CardBoundary>
           </section>
 
           {curve && chartPoints.length > 0 && (

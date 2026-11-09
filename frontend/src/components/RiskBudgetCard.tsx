@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { Resource } from '../api/useResource';
 import type { BudgetMeter, BudgetMeterLevel, RiskBudgetResponse } from '../types/api';
 import { AlpacaStaleNote, CardBody } from './cardState';
+import { CardBoundary } from './CardBoundary';
 import { SkeletonText } from './skeletons';
 import {
   budgetHints,
@@ -178,6 +179,7 @@ export function RiskBudgetCard({
         </span>
       </div>
       {budget?.stale && <AlpacaStaleNote asOf={budget.as_of ?? null} />}
+      <CardBoundary name="Risk budget">
       <CardBody
         res={res}
         what="the risk budget"
@@ -264,6 +266,7 @@ export function RiskBudgetCard({
       </div>
         )}
       </CardBody>
+      </CardBoundary>
     </section>
   );
 }

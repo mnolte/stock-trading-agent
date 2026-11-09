@@ -490,7 +490,8 @@ export interface WeeklyFacts {
   model_cost_usd: number | null;
   model_calls: number;
   reviews_cost_usd: number | null;
-  trades: WeeklyTrade[];
+  /** Older rows stored a count instead of the list (056). */
+  trades: WeeklyTrade[] | number;
   best_trade: WeeklyTrade | null;
   worst_trade: WeeklyTrade | null;
   skips: WeeklySkips;

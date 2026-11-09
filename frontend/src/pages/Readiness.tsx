@@ -8,6 +8,7 @@ import {
   postReadinessManual,
 } from '../api/state';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { Chip } from '../components/Chip';
 import type { ChipVariant } from '../components/Chip';
 import { DialogButton, Modal } from '../components/Modal';
@@ -228,6 +229,7 @@ export default function Readiness() {
           borderRadius: 'var(--sa-radius-lg)',
         }}
       >
+        <CardBoundary name="Readiness verdict">
         <span style={{ color: ready ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />
@@ -258,9 +260,11 @@ export default function Readiness() {
             : 'No snapshot yet — written after each session’s close'}
           {data?.run ? ` · run since ${shortDay(data.run.started_at)}` : ''}
         </span>
+        </CardBoundary>
       </section>
 
       <section aria-label="Readiness summary" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+        <CardBoundary name="Readiness summary">
         <StatCard label="Pass" value={String(data?.summary.pass ?? 0)} valueColor="var(--sa-positive)" sub={`of ${data?.summary.total ?? 15} criteria`} />
         <StatCard label="Not yet" value={String(data?.summary.not_yet ?? 0)} valueColor="var(--sa-negative-text)" sub="below target" />
         <StatCard label="Waiting for data" value={String(data?.summary.waiting ?? 0)} valueColor="var(--sa-warning-text)" sub="samples too small" />
@@ -270,6 +274,7 @@ export default function Readiness() {
           value={data?.summary.earliest?.text ?? '—'}
           sub={data?.summary.earliest ? `limited by ${data.summary.earliest.label.toLowerCase()}` : 'no open counts'}
         />
+        </CardBoundary>
       </section>
 
       {groups.map((group) => (

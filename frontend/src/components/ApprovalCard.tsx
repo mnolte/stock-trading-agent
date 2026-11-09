@@ -10,6 +10,7 @@ import {
 import type { Approval } from '../types/api';
 import { Banner } from './Banner';
 import { Button } from './Button';
+import { CardBoundary } from './CardBoundary';
 import { formatNyTitle } from './decisionFormat';
 
 /** R/R and dollar risk, computed from the stored limit/stop/target. */
@@ -70,6 +71,7 @@ export function ApprovalCard({
         gap: 'var(--sa-space-3)',
       }}
     >
+      <CardBoundary name="Pending approval">
       <div
         style={{
           fontSize: 'var(--sa-text-sm)',
@@ -171,6 +173,7 @@ export function ApprovalCard({
           Approve
         </Button>
       </div>
+      </CardBoundary>
     </div>
   );
 }

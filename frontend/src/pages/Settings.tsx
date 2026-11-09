@@ -35,6 +35,7 @@ import type {
   UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
+import { CardBoundary } from '../components/CardBoundary';
 import { AccessSection } from '../components/AccessSection';
 import { ServerSection } from '../components/ServerSection';
 import { useAuthStatus } from '../api/auth';
@@ -405,7 +406,9 @@ function Section({
           {blurb}
         </p>
       )}
-      {children}
+      <CardBoundary name={title}>
+        {children}
+      </CardBoundary>
     </section>
   );
 }

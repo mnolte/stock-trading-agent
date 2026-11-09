@@ -321,6 +321,48 @@ def _equity(session: Any, day: date, equity: Decimal, spy: Decimal) -> None:
         )
 
 
+
+# Weekly-review fixture rows for the 12 seeded trades (symbol, opened,
+# closed, exit, r, pnl_usd, regime) — best is index 7, worst index 5.
+_WEEKLY_TRADE_ROWS: list[tuple[str, str, str, str, float, float, str]] = [
+    ("MSFT", "2026-09-15", "2026-09-21", "target", 1.9, 412.5, "Up · normal vol"),
+    ("AAPL", "2026-09-15", "2026-09-24", "target", 2.0, 356.0, "Up · normal vol"),
+    ("NVDA", "2026-09-17", "2026-09-21", "stop", -1.0, -188.0, "Up · high vol"),
+    ("AMZN", "2026-09-21", "2026-09-28", "agent_exit", 0.8, 96.0, "Sideways · any"),
+    ("GOOGL", "2026-09-24", "2026-10-06", "target", 1.8, 298.0, "Up · normal vol"),
+    ("META", "2026-09-28", "2026-10-06", "stop", -1.0, -402.0,
+     "Down · normal or low"),
+    ("JPM", "2026-09-30", "2026-10-09", "earnings_exit", -0.6, -54.0,
+     "Up · normal vol"),
+    ("QQQ", "2026-10-02", "2026-10-12", "target", 2.1, 488.0, "Up · normal vol"),
+    ("XOM", "2026-10-06", "2026-10-09", "agent_exit", -0.7, -61.0,
+     "Sideways · any"),
+    ("MSFT", "2026-10-07", "2026-10-13", "target", 1.9, 371.0, "Up · normal vol"),
+    ("NVDA", "2026-10-09", "2026-10-13", "target", 1.9, 265.0, "Up · high vol"),
+    ("AAPL", "2026-10-09", "2026-10-13", "stop", -1.0, -142.0, "Up · normal vol"),
+]
+
+
+def _wt(
+    symbol: str, opened: str, closed: str, exit_: str,
+    r: float, pnl: float, regime: str,
+) -> dict[str, Any]:
+    """One facts.trades row, the shape app/reviews/facts.py writes."""
+    return {
+        "symbol": symbol,
+        "opened": opened,
+        "closed": closed,
+        "exit": exit_,
+        "r": r,
+        "pnl_usd": pnl,
+        "regime": regime,
+    }
+
+
+def _agg(name: str, trades: int, won: int, avg_r: float, pnl: float) -> dict[str, Any]:
+    return {"name": name, "trades": trades, "won": won, "avg_r": avg_r, "pnl_usd": pnl}
+
+
 def main() -> None:
     from app.config import get_config
     from app.db.base import get_session_maker
@@ -393,13 +435,92 @@ def main() -> None:
         )
         session.add(d)
 
+        # The same shape app/reviews/facts.py writes for a real weekly
+        # review (056): facts.trades is the per-trade list, not a count.
         weekly = Review(
             kind="weekly",
             period="2026-W41",
-            facts={"return_pct": 3.4, "spy_diff_pct": 0.8, "trades": 12},
+            facts={
+                "period": {
+                    "id": "2026-W41",
+                    "week": 41,
+                    "iso_year": 2026,
+                    "start": "2026-10-05",
+                    "end": "2026-10-09",
+                    "label": "5 – 9 Oct",
+                    "start_day": 5,
+                    "end_day": 9,
+                    "due": "2026-10-10",
+                    "trading_days": 5,
+                },
+                "limits": {
+                    "weekly_summary_words": 120,
+                    "verdict_after_sessions": 5,
+                    "skip_flat_pct": 2.0,
+                    "min_closed_trades_for_suggestion": 10,
+                },
+                "return_pct": 3.4,
+                "return_usd": 340.0,
+                "equity_start": 10000.0,
+                "equity_end": 10340.0,
+                "spy_return_pct": 2.6,
+                "vs_spy_pts": 0.8,
+                "max_drawdown_pct": -1.9,
+                "trades_closed": 12,
+                "won": 7,
+                "lost": 5,
+                "avg_r": 0.72,
+                "model_cost_usd": 0.42,
+                "model_calls": 96,
+                "reviews_cost_usd": 0.0015,
+                "trades": [_wt(*row) for row in _WEEKLY_TRADE_ROWS],
+                "best_trade": _wt(*(_WEEKLY_TRADE_ROWS[7])),
+                "worst_trade": _wt(*(_WEEKLY_TRADE_ROWS[5])),
+                "skips": {
+                    "total": 3,
+                    "with_outcome": 2,
+                    "pending": 1,
+                    "up": 1,
+                    "flat": 1,
+                    "down": 1,
+                    "biggest_miss": {
+                        "symbol": "GOOGL",
+                        "date": "2026-09-17",
+                        "confidence": 0.41,
+                        "pct": 6.2,
+                    },
+                },
+                "verdicts": {
+                    "good_call": 2,
+                    "bad_call": 0,
+                    "unclear": 1,
+                    "total": 3,
+                    "entered": {"good_call": 2, "bad_call": 0, "unclear": 0},
+                    "blocked": {"good_call": 0, "bad_call": 0, "unclear": 0, "reasons": {}},
+                    "skips": {"good_call": 0, "bad_call": 0, "unclear": 1},
+                    "thesis_contradictions": 0,
+                },
+                "sample": {
+                    "closed_trades": {"week": 12, "run": 12},
+                    "model_skips_with_outcome": {"week": 2, "run": 2},
+                    "confirmed_verdicts": {"week": 3, "run": 3},
+                },
+                "suggestion_allowed": True,
+                "by_regime": [
+                    _agg("Up · normal vol", 7, 5, 1.2, 1234.5),
+                    _agg("Up · high vol", 2, 1, 0.45, 123.0),
+                    _agg("Sideways · any", 2, 0, 0.05, 35.0),
+                    _agg("Down · normal or low", 1, 0, -1.0, -402.0),
+                ],
+                "by_symbol": [
+                    _agg("MSFT", 2, 2, 1.8, 783.5),
+                    _agg("NVDA", 2, 1, 0.45, 77.0),
+                    _agg("AAPL", 2, 1, 0.45, 214.0),
+                ],
+            },
             text=(
                 "Week 41: +3.4% vs SPY +2.6%. 12 trades closed, 7 winners, "
-                "average +0.71R. The two NVDA stops filled inside the "
+                "average +0.72R. The two NVDA stops filled inside the "
                 "planned range; no position ran without a stop."
             ),
             content={

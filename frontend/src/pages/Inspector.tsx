@@ -14,6 +14,7 @@ import type { FetchFailure } from '../api/useResource';
 import { useApiResource } from '../api/useResource';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { Card } from '../components/Card';
+import { CardBoundary } from '../components/CardBoundary';
 import { CardBody, FetchError, SkeletonLines } from '../components/cardState';
 import { SkeletonList } from '../components/skeletons';
 import { RecordNotFound } from '../components/errorPages';
@@ -265,6 +266,7 @@ function Filters({
         gap: 'var(--sa-space-4)',
       }}
     >
+      <CardBoundary name="Filters">
       <div
         style={{
           display: 'flex',
@@ -480,6 +482,7 @@ function Filters({
           </div>
         </div>
       )}
+      </CardBoundary>
     </section>
   );
 }
@@ -742,6 +745,7 @@ function CallDetails({
           gap: 'var(--sa-space-4)',
         }}
       >
+        <CardBoundary name="Call details">
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 'var(--sa-space-2) var(--sa-space-4)' }}>
           {onBack && (
             <button
@@ -829,6 +833,7 @@ function CallDetails({
             </div>
           ))}
         </div>
+        </CardBoundary>
       </section>
       {detail.outcome === 'error' && (
         <section
@@ -843,6 +848,7 @@ function CallDetails({
             gap: '10px',
           }}
         >
+          <CardBoundary name="Error">
           <h3 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
             Error
           </h3>
@@ -851,6 +857,7 @@ function CallDetails({
             The request was sent but no usable response came back, so there is
             no raw response. Keys and headers are never stored.
           </span>
+          </CardBoundary>
         </section>
       )}
       <section
@@ -865,6 +872,7 @@ function CallDetails({
           gap: '10px',
         }}
       >
+        <CardBoundary name="Prompt">
         <h3 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
           Prompt
         </h3>
@@ -891,6 +899,7 @@ function CallDetails({
             <MonoPre>{detail.prompt.stored}</MonoPre>
           </details>
         )}
+        </CardBoundary>
       </section>
       {detail.raw_response !== null && (
         <section
@@ -905,10 +914,12 @@ function CallDetails({
             gap: '10px',
           }}
         >
+          <CardBoundary name="Raw response">
           <h3 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
             Raw response
           </h3>
           <MonoPre>{detail.raw_response}</MonoPre>
+          </CardBoundary>
         </section>
       )}
     </>
@@ -1095,6 +1106,7 @@ export default function Inspector() {
           boxSizing: 'border-box',
         }}
       >
+        <CardBoundary name="Filtered calls">
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 'var(--sa-space-3)', flexWrap: 'wrap' }}>
           <h2 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
             Filtered calls
@@ -1130,6 +1142,7 @@ export default function Inspector() {
             <SkeletonLines bars={4} />
           </div>
         )}
+        </CardBoundary>
       </section>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', alignItems: 'flex-start' }}>
@@ -1148,6 +1161,7 @@ export default function Inspector() {
             overflow: 'hidden',
           }}
         >
+          <CardBoundary name="Model calls">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 'var(--sa-space-2)', padding: '14px 16px 8px' }}>
             <h2 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
               Calls
@@ -1256,6 +1270,7 @@ export default function Inspector() {
               </button>
             )}
           </div>
+          </CardBoundary>
         </section>
 
         <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
