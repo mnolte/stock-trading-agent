@@ -253,6 +253,7 @@ const SECTION_OF: Record<string, string> = {
   'decision.v3.min_edge': 'gates',
   'decision.v4.near_level_atr': 'gates',
   'decision.v5.trend_gate': 'gates',
+  'decision.v5.trend_gate_regimes': 'gates',
   'decision.v5.max_rr': 'gates',
   'decision.v5.base_rate_sessions': 'gates',
   'decision.v5.price_vs_signal_adverse_atr': 'gates',
@@ -2899,6 +2900,48 @@ export default function Settings() {
                     })
                   }
                 />
+              ),
+            })}
+            {row('decision.v5.trend_gate_regimes', {
+              id: 'v5regimes',
+              label: 'Regimes that pass the trend gate',
+              help: 'Candidates reach the model only in these regimes; down never does.',
+              children: (
+                <span style={{ display: 'inline-flex', gap: 14 }}>
+                  {(['up', 'sideways'] as const).map((regime) => {
+                    const current =
+                      s.decision.v5?.trend_gate_regimes ?? ['up', 'sideways'];
+                    const on = current.includes(regime);
+                    return (
+                      <label
+                        key={regime}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: 'var(--sa-text-sm)',
+                          color: 'var(--sa-text)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() => {
+                            const next = (['up', 'sideways'] as const).filter(
+                              (r) => (r === regime ? !on : current.includes(r)),
+                            );
+                            patch('decision', 'v5', {
+                              ...(s.decision.v5 ?? {}),
+                              trend_gate_regimes: [...next],
+                            });
+                          }}
+                        />
+                        {regime}
+                      </label>
+                    );
+                  })}
+                </span>
               ),
             })}
             {row('decision.v5.max_rr', {

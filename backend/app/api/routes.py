@@ -2800,6 +2800,7 @@ def _settings_form(config: object) -> dict[str, object]:
                         "v5",
                         {
                             "trend_gate": None,
+                            "trend_gate_regimes": None,
                             "max_rr": None,
                             "base_rate_sessions": None,
                             "price_vs_signal_adverse_atr": None,

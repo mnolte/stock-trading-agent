@@ -1219,11 +1219,14 @@ class CycleRunner:
             and v2 is not None
             and v2.fields["options"]
         ):
-            if self.decide.spec.is_v5 and v5_config(self.config).trend_gate:
+            v5c = v5_config(self.config)
+            if self.decide.spec.is_v5 and v5c.trend_gate:
                 # The v5 trend gate: the v4 checks_gate minus
                 # trend_daily, which stays a model call (docs/SPEC.md,
                 # Decision v5 — Trend gate in code).
-                checks_blocked = trend_gate_detail(v2.fields)
+                checks_blocked = trend_gate_detail(
+                    v2.fields, regimes=v5c.trend_gate_regimes
+                )
             elif (
                 self.decide.spec.is_v4
                 and not self.decide.spec.is_v5

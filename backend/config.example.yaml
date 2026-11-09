@@ -148,6 +148,7 @@ decision:
     gap_sessions: 60            # overnight.gap_p90_atr window; null below 20 sessions
     long_target_minutes: 120    # with fewer minutes left, a target over 2 ATR is an overnight hold
     trend_gate: true            # strategy override; candidates without trend_1h and regime up get no call
+    trend_gate_regimes: [up, sideways]  # regimes the trend gate passes; down never does
     max_rr: 3.0                 # v5 builds no option above this
     base_rate_sessions: 60      # window for per-option base rates
     base_rate_min_n: 30         # base_rate shown from this many comparable decided options

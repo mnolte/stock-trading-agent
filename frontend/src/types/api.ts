@@ -796,6 +796,7 @@ export interface SettingsForm {
     v4?: { near_level_atr?: number };
     v5?: {
       trend_gate?: boolean;
+      trend_gate_regimes?: string[];
       max_rr?: number;
       base_rate_sessions?: number;
       price_vs_signal_adverse_atr?: number;
