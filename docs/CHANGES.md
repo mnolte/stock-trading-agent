@@ -10,6 +10,7 @@ Build of the 058 spec entry on branch `fix/058-live-data-9-nov` (PR #200; the tr
 - **`price_stale`** (`data/models.py`, `engine/cycle.py`): the warning names the last IEX trade's age and price; the 60-second threshold is unchanged.
 - **Rebuild reload** (`errors.ts`, `api/main.py`): a stale chunk after a rebuild reloads once and reports at INFO — no error group, no notification.
 - **Restore test** (`ops/service.py`, `ServerSection.tsx`): with backup credentials unset, Settings → Server shows "not set up"; old records stay as history.
+- **Recently sent** (`Settings.tsx`): the notification rows switched from a fixed `92px 1fr auto` grid to a wrapping flex row — a long channel status ("email held back · browser held back") used to squeeze the subject to zero width at phone size.
 
 ## 2026-11-09 — [058] Live data of 9 November
 
