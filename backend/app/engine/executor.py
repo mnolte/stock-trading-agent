@@ -66,6 +66,7 @@ from app.risk.math import (
 )
 from app.signals.indicators import atr
 from app.signals.service import SignalService, SymbolEval, trading_days_until
+from app.spawn import spawn
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -430,7 +431,7 @@ class Executor:
             async def run() -> dict[str, object]:
                 return await make()
 
-            task = asyncio.create_task(run())
+            task = spawn(run(), name="request-once")
             self._request_once[request_id] = task
             if len(self._request_once) > 256:
                 self._request_once.pop(next(iter(self._request_once)))
