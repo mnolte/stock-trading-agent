@@ -117,6 +117,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 055 | feat | Loading states | `archive/055-feat-loading-states.md` | #180 | #181 | building |
 | 056 | feat | UX pass | `archive/056-feat-ux-pass.md` | #188 | #190, #191, #192, #193, #194, #195, #196, #197 | building |
 | 057 | fix | Log review fingerprint match | — | — | #198 | building |
+| 058 | fix | Live data of 9 November | `058-fix-live-data-9-nov.md` | #NEW | — | planned |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
