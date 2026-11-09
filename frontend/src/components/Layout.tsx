@@ -322,7 +322,7 @@ export function Layout() {
           needsYou={needsYou}
           narrow={narrow}
         />
-        <main style={{ flex: 1, padding: 'var(--sa-space-6)' }}>
+        <main style={{ flex: 1, padding: 'var(--sa-space-6)', position: 'relative' }}>
           {liveStatus === 'paused' && (
             <div
               style={{
@@ -363,11 +363,11 @@ export function Layout() {
               <Outlet />
             </ErrorBoundary>
           )}
+          <NotificationToasts />
+          <ApiErrorToasts />
         </main>
       </div>
       <AskDrawer />
-      <NotificationToasts />
-      <ApiErrorToasts />
       {ksToast && (
         <div
           role="status"

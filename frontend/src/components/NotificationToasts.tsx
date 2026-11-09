@@ -251,8 +251,8 @@ export default function NotificationToasts() {
       role="region"
       aria-label="Notifications"
       style={{
-        position: 'fixed',
-        top: 64,
+        position: 'absolute',
+        top: 16,
         right: 16,
         zIndex: 60,
         display: 'flex',

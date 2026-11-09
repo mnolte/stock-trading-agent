@@ -387,3 +387,30 @@ def test_library_loggers_warning_unless_library_debug(
         assert lib_filter.filter(record("urllib3", logging.DEBUG))
     finally:
         get_config().yaml["logging"]["library_debug"] = False
+
+
+def test_error_summary_strips_urls_and_file_refs() -> None:
+    from app.log_index import error_summary
+
+    msg = (
+        "Reviews screen failed to draw: "
+        "TypeError: (facts.trades ?? []) is not iterable\n"
+        "    at WeeklyView (http://127.0.0.1:5400/src/pages/Reviews.tsx:115:37)\n"
+        "    at renderWithHooks (/app/node_modules/react-dom/client.js:1:1)"
+    )
+    summary = error_summary(msg)
+    assert "http://127.0.0.1:5400" not in summary
+    assert "Reviews.tsx" not in summary
+    assert "client.js" not in summary
+    assert summary.startswith("Reviews screen failed to draw")
+    assert "\n" not in summary
+
+
+def test_error_summary_bare_file_ref_and_length() -> None:
+    from app.log_index import SUMMARY_LIMIT, error_summary
+
+    msg = "SMTP authentication failed for user at /srv/app/config.py:42:9 " + "x" * 200
+    summary = error_summary(msg)
+    assert "config.py" not in summary
+    assert len(summary) <= SUMMARY_LIMIT
+    assert summary.endswith("…")
