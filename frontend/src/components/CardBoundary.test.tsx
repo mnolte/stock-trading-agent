@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CardBoundary } from './CardBoundary';
 import { resetCardErrorReports } from './cardErrorReports';
+import { RiskBudgetCard } from './RiskBudgetCard';
+import type { Resource } from '../api/useResource';
+import type { RiskBudgetResponse } from '../types/api';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -96,5 +99,31 @@ describe('CardBoundary', () => {
         body: expect.stringContaining('react card boundary (Weekly review)'),
       }),
     );
+  });
+
+  it('a malformed risk-budget payload fails only its own card', async () => {
+    // Regression (056 follow-up): the card header read sectors[0] before
+    // the boundary, so a bad payload took the whole screen down.
+    const res = {
+      data: {},
+      loaded: true,
+      updatedAt: new Date(),
+      loading: false,
+      showSkeleton: false,
+      slow: false,
+      slowSeconds: 0,
+      refreshing: false,
+      failure: null,
+      reload: () => {},
+    } as unknown as Resource<RiskBudgetResponse>;
+    await render(
+      <>
+        <RiskBudgetCard res={res} />
+        <div data-testid="sibling">sibling ok</div>
+      </>,
+    );
+    expect(container.textContent).toContain('couldn’t be drawn');
+    expect(container.textContent).toContain('sibling ok');
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
