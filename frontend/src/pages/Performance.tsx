@@ -16,6 +16,7 @@ import {
   SkeletonTable,
   SkeletonTiles,
 } from '../components/skeletons';
+import { displayFullDate, fmtDayMonthIn } from '../format';
 import type {
   ClosedTradeRow,
   PerformanceAggRow,
@@ -64,25 +65,11 @@ function signedR(value: string | null | undefined): string {
 }
 
 /** "13 Oct" in Amsterdam time. */
-function dayLabel(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'Europe/Amsterdam',
-  });
-}
+const dayLabel = (iso: string | null | undefined): string =>
+  iso ? fmtDayMonthIn(iso) || '—' : '—';
 
 /** "Monday 5 October" in Amsterdam time. */
-function longDayLabel(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    timeZone: 'Europe/Amsterdam',
-  });
-}
+const longDayLabel = displayFullDate;
 
 /** Compact regime tag for the closed-trades column ("up · normal"). */
 function shortRegime(label: string | null): string {

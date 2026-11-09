@@ -1,5 +1,7 @@
 /** Formatting helpers for the inspector and decision detail screens. */
 
+import { ACTIONS, REASON_CODES, labelFor } from '../labels';
+
 export function actionColor(action: string | null): string {
   switch (action) {
     case 'enter':
@@ -58,13 +60,13 @@ export function actionLabel(action: string): string {
     case 'no_call':
       return 'No call';
     default:
-      return action.replace(/_/g, ' ');
+      return labelFor(ACTIONS, action);
   }
 }
 
 /** Why a decision recorded no call: rules, call cap, quote missing, model error. */
 export function noCallReasonLabel(reason: string): string {
-  return reason.replace(/_/g, ' ');
+  return labelFor(REASON_CODES, reason);
 }
 
 export function formatAmsTime(iso: string): string {

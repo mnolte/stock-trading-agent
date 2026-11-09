@@ -1,4 +1,5 @@
 import type { WatchlistRow } from '../types/api';
+import { fmtDayMonthIn } from '../format';
 
 export function rulesLabel(row: WatchlistRow): string {
   if (row.warming_up) return 'Warming up';
@@ -28,8 +29,7 @@ export function formatDayChange(pct: number | null): string {
 
 export function formatEarnings(isoDate: string | null): string {
   if (!isoDate) return '—';
-  const d = new Date(`${isoDate}T00:00:00Z`);
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return fmtDayMonthIn(isoDate) || '—';
 }
 
 export function formatLastAction(action: string | null, isoTime: string | null): string {

@@ -53,6 +53,7 @@ import {
   type InspectorFilters,
   type Period,
 } from './inspectorFilters';
+import { ACTIONS, REASON_CODES, labelFor } from '../labels';
 
 const PAGE_SIZE = 50; // inspector.page_size
 const PHONE = '(max-width: 640px)';
@@ -420,7 +421,7 @@ function Filters({
               onChange={(e) => onUpdate({ symbol: e.target.value || undefined })}
             />
           </label>
-          {select('action', 'Any action', ACTION_OPTIONS)}
+          {select('action', 'Any action', ACTION_OPTIONS, (v) => labelFor(ACTIONS, v))}
           {select(
             'reason',
             'Any reason',
@@ -435,8 +436,8 @@ function Filters({
             ],
             (v) =>
               v.startsWith('changed_by_code.')
-                ? `changed_by_code · ${v.slice('changed_by_code.'.length)}`
-                : REASON_LABELS[v] ?? v,
+                ? `Changed by code · ${labelFor(REASON_CODES, v.slice('changed_by_code.'.length))}`
+                : REASON_LABELS[v] ?? labelFor(REASON_CODES, v),
           )}
           {select('model', 'Any model', summary?.options.model ?? [])}
           {select(
@@ -621,7 +622,7 @@ function CallListRow({
     <button
       type="button"
       aria-pressed={selected}
-      aria-label={`${displayTime(call.sent_at)} ${rowTitle(call)} ${act}, ${call.outcome}`}
+      aria-label={`${displayTime(call.sent_at)} ${rowTitle(call)} ${labelFor(ACTIONS, act)}, ${call.outcome}`}
       onClick={onSelect}
       title={nyTime(call.sent_at)}
       className="sa-row"
@@ -650,7 +651,7 @@ function CallListRow({
         <span style={{ display: 'flex', gap: 'var(--sa-space-2)', alignItems: 'baseline', minWidth: 0 }}>
           <span style={{ fontWeight: 600 }}>{rowTitle(call)}</span>
           <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: actionColor(act) }}>
-            {act.replace(/_/g, ' ')}
+            {labelFor(ACTIONS, act)}
           </span>
         </span>
         <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

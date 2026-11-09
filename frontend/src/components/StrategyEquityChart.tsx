@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { LineSeries, LineStyle, createChart } from 'lightweight-charts';
 import type { Time } from 'lightweight-charts';
+import { fmtDayMonthIn } from '../format';
 
 export interface StrategySeries {
   name: string;
@@ -40,11 +41,7 @@ export function StrategyEquityChart({ series }: { series: StrategySeries[] }) {
         borderColor: GRID,
         fixLeftEdge: true,
         tickMarkFormatter: (time: Time) =>
-          new Date(`${businessDay(time)}T12:00:00Z`).toLocaleDateString('en-GB', {
-            day: 'numeric',
-            month: 'short',
-            timeZone: 'UTC',
-          }),
+          fmtDayMonthIn(businessDay(time)),
       },
       rightPriceScale: { borderColor: GRID },
       localization: {

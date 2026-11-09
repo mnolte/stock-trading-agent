@@ -24,6 +24,7 @@ import {
   openedTodayNy,
   signed,
   signedUsd, elapsedHm } from '../format';
+import { EXIT_REASONS, labelFor } from '../labels';
 
 const mono: React.CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
@@ -584,7 +585,7 @@ export default function Positions() {
               <span style={{ ...mono, color: fmtPnl(p.realized_pnl_raw).color }}>
                 {fmtPnl(p.realized_pnl_raw).text}
               </span>
-              <span style={{ color: 'var(--sa-text-muted)' }}>{p.exit_reason ?? ''}</span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>{labelFor(EXIT_REASONS, p.exit_reason)}</span>
             </div>
           ))}
         </Card>

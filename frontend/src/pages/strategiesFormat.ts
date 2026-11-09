@@ -1,4 +1,5 @@
 import type { StrategyDifference, StrategyRow } from '../types/api';
+import { fmtDayMonthIn, sessionDayShort } from '../format';
 
 const DISPLAY_TZ = 'Europe/Amsterdam';
 
@@ -46,21 +47,12 @@ export function cost(value: string | null | undefined): string {
 
 /** "5 Oct" in Amsterdam. */
 export function shortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: DISPLAY_TZ,
-  });
+  return fmtDayMonthIn(iso) || '—';
 }
 
 /** "Wed 7 Oct" for a New York session date (YYYY-MM-DD). */
 export function sessionDay(day: string): string {
-  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
+  return sessionDayShort(day);
 }
 
 /** "5 Oct 15:02 · virtual $10,000" — shadow start in Amsterdam time. */

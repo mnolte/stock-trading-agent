@@ -43,6 +43,7 @@ import {
   verdictVariant,
   weekLabel,
 } from './reviewsFormat';
+import { ACTIONS, CALL_KINDS, REASON_CODES, labelFor } from '../labels';
 
 const WEEKLY_EXPLAINER =
   'Written every Saturday 10:00 Amsterdam, covering Monday to Friday.';
@@ -524,7 +525,7 @@ function BriefingView({ review }: { review: ReviewDetail }) {
             label="Active banners"
             value={String(facts.banners?.length ?? 0)}
             sub={
-              facts.banners?.map((b) => b.kind.replace(/_/g, ' ')).join(' · ') ||
+              facts.banners?.map((b) => labelFor(CALL_KINDS, b.kind)).join(' · ') ||
               'none'
             }
           />
@@ -694,12 +695,14 @@ function VerdictsCard({
                           color: 'var(--sa-warning-text)',
                         }}
                       >
-                        {v.final_action.toUpperCase()}
+                        {labelFor(ACTIONS, v.final_action).toUpperCase()}
                       </span>{' '}
                       <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-warning-text)' }}>
-                        by code{v.change_text || v.change_reason
-                          ? ` · ${v.change_text ?? v.change_reason}`
-                          : ''}
+                        by code{v.change_text
+                          ? ` · ${v.change_text}`
+                          : v.change_reason
+                            ? ` · ${labelFor(REASON_CODES, v.change_reason)}`
+                            : ''}
                       </span>
                     </>
                   )}{' '}

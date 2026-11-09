@@ -7,6 +7,7 @@
  */
 
 import type { LlmCallRow, LlmCallSource } from '../types/api';
+import { REASON_CODES, labelFor } from '../labels';
 
 export type Period = 'last' | '5' | '20' | 'all' | 'custom';
 export const PERIODS: { value: Period; label: string }[] = [
@@ -263,5 +264,5 @@ export function rowContext(call: LlmCallRow): string {
 /** The outcome chip's text: "success", or the reason labels. */
 export function chipText(call: LlmCallRow): string {
   if (call.outcome === 'success') return 'success';
-  return call.reasons.map((r) => REASON_LABELS[r] ?? r).join(', ');
+  return call.reasons.map((r) => REASON_LABELS[r] ?? labelFor(REASON_CODES, r)).join(', ');
 }

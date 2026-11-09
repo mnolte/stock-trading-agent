@@ -9,6 +9,7 @@ import {
   getBacktestDecisions,
   getBacktestTrades,
   getBacktests,
+  getHeaderState,
   postBacktest,
   postBacktestCancel,
   postBacktestEstimate,
@@ -30,7 +31,8 @@ import type {
   BacktestTrade,
   BacktestsResponse,
 } from '../types/api';
-import { displayDateTime } from '../format';
+import { dayParts, displayDateTime, fmtDayYear, fmtMonthYear, parseDayInput } from '../format';
+import { ACTIONS, EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
 
 // Strategy colours in picker order (design: Backtest).
 const PALETTE = ['#F2B94B', '#9FB4CC', '#7FB8FF', '#C792EA'];
@@ -179,20 +181,13 @@ function cutoffWarning(
   const cutoff = model ? cutoffs[model] : undefined;
   if (!cutoff || !start) return null;
   if (start > cutoff) return null;
-  const month = new Date(`${cutoff}T12:00:00Z`).toLocaleDateString('en-GB', {
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+  const month = fmtMonthYear(cutoff);
   return `Knowledge cutoff ${month}: needs a later start`;
 }
 
 function cutoffOkLine(estimate: BacktestEstimate): string | null {
   if (!estimate.cutoff || !estimate.cutoff_label) return null;
-  const month = new Date(`${estimate.cutoff}T12:00:00Z`).toLocaleDateString(
-    'en-GB',
-    { month: 'short', year: 'numeric', timeZone: 'UTC' },
-  );
+  const month = fmtMonthYear(estimate.cutoff);
   return `Period starts after ${estimate.cutoff_label}'s knowledge cutoff (${month})`;
 }
 
@@ -326,6 +321,79 @@ export default function Backtest() {
   );
 }
 
+/** From/To field (056): reads and writes "14 Sep 2025" like every other
+ * date in the app; the Pick button opens the native calendar. The value
+ * stays ISO internally — the text is only the display. */
+function DayField({
+  label,
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  label: string;
+  value: string;
+  onChange: (iso: string) => void;
+  min?: string;
+  max?: string;
+}) {
+  const picker = useRef<HTMLInputElement>(null);
+  const [text, setText] = useState(() => (value ? fmtDayYear(value) : ''));
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setText(value ? fmtDayYear(value) : '');
+  }
+  return (
+    <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+      <input
+        aria-label={label}
+        aria-invalid={text.trim() !== '' && value === '' ? true : undefined}
+        placeholder="14 Sep 2025"
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const iso = parseDayInput(e.target.value);
+          if (iso) onChange(iso);
+        }}
+        style={{ ...inputStyle, flex: '1 1 auto', minWidth: 0 }}
+      />
+      <input
+        ref={picker}
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => {
+          if (e.target.value) onChange(e.target.value);
+        }}
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          opacity: 0,
+          pointerEvents: 'none',
+        }}
+      />
+      <button
+        type="button"
+        aria-label="Open date picker"
+        onClick={() => {
+          const el = picker.current;
+          if (!el) return;
+          if (typeof el.showPicker === 'function') el.showPicker();
+          else el.click();
+        }}
+        style={{ ...smallButton, flex: '0 0 auto' }}
+      >
+        Pick
+      </button>
+    </span>
+  );
+}
+
 function NewBacktestCard({
   data,
   onCreated,
@@ -335,9 +403,24 @@ function NewBacktestCard({
   onCreated: (id: number, refused: boolean) => void;
   onError: (msg: string | null) => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // From/To default from the agent's clock (/api/header → now; the
+  // simulated date in simulated mode), never the computer's (SPEC 717).
+  const [agentNow, setAgentNow] = useState<string | null>(null);
+  useEffect(() => {
+    getHeaderState()
+      .then((h) => setAgentNow(h.session?.now ?? null))
+      .catch(() => {});
+  }, []);
+  const agentToday = useMemo(() => {
+    const p = dayParts(agentNow);
+    return p
+      ? `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`
+      : '';
+  }, [agentNow]);
   const [start, setStart] = useState('');
-  const [end, setEnd] = useState(today);
+  const [endInput, setEndInput] = useState('');
+  const end = endInput || agentToday;
+  const setEnd = setEndInput;
   const [universe, setUniverse] = useState('fixed');
   const [picked, setPicked] = useState<string[]>(['live', 'rules_only']);
   const [equity, setEquity] = useState('10000');
@@ -390,11 +473,12 @@ function NewBacktestCard({
 
   const quick = (from: string) => {
     setStart(from);
-    setEnd(today);
+    if (agentToday) setEnd(agentToday);
   };
   const monthsAgo = (months: number) => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - months);
+    const p = dayParts(agentToday);
+    if (!p) return '';
+    const d = new Date(Date.UTC(p.y, p.m - 1 - months, 1));
     return d.toISOString().slice(0, 10);
   };
   const latestCutoff = picked
@@ -407,7 +491,7 @@ function NewBacktestCard({
     ? new Date(new Date(`${latestCutoff}T00:00:00Z`).getTime() + 86400000)
         .toISOString()
         .slice(0, 10)
-    : today;
+    : agentToday;
 
   const disabled =
     running ||
@@ -434,26 +518,24 @@ function NewBacktestCard({
     <Card label="New backtest">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <label style={labelStyle}>
+          <div style={labelStyle}>
             <span style={labelText}>From</span>
-            <input
-              type="date"
-              style={inputStyle}
+            <DayField
+              label="From"
               value={start}
               max={end}
-              onChange={(e) => setStart(e.target.value)}
+              onChange={setStart}
             />
-          </label>
-          <label style={labelStyle}>
+          </div>
+          <div style={labelStyle}>
             <span style={labelText}>To</span>
-            <input
-              type="date"
-              style={inputStyle}
+            <DayField
+              label="To"
               value={end}
               min={start}
-              onChange={(e) => setEnd(e.target.value)}
+              onChange={setEnd}
             />
-          </label>
+          </div>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
           <button type="button" style={smallButton} onClick={() => quick(monthsAgo(3))}>
@@ -1112,7 +1194,7 @@ function StrategyTrades({ run, ref_ }: { run: BacktestRun; ref_: BacktestStrateg
                 <td style={td}>{t.entry}</td>
                 <td style={td}>{displayDateTime(t.opened_at)}</td>
                 <td style={td}>{displayDateTime(t.closed_at)}</td>
-                <td style={{ ...td, fontFamily: 'inherit' }}>{t.exit_reason ?? '—'}</td>
+                <td style={{ ...td, fontFamily: 'inherit' }}>{labelFor(EXIT_REASONS, t.exit_reason)}</td>
                 <td
                   style={{
                     ...td,
@@ -1191,7 +1273,7 @@ function StrategyDecisions({
                 <td style={{ ...td, textAlign: 'left' }}>{d.symbol}</td>
                 <td style={{ ...td, textAlign: 'left', fontFamily: 'inherit' }}>{d.context}</td>
                 <td style={{ ...td, textAlign: 'left', fontFamily: 'inherit' }}>
-                  {d.no_call_reason ? `no_call · ${d.no_call_reason}` : d.final_action}
+                  {d.no_call_reason ? `No call · ${labelFor(REASON_CODES, d.no_call_reason)}` : labelFor(ACTIONS, d.final_action)}
                 </td>
                 <td style={{ ...td, textAlign: 'left', fontFamily: 'inherit' }}>
                   {d.cached ? 'cache' : 'model'}
