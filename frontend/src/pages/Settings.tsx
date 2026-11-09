@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { getAskStatus } from '../api/ask';
 import type { AskStatus } from '../api/ask';
@@ -36,6 +36,7 @@ import type {
 } from '../types/api';
 import { Banner } from '../components/Banner';
 import { CardBoundary } from '../components/CardBoundary';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { AccessSection } from '../components/AccessSection';
 import { ServerSection } from '../components/ServerSection';
 import { useAuthStatus } from '../api/auth';
@@ -308,48 +309,58 @@ const SECTION_OF: Record<string, string> = {
   'readiness.max_price_blocked_pct': 'ready',
 };
 
-const SECTIONS = [
-  { id: 'keys', label: 'API keys and data' },
-  { id: 'trading', label: 'Trading' },
-  { id: 'risk', label: 'Risk limits' },
-  { id: 'rules', label: 'Entry rules' },
-  { id: 'earnings', label: 'Earnings' },
-  { id: 'entry-selection', label: 'Entry selection' },
-  { id: 'gates', label: 'Decision gates' },
-  { id: 'model', label: 'Model and reviews' },
-  { id: 'ask', label: 'Ask the agent' },
-  { id: 'display', label: 'Display' },
-  { id: 'notify', label: 'Notifications' },
-  { id: 'ready', label: 'Readiness' },
-  { id: 'schedule', label: 'Schedule' },
-  { id: 'access', label: 'Access' },
-  { id: 'server', label: 'Server' },
-  { id: 'history', label: 'History' },
-  { id: 'danger', label: 'Paper account' },
-] as const;
-
-const SEARCH_TEXT: Record<string, string> = {
-  keys: 'api keys alpaca openai finnhub key test replace data sources market data news earnings ecb connections',
-  trading:
-    'trading execution mode automatic supervised universe fixed list screened pool liquidity screen min price average dollar volume drop after one share fits slippage assumed',
-  risk:
-    'risk limits per trade max position size single order total open risk positions sector cash only daily loss limit losing streak shock brake drawdown kill orders per cycle brakes portfolio',
-  rules:
-    'entry rules checks rsi range confidence stop distance reward risk atr spread entry limit cancel unfilled orders model answer',
-  earnings: 'earnings blackout hold through report sell trading days',
-  model:
-    'model reviews decisions prompt temperature calls per cycle daily briefing review cost cap',
-  ask: 'ask the agent chat drawer model cost cap answer notes instructions',
-  notify:
-    'notifications alerts browser email smtp quiet hours repeat limit critical warnings trading reviews send test channels',
-  ready:
-    'readiness thresholds closed trades paper sessions drawdown average r profit factor proposals calibration cycles price checks live trading',
-  schedule: 'schedule cycles new york amsterdam bar used entries position checks times',
-  history: 'history version reason change settings log',
-  server:
-    'server vps version address certificate clock disk updates backups local offsite restore test heartbeat instance download back up now credentials',
-  danger: 'paper account reset new run start over balance',
+// Route name -> section id (docs/kickoffs 056: /settings/<section>).
+const PARAM_TO_ID: Record<string, string> = {
+  keys: 'keys',
+  trading: 'trading',
+  risk: 'risk',
+  rules: 'rules',
+  selection: 'entry-selection',
+  gates: 'gates',
+  earnings: 'earnings',
+  model: 'model',
+  display: 'display',
+  notifications: 'notify',
+  readiness: 'ready',
+  schedule: 'schedule',
+  history: 'history',
+  access: 'access',
+  server: 'server',
+  'paper-account': 'danger',
+  ask: 'ask',
 };
+const ID_TO_PARAM: Record<string, string> = Object.fromEntries(
+  Object.entries(PARAM_TO_ID).map(([param, id]) => [id, param]),
+);
+const LAST_SECTION_KEY = 'sa.settings.section';
+
+function rememberedSection(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_SECTION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+const SECTIONS = [
+  { id: 'keys', label: 'API keys and data', param: 'keys' },
+  { id: 'trading', label: 'Trading', param: 'trading' },
+  { id: 'risk', label: 'Risk limits', param: 'risk' },
+  { id: 'rules', label: 'Entry rules', param: 'rules' },
+  { id: 'earnings', label: 'Earnings', param: 'earnings' },
+  { id: 'entry-selection', label: 'Entry selection', param: 'selection' },
+  { id: 'gates', label: 'Decision gates', param: 'gates' },
+  { id: 'model', label: 'Model and reviews', param: 'model' },
+  { id: 'ask', label: 'Ask the agent', param: 'ask' },
+  { id: 'display', label: 'Display', param: 'display' },
+  { id: 'notify', label: 'Notifications', param: 'notifications' },
+  { id: 'ready', label: 'Readiness', param: 'readiness' },
+  { id: 'schedule', label: 'Schedule', param: 'schedule' },
+  { id: 'access', label: 'Access', param: 'access' },
+  { id: 'server', label: 'Server', param: 'server' },
+  { id: 'history', label: 'History', param: 'history' },
+  { id: 'danger', label: 'Paper account', param: 'paper-account' },
+] as const;
 
 // ---------------------------------------------------------------------------
 // small building blocks
@@ -868,7 +879,7 @@ function KeysSection({
                     title={replaceDisabled ? keys.replace_hint : undefined}
                     style={{ height: 36, padding: '0 14px' }}
                   >
-                    Replace
+                    {row.set ? 'Replace' : 'Add key'}
                   </Button>
                 ) : (
                   <Button onClick={() => openReplace(row.name)} disabled={busy !== null} style={{ height: 36, padding: '0 14px' }}>
@@ -1381,6 +1392,12 @@ function RecentNotifications() {
 // ---------------------------------------------------------------------------
 // page
 
+// The layout remounts this page on every path change (ErrorBoundary is
+// keyed by pathname), so an unsaved draft would be lost when switching
+// /settings/<section> routes. Keep it outside the component; it clears
+// on save or discard.
+let settingsDraft: SettingsForm | null = null;
+
 export default function Settings() {
   const [data, setData] = useState<SettingsResponse | null>(null);
   const [form, setForm] = useState<SettingsForm | null>(null);
@@ -1390,11 +1407,18 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [reason, setReason] = useState('');
   const [find, setFind] = useState('');
-  const [activeSection, setActiveSection] = useState('keys');
   const [changedOnly, setChangedOnly] = useState(false);
+  const { section: routeParam } = useParams<{ section: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [remembered] = useState(rememberedSection);
+  const rememberedId = remembered ? PARAM_TO_ID[remembered] : undefined;
+  const routeId = routeParam ? PARAM_TO_ID[routeParam] : undefined;
+  const currentId = routeId ?? rememberedId ?? 'keys';
   const [newSymbol, setNewSymbol] = useState('');
   const [newSector, setNewSector] = useState('');
   const authStatus = useAuthStatus();
+  const narrow = useMediaQuery('(max-width: 820px)');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
@@ -1411,7 +1435,7 @@ export default function Settings() {
     getSettings()
       .then((d) => {
         setData(d);
-        setForm((f) => f ?? structuredClone(d.settings));
+        setForm((f) => f ?? settingsDraft ?? structuredClone(d.settings));
       })
       .catch(console.error);
     getUniverse().then(setUniverse).catch(() => setUniverse(null));
@@ -1477,23 +1501,34 @@ export default function Settings() {
   const invalid = Object.keys(fieldErrors).length > 0;
   const dirty = diffs.length > 0;
 
+  useEffect(() => {
+    if (form !== null) settingsDraft = form;
+  }, [form]);
+
   useUnsavedGuard(dirty);
 
-  // Scrollspy: highlight the section currently in view.
+  // One section per route (056): /settings opens the last one used,
+  // else keys; an unknown section falls back the same way.
   useEffect(() => {
-    const sections = Array.from(document.querySelectorAll('[data-settings-section]'));
-    if (sections.length === 0) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) setActiveSection(entry.target.id);
-        }
-      },
-      { rootMargin: '-20% 0px -70% 0px' },
-    );
-    sections.forEach((s) => observer.observe(s));
-    return () => observer.disconnect();
-  }, [data, keysData]);
+    if (routeParam && !routeId) {
+      navigate('/settings', { replace: true });
+      return;
+    }
+    if (!routeParam) {
+      navigate(`/settings/${ID_TO_PARAM[currentId] ?? 'keys'}${location.search}`, {
+        replace: true,
+      });
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        LAST_SECTION_KEY,
+        ID_TO_PARAM[currentId] ?? 'keys',
+      );
+    } catch {
+      // Storage can be unavailable (private mode); the route still works.
+    }
+  }, [routeParam, routeId, currentId, navigate, location.search]);
 
   const patch = (section: keyof SettingsForm, key: string, value: unknown) => {
     setForm((f) =>
@@ -1631,6 +1666,7 @@ export default function Settings() {
 
   const discard = () => {
     if (!data) return;
+    settingsDraft = null;
     setForm(structuredClone(data.settings));
     setReason('');
     if (promotion) {
@@ -1677,6 +1713,7 @@ export default function Settings() {
     if (Object.keys(universeSub).length > 0) submission.universe = universeSub;
     postSettings(submission, reason.trim(), promotion?.strategy_id)
       .then((res) => {
+        settingsDraft = null;
         setForm(null);
         setReason('');
         setNotice(
@@ -1743,12 +1780,42 @@ export default function Settings() {
       return SECTION_OF[path] === id;
     }).length;
 
-  const visibleSections = SECTIONS.filter((section) => {
-    if (changedOnly && sectionChanges(section.id) === 0) return false;
-    if (!find.trim()) return true;
-    const query = find.trim().toLowerCase();
-    return `${section.label} ${SEARCH_TEXT[section.id] ?? ''}`.toLowerCase().includes(query);
+  const sectionOfPath = (path: string): string => {
+    if (path.startsWith('universe.')) return 'trading';
+    if (path.startsWith('notifications.')) return 'notify';
+    return SECTION_OF[path] ?? '';
+  };
+
+  // "Find a setting" / "Changed from default" search every section's
+  // rows, grouped under the section titles (056).
+  const searchItems: { path: string; label: string; sectionId: string }[] = [];
+  const query = find.trim().toLowerCase();
+  if (changedOnly) {
+    for (const path of Object.keys(changed)) {
+      searchItems.push({
+        path,
+        label: LABEL_OF[path] ?? path,
+        sectionId: sectionOfPath(path),
+      });
+    }
+  }
+  if (query) {
+    for (const [path, label] of Object.entries(LABEL_OF)) {
+      if (`${label} ${path}`.toLowerCase().includes(query)) {
+        searchItems.push({ path, label, sectionId: sectionOfPath(path) });
+      }
+    }
+  }
+  const seenSearch = new Set<string>();
+  const dedupedSearch = searchItems.filter((item) => {
+    if (!item.sectionId || seenSearch.has(item.path)) return false;
+    seenSearch.add(item.path);
+    return true;
   });
+  const searchGroups = SECTIONS.map((section) => ({
+    section,
+    items: dedupedSearch.filter((item) => item.sectionId === section.id),
+  })).filter((group) => group.items.length > 0);
 
   const suffix = (path: string) => UNITS[path] ?? '';
   const barText = diffs
@@ -1850,70 +1917,220 @@ export default function Settings() {
             />
             Changed from default
           </label>
-          {visibleSections.map((section) => {
-            const count = sectionChanges(section.id);
-            const active = activeSection === section.id;
-            return (
-              <a
-                key={section.id}
-                href={`#${section.id}`}
-                onClick={() => setActiveSection(section.id)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                  minHeight: 36,
-                  padding: '0 12px',
-                  borderRadius: 'var(--sa-radius-sm)',
-                  textDecoration: 'none',
-                  fontSize: 'var(--sa-text-base)',
-                  background: active ? 'var(--sa-raised)' : 'transparent',
-                  color: active ? 'var(--sa-text)' : 'var(--sa-text-2)',
-                  boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
-                }}
-              >
-                {section.label}
-                {count > 0 && (
-                  <span
-                    title={`${count} unsaved change${count === 1 ? '' : 's'}`}
-                    style={{
-                      minWidth: 20,
-                      height: 20,
-                      padding: '0 6px',
-                      boxSizing: 'border-box',
-                      borderRadius: 999,
-                      background: 'var(--sa-accent-bg)',
-                      border: '1px solid var(--sa-accent-border)',
-                      color: 'var(--sa-accent)',
-                      fontFamily: 'var(--sa-font-mono)',
-                      fontSize: 11,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    {count}
-                  </span>
-                )}
-              </a>
-            );
-          })}
-          {visibleSections.length === 0 && (
-            <div style={{ padding: '8px 12px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-              No settings match “{find}”
-            </div>
+          {narrow ? (
+            <select
+              aria-label="Section"
+              value={currentId}
+              onChange={(e) =>
+                navigate(`/settings/${ID_TO_PARAM[e.target.value] ?? 'keys'}`)
+              }
+              style={{ ...textInput(), width: '100%', marginBottom: 6 }}
+            >
+              {SECTIONS.map((section) => {
+                const count = sectionChanges(section.id);
+                return (
+                  <option key={section.id} value={section.id}>
+                    {section.label}
+                    {count > 0 ? ` · ${count} changed` : ''}
+                  </option>
+                );
+              })}
+            </select>
+          ) : (
+            SECTIONS.map((section) => {
+              const count = sectionChanges(section.id);
+              const active = currentId === section.id;
+              return (
+                <Link
+                  key={section.id}
+                  to={`/settings/${section.param}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    minHeight: 36,
+                    padding: '0 12px',
+                    borderRadius: 'var(--sa-radius-sm)',
+                    textDecoration: 'none',
+                    fontSize: 'var(--sa-text-base)',
+                    background: active ? 'var(--sa-raised)' : 'transparent',
+                    color: active ? 'var(--sa-text)' : 'var(--sa-text-2)',
+                    boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
+                  }}
+                >
+                  {section.label}
+                  {count > 0 && (
+                    <span
+                      title={`${count} unsaved change${count === 1 ? '' : 's'}`}
+                      style={{
+                        minWidth: 20,
+                        height: 20,
+                        padding: '0 6px',
+                        boxSizing: 'border-box',
+                        borderRadius: 999,
+                        background: 'var(--sa-accent-bg)',
+                        border: '1px solid var(--sa-accent-border)',
+                        color: 'var(--sa-accent)',
+                        fontFamily: 'var(--sa-font-mono)',
+                        fontSize: 11,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {count}
+                    </span>
+                  )}
+                </Link>
+              );
+            })
           )}
           <div className="sn-hint" style={{ marginTop: 14, padding: 12, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
             Saved settings become a new version and apply from the next cycle. Current:{' '}
             <b style={{ color: 'var(--sa-text-2)', fontWeight: 600 }}>
-              v{data.active_version ?? '—'}
+              {data.active_version === null
+                ? 'no saved version yet'
+                : `v${data.active_version}`}
             </b>
           </div>
         </nav>
 
         <div style={{ flex: '999 1 560px', minWidth: 0, maxWidth: 920, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
-          {keysData && (
+          {(find.trim() || changedOnly) && (
+            <div
+              style={{
+                padding: 'var(--sa-space-4) var(--sa-space-5)',
+                background: 'var(--sa-surface)',
+                border: '1px solid var(--sa-border)',
+                borderRadius: 'var(--sa-radius-lg)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--sa-space-3)',
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>
+                {find.trim() ? 'Find a setting' : 'Changed from default'}
+              </div>
+              {searchGroups.length === 0 && (
+                <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+                  No settings match
+                  {find.trim() ? ` “${find.trim()}”` : ''}.
+                </div>
+              )}
+              {searchGroups.map((group) => (
+                <div key={group.section.id}>
+                  <div
+                    style={{
+                      fontSize: 'var(--sa-text-sm)',
+                      fontWeight: 600,
+                      color: 'var(--sa-text-muted)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      padding: '6px 0 2px',
+                    }}
+                  >
+                    {group.section.label}
+                  </div>
+                  {group.items.map((item) => {
+                    const parts = item.path.split('.');
+                    const current = parts.reduce<unknown>(
+                      (acc, key) =>
+                        acc && typeof acc === 'object'
+                          ? (acc as Record<string, unknown>)[key]
+                          : undefined,
+                      s as unknown,
+                    );
+                    const isChanged = item.path in changed;
+                    const editable =
+                      parts.length === 2 &&
+                      ['string', 'number', 'boolean'].includes(
+                        typeof current,
+                      ) &&
+                      parts[0] in s;
+                    return (
+                      <div
+                        key={item.path}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '6px 0',
+                          borderBottom: '1px solid var(--sa-border)',
+                          fontSize: 'var(--sa-text-md)',
+                        }}
+                      >
+                        <span style={{ flex: '1 1 auto', minWidth: 0 }}>
+                          {item.label}
+                          {isChanged && (
+                            <span style={{ color: 'var(--sa-accent)' }}>
+                              {' '}
+                              · changed
+                            </span>
+                          )}
+                        </span>
+                        {editable ? (
+                          typeof current === 'boolean' ? (
+                            <input
+                              type="checkbox"
+                              aria-label={item.label}
+                              checked={Boolean(current)}
+                              onChange={(e) =>
+                                patch(
+                                  parts[0] as keyof SettingsForm,
+                                  parts[1],
+                                  e.target.checked,
+                                )
+                              }
+                            />
+                          ) : typeof current === 'number' ? (
+                            <input
+                              type="number"
+                              aria-label={item.label}
+                              value={Number(current)}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isNaN(v)) {
+                                  patch(
+                                    parts[0] as keyof SettingsForm,
+                                    parts[1],
+                                    v,
+                                  );
+                                }
+                              }}
+                              style={{ ...textInput(), width: 110 }}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              aria-label={item.label}
+                              value={String(current ?? '')}
+                              onChange={(e) =>
+                                patch(
+                                  parts[0] as keyof SettingsForm,
+                                  parts[1],
+                                  e.target.value,
+                                )
+                              }
+                              style={{ ...textInput(), width: 180 }}
+                            />
+                          )
+                        ) : (
+                          <Link
+                            to={`/settings/${ID_TO_PARAM[group.section.id] ?? 'keys'}`}
+                            style={{ color: 'var(--sa-accent)', whiteSpace: 'nowrap' }}
+                          >
+                            Open
+                          </Link>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+          {currentId === 'keys' && keysData && (
             <KeysSection
               keys={keysData}
               onChanged={refreshKeys}
@@ -1922,6 +2139,7 @@ export default function Settings() {
             />
           )}
 
+          {currentId === 'trading' && (<>
           <Section id="trading" title="Trading" blurb="How orders are sent and which symbols are watched.">
             <Row
               id="mode"
@@ -2297,7 +2515,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'risk' && (<>
           <Section
             id="risk"
             title="Risk limits"
@@ -2425,7 +2645,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'rules' && (<>
           <Section id="rules" title="Entry rules and checks" blurb="The pre-filter before a model call, and the checks on what the model proposes.">
             <h3 style={subHead}>Before the model is asked</h3>
             <Row
@@ -2523,7 +2745,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'entry-selection' && (<>
           <Section id="entry-selection" title="Entry selection" blurb="How the cycle's candidates are ranked and picked when slots run out.">
             {row('selection.mode', {
               id: 'selmode',
@@ -2574,7 +2798,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'gates' && (<>
           <Section id="gates" title="Decision gates" blurb="The code gates a candidate passes before and after the model — per prompt version.">
             {row('decision.entry_gate', {
               id: 'egate',
@@ -2727,7 +2953,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'display' && (<>
           <Section id="display" title="Display" blurb="GUI thresholds — what turns amber or counts as slow. No trading effect.">
             {row('gui.near_stop_atr', {
               id: 'nearstop',
@@ -2760,7 +2988,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'earnings' && (<>
           <Section id="earnings" title="Earnings" blurb="How the agent handles symbols around their earnings date.">
             {row('risk.earnings_blackout_days', {
               id: 'blackout',
@@ -2779,7 +3009,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'model' && (<>
           <Section id="model" title="Model and reviews" blurb="The model, its prompt and limits on calls and cost.">
             <h3 style={subHead}>Decisions</h3>
             {row('decision.model', {
@@ -2951,7 +3183,9 @@ export default function Settings() {
               ),
             })}
           </Section>
+          </>)}
 
+          {currentId === 'ask' && (<>
           <Section
             id="ask"
             title="Ask the agent"
@@ -3042,7 +3276,9 @@ export default function Settings() {
               </div>
             </Row>
           </Section>
+          </>)}
 
+          {currentId === 'notify' && (<>
           <Section
             id="notify"
             title="Notifications"
@@ -3153,7 +3389,9 @@ export default function Settings() {
             <h3 style={subHead}>Recently sent</h3>
             <RecentNotifications />
           </Section>
+          </>)}
 
+          {currentId === 'ready' && (<>
           <Section
             id="ready"
             title="Readiness"
@@ -3239,7 +3477,9 @@ export default function Settings() {
               Zero-tolerance criteria (positions without a stop, kill switch events, unresolved errors, reconciliation) and the manual items are fixed by the spec.
             </div>
           </Section>
+          </>)}
 
+          {currentId === 'schedule' && (<>
           <Section
             id="schedule"
             title="Schedule"
@@ -3282,7 +3522,9 @@ export default function Settings() {
               run only the cycles before 13:00 New York.
             </div>
           </Section>
+          </>)}
 
+          {currentId === 'access' && (<>
           <Section
             id="access"
             title="Access"
@@ -3311,7 +3553,9 @@ export default function Settings() {
             )}
             {authStatus && <AccessSection auth={authStatus} />}
           </Section>
+          </>)}
 
+          {currentId === 'server' && (<>
           <Section
             id="server"
             title="Server"
@@ -3319,7 +3563,9 @@ export default function Settings() {
           >
             {authStatus && <ServerSection enabled={authStatus.required} />}
           </Section>
+          </>)}
 
+          {currentId === 'history' && (<>
           <Section
             id="history"
             title="Settings history"
@@ -3352,7 +3598,9 @@ export default function Settings() {
               </div>
             </div>
           </Section>
+          </>)}
 
+          {currentId === 'danger' && (<>
           <Section id="danger" title="Paper account" blurb="Starts over with a clean account and a new performance run.">
             <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px 20px', padding: '14px 0 18px' }}>
               <div style={{ flex: '1 1 360px', display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -3377,6 +3625,39 @@ export default function Settings() {
               <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', paddingBottom: 14 }}>{resetStep2}</div>
             )}
           </Section>
+          </>)}
+
+          {(() => {
+            const idx = SECTIONS.findIndex((sec) => sec.id === currentId);
+            const prev = idx > 0 ? SECTIONS[idx - 1] : null;
+            const next = idx >= 0 && idx < SECTIONS.length - 1 ? SECTIONS[idx + 1] : null;
+            if (!prev && !next) return null;
+            return (
+              <nav
+                aria-label="Section navigation"
+                style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}
+              >
+                {prev ? (
+                  <Link
+                    to={`/settings/${prev.param}`}
+                    style={{ color: 'var(--sa-accent)', fontSize: 'var(--sa-text-md)' }}
+                  >
+                    ← {prev.label}
+                  </Link>
+                ) : (
+                  <span />
+                )}
+                {next && (
+                  <Link
+                    to={`/settings/${next.param}`}
+                    style={{ color: 'var(--sa-accent)', fontSize: 'var(--sa-text-md)' }}
+                  >
+                    {next.label} →
+                  </Link>
+                )}
+              </nav>
+            );
+          })()}
 
           {dirty && (
             <div

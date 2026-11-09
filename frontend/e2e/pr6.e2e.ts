@@ -61,18 +61,24 @@ test('decision detail: sections render', async ({ page }, testInfo) => {
 });
 
 test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo) => {
+  // 056: one section per route — each section is checked on its own URL.
   await page.goto('/settings');
-
   await expect(page.getByRole('heading', { name: 'API keys and data' })).toBeVisible({
     timeout: 60_000,
   });
+
+  await page.goto('/settings/trading');
   await expect(page.getByLabel('Universe')).toBeVisible();
+  await page.goto('/settings/risk');
   await expect(page.getByRole('heading', { name: 'Risk limits' })).toBeVisible();
+  await page.goto('/settings/history');
   await expect(page.getByRole('heading', { name: 'Settings history' })).toBeVisible();
+  await page.goto('/settings/paper-account');
   await expect(page.getByRole('heading', { name: 'Paper account', exact: true })).toBeVisible();
 
   // The unsaved-changes bar opens on the first edit; Save stays off
   // until a reason is typed (PR 10: reason is required, no dialog).
+  await page.goto('/settings/model');
   const saveButton = page.getByRole('button', { name: /Save as v/ });
   await expect(saveButton).toHaveCount(0);
   await page.locator('#brief').click();
@@ -85,6 +91,7 @@ test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo)
   await page.screenshot({ path: shot('settings-save', testInfo.project.name) });
 
   // Reset requires typing RESET before the confirm button enables.
+  await page.goto('/settings/paper-account');
   await page.getByRole('button', { name: 'Reset paper account' }).click();
   const resetDialog = page.getByRole('dialog', { name: 'Reset the paper account?' });
   await expect(resetDialog).toBeVisible();

@@ -132,7 +132,7 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
 test('readiness: settings thresholds and fixed criteria note', async ({
   page,
 }, testInfo) => {
-  await page.goto('/settings');
+  await page.goto('/settings/readiness');
   const section = page.locator('section#ready');
   await expect(
     section.getByRole('heading', { name: 'Readiness' }),

@@ -143,9 +143,9 @@ test('settings: the screened pool can be switched on', async ({
   });
   expect(saved.ok(), await saved.text()).toBeTruthy();
 
-  await page.goto('/settings');
+  await page.goto('/settings/trading');
   await expect(
-    page.getByRole('heading', { name: 'API keys and data' })
+    page.getByRole('heading', { name: 'Trading' })
   ).toBeVisible({ timeout: 60_000 });
 
   // Both options are selectable. The save lands in a pending version —

@@ -28,24 +28,20 @@ test('settings: sections, key rows and the unsaved-changes bar', async ({
     page.getByText('Keys are stored encrypted on this computer')
   ).toBeVisible();
 
-  // The other sections from the design are all reachable in the list.
-  for (const name of [
-    'Trading',
-    'Risk limits',
-    'Entry rules and checks',
-    'Earnings',
-    'Model and reviews',
-    'Schedule',
-    'Settings history',
-    'Paper account',
-  ]) {
-    await expect(
-      page.getByRole('heading', { name, exact: true })
-    ).toBeVisible();
-  }
+  // 056: one section per route — the section list (desktop) or the
+  // Section select (phone) reaches every section.
+  await expect(
+    page
+      .getByRole('link', { name: 'Trading', exact: true })
+      .or(page.locator('select[aria-label="Section"]'))
+  ).toBeVisible();
 
   // An edit marks the row changed, shows Reset and opens the
   // unsaved-changes bar, which demands a reason before Save.
+  await page.goto('/settings/model');
+  await expect(
+    page.getByRole('heading', { name: 'Model and reviews' })
+  ).toBeVisible();
   await page.locator('#brief').click();
   await expect(page.getByText('Changed from').first()).toBeVisible();
   await expect(page.getByText('1 unsaved change')).toBeVisible();
@@ -64,9 +60,9 @@ test('settings: RSI from ≥ to is invalid and blocks Save', async ({
 }, testInfo) => {
   const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
 
-  await page.goto('/settings');
+  await page.goto('/settings/rules');
   await expect(
-    page.getByRole('heading', { name: 'API keys and data' })
+    page.getByRole('heading', { name: 'Entry rules and checks' })
   ).toBeVisible({ timeout: 60_000 });
 
   // The RSI row's "from" box is the first in the Entry rules section:
@@ -79,7 +75,8 @@ test('settings: RSI from ≥ to is invalid and blocks Save', async ({
   await expect(
     page.getByText('RSI from must be below RSI to').first()
   ).toBeVisible();
-  await page.locator('#brief').click(); // make the form dirty
+  // The RSI edit already makes the form dirty; Save stays off while
+  // the value is invalid.
   await expect(
     page.getByRole('button', { name: /^Save as v/ })
   ).toBeDisabled();

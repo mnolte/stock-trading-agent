@@ -16,7 +16,7 @@ test('new error notification', async ({ page, request, baseURL }) => {
       url: 'http://localhost/',
     },
   });
-  await page.goto('/settings');
+  await page.goto('/settings/notifications');
   const notify = page.locator('section#notify');
   const row = notify.getByText(/New error: e2e shot/).first();
   await expect(row).toBeVisible({ timeout: 60_000 });

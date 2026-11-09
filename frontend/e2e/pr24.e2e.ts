@@ -32,8 +32,7 @@ async function signIn(page: import('@playwright/test').Page) {
 
 test('Settings → Server renders the design rows', async ({ page }) => {
   await signIn(page);
-  await page.goto('/settings');
-  await page.getByRole('link', { name: 'Server' }).click();
+  await page.goto('/settings/server');
   const server = page.locator('#server');
   await expect(
     server.getByRole('heading', { name: 'This server' }),
