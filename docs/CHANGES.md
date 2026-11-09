@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-09 — [057] Log reviews on fingerprints with line breaks
+
+- `POST /api/logs/review` ran the fingerprint through `_one_line`,
+  which rewrote line breaks to spaces. Fingerprints of multi-line
+  messages (tracebacks, trailing newlines) kept theirs in the index,
+  so the stored review never matched and the problem stayed
+  "unreviewed". The fingerprint is now stored verbatim — it is a join
+  key, never rendered — and the Logs summary resolves the latest
+  review per fingerprint deterministically.
+
 ## 2026-11-09 — [056] UX pass on the running app
 
 From `docs/analysis/056-ux-review.md`. Behaviour of the GUI only; nothing in trading, risk or data changes.
