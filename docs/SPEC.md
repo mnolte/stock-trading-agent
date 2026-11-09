@@ -1848,7 +1848,9 @@ Decision v5 keeps everything v4 does and changes the following. Built as PR 37; 
 - Entry selection (PR 33) is unchanged and still discounts confidence by `confidence_weight`.
 
 **Trend gate in code** (v5).
-- A candidate whose `trend_1h` or `regime_trend` isn't `up` gets no model call (`no_call` · `checks`). It is the v4 `checks_gate` with `trend_daily` left to the model. The prompt rule the model broke for KO becomes a rule it can't break.
+- A candidate whose `trend_1h` isn't `up`, or whose `regime_trend` isn't in `decision.v5.trend_gate_regimes`, gets no model call (`no_call` · `checks`). It is the v4 `checks_gate` with `trend_daily` left to the model. The prompt rule the model broke for KO becomes a rule it can't break.
+- `decision.v5.trend_gate_regimes` (default `[up, sideways]`, strategy override; decided 9 Nov, item 058). Until 9 November only `up` passed, so a sideways market meant no entries at all: on 9 November every candidate that passed the rules in a "Sideways · high vol" regime (SBUX, HD, ACN, NKE, WMT) was stopped here. `down` never passes, and `trend_1h` must still be `up`. The model sees `regime_trend` `sideways` as a conflict (decision.v5 prompt, Trend), and with `regime_volatility` `high` the prompt asks for every check to agree, so in a sideways, high-volatility regime most of these calls are expected to end in skips; the calls cost and are measured like any other.
+- The gate's detail names the failing check and the allowed set: `trend_gate: regime_trend=down (allowed up, sideways)`.
 - `decision.v5.trend_gate` (default true) is a strategy override, because the one week of data so far went the other way: `trend_1h` up 14% target-first against mixed 24%. The counterfactual touches below measure what the gate removes.
 
 **Counterfactual touches** (every strategy, from PR 37). Missed opportunities can't be measured today: options removed by the room filter are stored as an id and a reason only, and candidates stopped by the rules pre-filter or a gate get no options at all.
