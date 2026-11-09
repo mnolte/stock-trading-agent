@@ -4,13 +4,15 @@ Newest first.
 
 ## 2026-11-09 — [058] Live data of 9 November
 
-From the live-data report of 9 November (Devin): a quiet day, flat by design under the v5 trend gate. Four small fixes and a change to the trend gate.
+From the live-data report of 9 November (Devin): a quiet day, flat by design under the v5 trend gate. Four small fixes, a change to the trend gate and decision.v6.
 
 - **Option outcomes, missing bars:** fetch the window's bars once from Alpaca's historical endpoint; if still not covered 2 sessions after the 5-session time (`outcomes.touches_give_up_sessions`), the options get `unavailable` and the row is done, so its verdict can draft. At most one try per row per session. Before, 17 rows were retried every cycle and their verdicts stayed pending until the bars were pruned (about 120 sessions).
 - **`price_stale` warning:** names the last IEX trade's age and price.
 - **Frontend after a rebuild:** a failed dynamic import reloads the page once and logs INFO; no error, no notification.
 - **Restore test "not set up":** an earlier failure isn't shown as the current state.
 - **Trend gate (decision v5), Marc's decision:** live now passes candidates in an `up` or `sideways` regime (`decision.v5.trend_gate_regimes`, default `[up, sideways]`, strategy override); `down` never, and `trend_1h` must still be `up`. On 9 November the gate had stopped all 7 candidates that passed the rules. The v5 prompt is unchanged: it treats a sideways regime as a conflict and, with high volatility, asks every check to agree, so the first effect is model calls that mostly end in skips while the regime stays high-volatility.
+- **Decision v6** (`prompts/decision.v6.md`, Marc's decision): decision.v5 with the trend and volatility rules rewritten for a sideways market. A stock that leads a sideways market (`trend_daily` up, `momentum` strong) may be entered; in a high-volatility sideways market it must lead, every other check must agree, and its target must be at most 2 ATR away. Backed by the code check `sideways_rule` (`decision.v6.sideways_max_target_atr`, 2.0). v5 contract reused; eval cases added; live switches to v6 once the eval passes (no shadow period).
+- Known prompt versions now read `decision.v1`–`v6` (the sentence still said v1–v3).
 
 ## 2026-11-09 — [057] Log reviews on fingerprints with line breaks
 

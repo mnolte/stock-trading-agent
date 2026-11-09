@@ -2,13 +2,14 @@
 
 Kickoff for Devin. Start the session with: "Build docs/kickoffs/058-fix-live-data-9-nov.md."
 
-From your live-data report of Monday 9 November (paper; flat since 6 Nov, 219 candidate decisions, all `no_call`). The engine did what the spec says; four small things need fixing, two need a query first, and Marc decided to let the v5 trend gate pass a sideways regime. Spec text: `docs/CHANGES.md` entry [058].
+From your live-data report of Monday 9 November (paper; flat since 6 Nov, 219 candidate decisions, all `no_call`). The engine did what the spec says; four small things need fixing, two need a query first, and Marc decided to let the v5 trend gate pass a sideways regime, with a new prompt version (decision.v6) to judge those candidates. Spec text: `docs/CHANGES.md` entry [058].
 
 ```text
 [058] Live data of 9 November. Goal: no row is retried every cycle for
 months, a price_stale warning says how stale, a rebuild doesn't raise an
-error, a restore test that isn't set up doesn't show an old failure, and
-the v5 trend gate lets candidates through in a sideways regime.
+error, a restore test that isn't set up doesn't show an old failure, the
+v5 trend gate lets candidates through in a sideways regime, and
+decision.v6 can judge them.
 Start from the latest main.
 
 Read first:
@@ -16,7 +17,9 @@ Read first:
 2. docs/CHANGES.md [058] and the SPEC.md text it names: Outcome tracking →
    Option outcomes → Missing bars; Alpaca integration → Market price (the
    price_stale warning); Logging → Frontend errors → New version loaded;
-   VPS deployment → Backups → Not set up; Decision v5 → Trend gate in code.
+   VPS deployment → Backups → Not set up; Decision v5 → Trend gate in code;
+   Decision v6 (the whole section) and backend/prompts/decision.v6.md
+   (diff it against decision.v5.md: only lines 1, 28 and 37–46 differ).
 
 Move this kickoff to docs/kickoffs/archive/ with git mv in your first PR.
 
@@ -114,6 +117,35 @@ STEP 5 · trend gate allows sideways (Marc, 9 Nov; its own PR, trading path)
 - After the merge, in the PR or a comment after one full session: how many
   sideways candidates got a call, the actions, and the model cost.
 
+STEP 6 · decision.v6 (its own PR, after step 5; trading path)
+
+- The prompt file and its manifest hash are in the spec PR; don't edit
+  them. Make decision.v6 a known version with the v5 contract:
+  decide/prompt.py (is_v5 → true for v5 and later, or an explicit
+  "v5 contract" set), the snapshot builder, schema, EV gate, trend gate,
+  exit consistency, overnight rules and replay all treat v6 as v5. Search
+  for every "decision.v5" string and is_v5 use; list them in the PR.
+- Code check sideways_rule (v6 entries only), after the model answers and
+  before the risk gates: regime_trend sideways and (trend_daily not up, or
+  momentum not strong, or regime_volatility high and the chosen option's
+  target_atr > decision.v6.sideways_max_target_atr) → final skip, change
+  reason sideways_rule, warning changed_by_code. Add
+  decision.v6.sideways_max_target_atr: 2.0 to config.example.yaml in this
+  PR. Show the reason as words (labels map from 056): "sideways market:
+  stock not leading" or "sideways, high volatility: target over 2 ATR".
+- Eval: eval/decision_v4.json gains the sideways cases in SPEC.md →
+  Decision v6 → Eval, with predicates; v5 cases must give v6 the same
+  pass result as v5. Run make eval-decision PROMPTS=decision.v5,decision.v6
+  (YES=1, within its cost cap) and put the report in the PR.
+- Settings → Model and reviews → Decisions: v6 appears in the prompt
+  picker with its one-line description from the file's header.
+- Tests first: v6 resolves to the v5 contract; sideways_rule turns each of
+  the three failing cases into a skip and leaves a leading stock with a
+  1.6 ATR target as an enter; v5 strategies never get sideways_rule;
+  startup accepts prompt: decision.v6.
+- Live: don't change the live prompt. Marc switches to decision.v6 in
+  Settings once the eval report is in the PR.
+
 Rules: no network in tests; no datetime.now() in engine code; prompts
 untouched; one Alembic migration if the touches retry needs a column (never
 edit a merged one); the price threshold is not changed here, and the
@@ -122,6 +154,8 @@ trend gate changes only as step 5 says.
 Done when: the step 0 answers are in the PR; the backfill log line shows
 "0 waiting" for rows older than the give-up time; a price_stale line names
 the age; a sideways-regime candidate with trend_1h up gets a model call;
+decision.v6 is selectable, passes the eval set and sideways_rule blocks
+the three cases;
 restarting the frontend build with a tab open logs one INFO and no
 error; Settings → Server says "not set up" for the restore test; make test
 passes.
@@ -136,6 +170,7 @@ The report of 9 November showed a healthy, flat day: 219 candidate decisions ove
 - **Stale frontend chunk logged as ERROR** at 15:32 UTC after a rebuild, with a warning notification. The reload already happens; only the level is wrong.
 - **Restore test "last failed Oct 1"** while it isn't set up (spec, item 050: not set up is not a failure).
 - **The trend gate stopped every candidate that passed the rules** (SBUX, HD, ACN, NKE, WMT): v5 passed only an `up` regime, so a sideways market meant no entries at all. Marc decided on 9 November to let `sideways` through for live. `trend_1h` must still be up and a `down` regime never passes. Expect the model to skip most of these while the regime is also high-volatility: the v5 prompt then asks for every check to agree. Insights → "What each filter removed" keeps measuring what the gate still removes.
+- **decision.v5 would still skip them**: it treats a regime that isn't up as a conflict and, with high volatility, asks every check to agree. Marc asked on 9 November for a new prompt version that relaxes this for a sideways market: decision.v6 (step 6).
 
 ## Not in this item
 
