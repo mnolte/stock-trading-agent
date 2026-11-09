@@ -54,6 +54,15 @@ describe('installErrorHooks', () => {
       '/api/logs/client',
       expect.objectContaining({ keepalive: true }),
     );
+    // The reload is expected after a rebuild — it reports at info level
+    // so the backend logs INFO, not an error group (item 058).
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(String(init.body)) as {
+      level?: string;
+      message: string;
+    };
+    expect(body.level).toBe('info');
+    expect(body.message).toContain('frontend reloaded after a new build');
   });
 
   it('lets a repeat failure inside the guard window reach the boundary', () => {

@@ -1396,7 +1396,13 @@ def compute_insights(
         target = sum(1 for r in group if r.touch == "target")
         stop = sum(1 for r in group if r.touch == "stop")
         neither = sum(1 for r in group if r.touch == "neither")
-        decided = sum(1 for r in group if r.touch is not None)
+        # "unavailable" is not a decided touch either — the bars never
+        # arrived, so it counts like a pending one (item 058).
+        decided = sum(
+            1
+            for r in group
+            if r.touch is not None and r.touch != "unavailable"
+        )
         rs = [r.r_made for r in group if r.r_made is not None]
         filters_out.append(
             {

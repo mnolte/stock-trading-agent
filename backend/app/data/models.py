@@ -85,6 +85,22 @@ class Quote:
             return "price_suspect"
         return None
 
+    def stale_detail(
+        self, *, now: datetime, max_age_seconds: float
+    ) -> str:
+        """Why the market price reads stale, in words for the WARNING —
+        the last IEX trade's age and price (docs/SPEC.md, Market price)."""
+        ts = self.trade_timestamp
+        if ts is None or not self.last.is_finite() or self.last <= 0:
+            return "no IEX last trade"
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        age = int((now - ts).total_seconds())
+        return (
+            f"last IEX trade {age} s old at ${self.last:.2f}, "
+            f"limit {int(max_age_seconds)} s"
+        )
+
     def quote_plausible(self, max_deviation_pct: Decimal) -> bool:
         """Both sides of the IEX book present, timestamped and within the
         deviation band of the market price (docs/SPEC.md, Entries — IEX

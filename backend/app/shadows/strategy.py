@@ -72,6 +72,7 @@ OVERRIDE_V4: dict[str, tuple[str, ...]] = {
 OVERRIDE_V5: dict[str, tuple[str, ...]] = {
     "entry_gate": ("decision", "entry_gate"),
     "trend_gate": ("decision", "v5", "trend_gate"),
+    "trend_gate_regimes": ("decision", "v5", "trend_gate_regimes"),
 }
 # Entry selection (PR 33): a shadow can test expected_profit next to
 # live. ``last_slot_min_ev_r`` may be overridden to None (off).
@@ -449,6 +450,23 @@ def validate_new_strategy(
                                 f"{label}: must be floor or ev"
                             )
                             continue
+                    elif item == "trend_gate_regimes":
+                        # A non-empty subset of the regimes the gate may
+                        # pass; ``down`` is never offered (docs/SPEC.md,
+                        # Decision v5 — Trend gate in code).
+                        if (
+                            not isinstance(value, list)
+                            or not value
+                            or not all(
+                                v in ("up", "sideways") for v in value
+                            )
+                        ):
+                            errors.append(
+                                f"{label}: a non-empty list of up, sideways"
+                            )
+                            continue
+                        overrides[str(item)] = list(dict.fromkeys(value))
+                        continue
                     elif not isinstance(value, bool):
                         errors.append(
                             f"{label}: must be true or false"

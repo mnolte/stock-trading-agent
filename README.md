@@ -78,6 +78,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `readiness.*` | What counts as ready and the checks behind it |
 | `insights.*` | Insights snapshots and their schedule |
 | `inspector.*` | LLM call inspector limits |
+| `outcomes.*` | Option-touch backfill: `outcomes.touches_give_up_sessions` is how old the five-session window may be before missing touches become `unavailable` |
 | `logging.*` | Log levels, retention and client-error rate limit |
 | `security.*` | Host allowlist, body caps, export and sender caps |
 | `auth.*` | Sign-in session lengths and lockout policy |

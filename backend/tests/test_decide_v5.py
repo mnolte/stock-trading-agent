@@ -774,7 +774,13 @@ async def test_removed_and_rules_blocked_options_get_touches(
 
     from app.market.clock import FakeClock
 
-    from tests.test_outcomes import DELAY, _outcome, _seed_bars, _worker
+    from tests.test_outcomes import (
+        DELAY,
+        _outcome,
+        _seed_bars,
+        _seed_window_coverage,
+        _worker,
+    )
 
 
     decision_time = datetime(2026, 10, 15, 14, 46, tzinfo=UTC)
@@ -813,6 +819,7 @@ async def test_removed_and_rules_blocked_options_get_touches(
             (datetime(2026, 10, 22, 14, 40, tzinfo=UTC), 425, 426, 424, 425),
         ],
     )
+    _seed_window_coverage(session_factory)
     with session_factory() as session:
         worker.fill(session, clock.now())
         session.commit()
@@ -1039,3 +1046,165 @@ async def test_v5_trend_gate_blocks_model_call(
     assert "trend_1h" in detail
     # No model call was made — the strategy stayed at zero calls.
     assert report.strategies[0].calls == 0
+
+
+# ----------------------------------------------------------------------
+# trend_gate_regimes (item 058 step 5): the gate passes the configured
+# regimes — up and sideways by default; down never.
+
+
+def test_v5_config_trend_gate_regimes_default_and_override() -> None:
+    assert v5_config(AppConfig()).trend_gate_regimes == ("up", "sideways")
+
+    config = AppConfig()
+    config.yaml["decision"]["v5"]["trend_gate_regimes"] = ["up"]
+    assert v5_config(config).trend_gate_regimes == ("up",)
+
+    # ``down`` is filtered however the yaml reads it.
+    config.yaml["decision"]["v5"]["trend_gate_regimes"] = ["up", "down"]
+    assert v5_config(config).trend_gate_regimes == ("up",)
+
+    # A config without the key (an old config.yaml) falls back to the
+    # default.
+    config.yaml["decision"]["v5"].pop("trend_gate_regimes")
+    assert v5_config(config).trend_gate_regimes == ("up", "sideways")
+
+
+def test_trend_gate_detail_sideways_passes_down_fails() -> None:
+    sideways = {
+        "checks": {
+            "trend_1h": "up",
+            "regime_trend": "sideways",
+            "trend_daily": "down",
+        }
+    }
+    assert trend_gate_detail(sideways) is None
+
+    down = {
+        "checks": {"trend_1h": "up", "regime_trend": "down"}
+    }
+    detail = trend_gate_detail(down)
+    assert detail == "trend_gate: regime_trend=down (allowed up, sideways)"
+
+    # ``down`` fails even if a caller passes a wider set.
+    assert trend_gate_detail(down, regimes=("up", "sideways", "down"))
+
+    # trend_1h still must be up.
+    mixed = {"checks": {"trend_1h": "mixed", "regime_trend": "up"}}
+    detail = trend_gate_detail(mixed)
+    assert detail is not None and "trend_1h=mixed" in detail
+
+
+async def _v5_gate_shadow(
+    session_factory: Any,
+    *,
+    regime_trend: str,
+    price: float = 102.0,
+    overrides: dict[str, Any] | None = None,
+) -> tuple[Any, Any]:
+    """One v5 shadow decision; returns the row and the runner report.
+
+    ``price`` 102 with ema20 101 / ema50 100 makes ``trend_1h`` up; the
+    regime comes from the snapshot's ``regime.trend``."""
+    from datetime import timedelta
+
+    from app.db.models import ShadowDecision, Strategy
+    from app.decide.client import FakeDecisionClient
+    from app.market.clock import FakeClock
+    from sqlalchemy import select
+
+    from tests.test_shadows import CYCLE, _runner, _seed, _snap
+
+    snap = _snap("MSFT", price=price)
+    snap["regime"] = {"trend": regime_trend, "volatility": "normal"}
+    cycle_id = _seed(session_factory, [("MSFT", "skip", None, snap)])
+    with session_factory() as session:
+        s = Strategy(
+            name="v5 gate",
+            kind="llm",
+            prompt_version="decision.v5",
+            model="gpt-4o-mini",
+            temperature=0.0,
+            overrides=overrides,
+            status="active",
+            created_at=CYCLE,
+        )
+        session.add(s)
+        session.commit()
+        sid = s.id
+    clock = FakeClock(CYCLE + timedelta(minutes=1))
+    runner = _runner(
+        session_factory,
+        clock,
+        clients={
+            "v5 gate": FakeDecisionClient(enter_symbols={"MSFT"})
+        },
+    )
+    report = await runner.after_cycle(cycle_id)
+    with session_factory() as session:
+        row = session.execute(
+            select(ShadowDecision).where(
+                ShadowDecision.strategy_id == sid,
+                ShadowDecision.symbol == "MSFT",
+            )
+        ).scalar_one()
+    return row, report
+
+
+@pytest.mark.anyio
+async def test_v5_trend_gate_passes_sideways_to_the_model(
+    session_factory: Any,
+) -> None:
+    """trend_1h up + regime_trend sideways reaches the model call —
+    the sideways regime no longer blocks every candidate (item 058)."""
+    row, report = await _v5_gate_shadow(
+        session_factory, regime_trend="sideways"
+    )
+    assert report.strategies[0].calls == 1
+    assert row.no_call_reason != "checks"
+
+
+@pytest.mark.anyio
+async def test_v5_trend_gate_still_blocks_down(
+    session_factory: Any,
+) -> None:
+    """regime_trend down never passes; the detail names the failed
+    field and the allowed set."""
+    row, report = await _v5_gate_shadow(
+        session_factory, regime_trend="down"
+    )
+    assert report.strategies[0].calls == 0
+    assert row.no_call_reason == "checks"
+    detail = ((row.validation_result or {}).get("error") or "")
+    assert "regime_trend=down (allowed up, sideways)" in detail
+
+
+@pytest.mark.anyio
+async def test_v5_trend_gate_still_requires_trend_1h_up(
+    session_factory: Any,
+) -> None:
+    """trend_1h mixed with an allowed regime still gets no model call."""
+    row, report = await _v5_gate_shadow(
+        session_factory, regime_trend="up", price=100.0
+    )
+    assert report.strategies[0].calls == 0
+    assert row.no_call_reason == "checks"
+    detail = ((row.validation_result or {}).get("error") or "")
+    assert "trend_1h=mixed" in detail
+
+
+@pytest.mark.anyio
+async def test_v5_trend_gate_regimes_strategy_override(
+    session_factory: Any,
+) -> None:
+    """A strategy override of [up] restores the old behaviour: a
+    sideways regime gets no model call."""
+    row, report = await _v5_gate_shadow(
+        session_factory,
+        regime_trend="sideways",
+        overrides={"trend_gate_regimes": ["up"]},
+    )
+    assert report.strategies[0].calls == 0
+    assert row.no_call_reason == "checks"
+    detail = ((row.validation_result or {}).get("error") or "")
+    assert "regime_trend=sideways (allowed up)" in detail

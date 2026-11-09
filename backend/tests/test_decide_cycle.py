@@ -1,6 +1,7 @@
 """The decision cycle end to end on fakes: stored decisions, no network."""
 
 import json
+import logging
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -483,7 +484,16 @@ async def test_scheduled_cycle_outcome_failure_is_stored_with_reason(
     session_factory: sessionmaker[Session],
 ) -> None:
     class BrokenOutcomes:
-        def fill(self, session: Session, now: datetime) -> None:
+        async def prefetch_touches(self, now: datetime) -> None:
+            return None
+
+        def fill(
+            self,
+            session: Session,
+            now: datetime,
+            *,
+            fetch_report: object = None,
+        ) -> None:
             raise RuntimeError("outcome failure")
 
     runner = _runner(session_factory, _evaluation(), universe=["MSFT"])
@@ -577,6 +587,41 @@ async def test_cycle_rejects_unusable_price_before_model(
     assert decision.input_snapshot is not None
     provenance = cast("dict[str, object]", decision.input_snapshot["quote"])
     assert provenance["fetched_at"] == NOW_13H.isoformat()
+
+
+async def test_price_stale_warning_names_age_and_price(
+    session_factory: sessionmaker[Session],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The price_stale WARNING says how stale the last IEX trade is and
+    at what price, so a quiet name reads differently from a feed outage
+    (docs/SPEC.md, Market price — item 058)."""
+
+    class Quotes:
+        async def fetch_quotes(self, symbols: list[str]) -> DataResult[dict[str, Quote]]:
+            return DataResult(
+                data={
+                    "MSFT": _quote(
+                        last="419.50",
+                        trade_ts=NOW_13H - timedelta(seconds=61),
+                    )
+                }
+            )
+
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", "pass")),
+        sources=_sources(quotes=Quotes()), universe=["MSFT"],
+    )
+    with caplog.at_level(logging.WARNING):
+        report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    messages = [
+        r.getMessage() for r in caplog.records
+        if "price_stale" in r.getMessage()
+    ]
+    assert any(
+        "MSFT" in m and "61 s old" in m and "419.50" in m for m in messages
+    ), messages
 
 
 @pytest.mark.parametrize(

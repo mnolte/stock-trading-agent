@@ -1268,7 +1268,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 automatic=True,
             )
 
-        outcome_worker.fill(session, clock.now())
+        fetch_report = await outcome_worker.prefetch_touches(clock.now())
+        outcome_worker.fill(session, clock.now(), fetch_report=fetch_report)
         if exec_state.account is not None:
             outcome_worker.write_equity_snapshot(
                 session,

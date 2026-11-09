@@ -27,6 +27,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, load_only, sessionmaker
 
 from app.config import AppConfig
+from app.data.aggregate import session_bars
 from app.data.alpaca import AlpacaDataClient
 from app.data.cache import _naive_utc
 from app.data.models import Bar5m, CalendarDay
@@ -57,8 +58,24 @@ _PRICE_CANDIDATES = 8
 _TOUCH_STOP = "stop"
 _TOUCH_TARGET = "target"
 _TOUCH_NEITHER = "neither"
+# Option touches could not be measured — the window's bars never
+# arrived (docs/SPEC.md, Option outcomes — Missing bars).
+_TOUCH_UNAVAILABLE = "unavailable"
+
+# ``_fill_option_touches`` / ``_fill_shadow_touches`` results.
+_TOUCHES_FILLED = "filled"
+_TOUCHES_MISSING = "missing"  # no bars for the window — fetch or give up
+_TOUCHES_WAITING = "waiting"  # bars there; the traded touch is pending
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TouchFetchReport:
+    """Rows whose missing window bars were fetched in one pass."""
+
+    decisions: int = 0
+    shadows: int = 0
 
 
 @dataclass
@@ -295,9 +312,16 @@ class OutcomeWorker:
             day = prev.date
         return day
 
-    def fill(self, session: Session, now: datetime | None = None) -> OutcomeReport:
+    def fill(
+        self,
+        session: Session,
+        now: datetime | None = None,
+        *,
+        fetch_report: TouchFetchReport | None = None,
+    ) -> OutcomeReport:
         """One pass over every unfilled outcome target and open trade."""
         now = now or self.clock.now()
+        fetched = fetch_report or TouchFetchReport()
         report = OutcomeReport()
         if self.market_data is None or self.calendar is None:
             return report
@@ -359,7 +383,7 @@ class OutcomeWorker:
                 Decision.options.is_not(None),
             )
         ).all()
-        filled_n = missing_n = 0
+        filled_n = waiting_n = unavailable_n = 0
         for decision, scheduled, outcome in stale:
             basis = _aware_utc(
                 outcome.price_5sessions_at or scheduled
@@ -370,16 +394,28 @@ class OutcomeWorker:
                 outcome.option_touches = {}
                 filled_n += 1
                 continue
-            if self._fill_option_touches(
+            result = self._fill_option_touches(
                 session, decision, outcome, _aware_utc(scheduled)
-            ):
+            )
+            if result == _TOUCHES_FILLED:
                 filled_n += 1
+            elif result == _TOUCHES_MISSING and self._touches_give_up(
+                outcome.price_5sessions_at or scheduled, now
+            ):
+                # Still no bars past the give-up window: every option
+                # without a result is "unavailable" and the row is done
+                # (docs/SPEC.md, Option outcomes — Missing bars).
+                outcome.option_touches = self._unavailable_touches(
+                    decision.options or {}
+                )
+                unavailable_n += 1
             else:
-                missing_n += 1
+                waiting_n += 1
         if stale:
             logger.info(
-                "option-touches backfill: %d rows filled, %d missing bars",
-                filled_n, missing_n,
+                "option-touches backfill: %d filled, %d fetched, "
+                "%d waiting, %d unavailable",
+                filled_n, fetched.decisions, waiting_n, unavailable_n,
             )
         session.flush()
 
@@ -394,7 +430,7 @@ class OutcomeWorker:
                 ShadowDecision.options.is_not(None),
             )
         ).all()
-        sf_filled = 0
+        sf_filled = sf_waiting = sf_unavailable = 0
         for srow, scheduled in shadow_stale:
             decision_time = _aware_utc(scheduled)
             targets = self._targets(decision_time)
@@ -407,11 +443,23 @@ class OutcomeWorker:
                 srow.option_touches = {}
                 sf_filled += 1
                 continue
-            if self._fill_shadow_touches(srow, decision_time, five):
+            result = self._fill_shadow_touches(srow, decision_time, five)
+            if result == _TOUCHES_FILLED:
                 sf_filled += 1
-        if sf_filled:
+            elif result == _TOUCHES_MISSING and self._touches_give_up(
+                five, now
+            ):
+                srow.option_touches = self._unavailable_touches(
+                    srow.options or {}
+                )
+                sf_unavailable += 1
+            else:
+                sf_waiting += 1
+        if shadow_stale:
             logger.info(
-                "shadow option-touches backfill: %d rows filled", sf_filled
+                "shadow option-touches backfill: %d filled, %d fetched, "
+                "%d waiting, %d unavailable",
+                sf_filled, fetched.shadows, sf_waiting, sf_unavailable,
             )
         session.flush()
 
@@ -540,37 +588,262 @@ class OutcomeWorker:
             touches[oid] = touch
         return touches
 
+    @staticmethod
+    def _touch_options(column: dict[str, Any]) -> list[dict[str, Any]]:
+        """Offered and removed options — both get a verdict (the
+        counterfactual touches, docs/SPEC.md, Decision v5)."""
+        options_raw: list[dict[str, Any]] = []
+        for key in ("options", "removed"):
+            entries = column.get(key)
+            if isinstance(entries, list):
+                options_raw += [o for o in entries if isinstance(o, dict)]
+        return options_raw
+
+    @classmethod
+    def _unavailable_touches(cls, column: dict[str, Any]) -> dict[str, object]:
+        """Every option without a result gets "unavailable" — the row is
+        done and its verdict can draft (docs/SPEC.md, Missing bars)."""
+        touches: dict[str, object] = {}
+        for option in cls._touch_options(column):
+            raw_id = option.get("id") or option.get("option_id")
+            if raw_id is not None:
+                touches[str(raw_id)] = _TOUCH_UNAVAILABLE
+        return touches
+
+    def _touches_give_up(
+        self, five_session_at: datetime, now: datetime
+    ) -> bool:
+        """True when the 5-session time is more than
+        ``outcomes.touches_give_up_sessions`` trading sessions ago."""
+        give_up = int(
+            self.config.get(
+                "outcomes", "touches_give_up_sessions", default=2
+            )
+        )
+        if self.calendar is None:
+            return False
+        day = _aware_utc(five_session_at).astimezone(NY_TZ).date()
+        today = now.astimezone(NY_TZ).date()
+        sessions = 0
+        cursor = day
+        while sessions <= give_up:
+            nxt = self.calendar.next_trading_day(cursor)
+            if nxt is None or nxt.date > today:
+                break
+            sessions += 1
+            cursor = nxt.date
+        return sessions > give_up
+
+    def _window_sessions(
+        self, start: datetime, end: datetime
+    ) -> list[CalendarDay]:
+        """Trading sessions overlapping [start, end], time-ordered."""
+        assert self.calendar is not None  # noqa: S101 - internal invariant
+        start_u = _aware_utc(start)
+        end_u = _aware_utc(end)
+        sessions: list[CalendarDay] = []
+        session = self.calendar.session_for(start_u.astimezone(NY_TZ).date())
+        if session is None:
+            session = self.calendar.next_trading_day(
+                start_u.astimezone(NY_TZ).date()
+            )
+        while session is not None:
+            if session.open.astimezone(UTC) >= end_u:
+                break
+            if session.close.astimezone(UTC) > start_u:
+                sessions.append(session)
+            nxt = self.calendar.next_trading_day(session.date)
+            if nxt is None:
+                break
+            session = nxt
+        return sessions
+
+    async def prefetch_touches(
+        self, now: datetime | None = None
+    ) -> TouchFetchReport:
+        """Fetch once per session the 5m bars a touches row is missing.
+
+        For every stale touches row whose window isn't covered by stored
+        bars, fetch that symbol's bars for the window through the data
+        limiter and store them, so ``fill`` can retry the touches
+        (docs/SPEC.md, Option outcomes — Missing bars). A row is tried at
+        most once per session: ``option_touches_tried_at`` is committed
+        before any network call (hard rule 13).
+        """
+        report = TouchFetchReport()
+        now = now or self.clock.now()
+        if self.market_data is None or self.calendar is None:
+            return report
+        bar_source = getattr(
+            getattr(self.market_data, "sources", None), "bars", None
+        )
+        if bar_source is None:
+            return report
+        cutoff = self._retention_cutoff(now)
+        today = now.astimezone(NY_TZ).date()
+
+        # (kind, symbol, start, end, sessions) for rows due a fetch.
+        wanted: list[
+            tuple[str, str, datetime, datetime, list[CalendarDay]]
+        ] = []
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(Decision, Cycle.scheduled_time, Outcome)
+                .join(Cycle, Decision.cycle_id == Cycle.id)
+                .join(Outcome, Outcome.decision_id == Decision.id)
+                .where(
+                    Outcome.option_touches.is_(None),
+                    Outcome.price_5sessions.is_not(None),
+                    Decision.options.is_not(None),
+                )
+            ).all()
+            for decision, scheduled, outcome in rows:
+                if not self._touch_options(decision.options or {}):
+                    continue
+                if outcome.price_5sessions_at is None:
+                    continue
+                decision_time = _aware_utc(scheduled)
+                end = _aware_utc(outcome.price_5sessions_at)
+                basis = end.astimezone(NY_TZ).date()
+                if cutoff is not None and basis < cutoff:
+                    continue
+                tried = outcome.option_touches_tried_at
+                if (
+                    tried is not None
+                    and _aware_utc(tried).astimezone(NY_TZ).date() == today
+                ):
+                    continue
+                sessions = self._window_sessions(decision_time, end)
+                if not sessions:
+                    continue
+                covered = self.market_data.bars_cache.covered_session_dates(
+                    decision.symbol, sessions
+                )
+                if (
+                    covered >= {s.date for s in sessions}
+                    and self.market_data.get_5m_bars(
+                        decision.symbol, decision_time, end
+                    )
+                ):
+                    continue
+                outcome.option_touches_tried_at = _naive_utc(now)
+                wanted.append(
+                    ("decisions", decision.symbol, decision_time, end, sessions)
+                )
+
+            shadow_rows = session.execute(
+                select(ShadowDecision, Cycle.scheduled_time)
+                .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
+                .where(
+                    ShadowDecision.option_touches.is_(None),
+                    ShadowDecision.options.is_not(None),
+                )
+            ).all()
+            for srow, scheduled in shadow_rows:
+                if not self._touch_options(srow.options or {}):
+                    continue
+                decision_time = _aware_utc(scheduled)
+                five = next(
+                    (
+                        t
+                        for f, _a, t in self._targets(decision_time)
+                        if f == "price_5sessions"
+                    ),
+                    None,
+                )
+                if five is None or now < five + self._delay:
+                    continue
+                if cutoff is not None and five.astimezone(NY_TZ).date() < cutoff:
+                    continue
+                tried = srow.option_touches_tried_at
+                if (
+                    tried is not None
+                    and _aware_utc(tried).astimezone(NY_TZ).date() == today
+                ):
+                    continue
+                sessions = self._window_sessions(decision_time, five)
+                if not sessions:
+                    continue
+                covered = self.market_data.bars_cache.covered_session_dates(
+                    srow.symbol, sessions
+                )
+                if (
+                    covered >= {s.date for s in sessions}
+                    and self.market_data.get_5m_bars(
+                        srow.symbol, decision_time, five
+                    )
+                ):
+                    continue
+                srow.option_touches_tried_at = _naive_utc(now)
+                wanted.append(
+                    ("shadows", srow.symbol, decision_time, five, sessions)
+                )
+            session.commit()  # tried marks are durable before any fetch
+
+        for kind, symbol, start, end, sessions in wanted:
+            try:
+                fetched = await bar_source.fetch_5m_bars(
+                    [symbol], start, end
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not stop the rest
+                logger.exception(
+                    "option-touches fetch raised for %s", symbol
+                )
+                continue
+            if fetched.error is not None:
+                logger.warning(
+                    "option-touches fetch failed for %s: %s",
+                    symbol,
+                    fetched.error,
+                )
+                continue
+            in_session = session_bars(fetched.data or [], sessions)
+            if in_session and self.market_data.bars_cache.store(in_session):
+                if kind == "decisions":
+                    report.decisions += 1
+                else:
+                    report.shadows += 1
+        return report
+
     def _fill_option_touches(
         self,
         session: Session,
         decision: Decision,
         outcome: Outcome,
         decision_time: datetime,
-    ) -> bool:
-        """First stop/target touch per offered option; True when every
-        option got a non-null verdict."""
+    ) -> str:
+        """First stop/target touch per offered option; one of the
+        ``_TOUCHES_*`` statuses."""
+        assert self.market_data is not None  # noqa: S101 - internal invariant
         if outcome.option_touches is not None:
-            return True
+            return _TOUCHES_FILLED
         column = decision.options or {}
-        # Offered and removed options both get a verdict — the
-        # counterfactual touches (docs/SPEC.md, Decision v5) measure
-        # what each filter removed. Old-format removed entries carry
-        # only {id, reason} and stay null.
-        options_raw: list[dict[str, Any]] = []
-        for key in ("options", "removed"):
-            entries = column.get(key)
-            if isinstance(entries, list):
-                options_raw += [o for o in entries if isinstance(o, dict)]
+        # Old-format removed entries carry only {id, reason} and stay
+        # null; entries without an id are skipped inside the scan.
+        options_raw = self._touch_options(column)
         if not options_raw:
             # No offered options → nothing to record; marking it done
             # keeps the row out of the backfill scan.
             outcome.option_touches = {}
-            return True
+            return _TOUCHES_FILLED
         if outcome.price_5sessions_at is None:
-            return False
+            return _TOUCHES_WAITING
         # Inclusive end bound: the bar that supplied the 5-session price
         # is the last one in the window; +5m would admit the next bar.
         end = _aware_utc(outcome.price_5sessions_at)
+        sessions = self._window_sessions(decision_time, end)
+        wanted_dates = {s.date for s in sessions}
+        if sessions and (
+            self.market_data.bars_cache.covered_session_dates(
+                decision.symbol, sessions
+            )
+            < wanted_dates
+        ):
+            # The window isn't covered by stored bars — the fetch-once /
+            # give-up path in ``fill`` decides what happens next.
+            return _TOUCHES_MISSING
+        if not self.market_data.get_5m_bars(decision.symbol, decision_time, end):
+            return _TOUCHES_MISSING
         snapshot = decision.input_snapshot
         constraints = (
             snapshot.get("constraints") if isinstance(snapshot, dict) else None
@@ -580,49 +853,69 @@ class OutcomeWorker:
             if isinstance(constraints, dict)
             else None
         )
+        # The chosen option replays like the rest unless the decision
+        # really opened a position: a "blocked" enter never traded, so
+        # waiting on a first_touch that cannot arrive would hold the row
+        # forever (item 058).
+        traded = (
+            session.execute(
+                select(Position.id)
+                .where(Position.entry_decision_id == decision.id)
+                .limit(1)
+            ).first()
+            is not None
+        )
         touches = self._option_touches(
             options_raw,
             symbol=decision.symbol,
             decision_time=decision_time,
             end=end,
             shared_limit=shared_limit,
-            traded_id=decision.chosen_option,
-            traded_touch=outcome.first_touch,
+            traded_id=decision.chosen_option if traded else None,
+            traded_touch=outcome.first_touch if traded else None,
             row_label=f"decision {decision.id}",
         )
         if touches is None:
-            # Bars missing or the traded option's real touch still
-            # unknown — stay NULL so a later pass retries.
-            return False
+            # The traded option's real touch still unknown — stay NULL
+            # so a later pass retries.
+            return _TOUCHES_WAITING
         # A null touch inside the dict is a terminal verdict (no limit
         # to test, unparseable price) — persist it, never a guessed fill.
         outcome.option_touches = touches
-        return None not in touches.values()
+        return _TOUCHES_FILLED
 
     def _fill_shadow_touches(
         self,
         row: ShadowDecision,
         decision_time: datetime,
         five_target: datetime,
-    ) -> bool:
+    ) -> str:
         """Counterfactual touches for one shadow decision — the same
         bar scan as the live fill (docs/SPEC.md, Decision v5)."""
+        assert self.market_data is not None  # noqa: S101 - internal invariant
         column = row.options or {}
-        raw: list[dict[str, Any]] = []
-        for key in ("options", "removed"):
-            entries = column.get(key)
-            if isinstance(entries, list):
-                raw += [o for o in entries if isinstance(o, dict)]
+        raw = self._touch_options(column)
         if not raw:
             row.option_touches = {}
-            return True
+            return _TOUCHES_FILLED
         # Same window as the live fill: through the close of the bar
         # that supplied the 5-session price, not the nominal target —
         # with a data gap the two can be sessions apart.
         price_bar = self._price_at(row.symbol, five_target)
         if price_bar is None:
-            return False  # bars missing — stay NULL, retry next pass
+            return _TOUCHES_MISSING  # bars missing — fetch or give up
         end = _aware_utc(price_bar.start)
+        sessions = self._window_sessions(decision_time, end)
+        wanted_dates = {s.date for s in sessions}
+        if sessions and (
+            self.market_data.bars_cache.covered_session_dates(
+                row.symbol, sessions
+            )
+            < wanted_dates
+        ):
+            return _TOUCHES_MISSING
+        if not self.market_data.get_5m_bars(row.symbol, decision_time, end):
+            return _TOUCHES_MISSING
         snapshot = row.input_snapshot or {}
         constraints = (
             snapshot.get("constraints") if isinstance(snapshot, dict) else None
@@ -643,9 +936,9 @@ class OutcomeWorker:
             row_label=f"shadow {row.id}",
         )
         if touches is None:
-            return False
+            return _TOUCHES_MISSING
         row.option_touches = touches
-        return None not in touches.values()
+        return _TOUCHES_FILLED
 
     def _update_best_worst(
         self, session: Session, position: Position, now: datetime

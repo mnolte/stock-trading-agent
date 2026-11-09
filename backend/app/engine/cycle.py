@@ -475,7 +475,14 @@ class CycleRunner:
                 # every cycle, whatever the decision stage produced.
                 if self.outcomes is not None:
                     try:
-                        self.outcomes.fill(session, self.clock.now())
+                        fetch_report = await self.outcomes.prefetch_touches(
+                            self.clock.now()
+                        )
+                        self.outcomes.fill(
+                            session,
+                            self.clock.now(),
+                            fetch_report=fetch_report,
+                        )
                         account = (
                             self.executor.state.account
                             if self.executor is not None
@@ -1212,11 +1219,14 @@ class CycleRunner:
             and v2 is not None
             and v2.fields["options"]
         ):
-            if self.decide.spec.is_v5 and v5_config(self.config).trend_gate:
+            v5c = v5_config(self.config)
+            if self.decide.spec.is_v5 and v5c.trend_gate:
                 # The v5 trend gate: the v4 checks_gate minus
                 # trend_daily, which stays a model call (docs/SPEC.md,
                 # Decision v5 — Trend gate in code).
-                checks_blocked = trend_gate_detail(v2.fields)
+                checks_blocked = trend_gate_detail(
+                    v2.fields, regimes=v5c.trend_gate_regimes
+                )
             elif (
                 self.decide.spec.is_v4
                 and not self.decide.spec.is_v5
@@ -1260,8 +1270,25 @@ class CycleRunner:
             # for the next one. Held positions are always reviewed.
             # The built options go with the row as counterfactuals
             # (docs/SPEC.md, Decision v5 — Counterfactual touches).
+            if price_reason == "price_stale":
+                # Name the last IEX trade's age and price so a name whose
+                # trades are rare on IEX can be told from a feed problem
+                # (docs/SPEC.md, Market price — item 058).
+                max_age = float(
+                    self.config.get_decimal(
+                        "execution", "quote_max_age_seconds", default=60
+                    )
+                )
+                detail = (
+                    quote.stale_detail(now=now, max_age_seconds=max_age)
+                    if quote is not None
+                    else "no IEX quote"
+                )
+                message = f"price_stale {item.symbol}: {detail}"
+            else:
+                message = f"{item.symbol}: {price_reason}"
             ev(logger, logging.WARNING, "cycle.price_blocked",
-               f"{item.symbol}: {price_reason}", symbol=item.symbol)
+               message, symbol=item.symbol)
             decision = self.decide.record_no_call(
                 session,
                 cycle_id=cycle_id,
