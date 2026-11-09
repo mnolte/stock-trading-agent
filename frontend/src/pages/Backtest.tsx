@@ -455,11 +455,11 @@ function NewBacktestCard({
       return;
     }
     const ticket = ++seq.current;
-    // Drop the previous inputs' estimate at once: until the debounced
-    // fetch answers, "Run backtest" must not look enabled on stale data.
-    setEstimate(null);
-    setEstimating(true);
     const t = setTimeout(() => {
+      // Drop the previous inputs' estimate as the fetch starts: until it
+      // answers, "Run backtest" must not look enabled on stale data.
+      setEstimate(null);
+      setEstimating(true);
       postBacktestEstimate(body)
         .then((est) => {
           if (ticket === seq.current) setEstimate(est);
