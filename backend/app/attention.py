@@ -85,20 +85,41 @@ def _item(
     }
 
 
-def _fingerprint_message(db_path: Any, fingerprint: str) -> str | None:
+def _fingerprint_groups(
+    db_path: Any, fingerprints: list[str]
+) -> dict[str, tuple[str, int, str]]:
+    """fingerprint → (summary, count, last_ts) for the Needs you line.
+
+    Summaries come from ``log_index.error_summary``: one line, no URLs
+    or file paths — the stack trace stays in Logs.
+    """
+    from app.log_index import error_summary
+
+    groups: dict[str, tuple[str, int, str]] = {}
+    if not fingerprints:
+        return groups
     try:
         with sqlite3.connect(
             f"file:{db_path}?mode=ro", uri=True
         ) as conn:
-            row = conn.execute(
-                "SELECT message FROM log_lines WHERE fingerprint = ? "
-                "ORDER BY ts DESC LIMIT 1",
-                (fingerprint,),
-            ).fetchone()
+            rows = [
+                conn.execute(
+                    "SELECT fingerprint, message, count(*), max(ts) "
+                    "FROM log_lines WHERE fingerprint = ? "
+                    "GROUP BY fingerprint",
+                    (fp,),
+                ).fetchone()
+                for fp in fingerprints
+            ]
     except sqlite3.Error:
         logger.warning("log index read failed for a Needs you item")
-        return None
-    return str(row[0]) if row else None
+        return groups
+    for row in rows:
+        if row is None:
+            continue
+        fp, message, count, last_ts = row
+        groups[str(fp)] = (error_summary(str(message)), int(count), str(last_ts))
+    return groups
 
 
 def build_attention(request: Request) -> dict[str, Any]:
@@ -435,14 +456,27 @@ def build_attention(request: Request) -> dict[str, Any]:
             session, config, calendar, today_ny
         )
         if unreviewed:
-            names = [
-                name
-                for name in (
-                    _fingerprint_message(index_path(config), fp)
-                    for fp in list(unreviewed)[:3]
+            groups = _fingerprint_groups(
+                index_path(config), list(unreviewed)[:3]
+            )
+            names = []
+            for fp in list(unreviewed)[:3]:
+                stats = groups.get(fp)
+                if stats is None:
+                    continue
+                summary, count, last_ts = stats
+                try:
+                    last_hhmm = (
+                        datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
+                        .astimezone(app_tz)
+                        .strftime("%H:%M")
+                    )
+                except ValueError:
+                    last_hhmm = ""
+                names.append(
+                    f"{summary} ×{count}"
+                    + (f" · last {last_hhmm}" if last_hhmm else "")
                 )
-                if name
-            ]
             n = len(unreviewed)
             detail = " · ".join(names[:2])
             items.append(

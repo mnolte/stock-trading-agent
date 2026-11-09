@@ -10,7 +10,7 @@ export default function ApiErrorToasts() {
   return (
     <div
       aria-live="polite"
-      style={{ position: 'fixed', right: 'var(--sa-space-5)', bottom: 'var(--sa-space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', zIndex: 60, maxWidth: 420 }}
+      style={{ position: 'absolute', right: 'var(--sa-space-5)', bottom: 'var(--sa-space-5)', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', zIndex: 60, maxWidth: 420 }}
     >
       {toasts.map((t) => (
         <div

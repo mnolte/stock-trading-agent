@@ -84,6 +84,39 @@ def fingerprint(logger: str, event: str | None, message: str) -> str:
     return f"{logger}|{event or ''}|{text[:200]}"
 
 
+_FILE_EXT = (
+    "tsx?|jsx?|py|css|html?|json|ya?ml|toml|md|sh|sql|cfg|ini|log"
+)
+# "(at /app/x.tsx:115:37)" style refs, then bare "path/file.py:12:3".
+_FILE_REF_PAREN = re.compile(
+    r"\([^()\n]*\.(?:" + _FILE_EXT + r")(?::\d+){0,2}[^()\n]*\)"
+)
+_FILE_REF = re.compile(
+    r"[\w@./~+\-]+\.(?:" + _FILE_EXT + r")(?::\d+){1,2}\b"
+)
+_URL = re.compile(r"(?:https?|file)://\S+")
+_ABS_PATH = re.compile(r"(?<![\w.])/(?:[\w.@~+\-]+/)+[\w.@~+\-]+\.\w+\b")
+_WS = re.compile(r"\s+")
+SUMMARY_LIMIT = 120
+
+
+def error_summary(message: str, *, limit: int = SUMMARY_LIMIT) -> str:
+    """One-line error text for Needs you and notifications.
+
+    First line of the message with URLs and file paths removed, cut to
+    ``limit`` characters. Stack traces and detail stay in Logs.
+    """
+    line = message.split("\n", 1)[0]
+    line = _FILE_REF_PAREN.sub("", line)
+    line = _URL.sub("", line)
+    line = _FILE_REF.sub("", line)
+    line = _ABS_PATH.sub("", line)
+    line = _WS.sub(" ", line).strip(" \t-–—:;,.()")
+    if len(line) > limit:
+        line = line[: limit - 1].rstrip() + "…"
+    return line
+
+
 def _record_to_row(record: logging.LogRecord) -> dict[str, Any] | None:
     """Map the JSON formatter's fields back onto a row (or None)."""
     message = record.getMessage()

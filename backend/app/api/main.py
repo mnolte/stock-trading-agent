@@ -919,7 +919,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _push_logs_topic(record)
         if record.levelno < logging.ERROR:
             return
-        from app.log_index import fingerprint
+        from app.log_index import error_summary, fingerprint
 
         fp = fingerprint(
             record.name, getattr(record, "event", None), record.getMessage()
@@ -935,7 +935,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         notifier.notify(
             "new_error",
-            scrub(record.getMessage()[:300], _all_secrets()),
+            scrub(error_summary(record.getMessage()), _all_secrets()),
             link="/logs",
         )
 
