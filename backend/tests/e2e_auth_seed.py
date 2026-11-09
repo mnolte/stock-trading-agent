@@ -13,9 +13,12 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 
+from sqlalchemy import delete
+
 from app.auth.create_user import create_or_reset_user
 from app.config import get_config
 from app.db.base import get_session_maker
+from app.db.models import SignInAttempt
 from app.market.clock import FakeClock
 
 PASSWORD = "e2e-test-password-14c"
@@ -32,6 +35,11 @@ with get_session_maker()() as session:
         username="marc",
         password=PASSWORD,
     )
+    # The frozen clock pins every attempt inside the 15-minute lockout
+    # window, so failures recorded by earlier runs (the e2e database is
+    # cached between CI jobs) would lock every sign-in forever.
+    session.execute(delete(SignInAttempt))
+    session.commit()
 out = os.path.join(config.env.sa_data_dir, "e2e-totp-secret")
 with open(out, "w") as handle:
     handle.write(secret)
