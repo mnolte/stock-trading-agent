@@ -79,6 +79,7 @@ function AppRoutes() {
             {/* Deep links to /decisions/:id draw the dashboard under the drawer. */}
             <Route path="decisions/:id" element={<Dashboard />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="settings/:section" element={<Settings />} />
             <Route path="universe" element={<Universe />} />
             <Route path="states" element={<States />} />
             <Route path="logs" element={<Logs />} />

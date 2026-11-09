@@ -33,7 +33,7 @@ test('promote pre-fills Settings as a new version and saves with the shadow id',
     }
   });
 
-  await page.goto('/settings?promote=42');
+  await page.goto('/settings/model?promote=42');
   await expect(
     page.getByText('Promote B · Bigger model to live: Model: gpt-4.1-mini → gpt-6.1-sol'),
   ).toBeVisible({ timeout: 60_000 });
@@ -51,14 +51,14 @@ test('promote pre-fills Settings as a new version and saves with the shadow id',
     reason: PROMOTION.reason,
     promote_strategy_id: 42,
   });
-  await expect(page).toHaveURL(/\/settings$/);
+  await expect(page).toHaveURL(/\/settings\/model$/);
 });
 
 test('promote under 20 closed trades only explains why', async ({ page }) => {
   await page.route('**/api/strategies/42/promotion', (route) =>
     route.fulfill({ json: { ...PROMOTION, allowed: false, closed: 4 } }),
   );
-  await page.goto('/settings?promote=42');
+  await page.goto('/settings/model?promote=42');
   await expect(
     page.getByText("B · Bigger model can't be promoted yet: it needs at least 20 closed trades (has 4)."),
   ).toBeVisible({ timeout: 60_000 });

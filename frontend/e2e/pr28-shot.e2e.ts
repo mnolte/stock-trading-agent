@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { screenshotDir, test } from './shots';
 // PR 28 screenshot: Settings → Email (SMTP), password required after a host change.
 test('smtp password required after host change', async ({ page }) => {
-  await page.goto('/settings');
+  await page.goto('/settings/notifications');
   const notify = page.locator('section#notify');
   await expect(notify.locator('#smtp-host')).toBeVisible({ timeout: 60_000 });
   await notify.locator('#smtp-host').fill('mail.saved.example');

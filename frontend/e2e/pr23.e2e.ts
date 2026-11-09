@@ -79,7 +79,7 @@ test('session-expired banner and redirect back', async ({ page }, info) => {
 
 test('settings Access section and sign out in the sidebar', async ({ page }, info) => {
   await signIn(page, info.project.name);
-  await page.goto('/settings');
+  await page.goto('/settings/access');
   await page.getByRole('heading', { name: 'Access' }).scrollIntoViewIfNeeded();
   await expect(page.getByText('required · password + authenticator')).toBeVisible();
   await expect(page.getByText('Signed-in devices')).toBeVisible();

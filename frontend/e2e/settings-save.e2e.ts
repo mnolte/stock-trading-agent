@@ -8,7 +8,7 @@ import { test } from './shots';
 // save both through the real page.
 
 test('settings: a review model change saves', async ({ page }) => {
-  await page.goto('/settings');
+  await page.goto('/settings/model');
   await expect(
     page.getByRole('heading', { name: 'Model and reviews' }),
   ).toBeVisible({ timeout: 60_000 });
@@ -37,9 +37,9 @@ test('settings: a review model change saves', async ({ page }) => {
 });
 
 test('settings: quiet hours save', async ({ page }) => {
-  await page.goto('/settings');
+  await page.goto('/settings/notifications');
   await expect(
-    page.getByRole('heading', { name: 'Model and reviews' }),
+    page.getByRole('heading', { name: 'Notifications', exact: true }),
   ).toBeVisible({ timeout: 60_000 });
 
   const notify = page.locator('section#notify');
@@ -62,9 +62,9 @@ test('settings: quiet hours save', async ({ page }) => {
 test('settings: a bad quiet-hours time is invalid and blocks Save', async ({
   page,
 }) => {
-  await page.goto('/settings');
+  await page.goto('/settings/notifications');
   await expect(
-    page.getByRole('heading', { name: 'Model and reviews' }),
+    page.getByRole('heading', { name: 'Notifications', exact: true }),
   ).toBeVisible({ timeout: 60_000 });
 
   const notify = page.locator('section#notify');
