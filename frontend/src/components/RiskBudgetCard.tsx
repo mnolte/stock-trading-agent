@@ -130,7 +130,7 @@ export function RiskBudgetCard({
 }) {
   const budget = res.data;
   const sb = budget?.shock_brake;
-  const sectorCap = budget?.sectors[0]?.cap ?? 0;
+  const sectorCap = budget?.sectors?.[0]?.cap ?? 0;
   return (
     <section
       aria-label="Risk budget"

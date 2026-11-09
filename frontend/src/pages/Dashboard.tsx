@@ -1022,6 +1022,7 @@ export default function Dashboard() {
               onRetry={approvalsRes.reload}
             />
           )}
+          <CardBoundary name="Pending approvals">
           {approvalsRes.data.items.map((a) => (
             <ApprovalCard
               key={a.id}
@@ -1036,6 +1037,7 @@ export default function Dashboard() {
               }}
             />
           ))}
+          </CardBoundary>
         </div>
       )}
 
