@@ -418,7 +418,7 @@ export default function Readiness() {
         label="History"
         right={<span style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>every status and manual change</span>}
       >
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={{ width: '100%', minWidth: '420px', borderCollapse: 'collapse' }}>
             <thead>
               <tr>

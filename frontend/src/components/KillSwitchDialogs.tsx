@@ -115,7 +115,7 @@ export function FlattenConfirmDialog({
       <p style={{ margin: 0, lineHeight: 1.55, color: 'var(--sa-text-2)' }}>
         This cancels all open orders and sells every position at market.
       </p>
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ overflowX: 'auto', minWidth: 0 }}>
         <table style={{ width: '100%', minWidth: 0 }}>
           <thead>
             <tr>

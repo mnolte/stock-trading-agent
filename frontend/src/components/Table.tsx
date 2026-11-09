@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 export function Table({ headers, rows }: { headers: ReactNode[]; rows: ReactNode[][] }) {
   return (
-    <div style={{ overflowX: 'auto' }}>
+    <div style={{ overflowX: 'auto', minWidth: 0 }}>
       <table style={{ width: '100%', minWidth: '600px' }}>
         <thead>
           <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>

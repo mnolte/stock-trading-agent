@@ -486,7 +486,7 @@ function V2OptionsTable({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflowX: 'auto',
+          overflowX: 'auto', minWidth: 0,
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -895,7 +895,7 @@ function V3OptionsTable({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflowX: 'auto',
+          overflowX: 'auto', minWidth: 0,
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -1585,7 +1585,7 @@ function V3StopOptions({ decision }: { decision: DecisionDetail }) {
         style={{
           border: '1px solid var(--sa-border)',
           borderRadius: 'var(--sa-radius-md)',
-          overflowX: 'auto',
+          overflowX: 'auto', minWidth: 0,
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>

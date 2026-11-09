@@ -236,7 +236,7 @@ function FilterRemovedCard({ filters, refreshing }: { filters: FilterRemovedRow[
         </div>
       ) : (
         <>
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
             <table style={{ width: '100%', minWidth: '760px', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
@@ -525,7 +525,9 @@ export default function Insights() {
             </div>
             {dim && (
               <>
+                <div style={{ overflowX: 'auto', minWidth: 0 }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
+
                   <thead>
                     <tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
                       <th style={{ padding: '6px 8px' }}>{dim.label}</th>
@@ -573,6 +575,7 @@ export default function Insights() {
                     ))}
                   </tbody>
                 </table>
+                </div>
                 {dim.hidden > 0 && <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>+ {dim.hidden} trades in slices under 10</div>}
                 {tradeSlice !== null && (
                   <div aria-label={`Trades in ${tradeSlice}`} style={{ borderTop: '1px solid var(--sa-border)', paddingTop: 'var(--sa-space-2)' }}>
@@ -596,6 +599,7 @@ export default function Insights() {
                       <div style={{ color: 'var(--sa-text-muted)' }}>No trades in this slice.</div>
                     )}
                     {tradesRes.data && tradesRes.data.trades.length > 0 && (
+                      <div style={{ overflowX: 'auto', minWidth: 0 }}>
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
                         <thead><tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
                           <th style={{ padding: '4px 8px' }}>Closed</th>
@@ -626,6 +630,7 @@ export default function Insights() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                   </div>
                 )}
@@ -640,6 +645,7 @@ export default function Insights() {
               refreshing={res.refreshing}
               right={snap.calibration.weighted_gap_pts != null ? <span style={{ color: 'var(--sa-text-muted)' }}>weighted gap {snap.calibration.weighted_gap_pts} pts · target before stop</span> : undefined}
             >
+              <div style={{ overflowX: 'auto', minWidth: 0 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--sa-text-sm)' }}>
                 <thead><tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
                   <th style={{ padding: '6px 8px' }}>Confidence</th><th style={{ padding: '6px 8px' }}>Stated</th><th style={{ padding: '6px 8px' }}>Reached target first</th><th style={{ padding: '6px 8px' }}>n</th>
@@ -655,6 +661,7 @@ export default function Insights() {
                   ))}
                 </tbody>
               </table>
+              </div>
               {snap.calibration.hidden ? <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>+ {snap.calibration.hidden} entries in buckets under 10</div> : null}
             </Card>
           )}

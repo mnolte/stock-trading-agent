@@ -233,7 +233,7 @@ function PositionCard({ p, near, fresh }: { p: PositionRow; near: number; fresh?
             stop none
           </div>
         )}
-        <div style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <div style={{ minWidth: '460px' }}>
             {legs.map((leg) => (
               <LegRow key={leg.id} leg={leg} />
@@ -406,7 +406,7 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
         res={res}
         what="the order history"
         skeleton={
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
             <div style={{ minWidth: '860px' }}>
               <SkeletonTable
                 columns={['Time', 'Symbol', 'Side', 'Leg', 'Type', 'Qty', 'Price', 'Fill', 'Slippage', 'Status'].map(
@@ -426,7 +426,7 @@ function OrderHistory({ res }: { res: Resource<OrdersResponse> }) {
         }
       >
         {() => (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
             <table style={{ width: '100%', minWidth: '860px' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
