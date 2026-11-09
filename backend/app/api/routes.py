@@ -5796,7 +5796,10 @@ def api_logs_summary(request: Request) -> dict[str, object]:
 
             with get_session_maker()() as session:
                 for fp, review in session.execute(
-                    text("SELECT fingerprint, review FROM log_reviews")
+                    text(
+                        "SELECT fingerprint, review FROM log_reviews "
+                        "ORDER BY reviewed_at, id"
+                    )
                 ):
                     reviews[fp] = review
         except Exception:  # noqa: BLE001 - table may predate the migration
@@ -5884,7 +5887,7 @@ def api_logs_review(request: Request, body: dict[str, object]) -> dict[str, obje
 
     review = str(body.get("review") or "")
     note = _multi_line(body.get("note"), 4000).strip()
-    fingerprint = _one_line(body.get("fingerprint"), 400)
+    fingerprint = str(body.get("fingerprint") or "")[:400]
     if review not in ("expected", "fixed") or not note or not fingerprint:
         raise HTTPException(
             status_code=422, detail="review (expected|fixed), note and fingerprint required"

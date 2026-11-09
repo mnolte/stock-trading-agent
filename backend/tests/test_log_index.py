@@ -237,6 +237,38 @@ def test_logs_api_summary_and_around(client: TestClient) -> None:
     assert any(line["id"] == err_id for line in around["lines"])
 
 
+def test_logs_review_keeps_fingerprint_verbatim(client: TestClient) -> None:
+    """A fingerprint with a line break must round-trip: _one_line used to
+    rewrite it, so the review never matched the index row."""
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("boom\nTraceback (most recent call last):", logging.ERROR))
+    handler.flush()
+
+    problem = next(
+        p
+        for p in client.get("/api/logs/summary").json()["problems"]
+        if "\n" in p["fingerprint"]
+    )
+    fp = problem["fingerprint"]
+    resp = client.post(
+        "/api/logs/review",
+        json={
+            "fingerprint": fp,
+            "review": "fixed",
+            "note": "patched",
+            "level": problem["level"],
+            "sample": problem["sample"],
+        },
+    )
+    assert resp.status_code == 200
+    again = next(
+        p
+        for p in client.get("/api/logs/summary").json()["problems"]
+        if p["fingerprint"] == fp
+    )
+    assert again["review"] == "fixed"
+
+
 def test_logs_api_export(client: TestClient) -> None:
     handler = cast(FastAPI, client.app).state.log_index_handler
     handler.emit(_rec("exported", logging.WARNING))
