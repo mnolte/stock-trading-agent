@@ -228,6 +228,12 @@ const UNITS: Record<string, string> = {
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
   'notifications.repeat_limit_minutes': ' min',
+  'decision.min_ev_r': ' R',
+  'decision.v3.min_room_atr': ' × ATR',
+  'decision.v4.near_level_atr': ' × ATR',
+  'decision.v5.max_rr': ' R',
+  'decision.v5.base_rate_sessions': ' sessions',
+  'decision.v5.price_vs_signal_adverse_atr': ' × ATR',
   'readiness.max_drawdown_pct': '%',
   'readiness.min_avg_r': 'R',
   'readiness.min_proposal_pass_pct': '%',
@@ -1687,6 +1693,20 @@ export default function Settings() {
     const universeSub: Record<string, unknown> = {};
     const screenSub: Record<string, unknown> = {};
     let universeListChanged = false;
+    // Decision gate groups echo every editable sub-key, with null for
+    // ones the active config lacks; the server merges per sub-key, so
+    // drop the nulls once instead of failing validation on them.
+    const gateGroups: Record<string, Record<string, unknown>> = {};
+    for (const ver of ['v3', 'v4', 'v5'] as const) {
+      const group = form.decision[ver];
+      if (group && typeof group === 'object') {
+        gateGroups[ver] = Object.fromEntries(
+          Object.entries(group as Record<string, unknown>).filter(
+            ([, v]) => v !== null && v !== undefined,
+          ),
+        );
+      }
+    }
     for (const path of Object.keys(changed)) {
       const [section, key] = path.split('.', 2);
       if (section === 'universe') {
@@ -1702,9 +1722,9 @@ export default function Settings() {
         }
         continue;
       }
-      (submission[section] ??= {})[key] = (
-        form[section as keyof SettingsForm] as Record<string, unknown>
-      )[key];
+      const leaf = (form[section as keyof SettingsForm] as Record<string, unknown>)[key];
+      (submission[section] ??= {})[key] =
+        section === 'decision' && key in gateGroups ? gateGroups[key] : leaf;
     }
     if (universeListChanged) {
       universeSub.symbols = form.universe.symbols;
@@ -1857,6 +1877,22 @@ export default function Settings() {
         const parts = path.split('.');
         if (parts.length === 3 && parts[0] === 'universe') {
           resetScreen(parts[2]);
+          return;
+        }
+        if (
+          parts.length === 4 &&
+          parts[0] === 'decision' &&
+          (parts[1] === 'v3' || parts[1] === 'v4' || parts[1] === 'v5')
+        ) {
+          const ver = parts[1] as 'v3' | 'v4' | 'v5';
+          const saved = (
+            data.settings.decision?.[ver] as Record<string, unknown> | undefined
+          )?.[parts[3]];
+          if (saved === undefined) return;
+          patch('decision', ver, {
+            ...((s.decision[ver] ?? {}) as Record<string, unknown>),
+            [parts[3]]: saved,
+          });
           return;
         }
         const [section, key] = parts as [keyof SettingsForm, string];
@@ -2934,6 +2970,9 @@ export default function Settings() {
                             const next = (['up', 'sideways'] as const).filter(
                               (r) => (r === regime ? !on : current.includes(r)),
                             );
+                            // The backend requires a non-empty list — the
+                            // gate would pass no regime at all.
+                            if (next.length === 0) return;
                             patch('decision', 'v5', {
                               ...(s.decision.v5 ?? {}),
                               trend_gate_regimes: [...next],
@@ -3783,6 +3822,16 @@ const LABEL_OF: Record<string, string> = {
   'decision.stop_atr_max': 'Stop distance to',
   'decision.min_reward_risk': 'Min reward to risk',
   'decision.max_calls_per_cycle': 'Max model calls per cycle',
+  'decision.entry_gate': 'Entry gate',
+  'decision.min_ev_r': 'Min expected R (ev gate)',
+  'decision.v3.min_room_atr': 'v3 room to first level',
+  'decision.v3.min_edge': 'v3 min edge over break-even',
+  'decision.v4.near_level_atr': 'v4 near-a-level distance',
+  'decision.v5.trend_gate': 'v5 trend gate',
+  'decision.v5.trend_gate_regimes': 'Regimes that pass the trend gate',
+  'decision.v5.max_rr': 'v5 max reward to risk',
+  'decision.v5.base_rate_sessions': 'v5 base rate window',
+  'decision.v5.price_vs_signal_adverse_atr': 'v5 adverse price move',
   'risk.risk_per_trade_pct': 'Risk per trade',
   'risk.max_position_pct': 'Max position size',
   'risk.max_open_risk_pct': 'Total open risk',
