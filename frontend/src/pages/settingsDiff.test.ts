@@ -192,6 +192,58 @@ describe('diffSettings', () => {
     });
   });
 
+  it('reports decision gate sub-keys as leaf diffs', () => {
+    const edited = base();
+    edited.decision.v5 = {
+      trend_gate: false,
+      trend_gate_regimes: ['up'],
+      max_rr: 3,
+      base_rate_sessions: 60,
+      price_vs_signal_adverse_atr: 0.5,
+    };
+    edited.decision.v3 = { min_room_atr: 1.5, min_edge: 0.2 };
+    const diffs = diffSettings(base(), edited);
+    expect(diffs).toContainEqual({
+      label: 'v5 trend gate',
+      from: '—',
+      to: 'off',
+    });
+    expect(diffs).toContainEqual({
+      label: 'Regimes that pass the trend gate',
+      from: '—',
+      to: 'up',
+    });
+    expect(diffs).toContainEqual({
+      label: 'v3 room to first level',
+      from: '—',
+      to: '1.5',
+    });
+    const map = diffMap(base(), edited);
+    expect(map['decision.v5.trend_gate']).toBe('—');
+    expect(map['decision.v5.max_rr']).toBe('—');
+    expect(map['decision.v3.min_edge']).toBe('—');
+  });
+
+  it('reports changed values inside an existing gate group', () => {
+    const current = base();
+    current.decision.v5 = {
+      trend_gate: true,
+      trend_gate_regimes: ['up', 'sideways'],
+      max_rr: 3,
+    };
+    const edited = base();
+    edited.decision.v5 = {
+      trend_gate: true,
+      trend_gate_regimes: ['up'],
+      max_rr: 4,
+    };
+    const diffs = diffSettings(current, edited);
+    expect(diffs).toEqual([
+      { label: 'Regimes that pass the trend gate', from: 'up, sideways', to: 'up' },
+      { label: 'v5 max reward to risk', from: '3', to: '4' },
+    ]);
+  });
+
   it('reports notification leaves and channel lists', () => {
     const edited = base();
     edited.notifications.repeat_limit_minutes = 15;

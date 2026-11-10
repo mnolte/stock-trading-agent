@@ -15,6 +15,16 @@ const FIELD_LABELS: Record<string, string> = {
   'decision.stop_atr_max': 'Stop distance to',
   'decision.min_reward_risk': 'Min reward to risk',
   'decision.max_calls_per_cycle': 'Max model calls per cycle',
+  'decision.entry_gate': 'Entry gate',
+  'decision.min_ev_r': 'Min expected R (ev gate)',
+  'decision.v3.min_room_atr': 'v3 room to first level',
+  'decision.v3.min_edge': 'v3 min edge over break-even',
+  'decision.v4.near_level_atr': 'v4 near-a-level distance',
+  'decision.v5.trend_gate': 'v5 trend gate',
+  'decision.v5.trend_gate_regimes': 'Regimes that pass the trend gate',
+  'decision.v5.max_rr': 'v5 max reward to risk',
+  'decision.v5.base_rate_sessions': 'v5 base rate window',
+  'decision.v5.price_vs_signal_adverse_atr': 'v5 adverse price move',
   'risk.risk_per_trade_pct': 'Risk per trade',
   'risk.max_position_pct': 'Max position size',
   'risk.max_open_risk_pct': 'Total open risk',
@@ -74,7 +84,7 @@ export interface DiffRow {
 }
 
 function fmtVal(value: unknown): string {
-  if (value === undefined) return '—';
+  if (value === undefined || value === null) return '—';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'on' : 'off';
   return String(value);
@@ -171,6 +181,20 @@ function notificationLeafRows(
   }
 }
 
+/** Nested leaves of a decision version gate (`decision.v3`/`v4`/`v5`),
+ * as `decision.<ver>.<sub>` paths. */
+function decisionGateLeafRows(
+  key: 'v3' | 'v4' | 'v5',
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  dictLeafRows('decision', key, current, edited, fmtVal,
+    (sub) => FIELD_LABELS[`decision.${key}.${sub}`] ?? `Decision ${key} ${sub}`,
+    map, rows);
+}
+
 /** Nested leaves of `universe.screen`, as `universe.screen.<key>` paths. */
 function screenLeafRows(
   current: SettingsForm,
@@ -230,6 +254,10 @@ export function diffSettings(
   ][]) {
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
+      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5') {
+        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5', current, edited, null, rows);
+        continue;
+      }
       if (path === 'universe.sectors') {
         const cur = (current.universe?.sectors ?? {}) as Record<string, string>;
         const next = value as Record<string, string>;
@@ -283,6 +311,10 @@ export function diffMap(
   ][]) {
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
+      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5') {
+        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5', current, edited, map, null);
+        continue;
+      }
       if (path === 'universe.sectors') {
         const cur = (current.universe?.sectors ?? {}) as Record<string, string>;
         const next = value as Record<string, string>;
