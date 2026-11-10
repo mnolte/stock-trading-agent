@@ -61,7 +61,7 @@ How Stock Trading Agent looks and what it says. It uses the same visual language
 Build these first, in PR 1, on a hidden `/dev/components` page:
 
 1. Sidebar with groups, active item and collapse (232 px / 72 px)
-2. Header, two fixed rows: title, PAPER badge and subtitle; session pill, Needs you chip, equity, today, regime chip, Pause/Resume, Kill switch. Below 820 px the title row is hidden and the stats are one mono line (see `Main-390.png`)
+2. Header, two fixed rows: title, PAPER badge and subtitle; session pill, Needs you chip, equity, today, regime chip with the VIX close on its label line ("Regime · VIX 17.4", details on hover; 060), Pause/Resume, Kill switch. Below 820 px the title row is hidden and the stats are one mono line (see `Main-390.png`)
 2a. Sidebar Ask button (accent, under the app mark; icon only when collapsed) and the phone bar's Ask icon; both open the Ask drawer, as does Ctrl/⌘+J
 3. Card with uppercase label and optional right-side link
 4. Stat card (label, value, sub line, optional bar)

@@ -2,6 +2,17 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-10 — [060] VIX data
+
+- **Header, every screen:** the VIX close sits on the Regime stat's label line ("REGIME · VIX 17.4"), so the header keeps its width (a separate VIX column pushed Pause and Kill switch to a third row at 1440). Hover: the close's date, 1-year percentile, 5-session change and VIXY since that close and today. Below 820 px the phone line has no room: the regime chip's tooltip carries it.
+- **`Main.dc.html` → Latest decision:** a "VIX 17.4 · 42nd pct" chip next to the market regime chip, from the decision's cycle.
+- **`MainLoading.dc.html`:** the header's Regime · VIX bar.
+- **`Insights.dc.html` → Slices:** two dimensions, VIX level and VIX 5-session change.
+- **`Settings.dc.html` → API keys and data → Data sources:** "VIX (FRED)" with the close, its date and the last fetch; FRED added to the data-source-failing notification's list.
+- **`States.dc.html`:** VIX stale (amber, "25.6 from Thu 5 Nov") and unavailable ("—").
+- Sample dates follow FRED's timing: on Thu 15 Oct at 18:52 Amsterdam the newest close is Tue 13 Oct's, fetched Wed 23:00 Amsterdam (17:00 New York).
+- Screenshots re-rendered for every screen with the header: Main (1440, 1024, 390), MainLoading, Positions (1440, 1024, 390), Settings (1440, 1024, 390), Backtest, Insights, Inspector, Loading, Logs, Performance, Readiness, Reviews, Strategies, Universe, AskDrawer (1440, 390), States.
+
 ## 2026-11-09 — [056] UX pass on the running app
 
 From the review in `docs/analysis/056-ux-review.md` (the app at 1440 and 390 px, seeded).

@@ -119,7 +119,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 057 | fix | Log review fingerprint match | — | — | #198 | building |
 | 058 | fix | Live data of 9 November | `archive/058-fix-live-data-9-nov.md` | #199 | #200, #201, #202 | building |
 | 059 | spec | PRs ready to merge (CI green, no conflicts) | — | #203 | — | merged |
-| 060 | feat | VIX data, collected and shown (issue #205) | — | — | — | planned |
+| 060 | feat | VIX data, collected and shown (issue #205) | `060-feat-vix-data.md` | #NEW | — | planned |
 | 061 | feat | Decision v7: the VIX in the model call (issue #206; after 060 and 20–30 sessions) | — | — | — | planned |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).

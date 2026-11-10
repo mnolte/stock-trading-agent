@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-11-10 — [060] VIX data, collected and shown
+
+Issue #205, step 1 of 2 (step 2, decision.v7 with the VIX, is item 061, issue #206). Nothing in trading changes.
+
+- **New data:** FRED `VIXCLS`, Cboe's VIX daily close, posted around 16:00 New York the next trading day, fetched at 08:00 and 17:00 New York and at startup (260 sessions of history); VIXY's 5-minute bars from Alpaca as a reference symbol, never traded.
+- **Per cycle,** stored on `cycles`: `vix_close`, `vix_date`, `vix_percentile_1y` (252 closes), `vix_change_5d_pct`, `vixy_change_today_pct`, `vixy_change_since_vix_pct` (VIXY since the VIX close shown, bridging FRED's lag), `vix_stale` (more than the normal 1 session late). Backtests fill the same fields from history.
+- **GUI:** the VIX beside the header's Regime label (tooltip below 820 px) and on the latest-decision card; stale shows amber with its date, missing shows "—"; two Insights slices (VIX level, VIX 5-session change); FRED in Settings → Data sources.
+- **API keys:** an optional FRED key, only if the keyless CSV stops working.
+- **Config:** `market.vix.source`, `percentile_sessions`, `stale_sessions`, `reference_etf`.
+- Build plan item 39.
+
 ## 2026-11-09 — [058] decision.v6 (build)
 
 Build of the 058 decision.v6 spec entry on branch `fix/058-decision-v6` (PR #202, stacked on #201).
