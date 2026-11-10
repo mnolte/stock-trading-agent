@@ -700,6 +700,75 @@ async def test_cycle_stale_quote_still_blocked_after_retry(
     assert decision.no_call_reason == "price_stale"
 
 
+async def test_cycle_failed_quote_fetch_is_not_retried(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A failed batch fetch is already reported — the cycle does not
+    answer it with a second full quote request."""
+
+    class BrokenQuotes:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_quotes(
+            self, symbols: list[str]
+        ) -> DataResult[dict[str, Quote]]:
+            self.calls += 1
+            return DataResult(data={}, error="quote feed down", source="fake")
+
+    quotes = BrokenQuotes()
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", "pass")),
+        sources=_sources(quotes=quotes), universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert quotes.calls == 1
+    assert report.data_source_health["quotes"].startswith("failed")
+    assert report.calls == 0
+    (decision,) = _decisions(session_factory)
+    assert decision.no_call_reason == "price_stale"
+
+
+async def test_cycle_failed_quote_retry_is_reported(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """When the one retry fails, the stale symbols stay blocked and the
+    quote health says the retry failed — it does not stay "ok"."""
+
+    class FlakyQuotes:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_quotes(
+            self, symbols: list[str]
+        ) -> DataResult[dict[str, Quote]]:
+            self.calls += 1
+            if self.calls == 1:
+                return DataResult(
+                    data={
+                        "MSFT": _quote(
+                            trade_ts=NOW_13H - timedelta(seconds=120)
+                        )
+                    }
+                )
+            return DataResult(data={}, error="retry timed out", source="fake")
+
+    quotes = FlakyQuotes()
+    runner = _runner(
+        session_factory, _evaluation(_item("MSFT", "pass")),
+        sources=_sources(quotes=quotes), universe=["MSFT"],
+    )
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert quotes.calls == 2
+    assert report.calls == 0
+    health = report.data_source_health["quotes"]
+    assert "incomplete" in health and "MSFT" in health and "retry timed out" in health
+    (decision,) = _decisions(session_factory)
+    assert decision.no_call_reason == "price_stale"
+
+
 async def test_cycle_does_not_retry_suspect_price(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -738,11 +807,13 @@ async def test_cycle_judges_trade_age_at_check_time(
         async def fetch_quotes(
             self, symbols: list[str]
         ) -> DataResult[dict[str, Quote]]:
-            # 50 s old at cycle start, >60 s by the time quotes are checked.
+            # 50 s old at cycle start — fresh under the 60 s limit — and
+            # stale after the first clock tick, however many ticks the
+            # pre-fetch work takes.
             return DataResult(
                 data={
                     "MSFT": _quote(
-                        trade_ts=NOW_13H - timedelta(seconds=30)
+                        trade_ts=NOW_13H - timedelta(seconds=50)
                     )
                 }
             )

@@ -6,7 +6,7 @@ Newest first.
 
 Live-data fix from the `price_stale` investigation; no spec change — the 60 s market-price rule stands.
 
-- **One quote retry:** when the cycle's quote fetch leaves symbols `price_stale`, they are fetched once more before the candidate loses its model call for the cycle. `price_suspect` is not retried — a bad trade does not fix itself. A failed retry keeps the first result and logs `cycle.quotes_retry`.
+- **One quote retry:** when the cycle's quote fetch succeeds but leaves symbols `price_stale`, they are fetched once more before the candidate loses its model call for the cycle. `price_suspect` is not retried — a bad trade does not fix itself. A failed batch fetch is not retried; a failed retry keeps the first result, logs `cycle.quotes_retry` and marks quotes `incomplete` in `data_source_health`.
 - **Age judged at check time:** the IEX last trade's age is measured when the price check runs (`clock.now()`), not at cycle start. The ~20 s of pre-fetch work no longer ages every trade; the held-position tighten check and the `price_stale` warning detail use the same clock.
 
 ## 2026-11-10 — [060] VIX data, collected and shown (build)
