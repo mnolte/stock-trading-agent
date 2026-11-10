@@ -220,9 +220,13 @@ class CycleRunner:
         )
         return quotes_result.data if quotes_result.error is None else {}
 
-    def _price_reason(self, symbol: str, quote: Quote | None, now: datetime) -> str | None:
+    def _price_reason(self, symbol: str, quote: Quote | None) -> str | None:
         if quote is None:
             return "price_stale"
+        # Judge the trade's age when the check runs, not at cycle start:
+        # the pre-fetch work would otherwise inflate every age by the
+        # cycle's lead time (docs/SPEC.md, Market price).
+        now = self.clock.now()
         bar = self.market_data.bars_cache.latest(symbol, now - timedelta(minutes=5))
         return quote.price_reason(
             now=now,
@@ -754,6 +758,23 @@ class CycleRunner:
         quotes = await self._fetch_quotes(
             [item.symbol for item in reviews], report
         )
+        # IEX last trades can lag a few seconds on Alpaca's latest
+        # endpoints; one retry separates a slow feed from a genuinely
+        # quiet tape before a candidate loses its call slot for the
+        # cycle (docs/SPEC.md, Market price).
+        stale = [
+            item.symbol
+            for item in reviews
+            if self._price_reason(item.symbol, quotes.get(item.symbol))
+            == "price_stale"
+        ]
+        if stale:
+            retry = await self.sources.quotes.fetch_quotes(stale)
+            if retry.error is None:
+                quotes.update(retry.data)
+            else:
+                ev(logger, logging.WARNING, "cycle.quotes_retry",
+                   f"quote retry failed: {retry.error}")
         max_calls = self.config.get_int(
             "decision", "max_calls_per_cycle", default=10
         )
@@ -775,7 +796,7 @@ class CycleRunner:
                 # Entries — Market price).
                 if (
                     item.rules.status == STATUS_HELD
-                    or self._price_reason(item.symbol, quotes.get(item.symbol), now) is None
+                    or self._price_reason(item.symbol, quotes.get(item.symbol)) is None
                 ):
                     called.append(item.symbol)
             news = await self._fetch_news(called, now, report)
@@ -1003,7 +1024,7 @@ class CycleRunner:
         from app.logging_config import ev
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
-        price_reason = self._price_reason(item.symbol, quote, now)
+        price_reason = self._price_reason(item.symbol, quote)
         # A candidate outside the prefetched news set can still reach the
         # model call (the call estimate doesn't know about checks/options
         # no-calls) — fetch its headlines so it never calls blind. Not
@@ -1059,7 +1080,7 @@ class CycleRunner:
             # looser 300s age, not the entry's 60s.
             tighten_reason = (
                 quote.price_reason(
-                    now=now,
+                    now=self.clock.now(),
                     max_age_seconds=float(
                         self.config.get_decimal(
                             "execution",
@@ -1308,7 +1329,7 @@ class CycleRunner:
                     )
                 )
                 detail = (
-                    quote.stale_detail(now=now, max_age_seconds=max_age)
+                    quote.stale_detail(now=self.clock.now(), max_age_seconds=max_age)
                     if quote is not None
                     else "no IEX quote"
                 )
@@ -1548,9 +1569,7 @@ class CycleRunner:
         prepared: list[dict[str, Any]] = []
         for item in cand_items:
             quote = quotes.get(item.symbol)
-            if quote is None or self._price_reason(
-                item.symbol, quote, now
-            ) is not None:
+            if quote is None or self._price_reason(item.symbol, quote) is not None:
                 continue
             if not self.decide.spec.uses_options:
                 prepared.append({"item": item, "quote": quote, "pre": None})
@@ -1723,7 +1742,7 @@ class CycleRunner:
         # Price-blocked candidates get their stored no_call too — the
         # same rows the rank path records.
         for item in cand_items:
-            if self._price_reason(item.symbol, quotes.get(item.symbol), now) is None:
+            if self._price_reason(item.symbol, quotes.get(item.symbol)) is None:
                 continue
             decision = await self._decide_item(
                 session,
