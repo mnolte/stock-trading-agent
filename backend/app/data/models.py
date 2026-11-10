@@ -213,6 +213,14 @@ class FXRate:
 
 
 @dataclass(frozen=True)
+class VixObservation:
+    """One FRED VIXCLS daily close (the observation date is the session)."""
+
+    date: date
+    close: Decimal
+
+
+@dataclass(frozen=True)
 class CalendarDay:
     """One trading day from Alpaca's calendar."""
 

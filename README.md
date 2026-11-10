@@ -56,6 +56,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 
 | Block | What it controls |
 | --- | --- |
+| `market.*` | Market-data extras: `market.vix.*` collects the VIX close (FRED) and the VIXY reference ETF's bars for display only |
 | `universe.*` | Watched symbols, sectors, screen pool and ranking |
 | `app.timezone` | Display timezone |
 | `schedule.*` | Cycle times, position checks, calendar and history loading |

@@ -2,6 +2,13 @@
 # Every value here is a default from docs/SPEC.md. Change behaviour here, not in code.
 # Secrets never go in this file; they live in .env.
 
+market:
+  vix:                            # item 060, docs/SPEC.md — VIX; display only, never a trading input
+    source: fred                  # FRED VIXCLS daily closes (keyless CSV; optional key in Settings)
+    percentile_sessions: 252      # closes the percentile and level are measured over
+    stale_sessions: 1             # sessions the newest usable close may lag the last completed one
+    reference_etf: VIXY           # bars every cycle; never a candidate, screened in or traded
+
 universe:
   symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, GOOGL, META, JPM, XOM]
   names:                        # PR 34: company names for headline about_symbol

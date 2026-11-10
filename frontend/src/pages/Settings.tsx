@@ -609,6 +609,7 @@ const KEY_FIELD_LABELS: Record<KeyGroup, string> = {
   openai: 'New OpenAI API key',
   anthropic: 'New Anthropic API key',
   finnhub: 'New Finnhub API key',
+  fred: 'New FRED API key',
 };
 
 const KEY_FORM_NOTES: Record<KeyGroup, string> = {
@@ -620,13 +621,19 @@ const KEY_FORM_NOTES: Record<KeyGroup, string> = {
     'The key is tested with a models list before it is saved. The old key keeps working until the new one passes.',
   finnhub:
     'The key is tested with one earnings-calendar request before it is saved. The old key keeps working until the new one passes.',
+  fred:
+    'Optional — only the fallback for a keyless FRED CSV that stops working. The key is tested with one VIXCLS observation before it is saved.',
 };
 
 function keyStatusChip(row: KeyRow): { text: string; tone: 'ok' | 'bad' | 'neutral' } {
   if (row.status === 'ok')
     return { text: row.name === 'alpaca' ? 'connected · paper' : 'ok', tone: 'ok' };
   if (row.status === 'failing') return { text: 'failing', tone: 'bad' };
-  if (row.status === 'missing') return { text: 'not set', tone: 'bad' };
+  // FRED is optional (item 060): no key is the normal state, not a fault.
+  if (row.status === 'missing')
+    return row.name === 'fred'
+      ? { text: 'optional', tone: 'neutral' }
+      : { text: 'not set', tone: 'bad' };
   return { text: 'saved · untested', tone: 'neutral' };
 }
 
@@ -815,6 +822,7 @@ function KeysSection({
         const status = keyStatusChip(row);
         const isAlpaca = row.name === 'alpaca';
         const isModelKey = row.name === 'openai' || row.name === 'anthropic';
+        const canRemove = isModelKey || row.name === 'fred';
         const replaceDisabled = isAlpaca && !keys.replace_allowed;
         return (
           <div key={row.name} style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -863,7 +871,7 @@ function KeysSection({
                     Test
                   </Button>
                 )}
-                {isModelKey && row.set && (
+                {canRemove && row.set && (
                   <Button
                     variant="ghost"
                     onClick={() => removeKey(row.name)}

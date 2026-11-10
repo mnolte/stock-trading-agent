@@ -122,6 +122,16 @@ class Cycle(Base):
     # Entry selection (PR 33): free slots, scored count, chosen ids and
     # the total rank order would have taken — expected_profit mode only.
     selection: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # VIX fields (item 060, docs/SPEC.md — VIX): the newest usable FRED
+    # close and what the cycle computed from it. Null before item 060 and
+    # whenever FRED has no close yet; never part of the model's input.
+    vix_close: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    vix_date: Mapped[date | None] = mapped_column(nullable=True)
+    vix_percentile_1y: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    vix_change_5d_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    vixy_change_today_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    vixy_change_since_vix_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    vix_stale: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class Decision(Base):
@@ -340,6 +350,20 @@ class CorporateAction(Base):
     action_type: Mapped[str] = mapped_column(String(16), nullable=False)  # split | dividend
     date: Mapped[datetime] = mapped_column(nullable=False)
     ratio_or_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+
+
+class VixClose(Base):
+    """One FRED VIXCLS daily close (docs/SPEC.md, VIX).
+
+    The observation date is the primary key; ``close`` is the exact
+    decimal FRED published. ``fetched_at`` records the last refresh.
+    """
+
+    __tablename__ = "vix_closes"
+
+    date: Mapped[date] = mapped_column(primary_key=True)
+    close: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
 class UniversePoolRow(Base):

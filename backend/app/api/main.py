@@ -39,6 +39,7 @@ from app.broker.base import Broker
 from app.config import ROOT, AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
 from app.data.service import MarketDataService
+from app.data.vix import VixService
 from app.db.backup import create_backup
 from app.db.base import check_schema_matches_models, get_session_maker
 from app.db.models import Event, Strategy
@@ -143,14 +144,19 @@ async def refresh_calendar_and_daily_data(
     sources: DataSources,
     config: AppConfig,
     clock: Clock,
+    vix: VixService | None = None,
 ) -> None:
-    """Daily refresh: calendar, earnings, corporate actions, FX, daily bars."""
+    """Daily refresh: calendar, earnings, corporate actions, FX, daily bars.
+
+    With a ``vix`` service this is also the 08:00 VIX fetch (item 060) —
+    FRED posts the previous close through the morning.
+    """
     today = clock.now().astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
     # Independent sources fetched together — the calendar must load first
     # (the daily refresh resolves sessions through it).
-    _, _, _, fx = await asyncio.gather(
+    tasks = [
         market_data.refresh_earnings(
             today - timedelta(days=30), today + timedelta(days=90)
         ),
@@ -159,8 +165,11 @@ async def refresh_calendar_and_daily_data(
         ),
         market_data.refresh_daily(today),
         sources.fx.fetch_fx(today),
-    )
-    market_data.latest_fx = fx
+    ]
+    if vix is not None:
+        tasks.append(vix.refresh(today))
+    results: list[Any] = await asyncio.gather(*tasks)
+    market_data.latest_fx = results[3]
 
 
 async def refresh_daily_data_and_signals(
@@ -171,14 +180,26 @@ async def refresh_daily_data_and_signals(
     clock: Clock,
     signals: SignalService,
     bus: UpdateBus | None = None,
+    vix: VixService | None = None,
 ) -> None:
     """The scheduled daily refresh, followed by a stored-snapshot refresh."""
     await refresh_calendar_and_daily_data(
-        calendar_store, market_data, sources, config, clock
+        calendar_store, market_data, sources, config, clock, vix
     )
     await signals.refresh()
     if bus is not None:
         bus.publish("watchlist", "header", "banners", "performance", "attention")
+
+
+async def run_vix_refresh(
+    vix: VixService, bus: UpdateBus | None = None
+) -> None:
+    """The 17:00 New York VIX refresh — picks up the day's FRED posting
+    (docs/SPEC.md, VIX). The next cycle carries the fields; this only
+    refreshes the store and the Settings data-source tile."""
+    await vix.refresh()
+    if bus is not None:
+        bus.publish("settings", "banners")
 
 
 def run_readiness_tick(
@@ -620,7 +641,7 @@ async def startup_key_checks(
                 error = scrub(result.error, secrets.scrub_values())
                 for name in ("alpaca_key_id", "alpaca_secret"):
                     secrets.record_test(name, False, error)
-    for group in ("openai", "finnhub"):
+    for group in ("openai", "finnhub", "fred"):
         await secrets.retest_stored(group, testers, event=False)
 
 
@@ -998,6 +1019,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     broker = make_broker(config, sources, clock, secrets_store)
     calendar_store = CalendarStore(sources.calendar)
     market_data = MarketDataService(sources, calendar_store, config)
+    # VIX collection (item 060): FRED closes into vix_closes, the VIXY
+    # reference ETF's bars into the cache — display only, never an input.
+    vix_service = VixService(
+        sources.vix, market_data, config, clock
+    )
     signal_service = SignalService(market_data, calendar_store, config, clock)
     # The llm_cache is shared: live and shadows write through to it (never
     # read it), backtests read it — a rerun on identical inputs is free.
@@ -1086,6 +1112,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             secrets=secrets_store,
             notify=lambda topics: bus.publish(*topics),
         ),
+        vix=vix_service,
     )
     def live_gate_state() -> LiveGateState:
         from app.db.base import get_session_maker
@@ -1138,7 +1165,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notify=lambda: bus.publish("universe", "banners", "header", "attention"),
     )
     await refresh_calendar_and_daily_data(
-        calendar_store, market_data, sources, config, clock
+        calendar_store, market_data, sources, config, clock, vix_service
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
@@ -1342,6 +1369,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.secrets_store = secrets_store
     app.state.key_testers = key_testers
     app.state.market_data = market_data
+    app.state.vix = vix_service
     app.state.signal_service = signal_service
     if config.env.mode != "simulated":
         cycle_runner.record_missing_cycles("app down")
@@ -1414,8 +1442,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             clock,
             signal_service,
             bus,
+            vix_service,
         ],
         id="daily-data-refresh",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
+    )
+    # The second VIX fetch (item 060): FRED posts the day's close around
+    # 16:00 New York, so 17:00 picks it up for the Settings tile; the
+    # next cycle stores the fields.
+    scheduler.add_job(
+        run_vix_refresh,
+        CronTrigger(hour=17, minute=0, timezone=NY_TZ),
+        args=[vix_service, bus],
+        id="vix-refresh",
         misfire_grace_time=misfire_grace,
         coalesce=True,
     )

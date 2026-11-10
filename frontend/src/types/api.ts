@@ -10,6 +10,17 @@ export interface SessionState {
   calendar_loaded?: boolean;
 }
 
+/** The seven VIX fields a cycle stores (item 060) — display only. */
+export interface VixPayload {
+  close: string | null;
+  date: string | null;
+  percentile: string | null;
+  change_5d_pct: string | null;
+  vixy_today_pct: string | null;
+  vixy_since_vix_pct: string | null;
+  stale: boolean | null;
+}
+
 export interface HeaderState {
   paper: boolean;
   mode: string;
@@ -19,6 +30,7 @@ export interface HeaderState {
   today_usd: string | null;
   today_eur: string | null;
   regime: string;
+  vix?: VixPayload | null;
   kill_switch: boolean;
   paused: boolean;
   paused_since: string | null;
@@ -973,7 +985,7 @@ export interface SettingsError {
 
 // ---- API keys (write-only; never a key value) -------------------------------
 
-export type KeyGroup = 'alpaca' | 'openai' | 'anthropic' | 'finnhub';
+export type KeyGroup = 'alpaca' | 'openai' | 'anthropic' | 'finnhub' | 'fred';
 export type KeyStatus = 'ok' | 'failing' | 'untested' | 'missing';
 
 export interface KeyRow {
@@ -1358,6 +1370,8 @@ export interface DashboardLatestDecision {
   why: string | null;
   model: string | null;
   regime: { trend: string; volatility: string } | null;
+  /** VIX fields of the decision's cycle (item 060). */
+  vix?: VixPayload | null;
   earnings: DecisionEarnings | null;
   sig: DashboardSigChip[];
   box: DashboardBoxRow[];

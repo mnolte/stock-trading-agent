@@ -344,8 +344,13 @@ def make_backtest_sources(
     market_sessions: sessionmaker[Session],
     clock: Clock,
     config: AppConfig,
+    vix: Any = None,
 ) -> Any:
-    """A ``DataSources`` for a backtest engine — every leg local."""
+    """A ``DataSources`` for a backtest engine — every leg local.
+
+    ``vix`` is the source the download phase already used; the replay
+    never calls it — VixService reads the closes market.db holds.
+    """
     from app.data.factory import DataSources
 
     # Session closes let the quote source mark the partial last bar of an
@@ -362,4 +367,5 @@ def make_backtest_sources(
         corporate_actions=BacktestCorporateActionSource(market_sessions),
         calendar=BacktestCalendarSource(market_sessions),
         alpaca=None,
+        vix=vix,
     )

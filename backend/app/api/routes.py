@@ -146,6 +146,47 @@ def _regime_label(request: Request) -> str:
         return "unavailable"
 
 
+def _vix_payload(row: Cycle | None) -> dict[str, object] | None:
+    """The cycle's stored VIX fields for the header and decision card
+    (item 060). Numbers stay strings — the GUI formats them."""
+    if row is None:
+        return None
+
+    def dec(value: Decimal | None) -> str | None:
+        return str(value) if value is not None else None
+
+    return {
+        "close": dec(row.vix_close),
+        "date": row.vix_date.isoformat() if row.vix_date else None,
+        "percentile": dec(row.vix_percentile_1y),
+        "change_5d_pct": dec(row.vix_change_5d_pct),
+        "vixy_today_pct": dec(row.vixy_change_today_pct),
+        "vixy_since_vix_pct": dec(row.vixy_change_since_vix_pct),
+        "stale": row.vix_stale,
+    }
+
+
+def _latest_cycle_vix(request: Request) -> dict[str, object] | None:
+    """VIX fields of the newest decision cycle — what the header shows."""
+    with get_session_maker()() as session:
+        row = session.execute(
+            select(Cycle)
+            .where(Cycle.kind == "cycle")
+            .order_by(Cycle.scheduled_time.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    return _vix_payload(row)
+
+
+def _cycle_vix(cycle_id: int | None) -> dict[str, object] | None:
+    """VIX fields of the cycle one decision belongs to."""
+    if cycle_id is None:
+        return None
+    with get_session_maker()() as session:
+        row = session.get(Cycle, cycle_id)
+    return _vix_payload(row)
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": get_config().env.mode}
@@ -252,6 +293,7 @@ def header_state(request: Request) -> dict[str, object]:
         "today_usd": _fmt_signed(account["today"]),
         "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
+        "vix": _latest_cycle_vix(request),
         "kill_switch": kill_on,
         "resume_blocked": _keys_issue(request) is not None,
         "keys_issue": _keys_issue(request),
@@ -3106,6 +3148,41 @@ def _connections(request: Request) -> list[dict[str, object]]:
             ),
         }
     )
+    vix = getattr(request.app.state, "vix", None)
+    vix_latest = getattr(vix, "latest", None) if vix is not None else None
+    vix_row = (
+        vix.latest_close() if vix is not None else None
+    )
+    vix_detail = "fake closes · VIXY bars every cycle" if simulated else (
+        str(vix_latest.error)
+        if vix_latest is not None and vix_latest.error is not None
+        else (
+            f"{vix_row.close} · {vix_row.date.isoformat()}"
+            + (
+                f" · fetched {vix.last_fetch_at.astimezone(NY_TZ):%H:%M}"
+                if vix is not None and vix.last_fetch_at is not None
+                else ""
+            )
+            + " · VIXY bars every cycle"
+            if vix_row is not None
+            else "no closes yet · VIXY bars every cycle"
+        )
+    )
+    rows.append(
+        {
+            "source": "VIX (FRED)",
+            "status": (
+                "simulated"
+                if simulated
+                else (
+                    "ok"
+                    if vix_latest is not None and vix_latest.error is None
+                    else "error"
+                )
+            ),
+            "detail": vix_detail,
+        }
+    )
     stream = broker.stream_connected() if broker is not None else None
     exec_state = getattr(request.app.state, "exec_state", None)
     degraded = bool(getattr(exec_state, "stream_degraded", False))
@@ -3502,6 +3579,7 @@ def _data_source_tiles(request: Request) -> list[dict[str, object]]:
         "Alpaca news",
         "Finnhub earnings",
         "ECB EUR/USD",
+        "VIX (FRED)",
     }
     return [row for row in _connections(request) if row["source"] in wanted]
 
@@ -3514,6 +3592,10 @@ _KEY_ROW_INFO: dict[str, dict[str, str]] = {
     "openai": {"label": "OpenAI (optional)", "hint": ""},
     "anthropic": {"label": "Anthropic (optional)", "hint": ""},
     "finnhub": {"label": "Finnhub", "hint": "Earnings calendar (free plan)"},
+    "fred": {
+        "label": "FRED (optional)",
+        "hint": "VIX data — only needed if the keyless CSV stops working",
+    },
 }
 
 
@@ -3548,6 +3630,21 @@ def api_keys(request: Request) -> dict[str, object]:
                 or _model_key_hint(request, group),
             }
         )
+    # FRED is optional (docs/SPEC.md, API keys): it sits after the required
+    # groups and never counts toward all_ready — GROUP_ORDER stays the
+    # resume-blocking list.
+    if "fred" in GROUPS:
+        status = store.group_status("fred") if store is not None else {
+            "name": "fred",
+            "set": False,
+            "status": "missing",
+            "masked": None,
+            "account": None,
+            "saved_at": None,
+            "tested_at": None,
+            "error": None,
+        }
+        rows.append({**_KEY_ROW_INFO["fred"], **status, "hint": _KEY_ROW_INFO["fred"]["hint"]})
     return {
         "keys": rows,
         "set_count": sum(1 for row in rows if row["set"]),
@@ -3599,6 +3696,10 @@ async def _apply_keys(request: Request, changed: set[str]) -> None:
         update_key = getattr(sources.earnings, "update_key", None)
         if callable(update_key):
             update_key(store.get("finnhub") or MISSING_KEY)
+    if "fred" in changed and sources is not None and sources.vix is not None:
+        update_key = getattr(sources.vix, "update_key", None)
+        if callable(update_key):
+            update_key(store.get("fred") or "")
     model_changed = changed & {"openai", "anthropic"}
     if model_changed and config.env.mode != "simulated":
         clients = getattr(request.app.state, "model_clients", None)
@@ -3721,6 +3822,8 @@ async def save_api_key(
         else testers.anthropic(value)
         if group == "anthropic"
         else testers.finnhub(value)
+        if group == "finnhub"
+        else testers.fred(value)
     )
     if not result.ok:
         clean = scrub(result.error or "", [value])
@@ -3734,19 +3837,20 @@ async def save_api_key(
 
 
 @router.post("/keys/{group}/remove")
-def remove_api_key(request: Request, group: str) -> dict[str, object]:
+async def remove_api_key(request: Request, group: str) -> dict[str, object]:
     """Remove a stored model key (behind "Confirm it is you").
 
     Refused while live decisions or a review task use that provider;
     active shadows on it pause and say why (docs/SPEC.md → Model
-    providers, Keys)."""
+    providers, Keys). FRED is optional data, not a model provider, so
+    the provider checks skip it and the live VIX source drops the key."""
     from app.auth.api import require_confirmed
 
     require_confirmed(request)
     store = _secrets(request)
     if store is None:
         raise HTTPException(status_code=503, detail="key store unavailable")
-    if group not in ("openai", "anthropic"):
+    if group not in ("openai", "anthropic", "fred"):
         raise HTTPException(status_code=404, detail="unknown key")
     if store.get(group) is None:
         raise HTTPException(
@@ -3760,7 +3864,7 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
     )
 
     config = get_config()
-    label = provider_label(group)
+    label = GROUP_LABELS[group] if group == "fred" else provider_label(group)
     live = str(config.get("decision", "model", default=""))
     if model_provider(config, live) == group:
         raise HTTPException(
@@ -3819,6 +3923,8 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
         if paused:
             session.commit()
     store.remove(group)
+    if group == "fred":
+        await _apply_keys(request, {group})
     store.record_event(
         group,
         "removed",
@@ -4454,6 +4560,7 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "why": why,
             "model": d.model,
             "regime": snapshot.get("regime"),
+            "vix": _cycle_vix(d.cycle_id),
             "earnings": latest_earnings,
             "sig": _sig_chips(snapshot, config),
             "box": _latest_box(d, snapshot, session_state, app_tz),

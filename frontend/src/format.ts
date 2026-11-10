@@ -106,6 +106,18 @@ export function fmtWeekdayDay(iso: string | null | undefined): string {
   return p.y === currentYear() ? base : `${base} ${p.y}`;
 }
 
+/** "Tue 13 Oct" / "Tue 13 Oct 2025" — short weekday first (VIX dates). */
+export function fmtWeekdayDayShort(iso: string | null | undefined): string {
+  const p = dayParts(iso);
+  if (!p || !iso) return '—';
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: MARKET_TZ,
+    weekday: 'short',
+  }).format(new Date(iso.includes('T') ? iso : `${iso}T12:00:00Z`));
+  const base = `${weekday} ${fmtDayMonth(p)}`;
+  return p.y === currentYear() ? base : `${base} ${p.y}`;
+}
+
 /** Date range: "14–25 Sep 2026", "28 Sep – 2 Oct", "28 Dec 2025 – 2 Jan 2026". */
 export function fmtRange(
   fromIso: string | null | undefined,

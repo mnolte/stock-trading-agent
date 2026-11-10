@@ -186,6 +186,21 @@ def test_remove_key_refused_while_ask_uses_it() -> None:
     assert "Ask the agent" in res.text
 
 
+def test_remove_fred_key_returns_to_keyless() -> None:
+    """FRED is optional data, not a model provider: its key removes
+    without the provider checks so the CSV path is used again."""
+    client, _ = _paper_client()
+    res = client.post(
+        "/api/keys/fred", json={"value": "fake-fred-key-0123456789abcdef"}
+    )
+    assert res.status_code == 200, res.text
+    res = client.post("/api/keys/fred/remove")
+    assert res.status_code == 200, res.text
+    assert res.json()["paused_shadows"] == []
+    store = cast(Any, client.app).state.secrets_store
+    assert store.get("fred") is None
+
+
 def test_remove_key_refused_by_pending_settings() -> None:
     """A pending version promotes at the next cycle — the key it moves a
     model to must not be removable first."""

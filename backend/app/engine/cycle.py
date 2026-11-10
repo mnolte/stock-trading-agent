@@ -23,6 +23,7 @@ from app.data.cache import _aware_utc, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import NewsItem, Quote
 from app.data.service import MarketDataService
+from app.data.vix import VixService
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position
 from app.decide.output import decision_trade_prices
@@ -104,6 +105,7 @@ class CycleRunner:
         notifier: Notifier | None = None,
         on_cycle_done: Callable[[CycleReport], None] | None = None,
         model_health: LiveModelHealth | None = None,
+        vix: VixService | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -129,6 +131,9 @@ class CycleRunner:
         # Decision layer); only the live app sets it — shadows, reviews
         # and backtests never see one.
         self.model_health = model_health
+        # VIX fields (item 060): stored on the cycle before decisions;
+        # None leaves every VIX column null (older callers, no source).
+        self.vix = vix
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -661,9 +666,32 @@ class CycleRunner:
         except Exception:  # noqa: BLE001
             logger.exception("shadow-held symbols unavailable")
             shadow_only = []
-        # One bar request covers shadow-held symbols too (docs/SPEC.md,
-        # Running shadows); they get no rules check or decision.
-        await self._update_bars(symbols + shadow_only, now, report)
+        # One bar request covers shadow-held symbols and the VIX
+        # reference ETF too (docs/SPEC.md, Running shadows / VIX); they
+        # get no rules check or decision.
+        vix_symbols = (
+            self.vix.reference_symbols() if self.vix is not None else []
+        )
+        await self._update_bars(
+            list(dict.fromkeys(symbols + shadow_only + vix_symbols)),
+            now,
+            report,
+        )
+        # The seven VIX fields are computed from stored closes and the
+        # cached ETF bars before any decision — collection only, they
+        # change nothing in trading (docs/SPEC.md, VIX).
+        if self.vix is not None:
+            try:
+                vix_fields = self.vix.cycle_fields(now)
+                stored_cycle = session.get(Cycle, cycle_id)
+                assert stored_cycle is not None  # noqa: S101 - internal invariant
+                for key, value in vix_fields.items():
+                    setattr(stored_cycle, key, value)
+                health = self.vix.health()
+                if health is not None:
+                    report.data_source_health["fred"] = health
+            except Exception:  # noqa: BLE001 - VIX never blocks a cycle
+                logger.exception("vix fields failed")
         # The 1h shock-brake leg runs here, on the hourly cycle, so the
         # just-topped-up cache holds the completed bar (docs/SPEC.md,
         # Position check).

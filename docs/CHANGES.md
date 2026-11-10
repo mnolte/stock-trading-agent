@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-10 — [060] VIX data, collected and shown (build)
+
+Build of the 060 spec entry on branch `feat/060-vix-data` (PR #209).
+
+- **`backend/config.example.yaml`**: the `market.vix.*` defaults (`source`, `percentile_sessions`, `stale_sessions`, `reference_etf`) — the spec entry below decides the behaviour.
+- **FRED key removal**: the optional FRED key can be removed in Settings → API keys; the live VIX source drops it and collection returns to the keyless CSV.
+
 ## 2026-11-10 — [060] VIX data, collected and shown
 
 Issue #205, step 1 of 2 (step 2, decision.v7 with the VIX, is item 061, issue #206). Nothing in trading changes.
