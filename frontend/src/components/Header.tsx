@@ -56,7 +56,7 @@ function Bar({ width, height = 14 }: { width: number | string; height?: number }
 function VixTag({ vix }: { vix: VixPayload | null | undefined }) {
   const tagStyle: React.CSSProperties = {
     fontFamily: 'var(--sa-font-mono)',
-    fontSize: '11px',
+    fontSize: 'var(--sa-text-xs)',
     color: 'var(--sa-text-muted)',
     whiteSpace: 'nowrap',
     textDecoration: 'underline dotted',
@@ -81,7 +81,7 @@ function VixTag({ vix }: { vix: VixPayload | null | undefined }) {
         {fmtVixClose(vix.close)}
       </span>
       {stale && (
-        <span style={{ fontSize: '12px' }}> from {fmtWeekdayDayShort(vix.date)}</span>
+        <span style={{ fontSize: 'var(--sa-text-sm)' }}> from {fmtWeekdayDayShort(vix.date)}</span>
       )}
     </span>
   );

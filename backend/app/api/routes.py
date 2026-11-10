@@ -3837,19 +3837,20 @@ async def save_api_key(
 
 
 @router.post("/keys/{group}/remove")
-def remove_api_key(request: Request, group: str) -> dict[str, object]:
+async def remove_api_key(request: Request, group: str) -> dict[str, object]:
     """Remove a stored model key (behind "Confirm it is you").
 
     Refused while live decisions or a review task use that provider;
     active shadows on it pause and say why (docs/SPEC.md → Model
-    providers, Keys)."""
+    providers, Keys). FRED is optional data, not a model provider, so
+    the provider checks skip it and the live VIX source drops the key."""
     from app.auth.api import require_confirmed
 
     require_confirmed(request)
     store = _secrets(request)
     if store is None:
         raise HTTPException(status_code=503, detail="key store unavailable")
-    if group not in ("openai", "anthropic"):
+    if group not in ("openai", "anthropic", "fred"):
         raise HTTPException(status_code=404, detail="unknown key")
     if store.get(group) is None:
         raise HTTPException(
@@ -3863,7 +3864,7 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
     )
 
     config = get_config()
-    label = provider_label(group)
+    label = GROUP_LABELS[group] if group == "fred" else provider_label(group)
     live = str(config.get("decision", "model", default=""))
     if model_provider(config, live) == group:
         raise HTTPException(
@@ -3922,6 +3923,8 @@ def remove_api_key(request: Request, group: str) -> dict[str, object]:
         if paused:
             session.commit()
     store.remove(group)
+    if group == "fred":
+        await _apply_keys(request, {group})
     store.record_event(
         group,
         "removed",

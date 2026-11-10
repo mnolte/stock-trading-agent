@@ -64,9 +64,10 @@ describe('vixHeaderTitle', () => {
     expect(title).toContain('5 sessions −6.2%');
     expect(title).toContain('VIXY since that close +1.2%, today +0.8%');
   });
-  it('stale explains the lag instead', () => {
+  it('stale explains the lag in plain words', () => {
     const title = vixHeaderTitle({ ...vix, stale: true });
-    expect(title).toContain('vix_stale');
+    expect(title).toContain('marked stale');
+    expect(title).not.toContain('vix_stale');
     expect(title).not.toContain('percentile');
   });
 });
@@ -81,6 +82,11 @@ describe('vixPhoneTitle / vixCardTitle', () => {
   it('phone title is just the regime without VIX', () => {
     expect(vixPhoneTitle(null)).toBe('Regime from SPY');
     expect(vixPhoneTitle({ ...vix, close: null })).toBe('Regime from SPY');
+  });
+  it('phone and card titles mark a stale close', () => {
+    const stale = { ...vix, stale: true };
+    expect(vixPhoneTitle(stale)).toContain('(stale)');
+    expect(vixCardTitle(stale)).toContain('stale');
   });
   it('card chip names the cycle', () => {
     const title = vixCardTitle(vix);

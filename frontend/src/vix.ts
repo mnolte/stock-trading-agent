@@ -1,5 +1,5 @@
 import type { VixPayload } from './types/api';
-import { fmtWeekdayDayShort, signedPct } from './format';
+import { fmtWeekdayDayShort, signed } from './format';
 
 /** "17.4" — the VIX close at one decimal (design/DESIGN.md numbers). */
 export function fmtVixClose(close: string | null | undefined): string {
@@ -30,7 +30,8 @@ export function fmtVixPct(value: string | null | undefined): string | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
-  return signedPct(n, 1).replace('.0%', '%');
+  const s = signed(n, 1);
+  return `${s.endsWith('.0') ? s.slice(0, -2) : s}%`;
 }
 
 function pctNum(value: string | null | undefined): number | null {
@@ -60,8 +61,10 @@ function vixyTail(vix: VixPayload, sincePrefix: string): string | null {
 /** The header's hover text (design/screens/Main.dc.html). */
 export function vixHeaderTitle(vix: VixPayload): string {
   if (vix.stale) {
-    const day = vix.date ? fmtWeekdayDayShort(vix.date) : 'the last session';
-    return `FRED has no close after ${day}; the stored fields keep that close with vix_stale true`;
+    const day = vix.date ? fmtWeekdayDayShort(vix.date) : null;
+    return day === null
+      ? 'FRED has not posted a newer close; the stored close is kept and marked stale'
+      : `FRED has not posted a newer close; the stored close of ${day} is kept and marked stale`;
   }
   const segments: string[] = [];
   if (vix.date !== null) {
@@ -87,7 +90,11 @@ export function vixPhoneTitle(vix: VixPayload | null | undefined): string {
   const parts = [`VIX ${fmtVixClose(vix.close)}`];
   const pct = pctNum(vix.percentile);
   if (pct !== null) parts.push(`${ordinal(pct)} percentile`);
-  if (vix.date !== null) parts.push(`close of ${fmtWeekdayDayShort(vix.date)}`);
+  if (vix.date !== null) {
+    parts.push(`close of ${fmtWeekdayDayShort(vix.date)}${vix.stale ? ' (stale)' : ''}`);
+  } else if (vix.stale) {
+    parts.push('stale close');
+  }
   const since = fmtVixPct(vix.vixy_since_vix_pct);
   const today = fmtVixPct(vix.vixy_today_pct);
   const moves: string[] = [];
@@ -100,6 +107,7 @@ export function vixPhoneTitle(vix: VixPayload | null | undefined): string {
 /** The latest-decision card chip's hover text. */
 export function vixCardTitle(vix: VixPayload): string {
   const segments: string[] = [];
+  if (vix.stale) segments.push('stale — FRED has not posted a newer close');
   if (vix.date !== null) {
     segments.push(`close of ${fmtWeekdayDayShort(vix.date)} (FRED)`);
   }

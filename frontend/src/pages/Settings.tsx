@@ -822,6 +822,7 @@ function KeysSection({
         const status = keyStatusChip(row);
         const isAlpaca = row.name === 'alpaca';
         const isModelKey = row.name === 'openai' || row.name === 'anthropic';
+        const canRemove = isModelKey || row.name === 'fred';
         const replaceDisabled = isAlpaca && !keys.replace_allowed;
         return (
           <div key={row.name} style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -870,7 +871,7 @@ function KeysSection({
                     Test
                   </Button>
                 )}
-                {isModelKey && row.set && (
+                {canRemove && row.set && (
                   <Button
                     variant="ghost"
                     onClick={() => removeKey(row.name)}

@@ -438,7 +438,7 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
         )}
         {d.vix && vixChipLabel(d.vix) !== null && (
           <span title={vixCardTitle(d.vix)}>
-            <Chip variant="neutral">{vixChipLabel(d.vix)}</Chip>
+            <Chip variant={d.vix.stale ? 'warning' : 'neutral'}>{vixChipLabel(d.vix)}</Chip>
           </span>
         )}
         <Chip variant="neutral">{earningsChipLabel(d.earnings)}</Chip>
