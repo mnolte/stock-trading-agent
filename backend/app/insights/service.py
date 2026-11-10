@@ -508,6 +508,20 @@ def _live_inputs(
     if window_start is not None:
         dec_q = dec_q.where(Cycle.scheduled_time >= window_start)
     dec_rows = session.execute(dec_q).all()
+    # VIX slice inputs live on the cycle, not the model snapshot (item
+    # 060): map each decision to its cycle's two VIX fields.
+    vix_by_decision = {
+        row[0]: (row[1], row[2])
+        for row in session.execute(
+            select(
+                Decision.id,
+                Cycle.vix_percentile_1y,
+                Cycle.vix_change_5d_pct,
+            )
+            .join(Cycle, Decision.cycle_id == Cycle.id)
+            .where(Cycle.kind == "cycle")
+        ).all()
+    }
 
     pos_q = select(Position).where(Position.closed_at.is_not(None))
     if window_start is not None:
@@ -683,6 +697,16 @@ def _live_inputs(
                 rs_vs_spy_pct=dims.get("rs_vs_spy_pct"),
                 spy_day_pct=_spy_day_pct(spy_daily_cache, opened_ny),
                 atr_percentile=dims.get("atr_percentile"),
+                vix_percentile=(
+                    vix_by_decision.get(p.entry_decision_id, (None, None))[0]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
+                vix_change_5d_pct=(
+                    vix_by_decision.get(p.entry_decision_id, (None, None))[1]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
                 confidence=_dec((decision.model_output or {}).get("confidence"))
                 if decision
                 else None,
@@ -956,6 +980,19 @@ def _shadow_inputs(
         .order_by(ShadowDecision.id)
     )
     dec_rows = session.execute(dec_q).all()
+    # Same VIX-from-cycle map as the live section (item 060).
+    vix_by_decision = {
+        row[0]: (row[1], row[2])
+        for row in session.execute(
+            select(
+                ShadowDecision.id,
+                Cycle.vix_percentile_1y,
+                Cycle.vix_change_5d_pct,
+            )
+            .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
+            .where(Cycle.kind == "cycle")
+        ).all()
+    }
 
     pos_q = select(ShadowPosition).where(
         ShadowPosition.strategy_id == strategy.id,
@@ -1068,6 +1105,16 @@ def _shadow_inputs(
                 rs_vs_spy_pct=dims.get("rs_vs_spy_pct"),
                 spy_day_pct=_spy_day_pct(spy_daily_cache, opened_ny),
                 atr_percentile=dims.get("atr_percentile"),
+                vix_percentile=(
+                    vix_by_decision.get(p.entry_decision_id, (None, None))[0]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
+                vix_change_5d_pct=(
+                    vix_by_decision.get(p.entry_decision_id, (None, None))[1]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
                 confidence=_dec((decision.model_output or {}).get("confidence"))
                 if decision
                 else None,

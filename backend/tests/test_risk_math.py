@@ -125,7 +125,9 @@ def test_every_default_symbol_can_trade_at_typical_atr() -> None:
     # >= 1 whole share within risk per trade, max position and cash.
     config = AppConfig()
     symbols = list(config.get("universe", "symbols"))
-    assert set(symbols) == set(_BASE_PRICES)
+    # VIXY has fake bars (the VIX reference ETF, item 060) but is never a
+    # candidate — it is not part of the tradable default universe.
+    assert set(symbols) == set(_BASE_PRICES) - {"VIXY"}
     risk_budget = EQUITY * Decimal("0.005")  # risk_per_trade 0.5%
     position_cap = EQUITY * Decimal("0.2")  # max_position 20%
     for symbol in symbols:

@@ -109,8 +109,12 @@ def build_bundle(
     before_call: Any,
     starting_equity: Decimal,
     slippage_pct: Decimal,
+    market_sessions: sessionmaker[Session] | None = None,
 ) -> StrategyBundle:
-    """Build one strategy's engine on its own database file."""
+    """Build one strategy's engine on its own database file.
+
+    ``market_sessions`` is the run's market.db — the VixService reads
+    the downloaded VIX closes from it (item 060)."""
     db_path = run_dir_for(config, run_id) / f"{slug}.db"
     if not db_path.exists():
         init_strategy_db(db_path)
@@ -178,6 +182,15 @@ def build_bundle(
         outcomes=outcomes,
         session_factory=sf,
     )
+    from app.data.vix import VixService
+
+    vix_service = VixService(
+        sources.vix,
+        market_data,
+        config,
+        bundle_clock,
+        session_factory=market_sessions or sf,
+    )
     cycle = CycleRunner(
         market_data=market_data,
         signals=signals,
@@ -189,6 +202,7 @@ def build_bundle(
         executor=executor,
         outcomes=outcomes,
         session_factory=sf,
+        vix=vix_service,
     )
     universe_service = UniverseService(
         market_data=market_data,

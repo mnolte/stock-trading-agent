@@ -113,6 +113,10 @@ class InsightsTrade:
     rs_vs_spy_pct: Decimal | None = None
     spy_day_pct: Decimal | None = None
     atr_percentile: Decimal | None = None
+    # VIX at the entry decision's cycle (item 060) — from cycles, never
+    # the model snapshot.
+    vix_percentile: Decimal | None = None
+    vix_change_5d_pct: Decimal | None = None
     confidence: Decimal | None = None
     stop_basis: str | None = None
     target_basis: str | None = None
@@ -500,6 +504,7 @@ def _dimension_values(
     opening_gap_pct: Decimal,
     strength_edges: tuple[Decimal, Decimal] | None,
     vol_edges: tuple[Decimal, Decimal] | None,
+    vix_edges: tuple[Decimal, Decimal] | None,
 ) -> dict[str, str | None]:
     """Every dimension's slice key for one trade (None = not sliceable)."""
     gap = trade.opening_gap_pct
@@ -575,6 +580,28 @@ def _dimension_values(
             else "high third"
         )
 
+    vix_level_key = None
+    if trade.vix_percentile is not None and vix_edges is not None:
+        lo, hi = vix_edges
+        vix_level_key = (
+            "low third"
+            if trade.vix_percentile < lo
+            else "middle third"
+            if trade.vix_percentile < hi
+            else "high third"
+        )
+
+    vix_change_key = None
+    if trade.vix_change_5d_pct is not None:
+        chg = trade.vix_change_5d_pct
+        vix_change_key = (
+            "down >10%"
+            if chg < Decimal("-10")
+            else "up >10%"
+            if chg > Decimal("10")
+            else "flat"
+        )
+
     basis_key = None
     if trade.stop_basis is not None or trade.target_basis is not None:
         basis_key = (
@@ -612,6 +639,8 @@ def _dimension_values(
         "strength_vs_spy": strength_key,
         "spy_that_day": spy_key,
         "volatility": vol_key,
+        "vix_level": vix_level_key,
+        "vix_change_5d": vix_change_key,
         "confidence": (
             _conf_bucket(trade.confidence)
             if trade.confidence is not None
@@ -636,6 +665,8 @@ DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("strength_vs_spy", "Strength vs SPY"),
     ("spy_that_day", "SPY that day"),
     ("volatility", "Volatility"),
+    ("vix_level", "VIX level"),
+    ("vix_change_5d", "VIX 5-session change"),
     ("confidence", "Confidence"),
     ("stop_target_basis", "Stop and target basis"),
     ("sessions_held", "Sessions held"),
@@ -686,6 +717,9 @@ def _slices(
     vol_edges = _tercile_edges(
         [t.atr_percentile for t in trades if t.atr_percentile is not None]
     )
+    vix_edges = _tercile_edges(
+        [t.vix_percentile for t in trades if t.vix_percentile is not None]
+    )
 
     dims_of: dict[int, dict[str, str | None]] = {
         t.id: _dimension_values(
@@ -694,6 +728,7 @@ def _slices(
             opening_gap_pct=opening_gap_pct,
             strength_edges=strength_edges,
             vol_edges=vol_edges,
+            vix_edges=vix_edges,
         )
         for t in trades
     }

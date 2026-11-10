@@ -13,8 +13,10 @@ from app.data.fake import (
     FakeFXSource,
     FakeNewsSource,
     FakeQuoteSource,
+    FakeVixSource,
 )
 from app.data.finnhub import FinnhubEarningsSource
+from app.data.fred import FredVixSource
 from app.data.protocols import (
     BarSource,
     CalendarSource,
@@ -23,6 +25,7 @@ from app.data.protocols import (
     FXSource,
     NewsSource,
     QuoteSource,
+    VixSource,
 )
 from app.data.rate_limiter import RateLimitConfig, RateLimiter
 from app.market.clock import RealClock
@@ -41,6 +44,9 @@ class DataSources:
     corporate_actions: CorporateActionSource
     calendar: CalendarSource
     alpaca: AlpacaDataClient | None
+    # VIX closes (item 060): None only where a caller builds sources by
+    # hand without one — VixService then reports the fields as missing.
+    vix: VixSource | None = None
 
 
 def make_data_sources(
@@ -65,10 +71,14 @@ def make_data_sources(
             corporate_actions=FakeCorporateActionSource(),
             calendar=calendar,
             alpaca=None,
+            vix=FakeVixSource(calendar),
         )
 
     key_id, secret = secrets.alpaca_pair() if secrets is not None else (None, None)
     finnhub_key = secrets.get("finnhub") if secrets is not None else None
+    # The FRED key is optional — only the fallback for a keyless CSV that
+    # stops working (docs/SPEC.md, VIX).
+    fred_key = secrets.get("fred") if secrets is not None else None
 
     max_calls = config.get_int("alpaca", "max_calls_per_minute", default=150)
     adjustment = str(config.get("schedule", "bar_adjustment", default="split"))
@@ -91,4 +101,5 @@ def make_data_sources(
         corporate_actions=alpaca,
         calendar=alpaca,
         alpaca=alpaca,
+        vix=FredVixSource(api_key=fred_key),
     )

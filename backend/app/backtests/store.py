@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import AppConfig
 from app.data.cache import BarCache
 from app.db.base import configure_sqlite
-from app.db.models import Bar1d, Bar5m, CorporateAction, Earning
+from app.db.models import Bar1d, Bar5m, CorporateAction, Earning, VixClose
 
 # market.db tables that share the live schema get their columns from the
 # live models; news and the trading calendar have no live table.
@@ -127,6 +127,9 @@ def make_market_db(path: Path, config: AppConfig) -> sessionmaker[Session]:
     engine = engine_for(path, config)
     cast(Table, Earning.__table__).create(engine, checkfirst=True)
     cast(Table, CorporateAction.__table__).create(engine, checkfirst=True)
+    # VIX closes the run downloaded (item 060) — the VixService reads
+    # them through the same ORM model as the live database.
+    cast(Table, VixClose.__table__).create(engine, checkfirst=True)
     _MARKET_META.create_all(engine)
     return sessionmaker(bind=engine)
 

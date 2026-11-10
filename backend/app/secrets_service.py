@@ -47,6 +47,7 @@ SECRET_NAMES = (
     "openai",
     "anthropic",
     "finnhub",
+    "fred",
     "smtp_password",
 )
 
@@ -56,13 +57,18 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "openai": ("openai",),
     "anthropic": ("anthropic",),
     "finnhub": ("finnhub",),
+    "fred": ("fred",),
 }
 GROUP_LABELS = {
     "alpaca": "Alpaca keys",
     "openai": "OpenAI key",
     "anthropic": "Anthropic key",
     "finnhub": "Finnhub key",
+    "fred": "FRED key",
 }
+# ``fred`` stays out of GROUP_ORDER on purpose: it is optional — a
+# missing or failing FRED key never blocks start or resume
+# (docs/SPEC.md, API keys).
 GROUP_ORDER = ("alpaca", "openai", "anthropic", "finnhub")
 
 ENV_VARS = {
@@ -71,6 +77,7 @@ ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "finnhub": "FINNHUB_API_KEY",
+    "fred": "FRED_API_KEY",
 }
 
 # Clients are always constructed, even without a key, so a later save can
@@ -195,6 +202,8 @@ class KeyTesters(Protocol):
 
     async def finnhub(self, key: str) -> KeyTestResult: ...
 
+    async def fred(self, key: str) -> KeyTestResult: ...
+
 
 class LiveKeyTesters:
     """The spec's tests: Alpaca GET account on the paper endpoint (must be
@@ -258,6 +267,19 @@ class LiveKeyTesters:
         except Exception as exc:  # noqa: BLE001
             return KeyTestResult(ok=False, error=scrub(str(exc), [key]))
 
+    async def fred(self, key: str) -> KeyTestResult:
+        """One VIXCLS observation through the FRED API (docs/SPEC.md,
+        API keys — the key is only the fallback for a keyless CSV that
+        stops working)."""
+        from app.data.fred import FredVixSource
+
+        source = FredVixSource(api_key=key, clock=self._clock)
+        error = await source.test_key()
+        return KeyTestResult(
+            ok=error is None,
+            error=scrub(error, [key]) if error else None,
+        )
+
 
 class FakeKeyTesters:
     """Offline testers for simulated mode and tests.
@@ -287,6 +309,10 @@ class FakeKeyTesters:
     async def finnhub(self, key: str) -> KeyTestResult:
         self.calls.append(("finnhub", (key,)))
         return self.results.get("finnhub") or KeyTestResult(ok=True)
+
+    async def fred(self, key: str) -> KeyTestResult:
+        self.calls.append(("fred", (key,)))
+        return self.results.get("fred") or KeyTestResult(ok=True)
 
 
 def make_key_testers(config: AppConfig, clock: Clock) -> KeyTesters:
@@ -650,6 +676,8 @@ class SecretsStore:
                 else testers.anthropic(value)
                 if group == "anthropic"
                 else testers.finnhub(value)
+                if group == "finnhub"
+                else testers.fred(value)
             )
             self.record_test(group, result.ok, result.detail or result.error)
         if event:
@@ -703,7 +731,7 @@ class SecretsStore:
                         self.record_event(name, "imported", outcome == "ok", detail)
                         self.imported.append(name)
 
-        for name in ("openai", "anthropic", "finnhub"):
+        for name in ("openai", "anthropic", "finnhub", "fred"):
             value = found.get(name)
             if not value:
                 continue
@@ -716,6 +744,8 @@ class SecretsStore:
                 else testers.anthropic
                 if name == "anthropic"
                 else testers.finnhub
+                if name == "finnhub"
+                else testers.fred
             )
             result = await tester(value)
             try:

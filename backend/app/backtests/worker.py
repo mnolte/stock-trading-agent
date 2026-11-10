@@ -178,8 +178,9 @@ async def _fill_market_db(
     wall: Clock,
     config: AppConfig,
     limiter: RateLimiter | None = None,
+    vix: Any = None,
 ) -> list[str]:
-    """Write the run's read-only inputs: calendar, earnings, news, CAs."""
+    """Write the run's read-only inputs: calendar, earnings, news, CAs, VIX."""
     warnings: list[str] = []
     limiter = limiter or _download_limiter(config)
     fetched = _naive_utc(wall.now())
@@ -329,6 +330,33 @@ async def _fill_market_db(
                                 ratio_or_amount=action.amount_or_ratio,
                             )
                         )
+                session.commit()
+
+    # VIX closes (item 060): the percentile window reaches ~1y before the
+    # run, so the fetch starts well before fill_start. A failure is a
+    # warning — cycles then store null VIX fields, like live.
+    if vix is not None:
+        from app.db.models import VixClose
+
+        percentile_sessions = int(
+            config.get("market", "vix", "percentile_sessions", default=252)
+        )
+        vix_start = run.start - timedelta(days=max(400, percentile_sessions * 2))
+        await gate.wait_for_call()
+        async with limiter.call_slot():
+            vix_result = await vix.fetch_vix_closes(vix_start, run.end)
+        if vix_result.error is not None:
+            warnings.append(f"vix download failed: {vix_result.error}")
+        else:
+            with market_sf() as session:
+                for obs in vix_result.data:
+                    session.merge(
+                        VixClose(
+                            date=obs.date,
+                            close=obs.close,
+                            fetched_at=fetched,
+                        )
+                    )
                 session.commit()
     return warnings
 
@@ -668,6 +696,7 @@ async def run_backtest(
     earnings: EarningsSource | None = None,
     secrets: Any = None,
     wall: Clock | None = None,
+    vix: Any = None,
 ) -> None:
     """Run the whole backtest; raises nothing — status lands on the row."""
     with contextlib.suppress(AttributeError, OSError):
@@ -723,6 +752,12 @@ async def run_backtest(
             raise _NoSessions()
 
         symbols = _run_symbols(config, live_sf)
+        # The VIX reference ETF gets bars like live but is never a
+        # candidate — bars only, no earnings/news download (item 060).
+        reference_etf = str(
+            config.get("market", "vix", "reference_etf", default="VIXY")
+        ).upper()
+        bar_symbols = list(dict.fromkeys(symbols + [reference_etf]))
         warnings += await _fill_market_db(
             run=run,
             days=all_days,
@@ -734,13 +769,14 @@ async def run_backtest(
             wall=wall,
             config=config,
             limiter=limiter,
+            vix=vix,
         )
         warnings += await _fill_bar_store(
             config=config,
             run=run,
             days=all_days,
             run_days=days,
-            symbols=symbols,
+            symbols=bar_symbols,
             alpaca=alpaca,
             store=store,
             gate=gate,
@@ -764,7 +800,7 @@ async def run_backtest(
         for spec in run.strategies:
             bundle_config = _bundle_config(config, spec, live_sf)
             sources = make_backtest_sources(
-                store, market_sf, clock, bundle_config
+                store, market_sf, clock, bundle_config, vix=vix
             )
             bundle = build_bundle(
                 config=bundle_config,
@@ -780,13 +816,14 @@ async def run_backtest(
                 before_call=gate.wait_for_call,
                 starting_equity=run.starting_equity,
                 slippage_pct=run.slippage_pct,
+                market_sessions=market_sf,
             )
             await bundle.calendar.load(all_days[0].date, run.end)
             if run.universe_mode == "screened":
                 _seed_universe_pool(live_sf, bundle)
             _seed_run_row(bundle, days[0], run.starting_equity)
             bundle.signals.earnings_missing = earnings_src.missing_symbols(symbols)
-            _prime_bars(bundle, store, all_days, symbols)
+            _prime_bars(bundle, store, all_days, bar_symbols)
             await bundle.market_data.refresh_earnings(run.start, run.end)
             await bundle.market_data.refresh_corporate_actions(
                 run.start, run.end
@@ -926,9 +963,11 @@ def main() -> None:
     secrets = SecretsStore(config, RealClock(), session_factory=live_sf)
     alpaca = None
     earnings_src: EarningsSource | None = None
+    vix_src: Any = None
     if config.env.mode != "simulated":
         from app.data.alpaca import AlpacaDataClient
         from app.data.finnhub import FinnhubEarningsSource
+        from app.data.fred import FredVixSource
         from app.secrets_service import MISSING_KEY
 
         rpm = config.get_int("backtest", "alpaca_calls_per_minute", default=40)
@@ -942,10 +981,14 @@ def main() -> None:
         earnings_src = FinnhubEarningsSource(
             secrets.get("finnhub") or MISSING_KEY
         )
+        # The FRED key is optional — only the fallback for a keyless CSV
+        # that stops working (docs/SPEC.md, VIX).
+        vix_src = FredVixSource(api_key=secrets.get("fred") or None)
     else:
-        from app.data.fake import FakeEarningsSource
+        from app.data.fake import FakeEarningsSource, FakeVixSource
 
         earnings_src = FakeEarningsSource()
+        vix_src = FakeVixSource()
 
     asyncio.run(
         run_backtest(
@@ -955,6 +998,7 @@ def main() -> None:
             alpaca=alpaca,
             earnings=earnings_src,
             secrets=secrets,
+            vix=vix_src,
         )
     )
 

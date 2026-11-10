@@ -15,6 +15,7 @@ from app.data.models import (
     FXRate,
     NewsItem,
     Quote,
+    VixObservation,
 )
 from app.market.clock import NY_TZ, UTC, Clock
 
@@ -32,6 +33,7 @@ _BASE_PRICES: dict[str, Decimal] = {
     "META": Decimal("585"),
     "JPM": Decimal("230"),
     "XOM": Decimal("120"),
+    "VIXY": Decimal("210"),
 }
 
 # Slow per-bar drift (~30% over 60 sessions). It keeps these symbols in a
@@ -291,6 +293,52 @@ class FakeBarSource:
             if bar is not None:
                 bars.append(bar)
         return DataResult(data=bars, source="fake")
+
+
+class FakeVixSource:
+    """Deterministic VIX closes for tests and simulated mode.
+
+    One close per trading session in range (the calendar decides which
+    days those are), a smooth deterministic walk around 18 so the
+    percentile and stale logic see realistic values.
+    """
+
+    def __init__(
+        self,
+        calendar: FakeCalendarSource | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.calendar = calendar or FakeCalendarSource()
+        self.error = error
+
+    async def fetch_vix_closes(
+        self, start: date, end: date
+    ) -> DataResult[list[VixObservation]]:
+        if self.error is not None:
+            return DataResult(data=[], error=self.error, source="fake")
+        result = await self.calendar.fetch_calendar(start, end)
+        if result.error is not None:
+            return DataResult(data=[], error=result.error, source="fake")
+        out: list[VixObservation] = []
+        for day in result.data:
+            if not start <= day.date <= end:
+                continue
+            rng = random.Random(f"vix:{day.date.isoformat()}")  # noqa: S311 - deterministic fake data, not crypto
+            # A slow sine over the day of year plus seeded noise keeps the
+            # series smooth enough for percentile/5-session math.
+            doy = day.date.timetuple().tm_yday
+            value = (
+                18.0
+                + 6.0 * math.sin(doy / 23.0)
+                + rng.uniform(-1.2, 1.2)
+            )
+            out.append(
+                VixObservation(
+                    date=day.date,
+                    close=_to_decimal(max(value, 5.0)),
+                )
+            )
+        return DataResult(data=out, source="fake")
 
 
 class FakeQuoteSource:

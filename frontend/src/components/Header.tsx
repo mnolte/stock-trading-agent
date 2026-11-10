@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { HeaderState } from '../types/api';
-import { displayTime, nyTime } from '../format';
+import type { HeaderState, VixPayload } from '../types/api';
+import { displayTime, fmtWeekdayDayShort, nyTime } from '../format';
+import { fmtVixClose, vixHeaderTitle, vixPhoneTitle } from '../vix';
 import { Chip } from './Chip';
 import { NeedsChip } from './NeedsChip';
 import { regimeVariant } from './regimeChip';
@@ -46,6 +47,43 @@ function Bar({ width, height = 14 }: { width: number | string; height?: number }
       aria-hidden="true"
       style={{ display: 'inline-block', width, height, borderRadius: 4, verticalAlign: 'middle' }}
     />
+  );
+}
+
+/** "VIX 17.4" on the Regime label line (item 060): hover carries the
+ * close's date, percentile, 5-session change and the VIXY moves. Stale
+ * is amber with the close's date; missing is a muted "—". */
+function VixTag({ vix }: { vix: VixPayload | null | undefined }) {
+  const tagStyle: React.CSSProperties = {
+    fontFamily: 'var(--sa-font-mono)',
+    fontSize: '11px',
+    color: 'var(--sa-text-muted)',
+    whiteSpace: 'nowrap',
+    textDecoration: 'underline dotted',
+    textUnderlineOffset: '3px',
+    cursor: 'help',
+  };
+  if (!vix || vix.close === null) {
+    return (
+      <span
+        title="No VIX close stored yet — FRED has not posted one, or the fetch is failing (Settings → Data sources)"
+        style={tagStyle}
+      >
+        VIX <span>—</span>
+      </span>
+    );
+  }
+  const stale = vix.stale === true && vix.date !== null;
+  return (
+    <span title={vixHeaderTitle(vix)} style={tagStyle}>
+      VIX{' '}
+      <span style={{ color: stale ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
+        {fmtVixClose(vix.close)}
+      </span>
+      {stale && (
+        <span style={{ fontSize: '12px' }}> from {fmtWeekdayDayShort(vix.date)}</span>
+      )}
+    </span>
   );
 }
 
@@ -348,18 +386,27 @@ export function Header({
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              <span
-                title="Market regime from SPY: trend × volatility"
+              <div
                 style={{
-                  ...statLabel,
-                  textDecoration: 'underline dotted',
-                  textUnderlineOffset: '3px',
-                  cursor: 'help',
-                  alignSelf: 'flex-start',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  gap: '10px',
                 }}
               >
-                Regime
-              </span>
+                <span
+                  title="Market regime from SPY: trend × volatility"
+                  style={{
+                    ...statLabel,
+                    textDecoration: 'underline dotted',
+                    textUnderlineOffset: '3px',
+                    cursor: 'help',
+                  }}
+                >
+                  Regime
+                </span>
+                {loading ? <Bar width={72} height={12} /> : <VixTag vix={state.vix} />}
+              </div>
               {loading ? <Bar width={72} height={22} /> : <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>}
             </div>
           </div>
@@ -398,7 +445,9 @@ export function Header({
                 >
                   {signedMoney(state.today_usd, '$')}
                 </span>
-                <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>
+                <span title={vixPhoneTitle(state.vix)}>
+                  <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>
+                </span>
               </>
             )}
           </div>

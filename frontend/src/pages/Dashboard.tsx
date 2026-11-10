@@ -42,6 +42,7 @@ import {
   SkeletonTile,
 } from '../components/skeletons';
 import { formatDayChange, formatPrice } from '../components/watchlistFormat';
+import { vixCardTitle, vixChipLabel } from '../vix';
 import {
   displayFullDate,
   displayTime,
@@ -433,6 +434,11 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
             <Chip variant={regimeVariant}>
               market {d.regime.trend} · {d.regime.volatility} vol
             </Chip>
+          </span>
+        )}
+        {d.vix && vixChipLabel(d.vix) !== null && (
+          <span title={vixCardTitle(d.vix)}>
+            <Chip variant="neutral">{vixChipLabel(d.vix)}</Chip>
           </span>
         )}
         <Chip variant="neutral">{earningsChipLabel(d.earnings)}</Chip>

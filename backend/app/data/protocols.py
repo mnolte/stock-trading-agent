@@ -13,6 +13,7 @@ from app.data.models import (
     FXRate,
     NewsItem,
     Quote,
+    VixObservation,
 )
 
 
@@ -78,6 +79,15 @@ class CorporateActionSource(Protocol):
         end: date,
     ) -> DataResult[list[CorporateActionEvent]]:
         """Fetch splits and dividends for the given symbols."""
+        ...
+
+
+class VixSource(Protocol):
+    async def fetch_vix_closes(
+        self, start: date, end: date
+    ) -> DataResult[list[VixObservation]]:
+        """Fetch VIX daily closes (FRED VIXCLS) for observation dates in
+        [start, end]; missing values are skipped, never returned."""
         ...
 
 
