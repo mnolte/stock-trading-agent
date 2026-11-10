@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-09 — [058] decision.v6 (build)
+
+Build of the 058 decision.v6 spec entry on branch `fix/058-decision-v6` (PR #202, stacked on #201).
+
+- **`prompts/decision.v6.md`**: immutable prompt on the v5 contract — a sideways market is no longer a conflict by itself; a leading stock (`trend_daily` up, `momentum` strong) may be entered, and in high volatility its target must be at most `decision.v6.sideways_max_target_atr` (2.0) ATR away.
+- **`sideways_rule`** (`decide/output.py`): code-enforced, v6 entries only — sideways + non-leading stock, or sideways + high volatility + target over the cap, turns the model's `enter` into `skip` with reason `sideways_rule`; the change is stored with `changed_by_code`. v5 never runs it.
+- **Picker and drawer**: Settings → Model lists v6 with its header description (shown as the row's help text — a long `<option>` label overflowed the page at phone width); the decision drawer treats v6 like v4/v5.
+- **Eval**: `eval/decision_v4.json` gained sideways predicates and cases; `make eval-decision PROMPTS=decision.v5,decision.v6` — sideways predicates 5/5, 5/5, 5/5. Live stays on the current prompt until switched in Settings.
+
 ## 2026-11-09 — [058] Trend gate regimes (build)
 
 Build of the 058 trend-gate change on branch `fix/058-trend-gate-sideways` (PR #201, stacked on #200).

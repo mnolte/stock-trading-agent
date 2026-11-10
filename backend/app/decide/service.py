@@ -301,6 +301,7 @@ class DecisionService:
                 current_stop=current_stop,
                 call_error=response.error,
                 config=self.config,
+                prompt_version=self._prompt.version,
             )
         elif self._spec.is_v4:
             validation = validate_model_output_v4(

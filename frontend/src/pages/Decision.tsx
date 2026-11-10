@@ -743,10 +743,10 @@ function V2Levels({ decision }: { decision: DecisionDetail }) {
 // decision.v3: checks by code, room and break-even
 // (design/screens/DecisionV3.dc.html, DecisionV3Held.dc.html)
 
-// decision.v5 renders the decision.v4 drawer — same schema and layout
-// (docs/SPEC.md, Decision v5 — the output schema is v4's).
+// decision.v5/v6 render the decision.v4 drawer — same schema and layout
+// (docs/SPEC.md, Decision v5/v6 — the output schema is v4's).
 const _isV4Plus = (version: string | null | undefined): boolean =>
-  version === 'decision.v4' || version === 'decision.v5';
+  version === 'decision.v4' || version === 'decision.v5' || version === 'decision.v6';
 
 function _v3Checks(decision: DecisionDetail): V3Checks | null {
   const checks = decision.input_snapshot?.checks;
@@ -2796,7 +2796,7 @@ export default function Decision() {
             <>
               {held ? (
                 <>
-                  {decision.prompt_version === 'decision.v5' && (
+                  {(decision.prompt_version === 'decision.v5' || decision.prompt_version === 'decision.v6') && (
                     <V5HoldOrExit decision={decision} />
                   )}
                   <V3PositionFacts decision={decision} />

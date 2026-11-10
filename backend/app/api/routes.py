@@ -2962,6 +2962,23 @@ def _settings_form(config: object) -> dict[str, object]:
     }
 
 
+_PROMPT_HEADER_RE = re.compile(
+    r"<!--\s*prompt:.*?created:\s*[0-9-]+\.\s*(.*?)\s*-->", re.DOTALL
+)
+
+
+def _prompt_description(text: str) -> str | None:
+    """The one-line description in a prompt file's header comment
+    (``<!-- prompt: …, created: <date>. <description> -->``)."""
+    match = _PROMPT_HEADER_RE.search(text)
+    if match is None:
+        return None
+    description = " ".join(match.group(1).split())
+    # The header's last sentence is the immutability note, not a
+    # description of what the version does.
+    return description.split(" Never edit a version")[0] or None
+
+
 def _prompt_options() -> dict[str, list[dict[str, object]]]:
     """Selectable prompt versions per family: decision prompts plus the
     review-task prompts each contract allows (docs/SPEC.md, Settings —
@@ -2991,6 +3008,7 @@ def _prompt_options() -> dict[str, list[dict[str, object]]]:
             {
                 "version": version,
                 "hash": prompt.short_hash,
+                "description": _prompt_description(prompt.text),
                 "shadows": shadow_names.get(version, []),
             }
         )
@@ -4893,6 +4911,10 @@ def _feed_reason(decision: Decision) -> str | None:
             None,
         )
         if failed is not None and failed.get("name"):
+            if failed.get("name") == "Sideways rule":
+                # decision.v6: the feed shows the reason in words
+                # ("sideways market: stock not leading").
+                return str(failed.get("detail") or failed["name"])
             return str(failed["name"])
         note = str(validation.get("note") or "")
         return note or None

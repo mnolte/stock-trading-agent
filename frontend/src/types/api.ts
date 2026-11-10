@@ -908,7 +908,7 @@ export interface SettingsResponse {
   model_options?: ModelOption[];
   prompt_options: Record<
     string,
-    { version: string; hash: string; shadows?: string[] }[]
+    { version: string; hash: string; description?: string | null; shadows?: string[] }[]
   >;
   schedule: {
     rows: ScheduleRow[];

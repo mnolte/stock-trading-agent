@@ -1208,3 +1208,137 @@ async def test_v5_trend_gate_regimes_strategy_override(
     assert row.no_call_reason == "checks"
     detail = ((row.validation_result or {}).get("error") or "")
     assert "regime_trend=sideways (allowed up)" in detail
+
+
+# ----------------------------------------------------------------------
+# decision.v6 — the v5 contract plus sideways_rule
+
+
+def _validate_v6(raw: str, snap: dict[str, Any], **overlay: Any) -> ValidationResult:
+    config = AppConfig().overlay(overlay)
+    return validate_model_output_v5(
+        raw,
+        symbol="T",
+        context=str(snap["context"]),
+        snapshot=snap,
+        atr_1h=Decimal("1.0"),
+        current_stop=None,
+        config=config,
+        prompt_version="decision.v6",
+    )
+
+
+def _sideways_snap(
+    *,
+    trend_daily: str = "up",
+    momentum: str = "strong",
+    volatility: str = "normal",
+    target_atr: float | None = 1.6,
+) -> dict[str, Any]:
+    option = _option()
+    if target_atr is not None:
+        option["target_atr"] = target_atr
+        option["min_confidence"] = 0.42
+    return _snapshot(
+        options=[option],
+        checks={
+            "trend_1h": "up",
+            "trend_daily": trend_daily,
+            "regime_trend": "sideways",
+            "regime_volatility": volatility,
+            "momentum": momentum,
+        },
+    )
+
+
+def test_v6_resolves_to_the_v5_contract() -> None:
+    """decision.v6 is a known version on the v5 contract: v4 schema,
+    v5 builder, is_v5 true (docs/SPEC.md, Decision v6 — Contract)."""
+    from app.decide.output import DECISION_V4_JSON_SCHEMA
+    from app.decide.prompt import load_prompt, prompt_spec
+
+    spec = prompt_spec("decision.v6")
+    assert spec.version == "decision.v6"
+    assert spec.builder == "v5"
+    assert spec.is_v5 and spec.is_v4 and spec.uses_options
+    assert spec.json_schema is DECISION_V4_JSON_SCHEMA
+    # The prompt file and its manifest hash came with the spec PR.
+    assert load_prompt("decision.v6").version == "decision.v6"
+
+
+def test_v6_strategy_defaults_to_ev_gate() -> None:
+    """A v6 shadow gets the v5 entry-gate default like a v5 one."""
+    from app.db.models import Strategy
+    from app.shadows.strategy import overrides_tree
+
+    v6 = Strategy(
+        name="v6", kind="llm", prompt_version="decision.v6",
+        model=None, temperature=None, overrides=None, status="active",
+        created_at=datetime(2026, 11, 9, tzinfo=UTC),
+    )
+    assert overrides_tree(v6)["decision"]["entry_gate"] == "ev"
+
+
+def test_sideways_rule_stock_not_leading() -> None:
+    """trend_daily not up or momentum not strong → enter becomes skip,
+    reason sideways_rule (docs/SPEC.md, Decision v6)."""
+    cases: list[dict[str, Any]] = [
+        {"trend_daily": "mixed"},
+        {"momentum": "mixed"},
+    ]
+    for checks in cases:
+        snap = _sideways_snap(**checks)
+        v = _validate_v6(
+            _v5(action="enter", option_id="A", confidence=0.7), snap
+        )
+        assert v.final_action == "skip"
+        assert v.model_action == "enter"
+        assert v.reason == "sideways_rule"
+        assert v.changed_by_code
+        assert "stock not leading" in (v.note or "")
+
+
+def test_sideways_rule_high_volatility_target_cap() -> None:
+    """Leading stock, high volatility, target over
+    decision.v6.sideways_max_target_atr → skip."""
+    snap = _sideways_snap(volatility="high", target_atr=2.6)
+    v = _validate_v6(
+        _v5(action="enter", option_id="A", confidence=0.7), snap
+    )
+    assert v.final_action == "skip"
+    assert v.reason == "sideways_rule"
+    assert "target over 2 ATR" in (v.note or "")
+
+
+def test_sideways_rule_leading_stock_enters() -> None:
+    """A leading stock (trend_daily up, momentum strong) enters in a
+    sideways regime — 1.6 ATR target passes even in high volatility."""
+    for volatility in ("normal", "high"):
+        snap = _sideways_snap(volatility=volatility, target_atr=1.6)
+        v = _validate_v6(
+            _v5(action="enter", option_id="A", confidence=0.7), snap
+        )
+        assert v.final_action == "enter", volatility
+        sideways = next(c for c in v.checks if c.name == "Sideways rule")
+        assert sideways.passed
+
+
+def test_sideways_rule_never_applies_to_v5() -> None:
+    """v5 strategies never get sideways_rule: the same sideways enter
+    stands under decision.v5."""
+    snap = _sideways_snap(momentum="mixed")
+    v = _validate_v5(
+        _v5(action="enter", option_id="A", confidence=0.7), snap
+    )
+    assert v.final_action == "enter"
+    assert v.reason != "sideways_rule"
+
+
+def test_sideways_rule_up_regime_untouched() -> None:
+    """An enter in an up regime is not a sideways-regime enter."""
+    snap = _sideways_snap(momentum="mixed")
+    snap["checks"]["regime_trend"] = "up"
+    v = _validate_v6(
+        _v5(action="enter", option_id="A", confidence=0.7), snap
+    )
+    assert v.final_action == "enter"

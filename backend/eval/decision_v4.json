@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "decision.v4 eval set (docs/analysis/2026-10-31-decision-v4-candidates.md). llm_call_id entries with a category and the named predicates a good answer must satisfy \u2014 not one exact answer.",
+  "description": "decision.v4 eval set (docs/analysis/2026-10-31-decision-v4-candidates.md). llm_call_id entries with a category and the named predicates a good answer must satisfy — not one exact answer.",
   "predicates": {
     "valid_output": "the model answer validates",
     "valid_option": "option_id is an offered option id for the context (candidate enter, held tighten)",
@@ -16,7 +16,10 @@
     "no_no_news_claim": "no no-news claim while headlines are present",
     "news_effect": "every news_used entry carries a non-empty effect",
     "sound_answer": "the model answer stays sound (valid + no warning reasons)",
-    "overnight_exit": "last cycle with the stop inside a typical gap: exit unless confidence >= neutral + 0.10"
+    "overnight_exit": "last cycle with the stop inside a typical gap: exit unless confidence >= neutral + 0.10",
+    "sideways_rule_clear": "decision.v6: code did not turn the enter into a sideways_rule skip",
+    "final_skip": "the final action is skip (model skip or a code change to skip)",
+    "sideways_target_cap": "decision.v6: an enter chooses an option with target_atr at most decision.v6.sideways_max_target_atr (2.0)"
   },
   "calls": [
     {
@@ -521,6 +524,126 @@
         "conf_within_anchor",
         "no_clear_path_claim",
         "overnight_exit",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2192,
+      "category": "sideways_leading",
+      "predicates": [
+        "sideways_rule_clear",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2159,
+      "category": "sideways_leading",
+      "predicates": [
+        "sideways_rule_clear",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2157,
+      "category": "sideways_leading",
+      "predicates": [
+        "sideways_rule_clear",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2155,
+      "category": "sideways_leading",
+      "predicates": [
+        "sideways_rule_clear",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2152,
+      "category": "sideways_leading",
+      "predicates": [
+        "sideways_rule_clear",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2166,
+      "category": "sideways_not_leading",
+      "predicates": [
+        "final_skip",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2161,
+      "category": "sideways_not_leading",
+      "predicates": [
+        "final_skip",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2132,
+      "category": "sideways_not_leading",
+      "predicates": [
+        "final_skip",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2126,
+      "category": "sideways_not_leading",
+      "predicates": [
+        "final_skip",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2087,
+      "category": "sideways_not_leading",
+      "predicates": [
+        "final_skip",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2965,
+      "category": "sideways_high_vol_target",
+      "predicates": [
+        "sideways_target_cap",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2958,
+      "category": "sideways_high_vol_target",
+      "predicates": [
+        "sideways_target_cap",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2949,
+      "category": "sideways_high_vol_target",
+      "predicates": [
+        "sideways_target_cap",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2933,
+      "category": "sideways_high_vol_target",
+      "predicates": [
+        "sideways_target_cap",
+        "valid_output"
+      ]
+    },
+    {
+      "llm_call_id": 2931,
+      "category": "sideways_high_vol_target",
+      "predicates": [
+        "sideways_target_cap",
         "valid_output"
       ]
     }

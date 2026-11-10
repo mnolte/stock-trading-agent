@@ -94,9 +94,10 @@ def prompt_spec(version: str) -> PromptSpec:
         DECISION_V4_JSON_SCHEMA,
     )
 
-    if version == "decision.v5":
-        # decision.v5 answers in the v4 schema (docs/SPEC.md, Decision
-        # v5 — Output schema); the builder and code checks differ.
+    if version in ("decision.v5", "decision.v6"):
+        # decision.v5/v6 answer in the v4 schema (docs/SPEC.md, Decision
+        # v5/v6 — Output schema); the builder and code checks differ.
+        # v6 reuses the v5 contract; its extra code check is sideways_rule.
         return PromptSpec(
             version, DECISION_V4_JSON_SCHEMA, uses_options=True, builder="v5"
         )

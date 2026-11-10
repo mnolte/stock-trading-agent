@@ -139,6 +139,16 @@ def _best_anchor(snap: dict[str, Any], context: str, output: Any) -> float | Non
     return float(v) if v is not None else None
 
 
+def _chosen_target_atr(snap: dict[str, Any], output: Any) -> float | None:
+    """The entered option's ``target_atr`` (decision.v5+ options)."""
+    oid = getattr(output, "option_id", None)
+    for o in snap.get("options") or []:
+        if isinstance(o, dict) and str(o.get("id")) == str(oid):
+            value = o.get("target_atr")
+            return float(value) if value is not None else None
+    return None
+
+
 def _claims_kinds(validation: ValidationResult) -> set[str]:
     claims = validation.claims
     if claims is None:
@@ -239,6 +249,14 @@ PREDICATES: dict[str, Callable[[dict[str, Any], Any, ValidationResult], bool]] =
     # the stop inside a typical gap, exit unless confidence ≥ neutral +
     # overnight_margin.
     "overnight_exit": _overnight_exit,
+    # decision.v6 sideways cases (docs/SPEC.md, Decision v6 — Eval).
+    "sideways_rule_clear": lambda s, o, v: v.reason != "sideways_rule",
+    "final_skip": lambda s, o, v: v.final_action == "skip",
+    "sideways_target_cap": lambda s, o, v: (
+        v.final_action != "enter"
+        or _chosen_target_atr(s, o) is None
+        or (_chosen_target_atr(s, o) or 0.0) <= 2.0
+    ),
 }
 
 
@@ -444,6 +462,7 @@ def _validate(
             raw, symbol=symbol, context=context, snapshot=snapshot,
             atr_1h=atr_1h, current_stop=current_stop,
             call_error=call_error, config=config,
+            prompt_version=prompt_version,
         )
     if spec.is_v4:
         return validate_model_output_v4(
