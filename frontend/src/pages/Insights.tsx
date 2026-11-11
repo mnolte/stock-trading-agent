@@ -238,6 +238,7 @@ const FILTER_LABELS: Record<string, string> = {
   slots: 'Slots full · not selected',
   rules: 'Rules',
   checks: 'Code checks',
+  fomc_window: 'FOMC window',
 };
 
 function filterLabel(key: string): string {

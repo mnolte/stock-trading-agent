@@ -21,9 +21,12 @@ import { formatPrice } from '../components/watchlistFormat';
 import {
   displayDateTime,
   displayTime,
+  fmtWeekdayDayShort,
   openedTodayNy,
   signed,
-  signedUsd, elapsedHm } from '../format';
+  signedUsd,
+  elapsedHm,
+} from '../format';
 import { EXIT_REASONS, labelFor } from '../labels';
 
 const mono: React.CSSProperties = {
@@ -51,7 +54,22 @@ function statusChips(p: PositionRow): ReactNode {
   if (p.origin === 'adopted') {
     chips.push(<Chip key="origin" variant="info">adopted</Chip>);
   }
-  return chips.length > 0 ? <span style={{ display: 'inline-flex', gap: 6 }}>{chips}</span> : null;
+  // Item 067: the 08:30 releases the position was held into — the same
+  // release line the dashboard counter shows, as a chip per date.
+  for (const rel of p.release_dates ?? []) {
+    chips.push(
+      <span
+        key={`release-${rel.type}-${rel.date}`}
+        title="Held into this 08:30 release (release_next_morning)"
+      >
+        <Chip variant="info">
+          {rel.label ?? rel.type.toUpperCase()} {fmtWeekdayDayShort(rel.date)} ·{' '}
+          {rel.time ?? '08:30'} NY
+        </Chip>
+      </span>,
+    );
+  }
+  return chips.length > 0 ? <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>{chips}</span> : null;
 }
 
 function LegRow({ leg }: { leg: PositionLeg }) {

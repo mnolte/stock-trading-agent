@@ -66,7 +66,7 @@ app:
 schedule:
   market_timezone: America/New_York   # cycles follow the exchange clock
   cycles: ["10:46", "11:46", "12:46", "13:46", "14:46", "15:46"]
-  last_cycle_no_entries: true
+  last_cycle_no_entries: false
   position_checks: ["09:46", "10:01", "10:16", "10:31", "11:01", "11:16", "11:31", "12:01", "12:16", "12:31", "13:01", "13:16", "13:31", "14:01", "14:16", "14:31", "15:01", "15:16", "15:31"]
   position_check_failures_alert: 3
   calendar_refresh: "08:00"
@@ -88,6 +88,7 @@ execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
+  entry_cutoff: "15:50"         # New York; no entry order is sent at or after it (the 10-minute fill window ends by the close)
   pending_exit_failures_alert: 3   # critical Needs you after this many failed exit attempts
   stream_update_grace_seconds: 120   # a fill found by reconciliation whose stream update never arrived within this marks the stream degraded
   stream_degraded_minutes: 30        # the degraded stream banner clears this long after the last failure
@@ -109,6 +110,31 @@ regime:
   vol_low_below_pct: 30
   vol_high_above_pct: 70
   block_entries_in: [down_high]
+
+events:                          # item 067, docs/SPEC.md — Economic releases
+  fomc:
+    enabled: true                # no new entries in the FOMC window; strategy-overridable
+    time: "14:00"                # New York, the rate decision
+    block_minutes_before: 30
+    block_minutes_after: 45
+    dates:                       # decision dates (second day of each meeting), from the Fed's calendar
+      - 2026-12-09
+      - 2027-01-27
+      - 2027-03-17
+      - 2027-04-28
+      - 2027-06-09
+      - 2027-07-28
+      - 2027-09-15
+      - 2027-10-27
+      - 2027-12-08
+      - 2028-01-26
+  fred_releases:                 # FRED release ids: CPI, Employment Situation, Personal Income and Outlays
+    cpi: 10
+    jobs: 50
+    pce: 54
+  release_time: "08:30"          # New York, the time the FRED releases land
+  lookahead_days: 60             # the daily 08:00 fetch covers this far ahead
+  next_release_sessions: 2       # a release this many sessions out is the cycle's next_release
 
 indicators:                     # signal indicator periods (docs/SPEC.md, Indicators)
   ema_fast: 20                  # 1h EMA fast

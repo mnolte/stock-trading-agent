@@ -8,9 +8,11 @@ comes from config; nothing is hard-coded here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from app.risk.fomc import in_fomc_window
 from app.signals.regime import MarketRegime
 from app.signals.snapshot import IndicatorSnapshot
 
@@ -56,6 +58,7 @@ def evaluate_entry_rules(
     is_last_cycle: bool,
     config: AppConfig,
     cycle_time: str | None = None,
+    cycle_at: datetime | None = None,
 ) -> RulesResult:
     rsi_min = config.get_int("rules", "rsi_min", default=40)
     rsi_max = config.get_int("rules", "rsi_max", default=70)
@@ -65,7 +68,7 @@ def evaluate_entry_rules(
     require_ema = bool(config.get("rules", "require_ema20_above_ema50", default=True))
     blackout_days = config.get_int("risk", "earnings_blackout_days", default=3)
     block_last_cycle = bool(
-        config.get("schedule", "last_cycle_no_entries", default=True)
+        config.get("schedule", "last_cycle_no_entries", default=False)
     )
 
     checks: list[RuleCheck] = []
@@ -146,6 +149,19 @@ def evaluate_entry_rules(
         earnings_detail = f"earnings in {n}d"
     checks.append(
         RuleCheck("earnings blackout", passed=earnings_ok, detail=earnings_detail)
+    )
+
+    # FOMC window (item 067): the whole cycle is inside the window, so
+    # every candidate fails the same check; holds and exits are not
+    # affected. events.fomc.enabled turns it off; strategies can
+    # override it through their config overlay.
+    fomc_detail = in_fomc_window(cycle_at, config) if cycle_at is not None else None
+    checks.append(
+        RuleCheck(
+            "fomc_window",
+            passed=fomc_detail is None,
+            detail=fomc_detail or "outside the FOMC window",
+        )
     )
 
     checks.append(

@@ -112,6 +112,12 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
     },
+    "events": {
+        # Economic releases (item 067): the FOMC window switch and its
+        # minute fields. Dates, times and FRED release ids stay in the
+        # config file — the form echoes them read-only.
+        "fomc": ("submap", None, None),
+    },
     "auth": {
         "idle_hours": ("int", 1, 168),
     },
@@ -164,6 +170,11 @@ SUBSPECS: dict[tuple[str, str], dict[str, tuple[str, float | None, float | None]
         "max_rr": ("number", 0, 20),
         "base_rate_sessions": ("int", 0, 260),
         "price_vs_signal_adverse_atr": ("number", 0, 20),
+    },
+    ("events", "fomc"): {
+        "enabled": ("bool", None, None),
+        "block_minutes_before": ("int", 0, 240),
+        "block_minutes_after": ("int", 0, 240),
     },
 }
 
@@ -257,6 +268,10 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "prompts.verdict"): "Verdict prompt",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
+    ("events", ""): "Economic releases",
+    ("events", "fomc.enabled"): "FOMC window",
+    ("events", "fomc.block_minutes_before"): "FOMC window blocks from",
+    ("events", "fomc.block_minutes_after"): "FOMC window blocks until",
     ("notifications", "repeat_limit_minutes"): "Repeat limit",
     ("notifications", "quiet_hours"): "Quiet hours",
     ("notifications", "quiet_hours.start"): "Quiet hours from",
@@ -886,6 +901,20 @@ def latest_version(session: Session) -> SettingsVersion | None:
     ).scalar_one_or_none()
 
 
+def _json_safe(value: Any) -> Any:
+    """YAML parses bare dates (``events.fomc.dates``) into ``date``
+    objects; the JSON column needs ISO strings instead."""
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
 def save_version(
     session: Session,
     clock: Clock,
@@ -899,7 +928,7 @@ def save_version(
     latest = latest_version(session)
     row = SettingsVersion(
         version=(latest.version + 1) if latest is not None else 1,
-        settings=settings,
+        settings=_json_safe(settings),
         changed_at=_naive_utc(clock.now()),
         reason=reason.strip() or None,
     )
@@ -914,6 +943,7 @@ def version_change_summary(
     """One-line diff for the Settings history table."""
     if previous is None:
         return "Defaults from the spec"
+    previous, current = _json_safe(previous), _json_safe(current)
     parts: list[str] = []
     for section in sorted(set(previous) | set(current)):
         prev_body = previous.get(section) or {}
@@ -967,6 +997,7 @@ def pending_change_map(
     save looks lost because the form shows the active values until the next
     cycle promotes the version.
     """
+    active, pending = _json_safe(active), _json_safe(pending)
     out: dict[str, Any] = {}
     for section in sorted(set(active) | set(pending)):
         a = active.get(section) or {}
@@ -1053,10 +1084,15 @@ def schedule_table(
                 "bar_used": bar_used,
                 "entries": (
                     "no"
-                    if last and config.get(
-                        "schedule", "last_cycle_no_entries", default=True
+                    if last
+                    and config.get(
+                        "schedule", "last_cycle_no_entries", default=False
                     )
-                    else "yes"
+                    else (
+                        f"yes, sent by {config.get('execution', 'entry_cutoff')}"
+                        if last and config.get("execution", "entry_cutoff")
+                        else "yes"
+                    )
                 ),
                 "runs_today": cycle in active if active else None,
             }

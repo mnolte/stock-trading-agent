@@ -126,11 +126,12 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 064 | fix | Logs screen counts unreviewed like Readiness | — | — | #212 | building |
 | 065 | fix | VIX fetch retries every 15 minutes while failing | — | — | #213 | building |
 | 066 | feat | "Get a key" links in Settings → API keys | — | — | #214 | building |
-| 067 | feat | Economic releases (issue #215) | `067-feat-economic-releases.md` | #220 | — | planned |
+| 067 | feat | Economic releases (issue #215) | `archive/067-feat-economic-releases.md` | #220 | #227 | building |
 | 068 | feat | Breadth and sectors, collected and shown (issue #216) | `archive/068-feat-breadth-sectors.md` | #222 | #228 | building |
 | 069 | feat | Settings UX | `069-feat-settings-ux.md` | #218 | — | planned |
 | 070 | fix | Test and save disabled on API keys | — | — | #219 | building |
-| 071 | feat | New entries in the last cycle (15:46), entry cutoff 15:50 | `071-feat-entries-in-last-cycle.md` | #221 | — | planned |
+| 071 | feat | New entries in the last cycle (15:46), entry cutoff 15:50 | `archive/071-feat-entries-in-last-cycle.md` | #221 | #226 | building |
+| 072 | fix | Wider HTTP pool for the Alpaca clients | — | — | #225 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

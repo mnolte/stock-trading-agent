@@ -472,11 +472,13 @@ class SignalService:
         # for the rules.entry_cycles strategy override.
         session_today = self.calendar.session_for(today)
         cycle_time: str | None = None
+        cycle_at: datetime | None = None
         if session_today is not None:
             active = self.session_clock.active_cycles(session_today)
             current = [c for c in active if c <= now]
             if current:
                 cycle_time = current[-1].strftime("%H:%M")
+                cycle_at = current[-1]
         ranks = {
             row.symbol: row.rank
             for row in self.market_data.screened_rows() or []
@@ -518,6 +520,7 @@ class SignalService:
                     is_last_cycle=last_cycle,
                     config=self.config,
                     cycle_time=cycle_time,
+                    cycle_at=cycle_at,
                 )
             price: Decimal | None
             base: Decimal | None

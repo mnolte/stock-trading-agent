@@ -58,6 +58,9 @@ const FIELD_LABELS: Record<string, string> = {
   'notifications.repeat_limit_minutes': 'Repeat limit',
   'notifications.quiet_hours.start': 'Quiet hours from',
   'notifications.quiet_hours.end': 'Quiet hours to',
+  'events.fomc.enabled': 'FOMC window',
+  'events.fomc.block_minutes_before': 'FOMC window blocks from',
+  'events.fomc.block_minutes_after': 'FOMC window blocks until',
   'universe.symbols': 'Universe',
   'universe.mode': 'Universe mode',
   'universe.screen.min_price': 'Min price',
@@ -230,6 +233,18 @@ function reviewModelLeafRows(
     map, rows);
 }
 
+/** Nested leaves of `events.fomc`, as `events.fomc.<sub>` paths. */
+function fomcLeafRows(
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  dictLeafRows('events', 'fomc', current, edited, fmtVal,
+    (sub) => FIELD_LABELS[`events.fomc.${sub}`] ?? `FOMC ${sub}`,
+    map, rows);
+}
+
 /** Nested leaves of `reviews.prompts`, as `reviews.prompts.<task>` paths. */
 function reviewPromptLeafRows(
   current: SettingsForm,
@@ -284,6 +299,10 @@ export function diffSettings(
         reviewModelLeafRows(current, edited, null, rows);
         continue;
       }
+      if (path === 'events.fomc') {
+        fomcLeafRows(current, edited, null, rows);
+        continue;
+      }
       if (path === 'reviews.prompts') {
         reviewPromptLeafRows(current, edited, null, rows);
         continue;
@@ -333,6 +352,10 @@ export function diffMap(
       }
       if (path === 'reviews.models') {
         reviewModelLeafRows(current, edited, map, null);
+        continue;
+      }
+      if (path === 'events.fomc') {
+        fomcLeafRows(current, edited, map, null);
         continue;
       }
       if (path === 'reviews.prompts') {

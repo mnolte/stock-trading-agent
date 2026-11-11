@@ -1,5 +1,15 @@
 import type { CycleCounter, CycleCounterSegment } from '../types/api';
-import { displayTime, displayWeekdayTime, nyTime } from '../format';
+import {
+  dayParts,
+  displayTime,
+  displayWeekdayTime,
+  nyTime,
+} from '../format';
+
+const MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
 
 // Display formatting for the dashboard cycle counter. Every schedule
 // fact (cycle times, segments, session boundaries) comes from
@@ -71,4 +81,41 @@ export function segmentTitle(s: CycleCounterSegment): string {
   const state =
     s.status === 'done' ? 'done' : s.status === 'next' ? 'next up' : 'later';
   return `${displayTime(s.time)} Amsterdam · ${nyTime(s.time)} New York — ${state}`;
+}
+
+/** The next-release line (item 067): "CPI tomorrow 14:30 · 08:30 NY",
+ * "FOMC today 20:00 · no entries in the 13:46 cycle". Amsterdam time
+ * first (mono), New York after the dot — or the blocked cycle for FOMC.
+ * The day word is the New York calendar day: today / tomorrow / a short
+ * weekday + date beyond that. */
+export function releaseLine(r: {
+  label: string;
+  date: string;
+  time: string;
+  at?: string;
+  blocked_cycle?: string | null;
+}): { lead: string; ams: string | null; tail: string } | null {
+  const p = dayParts(r.date);
+  if (!p) return null;
+  const nowP = dayParts(new Date().toISOString());
+  if (!nowP) return null;
+  const dayNum = Date.UTC(p.y, p.m - 1, p.d) / 86400000;
+  const nowNum = Date.UTC(nowP.y, nowP.m - 1, nowP.d) / 86400000;
+  const diff = Math.round(dayNum - nowNum);
+  let when: string;
+  if (diff <= 0) when = 'today';
+  else if (diff === 1) when = 'tomorrow';
+  else {
+    const d = new Date(Date.UTC(p.y, p.m - 1, p.d, 12));
+    const wd = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      weekday: 'short',
+    }).format(d);
+    when = `${wd} ${p.d} ${MONTHS[p.m - 1]}${p.y === nowP.y ? '' : ` ${p.y}`}`;
+  }
+  const ams = r.at ? displayTime(r.at) : null;
+  const tail = r.blocked_cycle
+    ? `no entries in the ${r.blocked_cycle} cycle`
+    : `${r.time} NY`;
+  return { lead: `${r.label} ${when}`, ams, tail };
 }

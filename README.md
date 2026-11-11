@@ -57,6 +57,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | Block | What it controls |
 | --- | --- |
 | `market.*` | Market-data extras: `market.vix.*` collects the VIX close (FRED) and the VIXY reference ETF's bars for display only |
+| `events.*` | Economic releases: `events.fomc.*` the FOMC decision window that blocks new entries, `events.fred_releases.*` the CPI, jobs and PCE release ids fetched from FRED, `events.release_time`, `events.lookahead_days` and `events.next_release_sessions` |
 | `universe.*` | Watched symbols, sectors, screen pool and ranking |
 | `app.timezone` | Display timezone |
 | `schedule.*` | Cycle times, position checks, calendar and history loading |

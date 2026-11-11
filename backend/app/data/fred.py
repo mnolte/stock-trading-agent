@@ -139,3 +139,61 @@ class FredVixSource:
         if not result.data:
             return "no VIXCLS observation returned"
         return None
+
+
+class FredReleaseSource:
+    """FRED release dates (``fred/releases/dates``, item 067).
+
+    The release calendar needs the API key — unlike the VIX closes there
+    is no keyless path. A missing key or a failed fetch is a
+    ``DataResult`` error; the caller treats it as a missing calendar,
+    which never blocks a cycle.
+    """
+
+    DATES_URL = "https://api.stlouisfed.org/fred/releases/dates"
+
+    def __init__(self, api_key: str | None = None) -> None:
+        self._api_key = api_key
+
+    def update_key(self, api_key: str) -> None:
+        """Swap the key in place after a Settings save."""
+        self._api_key = api_key
+
+    async def fetch_release_dates(
+        self, release_id: int, start: date, end: date
+    ) -> DataResult[list[date]]:
+        if not self._api_key:
+            return DataResult(
+                data=[], error="no FRED key stored", source="fred"
+            )
+        try:
+            response = await asyncio.to_thread(
+                httpx.get,
+                self.DATES_URL,
+                params={
+                    "release_id": release_id,
+                    "api_key": self._api_key,
+                    "file_type": "json",
+                    "realtime_start": start.isoformat(),
+                    "realtime_end": end.isoformat(),
+                    "sort_order": "asc",
+                    "limit": 1000,
+                },
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            payload = json.loads(response.text)
+        except Exception as exc:  # noqa: BLE001 - reported as a missing calendar
+            return DataResult(data=[], error=str(exc), source="fred")
+        days: list[date] = []
+        for row in payload.get("release_dates") or []:
+            if not isinstance(row, dict):
+                continue
+            raw = str(row.get("date") or "")
+            try:
+                day = date.fromisoformat(raw)
+            except ValueError:
+                continue
+            if start <= day <= end:
+                days.append(day)
+        return DataResult(data=sorted(set(days)), source="fred")

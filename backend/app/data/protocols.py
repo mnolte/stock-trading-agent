@@ -91,6 +91,14 @@ class VixSource(Protocol):
         ...
 
 
+class ReleaseSource(Protocol):
+    async def fetch_release_dates(
+        self, release_id: int, start: date, end: date
+    ) -> DataResult[list[date]]:
+        """Fetch a FRED release's dates in [start, end] (item 067)."""
+        ...
+
+
 class CalendarSource(Protocol):
     async def fetch_calendar(
         self,

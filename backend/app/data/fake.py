@@ -445,3 +445,32 @@ class FakeCorporateActionSource:
             if a.symbol in symbols and start <= a.ex_date <= end
         ]
         return DataResult(data=result, source="fake")
+
+
+class FakeReleaseSource:
+    """Deterministic FRED release dates for tests and simulated mode.
+
+    ``dates`` maps a FRED release id to the dates it publishes; empty by
+    default so a test controls the calendar. ``error`` simulates FRED
+    down or a missing key.
+    """
+
+    def __init__(
+        self,
+        dates: dict[int, list[date]] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self.dates = dates or {}
+        self.error = error
+
+    async def fetch_release_dates(
+        self, release_id: int, start: date, end: date
+    ) -> DataResult[list[date]]:
+        if self.error is not None:
+            return DataResult(data=[], error=self.error, source="fake")
+        return DataResult(
+            data=sorted(
+                d for d in self.dates.get(release_id, []) if start <= d <= end
+            ),
+            source="fake",
+        )

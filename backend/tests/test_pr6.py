@@ -3,7 +3,7 @@ versioned settings, warming-up symbols and the WebSocket update bus
 (docs/SPEC.md, GUI)."""
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
@@ -1436,3 +1436,70 @@ def test_reject_approval_api(client: TestClient) -> None:
     assert (
         client.post(f"/api/approvals/{approval_id}/reject").status_code == 404
     )
+
+
+# ----------------------------------------------------------------------
+# entry cutoff (item 071): an approval given at/after 15:50 New York
+# expires with entry_cutoff — it is never rejected for a re-check.
+
+
+async def test_approve_after_entry_cutoff_expires(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Pending from the 15:46 cycle; approving at 15:52 expires it."""
+    clock = FakeClock(datetime(2026, 10, 15, 19, 46, 20, tzinfo=UTC))
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    executor = _executor(session_factory, broker, clock, config)
+    await executor.reconcile()
+    approval_id = await _pending_approval_id(session_factory, executor)
+
+    clock.set(datetime(2026, 10, 15, 19, 52, 0, tzinfo=UTC))  # 15:52 NY
+    result = await executor.approve(approval_id)
+
+    assert result["ok"] is False
+    assert result["error"] == "entry_cutoff"
+    with session_factory() as session:
+        stored = session.get(Approval, approval_id)
+        assert stored is not None
+        assert stored.status == "expired"
+        assert stored.reason == "entry_cutoff"
+        decision = session.get(Decision, stored.decision_id)
+        assert decision is not None
+        assert decision.final_action == "blocked"
+        assert (decision.gates_result or {}).get("blocked_by") == "entry_cutoff"
+    assert broker.submit_calls == 0
+
+
+async def test_supervised_entry_after_cutoff_creates_no_approval(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A 15:51 decision in supervised mode blocks like automatic —
+    no pending approval is created for an entry that can never go out."""
+    clock = FakeClock(datetime(2026, 10, 15, 19, 51, 0, tzinfo=UTC))
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    config = AppConfig()
+    config.yaml["execution"]["mode"] = "supervised"
+    executor = _executor(session_factory, broker, clock, config)
+    await executor.reconcile()
+
+    with session_factory() as session:
+        decision = make_decision(
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            make_item("MSFT"),
+            None,
+            make_quote("MSFT"),
+            clock.now(),
+            account=make_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert (decision.gates_result or {}).get("blocked_by") == "entry_cutoff"
+        assert session.execute(select(Approval)).scalars().all() == []
+    assert broker.submit_calls == 0

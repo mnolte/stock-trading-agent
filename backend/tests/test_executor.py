@@ -4188,3 +4188,191 @@ async def test_adopt_skips_recently_closed_entry_order_row(
             ).scalar_one()
             == 1
         )
+
+
+# ----------------------------------------------------------------------
+# entry cutoff (item 071): no entry order is sent at or after
+# execution.entry_cutoff (15:50 New York); exits are unaffected.
+
+LATE_1546 = datetime(2026, 10, 15, 19, 46, 20, tzinfo=UTC)  # 15:46:20 NY
+LATE_1550 = datetime(2026, 10, 15, 19, 50, 0, tzinfo=UTC)  # 15:50:00 NY
+LATE_1555 = datetime(2026, 10, 15, 19, 55, 0, tzinfo=UTC)  # 15:55:00 NY
+
+
+async def test_last_cycle_entry_sends_before_cutoff(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A 15:46 candidate passes the pre-filter and its bracket goes out."""
+    clock = FakeClock(LATE_1546)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker, clock)
+    await executor.reconcile()
+    with session_factory() as session:
+        decision = make_decision(
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            make_item("MSFT"),
+            None,
+            make_quote("MSFT"),
+            clock.now(),
+            account=make_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "enter"
+    assert broker.submit_calls == 1
+    parents = await broker.get_open_orders()
+    assert len(parents.data) == 1
+    assert len(parents.data[0].legs) == 2
+
+
+async def test_entry_at_cutoff_is_blocked(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """An entry reached at 15:50:00 is a final blocked · entry_cutoff."""
+    clock = FakeClock(LATE_1550)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(session_factory, broker, clock)
+    await executor.reconcile()
+    with session_factory() as session:
+        decision = make_decision(
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            make_item("MSFT"),
+            None,
+            make_quote("MSFT"),
+            clock.now(),
+            account=make_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "entry_cutoff"
+    assert broker.submit_calls == 0
+
+
+class _CutoffQuotes:
+    """Fresh quotes whose fetch pushes the clock to the cutoff — the
+    pre-send check, not the cycle-time one, must catch this."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self._clock = clock
+
+    async def fetch_quotes(
+        self, symbols: list[str]
+    ) -> DataResult[dict[str, Quote]]:
+        self._clock.set(LATE_1550)
+        now = self._clock.now()
+        return DataResult(
+            data={
+                s: Quote(
+                    symbol=s,
+                    bid=Decimal("420.00"),
+                    ask=Decimal("420.10"),
+                    last=Decimal("420.10"),
+                    timestamp=now,
+                    feed="iex",
+                    trade_timestamp=now,
+                    fetched_at=now,
+                )
+                for s in symbols
+            },
+            source="fake",
+        )
+
+
+async def test_entry_blocked_when_send_reaches_cutoff(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Passed every check at 15:46 but the fresh-quote await lands at
+    15:50 — the order is never sent."""
+    clock = FakeClock(LATE_1546)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    executor = _executor(
+        session_factory,
+        broker,
+        clock,
+        sources=_sources(quotes=_CutoffQuotes(clock)),
+    )
+    await executor.reconcile()
+    with session_factory() as session:
+        decision = make_decision(
+            session, "MSFT", "enter", {"stop_price": 412.0, "target_price": 435.0}
+        )
+        await executor.apply_decision(
+            session,
+            decision,
+            make_item("MSFT"),
+            None,
+            make_quote("MSFT"),
+            clock.now(),
+            account=make_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "blocked"
+        assert decision.gates_result is not None
+        assert decision.gates_result["blocked_by"] == "entry_cutoff"
+    assert broker.submit_calls == 0
+
+
+async def test_exit_after_cutoff_still_sells(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The cutoff only gates entries: a 15:55 exit still goes out."""
+    clock = FakeClock(LATE_1555)
+    broker = FakeBroker(clock, prices={"MSFT": Decimal("420")})
+    broker.positions["MSFT"] = _PosRec(qty=4, avg_entry_price=Decimal("415"))
+    stop = await broker.submit_stop_order(
+        symbol="MSFT", qty=4, stop_price=Decimal("410"), client_order_id="s"
+    )
+    executor = _executor(session_factory, broker, clock)
+    with session_factory() as session:
+        position = open_position(
+            session,
+            "MSFT",
+            qty=4,
+            entry="415",
+            stop="410",
+            opened_at=LATE_1555.replace(tzinfo=None),
+        )
+        session.add(
+            Order(
+                alpaca_order_id=stop.data.id,
+                client_order_id="s",
+                symbol="MSFT",
+                decision_id=None,
+                side="sell",
+                order_type="stop",
+                leg="stop",
+                qty=4,
+                stop_price=Decimal("410"),
+                status="new",
+                created_at=LATE_1555.replace(tzinfo=None),
+            )
+        )
+        decision = make_decision(session, "MSFT", "exit")
+        await executor.apply_decision(
+            session,
+            decision,
+            make_item("MSFT"),
+            position,
+            make_quote("MSFT"),
+            clock.now(),
+            account=make_account(),
+            earnings_known=True,
+        )
+        session.commit()
+        assert decision.final_action == "exit"
+        exit_order = session.execute(
+            select(Order).where(Order.leg == "exit")
+        ).scalar_one()
+        assert exit_order.side == "sell"
+        assert exit_order.status == "filled"

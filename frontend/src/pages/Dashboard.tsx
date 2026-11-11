@@ -49,6 +49,7 @@ import {
   displayWeekdayDateTime,
   displayWeekdayTime,
   elapsedHm,
+  fmtWeekdayDayShort,
   nyTime,
   sessionDayLabel,
   sessionDayShort,
@@ -616,6 +617,15 @@ function OpenPositionsMini({
                   )}
                   <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                     {p.qty} sh{p.opened_today ? ' · today' : ''}
+                    {(p.release_dates ?? []).map((rel) => (
+                      <span
+                        key={`release-${rel.type}-${rel.date}`}
+                        title="Held into this 08:30 release (release_next_morning)"
+                      >
+                        {' '}· {rel.label ?? rel.type.toUpperCase()}{' '}
+                        {fmtWeekdayDayShort(rel.date)} {rel.time ?? '08:30'} NY
+                      </span>
+                    ))}
                   </span>{' '}
                   <span
                     style={{
@@ -1036,6 +1046,7 @@ export default function Dashboard() {
               killSwitchOn={approvalsRes.data?.kill_switch_on ?? false}
               paused={approvalsRes.data?.paused ?? false}
               nextCycle={approvalsRes.data?.next_cycle ?? null}
+              entryCutoff={approvalsRes.data?.entry_cutoff ?? null}
               onResolved={() => {
                 approvalsRes.reload();
                 dashboardRes.reload();
