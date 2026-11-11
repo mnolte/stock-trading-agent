@@ -16,8 +16,7 @@ async function shot(page: import('@playwright/test').Page, name: string) {
 
 test('069 risk limits: preview, summary and two unsaved changes', async ({
   page,
-}, testInfo) => {
-  const suffix = testInfo.project.name === 'mobile' ? '390' : '1440';
+}) => {
   await page.goto('/settings/risk');
   await expect(
     page.getByRole('heading', { name: 'Risk limits' }),
