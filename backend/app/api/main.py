@@ -38,6 +38,7 @@ from app.backtests.manager import BacktestManager
 from app.broker.base import Broker
 from app.config import ROOT, AppConfig, get_config
 from app.data.factory import DataSources, make_data_sources
+from app.data.releases import ReleaseCalendarService
 from app.data.service import MarketDataService
 from app.data.vix import VixService
 from app.db.backup import create_backup
@@ -145,11 +146,14 @@ async def refresh_calendar_and_daily_data(
     config: AppConfig,
     clock: Clock,
     vix: VixService | None = None,
+    releases: ReleaseCalendarService | None = None,
 ) -> None:
     """Daily refresh: calendar, earnings, corporate actions, FX, daily bars.
 
     With a ``vix`` service this is also the 08:00 VIX fetch (item 060) —
-    FRED posts the previous close through the morning.
+    FRED posts the previous close through the morning. With a
+    ``releases`` service it is the 08:00 release-calendar fetch (item
+    067): FOMC rows from config plus CPI/jobs/PCE dates from FRED.
     """
     today = clock.now().astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
@@ -168,6 +172,8 @@ async def refresh_calendar_and_daily_data(
     ]
     if vix is not None:
         tasks.append(vix.refresh(today))
+    if releases is not None:
+        tasks.append(releases.refresh(today))
     results: list[Any] = await asyncio.gather(*tasks)
     market_data.latest_fx = results[3]
 
@@ -181,10 +187,11 @@ async def refresh_daily_data_and_signals(
     signals: SignalService,
     bus: UpdateBus | None = None,
     vix: VixService | None = None,
+    releases: ReleaseCalendarService | None = None,
 ) -> None:
     """The scheduled daily refresh, followed by a stored-snapshot refresh."""
     await refresh_calendar_and_daily_data(
-        calendar_store, market_data, sources, config, clock, vix
+        calendar_store, market_data, sources, config, clock, vix, releases
     )
     await signals.refresh()
     if bus is not None:
@@ -1041,6 +1048,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     vix_service = VixService(
         sources.vix, market_data, config, clock
     )
+    # Release calendar (item 067): FOMC dates from config, CPI/jobs/PCE
+    # dates from FRED — stored rows only ever reach a cycle; a FRED
+    # outage leaves the FOMC rule working and warns on data-source health.
+    release_service = ReleaseCalendarService(
+        sources.releases, market_data, config, clock
+    )
+    release_service.sync_fomc()
     signal_service = SignalService(market_data, calendar_store, config, clock)
     # The llm_cache is shared: live and shadows write through to it (never
     # read it), backtests read it — a rerun on identical inputs is free.
@@ -1130,6 +1144,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             notify=lambda topics: bus.publish(*topics),
         ),
         vix=vix_service,
+        releases=release_service,
     )
     def live_gate_state() -> LiveGateState:
         from app.db.base import get_session_maker
@@ -1182,7 +1197,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         notify=lambda: bus.publish("universe", "banners", "header", "attention"),
     )
     await refresh_calendar_and_daily_data(
-        calendar_store, market_data, sources, config, clock, vix_service
+        calendar_store, market_data, sources, config, clock, vix_service,
+        release_service,
     )
     today = clock.now().astimezone(NY_TZ).date()
     await market_data.refresh_history(today)
@@ -1387,6 +1403,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.key_testers = key_testers
     app.state.market_data = market_data
     app.state.vix = vix_service
+    app.state.releases = release_service
     app.state.signal_service = signal_service
     if config.env.mode != "simulated":
         cycle_runner.record_missing_cycles("app down")
@@ -1460,6 +1477,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             signal_service,
             bus,
             vix_service,
+            release_service,
         ],
         id="daily-data-refresh",
         misfire_grace_time=misfire_grace,

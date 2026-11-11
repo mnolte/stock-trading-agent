@@ -132,6 +132,11 @@ class Cycle(Base):
     vixy_change_today_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     vixy_change_since_vix_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     vix_stale: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Economic releases (item 067): the next release within
+    # events.next_release_sessions sessions — {type, date, time, sessions_away}
+    # in New York time; null when nothing is scheduled or the calendar is
+    # missing (a missing calendar never blocks a cycle).
+    next_release: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Decision(Base):
@@ -175,6 +180,11 @@ class Decision(Base):
     # Entry selection (PR 33): the score and chosen/not-chosen record of
     # one scored candidate decision in expected_profit mode.
     selection: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Economic releases (item 067): the 08:30 releases the entry's next
+    # session opens after — a list of {type, date}; empty/null = untagged.
+    release_next_morning: Mapped[list[dict[str, str]] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
 
 
 class Order(Base):
@@ -268,6 +278,12 @@ class Position(Base):
     # Fetch failures toward "unavailable", kept on the row so a restart
     # does not reset the retry budget.
     after_exit_failures: Mapped[int] = mapped_column(nullable=False, default=0)
+    # Economic releases (item 067): the release dates the position was
+    # held into — a list of {type, date}, appended at each session's last
+    # cycle when the next session opens after an 08:30 release.
+    release_dates: Mapped[list[dict[str, str]] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
 
 
 class Outcome(Base):
@@ -363,6 +379,28 @@ class VixClose(Base):
 
     date: Mapped[date] = mapped_column(primary_key=True)
     close: Mapped[Decimal] = mapped_column(Money, nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class EconomicEvent(Base):
+    """One scheduled market-wide release (docs/SPEC.md, Economic releases).
+
+    FOMC decision dates come from config (``source="config"``); CPI, the
+    jobs report and PCE come from FRED's release calendar
+    (``source="fred"``). ``time`` is the New York "HH:MM" the release
+    lands; ``date`` the New York session date.
+    """
+
+    __tablename__ = "economic_events"
+    __table_args__ = (
+        UniqueConstraint("release_type", "date", name="uq_economic_events_type_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    release_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    date: Mapped[date] = mapped_column(nullable=False, index=True)
+    time: Mapped[str] = mapped_column(String(8), nullable=False)
+    source: Mapped[str] = mapped_column(String(8), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(nullable=False)
 
 

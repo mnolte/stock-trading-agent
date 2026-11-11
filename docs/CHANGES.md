@@ -33,6 +33,16 @@ Issue #215. Marc's decisions of 11 November.
 - **GUI:** next release in the this-cycle strip and on tagged position cards; Settings → Entry rules → Economic releases; Insights slice "release next morning"; `fomc_window` in What each filter removed; Needs you warns 60 days before the FOMC list in config runs out.
 - Build plan item 41.
 
+## 2026-11-11 — [067] Economic releases (build)
+
+- **Config:** `events.fomc.*` (enabled, `time` 14:00 New York, `block_minutes_before` 30, `block_minutes_after` 45, `dates` from the Fed's calendar), `events.fred_releases` (CPI 10, jobs 50, PCE 54), `events.release_time` 08:30, `events.lookahead_days` 60 and `events.next_release_sessions` 2.
+- **Calendar:** `economic_events` (release type, date, New York time, source, fetched_at). Config FOMC rows (`source: config`) sync at startup, the daily 08:00 refresh and settings promotion; CPI, jobs and PCE rows (`source: fred`) come from `fred/releases/dates`. A missing FRED key or failed fetch is a source-health failure only — cycles and the FOMC window keep working.
+- **FOMC window:** a cycle starting inside the window fails candidates on the `fomc_window` pre-filter check (options still tracked, strategy-overridable) and the order-time risk gate blocks with the same check, supervised approvals included. With the normal schedule the 13:46 cycle is the one blocked. Holds, exits and protective stops never consult it.
+- **Per cycle:** `cycles.next_release` stores the first release inside `events.next_release_sessions`, written even when the cycle then skips or fails.
+- **Tags:** a `candidate-enter` decision the session before an 08:30 release gets `release_next_morning` (type, label, date, time, instant); positions open through the session's last cycle get the tag appended to `positions.release_dates`, deduped, existing tags kept. Tagging never fails a cycle.
+- **GUI:** a second line under the cycle counter ("CPI tomorrow 14:30 · 08:30 NY"; for FOMC "no entries in the 13:46 cycle"), release chips on position cards, Settings → Entry rules → Economic releases (window and minutes editable; dates, tracked releases, FRED status and next release read-only), the Insights "release next morning" slice, `fomc_window` in What each filter removed, and the Needs-you warning 60 days before the configured FOMC dates end.
+- Screenshots in `docs/screenshots/067/`.
+
 ## 2026-11-11 — [071] New entries in the last cycle (build)
 
 - **Entry cutoff:** `execution.entry_cutoff` (15:50 New York) in `backend/config.example.yaml`. The executor checks it at the top of `_enter` and again right before the order slot — the fresh-quote await can cross it mid-entry. At or after the cutoff the decision ends `blocked` with `blocked_by: entry_cutoff` ("too close to the close") and no order is sent. A supervised approval approved at or after the cutoff expires with reason `entry_cutoff`; `/api/approvals` reports today's cutoff so the card shows the earlier of next cycle and cutoff.

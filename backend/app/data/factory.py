@@ -13,10 +13,11 @@ from app.data.fake import (
     FakeFXSource,
     FakeNewsSource,
     FakeQuoteSource,
+    FakeReleaseSource,
     FakeVixSource,
 )
 from app.data.finnhub import FinnhubEarningsSource
-from app.data.fred import FredVixSource
+from app.data.fred import FredReleaseSource, FredVixSource
 from app.data.protocols import (
     BarSource,
     CalendarSource,
@@ -25,6 +26,7 @@ from app.data.protocols import (
     FXSource,
     NewsSource,
     QuoteSource,
+    ReleaseSource,
     VixSource,
 )
 from app.data.rate_limiter import RateLimitConfig, RateLimiter
@@ -47,6 +49,9 @@ class DataSources:
     # VIX closes (item 060): None only where a caller builds sources by
     # hand without one — VixService then reports the fields as missing.
     vix: VixSource | None = None
+    # Release dates (item 067): None where a caller builds sources by hand
+    # — the release calendar then reports the FRED releases as missing.
+    releases: ReleaseSource | None = None
 
 
 def make_data_sources(
@@ -72,6 +77,7 @@ def make_data_sources(
             calendar=calendar,
             alpaca=None,
             vix=FakeVixSource(calendar),
+            releases=FakeReleaseSource(),
         )
 
     key_id, secret = secrets.alpaca_pair() if secrets is not None else (None, None)
@@ -102,4 +108,5 @@ def make_data_sources(
         calendar=alpaca,
         alpaca=alpaca,
         vix=FredVixSource(api_key=fred_key),
+        releases=FredReleaseSource(api_key=fred_key),
     )

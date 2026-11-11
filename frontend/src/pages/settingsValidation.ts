@@ -57,6 +57,8 @@ export const FIELD_RULES: Record<string, FieldRule> = {
   'notifications.repeat_limit_minutes': { kind: 'int', min: 0, max: 1440, label: 'Repeat limit' },
   'notifications.quiet_hours.start': { kind: 'time', label: 'Quiet hours from' },
   'notifications.quiet_hours.end': { kind: 'time', label: 'Quiet hours to' },
+  'events.fomc.block_minutes_before': { kind: 'int', min: 0, max: 240, label: 'FOMC window blocks from' },
+  'events.fomc.block_minutes_after': { kind: 'int', min: 0, max: 240, label: 'FOMC window blocks until' },
   'universe.mode': { kind: 'universe_mode', label: 'Universe' },
   'universe.screen.min_price': { kind: 'number', min: 0, label: 'Min price' },
   'universe.screen.min_avg_dollar_volume': { kind: 'number', min: 0, label: 'Min average dollar volume' },

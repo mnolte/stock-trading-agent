@@ -5,6 +5,7 @@ import {
   checkLabel,
   counterTail,
   nextCycleLabel,
+  releaseLine,
   runLabel,
   segmentTitle,
   todayLabel,
@@ -62,41 +63,73 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
   const check = checkLabel(counter);
   const run = runLabel(counter);
   const today = todayLabel(counter);
+  const release = counter.next_release
+    ? releaseLine(counter.next_release)
+    : null;
 
   return (
     <span
       style={{
         display: 'inline-flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 'var(--sa-space-2) var(--sa-space-3)',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        gap: '2px',
         color: 'var(--sa-text-muted)',
         fontSize: 'var(--sa-text-md)',
       }}
     >
-      <span>
-        {nextCycleLabel(counter)}
-        {tail && (
-          <span style={{ fontFamily: 'var(--sa-font-mono)' }}> · {tail}</span>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 'var(--sa-space-2) var(--sa-space-3)',
+        }}
+      >
+        <span>
+          {nextCycleLabel(counter)}
+          {tail && (
+            <span style={{ fontFamily: 'var(--sa-font-mono)' }}> · {tail}</span>
+          )}
+        </span>
+        {counter.segments.length > 0 && (
+          <span
+            aria-label="Today's cycles"
+            style={{ display: 'inline-flex', gap: '3px', alignItems: 'center' }}
+          >
+            {counter.segments.map((s) => (
+              <Segment key={s.time} segment={s} />
+            ))}
+          </span>
         )}
+        {today && <span>{today}</span>}
+        {run && (
+          <span title="Cycles run since this run started (a new run restarts the count)">
+            {run}
+          </span>
+        )}
+        {check && <span>{check}</span>}
       </span>
-      {counter.segments.length > 0 && (
+      {release && (
         <span
-          aria-label="Today's cycles"
-          style={{ display: 'inline-flex', gap: '3px', alignItems: 'center' }}
+          title="Economic release within 2 sessions (item 067). No rule for 08:30 releases: entries and positions held into it are tagged release_next_morning."
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-2)',
+          }}
         >
-          {counter.segments.map((s) => (
-            <Segment key={s.time} segment={s} />
-          ))}
+          <span>
+            {release.lead}{' '}
+            {release.ams && (
+              <span style={{ fontFamily: 'var(--sa-font-mono)' }}>{release.ams}</span>
+            )}{' '}
+            <span style={{ color: 'var(--sa-text-muted)' }}>· {release.tail}</span>
+          </span>
         </span>
       )}
-      {today && <span>{today}</span>}
-      {run && (
-        <span title="Cycles run since this run started (a new run restarts the count)">
-          {run}
-        </span>
-      )}
-      {check && <span>{check}</span>}
     </span>
   );
 }

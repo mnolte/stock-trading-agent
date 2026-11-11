@@ -676,6 +676,7 @@ class ShadowRunner:
                 is_last_cycle=last_cycle,
                 config=cfg,
                 cycle_time=scheduled.astimezone(NY_TZ).strftime("%H:%M"),
+                cycle_at=scheduled.astimezone(NY_TZ),
             )
             (passing if rules.status == STATUS_PASS else failing).append((d, rules))
         passing.sort(key=lambda pair: _rank_key(pair[0]))

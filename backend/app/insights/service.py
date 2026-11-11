@@ -715,6 +715,11 @@ def _live_inputs(
                 sessions_held=held_days or None,
                 prompt_version=decision.prompt_version if decision else None,
                 model=decision.model if decision else None,
+                release_next_morning=(
+                    bool(decision.release_next_morning)
+                    if decision is not None
+                    else None
+                ),
                 stop_leg_price=stop_leg,
                 stop_fill_price=stop_fill,
                 entry_ny=opened_ny,
