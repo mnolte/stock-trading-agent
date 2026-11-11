@@ -202,6 +202,23 @@ async def run_vix_refresh(
         bus.publish("settings", "banners")
 
 
+async def retry_vix_refresh(
+    vix: VixService, bus: UpdateBus | None = None
+) -> None:
+    """Retry the VIX fetch every 15 minutes while the last one failed.
+
+    A FRED outage longer than a fetch window would otherwise leave the
+    closes stale until the next scheduled fetch or a restart; the retry
+    closes that gap. No-op once a fetch succeeds — ``latest`` carries
+    the last attempt's result (docs/SPEC.md, VIX).
+    """
+    if vix.latest is None or vix.latest.error is None:
+        return
+    result = await vix.refresh()
+    if bus is not None and result.error is None:
+        bus.publish("settings", "banners")
+
+
 def run_readiness_tick(
     config: AppConfig,
     calendar: CalendarProvider,
@@ -1456,6 +1473,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         CronTrigger(hour=17, minute=0, timezone=NY_TZ),
         args=[vix_service, bus],
         id="vix-refresh",
+        misfire_grace_time=misfire_grace,
+        coalesce=True,
+    )
+    # While the last VIX fetch failed, retry every 15 minutes — a FRED
+    # outage would otherwise leave the closes stale until the next
+    # scheduled fetch or a restart (docs/SPEC.md, VIX).
+    scheduler.add_job(
+        retry_vix_refresh,
+        IntervalTrigger(minutes=15),
+        args=[vix_service, bus],
+        id="vix-refresh-retry",
         misfire_grace_time=misfire_grace,
         coalesce=True,
     )

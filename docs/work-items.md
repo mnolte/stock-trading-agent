@@ -124,6 +124,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 062 | fix | Decision gate settings could not be saved | — | — | #210 | building |
 | 063 | fix | Price-stale quotes: one retry, age judged at check time | — | — | #211 | building |
 | 064 | fix | Logs screen counts unreviewed like Readiness | — | — | #212 | building |
+| 065 | fix | VIX fetch retries every 15 minutes while failing | — | — | #213 | building |
 | 066 | feat | "Get a key" links in Settings → API keys | — | — | #214 | building |
 | 067 | feat | Economic release calendar (issue #215) | — | — | — | planned |
 | 068 | feat | Market breadth and sector strength, collected and shown (issue #216) | — | — | — | planned |
