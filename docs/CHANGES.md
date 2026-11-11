@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-11 — [068] Breadth and sectors
+
+Issue #216. Collected, shown and stored; nothing in trading uses them until decision.v7 (061).
+
+- **Breadth per cycle** on `cycles`: share of the universe above SMA 50, above SMA 200, with 1h EMA 20 over EMA 50, and up today. No new data; null under 20 symbols.
+- **Sector ETFs** (XLB, XLC, XLE, XLF, XLI, XLK, XLP, XLRE, XLU, XLV, XLY) as reference symbols, never traded; `market.sector_etfs` maps the sector resolver's sectors to them.
+- **Sectors per cycle** (each ETF's `rs_vs_spy_pct` and rank) and **per candidate** (`sector_etf`, `sector_rank`, `sector_rs_vs_spy_pct`, `rs_vs_sector_pct`) in the decision's `market_context`, outside the model's input.
+- **GUI:** breadth in the regime hover; a Sector column in the watchlist ("XLK 2/11"); three Insights slices; an Insights "Sectors now" card.
+- Build plan item 43.
+
 ## 2026-11-11 — [067] Economic releases
 
 Issue #215. Marc's decisions of 11 November.
