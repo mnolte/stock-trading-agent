@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-11 — [072] Wider HTTP pool for the Alpaca clients (build)
+
+Reliability fix, no spec change — silences the `urllib3.connectionpool Connection pool is full, discarding connection: data.alpaca.markets` warnings during the daily-bar refresh and the universe screen.
+
+- **`AlpacaDataClient`** mounts an `HTTPAdapter` with `pool_maxsize=20` on the `requests.Session` of each alpaca-py client it creates (`update_credentials`, so a key save re-applies it). urllib3's default pool is 10 connections per host — exactly the `Semaphore(10)` read concurrency — so any overlapping call (a cycle's quote or bar fetch during a refresh or screen) discarded its connection and paid a fresh TLS handshake.
+- `requests` is now a direct dependency (it was transitive via alpaca-py).
+
 ## 2026-11-11 — [061] Decision v7, planned
 
 Issue #206. A new spec section **Decision v7: market context in the model call (planned)**: step A, the analysis of the VIX, economic releases, breadth and sectors against outcomes (after 20 sessions of 060, 067 and 068 data; also what the FOMC window and the 15:46 entries of 071 did); step B, decision.v7 with only the fields and rules Marc picks, in its own spec PR with the prompt text. Build plan item 44. No prompt, snapshot or code changes now.
@@ -35,6 +42,12 @@ Issue #215. Marc's decisions of 11 November.
 - **Tags:** a `candidate-enter` decision the session before an 08:30 release gets `release_next_morning` (type, label, date, time, instant); positions open through the session's last cycle get the tag appended to `positions.release_dates`, deduped, existing tags kept. Tagging never fails a cycle.
 - **GUI:** a second line under the cycle counter ("CPI tomorrow 14:30 · 08:30 NY"; for FOMC "no entries in the 13:46 cycle"), release chips on position cards, Settings → Entry rules → Economic releases (window and minutes editable; dates, tracked releases, FRED status and next release read-only), the Insights "release next morning" slice, `fomc_window` in What each filter removed, and the Needs-you warning 60 days before the configured FOMC dates end.
 - Screenshots in `docs/screenshots/067/`.
+
+## 2026-11-11 — [071] New entries in the last cycle (build)
+
+- **Entry cutoff:** `execution.entry_cutoff` (15:50 New York) in `backend/config.example.yaml`. The executor checks it at the top of `_enter` and again right before the order slot — the fresh-quote await can cross it mid-entry. At or after the cutoff the decision ends `blocked` with `blocked_by: entry_cutoff` ("too close to the close") and no order is sent. A supervised approval approved at or after the cutoff expires with reason `entry_cutoff`; `/api/approvals` reports today's cutoff so the card shows the earlier of next cycle and cutoff.
+- **Default flipped:** `schedule.last_cycle_no_entries: false`; `true` still restores the old pre-filter rule. Settings → Schedule's last row reads "yes, sent by 15:50".
+- Exits, stop moves and protective stops never consult the cutoff. The Insights entry-cycle slice's 15:46 row is a normal data row — the rule row only exists while the setting is on.
 
 ## 2026-11-11 — [071] New entries in the last cycle
 

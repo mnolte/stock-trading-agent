@@ -52,7 +52,7 @@ app:
 schedule:
   market_timezone: America/New_York   # cycles follow the exchange clock
   cycles: ["10:46", "11:46", "12:46", "13:46", "14:46", "15:46"]
-  last_cycle_no_entries: true
+  last_cycle_no_entries: false
   position_checks: ["09:46", "10:01", "10:16", "10:31", "11:01", "11:16", "11:31", "12:01", "12:16", "12:31", "13:01", "13:16", "13:31", "14:01", "14:16", "14:31", "15:01", "15:16", "15:31"]
   position_check_failures_alert: 3
   calendar_refresh: "08:00"
@@ -74,6 +74,7 @@ execution:
   mode: automatic            # automatic | supervised (supervised from PR 6; refuses to start before)
   entry_limit_offset_pct: 0.05
   entry_timeout_minutes: 10
+  entry_cutoff: "15:50"         # New York; no entry order is sent at or after it (the 10-minute fill window ends by the close)
   pending_exit_failures_alert: 3   # critical Needs you after this many failed exit attempts
   stream_update_grace_seconds: 120   # a fill found by reconciliation whose stream update never arrived within this marks the stream degraded
   stream_degraded_minutes: 30        # the degraded stream banner clears this long after the last failure

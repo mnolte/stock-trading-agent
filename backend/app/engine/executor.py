@@ -14,7 +14,7 @@ import logging
 import secrets
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
@@ -901,6 +901,15 @@ class Executor:
             session.commit()
 
             decision = session.get(Decision, approval.decision_id)
+            if self._past_entry_cutoff():
+                # The approval can never become an order: it expires
+                # with the cutoff reason, not a re-check failure (071).
+                self._resolve_approval(approval, "expired", "entry_cutoff")
+                if decision is not None:
+                    self._entry_cutoff_block(session, decision)
+                session.commit()
+                self._notify({"approvals", "decisions", "attention"})
+                return {"ok": False, "error": "entry_cutoff"}
             # All risk gates again with fresh equity + the fresh ask.
             account = await self.refresh_account()
             if account is None:
@@ -1009,6 +1018,16 @@ class Executor:
                 return {"ok": False, "error": fail}
             assert result.sizing is not None  # noqa: S101 - internal invariant
             qty = result.sizing.shares
+
+            # The awaits above can cross the cutoff: check once more
+            # before the order slot, never after (071).
+            if self._past_entry_cutoff():
+                self._resolve_approval(approval, "expired", "entry_cutoff")
+                if decision is not None:
+                    self._entry_cutoff_block(session, decision)
+                session.commit()
+                self._notify({"approvals", "decisions", "attention"})
+                return {"ok": False, "error": "entry_cutoff"}
 
             self._orders_this_cycle += 1
             client_id = self._client_id(
@@ -3613,6 +3632,38 @@ class Executor:
         elif force_exit_reason is not None:
             decision.gates_result = {"forced": force_exit_reason, "sent": False}
 
+    def _past_entry_cutoff(self) -> bool:
+        """True at or after ``execution.entry_cutoff`` (HH:MM New York).
+
+        No entry order is ever sent past it, so the 10-minute fill
+        window always ends by the close (docs/SPEC.md, Rules
+        pre-filter). Exits, stop moves and protective stops never ask.
+        """
+        raw = self.config.get("execution", "entry_cutoff")
+        if not raw:
+            return False
+        try:
+            hour, minute = (int(part) for part in str(raw).split(":")[:2])
+            cutoff = time(hour, minute)
+        except (TypeError, ValueError):
+            logger.warning(
+                "execution.entry_cutoff %r is not HH:MM — ignored", raw
+            )
+            return False
+        return self.clock.now().astimezone(NY_TZ).time() >= cutoff
+
+    def _entry_cutoff_block(self, session: Session, decision: Decision) -> None:
+        """Record the cutoff stop on the decision: final ``blocked``
+        with change reason ``entry_cutoff`` (label "too close to the
+        close"), like every other executor-side entry stop."""
+        decision.gates_result = {
+            "allowed": False,
+            "blocked_by": "entry_cutoff",
+            "checks": [],
+        }
+        decision.final_action = "blocked"
+        session.flush()
+
     async def _enter(
         self,
         session: Session,
@@ -3622,6 +3673,9 @@ class Executor:
         account: BrokerAccount | None,
         earnings_known: bool,
     ) -> None:
+        if self._past_entry_cutoff():
+            self._entry_cutoff_block(session, decision)
+            return
         output = decision.model_output or {}
         stop = output.get("stop_price")
         target = output.get("target_price")
@@ -3806,6 +3860,18 @@ class Executor:
             session.flush()
             return
         qty = result.sizing.shares
+
+        # The cutoff is checked again right before the send: the
+        # fresh-quote await above can cross it mid-entry (071).
+        if self._past_entry_cutoff():
+            decision.gates_result = result.to_json() | {
+                "allowed": False,
+                "blocked_by": "entry_cutoff",
+                "detail": "no entry orders at or after the cutoff",
+            }
+            decision.final_action = "blocked"
+            session.flush()
+            return
 
         self._orders_this_cycle += 1
         client_id = self._client_id("entry", decision.id, decision.symbol)

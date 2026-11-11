@@ -1084,10 +1084,15 @@ def schedule_table(
                 "bar_used": bar_used,
                 "entries": (
                     "no"
-                    if last and config.get(
-                        "schedule", "last_cycle_no_entries", default=True
+                    if last
+                    and config.get(
+                        "schedule", "last_cycle_no_entries", default=False
                     )
-                    else "yes"
+                    else (
+                        f"yes, sent by {config.get('execution', 'entry_cutoff')}"
+                        if last and config.get("execution", "entry_cutoff")
+                        else "yes"
+                    )
                 ),
                 "runs_today": cycle in active if active else None,
             }

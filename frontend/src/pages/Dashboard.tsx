@@ -1046,6 +1046,7 @@ export default function Dashboard() {
               killSwitchOn={approvalsRes.data?.kill_switch_on ?? false}
               paused={approvalsRes.data?.paused ?? false}
               nextCycle={approvalsRes.data?.next_cycle ?? null}
+              entryCutoff={approvalsRes.data?.entry_cutoff ?? null}
               onResolved={() => {
                 approvalsRes.reload();
                 dashboardRes.reload();

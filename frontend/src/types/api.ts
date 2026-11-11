@@ -740,6 +740,9 @@ export interface ApprovalsResponse {
   paused: boolean;
   /** Pending approvals expire at the start of this cycle. */
   next_cycle: string | null;
+  /** Today's entry cutoff (execution.entry_cutoff, New York) — an
+   * approval can never become an order at or after it (item 071). */
+  entry_cutoff: string | null;
   items: Approval[];
   recent: Approval[];
 }

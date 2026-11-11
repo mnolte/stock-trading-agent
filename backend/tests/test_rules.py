@@ -53,6 +53,7 @@ def _eval(
     held: bool = False,
     open_entry_order: bool = False,
     is_last_cycle: bool = False,
+    config: AppConfig | None = None,
 ) -> RulesResult:
     return evaluate_entry_rules(
         "AAPL",
@@ -61,7 +62,7 @@ def _eval(
         held=held,
         open_entry_order=open_entry_order,
         is_last_cycle=is_last_cycle,
-        config=AppConfig(),
+        config=config or AppConfig(),
     )
 
 
@@ -141,10 +142,20 @@ def test_down_high_regime_fails() -> None:
     assert result.reason and "blocks" in result.reason
 
 
-def test_last_cycle_fails() -> None:
-    result = _eval(is_last_cycle=True)
+def test_last_cycle_fails_when_rule_on() -> None:
+    """schedule.last_cycle_no_entries: true restores the old rule (071)."""
+    config = AppConfig()
+    config.yaml["schedule"]["last_cycle_no_entries"] = True
+    result = _eval(is_last_cycle=True, config=config)
     assert result.status == "fail"
     assert result.reason and "last cycle" in result.reason
+
+
+def test_last_cycle_passes_by_default() -> None:
+    """Since 071 the last cycle enters like any other (entry_cutoff
+    still applies at send time — see test_executor)."""
+    result = _eval(is_last_cycle=True)
+    assert result.status == "pass"
 
 
 def test_no_snapshot_fails_cleanly() -> None:
