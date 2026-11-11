@@ -937,6 +937,9 @@ def decision_detail(request: Request, decision_id: int) -> dict[str, object]:
             if cycle_sel is not None
             else None
         ),
+        # Item 067: the 08:30 releases this entry was held into —
+        # null when the entry was never tagged.
+        "release_next_morning": decision.release_next_morning,
         "model": decision.model,
         "tokens_in": decision.tokens_in,
         "tokens_out": decision.tokens_out,
@@ -1219,6 +1222,58 @@ def readiness_manual(
     return {"saved": True, "id": row_id}
 
 
+def _next_release(request: Request, now: datetime) -> dict[str, object] | None:
+    """The dashboard's next-release line (item 067): the stored calendar's
+    first release within ``events.next_release_sessions`` sessions, with
+    the FOMC window's blocked cycle time added for the "no entries"
+    suffix. None without a release service or a coming release."""
+    releases = getattr(request.app.state, "releases", None)
+    if releases is None:
+        return None
+    try:
+        nxt = releases.next_release(now)
+    except Exception:  # noqa: BLE001 - display only, never 500s
+        logger.exception("next_release failed")
+        return None
+    if nxt is None:
+        return None
+    out = dict(nxt)
+    if out.get("type") == "fomc":
+        out["blocked_cycle"] = _fomc_blocked_cycle(request)
+    return out
+
+
+def _fomc_blocked_cycle(request: Request) -> str | None:
+    """The configured cycle time inside today's FOMC window — the cycle
+    the dashboard names in "no entries in the 13:46 cycle". None when no
+    cycle lands inside the window."""
+    from app.risk.fomc import fomc_dates, fomc_decision_at
+
+    config = get_config()
+    if not bool(config.get("events", "fomc", "enabled", default=True)):
+        return None
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    today = clock.now().astimezone(NY_TZ).date()
+    day = next((d for d in fomc_dates(config) if d == today), None)
+    if day is None:
+        return None
+    decision = fomc_decision_at(day, config)
+    before = int(config.get("events", "fomc", "block_minutes_before", default=30))
+    after = int(config.get("events", "fomc", "block_minutes_after", default=45))
+    start, end = decision - timedelta(minutes=before), decision + timedelta(
+        minutes=after
+    )
+    for raw in config.get("schedule", "cycles", default=[]) or []:
+        try:
+            hh, mm = (int(p) for p in str(raw).split(":")[:2])
+        except (ValueError, TypeError):
+            continue
+        at = datetime.combine(day, dtime(hh, mm), tzinfo=NY_TZ)
+        if start <= at <= end:
+            return f"{hh:02d}:{mm:02d}"
+    return None
+
+
 def _position_json(
     position: Position, market_value: Decimal | None = None
 ) -> dict[str, object]:
@@ -1251,6 +1306,9 @@ def _position_json(
             else None
         ),
         "exit_reason": position.exit_reason,
+        # Item 067: the 08:30 releases this position was held into —
+        # a list of {type, label, date} dicts, null when never tagged.
+        "release_dates": position.release_dates,
     }
 
 
@@ -2888,6 +2946,19 @@ def _settings_form(config: object) -> dict[str, object]:
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
         },
+        "events": {
+            # Only the editable FOMC sub-keys — dates, times and FRED
+            # release ids stay read-only on the page (item 067).
+            "fomc": {
+                "enabled": get("events", "fomc", "enabled", default=True),
+                "block_minutes_before": get(
+                    "events", "fomc", "block_minutes_before", default=30
+                ),
+                "block_minutes_after": get(
+                    "events", "fomc", "block_minutes_after", default=45
+                ),
+            },
+        },
         "auth": {
             "idle_hours": get("auth", "idle_hours", default=12),
         },
@@ -3273,6 +3344,14 @@ def settings(request: Request) -> dict[str, object]:
         ),
         "config_layers": config.layer_counts(),
         "mode": config.env.mode,
+        # Item 067: the release calendar's read-only display — FOMC date
+        # count/next/last, tracked 08:30 releases and the next release.
+        "economic_releases": (
+            releases.summary()
+            if (releases := getattr(request.app.state, "releases", None))
+            is not None
+            else None
+        ),
     }
 
 
@@ -3698,6 +3777,10 @@ async def _apply_keys(request: Request, changed: set[str]) -> None:
             update_key(store.get("finnhub") or MISSING_KEY)
     if "fred" in changed and sources is not None and sources.vix is not None:
         update_key = getattr(sources.vix, "update_key", None)
+        if callable(update_key):
+            update_key(store.get("fred") or "")
+    if "fred" in changed and sources is not None and sources.releases is not None:
+        update_key = getattr(sources.releases, "update_key", None)
         if callable(update_key):
             update_key(store.get("fred") or "")
     model_changed = changed & {"openai", "anthropic"}
@@ -4770,6 +4853,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         "cycle_index": cycle_index,
         "cycles_today": len(active_shown),
         "run_cycle_number": run_cycle_number,
+        # Item 067: the next release within events.next_release_sessions,
+        # computed live from the stored calendar (FOMC works even when
+        # FRED is down); null when nothing is coming.
+        "next_release": _next_release(request, ny_now),
     }
 
     # Decisions feed, grouped client-side by cycle. Each item carries its

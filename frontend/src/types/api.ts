@@ -283,6 +283,14 @@ export interface PositionRow {
   closed_at: string | null;
   realized_pnl_raw: number | null;
   exit_reason: string | null;
+  /** Item 067: the 08:30 releases this position was held into. */
+  release_dates?: {
+    type: string;
+    label?: string;
+    date: string;
+    time?: string;
+    at?: string;
+  }[] | null;
   legs?: PositionLeg[];
   last_price?: string | null;
   unrealized_pnl?: number | null;
@@ -684,6 +692,8 @@ export interface DecisionDetail {
   selection?: SelectionRecord | null;
   /** The cycle's winning set and every scored candidate of the cycle. */
   cycle_selection?: CycleSelection | null;
+  /** Item 067: the 08:30 releases this entry was held into. */
+  release_next_morning?: { type: string; label?: string; date: string }[] | null;
   model: string | null;
   tokens_in: number | null;
   tokens_out: number | null;
@@ -859,6 +869,15 @@ export interface SettingsForm {
     error_auto_resolve_minutes: number;
   };
   schedule: { cycles: string[] };
+  /** Economic releases (item 067): only the editable FOMC window
+   * fields — dates, times and FRED ids are read-only on the page. */
+  events?: {
+    fomc?: {
+      enabled?: boolean;
+      block_minutes_before?: number;
+      block_minutes_after?: number;
+    };
+  };
   auth: { idle_hours: number };
   notifications: {
     repeat_limit_minutes: number;
@@ -935,6 +954,22 @@ export interface SettingsResponse {
   /** SMTP card state; null when the notification service is absent. */
   smtp: SmtpStatus | null;
   mode: string;
+  /** Item 067: the release calendar's read-only display for Settings →
+   * Entry rules (FOMC date stats, tracked 08:30 releases, next release,
+   * FRED fetch state). Null when the service is absent. */
+  economic_releases?: {
+    fomc: { count: number; next: string | null; last: string | null };
+    releases: { type: string; label: string; next_date: string }[];
+    next_release: {
+      type: string;
+      label: string;
+      date: string;
+      time: string;
+      at?: string;
+      sessions_away: number;
+    } | null;
+    fred: string;
+  } | null;
 }
 
 // ---- Notifications ----------------------------------------------------------
@@ -1233,6 +1268,19 @@ export interface CycleCounterSegment {
   status: CycleSegmentStatus;
 }
 
+/** The next market-wide release within events.next_release_sessions
+ * (item 067). `time` is New York "HH:MM"; `blocked_cycle` is the cycle
+ * inside the FOMC window for the "no entries" suffix. */
+export interface NextRelease {
+  type: string;
+  label: string;
+  date: string; // New York session date, ISO
+  time: string; // New York "HH:MM"
+  at?: string; // UTC ISO of the release instant
+  sessions_away: number;
+  blocked_cycle?: string | null;
+}
+
 export interface CycleCounter {
   kill_switch: boolean;
   running: boolean;
@@ -1248,6 +1296,7 @@ export interface CycleCounter {
   cycle_index: number;
   cycles_today: number;
   run_cycle_number: number | null;
+  next_release?: NextRelease | null;
 }
 
 export interface DashboardStats {

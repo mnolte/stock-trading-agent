@@ -613,6 +613,30 @@ def build_attention(request: Request) -> dict[str, Any]:
                 )
             )
 
+        # 8b. FOMC dates running out (item 067): from 60 days before the
+        #     last configured date, Needs you asks for the Fed's next
+        #     year. The item leaves when the config list grows.
+        from app.risk.fomc import fomc_dates
+
+        fomc = fomc_dates(config)
+        if fomc:
+            last_fomc = fomc[-1]
+            if (last_fomc - today_ny).days <= 60:
+                items.append(
+                    _item(
+                        "settings",
+                        "warning",
+                        f"FOMC dates in config end on "
+                        f"{last_fomc:%d %b %Y}: add the next year from "
+                        "the Fed's calendar",
+                        "The FOMC window rule reads this list; update "
+                        "events.fomc.dates in the config file.",
+                        "Open Settings",
+                        "/settings",
+                        None,
+                    )
+                )
+
         # 8. An open position whose earnings report lands tonight — its
         #    scheduled earnings exit runs at the close (docs/SPEC.md,
         #    Needs you).

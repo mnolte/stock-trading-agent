@@ -57,6 +57,7 @@ from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 from app.notifications.service import Notifier, NullNotifier
+from app.risk.fomc import in_fomc_window
 from app.risk.gates import GateCheck, GateContext, evaluate_entry_gates, resolve_sectors
 from app.risk.math import (
     WorkingEntry,
@@ -3555,6 +3556,10 @@ class Executor:
             sectors=resolve_sectors(self.config, session),
             daily_loss_hit=self.state.daily_loss_hit,
             market_prices=market_prices,
+            in_fomc_window=(
+                in_fomc_window(self.clock.now().astimezone(NY_TZ), self.config)
+                is not None
+            ),
         )
 
     def budget_context(self, session: Session) -> GateContext:

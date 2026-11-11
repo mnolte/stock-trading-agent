@@ -43,7 +43,7 @@ import { useAuthStatus } from '../api/auth';
 import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
 import { SkeletonText } from '../components/skeletons';
-import { displayDateTime, displayDayTime, displayTime } from '../format';
+import { displayDateTime, displayDayTime, displayTime, fmtDay, fmtWeekdayDayShort } from '../format';
 import { diffMap, diffSettings, fmtPath } from './settingsDiff';
 import { validateForm } from './settingsValidation';
 
@@ -228,6 +228,8 @@ const UNITS: Record<string, string> = {
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
   'notifications.repeat_limit_minutes': ' min',
+  'events.fomc.block_minutes_before': ' min',
+  'events.fomc.block_minutes_after': ' min',
   'decision.min_ev_r': ' R',
   'decision.v3.min_room_atr': ' × ATR',
   'decision.v4.near_level_atr': ' × ATR',
@@ -287,6 +289,9 @@ const SECTION_OF: Record<string, string> = {
   'execution.max_spread_pct': 'rules',
   'execution.entry_limit_offset_pct': 'rules',
   'execution.entry_timeout_minutes': 'rules',
+  'events.fomc.enabled': 'rules',
+  'events.fomc.block_minutes_before': 'rules',
+  'events.fomc.block_minutes_after': 'rules',
   'risk.earnings_blackout_days': 'earnings',
   'risk.hold_through_earnings': 'earnings',
   'decision.model': 'model',
@@ -1674,6 +1679,32 @@ export default function Settings() {
     });
   };
 
+  // Economic releases (item 067): the FOMC window submap — one patch
+  // per sub-key, the group object stays whole like decision.v3/v4/v5.
+  const patchFomc = (sub: string, value: unknown) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            events: {
+              ...(f.events ?? {}),
+              fomc: { ...(f.events?.fomc ?? {}), [sub]: value },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
+  const resetFomc = (sub: string) => {
+    if (!data) return;
+    const saved = data.settings.events?.fomc?.[
+      sub as keyof NonNullable<NonNullable<SettingsForm['events']>['fomc']>
+    ];
+    if (saved === undefined) return;
+    patchFomc(sub, saved);
+  };
+
   const addSymbol = () => {
     if (!form || !newSymbol.trim() || !newSector) return;
     const symbol = newSymbol.trim().toUpperCase();
@@ -2809,6 +2840,128 @@ export default function Settings() {
                 <NumBox id="tmo" value={s.execution.entry_timeout_minutes} unit="min" accent={'execution.entry_timeout_minutes' in changed} invalid={!!fieldErrors['execution.entry_timeout_minutes']} onChange={(v) => patch('execution', 'entry_timeout_minutes', v)} />
               ),
             })}
+
+            <h3 style={subHead}>Economic releases</h3>
+            {(() => {
+              const fomc = s.events?.fomc ?? {};
+              const rel = data.economic_releases;
+              const fomcFrom = [
+                changed['events.fomc.enabled'] !== undefined
+                  ? `window ${changed['events.fomc.enabled']}`
+                  : null,
+                changed['events.fomc.block_minutes_before'] !== undefined ||
+                changed['events.fomc.block_minutes_after'] !== undefined
+                  ? `${changed['events.fomc.block_minutes_before'] ?? ''}–${changed['events.fomc.block_minutes_after'] ?? ''} min`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(' · ');
+              return (
+                <>
+                  <Row
+                    id="fomc"
+                    label="FOMC window"
+                    help="No new entries in a cycle that starts from 30 minutes before to 45 minutes after a 14:00 FOMC decision: the 13:46 cycle. Holds and exits are not affected. Strategy-overridable."
+                    changed={'events.fomc.enabled' in changed}
+                    changedFrom={changed['events.fomc.enabled']}
+                    pendingText={pendingText('events.fomc.enabled')}
+                    defaultText="On"
+                    onReset={() => resetFomc('enabled')}
+                  >
+                    <Switch
+                      id="fomc"
+                      on={fomc.enabled !== false}
+                      onChange={(on) => patchFomc('enabled', on)}
+                    />
+                  </Row>
+                  <Row
+                    id="fomcmin"
+                    label="FOMC window minutes"
+                    help="Around the 14:00 New York decision."
+                    changed={
+                      'events.fomc.block_minutes_before' in changed ||
+                      'events.fomc.block_minutes_after' in changed
+                    }
+                    changedFrom={fomcFrom || undefined}
+                    pendingText={pendingJoined(
+                      [
+                        'events.fomc.block_minutes_before',
+                        'events.fomc.block_minutes_after',
+                      ],
+                      ' / ',
+                    )}
+                    onReset={() => {
+                      resetFomc('block_minutes_before');
+                      resetFomc('block_minutes_after');
+                    }}
+                    defaultText="30 · 45 min"
+                  >
+                    <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 12px' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        before
+                        <NumBox
+                          label="Minutes before the decision"
+                          value={Number(fomc.block_minutes_before ?? 30)}
+                          width={56}
+                          invalid={!!fieldErrors['events.fomc.block_minutes_before']}
+                          onChange={(v) => patchFomc('block_minutes_before', v)}
+                        />
+                        min
+                      </span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        after
+                        <NumBox
+                          label="Minutes after the decision"
+                          value={Number(fomc.block_minutes_after ?? 45)}
+                          width={56}
+                          invalid={!!fieldErrors['events.fomc.block_minutes_after']}
+                          onChange={(v) => patchFomc('block_minutes_after', v)}
+                        />
+                        min
+                      </span>
+                    </span>
+                  </Row>
+                  <Row
+                    label="FOMC dates"
+                    help="From the Fed's calendar, kept in config. Needs you asks for the next year 60 days before the last date."
+                    changed={false}
+                  >
+                    <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }}>
+                      {rel?.fomc.count ?? 0} dates
+                      {rel?.fomc.next ? ` · next ${fmtDay(rel.fomc.next)}` : ''}
+                      {rel?.fomc.last ? ` · last ${fmtDay(rel.fomc.last)}` : ''}
+                    </span>
+                  </Row>
+                  <Row
+                    label="08:30 releases tracked"
+                    help="CPI, jobs report and PCE from FRED (needs the FRED key). No rule: entries held into one are tagged and measured (release next morning)."
+                    changed={false}
+                  >
+                    <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }}>
+                      {rel?.next_release?.at ? (
+                        <>
+                          next: {rel.next_release.label}{' '}
+                          {fmtWeekdayDayShort(rel.next_release.date)}{' '}
+                          {displayTime(rel.next_release.at)}
+                        </>
+                      ) : rel?.next_release ? (
+                        <>
+                          next: {rel.next_release.label}{' '}
+                          {fmtWeekdayDayShort(rel.next_release.date)}{' '}
+                          {rel.next_release.time} NY
+                        </>
+                      ) : (rel?.releases ?? []).length > 0 ? (
+                        (rel?.releases ?? [])
+                          .map((r) => `${r.label} ${fmtDay(r.next_date)}`)
+                          .join(' · ')
+                      ) : (
+                        'none fetched yet'
+                      )}
+                    </span>
+                  </Row>
+                </>
+              );
+            })()}
           </Section>
           </>)}
 

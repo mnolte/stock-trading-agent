@@ -22,6 +22,7 @@ from app.config import AppConfig
 from app.data.cache import _aware_utc, _naive_utc
 from app.data.factory import DataSources
 from app.data.models import DataResult, NewsItem, Quote
+from app.data.releases import ReleaseCalendarService
 from app.data.service import MarketDataService
 from app.data.vix import VixService
 from app.db.base import get_session_maker
@@ -106,6 +107,7 @@ class CycleRunner:
         on_cycle_done: Callable[[CycleReport], None] | None = None,
         model_health: LiveModelHealth | None = None,
         vix: VixService | None = None,
+        releases: ReleaseCalendarService | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -134,6 +136,10 @@ class CycleRunner:
         # VIX fields (item 060): stored on the cycle before decisions;
         # None leaves every VIX column null (older callers, no source).
         self.vix = vix
+        # Release calendar (item 067): per-cycle next_release, the
+        # release_next_morning tags and the FOMC-row sync on promotion.
+        # None leaves next_release null and skips the tags.
+        self.releases = releases
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -451,6 +457,22 @@ class CycleRunner:
             session.add(cycle)
             session.commit()
             report.cycle_id = cycle.id
+            # next_release (item 067): stored on every cycle row, even
+            # ones that later skip or fail — the dashboard reads the
+            # last cycle's value. Its own session+commit keeps the write
+            # out of the decision transaction (hard rule 13) and alive
+            # across a _run rollback.
+            if self.releases is not None:
+                try:
+                    next_release = self.releases.next_release(now)
+                except Exception:  # noqa: BLE001 - never blocks a cycle
+                    logger.exception("next_release failed")
+                    next_release = None
+                with self._session_factory() as rel_session:
+                    stored = rel_session.get(Cycle, cycle.id)
+                    if stored is not None:
+                        stored.next_release = next_release
+                        rel_session.commit()
             # The dashboard's cycle counter switches to "running" on this
             # push, and back to the countdown on the one after commit.
             self._notify({"header", "decisions"})
@@ -567,6 +589,7 @@ class CycleRunner:
                     decisions=len(report.decisions),
                     status=report.status,
                 )
+        self._tag_release_morning(report.cycle_id)
         self._notify({"header", "decisions", "banners"})
         failing = {
             name: status
@@ -586,6 +609,51 @@ class CycleRunner:
             except Exception:  # noqa: BLE001
                 logger.exception("shadow hook failed after cycle %s", report.cycle_id)
         return report
+
+    def _tag_release_morning(self, cycle_id: int | None) -> None:
+        """``release_next_morning`` tags (item 067).
+
+        An entry decision (``final_action == "enter"``) taken on the
+        session before an 08:30 release carries the release list on the
+        decision row. In the last cycle every still-open position gets
+        the same list appended to ``release_dates`` — the mornings it
+        was held into, accumulated across days.
+        """
+        if self.releases is None or cycle_id is None:
+            return
+        try:
+            tags = self.releases.next_session_morning_releases(
+                self.clock.now()
+            )
+        except Exception:  # noqa: BLE001 - never blocks a cycle
+            logger.exception("release tag lookup failed")
+            return
+        if not tags:
+            return
+        try:
+            with self._session_factory() as session:
+                for decision in session.execute(
+                    select(Decision).where(
+                        Decision.cycle_id == cycle_id,
+                        Decision.context == "candidate",
+                        Decision.final_action == "enter",
+                    )
+                ).scalars():
+                    decision.release_next_morning = tags
+                if self._is_last_cycle(self.clock.now()):
+                    for position in session.execute(
+                        select(Position).where(Position.closed_at.is_(None))
+                    ).scalars():
+                        held = list(position.release_dates or [])
+                        held_keys = {
+                            (t.get("type"), t.get("date")) for t in held
+                        }
+                        position.release_dates = held + [
+                            t for t in tags if (t["type"], t["date"]) not in held_keys
+                        ]
+                session.commit()
+        except Exception:  # noqa: BLE001 - tagging never blocks a cycle
+            logger.exception("release tagging failed for cycle %s", cycle_id)
 
     async def _count_cycle_outcome(self, report: CycleReport) -> None:
         """Three failed cycles in a row turn the kill switch on."""
@@ -649,6 +717,13 @@ class CycleRunner:
             if self.config.reschedule_cycles:
                 self.config.reschedule_cycles = False
                 self._on_settings_promoted()
+            # Saved FOMC settings land here (item 067): the stored
+            # economic_events rows follow the promoted config.
+            if self.releases is not None:
+                try:
+                    self.releases.sync_fomc()
+                except Exception:  # noqa: BLE001 - never blocks a cycle
+                    logger.exception("fomc sync after settings promotion failed")
             self._notify({"watchlist", "header", "decisions", "settings", "attention"})
 
         account = None
@@ -696,6 +771,16 @@ class CycleRunner:
                     report.data_source_health["fred"] = health
             except Exception:  # noqa: BLE001 - VIX never blocks a cycle
                 logger.exception("vix fields failed")
+        # The release calendar's health (item 067): a FRED outage or a
+        # missing key warns through data-source health; FOMC dates from
+        # config keep working either way.
+        if self.releases is not None:
+            try:
+                health = self.releases.health()
+                if health is not None:
+                    report.data_source_health["fred_releases"] = health
+            except Exception:  # noqa: BLE001 - never blocks a cycle
+                logger.exception("release health failed")
         # The 1h shock-brake leg runs here, on the hourly cycle, so the
         # just-topped-up cache holds the completed bar (docs/SPEC.md,
         # Position check).

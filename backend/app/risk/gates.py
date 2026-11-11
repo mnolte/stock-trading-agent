@@ -68,6 +68,10 @@ class GateContext:
     # Current market price per symbol, for working entries without a
     # stored/broker limit — an unpriced entry fails closed.
     market_prices: dict[str, Decimal] = field(default_factory=dict)
+    # FOMC window (item 067): True while the order would land inside a
+    # configured FOMC decision window — the order-time half of the
+    # fomc_window pre-filter check.
+    in_fomc_window: bool = False
 
 
 @dataclass(frozen=True)
@@ -214,6 +218,16 @@ def evaluate_entry_gates(
             else "no earnings ahead"
         ),
     )
+
+    # FOMC window (item 067): same test as the fomc_window pre-filter
+    # check, evaluated at order time — a supervised approval inside the
+    # window is refused here.
+    if ctx.in_fomc_window:
+        return block(
+            "fomc_window",
+            "inside the FOMC decision window; no new entries",
+        )
+    ok("fomc_window", "outside the FOMC window")
 
     # Re-entry: a symbol closed earlier this session is not bought again
     # until the next session (risk.reentry_same_session: false).

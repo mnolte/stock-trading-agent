@@ -129,6 +129,10 @@ class InsightsTrade:
     entry_ny: date | None = None  # session dates for overnight math
     exit_ny: date | None = None
     after_exit_move_pct: Decimal | None = None  # 5-session move (earnings exits)
+    # The entry decision's release_next_morning tag (item 067): True
+    # when the entry was taken the session before an 08:30 release,
+    # False for a known-clear entry, None when unknown (shadows).
+    release_next_morning: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -624,6 +628,14 @@ def _dimension_values(
             part for part in (trade.prompt_version, trade.model) if part
         ) or None
 
+    release_key = (
+        "release next morning"
+        if trade.release_next_morning
+        else "no release"
+        if trade.release_next_morning is not None
+        else None
+    )
+
     return {
         "entry_cycle": trade.entry_cycle,
         "weekday": (
@@ -649,6 +661,7 @@ def _dimension_values(
         "stop_target_basis": basis_key,
         "sessions_held": held_key,
         "prompt_model": pm_key,
+        "release_next_morning": release_key,
     }
 
 
@@ -671,6 +684,7 @@ DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("stop_target_basis", "Stop and target basis"),
     ("sessions_held", "Sessions held"),
     ("prompt_model", "Prompt and model"),
+    ("release_next_morning", "Release next morning"),
 )
 
 

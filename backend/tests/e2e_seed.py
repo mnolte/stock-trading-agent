@@ -41,6 +41,60 @@ def main() -> None:
             first.started_at = E2E_RUN_START
         session.commit()
     seed_v2_decision()
+    seed_economic_events()
+
+
+def seed_economic_events() -> None:
+    """Item 067 seed: release-calendar rows the e2e server picks up.
+
+    CPI lands the next session at 08:30 — the dashboard's next-release
+    line and the Settings "08:30 releases tracked" row read the stored
+    rows (the app's startup refresh also syncs the config FOMC dates).
+    The seeded v2 decision gets the ``release_next_morning`` tag so its
+    API payload shows the entry-release metadata.
+    """
+    from app.db.base import get_session_maker
+    from app.db.models import Decision, EconomicEvent
+
+    rows = [
+        # Friday 16 Oct — one session away from the frozen 15 Oct.
+        ("cpi", date(2026, 10, 16), "08:30", "fred"),
+        # Monday 19 Oct — within the 2-session next_release horizon only
+        # if CPI weren't first; still tracked in the calendar.
+        ("pce", date(2026, 10, 19), "08:30", "fred"),
+    ]
+    with get_session_maker()() as session:
+        for kind, day, hhmm, source in rows:
+            exists = session.execute(
+                select(EconomicEvent.id).where(
+                    EconomicEvent.release_type == kind,
+                    EconomicEvent.date == day,
+                )
+            ).scalar_one_or_none()
+            if exists is None:
+                session.add(
+                    EconomicEvent(
+                        release_type=kind,
+                        date=day,
+                        time=hhmm,
+                        source=source,
+                        fetched_at=datetime(2026, 10, 15, 12, 0),
+                    )
+                )
+        decision = session.execute(
+            select(Decision).where(Decision.prompt_version == "decision.v2")
+        ).scalar_one_or_none()
+        if decision is not None:
+            decision.release_next_morning = [
+                {
+                    "type": "cpi",
+                    "label": "CPI",
+                    "date": "2026-10-16",
+                    "time": "08:30",
+                    "at": "2026-10-16T12:30:00+00:00",
+                }
+            ]
+        session.commit()
 
 
 def seed_v2_decision() -> None:
