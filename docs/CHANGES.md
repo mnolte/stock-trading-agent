@@ -8,6 +8,12 @@ GUI addition, no spec change — the design file has no key-source links; noted 
 
 - **Settings → API keys:** each key row (Alpaca, OpenAI, Anthropic, Finnhub, FRED) now shows a "Get a key" link under its hint that opens the provider's key page in a new tab (Alpaca paper dashboard, OpenAI API keys, Anthropic console keys, Finnhub dashboard, FRED API keys).
 
+## 2026-11-11 — [065] VIX fetch retries every 15 minutes while failing (build)
+
+Spec entry: the VIX "Sources" bullet now says a failed fetch retries every 15 minutes until one succeeds.
+
+- **`vix-refresh-retry` job:** while `VixService.latest` carries an error, a 15-minute interval job re-runs the FRED fetch; the first success clears the retry and publishes `settings`/`banners` so the Settings tile and warning update without a reload. A FRED outage longer than a fetch window no longer waits for the next 08:00/17:00 fetch or a restart.
+
 ## 2026-11-10 — [064] Logs screen counts unreviewed like Readiness (build)
 
 Bug fix, no spec change — the Logs screen now matches the Readiness rule it claims to show.
