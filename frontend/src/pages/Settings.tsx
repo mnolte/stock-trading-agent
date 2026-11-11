@@ -618,6 +618,14 @@ const KEY_FIELD_LABELS: Record<KeyGroup, string> = {
   fred: 'New FRED API key',
 };
 
+const KEY_SOURCE_URLS: Record<KeyGroup, string> = {
+  alpaca: 'https://app.alpaca.markets/paper/dashboard/overview',
+  openai: 'https://platform.openai.com/api-keys',
+  anthropic: 'https://console.anthropic.com/settings/keys',
+  finnhub: 'https://finnhub.io/dashboard',
+  fred: 'https://fredaccount.stlouisfed.org/apikeys',
+};
+
 const KEY_FORM_NOTES: Record<KeyGroup, string> = {
   alpaca:
     'The keys are tested with a paper-account check before they are saved. The old keys keep working until the new ones pass. Only paper keys are accepted.',
@@ -844,6 +852,14 @@ function KeysSection({
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
                   <span style={{ fontSize: 'var(--sa-text-base)', fontWeight: 600 }}>{row.label}</span>
                   <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{row.hint}</span>
+                  <a
+                    href={KEY_SOURCE_URLS[row.name]}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-accent)', textDecoration: 'none' }}
+                  >
+                    Get a key
+                  </a>
                 </span>
               </div>
               <div style={{ flex: '0 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>

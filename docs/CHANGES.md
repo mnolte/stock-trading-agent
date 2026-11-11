@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-11 — [066] "Get a key" links in Settings → API keys (build)
+
+GUI addition, no spec change — the design file has no key-source links; noted as a deviation in the PR.
+
+- **Settings → API keys:** each key row (Alpaca, OpenAI, Anthropic, Finnhub, FRED) now shows a "Get a key" link under its hint that opens the provider's key page in a new tab (Alpaca paper dashboard, OpenAI API keys, Anthropic console keys, Finnhub dashboard, FRED API keys).
+
 ## 2026-11-11 — [065] VIX fetch retries every 15 minutes while failing (build)
 
 Spec entry: the VIX "Sources" bullet now says a failed fetch retries every 15 minutes until one succeeds.
