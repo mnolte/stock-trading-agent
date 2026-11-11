@@ -265,7 +265,8 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - RSI between 40 and 70, inclusive.
 - Outside the earnings blackout (see Risk).
 - Regime is not Down + High.
-- Not the 15:46 cycle (no new entries in the last cycle of a session).
+
+New entries are allowed in every cycle, the last one (15:46) included (decided 11 November, item 071). Until then the 15:46 cycle made exits only; no reason was ever written down. An entry sent at 15:46 has 14 minutes to fill, its limit order is cancelled after 10 minutes if unfilled (Alpaca integration), and the spread check still applies. `schedule.last_cycle_no_entries` (now `false`) turns the old rule back on. **Entry cutoff:** no entry order is sent after `execution.entry_cutoff` (15:50 New York), so the 10-minute fill window always ends by the close; this matters for an approval in supervised mode that arrives late in the last cycle (the approval then expires with "too close to the close").
 
 All thresholds live in config (see Config layers).
 
@@ -625,6 +626,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 38. **Decision v6** (item 058). `prompts/decision.v6.md`: decision.v5 with the trend and volatility rules rewritten for a sideways market; the v5 contract (schema, snapshot, checks, gates) reused; the code check `sideways_rule`; eval cases. See Decision v6.
 39. **VIX data** (item 060). FRED `VIXCLS` and VIXY bars, the seven VIX fields per cycle, the header and latest-decision display, two Insights slices, the data source in Settings; backtests carry the fields. See VIX.
 40. **Settings UX** (item 069). Grouped section list, defaults inline, money next to percentages, the Risk limits summary, labelled two-value fields, Advanced fold, override notes, tighter/looser tags and the looser-save confirmation. See Settings screen.
+41. **Entries in the last cycle** (item 071). `schedule.last_cycle_no_entries` defaults to `false`; the entry cutoff (`execution.entry_cutoff`, 15:50 New York). See Rules pre-filter.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1176,7 +1178,7 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
   - finding: 30 or more trades and a large enough difference;
   - early signal: 10–29, greyed;
   - hidden: under 10, counted in one line.
-- **Rules shown as rows.** A slice with no entries because of a rule (the 15:46 cycle) shows that rule instead of numbers.
+- **Rules shown as rows.** A slice with no entries because of a rule shows that rule instead of numbers (before item 071, the 15:46 cycle: its trades start on 11 November).
 
 **Calibration.**
 - **Chart.** Per 0.1 confidence bucket, stated confidence against the share of entries that reached the target before the stop, with the same sample statuses.

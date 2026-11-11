@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-11 — [071] New entries in the last cycle
+
+- **`Settings.dc.html` → Schedule:** the cycle table's last row reads "yes, sent by 15:50" instead of "exits only". Screenshots unchanged (they show Risk limits).
+
 ## 2026-11-11 — [069] Settings UX
 
 `Settings.dc.html` only. `Settings.png`, `Settings-1024.png`, `Settings-390.png`.

@@ -129,6 +129,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 067 | feat | Economic release calendar (issue #215) | — | — | — | planned |
 | 068 | feat | Market breadth and sector strength, collected and shown (issue #216) | — | — | — | planned |
 | 069 | feat | Settings UX | `069-feat-settings-ux.md` | #218 | — | planned |
+| 071 | spec | New entries in the last cycle (15:46), entry cutoff 15:50 | — | #NEW | — | merged |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
