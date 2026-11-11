@@ -140,6 +140,12 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 077 | feat | Universe UX and Data sync (issue #234) | `077-feat-universe-ux.md` | #237 | — | planned |
 | 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `078-feat-concurrent-requests.md` | #237 | — | planned |
 | 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `079-feat-review-stories.md` | #237 | — | planned |
+| 080 | analysis | Security audit of the repository (`docs/analysis/080-security-audit.md`; issue #241 for the GitHub settings) | — | #251 | — | merged |
+| 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `081-fix-keys-out-of-error-text.md` | #251 | — | planned |
+| 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
+| 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
+| 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
+| 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

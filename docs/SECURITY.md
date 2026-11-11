@@ -21,6 +21,17 @@ AGENTS.md hard rules 9 and 18–20.
 - **Supply chain.** Unpinned Actions, unaudited dependencies, committed
   secrets.
 
+- **Keys in error text** (audit of 11 Nov, item 081). A key inside a
+  URL ends up in the exception text; that text must be scrubbed before
+  it is stored, shown, emailed or given to a model, not only before it
+  is logged.
+- **A stolen session.** It must not be able to make the agent riskier
+  or quieter without the password or a code (item 082).
+- **The owner locked out.** Rate limits must not keep the owner from
+  the kill switch (item 083).
+- **The deploy chain.** The image that runs must be the image CI built
+  (item 084).
+
 ## Layers
 
 - **Request gate** (`app/api/gate.py`): one middleware in front of
@@ -48,3 +59,22 @@ AGENTS.md hard rules 9 and 18–20.
 - Physical access, evil extensions, or a compromised browser.
 - The paper Alpaca account itself (live trading is refused at boot).
 - Denial of service beyond the listed caps — this is a local app.
+
+## GitHub settings
+
+Settings of the repository itself; no code can set them. Checked on
+11 November 2026 (audit finding S4, issue #241): all four were open.
+
+- [ ] **Public or private.** The repository is public: the spec, the
+  designs, every analysis of the paper account and the deploy layout
+  are readable by anyone. Decide; if it stays public, keep real
+  domains, addresses and account numbers out of it (none are in it
+  today).
+- [ ] **Protect `main`.** Require a pull request, require the CI checks
+  (`backend-lint`, `backend-test`, `frontend-check`, `e2e`, `security`,
+  `spec-label`, `test-image`, `compose-test`), no force pushes, no
+  deletion.
+- [ ] **Secret scanning and push protection:** on.
+- [ ] **Dependabot security updates:** on, and read the open alert.
+- [ ] **Your GitHub account:** two-factor sign-in on; tokens given to
+  Devin and Claude limited to this repository.

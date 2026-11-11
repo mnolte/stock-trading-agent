@@ -700,6 +700,11 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 49. **Universe UX** (item 077). One mode line, Data sync with progress, consistent status per symbol, Pool by sector, inline remove. See Universe screen.
 50. **Concurrent requests** (item 078). `concurrency.max_requests` (20), batches for the cycle's waves, shadows, verdicts and every sync job, the plan-then-send call cap, storage and display. See Concurrent requests.
 51. **Review stories** (item 079). `briefing.v3` and `weekly.v3`, the glossary, the format check, prose templates, The numbers fold and terms explained in the GUI. See Stories.
+52. **Keys out of error text** (item 081). `safe_error`, scrubbing in `notify`, `record_event` and Ask tool results, the one-off scrub of stored rows, the Ask settings allowlist, the heartbeat URL as a secret. See Security hardening → Audit of 11 November 2026.
+53. **Confirm every loosening** (item 082). The backend direction map, the wider "Confirm it is you" rule, the GUI reading the map.
+54. **Sign-in resilience** (item 083). Trusted devices, the break-glass kill switch command, WebSocket session checks and the socket cap.
+55. **Supply chain and containers** (item 084). Signed images deployed by digest, pinned base images, container limits, backup delete protection, the full weekly audit.
+56. **CSV formulas and outbound addresses** (item 085). The one CSV writer; address checks at use; the SMTP host check.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1437,7 +1442,7 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
   - Every API request and the WebSocket need a valid session, for every HTTP method. Only `/healthz` and the sign-in endpoints are open; nothing open returns more than the version or whether sign-in is required.
   - Write requests also need a CSRF header (double-submit token).
   - The WebSocket checks the `Origin`.
-- **Rate limits.** After 5 failed attempts in 15 minutes, an address waits 15 minutes. After 20 failures in an hour across all addresses, sign-in pauses for an hour and a warning is sent. Error messages never say whether the password or the code was wrong.
+- **Rate limits.** After 5 failed attempts in 15 minutes, an address waits 15 minutes. After 20 failures in an hour across all addresses, sign-in pauses for an hour and a warning is sent. From item 083 a browser that signed in before (a trusted device) is not stopped by this pause; see Security hardening → Audit of 11 November 2026. Error messages never say whether the password or the code was wrong.
 - **Confirm and password change.** A wrong password or code in "Confirm it is you" or in Change password counts as a failed attempt for that session. After 5 in 15 minutes the session is signed out, the attempts are recorded like sign-in failures, and the "Failed sign-ins" warning is sent. A stolen session cookie must not allow unlimited guessing.
 - **The code step.** A wrong code counts as a failed attempt like a wrong password. The ticket between the two steps is single-use, tied to the browser that entered the password, and dropped after 3 wrong codes. A code that was already used (same 30-second step) is refused.
 - **Confirming risky actions.** These ask for the password or a code again (valid 5 minutes on that device):
@@ -1630,7 +1635,7 @@ From Devin's security audit of 27 October 2026. The audit found the code discipl
 - **Heartbeat and backup storage.** `ops.heartbeat_url` and the backup endpoint must be `https://` and must not resolve to a loopback or private address.
 - **Alpaca keys.** As already specced: keys for a different paper account require "Start new run". A test covers it.
 
-**More actions need "Confirm it is you"** (PR 23, when `SA_AUTH=required`):
+**More actions need "Confirm it is you"** (PR 23, when `SA_AUTH=required`; widened by item 082, see Audit of 11 November 2026):
 - a settings save that loosens a risk limit (a higher risk per trade, position size or exposure, a higher daily loss limit, or a kill-switch threshold raised or turned off);
 - changing the SMTP server, the "To" address or the heartbeat URL.
 
@@ -1654,6 +1659,58 @@ Tightening a limit never asks.
 **Error codes.** New in the API error table (see Error pages and API errors): 400 `bad_host`, 403 `origin_refused`, 413 `too_large`, 415 `unsupported_media_type`, 422 `password_required`.
 
 **Not changed.** Trading behaviour, risk limits and the database schema; PR 28 has no migration.
+
+**Audit of 11 November 2026** (items 081–085, planned).
+
+From Claude's audit (`docs/analysis/080-security-audit.md`, findings S1–S13). The earlier fixes hold; these rules close what was found next. Decided 11 Nov.
+
+**Error text is scrubbed where it is made** (item 081, S1). The log scrubber protects logs; error text also travels to notifications, emails, the database, the API and Ask. So:
+- **One function.** Every exception that becomes stored or shown text goes through `safe_error(exc)` (`app/errors.py`): the query string of any URL in the text is removed (`…/fred/releases/dates?…` becomes `…/fred/releases/dates`), then the scrubber's patterns and the stored secret values are applied, and the result is cut to 300 characters. `str(exc)` and `f"{exc}"` are not used for stored or shown text anywhere in `app/`; a test walks the code for them (allowlist with a comment, as for the ruff ignores).
+- **Every `DataResult.error`** is built with it, in every data source (Alpaca, Finnhub, FRED, ECB, news), and so are `data_source_health` values, key-test results and the `detail` of API errors.
+- **Second line.** `Notifier.notify` scrubs its line, body and details, and `record_event` its details, with the same patterns and values, whatever the caller did.
+- **Tool results.** Every Ask tool result passes the scrubber before it is sent to the model or stored (see below).
+- **Stored rows.** At the first start after the fix the app scrubs `cycles.data_source_health`, `notifications` (subject, body), `events.details` and `ask_messages` once, with the current secret values and patterns, and logs how many rows changed. If any row changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2, leaves when both keys are replaced or the item is dismissed with a reason).
+- **Test.** For each data source: a fake key, one HTTP error and one connection error; the key must be absent from the `DataResult`, the notification row, the email body, the cycle row, `GET /api/settings`, `GET /api/server` and the Ask tool results.
+
+**Ask sees trading settings only** (item 081, S3). The `settings` tool serves an allowlist of sections: `execution`, `rules`, `regime`, `events`, `indicators`, `decision`, `selection`, `risk`, `schedule`, `universe` (mode and screen thresholds, not names), `reviews`, `shadows`, `backtest`, `readiness`, `insights`, `performance`, `outcomes`. It never returns `ops`, `notifications.email`, `security`, `auth`, `logging`, `storage`, or anything from `secrets`. Notification channels are reported as on or failing, without addresses or hosts. A new config section is not served until it is added to the allowlist.
+
+**The heartbeat URL is a secret** (item 081, S9). It is stored in `secrets` (`heartbeat_url`), write-only like a key: the API and the GUI show only its host and the last 4 characters ("hc-ping.com/••••3f9a"), it is not part of settings versions or History, and Ask never sees it. A migration moves the current value and blanks it in stored settings versions. Saving it still needs "Confirm it is you" and the https-and-public check.
+
+**Every loosening asks "Confirm it is you"** (item 082, S2). This replaces the short list above ("a settings save that loosens a risk limit").
+- **One map, in the backend.** `settings_service.DIRECTIONS` gives every setting in `risk`, `execution`, `rules`, `regime`, `events`, `decision`, `selection`, `schedule` and `universe` its direction: which way is looser (up, down, on, off, a wider range, a longer list, a shorter list), or "neutral" with a comment. The settings API returns the map; the GUI's tighter and looser tags (item 069) read it, and the frontend's own map goes.
+- **A confirmation is needed** when a save contains any looser change; `execution.mode` going from supervised to automatic; a notification event losing a channel, or quiet hours getting longer; the universe mode going from fixed to screened; or a model or decision prompt change for live.
+- **Fails closed.** A setting in those sections without an entry in the map counts as looser, and a test fails until it has one.
+- **Tightening never asks**, as before. With `SA_AUTH=off` nothing asks, as before.
+- **The response** to an unconfirmed save names the changes that need it (`confirm_required` with `fields`), so the dialog can list them.
+
+**Sign-in can't be paused from outside for a known browser** (item 083, S6).
+- **Trusted device.** After a completed sign-in the browser gets `__Host-sa_device`: 32 random bytes, HttpOnly, Secure, SameSite=Strict, 180 days. The app stores its SHA-256 in `trusted_devices` (device name, created, last used). At most 10; the oldest goes.
+- **What it changes.** A sign-in attempt that presents a valid device cookie is not stopped by the global pause (20 failures an hour across all addresses). Everything else still applies: the password, the code, and the per-address lockout. Failures with a device cookie count per device: 5 in 15 minutes revoke that device.
+- **Revoked** by Remove in Settings → Access, by a password change, by "Sign out everywhere", and by new recovery codes.
+- **Sign-in page.** Under a global pause an unknown browser sees the pause and its end time. A known browser sees "Sign-in is paused for other browsers until 20:14. This browser is known, so you can sign in." The open status endpoint says `known_device` only to a browser that presents a valid cookie.
+- **Break-glass on the server.** `docker compose exec app python -m app.ops.kill_switch --reason "…"` (add `--flatten` to sell everything) writes a request file in the data folder (0600); the running app picks it up within 5 seconds, turns the kill switch on exactly as the button does, records the event with source `cli`, and removes the file. `--status` prints the state. It never resumes trading. `docs/DEPLOY.md` documents it as the way in when sign-in is unavailable.
+
+**A WebSocket lives as long as its session** (item 083, S7). The socket re-checks its session every 60 seconds and closes with 1008 `session_expired` when it is gone; sign-out, "Sign out everywhere", a password change and revoking a device close the affected sockets at once. At most `security.max_sockets` (20) are open; a new one closes the oldest.
+
+**The image that runs is the image CI built** (item 084, S5).
+- **Signed.** The tag workflow signs the pushed image with cosign (keyless, GitHub's OIDC identity) and writes the digest to the job summary.
+- **Verified and pinned.** `deploy/deploy.sh <tag>` resolves the tag to a digest, verifies the signature against this repository's tag workflow, and writes `SA_IMAGE=ghcr.io/mnolte/stock-agent@sha256:…` to `.env`; Compose runs `${SA_IMAGE}`. A failed verification stops the deploy before anything changes. Rollback uses the previous digest. `--unverified` exists only together with `--emergency` and is logged.
+- **Base images** (`python`, `node`, `caddy`) are pinned by digest, with a Dependabot `docker` entry for the Dockerfile and Compose files; uv is pinned to one version.
+- **Settings → Server** shows the running digest and "signature verified at deploy".
+
+**Containers** (item 084, S12). Caddy gets `read_only`, `cap_drop: ALL` with `NET_BIND_SERVICE` added back, and `no-new-privileges`; both services get `pids_limit` (app 256, Caddy 128). The runtime image has no tests or eval files, and `/srv` belongs to root, readable by the app user. `.dockerignore` lists `backend/config.yaml`, `**/secret.key`, `**/*.db` and `backups`. Unattended upgrades include Docker's repository.
+
+**Backups can't be erased by the server alone** (item 084, S8). `docs/DEPLOY.md` requires versioning or object lock on the backup bucket with at least 30 days' retention. The monthly restore test asks the bucket whether versioning is on and stores the answer; Settings → Server shows "Delete protection: on" or, in amber, "not confirmed".
+
+**Development dependencies are audited too** (item 084, S11). The weekly CI run audits all Python and frontend packages, development ones included, and posts the result in the job summary without failing the build; high or critical findings in production packages still fail every PR.
+
+**CSV cells can't be formulas** (item 085, S10). Every CSV export goes through one writer. A cell whose text starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`. Numbers are written as numbers and are not affected.
+
+**Outbound addresses are checked when used** (item 085, S13). The heartbeat ping and the backup endpoint resolve the host at each use, apply the public-address check to the result, and connect to that address (so a second lookup can't differ). The SMTP host must resolve to a public address unless `security.allow_private_smtp` (false) is on (loopback is refused even then); the check runs at save, at test and at send.
+
+**GitHub settings** (S4, no code). `docs/SECURITY.md` → GitHub settings holds the checklist: public or private, protection of `main` (pull request and passing checks required, no force push), secret scanning with push protection, Dependabot security updates.
+
+**Hard rule 9, sharpened** (`AGENTS.md`): a key must not appear in any text the app stores, shows, sends or gives to a model, not only in logs; text made from an exception goes through `safe_error`.
 
 ## Model providers: OpenAI and Anthropic
 

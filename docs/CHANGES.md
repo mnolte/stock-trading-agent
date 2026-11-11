@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-11 — [080] Security audit of the repository, and the rules that follow (spec)
+
+Marc asked for a security audit of the whole repository. Report: `docs/analysis/080-security-audit.md`. The fixes of the audits of 27 October and 8 November hold. New: 1 high, 5 medium and 7 low findings (S1–S13), one issue each (#238–#250), grouped into work items 081–085; S4 (GitHub settings) is for Marc.
+
+- **Security hardening → Audit of 11 November 2026** (new):
+  - **[081]** error text is scrubbed where it is made (`safe_error`), again in `notify` and `record_event`, and in every Ask tool result; stored rows are scrubbed once (S1: FRED and Finnhub keys reached notifications, emails, `cycles.data_source_health`, the Settings API and Ask through `DataResult.error`). Ask's settings tool serves an allowlist of trading sections (S3). The heartbeat URL is stored like a key (S9).
+  - **[082]** every loosening asks "Confirm it is you": one direction map in the backend, supervised → automatic, weaker alerts, a wider universe and a new live model or prompt included; an unmapped setting counts as looser (S2).
+  - **[083]** a known browser (device cookie) isn't stopped by the global sign-in pause; a break-glass kill switch command on the server; a WebSocket ends with its session, at most 20 sockets (S6, S7).
+  - **[084]** images signed in CI, verified and run by digest at deploy; base images and uv pinned; Caddy locked down, process limits, a leaner runtime image; backup delete protection; the weekly audit covers development packages (S5, S8, S11, S12).
+  - **[085]** CSV cells can't be formulas; outbound addresses are checked at use; the SMTP host must be public (S10, S13).
+- **Sign-in → Rate limits** and **More actions need "Confirm it is you"** point to the new rules.
+- **`AGENTS.md` hard rule 9:** a key must not appear in any text the app stores, shows, emails or gives to a model; exception text goes through `safe_error`.
+- **`docs/SECURITY.md`:** four threats added; a GitHub settings checklist (S4: public repository, unprotected `main`, secret scanning and Dependabot security updates off).
+- **Build plan** items 52–56.
 ## 2026-11-11 — [073]–[079] UX of five screens, concurrent requests, review stories (spec)
 
 Marc asked on 11 Nov for a UX pass on the dashboard, LLM inspector, Insights, Performance and Universe, concurrent requests in cycles and data syncs with a setting (default 20), and the briefing and weekly review as readable stories. One spec PR for seven work items, each with its kickoff and issue (#230–#236).
