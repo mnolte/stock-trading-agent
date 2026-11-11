@@ -308,27 +308,23 @@ button:not([disabled]):hover {
 .ask-note-edit-row { display: flex; align-items: center; gap: var(--sa-space-3); justify-content: flex-end; font-size: var(--sa-text-xs); color: var(--sa-text-muted); }
 .ask-note-edit-row .ask-send { height: 28px; }
 
-/* ---- Settings section nav: at phone width the section list becomes a
- * horizontal scroll row (moved out of an inline <style>, which the CSP
- * blocks). The !important rules win over the nav's inline styles. ---- */
+/* ---- Settings section nav (item 069): on a phone the grouped link list
+ * collapses to the Section select with the same optgroups; Find a setting
+ * stays above it. !important wins over the nav's inline styles. ---- */
 @media (max-width: 760px) {
   nav.sn {
     position: static !important;
     max-width: none !important;
     flex: 1 1 100% !important;
-    flex-direction: row !important;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 6px !important;
-    padding-bottom: 4px;
   }
-  nav.sn a {
-    flex: 0 0 auto;
-    white-space: nowrap;
-    border: 1px solid var(--sa-border);
-  }
+  nav.sn a,
   nav.sn .sn-hint,
+  nav.sn .sn-group {
+    display: none !important;
+  }
   nav.sn .sn-find {
-    display: none;
+    display: block !important;
+    width: 100%;
+    margin-bottom: 0;
   }
 }

@@ -164,7 +164,8 @@ function LockIcon() {
   );
 }
 
-// spec defaults (backend/config.example.yaml) shown under each control
+// spec defaults (backend/config.example.yaml) shown inline after each
+// row's explanation ("· default …", item 069)
 const DEFAULTS: Record<string, string> = {
   'execution.mode': 'Automatic',
   'execution.entry_limit_offset_pct': '0.05%',
@@ -354,25 +355,38 @@ function rememberedSection(): string | null {
   }
 }
 
+// Grouped section list (item 069): Trading first — most visits change a
+// trading limit; keys live under Connections. Routes are unchanged.
 const SECTIONS = [
-  { id: 'keys', label: 'API keys and data', param: 'keys' },
-  { id: 'trading', label: 'Trading', param: 'trading' },
-  { id: 'risk', label: 'Risk limits', param: 'risk' },
-  { id: 'rules', label: 'Entry rules', param: 'rules' },
-  { id: 'earnings', label: 'Earnings', param: 'earnings' },
-  { id: 'entry-selection', label: 'Entry selection', param: 'selection' },
-  { id: 'gates', label: 'Decision gates', param: 'gates' },
-  { id: 'model', label: 'Model and reviews', param: 'model' },
-  { id: 'ask', label: 'Ask the agent', param: 'ask' },
-  { id: 'display', label: 'Display', param: 'display' },
-  { id: 'notify', label: 'Notifications', param: 'notifications' },
-  { id: 'ready', label: 'Readiness', param: 'readiness' },
-  { id: 'schedule', label: 'Schedule', param: 'schedule' },
-  { id: 'access', label: 'Access', param: 'access' },
-  { id: 'server', label: 'Server', param: 'server' },
-  { id: 'history', label: 'History', param: 'history' },
-  { id: 'danger', label: 'Paper account', param: 'paper-account' },
+  { id: 'trading', label: 'Trading', param: 'trading', group: 'Trading' },
+  { id: 'risk', label: 'Risk limits', param: 'risk', group: 'Trading' },
+  { id: 'rules', label: 'Entry rules', param: 'rules', group: 'Trading' },
+  { id: 'entry-selection', label: 'Entry selection', param: 'selection', group: 'Trading' },
+  { id: 'gates', label: 'Decision gates', param: 'gates', group: 'Trading' },
+  { id: 'earnings', label: 'Earnings', param: 'earnings', group: 'Trading' },
+  { id: 'model', label: 'Model and reviews', param: 'model', group: 'Model' },
+  { id: 'ask', label: '· Ask the agent', param: 'ask', group: 'Model' },
+  { id: 'notify', label: 'Notifications', param: 'notifications', group: 'Alerts and display' },
+  { id: 'display', label: 'Display', param: 'display', group: 'Alerts and display' },
+  { id: 'keys', label: 'API keys and data', param: 'keys', group: 'Connections' },
+  { id: 'access', label: 'Access', param: 'access', group: 'Connections' },
+  { id: 'server', label: 'Server', param: 'server', group: 'Connections' },
+  { id: 'ready', label: 'Readiness', param: 'readiness', group: 'Records' },
+  { id: 'schedule', label: 'Schedule', param: 'schedule', group: 'Records' },
+  { id: 'history', label: 'History', param: 'history', group: 'Records' },
+  { id: 'danger', label: 'Paper account', param: 'paper-account', group: 'Records' },
 ] as const;
+
+// Consecutive sections sharing a group label, in order.
+const SECTION_GROUPS: { label: string; items: (typeof SECTIONS)[number][] }[] = [];
+for (const section of SECTIONS) {
+  const last = SECTION_GROUPS[SECTION_GROUPS.length - 1];
+  if (last && last.label === section.group) {
+    last.items.push(section);
+  } else {
+    SECTION_GROUPS.push({ label: section.group, items: [section] });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // small building blocks
@@ -467,7 +481,12 @@ function Row({
         <label htmlFor={id} style={{ fontSize: 'var(--sa-text-base)', color: 'var(--sa-text)' }}>
           {label}
         </label>
-        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.45 }}>{help}</span>
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.45 }}>
+          {help}
+          {defaultText !== undefined && (
+            <span style={{ color: 'var(--sa-text-faint)', whiteSpace: 'nowrap' }}> · default {defaultText}</span>
+          )}
+        </span>
       </div>
       <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
         {children}
@@ -488,11 +507,7 @@ function Row({
               Reset
             </button>
           </span>
-        ) : (
-          defaultText !== undefined && (
-            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-faint)' }}>Default {defaultText}</span>
-          )
-        )}
+        ) : null}
         {pendingText !== undefined && (
           <span
             title="Saved in the pending version — applies at the next cycle"
@@ -1455,7 +1470,7 @@ export default function Settings() {
   const [newSymbol, setNewSymbol] = useState('');
   const [newSector, setNewSector] = useState('');
   const authStatus = useAuthStatus();
-  const narrow = useMediaQuery('(max-width: 820px)');
+  const narrow = useMediaQuery('(max-width: 760px)');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
@@ -2014,73 +2029,98 @@ export default function Settings() {
             Changed from default
           </label>
           {narrow ? (
-            <select
-              aria-label="Section"
-              value={currentId}
-              onChange={(e) =>
-                navigate(`/settings/${ID_TO_PARAM[e.target.value] ?? 'keys'}`)
-              }
-              style={{ ...textInput(), width: '100%', marginBottom: 6 }}
-            >
-              {SECTIONS.map((section) => {
-                const count = sectionChanges(section.id);
-                return (
-                  <option key={section.id} value={section.id}>
-                    {section.label}
-                    {count > 0 ? ` · ${count} changed` : ''}
-                  </option>
-                );
-              })}
-            </select>
+            <label className="sn-pick" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Section</span>
+              <select
+                aria-label="Section"
+                value={currentId}
+                onChange={(e) =>
+                  navigate(`/settings/${ID_TO_PARAM[e.target.value] ?? 'keys'}`)
+                }
+                style={{ ...textInput(), width: '100%', marginBottom: 6 }}
+              >
+                {SECTION_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.items.map((section) => {
+                      const count = sectionChanges(section.id);
+                      return (
+                        <option key={section.id} value={section.id}>
+                          {section.label}
+                          {count > 0 ? ` · ${count} changed` : ''}
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
           ) : (
-            SECTIONS.map((section) => {
-              const count = sectionChanges(section.id);
-              const active = currentId === section.id;
-              return (
-                <Link
-                  key={section.id}
-                  to={`/settings/${section.param}`}
+            SECTION_GROUPS.map((group) => (
+              <div key={group.label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span
+                  className="sn-group"
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    minHeight: 36,
+                    margin: '12px 0 2px',
                     padding: '0 12px',
-                    borderRadius: 'var(--sa-radius-sm)',
-                    textDecoration: 'none',
-                    fontSize: 'var(--sa-text-base)',
-                    background: active ? 'var(--sa-raised)' : 'transparent',
-                    color: active ? 'var(--sa-text)' : 'var(--sa-text-2)',
-                    boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
+                    fontSize: 'var(--sa-text-xs)',
+                    fontWeight: 600,
+                    color: 'var(--sa-text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.08em',
                   }}
                 >
-                  {section.label}
-                  {count > 0 && (
-                    <span
-                      title={`${count} unsaved change${count === 1 ? '' : 's'}`}
+                  {group.label}
+                </span>
+                {group.items.map((section) => {
+                  const count = sectionChanges(section.id);
+                  const active = currentId === section.id;
+                  return (
+                    <Link
+                      key={section.id}
+                      to={`/settings/${section.param}`}
                       style={{
-                        minWidth: 20,
-                        height: 20,
-                        padding: '0 6px',
-                        boxSizing: 'border-box',
-                        borderRadius: 999,
-                        background: 'var(--sa-accent-bg)',
-                        border: '1px solid var(--sa-accent-border)',
-                        color: 'var(--sa-accent)',
-                        fontFamily: 'var(--sa-font-mono)',
-                        fontSize: 11,
-                        display: 'inline-flex',
+                        display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        minHeight: 36,
+                        padding: '0 12px',
+                        borderRadius: 'var(--sa-radius-sm)',
+                        textDecoration: 'none',
+                        fontSize: 'var(--sa-text-base)',
+                        background: active ? 'var(--sa-raised)' : 'transparent',
+                        color: active ? 'var(--sa-text)' : 'var(--sa-text-2)',
+                        boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
                       }}
                     >
-                      {count}
-                    </span>
-                  )}
-                </Link>
-              );
-            })
+                      {section.label}
+                      {count > 0 && (
+                        <span
+                          title={`${count} unsaved change${count === 1 ? '' : 's'}`}
+                          style={{
+                            minWidth: 20,
+                            height: 20,
+                            padding: '0 6px',
+                            boxSizing: 'border-box',
+                            borderRadius: 999,
+                            background: 'var(--sa-accent-bg)',
+                            border: '1px solid var(--sa-accent-border)',
+                            color: 'var(--sa-accent)',
+                            fontFamily: 'var(--sa-font-mono)',
+                            fontSize: 11,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            ))
           )}
           <div className="sn-hint" style={{ marginTop: 14, padding: 12, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
             Saved settings become a new version and apply from the next cycle. Current:{' '}
@@ -2402,7 +2442,7 @@ export default function Settings() {
               help="A symbol whose price is above max position size can never be bought."
               locked
             >
-              <Switch id="fit" on locked />
+              <span style={{ fontSize: 'var(--sa-text-base)', fontWeight: 600, color: 'var(--sa-text-2)' }}>Always on</span>
             </Row>
             <Row
               id="rank"
@@ -2672,7 +2712,7 @@ export default function Settings() {
               ),
             })}
             <Row label="Cash only" help="Order value must fit in cash. Margin is never used." locked id="cash">
-              <Switch id="cash" on locked />
+              <span style={{ fontSize: 'var(--sa-text-base)', fontWeight: 600, color: 'var(--sa-text-2)' }}>Always on</span>
             </Row>
 
             <h3 style={subHead}>Brakes</h3>
@@ -2698,7 +2738,7 @@ export default function Settings() {
               changed={'risk.shock_brake_1h_pct' in changed || 'risk.shock_brake_session_pct' in changed}
               changedFrom={`${data.settings.risk.shock_brake_1h_pct}% / ${data.settings.risk.shock_brake_session_pct}%`}
               error={fieldErrors['risk.shock_brake_1h_pct'] ?? fieldErrors['risk.shock_brake_session_pct']}
-              defaultText="1.5% / 2.5%"
+              defaultText="1.5% · 2.5%"
               pendingText={pendingJoined(
                 ['risk.shock_brake_1h_pct', 'risk.shock_brake_session_pct'],
                 ' / ',
@@ -2709,18 +2749,28 @@ export default function Settings() {
                 reset('risk', 'shock_brake_session_pct');
               }}
             >
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <NumBox label="from" value={s.risk.shock_brake_1h_pct} width={60} invalid={!!fieldErrors['risk.shock_brake_1h_pct']} onChange={(v) => patch('risk', 'shock_brake_1h_pct', v)} />
-                <span style={{ color: 'var(--sa-text-muted)' }}>to</span>
-                <span style={inputBox(false, !!fieldErrors['risk.shock_brake_session_pct'])}>
-                  <input
-                    aria-label="to"
-                    value={Number.isNaN(s.risk.shock_brake_session_pct) ? '' : s.risk.shock_brake_session_pct}
-                    inputMode="decimal"
-                    onChange={(e) => patch('risk', 'shock_brake_session_pct', Number(e.target.value))}
-                    style={numInput(60)}
+              <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 12px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  1h bar
+                  <NumBox
+                    label="SPY drop in the last 1h bar"
+                    value={s.risk.shock_brake_1h_pct}
+                    unit="%"
+                    width={56}
+                    invalid={!!fieldErrors['risk.shock_brake_1h_pct']}
+                    onChange={(v) => patch('risk', 'shock_brake_1h_pct', v)}
                   />
-                  <span style={unitText}>% SPY</span>
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                  since the open
+                  <NumBox
+                    label="SPY drop since the open"
+                    value={s.risk.shock_brake_session_pct}
+                    unit="%"
+                    width={56}
+                    invalid={!!fieldErrors['risk.shock_brake_session_pct']}
+                    onChange={(v) => patch('risk', 'shock_brake_session_pct', v)}
+                  />
                 </span>
               </span>
             </Row>
