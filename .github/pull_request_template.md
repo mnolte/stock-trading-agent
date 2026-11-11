@@ -6,6 +6,10 @@
 
 Work item: 
 
+<!-- The item's issue: "Closes #n" closes it when this PR merges (last PR of the item); "Part of #n" for an earlier PR; "Refs #n" for a spec PR; delete the line if the item has no issue. -->
+
+Closes #
+
 ## Spec files changed
 
 <!-- "Spec files changed: none" or a list with the reason for each.

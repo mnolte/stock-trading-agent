@@ -18,6 +18,7 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
   - commits start with `[NNN]`;
   - screenshots in `docs/screenshots/NNN/`.
   Take the number and name from the kickoff's file name. When you open or merge the PR, update the item's row in `docs/work-items.md` (build PR and status).
+  - If the item has a GitHub issue (its row in `docs/work-items.md` and its kickoff name it), write `Closes #<issue>` in the PR description, so GitHub closes the issue when the PR is merged. For an item built in several PRs, write `Part of #<issue>` in the earlier ones and `Closes #<issue>` in the last.
   - In the build PR itself, move the kickoff unchanged to `docs/kickoffs/archive/` with `git mv`, in the same PR as the code. For an item built in several PRs, the first PR moves it and the later ones read it from `archive/`. An unchanged move needs no `spec change` label; don't edit the file in the same move.
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.

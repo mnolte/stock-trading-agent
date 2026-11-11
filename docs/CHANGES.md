@@ -2,6 +2,25 @@
 
 Newest first.
 
+## 2026-11-11 — [073]–[079] UX of five screens, concurrent requests, review stories (spec)
+
+Marc asked on 11 Nov for a UX pass on the dashboard, LLM inspector, Insights, Performance and Universe, concurrent requests in cycles and data syncs with a setting (default 20), and the briefing and weekly review as readable stories. One spec PR for seven work items, each with its kickoff and issue (#230–#236).
+
+- **[073] GUI → Dashboard layout** (new): cards take their own height; the three-part this-cycle strip; four tiles with Last cycle; the latest decision card's fixed layout and spacing, and the no-call reason in words instead of "confidence —"; the briefing card's parts.
+- **[074] LLM call history → Reasons explained** (new): a table of every warning and error reason with what it means, the likely cause and what to do, kept in one place in code and filled with the call's own details. **Inspector, easier to read** (new): What happened panel, Top reasons, folded repeats, labels, the prompt-hash sentence, input as sections, per-cycle bars for one session, the batch a call was sent in.
+- **[075] Insights → GUI** (reworked): five questions with answer sentences by code (with the wording thresholds for question 1), tiles in words, "needs n trades" instead of dashes, the grouped dimension select, no internal names, the 15:46 row since item 071.
+- **[076] Performance screen** (new): summary sentence, one small-sample banner, tiles in words, exits and the deepest drawdown on the curve, `summary`, `exits` and `drawdown` in the API, labels for codes, folded empty and pending rows, paged closed trades.
+- **[077] Universe screen** (new): one mode line, colour only above zero, the Data sync card with `sync_runs` and its API, one status per symbol (warming up with progress, ready), Pool by sector, inline remove.
+- **[078] Concurrent requests** (new section): `concurrency.max_requests` (20, 1–50); what a batch is and what stays one at a time; a cycle's held and candidate waves; **the model call cap stays** (the called set is fixed before a wave's first call), with the one deliberate difference that candidates are planned against the state after the held wave; the sync jobs, shadows and verdicts as batches; storage (`cycles.model_seconds`, `max_in_flight`, `llm_calls.batch_id`, `batch_size`) and tests. Cycles at scale and Entry selection step 3 point to it. The config key arrives in the build PR: the README test requires every example key in the README, which Devin owns.
+- **[079] Reviews → Stories** (new): briefing.v3 and weekly.v3 as one to three paragraphs that explain the numbers they use; the glossary in the facts; the format check and a prose template; The numbers fold; terms explained in the GUI; word limits per version; cost. `backend/prompts/briefing.v3.md` and `weekly.v3.md` with their manifest hashes; not selectable until 079 registers them.
+- **Second pass, same day** (Marc asked for another round; all seven designs re-read at 390 and 1440 px):
+  - **GUI → Phones and long pages** (new): the answer column comes second in every table; label–value grids stack below 760 px; buttons wrap; "On this page" chips on long pages; chart axes drop labels instead of overlapping.
+  - **Dashboard layout:** the phone layout of the feed, positions and watchlist (two-line rows, no sideways scroll); "more" under Why.
+  - **[074] Does it need me?** (new): every warning and error gets a level, `none`, `watch` or `act`, set by code at write time with fixed rules (for example 401 = act; a second provider failure within 2 cycles = watch; every `changed_by_code` = none), stored as `llm_calls.attention`, shown as a chip, counted in the summary, a filter, and an item in Needs you for `act`. Also: the answer as rows, Newer/Older with J and K, input order.
+  - **[075]** the funnel's "n% kept", column order, On this page. **[076]** one banner only (the tails card drops its own), column order. **[077]** Data sync is one line while fine and opens by itself; Status third column.
+- **Build plan** items 45–51.
+- **Process** (`AGENTS.md`, `CLAUDE.md`, `docs/work-items.md`, PR template): issues close themselves. A build PR says `Closes #n` (the last PR of an item; `Part of #n` before it), a spec PR `Refs #n`.
+
 ## 2026-11-11 — E2E seed fingerprint for the cached scratch DB (fix)
 
 CI fix, no spec change — the Playwright e2e job restores `/tmp/stock-agent-e2e.db` through `actions/cache` `restore-keys`, which can serve a database seeded by an older `e2e_seed.py`. Alembic migrates the schema forward but not the rows, and `seed_v2_decision` returns early when a v2 decision exists, so 068's breadth/sectors/`market_context` fields stayed NULL and the watchlist Sector column, Sectors now card and related assertions failed.
