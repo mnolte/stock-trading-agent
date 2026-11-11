@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
 
+from alpaca.common.rest import RESTClient
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.data.historical.news import NewsClient
@@ -19,6 +20,7 @@ from alpaca.data.requests import (
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetCalendarRequest
+from requests.adapters import HTTPAdapter
 
 from app.data.models import (
     Bar5m,
@@ -34,6 +36,18 @@ from app.data.rate_limiter import RateLimiter
 from app.market.clock import NY_TZ, UTC, Clock, RealClock
 
 logger = logging.getLogger(__name__)
+
+# alpaca-py gives each REST client its own requests.Session, whose
+# urllib3 pool keeps 10 connections per host. The daily-bar refresh and
+# the universe screen already run 10 reads at once, so any overlapping
+# call overflowed the pool ("Connection pool is full, discarding
+# connection"). 20 leaves headroom for concurrent cycles.
+_HTTP_POOL_MAXSIZE = 20
+
+
+def _mount_pool(client: RESTClient) -> None:
+    """Widen the client's urllib3 per-host pool (default 10)."""
+    client._session.mount("https://", HTTPAdapter(pool_maxsize=_HTTP_POOL_MAXSIZE))
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -274,6 +288,13 @@ class AlpacaDataClient:
         self.corporate_actions = CorporateActionsClient(
             api_key, secret_key, raw_data=True
         )
+        for client in (
+            self.trading,
+            self.market_data,
+            self.news,
+            self.corporate_actions,
+        ):
+            _mount_pool(client)
 
     async def check_paper_account(self) -> DataResult[dict[str, Any]]:
         try:
