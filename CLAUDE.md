@@ -18,6 +18,7 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 ## When changing docs
 
 - Every piece of work with a kickoff is a work item `NNN-type-slug` (`docs/work-items.md`): take the next free number and add its row (status `planned`) in the spec PR.
+- Issues close themselves (decided 11 Nov): every kickoff for an item with an issue tells Devin to put `Closes #<issue>` in the (last) build PR; the spec PR says `Refs #<issue>`. Issues I open for planned work name their kickoff and say how they close.
 - Work on a `spec/NNN-slug` branch from the latest `main` and open a pull request titled `[NNN] spec: Title` with the label `spec change`. Never push to `main` and never merge; Marc does.
 - A pull request is done only when it is ready to merge: every CI check has passed (wait for the running ones) and GitHub reports no conflicts with `main`. If a check fails, fix it on the branch; if `main` moved and conflicts, merge the latest `main` into the branch and resolve. Say in the reply that CI passed and the PR merges cleanly (decided 9 Nov).
 - Never edit the root `README.md`; Devin owns it.
