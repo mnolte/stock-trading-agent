@@ -45,10 +45,19 @@ def main() -> None:
     fingerprint = _seed_fingerprint()
     # CI's actions/cache restore-keys can hand this job a scratch DB seeded
     # by an older e2e_seed: alembic migrates the schema forward but not the
-    # rows, so a fingerprint mismatch means the seeded rows are stale.
+    # rows, so a fingerprint mismatch means the seeded rows are stale. The
+    # cached data dir goes stale with it — e2e_backtest_seed would reuse an
+    # old run-<id> strategy DB and hit its UNIQUE constraints.
     if not (marker.exists() and marker.read_text().strip() == fingerprint):
+        import shutil
+
+        from app.backtests.store import run_dir_for
+
         for suffix in ("", "-wal", "-shm"):
             Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+        backtests = run_dir_for(get_config(), 0).parent
+        if backtests.exists():
+            shutil.rmtree(backtests)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
     with get_session_maker()() as session:
