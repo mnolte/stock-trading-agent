@@ -597,3 +597,29 @@ def test_random_noise_produces_at_most_chance_findings() -> None:
     # the run must not find structure in noise.
     assert len([f for f in out["findings"] if f["status"] == "finding"]) <= 4
     assert len(out["findings"]) <= 6
+
+
+def test_entry_cycle_last_row_shows_data_when_rule_off() -> None:
+    """071: with last_cycle_no_entries false the 15:46 row is a normal
+    data row — the rule row only exists while the rule is on."""
+    late = _bulk(0, 12, "5", cycle="15:46")
+    trades = _bulk(12, 12, "5", cycle="10:46") + late
+    out = compute_insights(
+        trades, [], [], [], **base_kwargs(last_cycle_no_entries=False)
+    )
+    rows = {r["slice"]: r for r in out["slices"]["entry_cycle"]["rows"]}
+    assert "rule" not in rows["15:46"]
+    assert rows["15:46"]["trades"] == 12
+    # with no 15:46 trades yet the row is just hidden like any empty
+    # cycle — never a rule row
+    out_empty = compute_insights(
+        _bulk(0, 12, "5", cycle="10:46"),
+        [],
+        [],
+        [],
+        **base_kwargs(last_cycle_no_entries=False),
+    )
+    rows_empty = {
+        r["slice"]: r for r in out_empty["slices"]["entry_cycle"]["rows"]
+    }
+    assert "15:46" not in rows_empty or "rule" not in rows_empty["15:46"]

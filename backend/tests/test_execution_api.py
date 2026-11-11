@@ -376,3 +376,11 @@ def test_positions_not_stale_when_broker_answers(
     data = client.get("/api/positions").json()
     assert data["stale"] is False
     assert data["as_of"] is None
+
+
+def test_approvals_reports_entry_cutoff(client: TestClient) -> None:
+    """The pending-approval card learns the 15:50 New York cutoff so it
+    can show the earlier of next cycle and cutoff as the expiry (071)."""
+    data = client.get("/api/approvals").json()
+    # Simulated clock: 2026-10-15, 09:30 New York — cutoff is 15:50 EDT.
+    assert data["entry_cutoff"] == "2026-10-15T19:50:00+00:00"

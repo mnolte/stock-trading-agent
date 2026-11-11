@@ -2677,6 +2677,26 @@ def _approval_json(approval: Approval, decision: Decision | None) -> dict[str, o
     }
 
 
+def _entry_cutoff_iso(request: Request) -> str | None:
+    """Today's ``execution.entry_cutoff`` (HH:MM New York) as a UTC ISO
+    instant — the pending approval card's earliest possible expiry
+    (item 071). None when the key is absent or malformed."""
+    raw = get_config().get("execution", "entry_cutoff")
+    if not raw:
+        return None
+    try:
+        hour, minute = (int(part) for part in str(raw).split(":")[:2])
+        cutoff = dtime(hour, minute)
+    except (TypeError, ValueError):
+        return None
+    ny_today = _clock(request).now().astimezone(NY_TZ).date()
+    return (
+        datetime.combine(ny_today, cutoff, tzinfo=NY_TZ)
+        .astimezone(UTC)
+        .isoformat()
+    )
+
+
 @router.get("/approvals")
 def approvals(request: Request) -> dict[str, object]:
     """Pending supervised-mode approvals plus the last resolved ones."""
@@ -2700,13 +2720,15 @@ def approvals(request: Request) -> dict[str, object]:
             .limit(10)
         ).scalars().all()
     # Pending approvals expire at the start of the next full cycle — the
-    # card shows that time (design/screens/States.dc.html).
+    # card shows that time (design/screens/States.dc.html). The entry
+    # cutoff can end them sooner (item 071).
     next_cycle = _session_state(request).next_cycle
     return {
         "mode": get_config().get("execution", "mode", default="automatic"),
         "kill_switch_on": bool(getattr(state, "kill_switch_on", False)),
         "paused": bool(getattr(state, "paused", False)),
         "next_cycle": next_cycle.isoformat() if next_cycle else None,
+        "entry_cutoff": _entry_cutoff_iso(request),
         "items": [_approval_json(a, decisions.get(a.decision_id)) for a in pending],
         "recent": [_approval_json(a, None) for a in recent],
     }
