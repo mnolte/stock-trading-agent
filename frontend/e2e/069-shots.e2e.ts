@@ -16,7 +16,7 @@ async function shot(page: import('@playwright/test').Page, name: string) {
 
 test('069 risk limits: preview, summary and two unsaved changes', async ({
   page,
-}) => {
+}, testInfo) => {
   await page.goto('/settings/risk');
   await expect(
     page.getByRole('heading', { name: 'Risk limits' }),
@@ -28,10 +28,11 @@ test('069 risk limits: preview, summary and two unsaved changes', async ({
   await expect(page.getByText(/= \$/).first()).toBeVisible();
 
   // Two unsaved changes for the shot: risk per trade and max positions.
+  // Always raise — the cached e2e DB can carry a saved 0.6 from an older run.
   const rpt = page.locator('#rpt');
-  await rpt.fill((await rpt.inputValue()) === '0.5' ? '0.6' : '0.5');
+  await rpt.fill(String(Math.round((Number(await rpt.inputValue()) + 0.1) * 100) / 100));
   const npos = page.locator('#npos');
-  await npos.fill((await npos.inputValue()) === '4' ? '5' : '4');
+  await npos.fill(String(Number(await npos.inputValue()) + 1));
   await expect(page.getByText('2 unsaved changes')).toBeVisible();
 
   if (testInfo.project.name === 'desktop') {
@@ -82,7 +83,9 @@ test('069 looser-save confirmation', async ({ page }, testInfo) => {
     page.getByRole('heading', { name: 'Risk limits' }),
   ).toBeVisible({ timeout: 60_000 });
   const rpt = page.locator('#rpt');
-  await rpt.fill((await rpt.inputValue()) === '0.5' ? '0.6' : '0.5');
+  // Always raise — a cached e2e DB can already hold 0.6, and a lower
+  // value is tighter and skips the looser-change dialog.
+  await rpt.fill(String(Math.round((Number(await rpt.inputValue()) + 0.1) * 100) / 100));
   await page.getByLabel('Reason for this change').fill('069 screenshot');
   await page.getByRole('button', { name: /^Save as v/ }).click();
   const dialog = page.getByRole('dialog');
