@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-11 — [069] Settings UX
+
+From a review of the built Settings screen (056) at 1440 and 390 px with the seeded app. GUI only; no setting, default or trading rule changes.
+
+- **Section list grouped:** Trading, Model, Alerts and display, Connections, Records (16 flat items before; Trading first, keys under Connections). Phone: the same groups in the Section select, and Find a setting no longer hidden.
+- **Rows:** the default moves inline to the end of the explanation (it took a line of its own on every row); fixed values read "Always on · fixed by the spec" instead of a dimmed switch that looked editable.
+- **Money next to percentages** ("= $40.74") and a **"What these limits mean today"** box on Risk limits: loss per stopped trade, which limit binds first, where the day stops and the kill switch turns on, in dollars.
+- **Shock brake** fields labelled "1h bar" and "since the open" (they read as a range "1.5 to 2.5").
+- **Advanced fold** for Trading → Prices and timeouts.
+- **Override notes** in rows a shadow overrides.
+- **Save bar:** each change tagged tighter or looser; a looser save asks once more.
+- **Email:** "Test and save" is the main button.
+- Also brought into the design: Decision gates → "Regimes that pass the trend gate" and the v6 sideways target limit (items 058).
+
 ## 2026-11-11 — [066] "Get a key" links in Settings → API keys (build)
 
 GUI addition, no spec change — the design file has no key-source links; noted as a deviation in the PR.

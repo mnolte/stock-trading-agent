@@ -2,6 +2,19 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-11 — [069] Settings UX
+
+`Settings.dc.html` only. `Settings.png`, `Settings-1024.png`, `Settings-390.png`.
+
+- **Section list** in five groups with small headings: Trading (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), Model (Model and reviews, · Ask the agent), Alerts and display (Notifications, Display), Connections (API keys and data, Access, Server), Records (Readiness, Schedule, History, Paper account). Previous/next follow this order. Phone: optgroups in the Section select; Find a setting shown above it.
+- **Rows:** default inline ("· default 2.5%") instead of a line under the control; fixed values as "Always on" with "fixed by the spec" on the same line (Cash only, One share fits) instead of a dimmed switch.
+- **Risk limits:** "What these limits mean today" box (at equity $10,184.30 with the two unsaved changes: $40.74 per stopped trade, $20.37 after 3 losses; 4 × 0.4% = 1.6% of the 2.5% budget; day stops at −$152.76; kill switch at $9,395.41, 8% below the $10,212.40 peak); "= $…" beside each % of equity; shock brake fields labelled "1h bar" and "since the open".
+- **Trading:** "Advanced · prices and timeouts" folded (5 settings, all at default).
+- **Entry rules:** RSI row notes "Shadow A uses 45–65" (the Strategies sample).
+- **Decision gates:** "Regimes that pass the trend gate" (Up, Sideways; 058) and Decision v6 → "Sideways, high volatility: target at most 2.0 × ATR"; the trend gate's explanation updated.
+- **Save bar:** each change tagged tighter (green) or looser (amber).
+- **Notifications → Email:** "Test and save" primary, "Send test" secondary.
+
 ## 2026-11-10 — [060] VIX data
 
 - **Header, every screen:** the VIX close sits on the Regime stat's label line ("REGIME · VIX 17.4"), so the header keeps its width (a separate VIX column pushed Pause and Kill switch to a third row at 1440). Hover: the close's date, 1-year percentile, 5-session change and VIXY since that close and today. Below 820 px the phone line has no room: the regime chip's tooltip carries it.
