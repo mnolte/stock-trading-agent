@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-11 — [067] Economic releases
+
+Issue #215. Marc's decisions of 11 November.
+
+- **Calendar:** FOMC decision dates in config (`events.fomc_dates`, from the Fed's calendar: 9 Dec 2026, eight dates in 2027, 26 Jan 2028); CPI, jobs report and PCE dates from FRED's release calendar, daily at 08:00 New York, 60 days ahead (needs the FRED key). Table `economic_events`.
+- **FOMC window, a rule:** no new entries in a cycle starting from 30 minutes before to 45 minutes after the 14:00 decision (the 13:46 cycle). Rules check `fomc_window`; options still tracked; strategy-overridable; risk-gate table row.
+- **08:30 releases, collected first:** no rule. New entries are already never made in the 15:46 cycle, so a last-cycle block would change nothing. Each cycle stores `next_release`; entries and held positions whose next session opens after a release are tagged `release_next_morning`; the decision.v7 analysis (061) decides on data.
+- **GUI:** next release in the this-cycle strip and on tagged position cards; Settings → Entry rules → Economic releases; Insights slice "release next morning"; `fomc_window` in What each filter removed; Needs you warns 60 days before the FOMC list in config runs out.
+- Build plan item 41.
+
 ## 2026-11-11 — [069] Settings UX
 
 From a review of the built Settings screen (056) at 1440 and 390 px with the seeded app. GUI only; no setting, default or trading rule changes.

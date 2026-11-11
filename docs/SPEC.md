@@ -123,6 +123,7 @@ A check takes a few seconds. A failed check is logged; three failed checks in a 
 | Alpaca IEX latest quote | Sizing, spread check | At order time |
 | Alpaca News API | Headlines for the last 24h per symbol, passed to the model | Every cycle |
 | Finnhub earnings calendar | Earnings blackout | Daily at 08:00 New York time |
+| FRED release dates (CPI, Employment Situation, Personal Income and Outlays) and the FOMC dates in config | Economic releases: the FOMC window and the "release next morning" tag (see Economic releases) | Daily at 08:00 New York time, 60 days ahead |
 | ECB EUR/USD reference rate | EUR display only | Daily |
 | FRED `VIXCLS` (Cboe's VIX daily close) | The VIX shown with the regime and stored per cycle; not sent to the model yet (see VIX) | Daily at 08:00 and 17:00 New York, and at startup |
 | Alpaca 5-min bars for VIXY | The VIX's direction today (see VIX) | Every cycle |
@@ -264,6 +265,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - 1h EMA 20 above EMA 50.
 - RSI between 40 and 70, inclusive.
 - Outside the earnings blackout (see Risk).
+- Outside the FOMC window (see Economic releases).
 - Regime is not Down + High.
 - Not the 15:46 cycle (no new entries in the last cycle of a session).
 
@@ -337,8 +339,17 @@ Pre-checks run before the gates: kill switch on, entries paused, an unacknowledg
 | Daily loss limit | −2% of equity in the current session | No new entries for the rest of the New York session, even if equity recovers; the latch is stored and survives a restart |
 | Shock brake | SPY down more than 1.5% in the last 1h bar, or more than 2.5% since the open | No new entries this session |
 | Earnings blackout | Earnings within the next 3 trading days | No new entry |
+| FOMC window | From 30 minutes before to 45 minutes after a 14:00 FOMC decision (see Economic releases) | No new entry |
 | Re-entry | The symbol was sold or stopped out earlier this session | No new entry in that symbol until the next session |
 | Drawdown kill | Equity 8% below its peak | Kill switch turns on automatically |
+
+**Economic releases** (item 067, decided 11 November). Releases that move the whole market at a known time. The earnings blackout covers one stock; this covers all of them.
+- **Which.** The FOMC rate decision (14:00 New York on a meeting's second day), CPI, the jobs report (Employment Situation) and PCE (Personal Income and Outlays), the last three at 08:30 New York.
+- **Dates.** FOMC: a dated list in config (`events.fomc_dates`), copied from the Fed's calendar, which the Fed publishes about a year and a half ahead; the decision dates are the second day of each meeting: 9 Dec 2026; 27 Jan, 17 Mar, 28 Apr, 9 Jun, 28 Jul, 15 Sep, 27 Oct, 8 Dec 2027; 26 Jan 2028. CPI, jobs and PCE: FRED's release dates (`fred/releases/dates`, the release ids in `events.fred_releases`), fetched daily at 08:00 New York, 60 days ahead, with the FRED key (optional key in API keys; the release calendar needs it). Stored in `economic_events`.
+- **FOMC window, a rule.** No new entries in a cycle that starts between `events.fomc.block_minutes_before` (30) minutes before and `events.fomc.block_minutes_after` (45) minutes after the decision. With cycles at :46, that is the 13:46 cycle; 14:46 runs as usual. A candidate stopped by it is `no_call` · `rules`, check `fomc_window`, its options still built and tracked like any rules failure. Holds and exits are not affected. `events.fomc.enabled` turns it off; strategies can override it.
+- **08:30 releases, collected first.** No rule (Marc, 11 November): new entries are already never made in the 15:46 cycle, so a "last cycle before" block would change nothing, and blocking a whole session costs about 3 sessions a month. Instead every cycle stores `next_release`: the next release within 2 sessions (type, time New York, sessions away), and an entry or a held position whose next session opens after an 08:30 release is tagged `release_next_morning`. The decision.v7 analysis (item 061) measures gaps and outcomes on release mornings before any rule.
+- **Missing calendar.** FRED down or no key: the FOMC rule still works from config, `next_release` is null for the other three, and a data-source warning goes out. A missing calendar never blocks a cycle.
+- **Keeping the FOMC list current.** Settings shows the last FOMC date in config; from 60 days before it, Needs you shows "FOMC dates in config end on 26 Jan 2028: add the next year from the Fed's calendar".
 | Losing streak | 3 losing trades in a row | Risk per trade halved until the next winning trade; never blocks by itself |
 | Risk per trade | 0.5% of equity | Sizing: shares = risk budget / (entry − stop), rounded down |
 | Max position size | 20% of equity | Sizing: shares reduced to fit |
@@ -451,11 +462,13 @@ The layout must also work at phone width, so the VPS version can be checked from
   - Copy that names a setting reads it from settings.
 - **Browser tab:** the title shows the agent's state (open, paused, kill switch).
 
+**Next release.** When a release is within 2 sessions, the this-cycle strip names it before the cycle counter: "CPI tomorrow 08:30" or "FOMC today 14:00 · no entries in the 13:46 cycle"; an open position tagged `release_next_morning` shows the same as a chip on its card (item 067).
+
 **Cycle counter.** The this-cycle strip at the top of the dashboard ends with a cycle counter: the next cycle's time in Amsterdam and New York with a live countdown (mm:ss under an hour, otherwise h:mm), one segment per cycle of today's session (done, next, later; an early-close day has fewer), "Cycle n of 6 today", the cycle's number in this run, and the next position check. Market closed: the next session's first cycle with its day. Kill switch on: "Kill switch on · no cycles". A cycle that is running shows "running" instead of the countdown. The count in this run comes from the `cycles` table (kind cycle) since the run started.
 
 **Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and symbols blocked from re-entry this session. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
 
-**Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
+**Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
 - **What these limits mean today.** Risk limits opens with three plain sentences computed from the values on screen, unsaved changes included: what a stopped-out trade loses (and after the losing-streak halving); whether the open-risk budget or the position count limits first (positions × risk per trade against total open risk); where new entries stop for the day and where the kill switch turns on, in dollars.
 - **Two-value settings are labelled** per field (shock brake: "1h bar" and "since the open"), not "1.5 to 2.5".
@@ -525,7 +538,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | Table | Holds |
 | --- | --- |
 | `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start). Daily bars live in `bars_1d` (symbol, session date, OHLCV), unique on (symbol, date) |
-| `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health; the VIX fields `vix_close`, `vix_date`, `vix_percentile_1y`, `vix_change_5d_pct`, `vixy_change_today_pct`, `vixy_change_since_vix_pct`, `vix_stale` (item 060; null before it) |
+| `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health; the VIX fields `vix_close`, `vix_date`, `vix_percentile_1y`, `vix_change_5d_pct`, `vixy_change_today_pct`, `vixy_change_since_vix_pct`, `vix_stale` (item 060; null before it); `next_release` JSON (type, time New York, sessions away; item 067) |
 | `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live); under decision.v2 also levels JSON, options JSON, chosen option, explanation check, options version |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
@@ -533,6 +546,7 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | `outcomes` | decision, price after 1h, 1 session and 5 sessions; best and worst price while open; first touch (trades); option touches (PR 32) |
 | `equity_snapshots` | time, equity, cash, SPY benchmark value, EUR/USD rate |
 | `day_trades` | date, symbol, order ids (no longer written since PR 26; kept for history) |
+| `economic_events` | type (fomc, cpi, jobs, pce), date, time New York, source (config or FRED), fetched at (item 067) |
 | `earnings` | symbol, date, time of day (before_open, after_close, during_market or unknown, mapped from Finnhub's bmo, amc and dmh), raw Finnhub value, fetched at |
 | `corporate_actions` | symbol, type, date, ratio or amount |
 | `settings_versions` | version, settings JSON, changed at, reason |
@@ -625,6 +639,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 38. **Decision v6** (item 058). `prompts/decision.v6.md`: decision.v5 with the trend and volatility rules rewritten for a sideways market; the v5 contract (schema, snapshot, checks, gates) reused; the code check `sideways_rule`; eval cases. See Decision v6.
 39. **VIX data** (item 060). FRED `VIXCLS` and VIXY bars, the seven VIX fields per cycle, the header and latest-decision display, two Insights slices, the data source in Settings; backtests carry the fields. See VIX.
 40. **Settings UX** (item 069). Grouped section list, defaults inline, money next to percentages, the Risk limits summary, labelled two-value fields, Advanced fold, override notes, tighter/looser tags and the looser-save confirmation. See Settings screen.
+41. **Economic releases** (item 067). The release calendar (FOMC from config, CPI, jobs and PCE from FRED), the FOMC window rule, `next_release` per cycle and the `release_next_morning` tag, the dashboard and Settings display, two Insights additions. See Economic releases.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1167,6 +1182,7 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
   - volatility (ATR percentile terciles);
   - VIX level at entry (`vix_percentile_1y` terciles; item 060);
   - VIX 5-session change at entry (falling below −10%, flat, rising above +10%);
+  - release next morning (an entry tagged `release_next_morning` or not; item 067);
   - confidence (0.1 buckets);
   - stop and target basis (decision.v2);
   - sessions held (1, 2–3, 4+);
