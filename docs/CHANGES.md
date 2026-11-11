@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-12 — [086] Tests run in CI, not on the laptop (process)
+
+Marc asked on 12 Nov to lower the CPU load that tests put on the development laptop. No behaviour change.
+
+- **`AGENTS.md` → Commands:** locally only ruff on the changed files and the tests for the change; never the full suites, the e2e suite, the security run or an image build. Open a draft PR early, push in batches, and treat green CI as the proof. Three exceptions (CI not starting for 30 minutes, a local-only failure, screenshots), each named in the PR. Stop every process you started.
+- **`CLAUDE.md` → Tests:** the same for Claude; kickoffs point to CI; reviews read the CI results.
+- **PR template:** the test plan asks for green CI and the names of the locally run tests, instead of `make lint` and `make test`.
+
 ## 2026-11-11 — [080] Security audit of the repository, and the rules that follow (spec)
 
 Marc asked for a security audit of the whole repository. Report: `docs/analysis/080-security-audit.md`. The fixes of the audits of 27 October and 8 November hold. New: 1 high, 5 medium and 7 low findings (S1–S13), one issue each (#238–#250), grouped into work items 081–085; S4 (GitHub settings) is for Marc.

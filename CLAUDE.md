@@ -27,6 +27,12 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 - Design changes go to `design/screens/` and `design/screenshots/`, plus an entry in `design/CHANGES.md`.
 - Keep the defaults in `backend/config.example.yaml` in step with the spec, but `main` must boot from it at every commit (`docs/README.md` rule 7). A block whose code doesn't exist yet goes in the kickoff, unless the app is known to ignore it.
 
+## Tests
+
+- CI runs the tests, not the laptop (decided 12 Nov, `AGENTS.md` → Commands). Run only the tests for the files a change touches; never the full suites, the e2e suite or an image build. Push, let CI run, wait for it, and fix what fails on the branch.
+- Every kickoff says its tests are proven in CI, and never asks Devin to run `make test` locally.
+- When reviewing a PR, read the CI results instead of re-running the suite; ask for a local run only when CI can't show the problem.
+
 ## Style
 
 - Plain, short sentences. Concrete numbers over adjectives.

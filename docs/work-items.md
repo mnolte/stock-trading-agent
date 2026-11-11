@@ -146,6 +146,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
 | 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
+| 086 | spec | Tests run in CI, not on the laptop | — | SPECPR | — | merged |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
