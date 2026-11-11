@@ -77,4 +77,5 @@ export const REASON_CODES: Record<string, string> = {
   rsi: 'RSI',
   spread: 'Spread',
   liquidity: 'Liquidity',
+  entry_cutoff: 'Too close to the close',
 };

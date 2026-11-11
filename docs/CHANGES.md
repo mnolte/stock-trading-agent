@@ -26,6 +26,12 @@ Issue #215. Marc's decisions of 11 November.
 - **GUI:** next release in the this-cycle strip and on tagged position cards; Settings → Entry rules → Economic releases; Insights slice "release next morning"; `fomc_window` in What each filter removed; Needs you warns 60 days before the FOMC list in config runs out.
 - Build plan item 41.
 
+## 2026-11-11 — [071] New entries in the last cycle (build)
+
+- **Entry cutoff:** `execution.entry_cutoff` (15:50 New York) in `backend/config.example.yaml`. The executor checks it at the top of `_enter` and again right before the order slot — the fresh-quote await can cross it mid-entry. At or after the cutoff the decision ends `blocked` with `blocked_by: entry_cutoff` ("too close to the close") and no order is sent. A supervised approval approved at or after the cutoff expires with reason `entry_cutoff`; `/api/approvals` reports today's cutoff so the card shows the earlier of next cycle and cutoff.
+- **Default flipped:** `schedule.last_cycle_no_entries: false`; `true` still restores the old pre-filter rule. Settings → Schedule's last row reads "yes, sent by 15:50".
+- Exits, stop moves and protective stops never consult the cutoff. The Insights entry-cycle slice's 15:46 row is a normal data row — the rule row only exists while the setting is on.
+
 ## 2026-11-11 — [071] New entries in the last cycle
 
 Marc's decision of 11 November.

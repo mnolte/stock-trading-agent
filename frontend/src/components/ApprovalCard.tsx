@@ -36,6 +36,7 @@ export function ApprovalCard({
   killSwitchOn,
   paused = false,
   nextCycle = null,
+  entryCutoff = null,
   onResolved,
 }: {
   approval: Approval;
@@ -43,6 +44,9 @@ export function ApprovalCard({
   paused?: boolean;
   /** Pending approvals expire at the start of this cycle. */
   nextCycle?: string | null;
+  /** Entries stop at this instant (execution.entry_cutoff) — an
+   * approval can never become an order at or after it (item 071). */
+  entryCutoff?: string | null;
   onResolved: () => void;
 }) {
   const location = useLocation();
@@ -57,6 +61,32 @@ export function ApprovalCard({
       .catch((e: Error) => setError(e.message))
       .finally(() => setBusy(false));
   };
+
+  // The approval dies at the earlier of the next cycle and the entry
+  // cutoff — from the 15:46 cycle that is 15:50 (item 071).
+  const cutoffMs = entryCutoff ? Date.parse(entryCutoff) : null;
+  const nextMs = nextCycle ? Date.parse(nextCycle) : null;
+  const cutoffFirst =
+    cutoffMs !== null && (nextMs === null || cutoffMs < nextMs);
+  const expiry = cutoffFirst && entryCutoff ? (
+    <b style={{ color: 'var(--sa-warning-text)', fontWeight: 600 }}>
+      expires at{' '}
+      <span title={formatNyTitle(entryCutoff)}>
+        {displayTime(entryCutoff)}
+      </span>{' '}
+      · too close to the close
+    </b>
+  ) : nextCycle ? (
+    <b style={{ color: 'var(--sa-warning-text)', fontWeight: 600 }}>
+      expires at the{' '}
+      <span title={formatNyTitle(nextCycle)}>
+        {openedTodayNy(nextCycle)
+          ? displayTime(nextCycle)
+          : displayWeekdayTime(nextCycle)}
+      </span>{' '}
+      cycle
+    </b>
+  ) : null;
 
   return (
     <div
@@ -112,20 +142,7 @@ export function ApprovalCard({
         <span title={formatNyTitle(approval.created_at)}>
           {displayTime(approval.created_at)}
         </span>
-        {nextCycle && (
-          <>
-            {' · '}
-            <b style={{ color: 'var(--sa-warning-text)', fontWeight: 600 }}>
-              expires at the{' '}
-              <span title={formatNyTitle(nextCycle)}>
-                {openedTodayNy(nextCycle)
-                  ? displayTime(nextCycle)
-                  : displayWeekdayTime(nextCycle)}
-              </span>{' '}
-              cycle
-            </b>
-          </>
-        )}
+        {expiry && <>{' · '}{expiry}</>}
         . Size and gates are checked again when you approve.
       </div>
       {error && <Banner variant="negative">{error}</Banner>}

@@ -1383,7 +1383,7 @@ def compute_snapshot(
             config.get("schedule", "cycles", default=[])
         ),
         last_cycle_no_entries=bool(
-            config.get("schedule", "last_cycle_no_entries", default=True)
+            config.get("schedule", "last_cycle_no_entries", default=False)
         ),
         entry_cycles=inputs["entry_cycles"],
         min_trades=int(cfg.get("min_trades", 30)),
