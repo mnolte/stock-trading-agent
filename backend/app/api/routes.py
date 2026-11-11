@@ -5938,11 +5938,25 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             "WHERE level IN ('ERROR','CRITICAL') "
             "GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50"
         ).fetchall()
-        # Review state for each fingerprint (step 8: log_reviews).
+        # Review state for each fingerprint (step 8: log_reviews), plus
+        # the set Readiness counts as unreviewed: a "fixed" problem that
+        # recurs is unreviewed again (docs/SPEC.md, Readiness — Errors).
         reviews: dict[str, str] = {}
+        unreviewed_fps: dict[str, str] | None = {}
         try:
             from sqlalchemy import text
 
+            from app.readiness.service import unreviewed_error_fingerprints
+
+            clock = getattr(request.app.state, "clock", None) or make_clock()
+            calendar_store = getattr(
+                request.app.state, "calendar_store", None
+            )
+            calendar = (
+                calendar_store
+                if calendar_store is not None
+                else WeekdayCalendarProvider()
+            )
             with get_session_maker()() as session:
                 for fp, review in session.execute(
                     text(
@@ -5951,8 +5965,15 @@ def api_logs_summary(request: Request) -> dict[str, object]:
                     )
                 ):
                     reviews[fp] = review
+                unreviewed_fps = unreviewed_error_fingerprints(
+                    session,
+                    get_config(),
+                    calendar,
+                    clock.now().astimezone(NY_TZ).date(),
+                )
         except Exception:  # noqa: BLE001 - table may predate the migration
             logging.getLogger("app.api").debug("log_reviews not available yet")
+            unreviewed_fps = None
     return {
         "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
         "level_counts": dict(level_counts),
@@ -5961,6 +5982,11 @@ def api_logs_summary(request: Request) -> dict[str, object]:
                 "fingerprint": fp, "level": lv, "first_ts": fts,
                 "last_ts": ts, "count": n,
                 "sample": smp, "review": reviews.get(fp),
+                "unreviewed": (
+                    fp not in reviews
+                    if unreviewed_fps is None
+                    else fp in unreviewed_fps
+                ),
             }
             for fp, lv, fts, ts, n, smp in problems
         ],

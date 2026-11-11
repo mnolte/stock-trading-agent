@@ -269,6 +269,72 @@ def test_logs_review_keeps_fingerprint_verbatim(client: TestClient) -> None:
     assert again["review"] == "fixed"
 
 
+def test_logs_summary_unreviewed_matches_readiness(client: TestClient) -> None:
+    """``unreviewed`` is the Readiness count, not "has no review row": a
+    ``fixed`` problem counts again once a newer line lands, ``expected``
+    never does (docs/SPEC.md, Readiness — Errors in the log)."""
+    from datetime import datetime
+
+    from app.db.base import get_session_maker
+    from app.db.models import LogReview
+
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    assert handler is not None
+    handler.emit(_rec("recurring boom", logging.ERROR))
+    handler.flush()
+
+    def problem() -> dict[str, object]:
+        return next(
+            p
+            for p in client.get("/api/logs/summary").json()["problems"]
+            if p["sample"].startswith("recurring boom")
+        )
+
+    fp = str(problem()["fingerprint"])
+    # Inside the 10-session window (the test clock is frozen at
+    # 2026-10-15 NY) but before any review.
+    with sqlite3.connect(handler.db_path) as conn:
+        conn.execute(
+            "UPDATE log_lines SET ts = '2026-10-10T12:00:00.000Z' "
+            "WHERE fingerprint = ?",
+            (fp,),
+        )
+
+    assert problem()["review"] is None
+    assert problem()["unreviewed"] is True
+
+    def review(kind: str, at: str) -> None:
+        with get_session_maker()() as session:
+            session.add(
+                LogReview(
+                    fingerprint=fp, level="ERROR",
+                    sample="recurring boom", review=kind, note="n",
+                    reviewed_at=datetime.fromisoformat(at),
+                    app_version="0.2.0",
+                )
+            )
+            session.commit()
+
+    # fixed after the last line: reviewed.
+    review("fixed", "2026-10-12T00:00:00")
+    assert problem()["review"] == "fixed"
+    assert problem()["unreviewed"] is False
+
+    # A newer line reopens it.
+    with sqlite3.connect(handler.db_path) as conn:
+        conn.execute(
+            "UPDATE log_lines SET ts = '2026-10-14T12:00:00.000Z' "
+            "WHERE fingerprint = ?",
+            (fp,),
+        )
+    assert problem()["unreviewed"] is True
+
+    # expected stays reviewed however often it recurs.
+    review("expected", "2026-10-13T00:00:00")
+    assert problem()["review"] == "expected"
+    assert problem()["unreviewed"] is False
+
+
 def test_logs_api_export(client: TestClient) -> None:
     handler = cast(FastAPI, client.app).state.log_index_handler
     handler.emit(_rec("exported", logging.WARNING))

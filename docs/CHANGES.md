@@ -8,6 +8,13 @@ Spec entry: the VIX "Sources" bullet now says a failed fetch retries every 15 mi
 
 - **`vix-refresh-retry` job:** while `VixService.latest` carries an error, a 15-minute interval job re-runs the FRED fetch; the first success clears the retry and publishes `settings`/`banners` so the Settings tile and warning update without a reload. A FRED outage longer than a fetch window no longer waits for the next 08:00/17:00 fetch or a restart.
 
+## 2026-11-10 — [064] Logs screen counts unreviewed like Readiness (build)
+
+Bug fix, no spec change — the Logs screen now matches the Readiness rule it claims to show.
+
+- **`/api/logs/summary`** returns `unreviewed` per recurring problem, computed by the same `unreviewed_error_fingerprints` Readiness and Needs you use: a `fixed` problem counts again once a newer ERROR line lands after the review; `expected` stays reviewed when it recurs.
+- **Logs screen**: the "N unreviewed" count and the warning chip use that flag. A fixed-then-recurred problem shows "unreviewed" again (hover says it was marked fixed); problems that don't count — CRITICAL lines and ERRORs outside the 10-session window — show "—" instead of an "unreviewed" chip they can't act on.
+
 ## 2026-11-10 — [063] Price-stale quotes: retry once, age at check time (build)
 
 Live-data fix from the `price_stale` investigation; no spec change — the 60 s market-price rule stands.
