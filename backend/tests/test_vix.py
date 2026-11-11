@@ -358,6 +358,76 @@ async def test_refresh_failure_is_health_not_an_exception(
     assert vix.health() == "failed: fred down"
 
 
+class _FlakyVix:
+    """fetch_vix_closes stub whose error flag the test flips."""
+
+    def __init__(self, error: str | None = None) -> None:
+        self.error = error
+        self.calls = 0
+
+    async def fetch_vix_closes(self, start: date, end: date) -> Any:
+        from app.data.models import DataResult
+
+        self.calls += 1
+        if self.error is not None:
+            return DataResult(data=[], error=self.error, source="fred")
+        return DataResult(
+            data=[VixObservation(date(2026, 11, 9), Decimal("21.5"))],
+            source="fred",
+        )
+
+
+async def test_vix_retry_runs_only_while_the_last_fetch_failed(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """The 15-minute retry job re-fetches after a failure and stops after
+    the first success — never fetching on top of a healthy feed."""
+    from app.api.main import retry_vix_refresh
+    from app.api.websocket import UpdateBus
+
+    now = datetime(2026, 11, 11, 12, 0, tzinfo=NY_TZ)
+    clock = FakeClock(now)
+    vix, _market = _service(session_factory, clock)
+    source = _FlakyVix()
+    vix.source = source
+    bus = UpdateBus()
+    queue = bus.subscribe()
+
+    # No refresh yet: nothing to retry.
+    await retry_vix_refresh(vix, bus)
+    assert source.calls == 0
+
+    # A healthy feed: the retry is a no-op.
+    await vix.refresh(date(2026, 11, 11))
+    assert source.calls == 1
+    await retry_vix_refresh(vix, bus)
+    assert source.calls == 1
+    assert queue.empty()
+
+    # A failed fetch arms the retry; it keeps failing until FRED is back.
+    source.error = "fred down"
+    await vix.refresh(date(2026, 11, 11))
+    assert source.calls == 2
+    await retry_vix_refresh(vix, bus)
+    assert source.calls == 3
+    assert vix.health() == "failed: fred down"
+    assert queue.empty()
+
+    # Recovery: one retry fetches, stores and tells the GUI.
+    source.error = None
+    await retry_vix_refresh(vix, bus)
+    assert source.calls == 4
+    assert vix.health() == "ok"
+    assert queue.get_nowait() == {"settings", "banners"}
+    with session_factory() as session:
+        row = session.execute(select(VixClose)).scalar_one()
+    assert row.date == date(2026, 11, 9)
+
+    # Healthy again: the job goes quiet.
+    await retry_vix_refresh(vix, bus)
+    assert source.calls == 4
+
+
 # ---------------------------------------------------------------------------
 # VIXY exclusion
 # ---------------------------------------------------------------------------

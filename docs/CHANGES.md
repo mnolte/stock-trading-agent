@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-11 — [065] VIX fetch retries every 15 minutes while failing (build)
+
+Spec entry: the VIX "Sources" bullet now says a failed fetch retries every 15 minutes until one succeeds.
+
+- **`vix-refresh-retry` job:** while `VixService.latest` carries an error, a 15-minute interval job re-runs the FRED fetch; the first success clears the retry and publishes `settings`/`banners` so the Settings tile and warning update without a reload. A FRED outage longer than a fetch window no longer waits for the next 08:00/17:00 fetch or a restart.
+
 ## 2026-11-10 — [063] Price-stale quotes: retry once, age at check time (build)
 
 Live-data fix from the `price_stale` investigation; no spec change — the 60 s market-price rule stands.
