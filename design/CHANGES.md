@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-11 — [068] Breadth and sectors
+
+- **`Main.dc.html` → Watchlist:** a Sector column after Day: the symbol's sector ETF and that sector's rank of 11 ("XLK 2/11"; Index funds "—"). Grid min width 800 → 890 px (the card scrolls inside at 390). `Main.png`, `Main-1024.png`, `Main-390.png`; `MainLoading.dc.html` gets the column's skeleton (`MainLoading.png`, `-390`).
+- **Header, every screen:** the Regime · VIX hover adds breadth ("31% of the universe above SMA 50, 44% up today"). Hover text only; the other screens' screenshots are unchanged.
+- **`Insights.dc.html`:** Slices gains Breadth, Sector rank and Stock vs sector; new **Sectors now** card (the 11 ETFs ranked by strength vs SPY at the last cycle, with breadth in its note). `Insights.png`, `Insights-390.png`.
+
 ## 2026-11-11 — [067] Economic releases
 
 - **`Main.dc.html`, cycle counter:** a third line with the next release within 2 sessions ("CPI tomorrow 14:30 · 08:30 NY"). `Main.png`, `Main-1024.png`, `Main-390.png`.

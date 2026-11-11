@@ -126,6 +126,7 @@ A check takes a few seconds. A failed check is logged; three failed checks in a 
 | FRED release dates (CPI, Employment Situation, Personal Income and Outlays) and the FOMC dates in config | Economic releases: the FOMC window and the "release next morning" tag (see Economic releases) | Daily at 08:00 New York time, 60 days ahead |
 | ECB EUR/USD reference rate | EUR display only | Daily |
 | FRED `VIXCLS` (Cboe's VIX daily close) | The VIX shown with the regime and stored per cycle; not sent to the model yet (see VIX) | Daily at 08:00 and 17:00 New York, and at startup |
+| Alpaca 5-min and daily bars for the 11 SPDR sector ETFs | Sector strength (see Breadth and sectors) | Every cycle |
 | Alpaca 5-min bars for VIXY | The VIX's direction today (see VIX) | Every cycle |
 | Alpaca corporate actions | Detect splits and dividends on held symbols | Daily |
 
@@ -258,6 +259,20 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - **Stale or missing.** A stale VIX keeps its last close with `vix_stale` true and shows amber ("VIX 25.6 from Thu 5 Nov"). With no close at all (FRED down since startup), the fields are null and the GUI shows "—". Neither blocks a cycle or an order; a failing FRED fetch is the usual "Data source or API key failing" warning.
 - **Config.** `market.vix.source` (`fred`), `market.vix.percentile_sessions` (252), `market.vix.stale_sessions` (1), `market.vix.reference_etf` (`VIXY`).
 
+**Breadth and sectors** (item 068, issue #216). The agent compares each stock only with SPY (`rs_vs_spy_pct`). Two things it can't see: how many stocks are rising (SPY can hold up on a few large names while most of the universe falls) and how the stock's sector is doing. Like the VIX, both are collected, shown and stored first; nothing in trading uses them until decision.v7 (item 061).
+- **Breadth, per cycle,** over the cycle's universe (live: the symbols screened in; backtests: the run's universe), from indicators every cycle already computes, stored on `cycles`:
+  - `breadth_above_sma50_pct`: share of symbols with the daily close above SMA 50;
+  - `breadth_above_sma200_pct`: the same for SMA 200;
+  - `breadth_ema_up_pct`: share with the 1h EMA 20 above EMA 50;
+  - `breadth_up_today_pct`: share trading above the previous close at the cycle's last bar.
+  With fewer than `market.breadth.min_symbols` (20) symbols computed, the fields are null.
+- **Sector ETFs.** The 11 SPDR sector ETFs (XLB, XLC, XLE, XLF, XLI, XLK, XLP, XLRE, XLU, XLV, XLY) are reference symbols like SPY and VIXY: their bars are downloaded and cached, but they are never candidates, never screened in and never traded. `market.sector_etfs` maps each sector the sector resolver (Risk → Sector cap) uses to its ETF; Index (SPY, QQQ) has none.
+- **Sectors, per cycle,** stored on `cycles` as JSON: each ETF's `rs_vs_spy_pct` (the same function and lookback as the stocks') and its rank 1–11.
+- **Per candidate,** stored on the decision, outside the model's input: `sector_etf`, `sector_rs_vs_spy_pct`, `sector_rank`, and `rs_vs_sector_pct` (the stock against its sector ETF, same function). Null without an ETF or its bars.
+- **Missing data** never blocks a cycle: a sector without bars has null fields; the data-source warning covers the bars as for any symbol.
+- **Backtests** download the ETFs' bars into `bars.db` like any symbol and compute the same fields.
+- **Config.** `market.sector_etfs` (the map above), `market.breadth.min_symbols` (20).
+
 **Rules pre-filter.** A symbol is an entry candidate only if all of these hold:
 
 - Not held, and no open entry order for it.
@@ -384,15 +399,15 @@ Earnings exits are not entry gates: a held symbol that reports before the next s
 
 The GUI reuses Trading Agent's visual language: the dark "instrument panel" style, IBM Plex type and the design tokens from its DESIGN.md. Copy the tokens file into this repo; do not import from the other project. Money is shown in USD; the EUR equivalent sits beside equity, today's P&L and card totals, and in a tooltip on every other amount. Times are in Amsterdam time with New York time on hover. Dates read "14 Sep" ("14 Sep 2025" outside the current year) in every screen, with fixed English month names; ISO dates only in Logs, exports and addresses. Stored codes (exit reasons, actions, reasons) are shown as words; the raw code only in the inspector, Logs and exports (item 056).
 
-**Header (every screen):** two fixed rows. First the screen title, PAPER badge and a short subtitle; then market session state with a countdown to the next open, close or cycle, a "Needs you · n" chip linking to the dashboard's Needs you card (hidden when n is 0, PR 35), equity in USD and EUR, today's P&L, regime label with the VIX close beside it (its percentile, date, 5-session change and VIXY's move today on hover; below 820 px in the regime chip's tooltip), Pause/Resume button, kill switch button. Below 820 px the title row is hidden (the top bar carries it) and equity, today and regime are one line. The Ask button is not in the header but in the sidebar and the phone top bar (Ask the agent → Opening it; decided 7 Nov).
+**Header (every screen):** two fixed rows. First the screen title, PAPER badge and a short subtitle; then market session state with a countdown to the next open, close or cycle, a "Needs you · n" chip linking to the dashboard's Needs you card (hidden when n is 0, PR 35), equity in USD and EUR, today's P&L, regime label with the VIX close beside it (its percentile, date, 5-session change and VIXY's move today on hover, with breadth: "31% above SMA 50 · 44% up today"; below 820 px in the regime chip's tooltip), Pause/Resume button, kill switch button. Below 820 px the title row is hidden (the top bar carries it) and equity, today and regime are one line. The Ask button is not in the header but in the sidebar and the phone top bar (Ask the agent → Opening it; decided 7 Nov).
 
 | Screen | What it shows |
 | --- | --- |
-| Dashboard | Risk budget card and cycle counter (see below); price chart for the selected symbol (1h bars, VWAP, EMAs, entry, stop and target lines); watchlist with price, day change, rules status and earnings date; open positions with unrealized P&L and stop distance; latest decisions feed; next-cycle timer; latest-decision card for the selected symbol (action, confidence, market regime, earnings date, reasoning, signal chips, and a three-line summary: the failed check and proposed stop and target for a skip, the position and its stop and target for a held symbol, or the pre-filter reason when no model call was made) |
+| Dashboard | Risk budget card and cycle counter (see below); price chart for the selected symbol (1h bars, VWAP, EMAs, entry, stop and target lines); watchlist with price, day change, rules status, earnings date and sector rank ("XLK 2/11", item 068); open positions with unrealized P&L and stop distance; latest decisions feed; next-cycle timer; latest-decision card for the selected symbol (action, confidence, market regime, earnings date, reasoning, signal chips, and a three-line summary: the failed check and proposed stop and target for a skip, the position and its stop and target for a held symbol, or the pre-filter reason when no model call was made) |
 | Decision detail | One order for every prompt version (`design/DESIGN.md` → Decision drawers): action with size and a confidence bar; entry, stop, target and R/R (or R now) tiles; **What happened**: the final action, every change by code with its reason, warnings, the order status (or, when no order was sent, why: paused, waiting for approval, kill switch, a gate, a shadow, outside the entry window), the verdict (pending, a draft with Confirm draft and Change…, confirmed, or none with why) and "Ask about this decision"; the version's own blocks (previous decision, hold or exit, position, entry thesis, checks by code, options or stop options, selection); agent reasoning with conflicts, named risks and news used; safety gates (code checks, then risk gates, each pass, fail or reduced); levels, folded; outcome (entries: 1h, 1 session and 5 sessions with best and worst R and which of stop or target was touched first; skips: their option touches; holds and exits: the position afterwards and, in the last cycle, the next open); links to the position, the strategy and the model call |
 | Positions and orders | Open positions, their bracket legs at Alpaca, order history with fills and slippage, reconciliation status, today's entries, exits and same-session round trips (information only) |
 | Performance | Equity curve vs SPY buy-and-hold (USD and EUR), raw vs adjusted P&L, win rate, average R, max drawdown, results by symbol and by regime, winners and tails (see Tail metrics) |
-| Insights | Where results come from: expectancy with its range, edge over SPY at the same exposure, beta, overnight vs in session, gaps, cost; findings; trade funnel; slices by time of day, sector, earnings distance, gap, VWAP, pullback, strength, regime, confidence and more; calibration; execution; skipped setups (see Insights) |
+| Insights | Where results come from (and, from item 068, a "Sectors now" card: the 11 sector ETFs with their strength vs SPY and rank at the last cycle): expectancy with its range, edge over SPY at the same exposure, beta, overnight vs in session, gaps, cost; findings; trade funnel; slices by time of day, sector, earnings distance, gap, VWAP, pullback, strength, regime, confidence and more; calibration; execution; skipped setups (see Insights) |
 | LLM inspector | Every model call since the start (live, shadows, reviews), filtered by period, outcome (success, warning, error), source and more; summary per session; prompt, raw response or error, tokens, cost, latency, outcome and reasons (see LLM call history) |
 | Settings | API keys and data-source status, execution mode, universe, risk values, entry rules, earnings handling, model and reviews, notifications, cycle times (read-only), settings history, access (sign-in, devices), server (health, backups, monitoring; on the VPS), paper account reset; changes are versioned and take effect next cycle (see Settings screen) |
 | Universe (v0.2) | Pool, daily screen and eligible symbols (see Larger universe) |
@@ -539,8 +554,8 @@ SQLite, one file, migrations with Alembic. Times are stored in UTC; money as dec
 | Table | Holds |
 | --- | --- |
 | `bars_5m` | symbol, start time, OHLCV, feed; unique on (symbol, start). Daily bars live in `bars_1d` (symbol, session date, OHLCV), unique on (symbol, date) |
-| `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health; the VIX fields `vix_close`, `vix_date`, `vix_percentile_1y`, `vix_change_5d_pct`, `vixy_change_today_pct`, `vixy_change_since_vix_pct`, `vix_stale` (item 060; null before it); `next_release` JSON (type, time New York, sessions away; item 067) |
-| `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live); under decision.v2 also levels JSON, options JSON, chosen option, explanation check, options version |
+| `cycles` | kind (cycle or position check), scheduled time, started, finished, status, errors, data-source health; the VIX fields `vix_close`, `vix_date`, `vix_percentile_1y`, `vix_change_5d_pct`, `vixy_change_today_pct`, `vixy_change_since_vix_pct`, `vix_stale` (item 060; null before it); `next_release` JSON (type, time New York, sessions away; item 067); the four breadth fields and `sectors` JSON (item 068) |
+| `decisions` | cycle, symbol, context (candidate or held), input snapshot JSON, rules result, model output JSON, validation result, gates result, final action, prompt version and hash, model, tokens, cost, cached (backtests only; always false live); under decision.v2 also levels JSON, options JSON, chosen option, explanation check, options version; `market_context` JSON with the candidate's sector fields (item 068; not sent to the model) |
 | `orders` | Alpaca order id, parent id, decision, side, type, leg (entry, stop, target, exit), qty, prices, status, timestamps |
 | `fills` | order, qty, price, time, slippage vs intended price |
 | `positions` | symbol, origin (agent or adopted), entry decision, qty, avg entry, initial stop, current stop, target, opened, closed, realized P&L raw and adjusted, exit reason, after-exit best price and time, after-exit close price, after-exit status and done at (see Tail metrics) |
@@ -642,6 +657,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 40. **Settings UX** (item 069). Grouped section list, defaults inline, money next to percentages, the Risk limits summary, labelled two-value fields, Advanced fold, override notes, tighter/looser tags and the looser-save confirmation. See Settings screen.
 41. **Entries in the last cycle** (item 071). `schedule.last_cycle_no_entries` defaults to `false`; the entry cutoff (`execution.entry_cutoff`, 15:50 New York). See Rules pre-filter.
 42. **Economic releases** (item 067). The release calendar (FOMC from config, CPI, jobs and PCE from FRED), the FOMC window rule, `next_release` per cycle and the `release_next_morning` tag, the dashboard and Settings display, two Insights additions. See Economic releases.
+43. **Breadth and sectors** (item 068). The four breadth fields per cycle, the sector ETFs as reference symbols, the sector table per cycle and the candidate's sector fields, the watchlist column, three Insights slices and the Sectors now card. See Breadth and sectors.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -1185,6 +1201,7 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
   - VIX level at entry (`vix_percentile_1y` terciles; item 060);
   - VIX 5-session change at entry (falling below −10%, flat, rising above +10%);
   - release next morning (an entry tagged `release_next_morning` or not; item 067);
+  - breadth at entry (`breadth_above_sma50_pct` terciles), sector rank at entry (1–3, 4–8, 9–11), stock vs sector at entry (`rs_vs_sector_pct` below or above 0; item 068);
   - confidence (0.1 buckets);
   - stop and target basis (decision.v2);
   - sessions held (1, 2–3, 4+);
