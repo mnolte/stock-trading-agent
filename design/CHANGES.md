@@ -2,6 +2,12 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-11 — [080] Security audit: Settings and Sign in
+
+- **`Settings.dc.html` → Access:** new group **Known browsers** above Signed-in devices (three browsers with "known since" and "last sign-in", Remove, the note on what a known browser may do and the break-glass command); the "Confirm before risky actions" text now names every loosening change (083, 082). New screenshot `Settings-access.png`.
+- **`Settings.dc.html` → Server:** an **Image** row (digest, "signature verified at deploy"); **Delete protection** under Backups (amber "not confirmed"); **Heartbeat** shown masked ("hc-ping.com/••••3f9a") with "Replace…"; the section counts 2 warnings (084, 081). New screenshot `Settings-server.png`. `Settings.png`, `-1024` and `-390` are unchanged (they show Risk limits).
+- **`Login.dc.html`:** a fourth state, "Paused, known browser": the amber note "Sign-in is paused for other browsers until 20:14 … This browser is known, so you can sign in." with a working form (083). `Login.png`, `Login-390.png`.
+
 ## 2026-11-11 — [068] Breadth and sectors
 
 - **`Main.dc.html` → Watchlist:** a Sector column after Day: the symbol's sector ETF and that sector's rank of 11 ("XLK 2/11"; Index funds "—"). Grid min width 800 → 890 px (the card scrolls inside at 390). `Main.png`, `Main-1024.png`, `Main-390.png`; `MainLoading.dc.html` gets the column's skeleton (`MainLoading.png`, `-390`).
