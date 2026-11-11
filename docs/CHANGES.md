@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-11 — [072] Wider HTTP pool for the Alpaca clients (build)
+
+Reliability fix, no spec change — silences the `urllib3.connectionpool Connection pool is full, discarding connection: data.alpaca.markets` warnings during the daily-bar refresh and the universe screen.
+
+- **`AlpacaDataClient`** mounts an `HTTPAdapter` with `pool_maxsize=20` on the `requests.Session` of each alpaca-py client it creates (`update_credentials`, so a key save re-applies it). urllib3's default pool is 10 connections per host — exactly the `Semaphore(10)` read concurrency — so any overlapping call (a cycle's quote or bar fetch during a refresh or screen) discarded its connection and paid a fresh TLS handshake.
+- `requests` is now a direct dependency (it was transitive via alpaca-py).
+
 ## 2026-11-11 — [061] Decision v7, planned
 
 Issue #206. A new spec section **Decision v7: market context in the model call (planned)**: step A, the analysis of the VIX, economic releases, breadth and sectors against outcomes (after 20 sessions of 060, 067 and 068 data; also what the FOMC window and the 15:46 entries of 071 did); step B, decision.v7 with only the fields and rules Marc picks, in its own spec PR with the prompt text. Build plan item 44. No prompt, snapshot or code changes now.
