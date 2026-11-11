@@ -658,6 +658,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 41. **Entries in the last cycle** (item 071). `schedule.last_cycle_no_entries` defaults to `false`; the entry cutoff (`execution.entry_cutoff`, 15:50 New York). See Rules pre-filter.
 42. **Economic releases** (item 067). The release calendar (FOMC from config, CPI, jobs and PCE from FRED), the FOMC window rule, `next_release` per cycle and the `release_next_morning` tag, the dashboard and Settings display, two Insights additions. See Economic releases.
 43. **Breadth and sectors** (item 068). The four breadth fields per cycle, the sector ETFs as reference symbols, the sector table per cycle and the candidate's sector fields, the watchlist column, three Insights slices and the Sectors now card. See Breadth and sectors.
+44. **Decision v7** (item 061). Step A: the market-context analysis, after 20 sessions of 060, 067 and 068 data. Step B, only after Marc's choice: snapshot v7, `decision.v7.md`, code checks, eval and a shadow. See Decision v7.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -2001,6 +2002,30 @@ From the live data of 9 November: in a "Sideways · high vol" regime the v5 tren
 **Reaching live.** Marc decided on 9 November to skip the shadow period: once the build passes the eval set, he sets the live prompt to `decision.v6` in Settings → Model and reviews → Decisions. The default in `config.example.yaml` stays as it is.
 
 **Not changed.** v1–v5 prompts; the trend gate's rule that `trend_1h` must be `up` and a `down` regime never passes; risk limits; entry selection.
+
+## Decision v7: market context in the model call (item 061, planned)
+
+Issue #206. Items 060 (VIX), 067 (economic releases) and 068 (breadth and sectors) collect market context that no decision uses. Decision v7 is the one prompt and snapshot version that may give it to the model, after the data shows which parts matter. One version for all four keeps it to one eval and one shadow, and lets them be compared with each other. Nothing below is built until step A is done and Marc has chosen.
+
+**Step A · evidence first.** Starts once all three items are live and at least 20 sessions of their data exist (counted from the last of the three). `docs/analysis/061-market-context.md`, from live, shadow and backtest data:
+- Insights → Slices (trades, win rate, average R with its 90% range; live, shadows and backtests apart) by: VIX percentile terciles and VIX 5-session change; breadth terciles; sector rank (1–3, 4–8, 9–11) and stock vs sector; sessions to the next release (0, 1, 2+); release next morning.
+- Option touches (target first, stop first) for every built option by the same groups: far more rows than trades.
+- Overnight gaps of held positions by VIX level, VIX change, and an 08:30 release the next morning.
+- What each adds over what the snapshot already has: the VIX within ATR-percentile terciles; sector rank within `rs_vs_spy_pct` groups; breadth within regime trend. A field that only repeats existing ones is dropped.
+- What the FOMC window cost (`fomc_window` candidates and their touches), and what the 15:46 entries since item 071 did.
+- A list of candidate rules, each with its numbers, and the fields the data doesn't support.
+
+Marc picks the rules and fields. Fields that separate nothing stay stored and shown but don't go into v7; if none separates anything, v7 isn't made.
+
+**Step B · decision.v7** (its own spec PR by Claude, with the prompt text):
+- **Snapshot v7** = snapshot v6 plus a `market` block with the chosen fields, from: `vix` (close, date, percentile, 5-session change, VIXY since the close, stale), `breadth` (the four shares), `events` (the next release within 2 sessions: type, time, sessions away); and per candidate `sector` (ETF, rank, the sector's strength vs SPY, the stock's strength vs its sector). A null field is explained in the prompt as unknown, never as calm.
+- **Prompt** `decision.v7.md` = decision.v6 plus a short section per chosen rule.
+- **Code checks** for any rule the model must not break, as the trend gate and `sideways_rule`.
+- **Contract:** the v6 contract plus the `market` block; output schema unchanged.
+- **Eval:** a case per rule, and per field null; v6 cases pass unchanged.
+- **Reaching live:** a shadow "I · v7" for at least 10 sessions next to live, then Marc decides.
+
+**Not in this item:** switching the regime's volatility label from the ATR percentile to the VIX (it changes v5 and v6 too; a separate decision after step A); sizing by VIX, breadth or sector; implied volatility per stock (not collected).
 
 ## Ask the agent (PR 36)
 
