@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-11 — [061] Decision v7, planned
+
+Issue #206. A new spec section **Decision v7: market context in the model call (planned)**: step A, the analysis of the VIX, economic releases, breadth and sectors against outcomes (after 20 sessions of 060, 067 and 068 data; also what the FOMC window and the 15:46 entries of 071 did); step B, decision.v7 with only the fields and rules Marc picks, in its own spec PR with the prompt text. Build plan item 44. No prompt, snapshot or code changes now.
+
 ## 2026-11-11 — [068] Breadth and sectors
 
 Issue #216. Collected, shown and stored; nothing in trading uses them until decision.v7 (061).
