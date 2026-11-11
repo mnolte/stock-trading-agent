@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-11 — [066] "Get a key" links in Settings → API keys (build)
+
+GUI addition, no spec change — the design file has no key-source links; noted as a deviation in the PR.
+
+- **Settings → API keys:** each key row (Alpaca, OpenAI, Anthropic, Finnhub, FRED) now shows a "Get a key" link under its hint that opens the provider's key page in a new tab (Alpaca paper dashboard, OpenAI API keys, Anthropic console keys, Finnhub dashboard, FRED API keys).
+
 ## 2026-11-10 — [064] Logs screen counts unreviewed like Readiness (build)
 
 Bug fix, no spec change — the Logs screen now matches the Readiness rule it claims to show.
