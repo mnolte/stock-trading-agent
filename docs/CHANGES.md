@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-11 — [070] Test and save disabled on API keys (build)
+
+Bug fix, no spec change — the keys form works as designed again.
+
+- **Settings → API keys:** "Test and save" was permanently disabled for every key group (Alpaca pair, OpenAI, Anthropic, Finnhub, FRED): the [055] busy-button rework inverted the condition to `busy !== row.name`, which is true whenever no save is running. It now disables only while another row's key action runs, matching the Test button; the row's own busy state stays with the button (it keeps focus).
+- The save notice read `undefined saved — tested ok.` because the response carries no label; it now uses the row's label from the loaded keys.
+
 ## 2026-11-11 — [069] Settings UX
 
 From a review of the built Settings screen (056) at 1440 and 390 px with the seeded app. GUI only; no setting, default or trading rule changes.
