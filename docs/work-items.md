@@ -124,6 +124,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 062 | fix | Decision gate settings could not be saved | — | — | #210 | building |
 | 063 | fix | Price-stale quotes: one retry, age judged at check time | — | — | #211 | building |
 | 064 | fix | Logs screen counts unreviewed like Readiness | — | — | #212 | building |
+| 066 | feat | "Get a key" links in Settings → API keys | — | — | #214 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
