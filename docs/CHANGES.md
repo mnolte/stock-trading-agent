@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-11-10 — [064] Logs screen counts unreviewed like Readiness (build)
+
+Bug fix, no spec change — the Logs screen now matches the Readiness rule it claims to show.
+
+- **`/api/logs/summary`** returns `unreviewed` per recurring problem, computed by the same `unreviewed_error_fingerprints` Readiness and Needs you use: a `fixed` problem counts again once a newer ERROR line lands after the review; `expected` stays reviewed when it recurs.
+- **Logs screen**: the "N unreviewed" count and the warning chip use that flag. A fixed-then-recurred problem shows "unreviewed" again (hover says it was marked fixed); problems that don't count — CRITICAL lines and ERRORs outside the 10-session window — show "—" instead of an "unreviewed" chip they can't act on.
+
 ## 2026-11-10 — [063] Price-stale quotes: retry once, age at check time (build)
 
 Live-data fix from the `price_stale` investigation; no spec change — the 60 s market-price rule stands.
