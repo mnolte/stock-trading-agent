@@ -115,6 +115,23 @@ def test_trading_client_is_paper() -> None:
     assert client.trading._base_url == BaseURL.TRADING_PAPER
 
 
+def test_alpaca_clients_have_room_in_http_pool() -> None:
+    """Cycles run up to 10 reads at once; urllib3's default pool of 10
+    per host overflowed with "Connection pool is full" warnings."""
+    from requests.adapters import HTTPAdapter
+
+    client = AlpacaDataClient("test-key", "test-secret")
+    for sdk in (
+        client.trading,
+        client.market_data,
+        client.news,
+        client.corporate_actions,
+    ):
+        adapter = sdk._session.get_adapter("https://data.alpaca.markets")
+        assert isinstance(adapter, HTTPAdapter)
+        assert adapter._pool_maxsize == 20
+
+
 def test_parse_order_tolerates_fractional_qty_strings() -> None:
     """Alpaca reports qty as a string and can return fractional values
     on orders outside our whole-share flow — the parser must read them
