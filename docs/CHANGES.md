@@ -7,7 +7,7 @@ Newest first.
 Marc's decision of 11 November.
 
 - **Removed:** "Not the 15:46 cycle (no new entries in the last cycle of a session)" from the rules pre-filter. It had been there since before PR 12 without a written reason. 14 minutes is enough to fill: the entry limit is cancelled after 10 minutes if unfilled, and the 0.15% spread check still applies.
-- **Config:** `schedule.last_cycle_no_entries` default `true` → `false` (the setting stays, to turn the rule back on).
+- **Config:** `schedule.last_cycle_no_entries` default `true` → `false` (the setting stays, to turn the rule back on). Changed in the build PR together with the cutoff, not before.
 - **New: entry cutoff** `execution.entry_cutoff` (15:50 New York): no entry order after it, so the fill window always ends by the close. A late supervised approval in the last cycle expires as "too close to the close".
 - **Insights:** the entry-cycle slice's 15:46 row stops being a rule row from 11 November.
 - The model already sees `session.last_cycle` (v5, v6); their prompts cover holds overnight, not entries; decision.v7 (061) can add an entry rule for the last cycle if the data asks for one.
