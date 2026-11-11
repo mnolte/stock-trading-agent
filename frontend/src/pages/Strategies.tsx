@@ -301,8 +301,13 @@ function NewShadowDialog({
 
 export default function Strategies() {
   const [data, setData] = useState<StrategiesResponse | null>(null);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [searchParams] = useSearchParams();
+  const [selectedId, setSelectedId] = useState<number | null>(() => {
+    // Settings override notes deep-link here (?strategy=<id>, item 069).
+    const raw = searchParams.get('strategy');
+    const n = raw === null ? NaN : Number(raw);
+    return Number.isInteger(n) ? n : null;
+  });
   const [dialog, setDialog] = useState(
     () => searchParams.get('new_shadow') === '1',
   );

@@ -190,3 +190,78 @@ def risk_budget(
         open_count=open_count,
         max_positions=max_positions,
     )
+
+
+# Settings → Risk limits preview (item 069): every "% of equity" control
+# gets its dollar amount at the current equity, plus the summary figures.
+# The endpoint merges a draft settings tree and calls this with the same
+# GateContext the gates see — no new math, Decimal throughout.
+PCT_OF_EQUITY_KEYS = (
+    "risk_per_trade_pct",
+    "max_position_pct",
+    "max_order_pct",
+    "max_open_risk_pct",
+    "daily_loss_limit_pct",
+)
+
+
+def settings_risk_preview(
+    config: AppConfig, ctx: GateContext
+) -> dict[str, object]:
+    """Dollar amounts and summary numbers for a draft risk config.
+
+    ``config`` is the draft tree (active settings with the unsaved values
+    merged on); ``ctx`` is the live gate context, so equity, the losing
+    streak and the peak are the ones the gates use right now.
+    """
+    equity = ctx.equity
+    defaults = {
+        "risk_per_trade_pct": Decimal("0.5"),
+        "max_position_pct": Decimal("20"),
+        "max_order_pct": Decimal("25"),
+        "max_open_risk_pct": Decimal("2.5"),
+        "daily_loss_limit_pct": Decimal("2"),
+    }
+    amounts = {
+        f"risk.{key}": str(
+            equity * config.get_decimal("risk", key, default=defaults[key]) / 100
+        )
+        for key in PCT_OF_EQUITY_KEYS
+    }
+
+    risk_pct = config.get_decimal("risk", "risk_per_trade_pct", default=Decimal("0.5"))
+    factor = streak_risk_factor(ctx.losing_streak, config)
+    per_trade = equity * risk_pct / 100
+
+    positions = config.get_int("risk", "max_open_positions", default=4)
+    open_risk_cap = config.get_decimal("risk", "max_open_risk_pct", default=Decimal("2.5"))
+    # Positions at full configured risk vs the open-risk budget: whichever
+    # is smaller binds first (docs/SPEC.md, Settings screen — item 069).
+    positions_risk_pct = Decimal(positions) * risk_pct
+    binds_first = "positions" if positions_risk_pct <= open_risk_cap else "open_risk"
+
+    daily_pct = config.get_decimal("risk", "daily_loss_limit_pct", default=Decimal("2"))
+    kill_pct = config.get_decimal("risk", "drawdown_kill_pct", default=8)
+    peak = ctx.peak_equity
+
+    return {
+        "equity": str(equity),
+        "amounts": amounts,
+        "summary": {
+            "risk_per_trade_pct": str(risk_pct),
+            "loss_per_trade_usd": str(per_trade),
+            "loss_per_trade_streak_usd": str(per_trade * factor),
+            "streak_factor": str(factor),
+            "losing_streak": ctx.losing_streak,
+            "losing_streak_len": config.get_int("risk", "losing_streak", default=3),
+            "max_open_positions": positions,
+            "positions_risk_pct": str(positions_risk_pct),
+            "open_risk_limit_pct": str(open_risk_cap),
+            "binds_first": binds_first,
+            "daily_loss_limit_pct": str(daily_pct),
+            "daily_loss_stop_usd": str(equity * daily_pct / 100),
+            "drawdown_kill_pct": str(kill_pct),
+            "kill_switch_equity_usd": str(peak * (Decimal(100) - kill_pct) / 100),
+            "peak_equity_usd": str(peak),
+        },
+    }

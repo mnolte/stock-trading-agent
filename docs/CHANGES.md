@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-11-11 — [069] Settings UX, risk preview and save direction (build)
+
+Second build PR of 069 (steps 3–7) on branch `feat/069-settings-ux-2`, on top of #229.
+
+- **`POST /api/settings/preview`** (read-only): merges a partial settings tree over the active config via `AppConfig.overlay()` and returns dollar equivalents for the percentage-of-equity risk fields plus a plain-language summary — per-trade loss, losing-streak factor and length, whether max positions or open risk binds first, the daily-loss stop and the drawdown kill-switch equity level. It reuses the live `GateContext` and the canonical `streak_risk_factor()`; it never validates, saves or applies anything.
+- **`GET /api/settings`** now carries strategy override metadata (active/paused shadows) so the page can note where a live value is overridden.
+- **Settings page**: percentage risk fields show a live USD amount beside them (debounced preview); a "What these limits mean today" summary box; an Advanced fold for the quote/broker timeout fields (auto-opens on Find or Changed-from-default matches); shadow override notes; decision-gate controls caught up to backend/spec support including v6.
+- **Save bar**: each changed field is labelled tighter, looser or neutral; looser-risk changes require a confirmation dialog before posting. Promotion and the reason requirement are unchanged.
+- **Components** extracted to `frontend/src/components/settings/` (controls, save bar, section nav, risk preview, override notes).
+- No setting, default, threshold or trading rule changed; `backend/config.example.yaml` untouched.
+
 ## 2026-11-11 — E2E seed fingerprint for the cached scratch DB (fix)
 
 CI fix, no spec change — the Playwright e2e job restores `/tmp/stock-agent-e2e.db` through `actions/cache` `restore-keys`, which can serve a database seeded by an older `e2e_seed.py`. Alembic migrates the schema forward but not the rows, and `seed_v2_decision` returns early when a v2 decision exists, so 068's breadth/sectors/`market_context` fields stayed NULL and the watchlist Sector column, Sectors now card and related assertions failed.

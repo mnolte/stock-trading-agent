@@ -62,6 +62,12 @@ test('settings: a Risk change survives switching to Trading and saves', async ({
 
   await page.getByLabel('Reason for this change').fill('e2e: risk tweak');
   await page.getByRole('button', { name: /^Save as v/ }).click();
+  // 0.5 → 0.6% loosens the agent: the save bar asks first and names the
+  // looser change (item 069).
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/Raises risk per trade/)).toBeVisible();
+  await dialog.getByRole('button', { name: /^Save as v/ }).click();
   await expect(
     page.getByText(/Saved as v\d+ · applies at the next cycle/),
   ).toBeVisible();

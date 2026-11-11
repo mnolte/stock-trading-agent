@@ -1,6 +1,6 @@
 import type { SettingsForm } from '../types/api';
 
-const FIELD_LABELS: Record<string, string> = {
+export const FIELD_LABELS: Record<string, string> = {
   'execution.mode': 'Execution mode',
   'execution.entry_limit_offset_pct': 'Entry limit above ask',
   'execution.entry_timeout_minutes': 'Cancel unfilled entry after',
@@ -25,6 +25,7 @@ const FIELD_LABELS: Record<string, string> = {
   'decision.v5.max_rr': 'v5 max reward to risk',
   'decision.v5.base_rate_sessions': 'v5 base rate window',
   'decision.v5.price_vs_signal_adverse_atr': 'v5 adverse price move',
+  'decision.v6.sideways_max_target_atr': 'v6 sideways, high volatility: target at most',
   'risk.risk_per_trade_pct': 'Risk per trade',
   'risk.max_position_pct': 'Max position size',
   'risk.max_open_risk_pct': 'Total open risk',
@@ -187,7 +188,7 @@ function notificationLeafRows(
 /** Nested leaves of a decision version gate (`decision.v3`/`v4`/`v5`),
  * as `decision.<ver>.<sub>` paths. */
 function decisionGateLeafRows(
-  key: 'v3' | 'v4' | 'v5',
+  key: 'v3' | 'v4' | 'v5' | 'v6',
   current: SettingsForm,
   edited: SettingsForm,
   map: Record<string, string> | null,
@@ -269,8 +270,8 @@ export function diffSettings(
   ][]) {
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
-      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5') {
-        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5', current, edited, null, rows);
+      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5' || path === 'decision.v6') {
+        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5' | 'v6', current, edited, null, rows);
         continue;
       }
       if (path === 'universe.sectors') {
@@ -330,8 +331,8 @@ export function diffMap(
   ][]) {
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       const path = `${section}.${key}`;
-      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5') {
-        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5', current, edited, map, null);
+      if (path === 'decision.v3' || path === 'decision.v4' || path === 'decision.v5' || path === 'decision.v6') {
+        decisionGateLeafRows(key as 'v3' | 'v4' | 'v5' | 'v6', current, edited, map, null);
         continue;
       }
       if (path === 'universe.sectors') {
@@ -368,4 +369,135 @@ export function diffMap(
     }
   }
   return map;
+}
+
+// ---------------------------------------------------------------------------
+// Tighter / looser (item 069): the save bar tags every risk, brake, entry
+// rule and decision-gate change with the direction it moves the agent.
+// Settings outside those categories carry no tag.
+
+export type ChangeDirection = 'tighter' | 'looser';
+
+type NumDirection = 'higher_tighter' | 'higher_looser';
+type BoolDirection = 'on_tighter' | 'on_looser';
+
+export const DIRECTION: Record<string, NumDirection | BoolDirection | 'list'> = {
+  // Risk limits — every raise of an exposure cap is looser.
+  'risk.risk_per_trade_pct': 'higher_looser',
+  'risk.max_position_pct': 'higher_looser',
+  'risk.max_order_pct': 'higher_looser',
+  'risk.max_open_risk_pct': 'higher_looser',
+  'risk.max_open_positions': 'higher_looser',
+  'risk.max_per_sector': 'higher_looser',
+  'risk.daily_loss_limit_pct': 'higher_looser',
+  'risk.losing_streak': 'higher_looser', // halving starts later
+  'risk.shock_brake_1h_pct': 'higher_looser', // brake trips later
+  'risk.shock_brake_session_pct': 'higher_looser',
+  'risk.earnings_blackout_days': 'higher_tighter',
+  'risk.hold_through_earnings': 'on_looser',
+  'risk.drawdown_kill_pct': 'higher_looser', // kill switch arms later
+  'risk.max_orders_per_cycle': 'higher_looser',
+  // Entry rules — a narrower RSI band or a tighter order envelope.
+  'rules.rsi_min': 'higher_tighter',
+  'rules.rsi_max': 'higher_looser', // narrowing the band is tighter
+  'execution.max_spread_pct': 'higher_looser',
+  'execution.entry_limit_offset_pct': 'higher_looser',
+  'execution.entry_timeout_minutes': 'higher_looser',
+  'events.fomc.enabled': 'on_tighter',
+  'events.fomc.block_minutes_before': 'higher_tighter',
+  'events.fomc.block_minutes_after': 'higher_tighter',
+  // Decision gates.
+  'decision.min_confidence_enter': 'higher_tighter',
+  'decision.stop_atr_min': 'higher_tighter',
+  'decision.stop_atr_max': 'higher_looser', // narrowing the band is tighter
+  'decision.min_reward_risk': 'higher_tighter',
+  'decision.min_ev_r': 'higher_tighter',
+  'decision.v3.min_room_atr': 'higher_tighter',
+  'decision.v3.min_edge': 'higher_tighter',
+  'decision.v5.trend_gate': 'on_tighter',
+  'decision.v5.trend_gate_regimes': 'list',
+  'decision.v5.max_rr': 'higher_looser',
+  'decision.v5.price_vs_signal_adverse_atr': 'higher_looser',
+  'decision.v6.sideways_max_target_atr': 'higher_looser',
+};
+
+export function settingLeaf(tree: unknown, path: string): unknown {
+  let cur = tree;
+  for (const part of path.split('.')) {
+    if (cur === null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
+}
+
+/** Direction of one changed leaf, or null when the setting carries no
+ * tag (anything outside risk, brakes, entry rules and decision gates). */
+export function changeDirection(
+  path: string,
+  from: unknown,
+  to: unknown,
+): ChangeDirection | null {
+  const rule = DIRECTION[path];
+  if (rule === undefined) return null;
+  if (rule === 'list') {
+    const a = Array.isArray(from) ? from : [];
+    const b = Array.isArray(to) ? to : [];
+    const added = b.some((v) => !a.includes(v));
+    const removed = a.some((v) => !b.includes(v));
+    if (added && !removed) return 'looser';
+    if (removed && !added) return 'tighter';
+    return null;
+  }
+  if (rule.startsWith('on_')) {
+    const tighterOn = rule === 'on_tighter';
+    return Boolean(to) === tighterOn ? 'tighter' : 'looser';
+  }
+  const fromN = Number(from);
+  const toN = Number(to);
+  if (Number.isNaN(fromN) || Number.isNaN(toN) || fromN === toN) return null;
+  const rose = toN > fromN;
+  const tighterOnRise = rule === 'higher_tighter';
+  return rose === tighterOnRise ? 'tighter' : 'looser';
+}
+
+/** path -> direction for every changed leaf (keys of diffMap). */
+export function diffDirections(
+  current: SettingsForm,
+  edited: SettingsForm,
+): Record<string, ChangeDirection> {
+  const out: Record<string, ChangeDirection> = {};
+  for (const path of Object.keys(diffMap(current, edited))) {
+    // diffMap also emits synthetic universe.sector.* paths — they have
+    // no rule and no leaf in the form, so they stay untagged.
+    const dir = changeDirection(
+      path,
+      settingLeaf(current, path),
+      settingLeaf(edited, path),
+    );
+    if (dir !== null) out[path] = dir;
+  }
+  return out;
+}
+
+/** Verb for the looser-change confirmation: "Raises risk per trade …". */
+export function changeVerb(path: string, from: unknown, to: unknown): string | null {
+  const rule = DIRECTION[path];
+  if (rule === undefined) return null;
+  if (rule === 'list') {
+    const a = Array.isArray(from) ? from : [];
+    const b = Array.isArray(to) ? to : [];
+    const added = b.some((v) => !a.includes(v));
+    const removed = a.some((v) => !b.includes(v));
+    if (added && !removed) return 'Adds';
+    if (removed && !added) return 'Removes';
+    return null;
+  }
+  if (rule.startsWith('on_')) {
+    const on = to === true || to === 'on' || to === 'true' || to === 1;
+    return on ? 'Turns on' : 'Turns off';
+  }
+  const fromN = Number(from);
+  const toN = Number(to);
+  if (Number.isNaN(fromN) || Number.isNaN(toN) || fromN === toN) return null;
+  return toN > fromN ? 'Raises' : 'Lowers';
 }

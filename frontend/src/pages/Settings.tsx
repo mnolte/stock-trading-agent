@@ -35,8 +35,23 @@ import type {
   UniverseResponse,
 } from '../types/api';
 import { Banner } from '../components/Banner';
-import { CardBoundary } from '../components/CardBoundary';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { LockIcon, NumBox, Row, Section, Switch } from '../components/settings/controls';
+import {
+  chip,
+  inputBox,
+  numInput,
+  selectStyle,
+  subHead,
+  textInput,
+  unitText,
+} from '../components/settings/styles';
+import { OverrideNotes } from '../components/settings/overrideNotes';
+import { RiskLimitsSummary, UsdAmount } from '../components/settings/RiskPreview';
+import { useRiskPreview } from '../components/settings/useRiskPreview';
+import { SaveBar } from '../components/settings/SaveBar';
+import type { BarChange } from '../components/settings/SaveBar';
+import { SectionNav } from '../components/settings/SectionNav';
 import { AccessSection } from '../components/AccessSection';
 import { ServerSection } from '../components/ServerSection';
 import { useAuthStatus } from '../api/auth';
@@ -44,125 +59,20 @@ import { Button } from '../components/Button';
 import { ResetAccountDialog } from '../components/SettingsDialogs';
 import { SkeletonText } from '../components/skeletons';
 import { displayDateTime, displayDayTime, displayTime, fmtDay, fmtWeekdayDayShort } from '../format';
-import { diffMap, diffSettings, fmtPath } from './settingsDiff';
+import {
+  changeVerb,
+  diffDirections,
+  FIELD_LABELS,
+  diffMap,
+  diffSettings,
+  fmtPath,
+  settingLeaf,
+} from './settingsDiff';
 import { validateForm } from './settingsValidation';
 
 // ---------------------------------------------------------------------------
 // design tokens (design/screens/Settings.dc.html)
 
-const inputBox = (accent = false, invalid = false): CSSProperties => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  height: 40,
-  boxSizing: 'border-box',
-  borderRadius: 'var(--sa-radius-md)',
-  border: `1px solid ${invalid ? 'var(--sa-negative-text)' : accent ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
-  background: 'var(--sa-bg)',
-});
-
-const numInput = (width = 72): CSSProperties => ({
-  width,
-  height: 38,
-  boxSizing: 'border-box',
-  padding: '0 8px 0 10px',
-  border: 0,
-  background: 'transparent',
-  color: 'var(--sa-text)',
-  fontFamily: 'var(--sa-font-mono)',
-  fontSize: 'var(--sa-text-base)',
-  textAlign: 'right',
-  // No outline:none — the shared :focus-visible ring stays on every
-  // interactive element (design/DESIGN.md, Interaction rules).
-});
-
-const unitText: CSSProperties = {
-  padding: '0 10px 0 2px',
-  fontSize: 'var(--sa-text-md)',
-  color: 'var(--sa-text-muted)',
-  whiteSpace: 'nowrap',
-};
-
-const textInput = (flex?: string): CSSProperties => ({
-  height: 40,
-  boxSizing: 'border-box',
-  borderRadius: 'var(--sa-radius-md)',
-  border: '1px solid var(--sa-border-strong)',
-  background: 'var(--sa-bg)',
-  color: 'var(--sa-text)',
-  fontSize: 'var(--sa-text-base)',
-  padding: '0 10px',
-  flex,
-});
-
-const selectStyle: CSSProperties = {
-  ...textInput(),
-  minWidth: 200,
-};
-
-const rowFrame = (changed: boolean): CSSProperties => ({
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '8px 24px',
-  padding: '14px 0',
-  borderBottom: '1px solid var(--sa-border)',
-  ...(changed
-    ? {
-        boxShadow: 'inset 3px 0 0 var(--sa-accent)',
-        background: 'var(--sa-accent-bg)',
-        margin: '0 -20px',
-        paddingLeft: 20,
-        paddingRight: 20,
-      }
-    : {}),
-});
-
-const subHead: CSSProperties = {
-  margin: '18px 0 0',
-  fontSize: 'var(--sa-text-sm)',
-  fontWeight: 600,
-  color: 'var(--sa-text-muted)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.08em',
-};
-
-const chip = (tone: 'ok' | 'bad' | 'neutral'): CSSProperties => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  height: 24,
-  padding: '0 8px',
-  borderRadius: 'var(--sa-radius-sm)',
-  fontFamily: 'var(--sa-font-mono)',
-  fontSize: 'var(--sa-text-sm)',
-  whiteSpace: 'nowrap',
-  ...(tone === 'ok'
-    ? {
-        background: 'var(--sa-positive-bg)',
-        color: 'var(--sa-positive)',
-        border: '1px solid var(--sa-positive-border)',
-      }
-    : tone === 'bad'
-      ? {
-          background: 'var(--sa-negative-bg)',
-          color: 'var(--sa-negative-soft)',
-          border: '1px solid var(--sa-negative-border)',
-        }
-      : {
-          background: 'var(--sa-neutral-chip-bg)',
-          color: 'var(--sa-neutral-chip)',
-          border: '1px solid var(--sa-neutral-chip-border)',
-        }),
-});
-
-function LockIcon() {
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 12px' }}>
-      <rect x="5" y="11" width="14" height="10" rx="2" />
-      <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-    </svg>
-  );
-}
 
 // spec defaults (backend/config.example.yaml) shown inline after each
 // row's explanation ("· default …", item 069)
@@ -237,6 +147,7 @@ const UNITS: Record<string, string> = {
   'decision.v5.max_rr': ' R',
   'decision.v5.base_rate_sessions': ' sessions',
   'decision.v5.price_vs_signal_adverse_atr': ' × ATR',
+  'decision.v6.sideways_max_target_atr': ' × ATR',
   'readiness.max_drawdown_pct': '%',
   'readiness.min_avg_r': 'R',
   'readiness.min_proposal_pass_pct': '%',
@@ -266,6 +177,7 @@ const SECTION_OF: Record<string, string> = {
   'decision.v5.max_rr': 'gates',
   'decision.v5.base_rate_sessions': 'gates',
   'decision.v5.price_vs_signal_adverse_atr': 'gates',
+  'decision.v6.sideways_max_target_atr': 'gates',
   'gui.near_stop_atr': 'display',
   'inspector.slow_call_seconds': 'display',
   'performance.slippage_pct_per_side': 'trading',
@@ -388,6 +300,16 @@ for (const section of SECTIONS) {
   }
 }
 
+// Trading → "Prices and timeouts" folds into Advanced (item 069); Find
+// and Changed-from-default open it when a match lives inside.
+const ADVANCED_PATHS = [
+  'execution.quote_max_age_seconds',
+  'execution.quote_max_deviation_pct',
+  'execution.tighten_quote_max_age_seconds',
+  'execution.fill_settle_seconds',
+  'api.broker_timeout_seconds',
+] as const;
+
 // ---------------------------------------------------------------------------
 // small building blocks
 
@@ -403,200 +325,6 @@ function AskSpendLine() {
       {status.questions ? ` · ${status.questions} questions` : ''}
       {status.avg_cost_usd ? ` · about $${Number(status.avg_cost_usd).toFixed(3)} each` : ''}
     </div>
-  );
-}
-
-function Section({
-  id,
-  title,
-  right,
-  blurb,
-  children,
-}: {
-  id: string;
-  title: string;
-  right?: ReactNode;
-  blurb?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section
-      id={id}
-      data-settings-section
-      style={{
-        scrollMarginTop: 24,
-        background: 'var(--sa-panel)',
-        border: '1px solid var(--sa-border)',
-        borderRadius: 'var(--sa-radius-lg)',
-        padding: '18px 20px 6px',
-        display: 'flex',
-        flexDirection: 'column',
-        minWidth: 0,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>{title}</h2>
-        {right && <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{right}</div>}
-      </div>
-      {blurb && (
-        <p style={{ margin: '4px 0 6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
-          {blurb}
-        </p>
-      )}
-      <CardBoundary name={title}>
-        {children}
-      </CardBoundary>
-    </section>
-  );
-}
-
-function Row({
-  id,
-  label,
-  help,
-  changed,
-  changedFrom,
-  error,
-  locked,
-  defaultText,
-  pendingText,
-  onReset,
-  children,
-}: {
-  id?: string;
-  label: string;
-  help: ReactNode;
-  changed?: boolean;
-  changedFrom?: string;
-  error?: string;
-  locked?: boolean;
-  defaultText?: string;
-  pendingText?: string;
-  onReset?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div style={rowFrame(!!changed)}>
-      <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-        <label htmlFor={id} style={{ fontSize: 'var(--sa-text-base)', color: 'var(--sa-text)' }}>
-          {label}
-        </label>
-        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.45 }}>
-          {help}
-          {defaultText !== undefined && (
-            <span style={{ color: 'var(--sa-text-faint)', whiteSpace: 'nowrap' }}> · default {defaultText}</span>
-          )}
-        </span>
-      </div>
-      <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        {children}
-        {error ? (
-          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-negative-text)' }}>{error}</span>
-        ) : locked ? (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            <LockIcon /> fixed by the spec
-          </span>
-        ) : changed ? (
-          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-accent)' }}>
-            Changed from {changedFrom} ·{' '}
-            <button
-              type="button"
-              onClick={onReset}
-              style={{ background: 'none', border: 0, color: 'var(--sa-accent)', cursor: 'pointer', fontSize: 'var(--sa-text-sm)', padding: 0 }}
-            >
-              Reset
-            </button>
-          </span>
-        ) : null}
-        {pendingText !== undefined && (
-          <span
-            title="Saved in the pending version — applies at the next cycle"
-            style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-faint)' }}
-          >
-            Pending: {pendingText}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function NumBox({
-  id,
-  label,
-  value,
-  unit,
-  accent,
-  invalid,
-  width,
-  onChange,
-}: {
-  id?: string;
-  label?: string;
-  value: number;
-  unit?: string;
-  accent?: boolean;
-  invalid?: boolean;
-  width?: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <span style={inputBox(accent, invalid)}>
-      <input
-        id={id}
-        aria-label={label}
-        value={Number.isNaN(value) ? '' : value}
-        inputMode="decimal"
-        onChange={(e) => onChange(Number(e.target.value))}
-        style={numInput(width)}
-      />
-      {unit && <span style={unitText}>{unit}</span>}
-    </span>
-  );
-}
-
-function Switch({
-  id,
-  on,
-  locked,
-  onChange,
-}: {
-  id?: string;
-  on: boolean;
-  locked?: boolean;
-  onChange?: (on: boolean) => void;
-}) {
-  return (
-    <button
-      id={id}
-      type="button"
-      role="switch"
-      aria-checked={on}
-      disabled={locked}
-      onClick={() => onChange?.(!on)}
-      style={{
-        position: 'relative',
-        width: 44,
-        height: 26,
-        borderRadius: 999,
-        border: 0,
-        background: on ? 'var(--sa-accent)' : 'var(--sa-border-strong)',
-        cursor: locked ? 'not-allowed' : 'pointer',
-        opacity: locked ? 0.55 : 1,
-      }}
-    >
-      <span
-        style={{
-          position: 'absolute',
-          top: 3,
-          ...(on ? { right: 3 } : { left: 3 }),
-          width: 20,
-          height: 20,
-          borderRadius: '50%',
-          background: 'var(--sa-text)',
-        }}
-      />
-    </button>
   );
 }
 
@@ -1371,7 +1099,7 @@ function SmtpCard({
           Send test
         </Button>
         <Button
-          variant="ghost"
+          variant="primary"
           onClick={save}
           busy={busy === 'save'}
           busyLabel="Testing…"
@@ -1474,6 +1202,7 @@ export default function Settings() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
+  const [advOpen, setAdvOpen] = useState(false);
 
   const [universe, setUniverse] = useState<UniverseResponse | null>(null);
   // Promote to live (docs/SPEC.md, Strategies and shadows): the shadow's
@@ -1552,6 +1281,14 @@ export default function Settings() {
   const fieldErrors = useMemo(() => (form ? validateForm(form) : {}), [form]);
   const invalid = Object.keys(fieldErrors).length > 0;
   const dirty = diffs.length > 0;
+
+  // Item 069: dollar preview for the draft risk tree (debounced inside
+  // the hook) and the tighter/looser tag per changed leaf.
+  const riskPreview = useRiskPreview(form?.risk ?? null);
+  const directions = useMemo(
+    () => (data && form ? diffDirections(data.settings, form) : {}),
+    [data, form],
+  );
 
   useEffect(() => {
     if (form !== null) settingsDraft = form;
@@ -1768,7 +1505,7 @@ export default function Settings() {
     // ones the active config lacks; the server merges per sub-key, so
     // drop the nulls once instead of failing validation on them.
     const gateGroups: Record<string, Record<string, unknown>> = {};
-    for (const ver of ['v3', 'v4', 'v5'] as const) {
+    for (const ver of ['v3', 'v4', 'v5', 'v6'] as const) {
       const group = form.decision[ver];
       if (group && typeof group === 'object') {
         gateGroups[ver] = Object.fromEntries(
@@ -1912,24 +1649,65 @@ export default function Settings() {
     items: dedupedSearch.filter((item) => item.sectionId === section.id),
   })).filter((group) => group.items.length > 0);
 
+  // Advanced fold (item 069): summary count and auto-open when Find or
+  // Changed-from-default points inside.
+  const advChangedCount = ADVANCED_PATHS.filter((p) => p in changed).length;
+  const advSummary =
+    advChangedCount > 0
+      ? `${advChangedCount} changed`
+      : `${ADVANCED_PATHS.length} settings, all at default`;
+  const advForced = ADVANCED_PATHS.some(
+    (p) =>
+      (changedOnly && p in changed) ||
+      (query.length > 0 &&
+        `${LABEL_OF[p] ?? p} ${p}`.toLowerCase().includes(query)),
+  );
+
   const suffix = (path: string) => UNITS[path] ?? '';
-  const barText = diffs
-    .map((d) => `${d.label} ${d.from}${suffix(labelToPath(d.label))} → ${d.to}${suffix(labelToPath(d.label))}`)
-    .join(' · ');
 
   function labelToPath(label: string): string {
-    const entry = Object.entries(LABEL_OF).find(([, l]) => l === label);
+    const entry =
+      Object.entries(FIELD_LABELS).find(([, l]) => l === label) ??
+      Object.entries(LABEL_OF).find(([, l]) => l === label);
     return entry ? entry[0] : '';
   }
+
+  const lowerFirst = (t: string) =>
+    /^[A-Z][a-z]/.test(t) ? t[0].toLowerCase() + t.slice(1) : t;
+  const barChanges: BarChange[] = diffs.map((d, i) => {
+    const path = labelToPath(d.label);
+    const unit = suffix(path);
+    const direction = directions[path] ?? null;
+    const verb = direction
+      ? changeVerb(
+          path,
+          settingLeaf(data.settings, path),
+          settingLeaf(form, path),
+        )
+      : null;
+    const phrase =
+      direction && verb
+        ? `${verb} ${lowerFirst(d.label)} ${d.from}${unit} → ${d.to}${unit}`
+        : null;
+    return {
+      key: `${d.label}#${i}`,
+      text: `${d.label} ${d.from}${unit} → ${d.to}${unit}`,
+      direction,
+      phrase,
+    };
+  });
 
   const row = (
     path: string,
     props: {
       id?: string;
       label: string;
-      help: string;
+      help: ReactNode;
       defaultText?: string;
       locked?: boolean;
+      /** Strategy-overridable paths — an active shadow's differing value
+       * shows "Shadow A uses …" at the end of the explanation (069). */
+      notes?: string[];
       children: ReactNode;
     },
   ) => (
@@ -1937,7 +1715,15 @@ export default function Settings() {
       key={path}
       id={props.id}
       label={props.label}
-      help={props.help}
+      help={
+        <>
+          {props.help}
+          <OverrideNotes
+            overrides={data.strategy_overrides}
+            paths={props.notes ?? []}
+          />
+        </>
+      }
       changed={path in changed}
       changedFrom={changed[path] ? `${changed[path]}${suffix(path)}` : undefined}
       error={fieldErrors[path]}
@@ -1953,9 +1739,12 @@ export default function Settings() {
         if (
           parts.length === 4 &&
           parts[0] === 'decision' &&
-          (parts[1] === 'v3' || parts[1] === 'v4' || parts[1] === 'v5')
+          (parts[1] === 'v3' ||
+            parts[1] === 'v4' ||
+            parts[1] === 'v5' ||
+            parts[1] === 'v6')
         ) {
-          const ver = parts[1] as 'v3' | 'v4' | 'v5';
+          const ver = parts[1] as 'v3' | 'v4' | 'v5' | 'v6';
           const saved = (
             data.settings.decision?.[ver] as Record<string, unknown> | undefined
           )?.[parts[3]];
@@ -1996,141 +1785,18 @@ export default function Settings() {
       )}
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-6)', alignItems: 'flex-start' }}>
-        <nav
-          className="sn"
-          aria-label="Settings sections"
-          style={{ flex: '1 1 200px', maxWidth: 240, position: 'sticky', top: 24, display: 'flex', flexDirection: 'column', gap: 2 }}
-        >
-          <input
-            className="sn-find"
-            type="search"
-            aria-label="Find a setting"
-            placeholder="Find a setting"
-            value={find}
-            onChange={(e) => setFind(e.target.value)}
-            style={{ ...textInput(), marginBottom: 6, width: '100%' }}
+        <SectionNav
+            narrow={narrow}
+            groups={SECTION_GROUPS}
+            currentId={currentId}
+            onNavigate={(param) => navigate(`/settings/${param}`)}
+            find={find}
+            onFind={setFind}
+            changedOnly={changedOnly}
+            onChangedOnly={setChangedOnly}
+            sectionChanges={sectionChanges}
+            activeVersion={data.active_version}
           />
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              fontSize: 'var(--sa-text-sm)',
-              color: 'var(--sa-text-muted)',
-              padding: '0 4px 10px',
-              cursor: 'pointer',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={changedOnly}
-              onChange={(e) => setChangedOnly(e.target.checked)}
-            />
-            Changed from default
-          </label>
-          {narrow ? (
-            <label className="sn-pick" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Section</span>
-              <select
-                aria-label="Section"
-                value={currentId}
-                onChange={(e) =>
-                  navigate(`/settings/${ID_TO_PARAM[e.target.value] ?? 'keys'}`)
-                }
-                style={{ ...textInput(), width: '100%', marginBottom: 6 }}
-              >
-                {SECTION_GROUPS.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.items.map((section) => {
-                      const count = sectionChanges(section.id);
-                      return (
-                        <option key={section.id} value={section.id}>
-                          {section.label}
-                          {count > 0 ? ` · ${count} changed` : ''}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
-          ) : (
-            SECTION_GROUPS.map((group) => (
-              <div key={group.label} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span
-                  className="sn-group"
-                  style={{
-                    margin: '12px 0 2px',
-                    padding: '0 12px',
-                    fontSize: 'var(--sa-text-xs)',
-                    fontWeight: 600,
-                    color: 'var(--sa-text-muted)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                  }}
-                >
-                  {group.label}
-                </span>
-                {group.items.map((section) => {
-                  const count = sectionChanges(section.id);
-                  const active = currentId === section.id;
-                  return (
-                    <Link
-                      key={section.id}
-                      to={`/settings/${section.param}`}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 8,
-                        minHeight: 36,
-                        padding: '0 12px',
-                        borderRadius: 'var(--sa-radius-sm)',
-                        textDecoration: 'none',
-                        fontSize: 'var(--sa-text-base)',
-                        background: active ? 'var(--sa-raised)' : 'transparent',
-                        color: active ? 'var(--sa-text)' : 'var(--sa-text-2)',
-                        boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
-                      }}
-                    >
-                      {section.label}
-                      {count > 0 && (
-                        <span
-                          title={`${count} unsaved change${count === 1 ? '' : 's'}`}
-                          style={{
-                            minWidth: 20,
-                            height: 20,
-                            padding: '0 6px',
-                            boxSizing: 'border-box',
-                            borderRadius: 999,
-                            background: 'var(--sa-accent-bg)',
-                            border: '1px solid var(--sa-accent-border)',
-                            color: 'var(--sa-accent)',
-                            fontFamily: 'var(--sa-font-mono)',
-                            fontSize: 11,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {count}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-            ))
-          )}
-          <div className="sn-hint" style={{ marginTop: 14, padding: 12, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
-            Saved settings become a new version and apply from the next cycle. Current:{' '}
-            <b style={{ color: 'var(--sa-text-2)', fontWeight: 600 }}>
-              {data.active_version === null
-                ? 'no saved version yet'
-                : `v${data.active_version}`}
-            </b>
-          </div>
-        </nav>
 
         <div style={{ flex: '999 1 560px', minWidth: 0, maxWidth: 920, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
           {(find.trim() || changedOnly) && (
@@ -2574,8 +2240,17 @@ export default function Settings() {
               ),
             })}
 
-            <h3 style={subHead}>Prices and timeouts</h3>
-            {row('execution.quote_max_age_seconds', {
+            <details
+              className="sa-adv"
+              open={advOpen || advForced}
+              onToggle={(e) => setAdvOpen(e.currentTarget.open)}
+              style={{ margin: '6px 0 0' }}
+            >
+              <summary style={{ cursor: 'pointer', fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: 'var(--sa-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '10px 0 2px', listStylePosition: 'inside' }}>
+                Advanced · prices and timeouts · {advSummary}
+              </summary>
+              <div style={{ paddingTop: 4 }}>
+{row('execution.quote_max_age_seconds', {
               id: 'qage',
               label: 'Quote max age',
               help: 'An IEX last trade older than this counts as stale — the price is not a live market price.',
@@ -2650,6 +2325,8 @@ export default function Settings() {
                 />
               ),
             })}
+              </div>
+            </details>
           </Section>
           </>)}
 
@@ -2660,30 +2337,34 @@ export default function Settings() {
             right={sectionChanges('risk') > 0 ? `${sectionChanges('risk')} changed` : undefined}
             blurb="Checked in code after every model answer; the first one that fails blocks the action."
           >
+            <RiskLimitsSummary preview={riskPreview} />
             <h3 style={subHead}>Per trade</h3>
             {row('risk.risk_per_trade_pct', {
               id: 'rpt',
               label: 'Risk per trade',
               help: 'What you lose if the stop is hit. Shares = this budget ÷ (entry − stop).',
-              children: (
-                <NumBox id="rpt" value={s.risk.risk_per_trade_pct} unit="% of equity" accent={'risk.risk_per_trade_pct' in changed} invalid={!!fieldErrors['risk.risk_per_trade_pct']} onChange={(v) => patch('risk', 'risk_per_trade_pct', v)} />
-              ),
+              children: (<>
+<NumBox id="rpt" value={s.risk.risk_per_trade_pct} unit="% of equity" accent={'risk.risk_per_trade_pct' in changed} invalid={!!fieldErrors['risk.risk_per_trade_pct']} onChange={(v) => patch('risk', 'risk_per_trade_pct', v)} />
+                <UsdAmount path="risk.risk_per_trade_pct" preview={riskPreview} />
+              </>),
             })}
             {row('risk.max_position_pct', {
               id: 'maxpos',
               label: 'Max position size',
               help: 'Shares are reduced to fit.',
-              children: (
-                <NumBox id="maxpos" value={s.risk.max_position_pct} unit="% of equity" accent={'risk.max_position_pct' in changed} invalid={!!fieldErrors['risk.max_position_pct']} onChange={(v) => patch('risk', 'max_position_pct', v)} />
-              ),
+              children: (<>
+<NumBox id="maxpos" value={s.risk.max_position_pct} unit="% of equity" accent={'risk.max_position_pct' in changed} invalid={!!fieldErrors['risk.max_position_pct']} onChange={(v) => patch('risk', 'max_position_pct', v)} />
+                <UsdAmount path="risk.max_position_pct" preview={riskPreview} />
+              </>),
             })}
             {row('risk.max_order_pct', {
               id: 'maxord',
               label: 'Max single order',
               help: 'Any larger order is blocked and alerts.',
-              children: (
-                <NumBox id="maxord" value={s.risk.max_order_pct} unit="% of equity" accent={'risk.max_order_pct' in changed} invalid={!!fieldErrors['risk.max_order_pct']} onChange={(v) => patch('risk', 'max_order_pct', v)} />
-              ),
+              children: (<>
+<NumBox id="maxord" value={s.risk.max_order_pct} unit="% of equity" accent={'risk.max_order_pct' in changed} invalid={!!fieldErrors['risk.max_order_pct']} onChange={(v) => patch('risk', 'max_order_pct', v)} />
+                <UsdAmount path="risk.max_order_pct" preview={riskPreview} />
+              </>),
             })}
 
             <h3 style={subHead}>Portfolio</h3>
@@ -2691,9 +2372,10 @@ export default function Settings() {
               id: 'openrisk',
               label: 'Total open risk',
               help: 'Entry-to-stop risk of all positions and working entry orders together.',
-              children: (
-                <NumBox id="openrisk" value={s.risk.max_open_risk_pct} unit="% of equity" accent={'risk.max_open_risk_pct' in changed} invalid={!!fieldErrors['risk.max_open_risk_pct']} onChange={(v) => patch('risk', 'max_open_risk_pct', v)} />
-              ),
+              children: (<>
+<NumBox id="openrisk" value={s.risk.max_open_risk_pct} unit="% of equity" accent={'risk.max_open_risk_pct' in changed} invalid={!!fieldErrors['risk.max_open_risk_pct']} onChange={(v) => patch('risk', 'max_open_risk_pct', v)} />
+                <UsdAmount path="risk.max_open_risk_pct" preview={riskPreview} />
+              </>),
             })}
             {row('risk.max_open_positions', {
               id: 'npos',
@@ -2720,9 +2402,10 @@ export default function Settings() {
               id: 'dll',
               label: 'Daily loss limit',
               help: 'No new entries for the rest of the session once the day is this far down.',
-              children: (
-                <NumBox id="dll" value={s.risk.daily_loss_limit_pct} unit="% of equity" accent={'risk.daily_loss_limit_pct' in changed} invalid={!!fieldErrors['risk.daily_loss_limit_pct']} onChange={(v) => patch('risk', 'daily_loss_limit_pct', v)} />
-              ),
+              children: (<>
+<NumBox id="dll" value={s.risk.daily_loss_limit_pct} unit="% of equity" accent={'risk.daily_loss_limit_pct' in changed} invalid={!!fieldErrors['risk.daily_loss_limit_pct']} onChange={(v) => patch('risk', 'daily_loss_limit_pct', v)} />
+                <UsdAmount path="risk.daily_loss_limit_pct" preview={riskPreview} />
+              </>),
             })}
             {row('risk.losing_streak', {
               id: 'streak',
@@ -2798,7 +2481,15 @@ export default function Settings() {
             <h3 style={subHead}>Before the model is asked</h3>
             <Row
               label="RSI range (1h)"
-              help="Outside this range the symbol is skipped without a model call. Inclusive."
+              help={
+                <>
+                  Outside this range the symbol is skipped without a model call. Inclusive.
+                  <OverrideNotes
+                    overrides={data.strategy_overrides}
+                    paths={['rules.rsi_min', 'rules.rsi_max']}
+                  />
+                </>
+              }
               changed={'rules.rsi_min' in changed || 'rules.rsi_max' in changed}
               changedFrom={`${data.settings.rules.rsi_min}–${data.settings.rules.rsi_max}`}
               error={fieldErrors['rules.rsi_min']}
@@ -2818,6 +2509,7 @@ export default function Settings() {
 
             <h3 style={subHead}>Checks on the model's answer</h3>
             {row('decision.min_confidence_enter', {
+              notes: ["decision.min_confidence_enter"],
               id: 'conf',
               label: 'Min confidence to enter',
               help: 'Lower-confidence entries become a skip.',
@@ -2827,7 +2519,15 @@ export default function Settings() {
             })}
             <Row
               label="Stop distance"
-              help="Allowed distance between entry and stop."
+              help={
+                <>
+                  Allowed distance between entry and stop.
+                  <OverrideNotes
+                    overrides={data.strategy_overrides}
+                    paths={['decision.stop_atr_min', 'decision.stop_atr_max']}
+                  />
+                </>
+              }
               changed={'decision.stop_atr_min' in changed || 'decision.stop_atr_max' in changed}
               changedFrom={`${data.settings.decision.stop_atr_min}–${data.settings.decision.stop_atr_max}`}
               error={fieldErrors['decision.stop_atr_min']}
@@ -2857,6 +2557,7 @@ export default function Settings() {
               </span>
             </Row>
             {row('decision.min_reward_risk', {
+              notes: ["decision.min_reward_risk"],
               id: 'rr',
               label: 'Min reward to risk',
               help: 'Target distance ÷ stop distance.',
@@ -3018,6 +2719,7 @@ export default function Settings() {
           {currentId === 'entry-selection' && (<>
           <Section id="entry-selection" title="Entry selection" blurb="How the cycle's candidates are ranked and picked when slots run out.">
             {row('selection.mode', {
+              notes: ["selection.mode"],
               id: 'selmode',
               label: 'Entry selection',
               help: 'Rank sends entries in rank order; expected profit picks the set with the highest total expected profit within the same limits. Gates, sizing and orders do not change.',
@@ -3035,6 +2737,7 @@ export default function Settings() {
               ),
             })}
             {row('selection.confidence_weight', {
+              notes: ["selection.confidence_weight"],
               id: 'selw',
               label: 'Confidence weight',
               help: 'How far confidence moves the probability away from break-even when scoring entries.',
@@ -3049,6 +2752,7 @@ export default function Settings() {
               ),
             })}
             {row('selection.last_slot_min_ev_r', {
+              notes: ["selection.last_slot_min_ev_r"],
               id: 'selfloor',
               label: 'Last slot min expected R',
               help: 'Minimum expected R for an entry taking the last free slot. 0 means off.',
@@ -3071,6 +2775,7 @@ export default function Settings() {
           {currentId === 'gates' && (<>
           <Section id="gates" title="Decision gates" blurb="The code gates a candidate passes before and after the model — per prompt version.">
             {row('decision.entry_gate', {
+              notes: ["decision.entry_gate"],
               id: 'egate',
               label: 'Entry gate',
               help: 'Floor keeps the v1–v4 break-even gate; ev prices each option on expected value (v5).',
@@ -3103,6 +2808,7 @@ export default function Settings() {
               ),
             })}
             {row('decision.v3.min_room_atr', {
+              notes: ["decision.v3.min_room_atr"],
               id: 'v3room',
               label: 'v3 room to first level',
               help: 'The first level in the way must be at least this far above the entry limit, in 1h ATR.',
@@ -3153,6 +2859,7 @@ export default function Settings() {
               ),
             })}
             {row('decision.v5.trend_gate', {
+              notes: ["decision.v5.trend_gate"],
               id: 'v5trend',
               label: 'v5 trend gate',
               help: 'Candidates without trend 1h and regime up get no model call.',
@@ -3170,6 +2877,7 @@ export default function Settings() {
               ),
             })}
             {row('decision.v5.trend_gate_regimes', {
+              notes: ["decision.v5.trend_gate_regimes"],
               id: 'v5regimes',
               label: 'Regimes that pass the trend gate',
               help: 'Candidates reach the model only in these regimes; down never does.',
@@ -3265,6 +2973,27 @@ export default function Settings() {
                 />
               ),
             })}
+            {row('decision.v6.sideways_max_target_atr', {
+              id: 'v6side',
+              label: 'v6 sideways, high volatility: target at most',
+              help: 'In a sideways regime with high volatility the target must be at most this × ATR.',
+              notes: ['decision.v6.sideways_max_target_atr'],
+              children: (
+                <NumBox
+                  id="v6side"
+                  value={s.decision.v6?.sideways_max_target_atr ?? 0}
+                  unit="× ATR"
+                  accent={'decision.v6.sideways_max_target_atr' in changed}
+                  invalid={!!fieldErrors['decision.v6.sideways_max_target_atr']}
+                  onChange={(v) =>
+                    patch('decision', 'v6', {
+                      ...(s.decision.v6 ?? {}),
+                      sideways_max_target_atr: v,
+                    })
+                  }
+                />
+              ),
+            })}
           </Section>
           </>)}
 
@@ -3328,6 +3057,7 @@ export default function Settings() {
           <Section id="model" title="Model and reviews" blurb="The model, its prompt and limits on calls and cost.">
             <h3 style={subHead}>Decisions</h3>
             {row('decision.model', {
+              notes: ["decision.model"],
               id: 'model',
               label: 'Model',
               help: 'Used for live decisions.',
@@ -3358,6 +3088,7 @@ export default function Settings() {
               ),
             })}
             {row('decision.prompt', {
+              notes: ["decision.prompt"],
               id: 'prompt',
               label: 'Decision prompt',
               help: `${decisionPromptDesc ? `${decisionPromptDesc} ` : ''}Prompts are never edited; a change is a new version.`,
@@ -3382,6 +3113,7 @@ export default function Settings() {
               ),
             })}
             {row('decision.temperature', {
+              notes: ["decision.temperature"],
               id: 'temp',
               label: 'Temperature',
               help: 'Decisions use 0 so the same input gives the same answer. OpenAI models only — Claude models use their effort setting instead.',
@@ -3973,52 +3705,16 @@ export default function Settings() {
           })()}
 
           {dirty && (
-            <div
-              role="region"
-              aria-label="Unsaved changes"
-              style={{
-                position: 'sticky',
-                bottom: 16,
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: '12px 16px',
-                padding: '12px 16px',
-                background: 'var(--sa-chrome)',
-                border: '1px solid var(--sa-accent-border)',
-                borderRadius: 'var(--sa-radius-lg)',
-                boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-              }}
-            >
-              <div style={{ flex: '2 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <span style={{ fontSize: 'var(--sa-text-base)', fontWeight: 600 }}>
-                  {diffs.length} unsaved change{diffs.length === 1 ? '' : 's'}
-                </span>
-                <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)' }}>{barText}</span>
-              </div>
-              <input
-                aria-label="Reason for this change"
-                placeholder="Reason (shown in history)"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                style={{ ...textInput('1 1 220px'), borderColor: reason.trim() ? 'var(--sa-border-strong)' : 'var(--sa-accent-border)' }}
-              />
-              <Button onClick={discard}>Discard</Button>
-              <Button
-                variant="primary"
-                onClick={save}
-                disabled={saving || invalid || !reason.trim()}
-                title={
-                  invalid
-                    ? 'Fix the invalid values first'
-                    : !reason.trim()
-                      ? 'A reason is required — it shows in History'
-                      : undefined
-                }
-              >
-                {saving ? 'Saving…' : `Save as v${data.next_version}`}
-              </Button>
-            </div>
+            <SaveBar
+              changes={barChanges}
+              reason={reason}
+              onReason={setReason}
+              onDiscard={discard}
+              onSave={save}
+              saving={saving}
+              invalid={invalid}
+              nextVersion={data.next_version}
+            />
           )}
         </div>
       </div>
@@ -4060,6 +3756,7 @@ const LABEL_OF: Record<string, string> = {
   'decision.v5.max_rr': 'v5 max reward to risk',
   'decision.v5.base_rate_sessions': 'v5 base rate window',
   'decision.v5.price_vs_signal_adverse_atr': 'v5 adverse price move',
+  'decision.v6.sideways_max_target_atr': 'v6 sideways, high volatility: target at most',
   'risk.risk_per_trade_pct': 'Risk per trade',
   'risk.max_position_pct': 'Max position size',
   'risk.max_open_risk_pct': 'Total open risk',
