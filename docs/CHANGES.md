@@ -25,6 +25,7 @@ Issue #215. Marc's decisions of 11 November.
 - **08:30 releases, collected first:** no rule. Any entry made the session before holds through the release overnight, so a rule would mean blocking the whole session (about 3 a month) without evidence. Each cycle stores `next_release`; entries and held positions whose next session opens after a release are tagged `release_next_morning`; the decision.v7 analysis (061) decides on data.
 - **GUI:** next release in the this-cycle strip and on tagged position cards; Settings → Entry rules → Economic releases; Insights slice "release next morning"; `fomc_window` in What each filter removed; Needs you warns 60 days before the FOMC list in config runs out.
 - Build plan item 41.
+
 ## 2026-11-11 — [071] New entries in the last cycle
 
 Marc's decision of 11 November.
@@ -34,6 +35,13 @@ Marc's decision of 11 November.
 - **New: entry cutoff** `execution.entry_cutoff` (15:50 New York): no entry order after it, so the fill window always ends by the close. A late supervised approval in the last cycle expires as "too close to the close".
 - **Insights:** the entry-cycle slice's 15:46 row stops being a rule row from 11 November.
 - The model already sees `session.last_cycle` (v5, v6); their prompts cover holds overnight, not entries; decision.v7 (061) can add an entry rule for the last cycle if the data asks for one.
+
+## 2026-11-11 — [070] Test and save disabled on API keys (build)
+
+Bug fix, no spec change — the keys form works as designed again.
+
+- **Settings → API keys:** "Test and save" was permanently disabled for every key group (Alpaca pair, OpenAI, Anthropic, Finnhub, FRED): the [055] busy-button rework inverted the condition to `busy !== row.name`, which is true whenever no save is running. It now disables only while another row's key action runs, matching the Test button; the row's own busy state stays with the button (it keeps focus).
+- The save notice read `undefined saved — tested ok.` because the response carries no label; it now uses the row's label from the loaded keys.
 
 ## 2026-11-11 — [069] Settings UX
 
