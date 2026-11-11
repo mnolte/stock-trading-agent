@@ -82,13 +82,24 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 - **Times:** Amsterdam time, with New York time in a tooltip. Never compute the offset by hand; the US and EU change clocks on different dates.
 - **Dates** (056): "14 Sep" within the current year, "14 Sep 2025" otherwise; ranges "14–25 Sep 2026" or "28 Sep – 2 Oct"; times "19:00", with seconds only in Logs. Month names are fixed English three-letter abbreviations, never the browser's locale ("Sept", "sep."). ISO dates (`2026-10-14`) only in Logs, exports and addresses. Date fields show the same format and default from the agent's clock, not the computer's.
 - **Words, not codes** (056): every stored code shown on a screen has one label, kept in one map: exit reasons (`agent_exit` → "agent exit"), actions, sources, call kinds, change and warning reasons. A code appears raw only in the inspector's raw response, Logs, exports and tooltips. A label is never printed twice ("Verdict verdict").
-- **Tile rows** (056): a grid, never a wrapping row: 6 tiles per row from 1181 px, 3 from 821 px, 2 on a phone (`.sa-tiles`, `.sa-tiles-6`). A lone tile never stretches across a row. A value too long for its tile wraps; it is never cut off.
+- **Tile rows** (056): a grid, never a wrapping row: 6 tiles per row from 1181 px, 3 from 821 px, 2 on a phone (`.sa-tiles`, `.sa-tiles-6`); a row of four uses `.sa-tiles-4` (4 from 821 px, 2 on a phone; 073). A lone tile never stretches across a row. A value too long for its tile wraps; it is never cut off.
 - **Colour means something:** green is a gain or a pass, red a loss, a stop or a failure, amber a warning or a skip, blue a stop raised or an info note. Never use colour alone; there is always a word or icon.
 - **Controls:** buttons, nav items and clickable rows are at least 44 px high.
 - **PAPER** shows in the header on every screen, always.
 - **Sample data:** every number in the designs is sample data, including every "finding" on Insights and every note in Ask. Labels that say "Sample data" in the designs are for the designs only. Never quote a design number as a result of the run.
 - **Design notes:** a muted paragraph under a table or card that explains how to read it (for example the bar legend under Open positions) is help text. Build it as the design shows it the first time, but it may move behind an info icon or a disclosure; it is never required copy.
 - **Decision drawers** share one order, whatever the prompt version: action · tiles · What happened · the version's own blocks · Agent reasoning · Safety gates · Levels (folded) · Outcome · footer links. What happened holds the final action, every change by code with its reason, warnings, the order status, the verdict (with Confirm draft and Change… when a draft exists) and "Ask about this decision".
+
+- **Cards take their own height** (073). A row of cards aligns them at the top; no card is stretched to its neighbour's height or ends in more than 24 px of empty space.
+- **Inside a card, groups have labels** (073). Small uppercase labels (11 px, muted, `group_label` in the generator) name each group of chips or rows (Why, Context, Signals, Key facts). 16 px between groups, 8 px inside one; chips of two groups never share a row, and no sentence sits between chips.
+- **Plain words next to numbers** (075, 076, 079). A headline number gets a second line saying what it means for someone new to trading ("On average a trade earned 0.21 times what it risked"), next to its definition on hover. A screen that answers a question starts with a sentence written by code, not a model.
+- **Glossary terms** (079). In model-written stories, a term from the fixed glossary is a button with a dotted underline; its definition shows on hover and on tap. First occurrence per paragraph only.
+- **Explain warnings** (074). A warning or error says what it means, why it happened here, and what to do, with links; the text comes from one table in code.
+- **The answer comes second** (073–077). In a table the first column names the row and the second holds the number it is read for, so both show at 390 px; the rest scrolls inside the card.
+- **Label–value grids stack on a phone** (`.sa-kv2`): below 760 px the label sits above its text. Buttons wrap their label (`.sa-wrap-phone`); nothing sticks out of its card.
+- **On this page** (`on_this_page` in the generator): a page taller than about 4 screens gets a row of chips that jump to its sections; on the dashboard and Performance only on a phone (`.sa-phone-only`).
+- **Does it need me?** (074). Next to every explained warning or error: one chip, "Nothing to do" (green), "Keep an eye on it" (amber) or "Needs you" (red), decided by code.
+- **Quiet when fine** (077). A status card that only reports health (Data sync) is one line while everything is fine and opens by itself when something failed or is running.
 
 ## Interaction rules
 

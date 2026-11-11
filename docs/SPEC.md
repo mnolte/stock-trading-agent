@@ -430,6 +430,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 | 2 | Live decisions failing; trade-updates stream degraded; a key failing | the episode clears |
 | 3 | Entries waiting for approval (supervised mode), with their expiry | approved, rejected or expired |
 | 4 | A notification channel failing (email or browser permission) | a send succeeds |
+| 4 | Model calls that need you (item 074): one item per reason at attention `act`, with its count and one-line fix ("OpenAI key refused (401) ×3 · replace the key"); order 2 when it stops live decisions | a later call of that kind succeeds, or the cause is fixed (key replaced, model changed) |
 | 5 | Errors not reviewed (ERROR fingerprints without a review, as counted on Readiness) | reviewed on Logs |
 | 6 | Verdicts to confirm | confirmed or changed |
 | 7 | Settings or prompts saved but waiting for a restart or the next run (for example a review prompt) | applied |
@@ -452,7 +453,7 @@ The layout must also work at phone width, so the VPS version can be checked from
   - per position: the bar, the result if the stop hits ($ and R; "locked in" when the stop is above the entry), the distance to the stop and to the target (with levels in the way), the planned exit, and the latest decision with a link;
   - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state.
 
-**Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text, chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
+**Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text (from item 079 a story of one to three paragraphs with its terms explained; see Stories), chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
 
 **Model call counter.** A summary tile shows today's decision calls against the day's maximum (max calls per cycle × cycles today, 60 by default), with today's and this month's decision cost. On hover it shows review cost against its own cap, and from v0.2 shadow and backtest cost against theirs. It links to the LLM inspector.
 
@@ -483,6 +484,39 @@ The layout must also work at phone width, so the VPS version can be checked from
 **Cycle counter.** The this-cycle strip at the top of the dashboard ends with a cycle counter: the next cycle's time in Amsterdam and New York with a live countdown (mm:ss under an hour, otherwise h:mm), one segment per cycle of today's session (done, next, later; an early-close day has fewer), "Cycle n of 6 today", the cycle's number in this run, and the next position check. Market closed: the next session's first cycle with its day. Kill switch on: "Kill switch on · no cycles". A cycle that is running shows "running" instead of the countdown. The count in this run comes from the `cycles` table (kind cycle) since the run started.
 
 **Risk budget card.** The dashboard shows how much of each limit is in use, computed by the same functions as the risk gates (never recomputed in the GUI): open risk of positions and working entries against the 2.5% cap; today's loss against the 2% daily limit; drawdown from the run's peak against the 8% kill. Each is a meter that turns amber above 75% of its limit and red at the limit. Underneath: room for more trades (the smallest of positions left, open risk left ÷ current risk per trade, and cash ÷ max position size, rounded down, with "limited by cash" or "limited by open risk" when that is the smallest), positions per sector against the sector cap, current risk per trade with the losing-streak count, the shock brake state with SPY's move over the last 1h bar and since the open, and symbols blocked from re-entry this session. Every label explains its rule on hover. It refreshes with the positions, orders and header updates.
+
+**Dashboard layout** (item 073, decided 11 Nov). The review of the running app on 11 November found cramped and stretched cards. These rules hold at every width:
+- **Cards take their own height.** A row of cards aligns them at the top. No card is stretched to its neighbour's height, and no card ends in more than 24 px of empty space. On a phone each card is as tall as its content.
+- **This-cycle strip.** Three parts, left to right (stacked on a phone):
+  1. the last cycle in one sentence, for example "18:46 cycle: 69 symbols checked, 8 passed the pre-filter, 8 asked the model, nothing changed";
+  2. its numbers as labelled values: Checked 69 · Passed 8 · Model calls 8 · Cost $0.003 · Took 41 s;
+  3. the cycle counter.
+  Values are separated by " · " and never run together. A time shows Amsterdam first and New York after it, labelled ("19:46 · 13:46 NY"). The next release (item 067) gets its own line under the counter, starting with a "Release" chip.
+- **Tiles.** Four tiles of equal size in one row, two per row on a phone (the tile grid of item 056): Since start, Positions, Model calls today, and Last cycle. Last cycle shows how long the last cycle took and how its model calls ran ("41 s · 8 calls, up to 8 at once", item 078); it turns amber above `schedule.cycle_duration_warn_minutes` (10). A tile holds its label, the value, one line under it and its link; the line under the value doesn't wrap at 1440 px. Tiles in a row share the tallest one's height and never grow beyond it.
+- **Latest decision card.** One fixed layout: 20 px padding, 16 px between groups, 8 px inside a group. Top to bottom:
+  1. the title "Latest decision" with "Open full decision →" on the right. This link replaces the 44 px button at the bottom;
+  2. one line that names the decision without doubt: the symbol, the cycle ("18:46 cycle · 12:46 NY"), and the model and prompt version. For a `no_call` it says "no model call" instead of the model;
+  3. the action badge, with one line next to it. For a model answer: "confidence 0.66". For a `no_call`: its reason in words, for example "pre-filter: RSI 74 is above 70", "call cap: 10 calls went to higher-ranked symbols" or "price check: the last trade is 4 min old". The card never shows "confidence —";
+  4. **Why**: the model's or code's reason, at most 4 lines, then "more" (opens the drawer);
+  5. **Context**, with a small label: regime, VIX, earnings and release chips on one wrapping row;
+  6. **Signals**, with a small label: the indicator chips;
+  7. **Key facts**: at most 3 label–value rows.
+  Each chip group has its own row. No sentence sits between chips.
+- **Today's decisions** keeps its grouping and its 44 px rows. A grouped row's symbols wrap under the reason instead of pushing the count off the row.
+- **Briefing card.** The status line (code), the story's paragraphs with 12 px between them (item 079), a fold "The numbers" with the facts the story was given, then one footer line: number check, next briefing, model, prompt and cost.
+- **Why** ends with a "more" link to the drawer, always, so a cut-off reason is one tap from its full text. A tile's "Open →" sits at the tile's bottom edge.
+- **On a phone** (below 760 px):
+  - an "On this page" row of chips under Needs you jumps to Positions, Chart, Latest decision, Today, Briefing and Watchlist (the page is about 6,000 px tall there);
+  - a decisions-feed row puts its action above the symbols and reason, instead of in a 108 px column;
+  - a position's distance to its stop gets its own line;
+  - the watchlist is a list of two-line rows that fits the screen: symbol, price and day change, then the rules result and the last action. Rank, sector and earnings show from 760 px up. No sideways scroll.
+
+**Phones and long pages** (items 073–077, decided 11 Nov). For every screen:
+- **The answer comes second.** In a table, the first column names the row and the second holds the number the table is read for, so both show at 390 px without scrolling; the other columns scroll inside the card. Slices: Avg R and its range. What each filter removed: R if taken. By regime and By symbol: P&L, then Avg R. Closed trades: Symbol, R, Adjusted, Exit. Decisions and outcomes: Price after 1 session. Pool: Symbol, then Status. Sectors now: Sector, then vs SPY.
+- **Label–value grids stack** below 760 px: the label sits above its text (What happened, the answer rows, Data sync jobs, the funnel's notes) instead of squeezing the text into a narrow column.
+- **Buttons wrap** their label on a phone; a button never sticks out of its card.
+- **On this page.** A page taller than about 4 screens gets a row of chips that jump to its sections: Insights at every width (its five questions), the dashboard and Performance on a phone.
+- **Chart axes** drop labels as the chart narrows (first, last and every third stay); labels never overlap.
 
 **Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
@@ -659,14 +693,26 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 42. **Economic releases** (item 067). The release calendar (FOMC from config, CPI, jobs and PCE from FRED), the FOMC window rule, `next_release` per cycle and the `release_next_morning` tag, the dashboard and Settings display, two Insights additions. See Economic releases.
 43. **Breadth and sectors** (item 068). The four breadth fields per cycle, the sector ETFs as reference symbols, the sector table per cycle and the candidate's sector fields, the watchlist column, three Insights slices and the Sectors now card. See Breadth and sectors.
 44. **Decision v7** (item 061). Step A: the market-context analysis, after 20 sessions of 060, 067 and 068 data. Step B, only after Marc's choice: snapshot v7, `decision.v7.md`, code checks, eval and a shadow. See Decision v7.
+45. **Dashboard UX** (item 073). Cards at their own height, the three-part cycle strip, four tiles with Last cycle, the latest decision card's fixed layout. See Dashboard layout.
+46. **LLM inspector UX** (item 074). The reasons table with explanations and fixes, What happened, Top reasons, folded repeats, labels, input as sections, per-cycle bars. See Reasons explained.
+47. **Insights UX** (item 075). Five questions with answer sentences, tiles in words, the grouped dimension select, no dashes. See Insights → GUI.
+48. **Performance UX** (item 076). Summary sentence, tiles in words, exits on the curve, folded empty rows, the pending after-exit line, paged trades. See Performance screen.
+49. **Universe UX** (item 077). One mode line, Data sync with progress, consistent status per symbol, Pool by sector, inline remove. See Universe screen.
+50. **Concurrent requests** (item 078). `concurrency.max_requests` (20), batches for the cycle's waves, shadows, verdicts and every sync job, the plan-then-send call cap, storage and display. See Concurrent requests.
+51. **Review stories** (item 079). `briefing.v3` and `weekly.v3`, the glossary, the format check, prose templates, The numbers fold and terms explained in the GUI. See Stories.
+52. **Keys out of error text** (item 081). `safe_error`, scrubbing in `notify`, `record_event` and Ask tool results, the one-off scrub of stored rows, the Ask settings allowlist, the heartbeat URL as a secret. See Security hardening → Audit of 11 November 2026.
+53. **Confirm every loosening** (item 082). The backend direction map, the wider "Confirm it is you" rule, the GUI reading the map.
+54. **Sign-in resilience** (item 083). Trusted devices, the break-glass kill switch command, WebSocket session checks and the socket cap.
+55. **Supply chain and containers** (item 084). Signed images deployed by digest, pinned base images, container limits, backup delete protection, the full weekly audit.
+56. **CSV formulas and outbound addresses** (item 085). The one CSV writer; address checks at use; the SMTP host check.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
 
 | Feature | When | Content |
 | --- | --- | --- |
-| Weekly review | Saturday 10:00 Amsterdam, covering Monday to Friday | Return, difference with SPY, trades won and lost, average R, max drawdown, model cost, best and worst trades, what skipped setups did after 5 sessions, confirmed verdicts, results by regime and symbol. Model text: a summary of at most 120 words, up to 3 observations and at most 1 suggestion, marked "not applied" |
-| Daily briefing | Trading days, 09:00 New York (15:00 Amsterdam most of the year); can be turned off | Open positions with stop distance, earnings today or tomorrow for held and watched symbols, market regime, yesterday's result, active banners. At most 80 words |
+| Weekly review | Saturday 10:00 Amsterdam, covering Monday to Friday | Return, difference with SPY, trades won and lost, average R, max drawdown, model cost, best and worst trades, what skipped setups did after 5 sessions, confirmed verdicts, results by regime and symbol. Model text: a summary of at most 120 words, up to 3 observations and at most 1 suggestion, marked "not applied". From `weekly.v3` (item 079): a story of 1–3 paragraphs and the suggestion (see Stories) |
+| Daily briefing | Trading days, 09:00 New York (15:00 Amsterdam most of the year); can be turned off | Open positions with stop distance, earnings today or tomorrow for held and watched symbols, market regime, yesterday's result, active banners. At most 80 words; from `briefing.v3` (item 079) a story of 1–3 paragraphs, at most 220 words (see Stories) |
 | Decision verdict | Once a decision's 5-session outcome is in | For every decision where the model answered enter or skip (not rules no_calls), including enters that code blocked: a draft verdict of good call, bad call or unclear on the model's call, a one-line reason and a thesis check (from PR 32, see Verdicts). Marc confirms or changes it; only confirmed verdicts count in reviews |
 
 **Number check.** Every number in the model's text must match a fact it was given (after rounding). Status facts (open positions, earnings today and tomorrow, active banners) are written by code as a fixed line, not by the model, and the model's text may not call a known-empty fact "unavailable". If one doesn't, or there is no OpenAI key, the call fails or the review cost cap is reached, the app shows a plain template built from the facts instead, labelled with the reason (for example "Plain review: number check failed"). The failure is logged.
@@ -696,13 +742,48 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 
 **Briefing text** (PR 32). The status line is written by code and stored only in `status_line`; `text` holds only the model's sentences, and the GUI and email show the status line above the text. Briefings stored with the status line in front of the text are shown without the repeat (the leading copy is removed on read; stored rows are not rewritten).
 
-**Model and cost.** Each review task has its own model, OpenAI or Anthropic, from the `models` list: `reviews.models.weekly`, `reviews.models.briefing` and `reviews.models.verdict` (defaults: `gpt-4o-mini` weekly, `gpt-4.1-mini` briefing and verdict). Temperature 0.2 for OpenAI models, with versioned prompts (`weekly.v1` and `v2`, `briefing.v1` and `v2`, `verdict.v1` and `v2`; `reviews.prompts` picks one per task) that are never edited once used. All three are chosen in Settings → Model and reviews → Reviews (model and prompt per task, PR 34); each prompt select lists only that task's known versions, and saving another task's or an unknown version is refused (422 `unknown_prompt_version`). Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions. Their cost also comes from the `models` list and counts only toward the review cap.
+**Stories** (item 079, `briefing.v3` and `weekly.v3`, planned; decided 11 Nov). The briefing and the weekly review read as a short story instead of a list of numbers, so someone new to trading can follow them.
+- **Form.** One to three paragraphs of plain prose: no lists, headings or tables. The briefing is at most `reviews.max_words.briefing` words (220 for v3; v2 answers keep their 80-word limit); the weekly story at most `reviews.max_words.weekly_story` (350), which takes the place of `weekly_summary` (120, still used by v1 and v2). The facts carry the limit as `limits.briefing_words` and `limits.weekly_story_words`.
+- **Choose, then explain.** A story picks the 2 to 4 facts that matter most and says what they mean, instead of naming every fact. Each number it uses gets its meaning in the same sentence: "JPM's stop sits 2.9% below its price: if JPM falls that far, Alpaca sells it automatically." Facts the story leaves out are still on screen, under "The numbers" (below).
+- **Briefing, paragraph by paragraph:**
+  1. where the account stands: open positions, what they risk, yesterday's result;
+  2. the market this morning and what it means for the agent today: regime, VIX, releases, earnings;
+  3. only when there is something: what to watch (a banner, a position near its stop, a release tomorrow morning).
+- **Weekly, paragraph by paragraph:**
+  1. how the week went, against SPY, and what that means;
+  2. what drove it: the best and worst trades, skipped setups, confirmed verdicts, regimes;
+  3. what the week says about the strategy so far and how much to trust it given the sample.
+  The suggestion stays a separate field with its evidence, as in v2. `observations` are dropped: what stands out goes into paragraph 2.
+- **Explaining without new numbers.** Explanations use words and the facts given; the number check covers every number, explanations included. Code adds `glossary` to the facts: for each term the facts use (stop, target, R, regime, VIX and its percentile, drawdown, adjusted P&L, win rate, expectancy, sample), a one-line plain definition from one fixed list in code (`app/reviews/glossary.py`). The model uses those definitions, so the same term is explained the same way every day. A threshold a definition needs (the 8% kill, the 0.5% risk per trade) comes from settings and is in the facts.
+- **Format check.** Besides the number check: the text splits into 1 to 3 paragraphs on blank lines, no line starts with "-", "*", "•" or "1.", and it stays within the word cap. A failure is handled like a failed number check: the plain template is shown, labelled "Plain review: format check failed". For v3 the plain template is prose too: one fixed sentence per fact group, written by code.
+- **Status line.** The briefing's code-written status line stays above the story, unchanged.
+- **The numbers.** Under the story, a fold "The numbers" lists the facts the story was given as a label–value table written by code, so nothing is lost by telling a story.
+- **Terms explained in the GUI.** In the dashboard card and on Reviews, every glossary term in the story is underlined; its definition (from the same list) shows on hover, and on tap on a phone.
+- **Email** sends the status line and the paragraphs.
+- **Defaults.** After item 079 is built, `reviews.prompts` defaults to `briefing.v3` and `weekly.v3`. Stored reviews keep their text and show as before. `briefing.v2` and `weekly.v2` stay selectable.
+- **Cost.** About 1,500 tokens in and up to 450 out per briefing: under $0.002 on gpt-4.1-mini, about $0.03 a month. A weekly story costs under $0.01. Both stay far inside the $2 review cap.
+
+**Model and cost.** Each review task has its own model, OpenAI or Anthropic, from the `models` list: `reviews.models.weekly`, `reviews.models.briefing` and `reviews.models.verdict` (defaults: `gpt-4o-mini` weekly, `gpt-4.1-mini` briefing and verdict). Temperature 0.2 for OpenAI models, with versioned prompts (`weekly.v1`, `v2` and `v3`, `briefing.v1`, `v2` and `v3`, `verdict.v1` and `v2`; v3 is selectable once item 079 is built; `reviews.prompts` picks one per task) that are never edited once used. All three are chosen in Settings → Model and reviews → Reviews (model and prompt per task, PR 34); each prompt select lists only that task's known versions, and saving another task's or an unknown version is refused (422 `unknown_prompt_version`). Review calls have their own monthly cap of $2 and can never use budget or rate limits needed by trading decisions. Their cost also comes from the `models` list and counts only toward the review cap.
 
 **Missed runs.** Unlike cycles, a review or briefing missed while the app was down is written at the next start, labelled with its original date. A briefing older than its trading day is skipped.
 
 **Storage.** A `reviews` table (kind, period, facts JSON, text, source model or template, reason, model, prompt version, tokens, cost, created at) and a `verdicts` table (decision, verdict, reason, thesis check and contradiction (PR 32), prompt version, source draft or Marc, created and updated at).
 
 **GUI.** A Reviews screen in the Learn group with Weekly and Briefings tabs and a "Verdicts to confirm" list. The decision drawer shows the verdict with Confirm and Change. The Dashboard shows today's briefing (see Daily briefing card).
+
+**Performance screen** (item 076, decided 11 Nov). Top to bottom: the summary, the tiles, the equity curve, By regime and By symbol, Winners and tails, Decisions and outcomes, Closed trades.
+- **Summary sentence.** One or two sentences at the top, written by code from the same numbers as the tiles (no model): "In 24 sessions the agent closed 12 trades and won 9. After costs it is down $22.38 (−0.22%), level with SPY over the same days. 12 trades is too few to judge the strategy; 20 is the first useful mark."
+- **Tiles say what they mean.** Each tile has a second line in words, next to its definition on hover. Average R: "a winner earned about 2 times what it risked; a loser lost about 1 time". Max drawdown: "the deepest fall from a high · the kill switch turns on at −8%". Adjusted P&L: "after the assumed slippage and dividends". Win rate: "9 of 12 closed trades".
+- **API.** The performance response gains `summary` (the sentence), `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %), from the same functions as the tiles.
+- **Equity curve.** Each trade's exit is a dot on the curve (green won, red lost) with the symbol and result on hover; the deepest drawdown is shaded from its peak to its low.
+- **Labels, not codes.** Exit reasons and actions go through the label map (target, stop, agent exit, earnings exit, Stop & flatten), here and in every table.
+- **Empty rows fold.** By regime lists only regimes with closed trades and adds one line: "No closed trades yet in: up · high vol, sideways, down." A regime that blocks entries (down · high vol) says so in that line.
+- **After the exit.** While every row is pending, the table is one line: "12 trades are inside their 5-session window; the first result arrives Thu 22 Oct." Once some are done, pending rows sit at the bottom, grouped into one row.
+- **Decisions and outcomes.** A price that isn't in yet says when it arrives ("waiting · first prices Fri 16 Oct"), not "—".
+- **Closed trades.** Newest first, 20 rows, then "Show all n". Filters for symbol and exit reason. The R column gets a small bar from −1R to the trade's R.
+- **One small-sample banner.** Below `performance.tail.min_trades` (20) closed trades, one banner under the summary says so for the whole page, and the Winners and tails card drops its own banner (two identical warnings on one page were one too many).
+- **Column order.** By regime and By symbol: name, P&L, Avg R, trades, won. Closed trades: Symbol, R (with its bar), Adjusted, Exit, Dates, Qty, Entry, Exit price, P&L (paper), Regime at entry. Decisions and outcomes: Decision, Price after 1 session, Count, Read.
+- **On a phone:** "On this page" chips (Curve, By regime and symbol, Winners and tails, Decisions, Closed trades); the equity curve keeps the first, last and every third date label.
 
 ## Larger universe (v0.2)
 
@@ -726,9 +807,28 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
 
 **Rank.** At the screen, each eligible symbol gets a rank: its return over the last 20 completed sessions minus SPY's over the same sessions (ties broken by dollar volume). The rank is shown on the Universe screen and the dashboard and is part of the input snapshot.
 
-**Cycles at scale.** Cycles run over the eligible symbols plus held symbols. 5-min bars are fetched with multi-symbol requests; quotes and news only for symbols that get a model call. Model calls go to held positions first, then to candidates that pass the rules in rank order (with `selection.mode: expected_profit`, in pre-score order; see Entry selection), up to `max_calls_per_cycle` (10); the rest are stored as `no_call` with reason `call_cap`. The shared limit of 150 Alpaca calls per minute still applies. Each cycle's duration is stored; a cycle longer than 10 minutes shows a warning banner. 5-min bars older than 120 sessions are deleted after the 03:00 backup.
+**Cycles at scale.** Cycles run over the eligible symbols plus held symbols. 5-min bars are fetched with multi-symbol requests; quotes and news only for symbols that get a model call. Model calls go to held positions first, then to candidates that pass the rules in rank order (with `selection.mode: expected_profit`, in pre-score order; see Entry selection), up to `max_calls_per_cycle` (10); the rest are stored as `no_call` with reason `call_cap`. From item 078 the calls of a cycle run in two waves, held then candidates, each sent at once (see Concurrent requests); which symbols get a call doesn't change. The shared limit of 150 Alpaca calls per minute still applies. Each cycle's duration is stored; a cycle longer than 10 minutes shows a warning banner. 5-min bars older than 120 sessions are deleted after the 03:00 backup.
 
 **GUI.** A Universe screen in the Control group: mode, counts (pool, eligible, held, excluded, warming up), today's screen as a funnel, and the pool table (rank, symbol, sector, price, 20-session average dollar volume, return vs SPY, status with reason) with filters, search, add, CSV import and remove. Statuses: eligible, eligible with 1 or 2 fails, held, excluded with the failed check, warming up. The dashboard watchlist gets filters (All, Pass rules, Held, Earnings within 3 days) and search; in screened mode it is sorted by rank and shows 15 rows, then "Show all". Settings → Trading gets the universe mode and the screen thresholds. In fixed mode the Universe screen shows the fixed list and points to Settings.
+
+**Universe screen** (item 077, decided 11 Nov). Top to bottom: the mode line, the tiles, Data sync, Today's screen, Pool by sector, Pool.
+- **One mode line.** The mode (fixed list or screened pool) is said once, in the banner, with its one consequence ("The daily screen below is a preview; cycles use the fixed list"). How the screen works is a fold inside Today's screen, closed by default.
+- **Tiles.** Pool, Eligible, Held, Excluded, Warming up. A zero is shown in the normal text colour; amber and red are only for counts above zero.
+- **Data sync** (new card). What the app is loading and when it last succeeded:
+  - one row per sync job: daily bars (08:00 NY), the daily screen (08:10 NY), 5-min bars (each cycle), history for new symbols (warm-up). Each row has its last run, its duration, symbols done of total, failures, and Retry for a failed job;
+  - while history loads, a progress bar: "Loading history · 41 of 72 symbols ready · about 2 min left · up to 20 requests at once" (`concurrency.max_requests`, item 078). The time left comes from the job's own pace so far;
+  - a failed symbol shows the source's error in plain words ("Alpaca: symbol not found") and its retry time.
+  - quiet when fine: while every job ran on time and none is running, the card is one line ("All 5 jobs ran on time · last 18:46 · Show jobs"). It opens by itself when a job failed, is late or is running, and its header says why ("open: 1 failed · 1 running");
+  - on a phone a job row stacks: name and time, then the result on its own line, then Retry.
+- **Status per symbol.** One chip and one line under it, never contradicting each other:
+  - warming up: "daily bars 180 of 260 · 5-min 22 of 60 sessions", with a small bar;
+  - ready: history loaded, "joins at the next screen · 08:10 NY Fri 16 Oct" (blue chip "ready", not "warming up");
+  - eligible, held, excluded (with the failed check and its numbers), eligible · 1 fail or 2 fails.
+- **Pool by sector.** A compact row per sector: symbols in the pool, eligible, and the sector's rank of 11 at the last cycle (item 068). Clicking a sector filters the pool.
+- **Pool table.** Status is the third column, right after the symbol, so it shows on a phone. The fold row names its filter and count ("61 more eligible · show all"); an unknown company name shows "name pending", not "—". Columns with no value yet (rank, price, volume before the first screen) say "after the first screen" in the header's hint instead of a column of dashes.
+- **Remove.** The × asks in the row: "Remove ANET from the pool? Its cached bars stay for 120 sessions." with Remove and Cancel. The question stays inside the visible part of the table when the table scrolls sideways. Held symbols have no ×.
+- **Adding.** The symbol field shows its hint in normal case ("Symbol, e.g. PANW") and turns what's typed into capitals.
+- **Storage and API.** A `sync_runs` table: job, started and finished at, status (running, ok, partial, failed), done and total, failures (symbol or source, error in plain words, next retry); a job updates its row at most once a second; 30 days kept. `GET /api/universe/sync` returns the latest run per job and, while history loads, symbols ready of total and the time left from the job's own pace (none until 5 symbols are done). `POST /api/universe/sync/{job}/retry` reruns a failed job for its failed symbols; during a cycle it answers 409.
 
 ## Strategies and shadows (v0.2)
 
@@ -834,7 +934,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 **Storage.** A new `llm_calls` table, one row per call:
 - What and where: sent at, New York session date, source (live, shadow, review, ask), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
 - How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
-- Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text.
+- Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text; from item 074 `attention` (none, watch, act; see Does it need me?).
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
 - The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
 - Indexes: (session date, sent at), (outcome, sent at), (source, sent at), (symbol, sent at).
@@ -842,7 +942,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 
 **Backfill.** The migration fills `llm_calls` from existing `decisions` (rows with a model output or reason `model_error`), `shadow_decisions` (rows with a model output) and `reviews` (source model, or template after a failed call). Outcome and reasons come from the stored validation result, final action, headline status and number check. Latency, HTTP status and request id are null and shown as "not recorded"; such rows are marked `backfilled`.
 
-**Filters.** Every filter is in the URL (`?from=&to=&outcome=&source=&symbol=&action=&reason=&model=&prompt=&strategy=&cycle=&call=`), so links land on the right calls:
+**Filters.** Every filter is in the URL (`?from=&to=&outcome=&source=&symbol=&action=&reason=&model=&prompt=&strategy=&cycle=&call=`, and `attention=` from item 074), so links land on the right calls:
 - The dashboard's model-call tile opens Last session with live decisions.
 - A grouped feed row opens its cycle and action.
 - The decision drawer's "Open model call" opens `?call=`, as does Copy link.
@@ -891,6 +991,42 @@ Pages of `inspector.page_size` (50) use a keyset cursor on (sent at, id), with "
 - `GET /api/llm-calls/export.csv` returns the export.
 - Each list and summary request must answer within 300 ms on a 100,000-call fixture.
 
+**Reasons explained** (item 074, decided 11 Nov). A warning or error tells Marc what happened, why it matters, the likely cause and what to do. The text for each reason is fixed in one table in code (`app/llm/reasons.py`), served with the call and filled in with the call's own details (the field that was unavailable, the gate and its numbers, the HTTP status). The GUI never writes its own explanation.
+
+| Reason | What it means | Likely cause | What to do |
+| --- | --- | --- | --- |
+| `changed_by_code` | The model's answer was valid, but code changed the action, usually enter → skip. The change reason names the check or gate | A risk gate or code check did its job: reward to risk below the minimum, stop distance, spread, max positions, sector cap, total open risk, `edge_too_small`, `flip_flop`, `price_stale`, `price_suspect`, `not_selected` | Usually nothing. Open the decision to see the gate's numbers. If one change reason keeps blocking good setups, check Insights → What each filter removed, and test another threshold in a shadow before changing it |
+| `input_incomplete` | The model answered with part of its input missing. Decisions: a field was "unavailable", or the symbol's headlines were truncated or failed. Reviews: a fact was unavailable (for verdicts, usually the option touches) | A data source failed or answered late at that cycle (news, quotes, FRED, the sector ETFs); the news request budget ran out (truncated); for verdicts, the 5-min bars for the 5-session window were missing (item 058) | Once: nothing. Repeating for one source: that source is failing; Needs you and Settings → API keys and data show it, and Logs has the error. Verdicts with missing touches settle by themselves after 2 sessions (`outcomes.touches_give_up_sessions`) and are marked "unavailable" |
+| `number_check_failed` | A briefing, weekly review or Ask answer contained a number that isn't in its facts. The plain template (or "no answer") was shown instead | The model rounded differently, computed a new number (a sum, a percentage) or invented one | Once: nothing. Often: try another review model in Settings → Model and reviews. The facts and the text are both in this call |
+| `slow` | The answer took longer than `inspector.slow_call_seconds` (15 s) but arrived | The provider was busy, a long answer, or high reasoning effort | Calls near 30 s risk a timeout. If they repeat, pick a faster model or a lower effort. Concurrency (item 078) doesn't make one call slower |
+| `unsupported_claim` | The explanation names a level, claim or path the input doesn't support (decision.v2 and later). The decision stands | The model described something it couldn't see in its input | Read the flagged words in the raw response. Repeats under one prompt: test a change in a shadow |
+| `unresolved_conflict` | An enter listed a conflicting check without saying what outweighs it (decision.v4 and later). The decision stands | The setup had a check against it that the model didn't weigh | Open the decision's conflicts. Many of these: compare their results on Insights before trusting the prompt |
+| `confidence_outlier` | The stated confidence is more than 0.30 above its anchor: the option's break-even confidence, or the neutral probability for a held position (decision.v4 and later) | Overconfidence; the model ignored the anchor it was given | Nothing per call. Calibration on Insights shows whether confidence is overstated overall |
+| `best_option_missing`, `best_option_mismatch` | A skip didn't name an offered option as best, or an enter named another option than the one it chose (decision.v4 and later) | An answer that didn't follow the format for the best option | Nothing per call. These decisions are left out of the skip calibration |
+| `hold_below_breakeven` | A hold with confidence below the exit line, or held overnight below the overnight line with the stop within the usual gap (decision.v5) | The model held a position its own numbers say to exit | Look at the position: the Needs you card lists the overnight case the same evening |
+| `timeout` | No answer within `decision.call_timeout_seconds` (30 s). Not retried; a decision becomes `no_call` (`model_error`) and nothing is traded for that symbol this cycle | The provider was overloaded or the network failed | Once: nothing. Several in one cycle: check the provider's status page. Every cycle: Logs shows whether the network or the provider fails |
+| `api_error` | The provider answered with an HTTP error, or the connection failed. Not retried | 401 or 403: the key is wrong, expired or lacks access. 404: the model name is unknown to the provider. 429: rate limit or spending limit reached. 500–599: the provider's own failure. No status: network or DNS | 401/403: replace the key in Settings → API keys and data. 404: pick a listed model. 429: raise the account's limits or lower `concurrency.max_requests`. 5xx: wait; check the provider's status page. No status: check the server's network |
+| `invalid_output` | The answer couldn't be used: not JSON, wrong schema, or it picked an option that wasn't offered. Counted as skip or hold | The model ignored the format, or its answer was cut off at `decision.max_output_tokens` | Once: nothing. Often for one model: that model doesn't follow the schema; pick another. Cut off: raise `decision.max_output_tokens` or lower the effort |
+| `refusal` | The model refused to answer. Counted as skip or hold | A safety filter at the provider | Read the refusal text. Repeats: report it with the call link |
+
+**Inspector, easier to read** (item 074).
+- **What happened.** The outcome block becomes a "What happened" panel: one entry per reason, each with the four parts above, the call's own details, and links (the decision, the gate in Settings, Logs filtered to that minute, the source in Settings → API keys and data). A success says "Valid · used as the model chose" and nothing more.
+- **Top reasons.** The summary lists the reasons in the filtered set with their counts, most frequent first, each with its one-line "What to do" and a link that filters on it ("9 × input incomplete · verdicts · touches unavailable · settles after 2 sessions").
+- **Repeats folded.** In the list, consecutive calls of one session with the same kind, action, outcome and reasons fold into one row ("Verdict · 9 calls · input incomplete") that opens in place. Changes and errors never fold.
+- **Labels.** The call kind is written once ("Verdict", never "Verdict verdict"). The model line is "gpt-4o-mini · temperature 0.2" or "claude-haiku-5-5 · effort low"; a value that wasn't recorded says "not recorded", never "—" or "0.00 s".
+- **Prompt changed since.** When the stored hash differs from the prompt file: "This call used an earlier text of `decision.v1` (hash a1b2c3…, file now d4e5f6…). Used prompts are never edited, so the file was changed by hand; `git log backend/prompts/decision.v1.md` shows when." The text isn't shown.
+- **Input as sections.** The user part shows as labelled sections (Market, 1h indicators, Daily, Position, Options, Headlines, Facts for reviews) with label–value rows, with "Raw JSON" behind a toggle. JSON is shown with its real characters (×, −, €), never escapes like `×`.
+- **One session.** With a period of one session, the summary chart has one bar per cycle (and one for the reviews after the close) instead of a single bar.
+- **Batches.** A call sent in a batch (item 078) says so in its call data: "Sent · with 7 others · 18:46:04".
+- **Does it need me?** Every warning and error carries one of three levels, set by code when the call is stored (looking back only, so it never changes afterwards) and stored as `attention`:
+  - **Needs you** (`act`): `api_error` 401, 403 or 404; three or more 429s in one session; a timeout or 5xx in 3 cycles in a row; `input_incomplete` from the same source in 3 cycles in a row; `invalid_output` or `refusal` on 3 or more of a model's last 20 calls; `number_check_failed` on 3 of the last 5 reviews of one kind; `hold_below_breakeven` on a position held overnight.
+  - **Keep an eye on it** (`watch`): a second timeout or provider error within 2 cycles; 3 or more `slow` calls in a session; `unsupported_claim`, `unresolved_conflict` or `confidence_outlier` on 20% or more of the last 20 decision calls.
+  - **Nothing to do** (`none`): everything else, which includes every `changed_by_code`.
+  The level shows as a chip in What happened (its reason on hover) and on each Top reasons row; the summary counts them ("0 need you · 1 to watch · 9 nothing to do"); `attention=` is a filter; and each `act` group is an item in the dashboard's Needs you card (see its list), linking to the filtered inspector.
+- **Answer as rows.** The model's answer shows as label–value rows (action, confidence, stop, target, thesis, invalidation, risks; empty fields left out), with "Raw JSON" and Copy next to it. When code changed the action, a line above says "The model answered `enter` → code made it `skip`". An answer that isn't JSON shows raw.
+- **Moving through calls.** The details have "↑ Newer" and "↓ Older" buttons (keys K and J, or the arrow keys when the list has focus), following the list's order and filters. On a phone, where the details sit under the list, this replaces going back to the list for every call.
+- **Input order.** Single fields (symbol, context, price, days to earnings) come first under "Call"; then the groups. Headlines are one row each (time · source · title), not a JSON array.
+
 **GUI.** The LLM inspector screen keeps its place in the Learn group. It has filters, the summary, the list and the details, and follows the PR 17 interaction rules (toggle buttons with `aria-pressed`, card states, latest request wins).
 
 ## Tail metrics
@@ -920,7 +1056,7 @@ Trend-following results usually depend on a few large winners. Fixed targets can
 **API.** `GET /api/performance/tails?run=` returns the distribution, the summary values with their sample counts, the after-exit medians per exit reason and the per-trade rows, all as numbers.
 
 **GUI.** The "Winners and tails" card on Performance, below By regime and By symbol. It has:
-- a small-sample banner;
+- a small-sample banner (from item 076 the page's one banner takes its place);
 - the R distribution as bars (losses red, wins green);
 - tiles for largest win, largest loss, top 20% share, net without the best trade and winners kept;
 - "After the exit" with medians per exit reason;
@@ -1241,15 +1377,24 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 
 **API.** `GET /api/insights?strategy=&period=` returns the latest snapshot as numbers, and `GET /api/insights/trades?strategy=&period=&dimension=&slice=` returns the trades behind a slice.
 
-**GUI.** The page shows, top to bottom:
-- strategy and period toggles, with when the snapshot was computed;
-- the headline tiles, each explaining its definition on hover;
-- Findings;
-- "Where trades come from" next to "Skipped setups";
-- Slices, with a dimension picker;
-- Calibration, Execution, and Overnight and in session.
+**GUI** (reworked in item 075, decided 11 Nov). The page reads as five questions, each a section with its question as the heading and one plain answer sentence under it, written by code from the snapshot:
+1. **Is there an edge?** The answer sentence ("Probably, but not proven: +0.21R per trade, and the range still includes 0.02R"), then four tiles: Expectancy, Edge over SPY at the same exposure, Beta to SPY, Model cost per trade. Overnight vs in session and Gaps through the stop are no longer tiles; they live in section 5, so no number is shown twice.
+2. **What stands out?** Findings and early signals.
+3. **Where are trades lost?** "Where trades come from" (the funnel), "What each filter removed" and "Skipped setups".
+4. **Which conditions work?** Slices.
+5. **What do confidence, fills and nights cost?** Calibration, Execution, and Overnight and in session.
 
-Before 10 closed trades, the page shows the funnel, skips and execution, and says when slices start to count.
+- **Answer sentences** come from fixed templates over the snapshot (no model) and are stored with it (`answers`). For question 1: "Not shown yet" while the 90% range includes 0; "Probably, but not proven yet" when its low end is above 0 but under 0.1R; "Yes" from 0.1R. These are wording thresholds, not trading rules.
+- **Answers, not dashes.** A number that needs more trades says so instead of "—": "needs 10 closed trades · 4 so far". A card whose numbers all need more trades shows that one line and its definition, not a table of dashes.
+- **What a number means.** Every tile has a second line in words for someone new to trading (Expectancy: "on average a trade earned 0.21 times what it risked"), next to the definition on hover. The page has a "How to read this page" fold at the top: R, expectancy, the 90% range, early signal versus finding, and why a finding is a question.
+- **Slices.** The dimension picker is one select with groups instead of 22 chips: Timing (entry cycle, weekday, sessions held), Market (regime, SPY that day, VIX level, VIX change, breadth, release next morning), Stock (sector, symbol, sector rank, stock vs sector, days to earnings, opening gap, entry vs VWAP, pullback depth, strength vs SPY, volatility), Model (confidence, stop and target basis, prompt and model). The chosen dimension is in the URL (`?dim=`). On a phone the table scrolls inside its card.
+- **No internal names.** Item numbers and code names don't appear in the screen's text ("(item 068)" and `rs_vs_sector_pct` stay in the spec). Dates follow the date rule ("14 Oct", never "2026-10-14").
+- **The 15:46 row.** Since item 071 the 15:46 cycle enters like the others. Its slice says "entries from 11 Nov" until it has 10 trades, instead of the rule text.
+- **On this page.** Under the filters, chips jump to the five questions.
+- **The funnel says what was kept.** Each step shows the share of the step before that it kept ("14% kept") before what was lost. On a phone the step's name and count share a line and the bar and note sit under them.
+- **Column order.** Slices: the slice, Avg R, range, trades, win rate, total R, skips, sample. What each filter removed: the filter, R if taken, removed, target first, stop first, neither, status; a filter with too few decided touches says "needs 100" in the R column and leaves the shares empty.
+
+Before 10 closed trades, sections 1, 2 and 4 show what they will hold and how many trades they need; the funnel, skips and execution show as normal.
 
 ## VPS deployment
 
@@ -1297,7 +1442,7 @@ Production runs on a rented Linux VPS, so the agent trades and watches positions
   - Every API request and the WebSocket need a valid session, for every HTTP method. Only `/healthz` and the sign-in endpoints are open; nothing open returns more than the version or whether sign-in is required.
   - Write requests also need a CSRF header (double-submit token).
   - The WebSocket checks the `Origin`.
-- **Rate limits.** After 5 failed attempts in 15 minutes, an address waits 15 minutes. After 20 failures in an hour across all addresses, sign-in pauses for an hour and a warning is sent. Error messages never say whether the password or the code was wrong.
+- **Rate limits.** After 5 failed attempts in 15 minutes, an address waits 15 minutes. After 20 failures in an hour across all addresses, sign-in pauses for an hour and a warning is sent. From item 083 a browser that signed in before (a trusted device) is not stopped by this pause; see Security hardening → Audit of 11 November 2026. Error messages never say whether the password or the code was wrong.
 - **Confirm and password change.** A wrong password or code in "Confirm it is you" or in Change password counts as a failed attempt for that session. After 5 in 15 minutes the session is signed out, the attempts are recorded like sign-in failures, and the "Failed sign-ins" warning is sent. A stolen session cookie must not allow unlimited guessing.
 - **The code step.** A wrong code counts as a failed attempt like a wrong password. The ticket between the two steps is single-use, tied to the browser that entered the password, and dropped after 3 wrong codes. A code that was already used (same 30-second step) is refused.
 - **Confirming risky actions.** These ask for the password or a code again (valid 5 minutes on that device):
@@ -1490,7 +1635,7 @@ From Devin's security audit of 27 October 2026. The audit found the code discipl
 - **Heartbeat and backup storage.** `ops.heartbeat_url` and the backup endpoint must be `https://` and must not resolve to a loopback or private address.
 - **Alpaca keys.** As already specced: keys for a different paper account require "Start new run". A test covers it.
 
-**More actions need "Confirm it is you"** (PR 23, when `SA_AUTH=required`):
+**More actions need "Confirm it is you"** (PR 23, when `SA_AUTH=required`; widened by item 082, see Audit of 11 November 2026):
 - a settings save that loosens a risk limit (a higher risk per trade, position size or exposure, a higher daily loss limit, or a kill-switch threshold raised or turned off);
 - changing the SMTP server, the "To" address or the heartbeat URL.
 
@@ -1514,6 +1659,58 @@ Tightening a limit never asks.
 **Error codes.** New in the API error table (see Error pages and API errors): 400 `bad_host`, 403 `origin_refused`, 413 `too_large`, 415 `unsupported_media_type`, 422 `password_required`.
 
 **Not changed.** Trading behaviour, risk limits and the database schema; PR 28 has no migration.
+
+**Audit of 11 November 2026** (items 081–085, planned).
+
+From Claude's audit (`docs/analysis/080-security-audit.md`, findings S1–S13). The earlier fixes hold; these rules close what was found next. Decided 11 Nov.
+
+**Error text is scrubbed where it is made** (item 081, S1). The log scrubber protects logs; error text also travels to notifications, emails, the database, the API and Ask. So:
+- **One function.** Every exception that becomes stored or shown text goes through `safe_error(exc)` (`app/errors.py`): the query string of any URL in the text is removed (`…/fred/releases/dates?…` becomes `…/fred/releases/dates`), then the scrubber's patterns and the stored secret values are applied, and the result is cut to 300 characters. `str(exc)` and `f"{exc}"` are not used for stored or shown text anywhere in `app/`; a test walks the code for them (allowlist with a comment, as for the ruff ignores).
+- **Every `DataResult.error`** is built with it, in every data source (Alpaca, Finnhub, FRED, ECB, news), and so are `data_source_health` values, key-test results and the `detail` of API errors.
+- **Second line.** `Notifier.notify` scrubs its line, body and details, and `record_event` its details, with the same patterns and values, whatever the caller did.
+- **Tool results.** Every Ask tool result passes the scrubber before it is sent to the model or stored (see below).
+- **Stored rows.** At the first start after the fix the app scrubs `cycles.data_source_health`, `notifications` (subject, body), `events.details` and `ask_messages` once, with the current secret values and patterns, and logs how many rows changed. If any row changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2, leaves when both keys are replaced or the item is dismissed with a reason).
+- **Test.** For each data source: a fake key, one HTTP error and one connection error; the key must be absent from the `DataResult`, the notification row, the email body, the cycle row, `GET /api/settings`, `GET /api/server` and the Ask tool results.
+
+**Ask sees trading settings only** (item 081, S3). The `settings` tool serves an allowlist of sections: `execution`, `rules`, `regime`, `events`, `indicators`, `decision`, `selection`, `risk`, `schedule`, `universe` (mode and screen thresholds, not names), `reviews`, `shadows`, `backtest`, `readiness`, `insights`, `performance`, `outcomes`. It never returns `ops`, `notifications.email`, `security`, `auth`, `logging`, `storage`, or anything from `secrets`. Notification channels are reported as on or failing, without addresses or hosts. A new config section is not served until it is added to the allowlist.
+
+**The heartbeat URL is a secret** (item 081, S9). It is stored in `secrets` (`heartbeat_url`), write-only like a key: the API and the GUI show only its host and the last 4 characters ("hc-ping.com/••••3f9a"), it is not part of settings versions or History, and Ask never sees it. A migration moves the current value and blanks it in stored settings versions. Saving it still needs "Confirm it is you" and the https-and-public check.
+
+**Every loosening asks "Confirm it is you"** (item 082, S2). This replaces the short list above ("a settings save that loosens a risk limit").
+- **One map, in the backend.** `settings_service.DIRECTIONS` gives every setting in `risk`, `execution`, `rules`, `regime`, `events`, `decision`, `selection`, `schedule` and `universe` its direction: which way is looser (up, down, on, off, a wider range, a longer list, a shorter list), or "neutral" with a comment. The settings API returns the map; the GUI's tighter and looser tags (item 069) read it, and the frontend's own map goes.
+- **A confirmation is needed** when a save contains any looser change; `execution.mode` going from supervised to automatic; a notification event losing a channel, or quiet hours getting longer; the universe mode going from fixed to screened; or a model or decision prompt change for live.
+- **Fails closed.** A setting in those sections without an entry in the map counts as looser, and a test fails until it has one.
+- **Tightening never asks**, as before. With `SA_AUTH=off` nothing asks, as before.
+- **The response** to an unconfirmed save names the changes that need it (`confirm_required` with `fields`), so the dialog can list them.
+
+**Sign-in can't be paused from outside for a known browser** (item 083, S6).
+- **Trusted device.** After a completed sign-in the browser gets `__Host-sa_device`: 32 random bytes, HttpOnly, Secure, SameSite=Strict, 180 days. The app stores its SHA-256 in `trusted_devices` (device name, created, last used). At most 10; the oldest goes.
+- **What it changes.** A sign-in attempt that presents a valid device cookie is not stopped by the global pause (20 failures an hour across all addresses). Everything else still applies: the password, the code, and the per-address lockout. Failures with a device cookie count per device: 5 in 15 minutes revoke that device.
+- **Revoked** by Remove in Settings → Access, by a password change, by "Sign out everywhere", and by new recovery codes.
+- **Sign-in page.** Under a global pause an unknown browser sees the pause and its end time. A known browser sees "Sign-in is paused for other browsers until 20:14. This browser is known, so you can sign in." The open status endpoint says `known_device` only to a browser that presents a valid cookie.
+- **Break-glass on the server.** `docker compose exec app python -m app.ops.kill_switch --reason "…"` (add `--flatten` to sell everything) writes a request file in the data folder (0600); the running app picks it up within 5 seconds, turns the kill switch on exactly as the button does, records the event with source `cli`, and removes the file. `--status` prints the state. It never resumes trading. `docs/DEPLOY.md` documents it as the way in when sign-in is unavailable.
+
+**A WebSocket lives as long as its session** (item 083, S7). The socket re-checks its session every 60 seconds and closes with 1008 `session_expired` when it is gone; sign-out, "Sign out everywhere", a password change and revoking a device close the affected sockets at once. At most `security.max_sockets` (20) are open; a new one closes the oldest.
+
+**The image that runs is the image CI built** (item 084, S5).
+- **Signed.** The tag workflow signs the pushed image with cosign (keyless, GitHub's OIDC identity) and writes the digest to the job summary.
+- **Verified and pinned.** `deploy/deploy.sh <tag>` resolves the tag to a digest, verifies the signature against this repository's tag workflow, and writes `SA_IMAGE=ghcr.io/mnolte/stock-agent@sha256:…` to `.env`; Compose runs `${SA_IMAGE}`. A failed verification stops the deploy before anything changes. Rollback uses the previous digest. `--unverified` exists only together with `--emergency` and is logged.
+- **Base images** (`python`, `node`, `caddy`) are pinned by digest, with a Dependabot `docker` entry for the Dockerfile and Compose files; uv is pinned to one version.
+- **Settings → Server** shows the running digest and "signature verified at deploy".
+
+**Containers** (item 084, S12). Caddy gets `read_only`, `cap_drop: ALL` with `NET_BIND_SERVICE` added back, and `no-new-privileges`; both services get `pids_limit` (app 256, Caddy 128). The runtime image has no tests or eval files, and `/srv` belongs to root, readable by the app user. `.dockerignore` lists `backend/config.yaml`, `**/secret.key`, `**/*.db` and `backups`. Unattended upgrades include Docker's repository.
+
+**Backups can't be erased by the server alone** (item 084, S8). `docs/DEPLOY.md` requires versioning or object lock on the backup bucket with at least 30 days' retention. The monthly restore test asks the bucket whether versioning is on and stores the answer; Settings → Server shows "Delete protection: on" or, in amber, "not confirmed".
+
+**Development dependencies are audited too** (item 084, S11). The weekly CI run audits all Python and frontend packages, development ones included, and posts the result in the job summary without failing the build; high or critical findings in production packages still fail every PR.
+
+**CSV cells can't be formulas** (item 085, S10). Every CSV export goes through one writer. A cell whose text starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`. Numbers are written as numbers and are not affected.
+
+**Outbound addresses are checked when used** (item 085, S13). The heartbeat ping and the backup endpoint resolve the host at each use, apply the public-address check to the result, and connect to that address (so a second lookup can't differ). The SMTP host must resolve to a public address unless `security.allow_private_smtp` (false) is on (loopback is refused even then); the check runs at save, at test and at send.
+
+**GitHub settings** (S4, no code). `docs/SECURITY.md` → GitHub settings holds the checklist: public or private, protection of `main` (pull request and passing checks required, no force push), secret scanning with push protection, Dependabot security updates.
+
+**Hard rule 9, sharpened** (`AGENTS.md`): a key must not appear in any text the app stores, shows, sends or gives to a model, not only in logs; text made from an exception goes through `safe_error`.
 
 ## Model providers: OpenAI and Anthropic
 
@@ -1714,7 +1911,7 @@ When more entries pass than there are free slots, today the first ones in rank o
 
 1. **Held positions first,** as today: their model calls run and their exits and stop moves are carried out before any entry is chosen, so a slot freed by an exit is available in the same cycle.
 2. **Pre-score and call order.** For every candidate that passed the rules and has a usable market price, code builds the options (decision.v2 and v3) and sizes the first option with the shared sizing function. The pre-score is the dollars at risk of that size; it is what one R of this trade is worth after the max-position cap. Candidates are called in pre-score order, ties by rank; the call cap of 10 applies to that order. The cap counts real model calls only, as in rank mode. A candidate that ends without a call (no options, a price check, the trend gate) uses no slot, and the walk goes on to the next one until 10 calls are made or the list ends. decision.v1 candidates have no options and keep rank order.
-3. **Collect.** All candidate model calls of the cycle run first and nothing is submitted yet. Calls may run concurrently within the existing rate limiter and call cap. Each answer is validated as today.
+3. **Collect.** All candidate model calls of the cycle run first and nothing is submitted yet. Calls run concurrently within the existing rate limiter and call cap (see Concurrent requests, item 078). Each answer is validated as today.
 4. **Score each enter** that passed validation and a dry run of the entry gates against the cycle's starting state:
    - break-even `be` = 1 ÷ (1 + R/R) of the chosen option;
    - probability used `p` = be + `confidence_weight` × (confidence − be), so the model's confidence counts for half until calibration exists;
@@ -2206,6 +2403,73 @@ A drawer opens on any screen with that screen as context, so "why was this block
 - `design/screens/AskStates.dc.html`: first open with suggestions, earlier chats, problems (a number not found, a failed answer, a stopped answer, the monthly cap), notes, and the phone layout with an answer that uses a note.
 - "Save as note" sits in each answer's footer. The Settings design has the Ask the agent group (`design/screens/Settings.dc.html`).
 - The sidebar gets the Ask button under the app mark on every screen; the phone top bar gets an Ask button next to the menu. (The header first had it; moved 5 Nov, item 045.)
+
+## Concurrent requests (item 078, planned)
+
+A cycle and a data sync send their independent requests at the same time instead of one after another. What is sent, the order in which answers are stored and applied, and every limit stay as they are; only the waiting goes. Decided 11 Nov.
+
+**Setting.** `concurrency.max_requests` (20, from 1 to 50; in `backend/config.example.yaml` from the item 078 build): the most requests one batch keeps in flight at once. It is read at start; Settings → Server shows it, and a change needs a restart. It also sizes each HTTP client's connection pool: at least `max_requests` connections per host, so parallel requests never overflow the pool (item 072 fixed it at 20). `1` gives the old one-at-a-time behaviour, for debugging.
+
+**A batch.** A set of requests whose answers don't depend on each other: the model calls of one wave of a cycle, the daily-bar fetches of one refresh, the symbol checks of the daily screen. In a batch:
+- at most `max_requests` requests are in flight; the others wait their turn in the batch's order;
+- each request still passes its source's rate limiter (Alpaca 150 calls per minute for live and 40 for backtest downloads, Finnhub's limit, the review and Ask limits). The limiter decides how fast; `max_requests` decides how many at once;
+- each request keeps its own timeout (`decision.call_timeout_seconds`, 30, for model calls; the source timeouts for data). A slow or failed request never cancels the others;
+- one task stores and applies the answers, in the batch's order, never in the order they arrive. Database writes are never concurrent, and each `llm_calls` row is still written with its linked row (hard rule 13);
+- live goes first: when a live cycle's request and a sync, shadow, review, Ask or backtest request wait for the same source, the live one is sent first.
+
+**What stays one at a time.**
+- Orders. Submit, replace and cancel run in sequence: each gate depends on the previous result, and a timed-out order is reconciled before the next one.
+- Reconciliation, the kill switch and Stop & flatten.
+- Steps of a cycle that depend on each other, below.
+
+**A cycle, step by step.**
+1. Clock check and reconciliation, as today.
+2. At the same time: the 5-min bar refresh (separate multi-symbol requests in parallel; the pages of one request in sequence), the account refresh, and the market context (VIX from FRED and VIXY, the sector ETFs, breadth). Each source keeps its own health line; one failing doesn't stop the others.
+3. Rules pre-filter and rank: code, no requests.
+4. Quotes for the review list and the stale-quote retry.
+5. **Held wave.** Code decides which held positions need a call (all of them, except one waiting for an acknowledgment), as today. Their headlines are fetched, then those calls are sent together. Their answers are validated, stored and applied in held order (exits, stop moves), as today.
+6. **Plan the candidates.** Against the state after the held wave, so a slot an exit freed counts, code walks the candidates in rank order (pre-score order with `selection.mode: expected_profit`) and decides for each whether it needs a model call. Everything that can end without a call is code and is decided here: the price checks, the trend gate, no options, room. The first symbols that need a call, up to `decision.max_calls_per_cycle` (10) minus the held calls, are the called set; every later one is stored as `no_call` with reason `call_cap`, as today.
+7. **Candidate wave.** Headlines for the called set are fetched (pages for different symbols in parallel), then all candidate calls are sent together. Answers are validated and stored in call order. Entries then go through the gates and the fresh-quote check one at a time: in rank order, or in the order Entry selection chooses (its step 3, "Collect", already works this way).
+8. **Shadows.** After live's orders are sent, each active shadow's calls for the cycle are one batch, planned with the same rule and the shadow's own 10-call cap. Shadow work still never delays live.
+
+**The model call cap stays.** Concurrency changes when calls run, not which ones. The called set is fixed before the wave's first call is sent (held calls count first), so a cycle never sends more than `max_calls_per_cycle` calls, whatever the answers. A call that times out or errors still counts, as today. Two differences, both on purpose:
+- **Same starting state for all candidates.** In rank mode a later candidate's options used to be built after earlier entries of the same cycle were sent. Now every candidate is planned against the same state, after the held wave. A candidate whose option no longer fits after an earlier entry is blocked at submit by its gate (`max_open_positions`, `total_open_risk`, `sector_cap` or cash, final action `blocked`) instead of ending as `no_options · room` before its call. With at most 4 positions this only happens when 2 or more entries pass in one cycle. It can cost extra calls in that cycle, never more than the cap.
+- **Inputs are fixed first.** Every input snapshot of a wave is built before its first call is sent, so no answer can leak into another call's input. Calls of one wave are sent within about a second of each other.
+
+**Expected effect.** Model calls take 1.5–2 s each. Ten calls one after another take about 18 s of a cycle; as one batch about 2–3 s, or 30 s at worst when one times out. Sync jobs that run 10 at once today (the daily bars, the daily screen) can take up to half as long at 20, within the same 150 calls per minute.
+
+**Data syncs.** Each sync job sends its independent requests as one batch, with the batch rules above:
+
+| Job | One request per |
+| --- | --- |
+| Daily bars (08:00 New York) | symbol |
+| 5-min history and warm-up of new symbols | symbol group with the same start date, split into chunks of symbols |
+| Daily screen (08:10 New York) | symbol check |
+| Missing bars for option touches (item 058) | symbol and window |
+| Morning refresh: earnings calendar, corporate actions, FRED series and releases, ECB rates | source; the sources run in parallel |
+| Backtest bar download | symbol and month, within its 40 calls per minute |
+
+A job's results are written once the batch is done, in one transaction per symbol as today. A job that fails for some symbols stores the rest and lists the failed ones with their errors (Universe → Data sync, item 077).
+
+**Reviews and Ask.** The verdict drafts that come due together (one per decision whose 5-session outcome came in) are one batch. The briefing, the weekly review and Ask are single calls and don't change.
+
+**Rate limits from a provider.** An HTTP 429 from a model provider stays `api_error` with status 429 and is not retried. The LLM inspector explains it (item 074): raise the account's limits or lower `concurrency.max_requests`. Alpaca reads keep their backoff.
+
+**Storage and display.**
+- `cycles` gains `model_seconds` (from the first model call sent to the last answer) and `max_in_flight` (the most requests in flight at once during the cycle). `llm_calls` gains `batch_id` and `batch_size`.
+- Dashboard: the Last cycle tile and the this-cycle strip show how long the cycle took and "8 calls, up to 8 at once" (item 073).
+- LLM inspector: a batched call says "Sent · with 7 others · 18:46:04" (item 074).
+- Universe → Data sync shows each job's progress and "up to 20 requests at once" (item 077).
+- Logs: one INFO line per batch: kind, size, most in flight, wall time, failures.
+
+**Tests.**
+- A fake model with random latencies: decisions are stored and applied in rank order whatever order the answers arrive in.
+- 15 symbols that need a call and a cap of 10: exactly 10 calls are sent, and 5 `no_call` (`call_cap`) are stored.
+- `max_requests: 3`: never more than 3 in flight (a counter in the fake), for model calls and for the daily bar refresh.
+- A call that times out after 30 s doesn't stop the others: their answers are stored and the cycle goes on.
+- Rank mode with two passing entries and one free slot: the second is `blocked` by `max_open_positions` at submit.
+- `max_requests: 1` gives the same stored decisions as before on the replay fixture, apart from `sent_at` and the cycles where two or more entries passed (the deliberate difference above).
+- The daily bar refresh over 72 symbols never exceeds 20 in flight or 150 calls per minute.
 
 ## Out of scope and later versions
 

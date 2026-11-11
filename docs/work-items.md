@@ -42,6 +42,7 @@ The examples use 099 as a made-up number.
 - **One item, one build PR where possible.** An urgent part can be split off as its own item, for example a settings fix that must ship before a session.
 - **Small fixes found during a review** of item NNN go into a follow-up PR of that item. They get their own number only when they need their own kickoff.
 - **Dependabot and other automatic PRs** keep their own names and get no number.
+- **Issues close themselves** (decided 11 Nov). An item with a GitHub issue names it in its row ("issue #230"). The build PR's description says `Closes #230`, so GitHub closes the issue when the PR is merged into `main`. An item built in several PRs: `Part of #230` in the earlier ones, `Closes #230` in the last. A spec PR says `Refs #230`, never `Closes`: merging the spec doesn't finish the work.
 
 ## Kickoffs move to the archive with the build
 
@@ -132,6 +133,19 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 070 | fix | Test and save disabled on API keys | — | — | #219 | building |
 | 071 | feat | New entries in the last cycle (15:46), entry cutoff 15:50 | `archive/071-feat-entries-in-last-cycle.md` | #221 | #226 | building |
 | 072 | fix | Wider HTTP pool for the Alpaca clients | — | — | #225 | building |
+| 073 | feat | Dashboard UX (issue #230) | `073-feat-dashboard-ux.md` | #237 | — | planned |
+| 074 | feat | LLM inspector UX: reasons explained (issue #231) | `074-feat-inspector-ux.md` | #237 | — | planned |
+| 075 | feat | Insights UX: five questions (issue #232) | `075-feat-insights-ux.md` | #237 | — | planned |
+| 076 | feat | Performance UX (issue #233) | `076-feat-performance-ux.md` | #237 | — | planned |
+| 077 | feat | Universe UX and Data sync (issue #234) | `077-feat-universe-ux.md` | #237 | — | planned |
+| 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `078-feat-concurrent-requests.md` | #237 | — | planned |
+| 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `079-feat-review-stories.md` | #237 | — | planned |
+| 080 | analysis | Security audit of the repository (`docs/analysis/080-security-audit.md`; issue #241 for the GitHub settings) | — | #251 | — | merged |
+| 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `081-fix-keys-out-of-error-text.md` | #251 | — | planned |
+| 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
+| 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
+| 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
+| 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

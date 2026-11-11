@@ -18,6 +18,7 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
   - commits start with `[NNN]`;
   - screenshots in `docs/screenshots/NNN/`.
   Take the number and name from the kickoff's file name. When you open or merge the PR, update the item's row in `docs/work-items.md` (build PR and status).
+  - If the item has a GitHub issue (its row in `docs/work-items.md` and its kickoff name it), write `Closes #<issue>` in the PR description, so GitHub closes the issue when the PR is merged. For an item built in several PRs, write `Part of #<issue>` in the earlier ones and `Closes #<issue>` in the last.
   - In the build PR itself, move the kickoff unchanged to `docs/kickoffs/archive/` with `git mv`, in the same PR as the code. For an item built in several PRs, the first PR moves it and the later ones read it from `archive/`. An unchanged move needs no `spec change` label; don't edit the file in the same move.
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.
@@ -48,7 +49,7 @@ For isolated decision-drawer browser checks, run `cd frontend && E2E_DRAWER_ONLY
 6. **No network in tests.** Every external service sits behind an interface with a fake. Sockets are blocked in the test setup.
 7. **The model never overrides code.** Rules and risk gates run in code; invalid model output becomes `skip` (or `hold` for a position).
 8. **Prompts are immutable once used.** Never edit a prompt file (`decision.v1.md`, `decision.v2.md`, …) after it has made a decision; create the next version. Never move a level or pick another option in code to make a model's choice pass.
-9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys. The log scrubber covers exception messages and tracebacks in every handler, not only log messages.
+9. **Secrets.** Keys are entered in Settings and stored encrypted (`secrets` table, `data/secret.key`). The API is write-only for keys. Never print, log, commit or send them to the frontend; tests use fake keys. The log scrubber covers exception messages and tracebacks in every handler, not only log messages. The same holds outside logs (item 081): a key must not appear in any text the app stores, shows, emails or gives to a model. Never put `str(exc)` into a notification, an event, a database row, an API answer or a tool result; use `safe_error(exc)`.
 10. **Never open without sign-in.** Locally the backend binds to `127.0.0.1` with `SA_AUTH=off`. On any other address `SA_AUTH=required` is mandatory and the app refuses to start otherwise. Every route except `/healthz` and sign-in needs a session; a test walks the route table. Never publish the app port directly; only Caddy is public. One instance per Alpaca account: `SA_INSTANCE_ID` must differ per copy.
 11. **Migrations are immutable once merged.** A schema change is always a new Alembic revision; never edit or reorder a merged one.
 12. **Processes.** Never kill processes by name or broad pattern. Stop only a process you started, by its PID.
