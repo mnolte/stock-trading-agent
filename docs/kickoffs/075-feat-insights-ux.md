@@ -57,6 +57,19 @@ Put "Closes #232" in the PR description.
    row "Rules · last cycle (15:46)" keeps its history and says "until
    10 Nov".
 
+4b. Reading order inside cards.
+   - "On this page" chips under the filters jump to the five questions
+     (anchors, at every width).
+   - Funnel: each step shows "n% kept" (of the step before) before what
+     was lost; below 760 px the name and count share a line and the bar
+     and note sit under them.
+   - Columns: Slices = slice, Avg R, range, trades, win rate, total R,
+     skips, sample. What each filter removed = filter, R if taken,
+     removed, target first, stop first, neither, status ("needs 100" in
+     the R column when too few touches are decided). Sectors now = rank,
+     sector, vs SPY, ETF.
+   - Buttons in Findings wrap their label on a phone.
+
 5. Text. No item numbers or code names in UI text ("(item 068)",
    rs_vs_sector_pct); snapshot dates through the 056 formatter.
 

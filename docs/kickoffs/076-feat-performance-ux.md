@@ -27,7 +27,8 @@ Put "Closes #233" in the PR description.
    losing, winning, ahead of or behind SPY).
 
 2. Small sample. One banner under the summary below
-   performance.tail.min_trades (20) closed trades, "n of 20 trades".
+   performance.tail.min_trades (20) closed trades, "n of 20 trades". The
+   Winners and tails card no longer shows its own banner.
 
 3. Tiles. Six tiles with a plain line under the value from the label map
    (the design's wording, numbers filled in) and the definition on hover.
@@ -52,7 +53,14 @@ Put "Closes #233" in the PR description.
 
 7. Closed trades. Newest first, 20 rows then "Show all n"; filters for
    symbol and exit reason (in the URL); an R bar from −1R to the trade's R
-   (capped at 2R in width).
+   (capped at 2R in width). Columns: Symbol, R, Adjusted, Exit, Dates,
+   Qty, Entry, Exit price, P&L (paper), Regime at entry.
+
+7b. Column order elsewhere: By regime and By symbol = name, P&L, Avg R,
+   trades, won; Decisions and outcomes = Decision, Price after 1 session,
+   Count, Read. Phone: "On this page" chips (Curve, By regime and symbol,
+   Winners and tails, Decisions, Closed trades); the curve keeps the
+   first, last and every third date label, never overlapping.
 
 8. Screenshots in docs/screenshots/076/: 1440 and 390, under 20 trades,
    and After the exit all pending.

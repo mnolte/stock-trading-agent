@@ -49,7 +49,17 @@ Two PRs if it grows past ~800 lines: steps 1–2, then 3–6. Put
    inside it), Pool by sector (pool, eligible, sector rank from 068;
    clicking filters the pool, ?sector= in the URL), Pool.
 
-5. Pool table. The fold row names its filter and count; "name pending"
+4b. Data sync, quiet when fine: while every job's last run is ok and on
+   time and none is running, the card is one line ("All 5 jobs ran on
+   time · last 18:46 · Show jobs"); it opens by itself when a job failed,
+   is late or is running, with the reason in its header ("open: 1 failed ·
+   1 running"). Below 760 px a job row stacks: name and time, the result on
+   its own line, then Retry.
+
+5. Pool table. Status is the third column (after Symbol), so it shows at
+   390 px. The remove question stays in the visible part of the table
+   (position: sticky) when the table scrolls. The fold row names its
+   filter and count; "name pending"
    for an unknown name; columns without values before the first screen get
    the hint "after the first screen" instead of dashes; the × opens an
    inline confirm row (Remove, Cancel; focus on Cancel); the add field's

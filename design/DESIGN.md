@@ -95,6 +95,11 @@ Build these first, in PR 1, on a hidden `/dev/components` page:
 - **Plain words next to numbers** (075, 076, 079). A headline number gets a second line saying what it means for someone new to trading ("On average a trade earned 0.21 times what it risked"), next to its definition on hover. A screen that answers a question starts with a sentence written by code, not a model.
 - **Glossary terms** (079). In model-written stories, a term from the fixed glossary is a button with a dotted underline; its definition shows on hover and on tap. First occurrence per paragraph only.
 - **Explain warnings** (074). A warning or error says what it means, why it happened here, and what to do, with links; the text comes from one table in code.
+- **The answer comes second** (073–077). In a table the first column names the row and the second holds the number it is read for, so both show at 390 px; the rest scrolls inside the card.
+- **Label–value grids stack on a phone** (`.sa-kv2`): below 760 px the label sits above its text. Buttons wrap their label (`.sa-wrap-phone`); nothing sticks out of its card.
+- **On this page** (`on_this_page` in the generator): a page taller than about 4 screens gets a row of chips that jump to its sections; on the dashboard and Performance only on a phone (`.sa-phone-only`).
+- **Does it need me?** (074). Next to every explained warning or error: one chip, "Nothing to do" (green), "Keep an eye on it" (amber) or "Needs you" (red), decided by code.
+- **Quiet when fine** (077). A status card that only reports health (Data sync) is one line while everything is fine and opens by itself when something failed or is running.
 
 ## Interaction rules
 

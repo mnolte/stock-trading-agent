@@ -430,6 +430,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 | 2 | Live decisions failing; trade-updates stream degraded; a key failing | the episode clears |
 | 3 | Entries waiting for approval (supervised mode), with their expiry | approved, rejected or expired |
 | 4 | A notification channel failing (email or browser permission) | a send succeeds |
+| 4 | Model calls that need you (item 074): one item per reason at attention `act`, with its count and one-line fix ("OpenAI key refused (401) ×3 · replace the key"); order 2 when it stops live decisions | a later call of that kind succeeds, or the cause is fixed (key replaced, model changed) |
 | 5 | Errors not reviewed (ERROR fingerprints without a review, as counted on Readiness) | reviewed on Logs |
 | 6 | Verdicts to confirm | confirmed or changed |
 | 7 | Settings or prompts saved but waiting for a restart or the next run (for example a review prompt) | applied |
@@ -503,6 +504,19 @@ The layout must also work at phone width, so the VPS version can be checked from
   Each chip group has its own row. No sentence sits between chips.
 - **Today's decisions** keeps its grouping and its 44 px rows. A grouped row's symbols wrap under the reason instead of pushing the count off the row.
 - **Briefing card.** The status line (code), the story's paragraphs with 12 px between them (item 079), a fold "The numbers" with the facts the story was given, then one footer line: number check, next briefing, model, prompt and cost.
+- **Why** ends with a "more" link to the drawer, always, so a cut-off reason is one tap from its full text. A tile's "Open →" sits at the tile's bottom edge.
+- **On a phone** (below 760 px):
+  - an "On this page" row of chips under Needs you jumps to Positions, Chart, Latest decision, Today, Briefing and Watchlist (the page is about 6,000 px tall there);
+  - a decisions-feed row puts its action above the symbols and reason, instead of in a 108 px column;
+  - a position's distance to its stop gets its own line;
+  - the watchlist is a list of two-line rows that fits the screen: symbol, price and day change, then the rules result and the last action. Rank, sector and earnings show from 760 px up. No sideways scroll.
+
+**Phones and long pages** (items 073–077, decided 11 Nov). For every screen:
+- **The answer comes second.** In a table, the first column names the row and the second holds the number the table is read for, so both show at 390 px without scrolling; the other columns scroll inside the card. Slices: Avg R and its range. What each filter removed: R if taken. By regime and By symbol: P&L, then Avg R. Closed trades: Symbol, R, Adjusted, Exit. Decisions and outcomes: Price after 1 session. Pool: Symbol, then Status. Sectors now: Sector, then vs SPY.
+- **Label–value grids stack** below 760 px: the label sits above its text (What happened, the answer rows, Data sync jobs, the funnel's notes) instead of squeezing the text into a narrow column.
+- **Buttons wrap** their label on a phone; a button never sticks out of its card.
+- **On this page.** A page taller than about 4 screens gets a row of chips that jump to its sections: Insights at every width (its five questions), the dashboard and Performance on a phone.
+- **Chart axes** drop labels as the chart narrows (first, last and every third stay); labels never overlap.
 
 **Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
@@ -762,7 +776,9 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 - **After the exit.** While every row is pending, the table is one line: "12 trades are inside their 5-session window; the first result arrives Thu 22 Oct." Once some are done, pending rows sit at the bottom, grouped into one row.
 - **Decisions and outcomes.** A price that isn't in yet says when it arrives ("waiting · first prices Fri 16 Oct"), not "—".
 - **Closed trades.** Newest first, 20 rows, then "Show all n". Filters for symbol and exit reason. The R column gets a small bar from −1R to the trade's R.
-- **One small-sample banner.** Below `performance.tail.min_trades` (20) closed trades, one banner under the summary says so for the whole page. The Winners and tails card keeps its own note.
+- **One small-sample banner.** Below `performance.tail.min_trades` (20) closed trades, one banner under the summary says so for the whole page, and the Winners and tails card drops its own banner (two identical warnings on one page were one too many).
+- **Column order.** By regime and By symbol: name, P&L, Avg R, trades, won. Closed trades: Symbol, R (with its bar), Adjusted, Exit, Dates, Qty, Entry, Exit price, P&L (paper), Regime at entry. Decisions and outcomes: Decision, Price after 1 session, Count, Read.
+- **On a phone:** "On this page" chips (Curve, By regime and symbol, Winners and tails, Decisions, Closed trades); the equity curve keeps the first, last and every third date label.
 
 ## Larger universe (v0.2)
 
@@ -797,13 +813,15 @@ A symbol that passes every check is eligible. An eligible symbol stays eligible 
   - one row per sync job: daily bars (08:00 NY), the daily screen (08:10 NY), 5-min bars (each cycle), history for new symbols (warm-up). Each row has its last run, its duration, symbols done of total, failures, and Retry for a failed job;
   - while history loads, a progress bar: "Loading history · 41 of 72 symbols ready · about 2 min left · up to 20 requests at once" (`concurrency.max_requests`, item 078). The time left comes from the job's own pace so far;
   - a failed symbol shows the source's error in plain words ("Alpaca: symbol not found") and its retry time.
+  - quiet when fine: while every job ran on time and none is running, the card is one line ("All 5 jobs ran on time · last 18:46 · Show jobs"). It opens by itself when a job failed, is late or is running, and its header says why ("open: 1 failed · 1 running");
+  - on a phone a job row stacks: name and time, then the result on its own line, then Retry.
 - **Status per symbol.** One chip and one line under it, never contradicting each other:
   - warming up: "daily bars 180 of 260 · 5-min 22 of 60 sessions", with a small bar;
   - ready: history loaded, "joins at the next screen · 08:10 NY Fri 16 Oct" (blue chip "ready", not "warming up");
   - eligible, held, excluded (with the failed check and its numbers), eligible · 1 fail or 2 fails.
 - **Pool by sector.** A compact row per sector: symbols in the pool, eligible, and the sector's rank of 11 at the last cycle (item 068). Clicking a sector filters the pool.
-- **Pool table.** The fold row names its filter and count ("61 more eligible · show all"); an unknown company name shows "name pending", not "—". Columns with no value yet (rank, price, volume before the first screen) say "after the first screen" in the header's hint instead of a column of dashes.
-- **Remove.** The × asks in the row: "Remove ANET from the pool? Its cached bars stay for 120 sessions." with Remove and Cancel. Held symbols have no ×.
+- **Pool table.** Status is the third column, right after the symbol, so it shows on a phone. The fold row names its filter and count ("61 more eligible · show all"); an unknown company name shows "name pending", not "—". Columns with no value yet (rank, price, volume before the first screen) say "after the first screen" in the header's hint instead of a column of dashes.
+- **Remove.** The × asks in the row: "Remove ANET from the pool? Its cached bars stay for 120 sessions." with Remove and Cancel. The question stays inside the visible part of the table when the table scrolls sideways. Held symbols have no ×.
 - **Adding.** The symbol field shows its hint in normal case ("Symbol, e.g. PANW") and turns what's typed into capitals.
 - **Storage and API.** A `sync_runs` table: job, started and finished at, status (running, ok, partial, failed), done and total, failures (symbol or source, error in plain words, next retry); a job updates its row at most once a second; 30 days kept. `GET /api/universe/sync` returns the latest run per job and, while history loads, symbols ready of total and the time left from the job's own pace (none until 5 symbols are done). `POST /api/universe/sync/{job}/retry` reruns a failed job for its failed symbols; during a cycle it answers 409.
 
@@ -911,7 +929,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 **Storage.** A new `llm_calls` table, one row per call:
 - What and where: sent at, New York session date, source (live, shadow, review, ask), strategy (shadows), kind (decision, briefing, weekly, verdict), the linked decision, shadow decision or review, cycle, symbol, context.
 - How: model, temperature, prompt version and hash, tokens in and out, cost and its source, latency in ms, final action.
-- Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text.
+- Result: outcome, reasons JSON, error type, HTTP status, error message, provider and provider request id, raw response text; from item 074 `attention` (none, watch, act; see Does it need me?).
 - The row is written in the same transaction as the linked row, after the call has returned (hard rule 13). Error messages go through the same key scrubbing as logs; request headers are never stored.
 - The prompt is not duplicated. The system part is rebuilt from the versioned prompt file; if its hash differs from the stored hash, the screen says so instead of showing the text. The user part comes from the linked row's input snapshot (decisions, shadows) or facts JSON (reviews).
 - Indexes: (session date, sent at), (outcome, sent at), (source, sent at), (symbol, sent at).
@@ -919,7 +937,7 @@ A size reduced by a gate is not a warning; the model's action was kept.
 
 **Backfill.** The migration fills `llm_calls` from existing `decisions` (rows with a model output or reason `model_error`), `shadow_decisions` (rows with a model output) and `reviews` (source model, or template after a failed call). Outcome and reasons come from the stored validation result, final action, headline status and number check. Latency, HTTP status and request id are null and shown as "not recorded"; such rows are marked `backfilled`.
 
-**Filters.** Every filter is in the URL (`?from=&to=&outcome=&source=&symbol=&action=&reason=&model=&prompt=&strategy=&cycle=&call=`), so links land on the right calls:
+**Filters.** Every filter is in the URL (`?from=&to=&outcome=&source=&symbol=&action=&reason=&model=&prompt=&strategy=&cycle=&call=`, and `attention=` from item 074), so links land on the right calls:
 - The dashboard's model-call tile opens Last session with live decisions.
 - A grouped feed row opens its cycle and action.
 - The decision drawer's "Open model call" opens `?call=`, as does Copy link.
@@ -995,6 +1013,14 @@ Pages of `inspector.page_size` (50) use a keyset cursor on (sent at, id), with "
 - **Input as sections.** The user part shows as labelled sections (Market, 1h indicators, Daily, Position, Options, Headlines, Facts for reviews) with label–value rows, with "Raw JSON" behind a toggle. JSON is shown with its real characters (×, −, €), never escapes like `×`.
 - **One session.** With a period of one session, the summary chart has one bar per cycle (and one for the reviews after the close) instead of a single bar.
 - **Batches.** A call sent in a batch (item 078) says so in its call data: "Sent · with 7 others · 18:46:04".
+- **Does it need me?** Every warning and error carries one of three levels, set by code when the call is stored (looking back only, so it never changes afterwards) and stored as `attention`:
+  - **Needs you** (`act`): `api_error` 401, 403 or 404; three or more 429s in one session; a timeout or 5xx in 3 cycles in a row; `input_incomplete` from the same source in 3 cycles in a row; `invalid_output` or `refusal` on 3 or more of a model's last 20 calls; `number_check_failed` on 3 of the last 5 reviews of one kind; `hold_below_breakeven` on a position held overnight.
+  - **Keep an eye on it** (`watch`): a second timeout or provider error within 2 cycles; 3 or more `slow` calls in a session; `unsupported_claim`, `unresolved_conflict` or `confidence_outlier` on 20% or more of the last 20 decision calls.
+  - **Nothing to do** (`none`): everything else, which includes every `changed_by_code`.
+  The level shows as a chip in What happened (its reason on hover) and on each Top reasons row; the summary counts them ("0 need you · 1 to watch · 9 nothing to do"); `attention=` is a filter; and each `act` group is an item in the dashboard's Needs you card (see its list), linking to the filtered inspector.
+- **Answer as rows.** The model's answer shows as label–value rows (action, confidence, stop, target, thesis, invalidation, risks; empty fields left out), with "Raw JSON" and Copy next to it. When code changed the action, a line above says "The model answered `enter` → code made it `skip`". An answer that isn't JSON shows raw.
+- **Moving through calls.** The details have "↑ Newer" and "↓ Older" buttons (keys K and J, or the arrow keys when the list has focus), following the list's order and filters. On a phone, where the details sit under the list, this replaces going back to the list for every call.
+- **Input order.** Single fields (symbol, context, price, days to earnings) come first under "Call"; then the groups. Headlines are one row each (time · source · title), not a JSON array.
 
 **GUI.** The LLM inspector screen keeps its place in the Learn group. It has filters, the summary, the list and the details, and follows the PR 17 interaction rules (toggle buttons with `aria-pressed`, card states, latest request wins).
 
@@ -1025,7 +1051,7 @@ Trend-following results usually depend on a few large winners. Fixed targets can
 **API.** `GET /api/performance/tails?run=` returns the distribution, the summary values with their sample counts, the after-exit medians per exit reason and the per-trade rows, all as numbers.
 
 **GUI.** The "Winners and tails" card on Performance, below By regime and By symbol. It has:
-- a small-sample banner;
+- a small-sample banner (from item 076 the page's one banner takes its place);
 - the R distribution as bars (losses red, wins green);
 - tiles for largest win, largest loss, top 20% share, net without the best trade and winners kept;
 - "After the exit" with medians per exit reason;
@@ -1359,6 +1385,9 @@ Next to each step is what was lost and why: rules, call cap, price checks, model
 - **Slices.** The dimension picker is one select with groups instead of 22 chips: Timing (entry cycle, weekday, sessions held), Market (regime, SPY that day, VIX level, VIX change, breadth, release next morning), Stock (sector, symbol, sector rank, stock vs sector, days to earnings, opening gap, entry vs VWAP, pullback depth, strength vs SPY, volatility), Model (confidence, stop and target basis, prompt and model). The chosen dimension is in the URL (`?dim=`). On a phone the table scrolls inside its card.
 - **No internal names.** Item numbers and code names don't appear in the screen's text ("(item 068)" and `rs_vs_sector_pct` stay in the spec). Dates follow the date rule ("14 Oct", never "2026-10-14").
 - **The 15:46 row.** Since item 071 the 15:46 cycle enters like the others. Its slice says "entries from 11 Nov" until it has 10 trades, instead of the rule text.
+- **On this page.** Under the filters, chips jump to the five questions.
+- **The funnel says what was kept.** Each step shows the share of the step before that it kept ("14% kept") before what was lost. On a phone the step's name and count share a line and the bar and note sit under them.
+- **Column order.** Slices: the slice, Avg R, range, trades, win rate, total R, skips, sample. What each filter removed: the filter, R if taken, removed, target first, stop first, neither, status; a filter with too few decided touches says "needs 100" in the R column and leaves the shares empty.
 
 Before 10 closed trades, sections 1, 2 and 4 show what they will hold and how many trades they need; the funnel, skips and execution show as normal.
 

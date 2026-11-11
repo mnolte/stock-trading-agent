@@ -49,7 +49,20 @@ first).
    session, `buckets` are per cycle (plus one "after the close" bucket for
    reviews) instead of one bucket.
 
-4. Details panel. The outcome block keeps its chip and one-line result;
+3b. Attention. llm_calls.attention (none, watch, act; new migration,
+   backfill none), set at write time by one pure function over the call
+   and the earlier calls it needs (same session, last 20 of the model,
+   last 5 reviews of the kind) with the spec's rules ("Does it need
+   me?"). Never recomputed. Filter attention= on list, summary and CSV;
+   the summary returns the three counts; top_reasons rows carry their
+   level. Needs you gets one item per reason at `act` (spec's Needs you
+   table), leaving when a later call of that kind succeeds. Tests: one per
+   rule, on both sides of each threshold (2 vs 3 cycles in a row, 2 vs 3 of
+   20, and so on), and that a later success doesn't rewrite stored levels.
+
+4. Details panel. Each What happened panel shows its level as a chip
+   (Nothing to do / Keep an eye on it / Needs you) with the reason on
+   hover; Top reasons rows and the summary show the levels too. The outcome block keeps its chip and one-line result;
    under it one "What happened" panel per explanation (What it means / Why
    here / What to do, then link buttons). Success: "Valid · used as the
    model chose." only.
@@ -69,6 +82,16 @@ first).
      indicators, Daily, Position, Options, Headlines) with a "Raw JSON"
      toggle; the raw view and the API use ensure_ascii=False, so × and −
      show as themselves.
+   - The answer as label–value rows (empty fields left out) with Raw JSON
+     and Copy; "The model answered enter → code made it skip" above them
+     when code changed the action; a non-JSON answer shows raw.
+   - Input order: single fields first under "Call", then the groups;
+     headlines one row each (time · source · title).
+   - "↑ Newer" and "↓ Older" in the details header, K and J (and the
+     arrow keys while the list has focus), following the list's order and
+     filters; the buttons disable at the ends.
+   - Below 760 px the What happened and answer grids stack (label above
+     text).
    - A batched call (078) shows "Sent · with 7 others · 18:46:04"; before
      078 is merged, leave the row out.
 
@@ -81,6 +104,7 @@ copy in the frontend beyond labels); keys never in a message (the existing
 scrubber); nothing in design/.
 
 Done when: every reason code and change reason has an explanation (test);
+every attention rule has its tests;
 each detail function has a test with a stored fixture; the inspector
 matches the design at 1440 and 390 with no sideways scroll; list and
 summary still answer within 300 ms on the 100,000-call fixture; make test

@@ -62,17 +62,28 @@ Put "Closes #230" in the PR description, so the issue closes on merge.
 5. Today's decisions: rows keep 44 px; a grouped row's symbol list wraps
    under the reason so the count stays on the row.
 
-6. Loading skeleton (MainLoading.dc.html): four tiles; the latest decision
+6. Phone (below 760 px), as Main-390.png:
+   - an "On this page" chip row under Needs you (Positions, Chart, Latest
+     decision, Today, Briefing, Watchlist), anchors with scroll-margin;
+   - feed rows: the action above the symbols and reason;
+   - a position's distance to its stop on its own line;
+   - the watchlist as two-line rows without sideways scroll: symbol, price,
+     day change; under them the rules result and the last action. Rank,
+     sector and earnings columns from 760 px up.
+   Also at every width: Why ends with "more" (opens the drawer); a tile's
+   "Open →" sits at the tile's bottom.
+
+7. Loading skeleton (MainLoading.dc.html): four tiles; the latest decision
    skeleton with the four group labels.
 
-7. Screenshots in docs/screenshots/073/: dashboard at 1440, 1024 and 390,
+8. Screenshots in docs/screenshots/073/: dashboard at 1440, 1024 and 390,
    with MSFT (held) and with SPY (a no_call) selected.
 
 Rules: no network in tests; labels from the one label map; times through the
 056 formatter; nothing in design/.
 
 Done when: the dashboard matches Main.dc.html at 1440, 1024 and 390 with no
-sideways scroll; no card has more than 24 px of empty space at its bottom at
+sideways scroll, the watchlist included (no inner scroll at 390); no card has more than 24 px of empty space at its bottom at
 1440; a no_call never shows "confidence —"; a Playwright check finds no
 "undefined", "NaN" or a digit directly followed by a letter in the strip;
 make test and the e2e pass.

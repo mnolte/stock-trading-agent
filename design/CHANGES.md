@@ -15,6 +15,17 @@ Spec PR [073] holds the design for items 073–079. A shared stylesheet rule (`.
 - **[077] `Universe.dc.html`:** six tiles (Ready added: DDOG); **Data sync** card (history progress bar "72 of 73 symbols ready · up to 20 requests at once", one row per job with last run, duration, result, and Retry on a failed earnings fetch); Today's screen with How the screen works as a fold; **Pool by sector** (pool, eligible, sector rank; click filters); status per symbol: ANET warming up with two progress bars, DDOG "ready · joins at the next screen"; AZO's remove confirm open in its row; the fold row "61 more eligible · show all". `Universe.png`, `Universe-390.png`.
 - **`DESIGN.md` → Rules:** cards take their own height, labelled groups inside cards, plain words next to numbers, glossary terms, explained warnings; `.sa-tiles-4`.
 
+**Second pass, same day** (all seven screens re-read at 390 px and 1440 px):
+
+- **Every screen:** shared phone rules in the stylesheet (`.sa-kv2`, `.sa-stack`, `.sa-hide-phone`, `.sa-wrap-phone`, `.sa-phone-only`) and the `on_this_page` chip row; again one stylesheet line in every screen file.
+- **[073] `Main.dc.html`:** phone: "On this page" chips under Needs you; feed rows with the action above the text; a position's stop distance on its own line; the watchlist as two-line rows with no sideways scroll (was: three columns visible, the rest scrolled away). Every width: "more" under Why; "Open →" at the bottom of each tile.
+- **[074] `Inspector.dc.html`:** a level chip on each What happened panel and Top reasons row (Nothing to do / Keep an eye on it / Needs you) and the three counts in the summary (NVDA's timeout is "Keep an eye on it": the second provider failure in two cycles); the answer as rows with "The model answered enter → code made it skip", Raw JSON and Copy; "↑ Newer" / "↓ Older" in the details header; input fields in order (single fields first, headlines one per row); on a phone the What happened and answer grids stack; "not recorded" for missing tokens.
+- **[075] `Insights.dc.html`:** "On this page" chips for the five questions; the funnel shows "n% kept" per step and stacks on a phone (the notes used to break into one word per line); Slices and What each filter removed with the answer column second ("needs 100" instead of dashes); Sectors now as rank, sector, vs SPY, ETF; Findings buttons wrap on a phone.
+- **[076] `Performance.dc.html`:** the Winners and tails card's own small-sample banner removed (the page banner covers it); By regime, By symbol, Decisions and outcomes and Closed trades with the answer column second; phone: "On this page" chips, date labels on the curve thinned so they no longer overlap.
+- **[077] `Universe.dc.html`:** Status is the pool's third column; Data sync rows stack on a phone (the result used to break into one word per line, Retry stuck out); the remove question stays in view; a note that the card is one line while every job is fine.
+- **`Reviews.dc.html`:** "The numbers" tiles in the tile grid (two per row on a phone).
+- **`DESIGN.md` → Rules:** the answer comes second, grids stack on a phone, On this page, Does it need me?, quiet when fine.
+
 ## 2026-11-11 — [068] Breadth and sectors
 
 - **`Main.dc.html` → Watchlist:** a Sector column after Day: the symbol's sector ETF and that sector's rank of 11 ("XLK 2/11"; Index funds "—"). Grid min width 800 → 890 px (the card scrolls inside at 390). `Main.png`, `Main-1024.png`, `Main-390.png`; `MainLoading.dc.html` gets the column's skeleton (`MainLoading.png`, `-390`).
