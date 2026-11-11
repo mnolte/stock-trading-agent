@@ -23,12 +23,33 @@ from sqlalchemy import select
 E2E_RUN_START = datetime(2026, 10, 5, 13, 30)  # Monday 09:30 New York, naive UTC
 
 
+def _seed_fingerprint() -> str:
+    import hashlib
+
+    here = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in ("e2e_seed.py", "e2e_backtest_seed.py"):
+        digest.update((here / name).read_bytes())
+    return digest.hexdigest()
+
+
 def main() -> None:
     from app.config import get_config
     from app.db.base import get_session_maker
     from app.db.models import Run
 
-    Path(get_config().env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
+    env = get_config().env
+    db_path = Path(env.sa_db_path)
+    data_dir = Path(env.sa_data_dir)
+    marker = data_dir / "e2e-seed.sha"
+    fingerprint = _seed_fingerprint()
+    # CI's actions/cache restore-keys can hand this job a scratch DB seeded
+    # by an older e2e_seed: alembic migrates the schema forward but not the
+    # rows, so a fingerprint mismatch means the seeded rows are stale.
+    if not (marker.exists() and marker.read_text().strip() == fingerprint):
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
     with get_session_maker()() as session:
         first = session.execute(select(Run).order_by(Run.id).limit(1)).scalar_one_or_none()
@@ -42,6 +63,8 @@ def main() -> None:
         session.commit()
     seed_v2_decision()
     seed_economic_events()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"{fingerprint}\n")
 
 
 def seed_economic_events() -> None:

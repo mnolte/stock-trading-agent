@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-11 — E2E seed fingerprint for the cached scratch DB (fix)
+
+CI fix, no spec change — the Playwright e2e job restores `/tmp/stock-agent-e2e.db` through `actions/cache` `restore-keys`, which can serve a database seeded by an older `e2e_seed.py`. Alembic migrates the schema forward but not the rows, and `seed_v2_decision` returns early when a v2 decision exists, so 068's breadth/sectors/`market_context` fields stayed NULL and the watchlist Sector column, Sectors now card and related assertions failed.
+
+- `tests/e2e_seed.py` now writes a sha256 fingerprint of itself and `e2e_backtest_seed.py` to `$SA_DATA_DIR/e2e-seed.sha` after seeding; a missing or mismatched fingerprint deletes the scratch DB (and its WAL/SHM) before `alembic upgrade`, so a stale cached DB reseeds from scratch while an unchanged seed keeps the warm-bars cache.
+
 ## 2026-11-11 — Shadow cycle crash on duplicate live decisions (fix)
 
 Reliability fix, no spec change — `shadows-cycle-471` died on a `PendingRollbackError` after a `UNIQUE constraint failed: shadow_decisions.strategy_id, shadow_decisions.cycle_id, shadow_decisions.symbol`.
