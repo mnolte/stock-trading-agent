@@ -37,6 +37,7 @@ interface Problem {
   count: number;
   sample: string;
   review: string | null;
+  unreviewed: boolean;
 }
 
 interface Summary {
@@ -541,7 +542,7 @@ export default function Logs() {
 
   const todayIso = new Date().toISOString().slice(0, 10);
   const maxCount = Math.max(1, ...dayCounts.map(([, c]) => c.warning + c.error));
-  const unreviewed = (summary?.problems ?? []).filter((p) => !p.review).length;
+  const unreviewed = (summary?.problems ?? []).filter((p) => p.unreviewed).length;
 
   return (
     <div style={{ maxWidth: 'var(--sa-page-max)', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
@@ -757,10 +758,11 @@ export default function Logs() {
                         <span style={{ color: 'var(--sa-text-muted)' }}>last {displayDayTime(p.last_ts)}</span>
                       </td>
                       <td style={{ padding: 10, borderBottom: '1px solid var(--sa-border)', verticalAlign: 'top' }}>
-                        {p.review ? (
-                          <Chip variant="neutral">{p.review}</Chip>
-                        ) : (
-                          <span style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                        {p.unreviewed ? (
+                          <span
+                            style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}
+                            title={p.review ? `Marked ${p.review}; it happened again` : undefined}
+                          >
                             <Chip variant="warning">unreviewed</Chip>
                             <button
                               type="button"
@@ -773,6 +775,10 @@ export default function Logs() {
                               Review
                             </button>
                           </span>
+                        ) : p.review ? (
+                          <Chip variant="neutral">{p.review}</Chip>
+                        ) : (
+                          <span style={{ color: 'var(--sa-text-muted)' }}>—</span>
                         )}
                       </td>
                     </tr>
