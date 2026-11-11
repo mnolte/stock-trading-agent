@@ -117,6 +117,11 @@ class InsightsTrade:
     # the model snapshot.
     vix_percentile: Decimal | None = None
     vix_change_5d_pct: Decimal | None = None
+    # Breadth and sector context at entry (item 068) — from the
+    # decision's cycle and its market_context, never the model snapshot.
+    breadth_above_sma50_pct: Decimal | None = None
+    sector_rank: int | None = None
+    rs_vs_sector_pct: Decimal | None = None
     confidence: Decimal | None = None
     stop_basis: str | None = None
     target_basis: str | None = None
@@ -505,6 +510,7 @@ def _dimension_values(
     strength_edges: tuple[Decimal, Decimal] | None,
     vol_edges: tuple[Decimal, Decimal] | None,
     vix_edges: tuple[Decimal, Decimal] | None,
+    breadth_edges: tuple[Decimal, Decimal] | None,
 ) -> dict[str, str | None]:
     """Every dimension's slice key for one trade (None = not sliceable)."""
     gap = trade.opening_gap_pct
@@ -591,6 +597,38 @@ def _dimension_values(
             else "high third"
         )
 
+    breadth_key = None
+    if (
+        trade.breadth_above_sma50_pct is not None
+        and breadth_edges is not None
+    ):
+        lo, hi = breadth_edges
+        breadth_key = (
+            "low third"
+            if trade.breadth_above_sma50_pct < lo
+            else "middle third"
+            if trade.breadth_above_sma50_pct < hi
+            else "high third"
+        )
+
+    rank_key = None
+    if trade.sector_rank is not None:
+        rank_key = (
+            "1–3"
+            if trade.sector_rank <= 3
+            else "4–8"
+            if trade.sector_rank <= 8
+            else "9–11"
+        )
+
+    rs_sector_key = None
+    if trade.rs_vs_sector_pct is not None:
+        rs_sector_key = (
+            "above 0"
+            if trade.rs_vs_sector_pct > 0
+            else "below 0"
+        )
+
     vix_change_key = None
     if trade.vix_change_5d_pct is not None:
         chg = trade.vix_change_5d_pct
@@ -641,6 +679,9 @@ def _dimension_values(
         "volatility": vol_key,
         "vix_level": vix_level_key,
         "vix_change_5d": vix_change_key,
+        "breadth": breadth_key,
+        "sector_rank": rank_key,
+        "stock_vs_sector": rs_sector_key,
         "confidence": (
             _conf_bucket(trade.confidence)
             if trade.confidence is not None
@@ -667,6 +708,9 @@ DIMENSIONS: tuple[tuple[str, str], ...] = (
     ("volatility", "Volatility"),
     ("vix_level", "VIX level"),
     ("vix_change_5d", "VIX 5-session change"),
+    ("breadth", "Breadth"),
+    ("sector_rank", "Sector rank"),
+    ("stock_vs_sector", "Stock vs sector"),
     ("confidence", "Confidence"),
     ("stop_target_basis", "Stop and target basis"),
     ("sessions_held", "Sessions held"),
@@ -720,6 +764,13 @@ def _slices(
     vix_edges = _tercile_edges(
         [t.vix_percentile for t in trades if t.vix_percentile is not None]
     )
+    breadth_edges = _tercile_edges(
+        [
+            t.breadth_above_sma50_pct
+            for t in trades
+            if t.breadth_above_sma50_pct is not None
+        ]
+    )
 
     dims_of: dict[int, dict[str, str | None]] = {
         t.id: _dimension_values(
@@ -729,6 +780,7 @@ def _slices(
             strength_edges=strength_edges,
             vol_edges=vol_edges,
             vix_edges=vix_edges,
+            breadth_edges=breadth_edges,
         )
         for t in trades
     }

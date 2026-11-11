@@ -21,6 +21,13 @@ export interface VixPayload {
   stale: boolean | null;
 }
 
+export interface BreadthPayload {
+  above_sma50_pct: string | null;
+  above_sma200_pct: string | null;
+  ema_up_pct: string | null;
+  up_today_pct: string | null;
+}
+
 export interface HeaderState {
   paper: boolean;
   mode: string;
@@ -31,6 +38,7 @@ export interface HeaderState {
   today_eur: string | null;
   regime: string;
   vix?: VixPayload | null;
+  breadth?: BreadthPayload | null;
   kill_switch: boolean;
   paused: boolean;
   paused_since: string | null;
@@ -63,6 +71,10 @@ export interface WatchlistRow {
   rank?: number | null;
   // Trading days until the next earnings event, for the earnings filter.
   days_to_earnings?: number | null;
+  // Sector ETF and its rank of 11 at the last cycle (item 068); null for
+  // Index and unresolved sectors.
+  sector_etf?: string | null;
+  sector_rank?: number | null;
 }
 
 export interface WatchlistResponse {

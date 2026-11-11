@@ -183,6 +183,7 @@ def build_bundle(
         session_factory=sf,
     )
     from app.data.vix import VixService
+    from app.signals.breadth import BreadthService
 
     vix_service = VixService(
         sources.vix,
@@ -191,6 +192,7 @@ def build_bundle(
         bundle_clock,
         session_factory=market_sessions or sf,
     )
+    breadth_service = BreadthService(market_data, config)
     cycle = CycleRunner(
         market_data=market_data,
         signals=signals,
@@ -203,6 +205,7 @@ def build_bundle(
         outcomes=outcomes,
         session_factory=sf,
         vix=vix_service,
+        breadth=breadth_service,
     )
     universe_service = UniverseService(
         market_data=market_data,
@@ -266,6 +269,7 @@ class RulesOnlyDecisionService(DecisionService):
         current_stop: Decimal | None,
         v2: Any = None,
         on_response: Any = None,
+        market_context: dict[str, Any] | None = None,
     ) -> Any:
         from app.decide.output import ModelOutput, ValidationResult
 
@@ -288,6 +292,7 @@ class RulesOnlyDecisionService(DecisionService):
                     note="rules only — hold",
                 ),
                 final_action="hold",
+                market_context=market_context,
             )
         k = Decimal(
             str(self.config.get("shadows", "rules_only", "stop_atr", default=2.0))
@@ -321,4 +326,5 @@ class RulesOnlyDecisionService(DecisionService):
                 note="rules only — enter",
             ),
             final_action="enter",
+            market_context=market_context,
         )

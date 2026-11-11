@@ -27,6 +27,14 @@ export function formatDayChange(pct: number | null): string {
   return `${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(2)}%`;
 }
 
+/** "XLK 2/11" — the sector ETF and its rank of 11 at the last cycle
+ * (item 068); a dash for Index and unresolved sectors. */
+export function formatSector(row: WatchlistRow): string {
+  if (!row.sector_etf) return '—';
+  if (row.sector_rank == null) return `${row.sector_etf} —`;
+  return `${row.sector_etf} ${row.sector_rank}/11`;
+}
+
 export function formatEarnings(isoDate: string | null): string {
   if (!isoDate) return '—';
   return fmtDayMonthIn(isoDate) || '—';

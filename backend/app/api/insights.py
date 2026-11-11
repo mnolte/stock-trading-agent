@@ -17,13 +17,60 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
 from app.db.base import get_session_maker
-from app.db.models import Position, ShadowPosition, Strategy
+from app.db.models import Cycle, Position, ShadowPosition, Strategy
 from app.insights.service import latest_snapshot
 from app.shadows.strategy import NON_ARCHIVED
 
 router = APIRouter()
 
 PERIODS = ("run", "last20", "all")
+
+
+def _sectors_now() -> dict[str, Any] | None:
+    """The latest decision cycle's sector table and breadth shares for
+    the Sectors now card (item 068): live data, not part of the stored
+    snapshot — the card always shows the last cycle."""
+    with get_session_maker()() as session:
+        row = session.execute(
+            select(Cycle)
+            .where(Cycle.kind == "cycle")
+            .order_by(Cycle.scheduled_time.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if row is None or not row.sectors:
+        return None
+
+    def dec(value: Any) -> float | str | None:
+        return float(value) if value is not None else None
+
+    raw = row.sectors or {}
+    entries = [
+        {
+            "rank": entry.get("rank"),
+            "etf": entry.get("etf"),
+            "sector": sector,
+            "rs_vs_spy_pct": dec(entry.get("rs_vs_spy_pct")),
+        }
+        for sector, entry in raw.items()
+        if isinstance(entry, dict)
+    ]
+    entries.sort(
+        key=lambda e: (
+            e["rank"] is None,
+            e["rank"] if e["rank"] is not None else 0,
+            str(e["sector"]),
+        )
+    )
+    return {
+        "at": row.scheduled_time.isoformat(),
+        "breadth": {
+            "above_sma50_pct": dec(row.breadth_above_sma50_pct),
+            "above_sma200_pct": dec(row.breadth_above_sma200_pct),
+            "ema_up_pct": dec(row.breadth_ema_up_pct),
+            "up_today_pct": dec(row.breadth_up_today_pct),
+        },
+        "sectors": entries,
+    }
 
 
 def _strategy(session: Any, raw: str | None) -> int | None:
@@ -74,6 +121,7 @@ def insights(request: Request, strategy: str | None = None, period: str = "run")
             "strategies": _strategy_list(session),
             "period": period,
             "strategy": strategy or "live",
+            "sectors_now": _sectors_now(),
             "empty": snapshot is None,
             "snapshot": (
                 {

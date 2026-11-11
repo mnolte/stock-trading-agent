@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-import type { HeaderState, VixPayload } from '../types/api';
+import type { BreadthPayload, HeaderState, VixPayload } from '../types/api';
 import { displayTime, fmtWeekdayDayShort, nyTime } from '../format';
 import { fmtVixClose, vixHeaderTitle, vixPhoneTitle } from '../vix';
 import { Chip } from './Chip';
@@ -53,7 +53,13 @@ function Bar({ width, height = 14 }: { width: number | string; height?: number }
 /** "VIX 17.4" on the Regime label line (item 060): hover carries the
  * close's date, percentile, 5-session change and the VIXY moves. Stale
  * is amber with the close's date; missing is a muted "—". */
-function VixTag({ vix }: { vix: VixPayload | null | undefined }) {
+function VixTag({
+  vix,
+  breadth,
+}: {
+  vix: VixPayload | null | undefined;
+  breadth?: BreadthPayload | null;
+}) {
   const tagStyle: React.CSSProperties = {
     fontFamily: 'var(--sa-font-mono)',
     fontSize: 'var(--sa-text-xs)',
@@ -75,7 +81,7 @@ function VixTag({ vix }: { vix: VixPayload | null | undefined }) {
   }
   const stale = vix.stale === true && vix.date !== null;
   return (
-    <span title={vixHeaderTitle(vix)} style={tagStyle}>
+    <span title={vixHeaderTitle(vix, breadth)} style={tagStyle}>
       VIX{' '}
       <span style={{ color: stale ? 'var(--sa-warning-text)' : 'var(--sa-text-2)' }}>
         {fmtVixClose(vix.close)}
@@ -405,7 +411,7 @@ export function Header({
                 >
                   Regime
                 </span>
-                {loading ? <Bar width={72} height={12} /> : <VixTag vix={state.vix} />}
+                {loading ? <Bar width={72} height={12} /> : <VixTag vix={state.vix} breadth={state.breadth} />}
               </div>
               {loading ? <Bar width={72} height={22} /> : <Chip variant={regimeVariant(state.regime)}>{state.regime}</Chip>}
             </div>

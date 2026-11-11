@@ -20,11 +20,12 @@ import {
   formatEarnings,
   formatLastAction,
   formatPrice,
+  formatSector,
   rulesColor,
   rulesLabel,
 } from './watchlistFormat';
 
-const GRID = '90px 110px 90px minmax(200px, 1.3fr) minmax(150px, 1fr) 90px';
+const GRID = '90px 110px 90px 98px minmax(200px, 1.3fr) minmax(150px, 1fr) 90px';
 // Screened mode adds a leading rank column (docs/SPEC.md: the rank shows
 // on the Universe screen and the dashboard).
 const GRID_RANKED = `48px ${GRID}`;
@@ -134,6 +135,7 @@ export function Watchlist({
               { label: 'Symbol' },
               { label: 'Price', align: 'right' },
               { label: 'Day', align: 'right' },
+              { label: 'Sector' },
               { label: 'Rules' },
               { label: 'Last action' },
               { label: 'Earnings' },
@@ -202,7 +204,7 @@ export function Watchlist({
         )}
       </div>
       <div style={{ overflowX: 'auto', minWidth: 0 }}>
-        <div role="list" aria-label="Watchlist" style={{ minWidth: '760px' }}>
+        <div role="list" aria-label="Watchlist" style={{ minWidth: '890px' }}>
           <div
             aria-hidden="true"
             style={{
@@ -226,6 +228,12 @@ export function Watchlist({
             <span>Symbol</span>
             <span style={{ textAlign: 'right' }}>Price</span>
             <span style={{ textAlign: 'right' }}>Day</span>
+            <span
+              title="The symbol's sector ETF and that sector's rank of 11 by strength vs SPY at the last cycle (item 068). Index funds have none."
+              style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
+            >
+              Sector
+            </span>
             <span>Rules</span>
             <span>Last action</span>
             <span
@@ -292,6 +300,16 @@ export function Watchlist({
                   }}
                 >
                   {formatDayChange(row.day_change_pct)}
+                </span>
+                <span
+                  style={{
+                    fontFamily: 'var(--sa-font-mono)',
+                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-2)',
+                    paddingLeft: '14px',
+                  }}
+                >
+                  {formatSector(row)}
                 </span>
                 <span style={{ fontSize: 'var(--sa-text-md)', color: rulesColor(row) }}>
                   {rulesLabel(row)}

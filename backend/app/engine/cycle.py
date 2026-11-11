@@ -50,7 +50,7 @@ from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock, SessionClock
 from app.notifications.service import Notifier, NullNotifier
 from app.risk.earnings import earnings_exit_due, next_earnings
-from app.risk.gates import evaluate_entry_gates
+from app.risk.gates import evaluate_entry_gates, resolve_sectors
 from app.risk.math import (
     committed_entries,
     open_risk,
@@ -59,6 +59,7 @@ from app.risk.math import (
     trade_risk,
 )
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
+from app.signals.breadth import BreadthService, CycleMarket
 from app.signals.service import SignalService, SymbolEval
 
 NEWS_WINDOW = timedelta(hours=24)
@@ -106,6 +107,7 @@ class CycleRunner:
         on_cycle_done: Callable[[CycleReport], None] | None = None,
         model_health: LiveModelHealth | None = None,
         vix: VixService | None = None,
+        breadth: BreadthService | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -134,6 +136,10 @@ class CycleRunner:
         # VIX fields (item 060): stored on the cycle before decisions;
         # None leaves every VIX column null (older callers, no source).
         self.vix = vix
+        # Breadth and sector fields (item 068): stored on the cycle and
+        # each candidate's market_context; collection only, never a
+        # trading input. None leaves every column null.
+        self.breadth = breadth
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -676,8 +682,15 @@ class CycleRunner:
         vix_symbols = (
             self.vix.reference_symbols() if self.vix is not None else []
         )
+        breadth_symbols = (
+            self.breadth.reference_symbols() if self.breadth is not None else []
+        )
         await self._update_bars(
-            list(dict.fromkeys(symbols + shadow_only + vix_symbols)),
+            list(
+                dict.fromkeys(
+                    symbols + shadow_only + vix_symbols + breadth_symbols
+                )
+            ),
             now,
             report,
         )
@@ -702,6 +715,25 @@ class CycleRunner:
         if self.executor is not None:
             await self.executor.update_session_brakes(include_1h=True)
         evaluation = await self.signals.refresh_eval()
+        # Breadth and the sector table (item 068): stored on the cycle
+        # before decisions and used only for each candidate's
+        # market_context — collection only, never a trading input
+        # (docs/SPEC.md, Breadth and sectors).
+        market: CycleMarket | None = None
+        sector_map: dict[str, str] = {}
+        if self.breadth is not None:
+            try:
+                market = self.breadth.cycle_market(evaluation.items, now)
+                stored_cycle = session.get(Cycle, cycle_id)
+                assert stored_cycle is not None  # noqa: S101 - internal invariant
+                for key, value in market.columns().items():
+                    setattr(stored_cycle, key, value)
+                sector_map = resolve_sectors(self.config, session)
+                session.flush()
+            except Exception:  # noqa: BLE001 - breadth never blocks a cycle
+                logger.exception("breadth/sector fields failed")
+                market = None
+                sector_map = {}
         if shadow_only:
             try:
                 for symbol, (snap, bars_1h, _daily, _todays) in (
@@ -892,6 +924,9 @@ class CycleRunner:
                     else f"rules: {item.rules.status}"
                 ),
                 v2=v2,
+                market_context=self._market_context(
+                    item, market, sector_map
+                ),
             )
             report.decisions.append(decision.id)
         # Hard rule 13: the recorded no_call decisions are durable before
@@ -919,6 +954,8 @@ class CycleRunner:
                 call_responses,
                 max_calls,
                 account,
+                market=market,
+                symbol_sectors=sector_map,
             )
         else:
             for i, item in enumerate(reviews):
@@ -940,6 +977,8 @@ class CycleRunner:
                     now=now,
                     report=report,
                     call_responses=call_responses,
+                    market=market,
+                    symbol_sectors=sector_map,
                 )
                 if self.executor is not None:
                     await self._apply_item(
@@ -999,6 +1038,9 @@ class CycleRunner:
                     rules=item.rules,
                     reason="call_cap",
                     detail="call cap reached",
+                    market_context=self._market_context(
+                        item, market, sector_map
+                    ),
                 )
                 report.decisions.append(decision.id)
             session.commit()
@@ -1010,6 +1052,22 @@ class CycleRunner:
 
     # ------------------------------------------------------------------
     # per-item pipeline (shared by rank and expected_profit paths)
+
+    def _market_context(
+        self,
+        item: Any,
+        market: CycleMarket | None,
+        sector_map: dict[str, str],
+    ) -> dict[str, Any] | None:
+        """The candidate's sector fields for ``decisions.market_context``
+        (item 068): stored for analysis, never part of the model's input
+        or the prompt. Held decisions get none — the field describes a
+        candidate's sector at decision time."""
+        if market is None or item.rules.status == STATUS_HELD:
+            return None
+        return market.decision_context(
+            sector_map.get(item.symbol), item.bars_1h
+        )
 
     async def _decide_item(
         self,
@@ -1027,9 +1085,14 @@ class CycleRunner:
         now: datetime,
         report: CycleReport,
         call_responses: list[ModelResponse],
+        market: CycleMarket | None = None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> Decision:
         """Build the snapshot and options, then either record the code
         no_call or run the model call — one stored decision either way."""
+        market_context = self._market_context(
+            item, market, symbol_sectors or {}
+        )
         from app.logging_config import ev
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
@@ -1318,6 +1381,7 @@ class CycleRunner:
                 reason="checks",
                 detail=checks_blocked,
                 v2=v2,
+                market_context=market_context,
             )
         elif (
             context == "candidate"
@@ -1357,6 +1421,7 @@ class CycleRunner:
                 reason=price_reason,
                 detail=price_reason,
                 v2=v2,
+                market_context=market_context,
             )
         elif (
             context == "candidate"
@@ -1377,6 +1442,7 @@ class CycleRunner:
                 reason="no_options",
                 detail=v2.reason or "no option met the rules",
                 v2=v2,
+                market_context=market_context,
             )
         else:
             report.calls += 1
@@ -1398,6 +1464,7 @@ class CycleRunner:
                     if self.model_health is not None
                     else None
                 ),
+                market_context=market_context,
             )
         return decision
 
@@ -1511,6 +1578,8 @@ class CycleRunner:
         call_responses: list[ModelResponse],
         max_calls: int,
         account: Any,
+        market: CycleMarket | None = None,
+        symbol_sectors: dict[str, str] | None = None,
     ) -> None:
         """Held first, then pre-score, collect, score, choose, submit.
 
@@ -1551,6 +1620,8 @@ class CycleRunner:
                 now=now,
                 report=report,
                 call_responses=call_responses,
+                market=market,
+                symbol_sectors=symbol_sectors or {},
             )
             await self._apply_item(
                 session,
@@ -1704,6 +1775,8 @@ class CycleRunner:
                 now=now,
                 report=report,
                 call_responses=call_responses,
+                market=market,
+                symbol_sectors=symbol_sectors or {},
             )
             session.commit()
             report.decisions.append(decision.id)
@@ -1746,6 +1819,9 @@ class CycleRunner:
                 rules=item.rules,
                 reason="call_cap",
                 detail="call cap reached",
+                market_context=self._market_context(
+                    item, market, symbol_sectors or {}
+                ),
             )
             report.decisions.append(decision.id)
         # Price-blocked candidates get their stored no_call too — the
@@ -1767,6 +1843,8 @@ class CycleRunner:
                 now=now,
                 report=report,
                 call_responses=call_responses,
+                market=market,
+                symbol_sectors=symbol_sectors or {},
             )
             report.decisions.append(decision.id)
         session.commit()

@@ -85,6 +85,7 @@ from app.secrets_service import (
 )
 from app.shadows.portfolio import LiveGateState
 from app.shadows.runner import ShadowRunner
+from app.signals.breadth import BreadthService
 from app.signals.service import SignalService
 from app.universe.service import UniverseService
 
@@ -1041,6 +1042,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     vix_service = VixService(
         sources.vix, market_data, config, clock
     )
+    # Breadth and sector ETFs (item 068): bars every cycle like the
+    # other reference symbols — stored and shown, never a trading input.
+    breadth_service = BreadthService(market_data, config)
     signal_service = SignalService(market_data, calendar_store, config, clock)
     # The llm_cache is shared: live and shadows write through to it (never
     # read it), backtests read it — a rerun on identical inputs is free.
@@ -1130,6 +1134,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             notify=lambda topics: bus.publish(*topics),
         ),
         vix=vix_service,
+        breadth=breadth_service,
     )
     def live_gate_state() -> LiveGateState:
         from app.db.base import get_session_maker
@@ -1185,7 +1190,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         calendar_store, market_data, sources, config, clock, vix_service
     )
     today = clock.now().astimezone(NY_TZ).date()
-    await market_data.refresh_history(today)
+    # The sector ETFs join the history fill like the universe: the
+    # cycle's 3-day top-up alone would never reach the 20-bar
+    # relative-strength window (item 068).
+    await market_data.refresh_history(
+        today,
+        symbols=market_data.universe() + breadth_service.reference_symbols(),
+    )
 
     # The pool seeds once at startup; the daily screen runs from its
     # 08:10 New York job — in screened mode its eligible list is what

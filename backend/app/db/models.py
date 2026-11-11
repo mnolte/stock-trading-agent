@@ -132,6 +132,15 @@ class Cycle(Base):
     vixy_change_today_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     vixy_change_since_vix_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     vix_stale: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # Breadth and sectors (item 068): the four universe breadth shares
+    # and the per-cycle sector-ETF table. Display and stored analysis
+    # only — never a trading input. Null before item 068 and whenever
+    # fewer than market.breadth.min_symbols symbols were computed.
+    breadth_above_sma50_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    breadth_above_sma200_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    breadth_ema_up_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    breadth_up_today_pct: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    sectors: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Decision(Base):
@@ -175,6 +184,10 @@ class Decision(Base):
     # Entry selection (PR 33): the score and chosen/not-chosen record of
     # one scored candidate decision in expected_profit mode.
     selection: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Sector fields of a candidate decision (item 068): sector_etf,
+    # sector_rank, sector_rs_vs_spy_pct, rs_vs_sector_pct — stored for
+    # analysis, never part of the model's input or the prompt.
+    market_context: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
 
 
 class Order(Base):

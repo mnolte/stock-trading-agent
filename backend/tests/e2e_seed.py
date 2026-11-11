@@ -129,6 +129,25 @@ def seed_v2_decision() -> None:
             finished_at=datetime(2026, 10, 15, 19, 46, 12),
             duration_seconds=12.0,
             status="done",
+            # Item 068: the breadth shares and sector table the GUI's
+            # Sectors now card and watchlist column read.
+            breadth_above_sma50_pct=Decimal("31.00"),
+            breadth_above_sma200_pct=Decimal("44.00"),
+            breadth_ema_up_pct=Decimal("36.00"),
+            breadth_up_today_pct=Decimal("44.00"),
+            sectors={
+                "Technology": {"etf": "XLK", "rs_vs_spy_pct": 2.31, "rank": 2},
+                "Financials": {"etf": "XLF", "rs_vs_spy_pct": 0.84, "rank": 5},
+                "Communication Services": {"etf": "XLC", "rs_vs_spy_pct": -0.42, "rank": 8},
+                "Industrials": {"etf": "XLI", "rs_vs_spy_pct": 0.15, "rank": 7},
+                "Consumer Discretionary": {"etf": "XLY", "rs_vs_spy_pct": 1.12, "rank": 4},
+                "Materials": {"etf": "XLB", "rs_vs_spy_pct": -1.05, "rank": 10},
+                "Health Care": {"etf": "XLV", "rs_vs_spy_pct": 0.61, "rank": 6},
+                "Consumer Staples": {"etf": "XLP", "rs_vs_spy_pct": -0.18, "rank": 9},
+                "Energy": {"etf": "XLE", "rs_vs_spy_pct": 1.84, "rank": 3},
+                "Utilities": {"etf": "XLU", "rs_vs_spy_pct": -1.62, "rank": 11},
+                "Real Estate": {"etf": "XLRE", "rs_vs_spy_pct": 2.97, "rank": 1},
+            },
         )
         session.add(cycle)
         session.flush()
@@ -190,6 +209,12 @@ def seed_v2_decision() -> None:
                 },
                 chosen_option="D",
                 explanation_check={"passed": True, "bad_ids": [], "bad_numbers": []},
+                market_context={
+                    "sector_etf": "XLK",
+                    "sector_rank": 2,
+                    "sector_rs_vs_spy_pct": 2.31,
+                    "rs_vs_sector_pct": 0.64,
+                },
         )
         session.add(decision)
         session.flush()
