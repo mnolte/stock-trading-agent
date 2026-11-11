@@ -1003,6 +1003,41 @@ async def test_shadow_row_keeps_the_snapshot_on_a_live_linked_symbol(
     assert msft.input_snapshot["symbol"] == "MSFT"
 
 
+async def test_duplicate_live_decisions_for_one_symbol_keep_the_last(
+    sf: sessionmaker[Session],
+) -> None:
+    """Live's expected-profit pass can store two evaluations of one
+    symbol in a cycle (a quote that went stale mid-cycle is re-checked).
+    The shadow writes one row per symbol — the last evaluation — and
+    the cycle pass survives instead of dying on the unique constraint."""
+    sid = _strategy(sf, "Rules only", kind="rules_only")
+    _pending(
+        sf,
+        sid,
+        symbol="WMT",
+        status="open",
+        entry=Decimal("100"),
+        opened_at=_naive(datetime(2026, 10, 14, 11, 0, tzinfo=NY_TZ)),
+        bars_through=_naive(CYCLE),
+    )
+    cycle_id = _seed(
+        sf,
+        [
+            ("MSFT", "skip", None, _snap("MSFT")),
+            ("WMT", "no_call", "price_stale", _snap("WMT", price=100.0, rank=10)),
+            ("WMT", "no_call", "price_stale", _snap("WMT", price=101.5, rank=10)),
+        ],
+    )
+    await _runner(sf, FakeClock(CYCLE + timedelta(minutes=1))).after_cycle(cycle_id)
+    rows = _rows(sf, sid)
+    assert set(rows) == {"MSFT", "WMT"}
+    wmt = rows["WMT"]
+    assert wmt.context == "held"
+    assert wmt.final_action == "hold"
+    assert wmt.input_snapshot is not None
+    assert wmt.input_snapshot["price"] == 101.5
+
+
 # ----------------------------------------------------------------------
 # "same as live"
 

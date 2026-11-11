@@ -23,12 +23,42 @@ from sqlalchemy import select
 E2E_RUN_START = datetime(2026, 10, 5, 13, 30)  # Monday 09:30 New York, naive UTC
 
 
+def _seed_fingerprint() -> str:
+    import hashlib
+
+    here = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for name in ("e2e_seed.py", "e2e_backtest_seed.py"):
+        digest.update((here / name).read_bytes())
+    return digest.hexdigest()
+
+
 def main() -> None:
     from app.config import get_config
     from app.db.base import get_session_maker
     from app.db.models import Run
 
-    Path(get_config().env.sa_db_path).parent.mkdir(parents=True, exist_ok=True)
+    env = get_config().env
+    db_path = Path(env.sa_db_path)
+    data_dir = Path(env.sa_data_dir)
+    marker = data_dir / "e2e-seed.sha"
+    fingerprint = _seed_fingerprint()
+    # CI's actions/cache restore-keys can hand this job a scratch DB seeded
+    # by an older e2e_seed: alembic migrates the schema forward but not the
+    # rows, so a fingerprint mismatch means the seeded rows are stale. The
+    # cached data dir goes stale with it — e2e_backtest_seed would reuse an
+    # old run-<id> strategy DB and hit its UNIQUE constraints.
+    if not (marker.exists() and marker.read_text().strip() == fingerprint):
+        import shutil
+
+        from app.backtests.store import run_dir_for
+
+        for suffix in ("", "-wal", "-shm"):
+            Path(f"{db_path}{suffix}").unlink(missing_ok=True)
+        backtests = run_dir_for(get_config(), 0).parent
+        if backtests.exists():
+            shutil.rmtree(backtests)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     command.upgrade(Config(str(Path(__file__).resolve().parents[1] / "alembic.ini")), "head")
     with get_session_maker()() as session:
         first = session.execute(select(Run).order_by(Run.id).limit(1)).scalar_one_or_none()
@@ -42,6 +72,8 @@ def main() -> None:
         session.commit()
     seed_v2_decision()
     seed_economic_events()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"{fingerprint}\n")
 
 
 def seed_economic_events() -> None:
@@ -183,6 +215,25 @@ def seed_v2_decision() -> None:
             finished_at=datetime(2026, 10, 15, 19, 46, 12),
             duration_seconds=12.0,
             status="done",
+            # Item 068: the breadth shares and sector table the GUI's
+            # Sectors now card and watchlist column read.
+            breadth_above_sma50_pct=Decimal("31.00"),
+            breadth_above_sma200_pct=Decimal("44.00"),
+            breadth_ema_up_pct=Decimal("36.00"),
+            breadth_up_today_pct=Decimal("44.00"),
+            sectors={
+                "Technology": {"etf": "XLK", "rs_vs_spy_pct": 2.31, "rank": 2},
+                "Financials": {"etf": "XLF", "rs_vs_spy_pct": 0.84, "rank": 5},
+                "Communication Services": {"etf": "XLC", "rs_vs_spy_pct": -0.42, "rank": 8},
+                "Industrials": {"etf": "XLI", "rs_vs_spy_pct": 0.15, "rank": 7},
+                "Consumer Discretionary": {"etf": "XLY", "rs_vs_spy_pct": 1.12, "rank": 4},
+                "Materials": {"etf": "XLB", "rs_vs_spy_pct": -1.05, "rank": 10},
+                "Health Care": {"etf": "XLV", "rs_vs_spy_pct": 0.61, "rank": 6},
+                "Consumer Staples": {"etf": "XLP", "rs_vs_spy_pct": -0.18, "rank": 9},
+                "Energy": {"etf": "XLE", "rs_vs_spy_pct": 1.84, "rank": 3},
+                "Utilities": {"etf": "XLU", "rs_vs_spy_pct": -1.62, "rank": 11},
+                "Real Estate": {"etf": "XLRE", "rs_vs_spy_pct": 2.97, "rank": 1},
+            },
         )
         session.add(cycle)
         session.flush()
@@ -244,6 +295,12 @@ def seed_v2_decision() -> None:
                 },
                 chosen_option="D",
                 explanation_check={"passed": True, "bad_ids": [], "bad_numbers": []},
+                market_context={
+                    "sector_etf": "XLK",
+                    "sector_rank": 2,
+                    "sector_rs_vs_spy_pct": 2.31,
+                    "rs_vs_sector_pct": 0.64,
+                },
         )
         session.add(decision)
         session.flush()

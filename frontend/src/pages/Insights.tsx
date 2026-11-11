@@ -14,6 +14,7 @@ import {
   SkeletonText,
   SkeletonTiles,
 } from '../components/skeletons';
+import { displayTime, signedPct } from '../format';
 import { EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
 import { ghostButton } from '../components/errorPageStyles';
 
@@ -103,10 +104,29 @@ interface Snapshot {
   };
 }
 
+/** The latest cycle's sector table + breadth for the Sectors now card
+ * (item 068) — live data, not part of the stored snapshot. */
+interface SectorsNow {
+  at: string;
+  breadth: {
+    above_sma50_pct: number | null;
+    above_sma200_pct: number | null;
+    ema_up_pct: number | null;
+    up_today_pct: number | null;
+  } | null;
+  sectors: {
+    rank: number | null;
+    etf: string | null;
+    sector: string;
+    rs_vs_spy_pct: number | null;
+  }[];
+}
+
 interface InsightsResponse {
   strategies: { id: string; name: string; kind: string }[];
   period: string;
   empty: boolean;
+  sectors_now?: SectorsNow | null;
   snapshot: Snapshot | null;
 }
 
@@ -165,6 +185,22 @@ function fmtUsd(v: string | null | undefined): string {
 }
 function fmtPct(v: string | null | undefined): string {
   return v == null ? '—' : `${Number(v).toFixed(1)}%`;
+}
+
+function breadthNote(
+  breadth: SectorsNow['breadth'],
+): string {
+  if (!breadth) return '';
+  const parts: string[] = [];
+  if (breadth.above_sma50_pct != null) {
+    parts.push(
+      `${Math.round(breadth.above_sma50_pct)}% of the universe above SMA 50`,
+    );
+  }
+  if (breadth.up_today_pct != null) {
+    parts.push(`${Math.round(breadth.up_today_pct)}% up today`);
+  }
+  return parts.length ? ` Breadth then: ${parts.join(', ')}.` : '';
 }
 
 function RangeBar({ lo, hi, avg }: { lo: string | null | undefined; hi: string | null | undefined; avg: string | null | undefined }) {
@@ -707,6 +743,66 @@ export default function Insights() {
           </div>
         </>
       )}
+      {/* sectors now — the last cycle's sector table (item 068) */}
+      {res.data?.sectors_now && (
+        <Card label="Sectors now" refreshing={res.refreshing}>
+          <div style={{ overflowX: 'auto', minWidth: 0 }}>
+            <table
+              style={{
+                minWidth: '420px',
+                borderCollapse: 'collapse',
+                fontSize: 'var(--sa-text-sm)',
+              }}
+            >
+              <thead>
+                <tr style={{ color: 'var(--sa-text-muted)', textAlign: 'left' }}>
+                  <th style={{ padding: '6px 8px' }}>Rank</th>
+                  <th style={{ padding: '6px 8px' }}>ETF</th>
+                  <th style={{ padding: '6px 8px' }}>Sector</th>
+                  <th style={{ padding: '6px 8px', textAlign: 'right' }}>
+                    vs SPY · 20 × 1h bars
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {res.data.sectors_now.sectors.map((e) => (
+                  <tr
+                    key={e.sector}
+                    style={{ borderTop: '1px solid var(--sa-border)' }}
+                  >
+                    <td style={{ padding: '6px 8px', fontFamily: 'var(--sa-font-mono)' }}>
+                      {e.rank ?? '—'}
+                    </td>
+                    <td style={{ padding: '6px 8px', fontFamily: 'var(--sa-font-mono)' }}>
+                      {e.etf ?? '—'}
+                    </td>
+                    <td style={{ padding: '6px 8px' }}>{e.sector}</td>
+                    <td
+                      style={{
+                        padding: '6px 8px',
+                        fontFamily: 'var(--sa-font-mono)',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {e.rs_vs_spy_pct != null
+                        ? signedPct(e.rs_vs_spy_pct, 2)
+                        : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)', marginTop: 'var(--sa-space-2)' }}>
+            At the {displayTime(res.data.sectors_now.at)} cycle, from each
+            sector ETF's bars with the same strength measure as the stocks
+            (item 068).
+            {breadthNote(res.data.sectors_now.breadth)} Reference only:
+            nothing in trading uses it yet.
+          </div>
+        </Card>
+      )}
+
       {res.loading && !snap && (
         <div className="sa-loading" aria-hidden="true">
           <SkeletonTiles count={6} />

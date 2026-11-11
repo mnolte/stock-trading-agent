@@ -67,6 +67,7 @@ from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
 from app.risk.budget import Meter, risk_budget
 from app.risk.earnings import next_earnings
+from app.risk.gates import resolve_sectors
 from app.risk.math import open_risk
 from app.secrets_service import (
     GROUP_LABELS,
@@ -166,16 +167,61 @@ def _vix_payload(row: Cycle | None) -> dict[str, object] | None:
     }
 
 
-def _latest_cycle_vix(request: Request) -> dict[str, object] | None:
-    """VIX fields of the newest decision cycle — what the header shows."""
+def _latest_cycle(request: Request) -> Cycle | None:
+    """The newest decision cycle row — what the header and watchlist
+    read their stored market fields from."""
     with get_session_maker()() as session:
-        row = session.execute(
+        return session.execute(
             select(Cycle)
             .where(Cycle.kind == "cycle")
             .order_by(Cycle.scheduled_time.desc())
             .limit(1)
         ).scalar_one_or_none()
-    return _vix_payload(row)
+
+
+def _latest_cycle_vix(request: Request) -> dict[str, object] | None:
+    """VIX fields of the newest decision cycle — what the header shows."""
+    return _vix_payload(_latest_cycle(request))
+
+
+def _breadth_payload(row: Cycle | None) -> dict[str, object] | None:
+    """The cycle's four breadth shares for the header hover (item
+    068). Numbers stay strings — the GUI formats them."""
+    if row is None:
+        return None
+
+    def dec(value: Decimal | None) -> str | None:
+        return str(value) if value is not None else None
+
+    return {
+        "above_sma50_pct": dec(row.breadth_above_sma50_pct),
+        "above_sma200_pct": dec(row.breadth_above_sma200_pct),
+        "ema_up_pct": dec(row.breadth_ema_up_pct),
+        "up_today_pct": dec(row.breadth_up_today_pct),
+    }
+
+
+def _sector_index(
+    request: Request,
+) -> dict[str, dict[str, object]]:
+    """symbol -> {"etf", "rank"} from the latest cycle's sector table
+    and the symbol's resolved sector (item 068). Index and unknown
+    sectors get nulls — the GUI shows a dash."""
+    row = _latest_cycle(request)
+    sectors = row.sectors if row is not None and row.sectors else {}
+    if not sectors:
+        return {}
+    with get_session_maker()() as session:
+        symbol_sector = resolve_sectors(get_config(), session)
+    out: dict[str, dict[str, object]] = {}
+    for symbol, sector in symbol_sector.items():
+        entry = sectors.get(sector)
+        entry = entry if isinstance(entry, dict) else None
+        out[symbol] = {
+            "sector_etf": entry.get("etf") if entry else None,
+            "sector_rank": entry.get("rank") if entry else None,
+        }
+    return out
 
 
 def _cycle_vix(cycle_id: int | None) -> dict[str, object] | None:
@@ -294,6 +340,7 @@ def header_state(request: Request) -> dict[str, object]:
         "today_eur": _fmt_signed(_eur(account["today"], request)),
         "regime": _regime_label(request),
         "vix": _latest_cycle_vix(request),
+        "breadth": _breadth_payload(_latest_cycle(request)),
         "kill_switch": kill_on,
         "resume_blocked": _keys_issue(request) is not None,
         "keys_issue": _keys_issue(request),
@@ -335,6 +382,7 @@ def watchlist(request: Request) -> dict[str, object]:
             config.get("risk", "earnings_blackout_days", default=3)
         ),
     }
+    sector_index = _sector_index(request)
     if result is None:
         return {"computed_at": None, "regime": None, "rows": [], **meta}
     return {
@@ -379,6 +427,12 @@ def watchlist(request: Request) -> dict[str, object]:
                 ),
                 "rank": row.rank,
                 "days_to_earnings": row.days_to_earnings,
+                "sector_etf": (
+                    sector_index.get(row.symbol, {}).get("sector_etf")
+                ),
+                "sector_rank": (
+                    sector_index.get(row.symbol, {}).get("sector_rank")
+                ),
             }
             for row in result.rows
         ],

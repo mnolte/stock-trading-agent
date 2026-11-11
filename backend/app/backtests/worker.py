@@ -752,12 +752,21 @@ async def run_backtest(
             raise _NoSessions()
 
         symbols = _run_symbols(config, live_sf)
-        # The VIX reference ETF gets bars like live but is never a
-        # candidate — bars only, no earnings/news download (item 060).
+        # The VIX reference ETF and the sector ETFs (item 068) get bars
+        # like live but are never candidates — bars only, no
+        # earnings/news download (items 060, 068).
         reference_etf = str(
             config.get("market", "vix", "reference_etf", default="VIXY")
         ).upper()
-        bar_symbols = list(dict.fromkeys(symbols + [reference_etf]))
+        sector_etfs = [
+            str(etf).upper()
+            for etf in (
+                config.get("market", "sector_etfs", default={}) or {}
+            ).values()
+        ]
+        bar_symbols = list(
+            dict.fromkeys(symbols + [reference_etf] + sector_etfs)
+        )
         warnings += await _fill_market_db(
             run=run,
             days=all_days,

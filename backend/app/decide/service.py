@@ -195,6 +195,7 @@ class DecisionService:
         current_stop: Decimal | None,
         v2: V2Build | None = None,
         on_response: Callable[[ModelResponse], None] | None = None,
+        market_context: dict[str, Any] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
         send_snapshot = (
@@ -400,6 +401,7 @@ class DecisionService:
             sent_at=sent_at,
             v2=v2,
             send_snapshot=send_snapshot,
+            market_context=market_context,
         )
         return decision
 
@@ -415,6 +417,7 @@ class DecisionService:
         reason: str,
         detail: str | None = None,
         v2: V2Build | None = None,
+        market_context: dict[str, Any] | None = None,
     ) -> Decision:
         """Store a decision row when code blocked the call before it happened."""
         if reason not in NO_CALL_REASONS:
@@ -454,6 +457,7 @@ class DecisionService:
             final_action=NO_CALL,
             no_call_reason=reason,
             v2=v2,
+            market_context=market_context,
         )
 
     def _store(
@@ -473,6 +477,7 @@ class DecisionService:
         sent_at: datetime | None = None,
         v2: V2Build | None = None,
         send_snapshot: dict[str, Any] | None = None,
+        market_context: dict[str, Any] | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -525,6 +530,7 @@ class DecisionService:
                 if v2 is not None
                 else None
             ),
+            market_context=market_context,
         )
         session.add(decision)
         session.flush()

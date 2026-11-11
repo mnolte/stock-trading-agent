@@ -408,6 +408,7 @@ def _skip_dims(
     scheduled: datetime,
     sector: str | None,
     opening_gap_pct: Decimal = Decimal("1"),
+    market_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Slice keys for a skip (same names as trade dims)."""
     h = snap.get("indicators_1h") or {}
@@ -472,6 +473,32 @@ def _skip_dims(
         "volatility": None,
         "strength_vs_spy": None,
         "spy_that_day": None,
+        # Breadth is a tercile like volatility — its edges come from the
+        # trades, so skips stay unsliced there (item 068). Sector rank
+        # and stock-vs-sector are fixed buckets and do carry over.
+        "breadth": None,
+        "sector_rank": (
+            (
+                "1–3"
+                if int(market_context["sector_rank"]) <= 3
+                else "4–8"
+                if int(market_context["sector_rank"]) <= 8
+                else "9–11"
+            )
+            if market_context is not None
+            and market_context.get("sector_rank") is not None
+            else None
+        ),
+        "stock_vs_sector": (
+            (
+                "above 0"
+                if float(market_context["rs_vs_sector_pct"]) > 0
+                else "below 0"
+            )
+            if market_context is not None
+            and market_context.get("rs_vs_sector_pct") is not None
+            else None
+        ),
     }
     return out
 
@@ -508,15 +535,17 @@ def _live_inputs(
     if window_start is not None:
         dec_q = dec_q.where(Cycle.scheduled_time >= window_start)
     dec_rows = session.execute(dec_q).all()
-    # VIX slice inputs live on the cycle, not the model snapshot (item
-    # 060): map each decision to its cycle's two VIX fields.
+    # VIX and breadth slice inputs live on the cycle, not the model
+    # snapshot (items 060, 068): map each decision to its cycle's
+    # stored fields.
     vix_by_decision = {
-        row[0]: (row[1], row[2])
+        row[0]: (row[1], row[2], row[3])
         for row in session.execute(
             select(
                 Decision.id,
                 Cycle.vix_percentile_1y,
                 Cycle.vix_change_5d_pct,
+                Cycle.breadth_above_sma50_pct,
             )
             .join(Cycle, Decision.cycle_id == Cycle.id)
             .where(Cycle.kind == "cycle")
@@ -615,6 +644,9 @@ def _live_inputs(
         )
         snap = (decision.input_snapshot or {}) if decision else {}
         dims = _dims_from_snapshot(snap) if snap else {}
+        mc: dict[str, Any] = (
+            decision.market_context if decision is not None else None
+        ) or {}
         stop_basis = target_basis = None
         if decision is not None:
             stop_basis, target_basis = _basis(decision)
@@ -703,8 +735,25 @@ def _live_inputs(
                     else None
                 ),
                 vix_change_5d_pct=(
-                    vix_by_decision.get(p.entry_decision_id, (None, None))[1]
+                    vix_by_decision.get(p.entry_decision_id, (None, None, None))[1]
                     if p.entry_decision_id is not None
+                    else None
+                ),
+                breadth_above_sma50_pct=(
+                    vix_by_decision.get(
+                        p.entry_decision_id, (None, None, None)
+                    )[2]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
+                sector_rank=(
+                    int(mc["sector_rank"])
+                    if mc.get("sector_rank") is not None
+                    else None
+                ),
+                rs_vs_sector_pct=(
+                    _dec(mc.get("rs_vs_sector_pct"))
+                    if mc.get("rs_vs_sector_pct") is not None
                     else None
                 ),
                 confidence=_dec((decision.model_output or {}).get("confidence"))
@@ -795,7 +844,11 @@ def _live_inputs(
                     price=_dec(snap_skip.get("price")),
                     atr_1h=_dec(h.get("atr14")),
                     dims=_skip_dims(
-                        d.symbol, snap_skip, scheduled, sectors.get(d.symbol)
+                        d.symbol,
+                        snap_skip,
+                        scheduled,
+                        sectors.get(d.symbol),
+                        market_context=d.market_context,
                     ),
                 )
             )
@@ -985,17 +1038,30 @@ def _shadow_inputs(
         .order_by(ShadowDecision.id)
     )
     dec_rows = session.execute(dec_q).all()
-    # Same VIX-from-cycle map as the live section (item 060).
+    # Same cycle-fields map as the live section (items 060, 068).
     vix_by_decision = {
-        row[0]: (row[1], row[2])
+        row[0]: (row[1], row[2], row[3])
         for row in session.execute(
             select(
                 ShadowDecision.id,
                 Cycle.vix_percentile_1y,
                 Cycle.vix_change_5d_pct,
+                Cycle.breadth_above_sma50_pct,
             )
             .join(Cycle, ShadowDecision.cycle_id == Cycle.id)
             .where(Cycle.kind == "cycle")
+        ).all()
+    }
+    # market_context lives on the live decision a shadow row links to
+    # (item 068): shadow decision id -> its market_context.
+    market_context_by_shadow = {
+        row[0]: row[1]
+        for row in session.execute(
+            select(ShadowDecision.id, Decision.market_context)
+            .join(
+                Decision,
+                ShadowDecision.live_decision_id == Decision.id,
+            )
         ).all()
     }
 
@@ -1049,6 +1115,11 @@ def _shadow_inputs(
         )
         snap = _shadow_snapshot(session, decision) if decision else {}
         dims = _dims_from_snapshot(snap) if snap else {}
+        mc: dict[str, Any] = (
+            market_context_by_shadow.get(p.entry_decision_id)
+            if p.entry_decision_id is not None
+            else None
+        ) or {}
         stop_basis = target_basis = None
         if decision is not None:
             stop_basis, target_basis = _basis(decision)
@@ -1116,8 +1187,25 @@ def _shadow_inputs(
                     else None
                 ),
                 vix_change_5d_pct=(
-                    vix_by_decision.get(p.entry_decision_id, (None, None))[1]
+                    vix_by_decision.get(p.entry_decision_id, (None, None, None))[1]
                     if p.entry_decision_id is not None
+                    else None
+                ),
+                breadth_above_sma50_pct=(
+                    vix_by_decision.get(
+                        p.entry_decision_id, (None, None, None)
+                    )[2]
+                    if p.entry_decision_id is not None
+                    else None
+                ),
+                sector_rank=(
+                    int(mc["sector_rank"])
+                    if mc.get("sector_rank") is not None
+                    else None
+                ),
+                rs_vs_sector_pct=(
+                    _dec(mc.get("rs_vs_sector_pct"))
+                    if mc.get("rs_vs_sector_pct") is not None
                     else None
                 ),
                 confidence=_dec((decision.model_output or {}).get("confidence"))
@@ -1196,7 +1284,11 @@ def _shadow_inputs(
                     price=_dec(snap.get("price")),
                     atr_1h=_dec(h.get("atr14")),
                     dims=_skip_dims(
-                        d.symbol, snap, scheduled, sectors.get(d.symbol)
+                        d.symbol,
+                        snap,
+                        scheduled,
+                        sectors.get(d.symbol),
+                        market_context=market_context_by_shadow.get(d.id),
                     ),
                 )
             )

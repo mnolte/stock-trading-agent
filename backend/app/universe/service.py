@@ -744,12 +744,11 @@ class UniverseService:
 
         with self._sf() as session:
             pool = self._active_pool(session)
-        # The VIX reference ETF is never screened into the universe —
-        # it stays in the pool but gets no screen row (docs/SPEC.md, VIX).
-        reference = str(
-            self._config.get("market", "vix", "reference_etf", default="VIXY")
-        ).upper()
-        pool = [row for row in pool if row.symbol != reference]
+        # Reference symbols (the VIX ETF, the sector ETFs) are never
+        # screened into the universe — they stay in the pool but get no
+        # screen row (docs/SPEC.md, VIX and Breadth and sectors).
+        reference = set(self._market_data.reference_symbols())
+        pool = [row for row in pool if row.symbol not in reference]
         if not pool:
             raise ScreenError("the universe pool is empty")
 

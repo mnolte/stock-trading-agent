@@ -70,12 +70,24 @@ class MarketDataService:
         )
         extras = self._held_symbols() | {"SPY"}
         symbols = base + sorted(extras - set(base))
-        # The VIX reference ETF gets bars every cycle but is never a
-        # candidate, screened in or traded (docs/SPEC.md, VIX).
-        reference = str(
-            self.config.get("market", "vix", "reference_etf", default="VIXY")
-        ).upper()
-        return [s for s in symbols if s != reference]
+        # Reference symbols get bars every cycle but are never candidates,
+        # screened in or traded (docs/SPEC.md, VIX and Breadth and sectors).
+        excluded = set(self.reference_symbols())
+        return [s for s in symbols if s not in excluded]
+
+    def reference_symbols(self) -> list[str]:
+        """Symbols that get bars but are never candidates: the VIX ETF and
+        the sector ETFs of ``market.sector_etfs`` (item 068)."""
+        out = [
+            str(
+                self.config.get(
+                    "market", "vix", "reference_etf", default="VIXY"
+                )
+            ).upper()
+        ]
+        sector_etfs = self.config.get("market", "sector_etfs", default={}) or {}
+        out += [str(etf).upper() for etf in sector_etfs.values()]
+        return list(dict.fromkeys(out))
 
     def screened_rows(self) -> list[UniverseScreenRow] | None:
         """Eligible rows of the screen currently in effect, in rank order.

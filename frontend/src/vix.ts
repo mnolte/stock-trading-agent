@@ -1,4 +1,4 @@
-import type { VixPayload } from './types/api';
+import type { BreadthPayload, VixPayload } from './types/api';
 import { fmtWeekdayDayShort, signed } from './format';
 
 /** "17.4" — the VIX close at one decimal (design/DESIGN.md numbers). */
@@ -58,13 +58,35 @@ function vixyTail(vix: VixPayload, sincePrefix: string): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
+/** "Breadth: 31% of the universe above SMA 50, 44% up today" — the
+ * breadth segment of the header hover (item 068). */
+export function breadthTitle(
+  breadth: BreadthPayload | null | undefined,
+): string | null {
+  if (!breadth) return null;
+  const parts: string[] = [];
+  const sma50 = pctNum(breadth.above_sma50_pct);
+  const upToday = pctNum(breadth.up_today_pct);
+  if (sma50 !== null) {
+    parts.push(`${Math.round(sma50)}% of the universe above SMA 50`);
+  }
+  if (upToday !== null) parts.push(`${Math.round(upToday)}% up today`);
+  return parts.length ? `Breadth: ${parts.join(', ')}` : null;
+}
+
 /** The header's hover text (design/screens/Main.dc.html). */
-export function vixHeaderTitle(vix: VixPayload): string {
+export function vixHeaderTitle(
+  vix: VixPayload,
+  breadth?: BreadthPayload | null,
+): string {
   if (vix.stale) {
     const day = vix.date ? fmtWeekdayDayShort(vix.date) : null;
-    return day === null
-      ? 'FRED has not posted a newer close; the stored close is kept and marked stale'
-      : `FRED has not posted a newer close; the stored close of ${day} is kept and marked stale`;
+    const staleBase =
+      day === null
+        ? 'FRED has not posted a newer close; the stored close is kept and marked stale'
+        : `FRED has not posted a newer close; the stored close of ${day} is kept and marked stale`;
+    const breadthSeg = breadthTitle(breadth);
+    return breadthSeg === null ? staleBase : `${staleBase} · ${breadthSeg}`;
   }
   const segments: string[] = [];
   if (vix.date !== null) {
@@ -80,6 +102,8 @@ export function vixHeaderTitle(vix: VixPayload): string {
   if (chg !== null) segments.push(`5 sessions ${chg}`);
   const tail = vixyTail(vix, 'VIXY since that close');
   if (tail !== null) segments.push(tail);
+  const breadthSeg = breadthTitle(breadth);
+  if (breadthSeg !== null) segments.push(breadthSeg);
   return `VIX: the market's expected volatility over the next 30 days (Cboe). ${segments.join(' · ')}`;
 }
 

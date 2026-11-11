@@ -8,6 +8,20 @@ market:
     percentile_sessions: 252      # closes the percentile and level are measured over
     stale_sessions: 1             # sessions the newest usable close may lag the last completed one
     reference_etf: VIXY           # bars every cycle; never a candidate, screened in or traded
+  sector_etfs:                   # item 068: sector → its SPDR ETF (Index has none)
+    Technology: XLK
+    Financials: XLF
+    Communication Services: XLC
+    Industrials: XLI
+    Consumer Discretionary: XLY
+    Materials: XLB
+    Health Care: XLV
+    Consumer Staples: XLP
+    Energy: XLE
+    Utilities: XLU
+    Real Estate: XLRE
+  breadth:                       # item 068: per-cycle breadth shares (display only)
+    min_symbols: 20              # under this many computed symbols the fields are null
 
 universe:
   symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, GOOGL, META, JPM, XOM]

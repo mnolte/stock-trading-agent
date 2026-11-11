@@ -480,17 +480,20 @@ class ShadowRunner:
                         # strategy forever, the undecided symbols neither
                         # retried nor marked. Roll the partial rows back
                         # so the next cycle pass retries the whole set.
+                        # Roll back before reading ORM attributes: a failed
+                        # flush expires every object, and touching one
+                        # raises PendingRollbackError instead.
+                        session.rollback()
                         logger.exception(
                             "shadow decide failed for strategy %s cycle %s",
-                            strategy.id, cycle_id,
+                            sr.strategy_id, cycle_id,
                         )
-                        session.rollback()
-                        # llm_calls committed with the partial decisions
-                        # would dangle — drop the cycle's calls with them.
                         stale_ids = select(ShadowDecision.id).where(
-                            ShadowDecision.strategy_id == strategy.id,
+                            ShadowDecision.strategy_id == sr.strategy_id,
                             ShadowDecision.cycle_id == cycle_id,
                         )
+                        # llm_calls committed with the partial decisions
+                        # would dangle — drop the cycle's calls with them.
                         # Null the link, don't delete the call — those
                         # requests were real and cost real money; the
                         # audit and monthly spend stay correct.
@@ -508,7 +511,7 @@ class ShadowRunner:
                         )
                         session.execute(
                             delete(ShadowDecision).where(
-                                ShadowDecision.strategy_id == strategy.id,
+                                ShadowDecision.strategy_id == sr.strategy_id,
                                 ShadowDecision.cycle_id == cycle_id,
                             )
                         )
@@ -640,12 +643,21 @@ class ShadowRunner:
             )
             return
 
-        decisions = [
-            LiveInput(d.symbol, dict(d.input_snapshot or {}), d.id, d.id)
-            for d in session.execute(
-                select(Decision).where(Decision.cycle_id == cycle.id).order_by(Decision.id)
-            ).scalars()
-        ]
+        # Live can store two evaluations of one symbol in a cycle (the
+        # expected-profit pass re-checks a quote that went stale
+        # mid-cycle); a shadow writes one row per symbol, so keep the
+        # last — the freshest input.
+        latest: dict[str, LiveInput] = {}
+        for live_dec in session.execute(
+            select(Decision).where(Decision.cycle_id == cycle.id).order_by(Decision.id)
+        ).scalars():
+            latest[live_dec.symbol] = LiveInput(
+                live_dec.symbol,
+                dict(live_dec.input_snapshot or {}),
+                live_dec.id,
+                live_dec.id,
+            )
+        decisions = sorted(latest.values(), key=lambda d: d.order)
         # Symbols only this shadow holds: live built their snapshots in the
         # same cycle but made no decision (docs/SPEC.md, Running shadows).
         seen = {d.symbol for d in decisions}
