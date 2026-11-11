@@ -90,9 +90,8 @@ STEP 3 · screenshots in docs/screenshots/pr-<n>/: the dashboard strip
 with a release and an FOMC day, Settings → Entry rules, the Insights rows,
 a tagged position card.
 
-Rules: no network in tests; no datetime.now() in engine code; the 15:46
-no-entry rule (schedule.last_cycle_no_entries) is untouched; prompts
-untouched.
+Rules: no network in tests; no datetime.now() in engine code; prompts
+untouched. Builds on 071 (entries allowed at 15:46, cutoff 15:50).
 
 Done when: the FOMC window blocks only the 13:46 cycle on decision days;
 next_release and the tag are stored; the GUI shows them as designed; make
@@ -101,7 +100,7 @@ test and the e2e pass.
 
 ## Why
 
-The earnings blackout covers one stock's report; nothing covers the releases that move every stock at a known time. For FOMC (14:00, inside the session) the risk is concrete: an entry in the 13:46 cycle sits through the statement 14 minutes later, so it gets a rule. For the 08:30 releases a rule is less clear: any entry made that day holds overnight anyway. Marc chose (11 November) to collect first and decide in item 061 with data.
+The earnings blackout covers one stock's report; nothing covers the releases that move every stock at a known time. For FOMC (14:00, inside the session) the risk is concrete: an entry in the 13:46 cycle sits through the statement 14 minutes later, so it gets a rule. For the 08:30 releases a rule is less clear: any entry made the session before holds through the release overnight, so the only real rule would block a whole session. Marc chose (11 November) to collect first and decide in item 061 with data.
 
 ## Open questions for Marc
 

@@ -7,6 +7,9 @@ Newest first. Each entry names the screens it touches.
 - **`Main.dc.html`, cycle counter:** a third line with the next release within 2 sessions ("CPI tomorrow 14:30 · 08:30 NY"). `Main.png`, `Main-1024.png`, `Main-390.png`.
 - **`Settings.dc.html` → Entry rules:** new group *Economic releases*: FOMC window (switch), FOMC window minutes (before 30 · after 45, labelled), FOMC dates (10 dates · next 9 Dec 2026 · last 26 Jan 2028), 08:30 releases tracked (next CPI). `Settings.png`, `-1024`, `-390`.
 - **`Insights.dc.html`:** What each filter removed gains "Rules · last cycle (15:46)" and "Rules · FOMC window"; Slices gains "Release next morning". `Insights.png`, `Insights-390.png`.
+## 2026-11-11 — [071] New entries in the last cycle
+
+- **`Settings.dc.html` → Schedule:** the cycle table's last row reads "yes, sent by 15:50" instead of "exits only". Screenshots unchanged (they show Risk limits).
 
 ## 2026-11-11 — [069] Settings UX
 
