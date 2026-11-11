@@ -112,7 +112,7 @@ the e2e pass.
 Review of the built Settings screen (056) on 11 November, seeded app, 1440 and 390 px:
 
 - **The section list was 16 flat items** with API keys first, while most visits are to change a trading limit.
-- **Every row spent a line on "Default …"**, even when the value was the default. On Risk limits that's 13 extra lines.
+- **Every row spent a line on "Default …"**, even when the value was the default. On Risk limits that's 11 extra lines.
 - **Fixed values looked editable:** a yellow switch for Cash only that can't be switched.
 - **Percentages had no dollar meaning.** "0.5 % of equity" is $50.92 today; nothing said so. Nothing said how the limits combine either: 4 positions × 0.5 % = 2 % against a 2.5 % budget.
 - **The shock brake read as a range** ("1.5 to 2.5 % SPY") but is two separate triggers.
