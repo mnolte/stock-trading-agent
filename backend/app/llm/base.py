@@ -46,6 +46,12 @@ class ModelResponse:
     # was refusal) — no usable response.
     refused: bool = False
     provider: str = "openai"
+    # Input tokens the provider's prompt cache served (priced at
+    # ``models.<id>.cached_input``, else input) and, for Anthropic,
+    # cache-creation tokens (``cache_write``, else input) — the same
+    # accounting as :class:`ConverseResult`.
+    cached_tokens_in: int | None = None
+    cache_write_tokens_in: int | None = None
     # json.loads(raw) when the answer parsed; None otherwise.
     parsed: Any = None
 
@@ -170,6 +176,36 @@ class ModelClient(Protocol):
         ...
 
 
+def _usage_cost(
+    table: dict[str, Any],
+    model: str,
+    tokens_in: int,
+    tokens_out: int,
+    cached_in: int,
+    cache_write_in: int,
+) -> Decimal | None:
+    """USD cost of one call's token counts; None without a price.
+
+    Uncached input is ``tokens_in − cached − cache_write``; cached reads
+    price at ``models.<id>.cached_input`` (else the input price) and
+    Anthropic cache writes at ``cache_write`` (else input).
+    """
+    price = model_price(table, model)
+    if price is None:
+        return None
+    in_price, out_price = price
+    entry = table.get(model) or {}
+    cached_price = Decimal(str(entry.get("cached_input", in_price)))
+    write_price = Decimal(str(entry.get("cache_write", in_price)))
+    plain = max(tokens_in - cached_in - cache_write_in, 0)
+    return (
+        Decimal(plain) * in_price
+        + Decimal(cached_in) * cached_price
+        + Decimal(cache_write_in) * write_price
+        + Decimal(tokens_out) * out_price
+    ) / Decimal(1_000_000)
+
+
 def token_cost(
     response: ModelResponse, config: AppConfig, *, model: str | None = None
 ) -> Decimal | None:
@@ -184,13 +220,14 @@ def token_cost(
     """
     if response.tokens_in is None or response.tokens_out is None:
         return None
-    price = model_price(models_table(config), model or response.model)
-    if price is None:
-        return None
-    in_price, out_price = price
-    return (
-        Decimal(response.tokens_in) * in_price + Decimal(response.tokens_out) * out_price
-    ) / Decimal(1_000_000)
+    return _usage_cost(
+        models_table(config),
+        model or response.model,
+        response.tokens_in,
+        response.tokens_out,
+        response.cached_tokens_in or 0,
+        response.cache_write_tokens_in or 0,
+    )
 
 
 def converse_cost(
@@ -198,27 +235,15 @@ def converse_cost(
 ) -> Decimal | None:
     """USD cost of one converse round; cached tokens at their own price.
 
-    Uncached input is ``tokens_in − cached − cache_write``; cached reads
-    price at ``models.<id>.cached_input`` (else the input price) and
-    Anthropic cache writes at ``cache_write`` (else input). None without
-    usage or a price, exactly like :func:`token_cost`.
+    None without usage or a price, exactly like :func:`token_cost`.
     """
     if result.tokens_in is None or result.tokens_out is None:
         return None
-    table = models_table(config)
-    price = model_price(table, model or result.model)
-    if price is None:
-        return None
-    in_price, out_price = price
-    entry = table.get(model or result.model) or {}
-    cached_price = Decimal(str(entry.get("cached_input", in_price)))
-    write_price = Decimal(str(entry.get("cache_write", in_price)))
-    cached = result.cached_tokens_in or 0
-    written = result.cache_write_tokens_in or 0
-    plain = max(result.tokens_in - cached - written, 0)
-    return (
-        Decimal(plain) * in_price
-        + Decimal(cached) * cached_price
-        + Decimal(written) * write_price
-        + Decimal(result.tokens_out) * out_price
-    ) / Decimal(1_000_000)
+    return _usage_cost(
+        models_table(config),
+        model or result.model,
+        result.tokens_in,
+        result.tokens_out,
+        result.cached_tokens_in or 0,
+        result.cache_write_tokens_in or 0,
+    )

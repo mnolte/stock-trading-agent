@@ -1726,7 +1726,7 @@ Decisions (live and shadows), the weekly review, the daily briefing, verdicts, r
 
 **Model list.** The `models` block in config is the only place that names models. Each entry has:
 - `provider`: `openai` or `anthropic`;
-- prices in USD per million tokens (`input`, `output`), the only price source;
+- prices in USD per million tokens (`input`, `output`), the only price source; optional `cached_input` and `cache_write` price prompt-cache reads and Anthropic cache writes, each falling back to `input` when absent;
 - `cutoff`: the model's reliable knowledge cutoff, used by the backtest lookahead check;
 - for Anthropic models, `effort` (`low`, `medium` or `high`; default `low`);
 - optionally `timeout_seconds`, overriding `decision.call_timeout_seconds` for that model;
@@ -1759,7 +1759,9 @@ Settings, the shadow dialog, backtests and replays only offer models from this l
 - **A backtest** with a strategy whose provider has no working key is refused before it starts.
 - **A failing key during the session** (for example revoked) behaves as today: calls fail as `api_error`, the "Data source or API key failing" notification fires, and decisions on that provider count as skip or hold.
 
-**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list. Prompt caching is not used in this version.
+**Costs.** Calls count toward the same caps as today (decisions, shadows, reviews, backtests), priced from the model list.
+
+**Prompt caching.** Every `complete()` call sends the system prompt as the cacheable prefix: Anthropic marks it with cache control (ephemeral), OpenAI's automatic prefix caching applies with no marker. Cached reads count at the model's `cached_input` and Anthropic cache writes at `cache_write`, each falling back to `input` — the same accounting `converse()` already uses for Ask. Only the system prompt is shared (snapshots differ per symbol), and a prompt below the provider's cache minimum simply isn't cached. Calls made before caching shipped keep their stored cost; costs are never rewritten.
 
 **Backtests.** The lookahead check uses the model's `cutoff`. Current Claude 5.5 models have a reliable knowledge cutoff of June 2026, so their backtests can only start on 1 July 2026; the backtest screen says so, as it does for any model.
 

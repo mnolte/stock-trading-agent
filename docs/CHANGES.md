@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-11 — [086] Prompt caching on `complete()` model calls (spec)
+
+Issue #224. `converse()` (Ask) already cached the system prompt and tool definitions and priced cached tokens; `complete()` — decisions, shadows, reviews, replays and evals — did not, so Anthropic calls were never cached and OpenAI's automatic cached-token discount was invisible to stored costs and monthly caps.
+
+- **Model providers → Model list:** `cached_input` and `cache_write` join `input`/`output` as optional per-model prices, each falling back to `input`.
+- **Model providers → Prompt caching** (new): every `complete()` call sends the system prompt as the cacheable prefix — Anthropic cache control, OpenAI automatic caching; cached reads at `cached_input`, Anthropic writes at `cache_write`; calls before the change keep their stored cost.
+- `backend/config.example.yaml`: `cached_input` prices for `gpt-4o-mini` ($0.075) and `gpt-4.1-mini` ($0.10) per million tokens.
+
 ## 2026-11-11 — [080] Security audit of the repository, and the rules that follow (spec)
 
 Marc asked for a security audit of the whole repository. Report: `docs/analysis/080-security-audit.md`. The fixes of the audits of 27 October and 8 November hold. New: 1 high, 5 medium and 7 low findings (S1–S13), one issue each (#238–#250), grouped into work items 081–085; S4 (GitHub settings) is for Marc.

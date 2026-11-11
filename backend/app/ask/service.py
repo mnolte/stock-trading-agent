@@ -419,6 +419,8 @@ async def answer(
                 request_id=result.request_id,
                 refused=result.refused,
                 provider=result.provider,
+                cached_tokens_in=result.cached_tokens_in,
+                cache_write_tokens_in=result.cache_write_tokens_in,
             )
             row = build_llm_call(
                 source="ask",

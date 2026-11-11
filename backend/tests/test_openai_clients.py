@@ -1,13 +1,14 @@
 """The OpenAI SDK defaults to 2 retries; the spec says no retry. Both real
 clients must pin ``max_retries=0`` — including after a key swap."""
 
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 from app.config import AppConfig
-from app.decide.client import OpenAIDecisionClient
+from app.decide.client import OpenAIDecisionClient, token_cost
 from app.llm.base import ConverseMessage
 from app.llm.providers.openai import OpenAIAdapter
 from app.reviews.client import OpenAIReviewClient
@@ -110,3 +111,37 @@ async def test_temperature_capability(
         assert "temperature" not in kwargs
     else:
         assert kwargs["temperature"] == 0.2
+
+
+async def test_complete_reports_cached_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """086: prompt_tokens_details.cached_tokens reaches the response and
+    token_cost prices it at cached_input (subset of prompt_tokens)."""
+    config = AppConfig()
+    completion = SimpleNamespace(
+        usage=SimpleNamespace(
+            prompt_tokens=2000,
+            completion_tokens=500,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=800),
+        ),
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="{}", refusal=None),
+                finish_reason="stop",
+            )
+        ],
+    )
+    raw = SimpleNamespace(headers={}, parse=lambda: completion)
+    create = AsyncMock(return_value=raw)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
+        create=create, with_raw_response=SimpleNamespace(create=create),
+    )))
+    monkeypatch.setattr("openai.AsyncOpenAI", lambda **kwargs: client)
+    adapter = OpenAIAdapter(config, api_key="sk-test")
+    resp = await adapter.complete(system="s", user="u", model="gpt-4o-mini")
+    assert resp.error is None
+    assert resp.tokens_in == 2000
+    assert resp.cached_tokens_in == 800
+    # 1200 x 0.15 + 800 x 0.075 + 500 x 0.60 per MTok.
+    assert token_cost(resp, config) == Decimal("0.00054")
