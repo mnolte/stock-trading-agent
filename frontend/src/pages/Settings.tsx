@@ -717,10 +717,11 @@ function KeysSection({
         setKeyId('');
         setSecret('');
         setValue('');
+        const label = keys.keys.find((r) => r.name === group)?.label ?? group;
         onNotice(
           res.account_changed
             ? 'Alpaca keys saved — they point at a different paper account. Start a new run to continue.'
-            : `${res.key.label} saved — tested ok.`,
+            : `${label} saved — tested ok.`,
         );
         onChanged();
       })
@@ -952,7 +953,7 @@ function KeysSection({
                     busy={busy === row.name}
                     busyLabel="Testing…"
                     waitingFor="the provider"
-                    disabled={busy !== row.name || (isAlpaca ? !keyId.trim() || !secret.trim() : !value.trim())}
+                    disabled={(busy !== null && busy !== row.name) || (isAlpaca ? !keyId.trim() || !secret.trim() : !value.trim())}
                     style={{ height: 40, padding: '0 16px' }}
                   >
                     Test and save
