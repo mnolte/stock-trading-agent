@@ -291,6 +291,30 @@ export function signedPct(n: number, digits = 2): string {
   return `${signed(n, digits)}%`;
 }
 
+/** Values joined with " · " through one helper (item 073) — nothing is
+ * concatenated by hand, so no "$0.000.next" style run-together. */
+export function joinParts(
+  ...parts: (string | number | null | undefined)[]
+): string {
+  return parts
+    .filter((p): p is string | number => p !== null && p !== undefined && p !== '')
+    .map(String)
+    .join(' · ');
+}
+
+/** "41 s" under a minute, "2 min 5 s" above — the cycle duration
+ * (item 073's Took value and Last cycle tile). */
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+    return '—';
+  }
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `${m} min ${r} s` : `${m} min`;
+}
+
 /** "+$12.40" / "−$12.40". */
 export function signedUsd(n: number, digits = 2): string {
   const sign = n > 0 ? '+' : n < 0 ? '−' : '';

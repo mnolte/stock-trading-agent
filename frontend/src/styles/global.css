@@ -99,12 +99,91 @@ button:not([disabled]):hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+/* Four equal tiles (item 073): exactly 4 columns from 821 px; below that
+ * the base .sa-tiles rule applies (auto-fit, 2 columns on a phone). */
+@media (min-width: 821px) {
+  .sa-tiles-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+/* Phone-only elements (item 073): hidden at every width, flex below
+ * 820 px — the dashboard's "On this page" chip row. */
+.sa-phone-only {
+  display: none;
+}
+@media (max-width: 820px) {
+  .sa-phone-only {
+    display: flex;
+  }
+}
+/* Same idea inside running text (the watchlist footer note): inline,
+ * not flex, so it doesn't break the line. */
+.sa-phone-inline {
+  display: none;
+}
+@media (max-width: 820px) {
+  .sa-phone-inline {
+    display: inline;
+  }
+}
 /* Card rows (056): flex rows stretch their cards to the tallest only from
- * 821 px; below that each card is as tall as its content. */
+ * 821 px; below that each card is as tall as its content. The dashboard's
+ * rows opt into top alignment at every width (item 073) via
+ * align-items: flex-start inline. */
 @media (max-width: 820px) {
   .sa-card-row {
     align-items: flex-start;
   }
+}
+/* Phone layout below 760 px (item 073, design/screens/Main.dc.html). */
+@media (max-width: 760px) {
+  /* Columns that need the width: hidden on a phone. */
+  .sa-hide-phone {
+    display: none !important;
+  }
+  /* This-cycle strip: the counter stacks under the numbers. */
+  .sa-cyc-counter {
+    border-left: 0 !important;
+    padding-left: 0 !important;
+    border-top: 1px solid var(--sa-border);
+    padding-top: 12px;
+    flex-basis: 100% !important;
+    min-width: 0 !important;
+  }
+  /* Feed rows: the action goes above the symbols and reason. */
+  .sa-feed-row {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    row-gap: 2px !important;
+  }
+  .sa-feed-row > :first-child {
+    grid-column: 1 / -1;
+  }
+  /* A position's distance to its stop gets its own line. */
+  .sa-pos-dist {
+    display: block;
+  }
+  /* The watchlist as two-line rows that fit the screen: no sideways
+   * scroll, rank/sector/last action/earnings hidden (.sa-hide-phone). */
+  .sa-wl {
+    min-width: 0 !important;
+  }
+  .sa-wl-row {
+    grid-template-columns: minmax(0, 1fr) auto 72px !important;
+    padding: 8px 10px !important;
+    row-gap: 2px !important;
+  }
+  .sa-wl-rules {
+    grid-column: 1 / -1;
+    font-size: var(--sa-text-sm) !important;
+  }
+  .sa-wl-act {
+    display: inline;
+  }
+}
+/* The watchlist's phone-only last-action fragment inside the rules cell:
+ * hidden at every width, inline below 760 px (see the media block). */
+.sa-wl-act {
+  display: none;
 }
 /* Loading (055). Skeletons, spinner, refresh bar, new-row tint.
  * See design/DESIGN.md → Loading and design/tokens.css. */

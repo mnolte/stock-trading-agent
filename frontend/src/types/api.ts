@@ -1303,6 +1303,37 @@ export interface DashboardCycleLine {
   text: string;
   cycle_index: number;
   cycles_today: number;
+  /** Item 073: the last cycle's scheduled time (UTC ISO) and its numbers —
+   * the strip's sentence and labelled values are built from these, not
+   * parsed out of `text`. Null/absent off-session. */
+  time?: string | null;
+  cycle_id?: number | null;
+  summary?: {
+    checked: number;
+    passed: number;
+    calls: number;
+    cost: string;
+    took_seconds: number | null;
+    took_warn: boolean;
+    changes: string;
+    /** Item 073: the sentence's outcome clause counts. */
+    held: number;
+    skipped: number;
+    entered: number;
+    blocked: number;
+    approved: number;
+  } | null;
+}
+
+/** Item 073: the Last cycle tile — the latest cycle's stored duration,
+ * real model calls and the slow-cycle flag (schedule.cycle_duration_
+ * warn_minutes), shown off-hours too. */
+export interface DashboardLastCycle {
+  cycle_id: number;
+  time: string;
+  took_seconds: number | null;
+  calls: number;
+  took_warn: boolean;
 }
 
 // Cycle counter at the right end of the this-cycle strip. The schedule is
@@ -1466,6 +1497,13 @@ export interface DashboardLatestDecision {
   confidence: number | null;
   why: string | null;
   model: string | null;
+  /** Item 073: the meta line's "model · prompt version". */
+  prompt_version?: string | null;
+  /** Item 067/073: the 08:30 releases this entry was held into — Context
+   * group's release chips. */
+  release_next_morning?:
+    | { type: string; label?: string; date: string; time?: string }[]
+    | null;
   regime: { trend: string; volatility: string } | null;
   /** VIX fields of the decision's cycle (item 060). */
   vix?: VixPayload | null;
@@ -1522,6 +1560,7 @@ export interface DashboardResponse {
   };
   cycle_line: DashboardCycleLine | null;
   cycle_counter: CycleCounter | null;
+  last_cycle: DashboardLastCycle | null;
   stats: DashboardStats;
   briefing: DashboardBriefing | null;
   latest_decision: DashboardLatestDecision | null;

@@ -133,7 +133,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 070 | fix | Test and save disabled on API keys | — | — | #219 | building |
 | 071 | feat | New entries in the last cycle (15:46), entry cutoff 15:50 | `archive/071-feat-entries-in-last-cycle.md` | #221 | #226 | building |
 | 072 | fix | Wider HTTP pool for the Alpaca clients | — | — | #225 | building |
-| 073 | feat | Dashboard UX (issue #230) | `073-feat-dashboard-ux.md` | #237 | — | planned |
+| 073 | feat | Dashboard UX (issue #230) | `archive/073-feat-dashboard-ux.md` | #237 | #258 | building |
 | 074 | feat | LLM inspector UX: reasons explained (issue #231) | `074-feat-inspector-ux.md` | #237 | — | planned |
 | 075 | feat | Insights UX: five questions (issue #232) | `archive/075-feat-insights-ux.md` | #237 | #256 | building |
 | 076 | feat | Performance UX (issue #233) | `076-feat-performance-ux.md` | #237 | — | planned |

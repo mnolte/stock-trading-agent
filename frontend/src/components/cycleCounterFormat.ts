@@ -40,6 +40,18 @@ export function nextCycleLabel(c: CycleCounter): string {
   return `next cycle ${when} · ${nyTime(c.next_cycle)} NY`;
 }
 
+/** The counter's first row split for the design layout (item 073):
+ * "Next cycle" + the Amsterdam time (bold) + "· HH:MM NY". */
+export function nextCycleParts(
+  c: CycleCounter,
+): { when: string; ny: string } | null {
+  if (!c.next_cycle) return null;
+  const when = c.next_cycle_today
+    ? displayTime(c.next_cycle)
+    : displayWeekdayTime(c.next_cycle);
+  return { when, ny: `${nyTime(c.next_cycle)} NY` };
+}
+
 /** "in 54:12" while waiting, "running" while a cycle runs. A countdown
  * longer than 24 hours shows only the day and time instead
  * (docs/SPEC.md — the label already carries "Mon 16:46 · 10:46 NY"). */
@@ -51,12 +63,14 @@ export function counterTail(c: CycleCounter, nowMs: number): string | null {
   return `in ${counterCountdown(c.next_cycle, nowMs)}`;
 }
 
-/** "Next · cycle 3 of 6 today" — the next cycle's number in the session.
- * Off-hours the shown session is the last completed one, so the "today"
- * suffix drops off. Null when there is no shown session. */
-export function todayLabel(c: CycleCounter): string | null {
+/** "Cycle 4 of 6 today" — the upcoming cycle's number in the shown
+ * session (the ran count plus one while a next cycle is scheduled).
+ * Off-hours, or after the last cycle, it is the count that ran. Null
+ * when there is no shown session. */
+export function cycleProgressLabel(c: CycleCounter): string | null {
   if (!c.cycles_today) return null;
-  return `Next · cycle ${c.cycle_index} of ${c.cycles_today}${
+  const n = c.cycle_index + (c.next_cycle_today ? 1 : 0);
+  return `Cycle ${n} of ${c.cycles_today}${
     c.session_is_today ? ' today' : ''
   }`;
 }
@@ -67,13 +81,14 @@ export function runLabel(c: CycleCounter): string | null {
   return c.run_cycle_number ? `#${c.run_cycle_number} this run` : null;
 }
 
-/** "next check 20:01", with the weekday when it is another session. */
+/** "Position check 19:01 · 13:01 NY" — Amsterdam first, New York after
+ * the dot; the weekday when it is another session. */
 export function checkLabel(c: CycleCounter): string | null {
   if (!c.next_check) return null;
   const when = c.next_check_today
     ? displayTime(c.next_check)
     : displayWeekdayTime(c.next_check);
-  return `next check ${when}`;
+  return `Position check ${when} · ${nyTime(c.next_check)} NY`;
 }
 
 /** Hover text for one session segment. */

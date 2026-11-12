@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 
 import type { CycleCounter as CycleCounterData, CycleCounterSegment } from '../types/api';
+import { joinParts } from '../format';
 import {
   checkLabel,
-  counterTail,
-  nextCycleLabel,
+  counterCountdown,
+  cycleProgressLabel,
+  nextCycleParts,
   releaseLine,
   runLabel,
   segmentTitle,
-  todayLabel,
 } from './cycleCounterFormat';
 
 function Segment({ segment }: { segment: CycleCounterSegment }) {
@@ -16,9 +17,9 @@ function Segment({ segment }: { segment: CycleCounterSegment }) {
     <span
       title={segmentTitle(segment)}
       style={{
-        width: '12px',
-        height: '6px',
-        borderRadius: '3px',
+        flex: '1 1 0',
+        height: '8px',
+        borderRadius: '4px',
         boxSizing: 'border-box',
         background:
           segment.status === 'done'
@@ -35,11 +36,11 @@ function Segment({ segment }: { segment: CycleCounterSegment }) {
   );
 }
 
-/** Right end of the this-cycle strip: next cycle with a live countdown,
- * one segment per cycle of today's session, "Cycle n of 6 today", the
- * cycle's number in this run and the next position check. The schedule
- * comes from the backend; only the countdown ticks client-side (it
- * resyncs when the header topic refetches the dashboard). */
+/** The cycle strip's right column: the next cycle with a live countdown,
+ * one segment per cycle of the shown session, "Cycle n of 6 today",
+ * the cycle's number in this run and the next position check. The
+ * schedule comes from the backend; only the countdown ticks client-side
+ * (it resyncs when the header topic refetches the dashboard). */
 export function CycleCounter({ counter }: { counter: CycleCounterData }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   // Drift between the server clock and the client clock, measured on each
@@ -59,68 +60,120 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
     );
   }
 
-  const tail = counterTail(counter, nowMs);
-  const check = checkLabel(counter);
+  const gapMs = counter.next_cycle
+    ? new Date(counter.next_cycle).getTime() - nowMs
+    : Infinity;
+  const countdown = counter.running
+    ? 'running'
+    : counter.next_cycle && gapMs <= 24 * 3_600_000
+      ? counterCountdown(counter.next_cycle, nowMs)
+      : null;
+  const next = nextCycleParts(counter);
+  const progress = cycleProgressLabel(counter);
   const run = runLabel(counter);
-  const today = todayLabel(counter);
+  const check = checkLabel(counter);
   const release = counter.next_release
     ? releaseLine(counter.next_release)
     : null;
 
   return (
-    <span
+    <div
+      role="timer"
+      aria-label="Cycle counter"
       style={{
-        display: 'inline-flex',
+        display: 'flex',
         flexDirection: 'column',
-        alignItems: 'flex-end',
-        gap: '2px',
-        color: 'var(--sa-text-muted)',
+        gap: '8px',
+        color: 'var(--sa-text-2)',
         fontSize: 'var(--sa-text-md)',
       }}
     >
-      <span
+      <div
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: '10px',
           flexWrap: 'wrap',
-          gap: 'var(--sa-space-2) var(--sa-space-3)',
         }}
       >
         <span>
-          {nextCycleLabel(counter)}
-          {tail && (
-            <span style={{ fontFamily: 'var(--sa-font-mono)' }}> · {tail}</span>
+          {next ? (
+            <>
+              Next cycle{' '}
+              <b style={{ fontWeight: 600, color: 'var(--sa-text)' }}>
+                {next.when}
+              </b>{' '}
+              <span style={{ color: 'var(--sa-text-muted)' }}>· {next.ny}</span>
+            </>
+          ) : (
+            'no cycle scheduled'
           )}
         </span>
-        {counter.segments.length > 0 && (
+        {countdown && (
           <span
-            aria-label="Today's cycles"
-            style={{ display: 'inline-flex', gap: '3px', alignItems: 'center' }}
+            style={{
+              fontFamily: 'var(--sa-font-mono)',
+              fontSize: 'var(--sa-text-base)',
+              color: 'var(--sa-text)',
+            }}
           >
-            {counter.segments.map((s) => (
-              <Segment key={s.time} segment={s} />
-            ))}
+            {countdown}
           </span>
         )}
-        {today && <span>{today}</span>}
-        {run && (
-          <span title="Cycles run since this run started (a new run restarts the count)">
-            {run}
-          </span>
-        )}
-        {check && <span>{check}</span>}
-      </span>
+      </div>
+      {counter.segments.length > 0 && (
+        <div aria-hidden="true" style={{ display: 'flex', gap: '4px' }}>
+          {counter.segments.map((s) => (
+            <Segment key={s.time} segment={s} />
+          ))}
+        </div>
+      )}
+      {(progress || run || check) && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            gap: '4px 10px',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-text-muted)',
+          }}
+        >
+          <span>{joinParts(progress, run)}</span>
+          <span>{check}</span>
+        </div>
+      )}
       {release && (
-        <span
+        <div
           title="Economic release within 2 sessions (item 067). No rule for 08:30 releases: entries and positions held into it are tagged release_next_morning."
           style={{
-            display: 'inline-flex',
+            display: 'flex',
+            flexWrap: 'wrap',
             alignItems: 'center',
-            gap: '6px',
+            gap: '8px',
+            paddingTop: '8px',
+            borderTop: '1px solid var(--sa-border)',
             fontSize: 'var(--sa-text-sm)',
             color: 'var(--sa-text-2)',
           }}
         >
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: '24px',
+              padding: '0 8px',
+              borderRadius: 'var(--sa-radius-sm)',
+              background: 'var(--sa-warning-bg)',
+              border: '1px solid var(--sa-warning-border)',
+              color: 'var(--sa-warning-text)',
+              fontSize: 'var(--sa-text-sm)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Release
+          </span>
           <span>
             {release.lead}{' '}
             {release.ams && (
@@ -128,8 +181,8 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
             )}{' '}
             <span style={{ color: 'var(--sa-text-muted)' }}>· {release.tail}</span>
           </span>
-        </span>
+        </div>
       )}
-    </span>
+    </div>
   );
 }
