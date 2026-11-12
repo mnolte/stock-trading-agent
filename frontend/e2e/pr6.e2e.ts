@@ -81,7 +81,9 @@ test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo)
   await page.goto('/settings/model');
   const saveButton = page.getByRole('button', { name: /Save as v/ });
   await expect(saveButton).toHaveCount(0);
-  await page.locator('#brief').click();
+  const brief = page.locator('#brief');
+  const wasOn = (await brief.getAttribute('aria-checked')) === 'true';
+  await brief.click();
   await expect(page.getByText('unsaved change')).toBeVisible();
   await expect(saveButton).toBeDisabled();
   await page.getByLabel('Reason for this change').fill('e2e check');
@@ -89,6 +91,17 @@ test('settings: sections, unsaved bar, reset dialog', async ({ page }, testInfo)
   await saveButton.click();
   await expect(page.getByText(/Saved as v\d+/)).toBeVisible();
   await page.screenshot({ path: shot('settings-save', testInfo.project.name) });
+
+  // The save persists in the shared e2e database and the newest version
+  // applies at the next start: leave Daily briefing on — item 079's
+  // dashboard shot needs the card, and a saved "off" would silently
+  // blank it for later specs and later runs.
+  if (wasOn) {
+    await brief.click();
+    await page.getByLabel('Reason for this change').fill('e2e check: restore');
+    await page.getByRole('button', { name: /^Save as v/ }).click();
+    await expect(page.getByText(/Saved as v\d+/)).toBeVisible();
+  }
 
   // Reset requires typing RESET before the confirm button enables.
   await page.goto('/settings/paper-account');
