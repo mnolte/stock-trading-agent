@@ -4665,6 +4665,27 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             if last_cycle is not None
             else []
         )
+        # Item 073: the strip's numbers and the Last cycle tile read the
+        # latest cycle's stored duration plus its decisions.
+        last_cycle_calls = sum(
+            1 for d in cycle_decisions if d.model != "none"
+        )
+        last_cycle_cost = sum(
+            (d.cost or Decimal(0)) for d in cycle_decisions
+        )
+        took_warn = bool(
+            last_cycle is not None
+            and last_cycle.duration_seconds is not None
+            and last_cycle.duration_seconds
+            > float(
+                config.get(
+                    "schedule",
+                    "cycle_duration_warn_minutes",
+                    default=10,
+                )
+            )
+            * 60
+        )
         open_rows = session.execute(
             select(Position).where(Position.closed_at.is_(None))
         ).scalars().all()
@@ -4739,7 +4760,9 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
                         / run.spy_close
                         * 100
                     )
-        since_label = f"since {run.started_at.astimezone(app_tz).strftime('%d %b')}"
+        # Item 073 tile sub: "started 5 Oct" (design/screens/Main.dc.html).
+        started_ny = run.started_at.astimezone(app_tz)
+        since_label = f"started {started_ny.day} {started_ny.strftime('%b')}"
 
     # Latest decision card.
     latest_card = None
@@ -4750,22 +4773,17 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         output = d.model_output or {}
         rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
-        if d.final_action == "no_call":
-            if d.no_call_reason in (None, "rules"):
-                why = rules.get("reason") or "failed the pre-filter"
-            elif d.prompt_version == "decision.v3" and validation.get("error"):
-                why = f"{d.no_call_reason} · {validation['error']}"
-            else:
-                why = validation.get("error") or _NO_CALL_WHY.get(
-                    d.no_call_reason,
-                    str(d.no_call_reason).replace("_", " "),
-                )
-        else:
-            why = (
+        why = (
+            # Item 073: the card prefixes the reason label itself
+            # ("pre-filter: …"), so `why` carries the detail only.
+            _no_call_detail(d, rules, validation, last_cycle_calls)
+            if d.final_action == "no_call"
+            else (
                 output.get("thesis")
                 or validation.get("note")
                 or validation.get("error")
             )
+        )
         latest_card = {
             "id": d.id,
             "symbol": d.symbol,
@@ -4779,6 +4797,10 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             ),
             "why": why,
             "model": d.model,
+            # Item 073: the meta line's "model · prompt version" and the
+            # Context group's release chips.
+            "prompt_version": d.prompt_version,
+            "release_next_morning": d.release_next_morning,
             "regime": snapshot.get("regime"),
             "vix": _cycle_vix(d.cycle_id),
             "earnings": latest_earnings,
@@ -4873,10 +4895,15 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         prefilter_failed = sum(
             1 for d in cycle_decisions if d.no_call_reason == "rules"
         )
-        calls = sum(1 for d in cycle_decisions if d.model != "none")
-        cost = sum(
-            (d.cost or Decimal(0)) for d in cycle_decisions
+        # Item 073: candidates that got past the rules pre-filter —
+        # called or stopped later (call cap, price, options, checks).
+        passed = sum(
+            1
+            for d in cycle_decisions
+            if d.context != "held" and d.no_call_reason != "rules"
         )
+        calls = last_cycle_calls
+        cost = last_cycle_cost
         entered = sum(1 for d in cycle_decisions if d.final_action == "enter")
         blocked = sum(1 for d in cycle_decisions if d.final_action == "blocked")
         skipped = sum(1 for d in cycle_decisions if d.final_action == "skip")
@@ -4935,6 +4962,29 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
             "text": " ".join(sentences),
             "cycle_index": cycle_index,
             "cycles_today": len(active_shown),
+            # Item 073: the strip's sentence and labelled values are
+            # built from these numbers, not parsed out of `text`.
+            "time": scheduled_ny.isoformat(),
+            "cycle_id": last_cycle.id,
+            "summary": {
+                "checked": len(cycle_decisions),
+                "passed": passed,
+                "calls": calls,
+                "cost": str(cost),
+                "took_seconds": (
+                    float(last_cycle.duration_seconds)
+                    if last_cycle.duration_seconds is not None
+                    else None
+                ),
+                "took_warn": took_warn,
+                "changes": _cycle_changes(cycle_decisions),
+                # Item 073: the sentence's outcome clause.
+                "held": held_ctx,
+                "skipped": skipped,
+                "entered": entered,
+                "blocked": blocked,
+                "approved": approved_count,
+            },
         }
 
     # Cycle counter at the strip's right end (docs/SPEC.md, GUI). The whole
@@ -5129,6 +5179,23 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         },
         "cycle_line": cycle_line,
         "cycle_counter": cycle_counter,
+        # Item 073: the Last cycle tile — duration, call count and the
+        # slow-cycle flag, off-hours included.
+        "last_cycle": (
+            {
+                "cycle_id": last_cycle.id,
+                "time": last_cycle.scheduled_time.replace(tzinfo=UTC).isoformat(),
+                "took_seconds": (
+                    float(last_cycle.duration_seconds)
+                    if last_cycle.duration_seconds is not None
+                    else None
+                ),
+                "calls": last_cycle_calls,
+                "took_warn": took_warn,
+            }
+            if last_cycle is not None
+            else None
+        ),
         "stats": {
             "positions": len(open_rows),
             "positions_cap": config.get("risk", "max_open_positions", default=4),
@@ -5182,17 +5249,80 @@ def _session_date_label(day: date) -> str:
 
 # Why a symbol reached no model call, for the latest-decision card
 # (docs/SPEC.md: "why from the stored snapshot — pre-filter reason, call
-# cap, price check").
+# cap, price check"). Item 073: these are the detail under the card's
+# "<reason>: " label, not a sentence — the GUI adds the label.
 _NO_CALL_WHY = {
-    "call_cap": "call cap reached — the model was not asked",
-    "price_stale": "no fresh price — the model was not asked",
-    "price_suspect": "price check failed — the model was not asked",
+    "call_cap": "the call cap was reached",
+    "price_stale": "no fresh price",
+    "price_suspect": "the price check failed",
     # Stored decisions from before the Oct-24 rename keep the old name.
-    "quote_suspect": "price check failed — the model was not asked",
+    "quote_suspect": "the price check failed",
     "model_error": "the model call failed",
-    "no_options": "no option met the rules — the model was not asked",
-    "reference_missing": "no usable reference price — the model was not asked",
+    "no_options": "no option met the rules",
+    "reference_missing": "no usable reference price",
+    "checks": "a decision check failed",
 }
+
+
+def _no_call_detail(
+    decision: Decision,
+    rules: dict[str, object],
+    validation: dict[str, object],
+    cycle_calls: int,
+) -> str:
+    """The detail under the latest-decision card's "<reason>: " label
+    (item 073): the pre-filter's failing check, how many calls took the
+    cap slots, or the stored validation error."""
+    reason = decision.no_call_reason or "rules"
+    if reason in (None, "rules"):
+        reason_text = rules.get("reason")
+        # No detail: the card's "pre-filter" label stands alone.
+        return str(reason_text) if reason_text else ""
+    if reason == "call_cap":
+        if cycle_calls:
+            return f"{cycle_calls} calls went to higher-ranked symbols"
+        return "the call cap was reached"
+    error = str(validation.get("error") or "").strip()
+    # The stored error can be the bare reason code — that adds nothing
+    # under the label, so fall back to the shared wording.
+    if error and error != reason:
+        return error
+    return _NO_CALL_WHY.get(reason, reason.replace("_", " "))
+
+
+def _cycle_changes(decisions: Sequence[Decision]) -> str:
+    """The strip sentence's last clause (item 073): what the cycle
+    changed — "nothing changed", "1 entry: MSFT", "JPM stop raised"."""
+    enters = [d.symbol for d in decisions if d.final_action == "enter"]
+    exits = [d.symbol for d in decisions if d.final_action == "exit"]
+    stops = [
+        d.symbol for d in decisions if d.final_action == "tighten_stop"
+    ]
+    pending = sum(
+        1
+        for d in decisions
+        if (d.gates_result or {}).get("pending_approval")
+    )
+    parts: list[str] = []
+    if enters:
+        parts.append(
+            f"{len(enters)} entr{'y' if len(enters) == 1 else 'ies'}: "
+            + ", ".join(enters)
+        )
+    if exits:
+        parts.append(
+            f"{len(exits)} exit{'s' if len(exits) != 1 else ''}: "
+            + ", ".join(exits)
+        )
+    if stops:
+        parts.append(
+            f"{stops[0]} stop raised"
+            if len(stops) == 1
+            else f"{len(stops)} stops raised: {', '.join(stops)}"
+        )
+    if pending:
+        parts.append(f"{pending} awaiting approval")
+    return "; ".join(parts) if parts else "nothing changed"
 
 
 def _feed_change(decision: Decision) -> bool:

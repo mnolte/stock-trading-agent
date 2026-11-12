@@ -227,6 +227,74 @@ export function SkeletonChip({ width = 96 }: { width?: number | string }) {
   );
 }
 
+/** The latest-decision card's loading shape (item 073,
+ * design/screens/MainLoading.dc.html): meta bar, badge + symbol bars,
+ * then the real group labels (Why, Context, Signals, Key facts) over
+ * skeleton bars — the labels are never bars. */
+export function SkeletonDecision() {
+  const group = (label: string, body: ReactNode) => (
+    <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span
+        style={{
+          fontSize: 'var(--sa-text-xs)',
+          fontWeight: 600,
+          color: 'var(--sa-text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.08em',
+        }}
+      >
+        {label}
+      </span>
+      {body}
+    </div>
+  );
+  return (
+    <div aria-hidden="true" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <Bar w="70%" h={10} />
+      <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        <Bar w={88} h={48} r={8} />
+        <span style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Bar w="40%" />
+          <Bar w="60%" h={10} />
+        </span>
+      </div>
+      {group(
+        'Why',
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Bar w="95%" />
+          <Bar w="88%" />
+          <Bar w="70%" />
+        </span>,
+      )}
+      {group(
+        'Context',
+        <span style={{ display: 'flex', gap: 6 }}>
+          <SkeletonChip width={140} />
+          <SkeletonChip width={120} />
+          <SkeletonChip width={96} />
+        </span>,
+      )}
+      {group(
+        'Signals',
+        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          <SkeletonChip width={72} />
+          <SkeletonChip width={88} />
+          <SkeletonChip width={64} />
+          <SkeletonChip width={80} />
+        </span>,
+      )}
+      {group(
+        'Key facts',
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Bar w="80%" />
+          <Bar w="65%" />
+          <Bar w="72%" />
+        </span>,
+      )}
+    </div>
+  );
+}
+
 /** Convenience: a row of stat tiles (the dashboard's account summary). */
 export function SkeletonTiles({ count = 2 }: { count?: number }) {
   return (
