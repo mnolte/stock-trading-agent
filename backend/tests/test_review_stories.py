@@ -12,7 +12,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from sqlalchemy.orm import Session, sessionmaker
 from app.config import AppConfig
 from app.db.models import Cycle, Run
 from app.market.clock import FakeClock
@@ -27,6 +26,7 @@ from app.reviews.templates import (
     plain_content,
     weekly_story_plain,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 from tests.test_reviews import (
     SATURDAY,
