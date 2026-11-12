@@ -2,6 +2,19 @@
 
 Newest first.
 
+## 2026-11-12 — [076] Performance UX (build)
+
+Build PR of 076 on branch `feat/076-performance-ux`.
+
+- **Summary sentence** (`performance.summary.sentence`): one to three sentences from a fixed template over the same numbers as the tiles — sessions, closed trades and wins, adjusted P&L in $ and %, the account's return against SPY's, positions still open. No model.
+- **Tiles in words**: each of the six tiles gets a plain-words line under the value and keeps its definition on hover.
+- **Equity curve**: the response gains `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %). Exits are rings on the curve — green won, red lost — with "symbol · result" on hover; the deepest drawdown is shaded from peak to low. Both are in the legend.
+- **Labels, not codes**: exit reasons and actions read through the shared label map everywhere on the screen.
+- **Folding**: By regime lists only regimes with closed trades plus one "No closed trades yet in: …" line; a regime that blocks entries (down · high vol) says so. While every after-exit row is pending the table is one line — "n trades are inside their 5-session window; the first result arrives <date>", the date the earliest exit plus five trading sessions from the calendar; once some are done, pending rows group at the bottom. Decisions waiting on prices say "waiting · first prices <date>".
+- **Closed trades**: newest first, 20 rows then "Show all n"; symbol and exit-reason filters kept in the URL; the R column gets a bar from −1R to the trade's R, capped at 2R wide.
+- **One banner**: below `performance.tail.min_trades` (20) closed trades the page shows a single small-sample banner under the summary; the Winners and tails card drops its own.
+- **Phone**: "On this page" chips; chart date labels stay non-overlapping.
+
 ## 2026-11-12 — [088] Code coverage report from CI (build, part 2)
 
 Second build PR of 088 on branch `ops/088-code-coverage-e2e` (steps 7–10 of the kickoff).

@@ -1207,6 +1207,7 @@ export interface PerformanceSummary {
   spy_return_pct: string | null;
   vs_spy_pct: string | null;
   adjusted_usd: string;
+  adjusted_pct?: string | null;
   slippage_pct: string;
   dividends_usd: string;
   win_rate_pct: string | null;
@@ -1215,6 +1216,10 @@ export interface PerformanceSummary {
   avg_r: string | null;
   max_drawdown_pct: string;
   kill_pct: string;
+  /** Item 076: the one-to-three-sentence run summary at the top. */
+  sentence?: string;
+  /** Closed trades below this show the page's small-sample banner. */
+  tail_min_trades?: number;
 }
 
 export interface PerformanceAggRow {
@@ -1231,6 +1236,8 @@ export interface DecisionOutcomeRow {
   count: number;
   avg_1session_pct: string | null;
   outcomes: number;
+  /** Item 076: NY date of the first 1-session price, while none is in. */
+  first_price_date?: string | null;
   read: string;
 }
 
@@ -1300,6 +1307,8 @@ export interface PerformanceTailsResponse {
   after_exit_sessions?: number;
   top_share_pct?: number;
   pending: number;
+  /** Item 076: NY date the first after-exit result arrives, if known. */
+  first_result_date?: string | null;
   unavailable: number;
   excluded: number;
   distribution: TailsBucket[];
@@ -1310,6 +1319,20 @@ export interface PerformanceTailsResponse {
   winners_kept: { share: string; winners: number } | null;
   after_exit: TailsAfterExitGroup[];
   rows: TailsTradeRow[];
+}
+
+/** Item 076: one agent trade's exit, drawn as a ring on the curve. */
+export interface PerformanceExit {
+  date: string;
+  symbol: string;
+  r: string | null;
+  won: boolean;
+}
+
+export interface PerformanceDrawdown {
+  peak_date: string;
+  low_date: string;
+  pct: string;
 }
 
 export interface PerformanceResponse {
@@ -1324,6 +1347,10 @@ export interface PerformanceResponse {
   };
   by_regime?: PerformanceAggRow[];
   by_symbol?: PerformanceAggRow[];
+  /** Item 076: regimes without closed trades, for the folded line. */
+  empty_regimes?: string[];
+  exits?: PerformanceExit[];
+  drawdown?: PerformanceDrawdown | null;
   decision_outcomes?: DecisionOutcomeRow[];
   closed_trades?: ClosedTradeRow[];
   open?: { count: number; symbols: string[]; unrealized: string };
