@@ -15,6 +15,7 @@ import {
   SkeletonTiles,
 } from '../components/skeletons';
 import {
+  displayDayTime,
   displayTime,
   sessionDayShort,
   signedPct,
@@ -1011,7 +1012,7 @@ export default function Insights() {
                             <tbody>
                               {tradesRes.data.trades.map((t) => (
                                 <tr key={t.id} style={{ borderTop: '1px solid var(--sa-border)' }}>
-                                  <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.closed_at ? sessionDayShort(t.closed_at) : '—'}</td>
+                                  <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.closed_at ? displayDayTime(t.closed_at) : '—'}</td>
                                   <td style={{ padding: '4px 8px' }}>{t.symbol}</td>
                                   <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{t.qty}</td>
                                   <td style={{ padding: '4px 8px', fontFamily: 'var(--sa-font-mono)' }}>{fmtR(t.r)}</td>
