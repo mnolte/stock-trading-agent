@@ -150,6 +150,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
 | 088 | ops | Code coverage report from CI (issue #259) | `archive/088-ops-code-coverage.md` | #260 | #263 | building |
 | 089 | spec | A PR closes only issues it resolves | — | #261 | — | merged |
+| 090 | fix | After-exit job's SQLite off the event loop | — | — | #262 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
