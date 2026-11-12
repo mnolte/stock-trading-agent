@@ -1,4 +1,6 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
+
+import { test } from './shots';
 
 // 056 step 2 — error text is one line outside Logs, and toasts stack below
 // the header so they never cover Pause / Resume or the kill switch

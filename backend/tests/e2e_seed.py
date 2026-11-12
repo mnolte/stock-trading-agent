@@ -18,7 +18,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 E2E_RUN_START = datetime(2026, 10, 5, 13, 30)  # Monday 09:30 New York, naive UTC
 
@@ -27,9 +27,22 @@ def _seed_fingerprint() -> str:
     import hashlib
 
     here = Path(__file__).resolve().parent
+    backend = here.parent
     digest = hashlib.sha256()
     for name in ("e2e_seed.py", "e2e_backtest_seed.py"):
         digest.update((here / name).read_bytes())
+    # Reviews are written into the scratch DB at runtime, not seeded:
+    # a change to their prompts, facts, validation or fake answers must
+    # count as stale rows too (item 079 — the v2→v3 prompt bump left a
+    # cached DB serving weekly.v2/briefing.v2 rows to the story UI).
+    for pattern in (
+        "app/reviews/*.py",
+        "prompts/*.md",
+        "app/llm/fake.py",
+    ):
+        for path in sorted(backend.glob(pattern)):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
@@ -69,6 +82,14 @@ def main() -> None:
             session.add(Run(started_at=E2E_RUN_START, starting_equity=starting, spy_close=None))
         elif first.started_at > E2E_RUN_START:
             first.started_at = E2E_RUN_START
+        # Specs save settings versions and the next server start applies
+        # the newest row (load_saved_settings). A spec that flips
+        # reviews.briefing_enabled would leave the dashboard briefing
+        # card off for every later run on the cached database (item 079),
+        # so each e2e run starts from the YAML defaults again.
+        from app.db.models import SettingsVersion
+
+        session.execute(delete(SettingsVersion))
         session.commit()
     seed_v2_decision()
     seed_economic_events()

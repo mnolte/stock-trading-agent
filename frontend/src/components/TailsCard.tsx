@@ -10,7 +10,7 @@ import { Card } from './Card';
 import { CardBody } from './cardState';
 import { SkeletonTable, SkeletonTiles } from './skeletons';
 import type { Resource } from '../api/useResource';
-import { fmtDayMonthIn } from '../format';
+import { fmtDayMonthIn, sessionDayShort } from '../format';
 import { EXIT_REASONS, labelFor } from '../labels';
 
 const mono: React.CSSProperties = {
@@ -120,7 +120,7 @@ function Row({ trade }: { trade: TailsTradeRow }) {
     <tr style={{ borderBottom: '1px solid var(--sa-border)' }}>
       <td style={{ padding: '10px', fontWeight: 600 }}>{trade.symbol}</td>
       <td style={{ padding: '10px', fontSize: 'var(--sa-text-md)' }}>
-        {trade.exit_label}
+        {labelFor(EXIT_REASONS, trade.exit_reason)}
       </td>
       <td style={{ padding: '10px', textAlign: 'right', ...mono }}>
         <span style={{ color: rColor(trade.result_r) }}>{r(trade.result_r, 1)}</span>
@@ -185,9 +185,24 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
   const exitLabel = (reason: string | null): string =>
     labelFor(EXIT_REASONS, reason);
 
+  // Item 076: trades still inside their window fold away — one line when
+  // every row is pending, one grouped row at the bottom when some are
+  // done. The page banner above already carries the small-sample warning.
+  const pendingRows = data.rows.filter((t) => t.after_exit_status === 'pending');
+  const settledRows = data.rows.filter((t) => t.after_exit_status !== 'pending');
+  const allPending = data.rows.length > 0 && settledRows.length === 0;
+  const firstResult = data.first_result_date
+    ? sessionDayShort(data.first_result_date)
+    : null;
+  const pendingLine =
+    `${pendingRows.length} ${pendingRows.length === 1 ? 'trade is' : 'trades are'} ` +
+    `inside their ${sessions}-session window` +
+    (firstResult ? `; the first result arrives ${firstResult}` : '');
+
   const afterTiles = data.after_exit.flatMap((g) => {
     const tiles: React.ReactElement[] = [];
-    const name = `${g.label === 'agent exit' ? 'Agent' : g.label[0].toUpperCase() + g.label.slice(1)} exits`;
+    // "Agent exit" → "Agent exits"; "Target" → "Target exits".
+    const name = `${labelFor(EXIT_REASONS, g.reason).replace(/ exit$/, '')} exits`;
     if (g.reason === 'target') {
       const n1 = Math.round(Number(g.share_1r ?? 0) * g.count);
       tiles.push(
@@ -233,43 +248,6 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
 
   return (
     <>
-      {data.trades < data.min_trades && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '10px 14px',
-            alignItems: 'center',
-            padding: '10px 12px',
-            border: '1px solid var(--sa-warning-border)',
-            background: 'var(--sa-warning-bg)',
-            borderRadius: 'var(--sa-radius-md)',
-            fontSize: 'var(--sa-text-md)',
-          }}
-        >
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              height: 24,
-              padding: '0 8px',
-              borderRadius: 6,
-              ...mono,
-              fontSize: 'var(--sa-text-sm)',
-              whiteSpace: 'nowrap',
-              color: 'var(--sa-warning-text)',
-              border: '1px solid var(--sa-warning-border)',
-            }}
-          >
-            {data.trades} of {data.min_trades} trades
-          </span>
-          <span style={{ color: 'var(--sa-text-2)' }}>
-            Too few closed trades to read the tail yet. Values are shown, but one
-            trade can swing every number on this card.
-          </span>
-        </div>
-      )}
-
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', alignItems: 'flex-start' }}>
         <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
@@ -413,6 +391,11 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
         {afterTiles.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>{afterTiles}</div>
         )}
+        {allPending ? (
+          <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+            {pendingLine}.
+          </div>
+        ) : (
         <div style={{ overflowX: 'auto', minWidth: 0 }}>
           <table style={{ width: '100%', minWidth: 620 }}>
             <thead>
@@ -439,26 +422,37 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
               </tr>
             </thead>
             <tbody>
-              {data.rows.length === 0 ? (
+              {settledRows.length === 0 && pendingRows.length === 0 ? (
                 <tr>
                   <td colSpan={6} style={{ padding: '10px', color: muted, fontSize: 'var(--sa-text-md)' }}>
                     No closed trades yet — the table fills as trades close.
                   </td>
                 </tr>
               ) : (
-                data.rows.map((trade) => (
+                settledRows.map((trade) => (
                   <Row key={trade.id} trade={trade} />
                 ))
+              )}
+              {pendingRows.length > 0 && (
+                <tr>
+                  <td
+                    colSpan={6}
+                    style={{ padding: '10px', color: muted, fontSize: 'var(--sa-text-md)' }}
+                  >
+                    {pendingLine}.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
+        )}
         <div style={{ fontSize: 'var(--sa-text-sm)', color: muted, lineHeight: 1.5 }}>
           How to read it: if target exits regularly run 1R or more further, fixed
           targets cut off the winners that pay for the losers, and testing another
           exit style is worth it. If they don&rsquo;t, fixed targets are fine.
-          Trades still inside their {sessions}-session window show
-          &ldquo;pending&rdquo;.
+          Trades still inside their {sessions}-session window are grouped at
+          the bottom.
         </div>
       </div>
     </>

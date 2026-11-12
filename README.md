@@ -105,6 +105,10 @@ default is commented in `backend/config.example.yaml`. Blocks:
 - Daily loss limit, drawdown kill switch, no re-entry the same session, earnings blackout.
 - Keys are stored encrypted, shown only as the last 4 characters, and never logged.
 
+## Tests and coverage
+
+CI runs the backend and frontend tests on every pull request. The **`coverage`** job's **Summary** page shows one table with Unit, E2E and All coverage per side (lines and branches, the least-covered files, and the files only the e2e reaches). The combined HTML reports are kept as the `coverage-all` artifact for 7 days; the per-job `coverage-backend` / `coverage-frontend` / `coverage-e2e-*` artifacts hold the unit-only and e2e-only reports.
+
 ## Build plan
 
 1. Skeleton
