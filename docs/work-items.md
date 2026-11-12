@@ -129,7 +129,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 066 | feat | "Get a key" links in Settings → API keys | — | — | #214 | building |
 | 067 | feat | Economic releases (issue #215) | `archive/067-feat-economic-releases.md` | #220 | #227 | building |
 | 068 | feat | Breadth and sectors, collected and shown (issue #216) | `archive/068-feat-breadth-sectors.md` | #222 | #228 | building |
-| 069 | feat | Settings UX | `archive/069-feat-settings-ux.md` | #218 | #229 | building |
+| 069 | feat | Settings UX | `archive/069-feat-settings-ux.md` | #218 | #229, #252 | building |
 | 070 | fix | Test and save disabled on API keys | — | — | #219 | building |
 | 071 | feat | New entries in the last cycle (15:46), entry cutoff 15:50 | `archive/071-feat-entries-in-last-cycle.md` | #221 | #226 | building |
 | 072 | fix | Wider HTTP pool for the Alpaca clients | — | — | #225 | building |
@@ -146,7 +146,8 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
 | 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
-| 086 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
+| 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
+| 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

@@ -68,6 +68,7 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "v3": ("submap", None, None),
         "v4": ("submap", None, None),
         "v5": ("submap", None, None),
+        "v6": ("submap", None, None),
     },
     "gui": {
         "near_stop_atr": ("number", 0, 20),
@@ -171,6 +172,9 @@ SUBSPECS: dict[tuple[str, str], dict[str, tuple[str, float | None, float | None]
         "base_rate_sessions": ("int", 0, 260),
         "price_vs_signal_adverse_atr": ("number", 0, 20),
     },
+    ("decision", "v6"): {
+        "sideways_max_target_atr": ("number", 0, 20),
+    },
     ("events", "fomc"): {
         "enabled": ("bool", None, None),
         "block_minutes_before": ("int", 0, 240),
@@ -234,6 +238,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "v5.max_rr"): "v5 max reward to risk",
     ("decision", "v5.base_rate_sessions"): "v5 base rate window",
     ("decision", "v5.price_vs_signal_adverse_atr"): "v5 adverse price move",
+    ("decision", "v6.sideways_max_target_atr"): "v6 sideways high-volatility target",
     ("gui", "near_stop_atr"): "Near-stop warning",
     ("inspector", "slow_call_seconds"): "Slow call",
     ("api", "broker_timeout_seconds"): "Broker answer timeout",

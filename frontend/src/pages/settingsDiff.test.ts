@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { diffMap, diffSettings } from './settingsDiff';
+import { changeDirection, DIRECTION, diffDirections, diffMap, diffSettings } from './settingsDiff';
 import type { SettingsForm } from '../types/api';
 
 function base(): SettingsForm {
@@ -265,5 +265,72 @@ describe('diffSettings', () => {
       from: 'banner only',
       to: 'browser',
     });
+  });
+});
+
+describe('changeDirection (item 069)', () => {
+  it('tags the kickoff examples', () => {
+    // risk per trade down = tighter, up = looser
+    expect(changeDirection('risk.risk_per_trade_pct', 0.6, 0.5)).toBe('tighter');
+    expect(changeDirection('risk.risk_per_trade_pct', 0.5, 0.6)).toBe('looser');
+    // max open positions up = looser
+    expect(changeDirection('risk.max_open_positions', 4, 5)).toBe('looser');
+    // a narrower RSI range = tighter on both ends
+    expect(changeDirection('rules.rsi_min', 40, 45)).toBe('tighter');
+    expect(changeDirection('rules.rsi_max', 70, 65)).toBe('tighter');
+    // trend gate off = looser
+    expect(changeDirection('decision.v5.trend_gate', true, false)).toBe('looser');
+    // adding a regime to trend_gate_regimes = looser
+    expect(
+      changeDirection('decision.v5.trend_gate_regimes', ['up'], ['up', 'sideways']),
+    ).toBe('looser');
+    expect(
+      changeDirection('decision.v5.trend_gate_regimes', ['up', 'sideways'], ['up']),
+    ).toBe('tighter');
+  });
+
+  it('leaves settings outside risk/brakes/rules/gates untagged', () => {
+    expect(changeDirection('performance.slippage_pct_per_side', 0.05, 0.1)).toBeNull();
+    expect(changeDirection('notifications.repeat_limit_minutes', 30, 60)).toBeNull();
+    expect(changeDirection('decision.model', 'a', 'b')).toBeNull();
+  });
+
+  it('covers every key in the direction map', () => {
+    for (const [path, rule] of Object.entries(DIRECTION)) {
+      if (rule === 'list') {
+        expect(
+          changeDirection(path, ['up'], ['up', 'sideways']),
+          path,
+        ).toBe('looser');
+        expect(changeDirection(path, ['up', 'sideways'], ['up']), path).toBe(
+          'tighter',
+        );
+      } else if (rule.startsWith('on_')) {
+        expect(changeDirection(path, true, false), path).not.toBeNull();
+        expect(changeDirection(path, false, true), path).not.toBeNull();
+      } else {
+        expect(changeDirection(path, 1, 2), path).not.toBeNull();
+        expect(changeDirection(path, 2, 1), path).not.toBeNull();
+      }
+    }
+  });
+
+  it('diffDirections follows diffMap paths', () => {
+    const current = base();
+    const edited = base();
+    edited.risk.risk_per_trade_pct = 0.6;
+    edited.decision.v5 = { ...(edited.decision.v5 ?? {}), trend_gate: false };
+    const dirs = diffDirections(current, edited);
+    expect(dirs['risk.risk_per_trade_pct']).toBe('looser');
+    expect(dirs['decision.v5.trend_gate']).toBe('looser');
+    expect(dirs['performance.slippage_pct_per_side']).toBeUndefined();
+  });
+
+  it('diffMap reports decision.v6 leaves', () => {
+    const current = base();
+    const edited = base();
+    edited.decision.v6 = { sideways_max_target_atr: 3 };
+    const map = diffMap(current, edited);
+    expect(map['decision.v6.sideways_max_target_atr']).toBeDefined();
   });
 });

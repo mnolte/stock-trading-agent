@@ -28,7 +28,7 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 
 ## Commands
 
-**CI runs the tests, not the laptop** (decided 12 Nov, item 086). The full suites load every core of the development laptop for minutes. So:
+**CI runs the tests, not the laptop** (decided 12 Nov, item 087). The full suites load every core of the development laptop for minutes. So:
 
 - **Locally, run only what you changed**, and keep it under about a minute:
 

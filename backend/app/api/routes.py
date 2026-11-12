@@ -65,7 +65,7 @@ from app.notifications.service import (
 )
 from app.reviews.facts import verdict_eligible, verdict_facts
 from app.reviews.templates import briefing_display
-from app.risk.budget import Meter, risk_budget
+from app.risk.budget import Meter, risk_budget, settings_risk_preview
 from app.risk.earnings import next_earnings
 from app.risk.gates import resolve_sectors
 from app.risk.math import open_risk
@@ -2982,6 +2982,7 @@ def _settings_form(config: object) -> dict[str, object]:
                             "price_vs_signal_adverse_atr": None,
                         },
                     ),
+                    ("v6", {"sideways_max_target_atr": None}),
                 )
             },
         },
@@ -3361,6 +3362,44 @@ def _reviews_spend(request: Request) -> str | None:
         return str(service.monthly_spend(session))
 
 
+def _flatten_overrides(
+    node: dict[str, Any], prefix: tuple[str, ...] = ()
+) -> list[tuple[str, Any]]:
+    """Dotted path -> leaf value for a nested overrides tree."""
+    out: list[tuple[str, Any]] = []
+    for key, value in node.items():
+        path = prefix + (key,)
+        if isinstance(value, dict):
+            out.extend(_flatten_overrides(value, path))
+        else:
+            out.append((".".join(path), value))
+    return out
+
+
+def _strategy_overrides(config: AppConfig) -> dict[str, list[dict[str, object]]]:
+    """Active shadows' overrides, flattened to dotted paths (item 069).
+
+    A Settings row shows "Shadow A uses 45–65" when an active shadow runs
+    that setting differently from the live value; only differing values
+    are listed.
+    """
+    from app.shadows.strategy import overrides_tree
+
+    out: dict[str, list[dict[str, object]]] = {}
+    with get_session_maker()() as session:
+        strategies = session.execute(
+            select(Strategy).where(Strategy.status == "active")
+        ).scalars().all()
+    for strategy in strategies:
+        for path, value in _flatten_overrides(overrides_tree(strategy)):
+            if value == config.get(*path.split(".")):
+                continue
+            out.setdefault(path, []).append(
+                {"id": strategy.id, "name": strategy.name, "value": value}
+            )
+    return out
+
+
 @router.get("/settings")
 def settings(request: Request) -> dict[str, object]:
     """The Settings form, schedule table, connections and version history."""
@@ -3385,6 +3424,7 @@ def settings(request: Request) -> dict[str, object]:
     active_tree = config.effective()
     return {
         "settings": _settings_form(config),
+        "strategy_overrides": _strategy_overrides(config),
         "active_version": config.active_version,
         "pending_version": config.pending_version,
         "pending": pending_change_map(active_tree, pending_tree)
@@ -3429,6 +3469,27 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
     }
+
+
+@router.post("/settings/preview")
+def settings_preview(request: Request, body: dict[str, object]) -> dict[str, object]:
+    """Risk-limits preview for a draft settings tree (item 069).
+
+    The GUI sends the same partial ``settings`` object a save would carry;
+    it is merged onto the active settings (what the form shows) and the
+    dollar amounts and summary numbers are computed from the live gate
+    context — the same equity, streak and peak the gates use. Read-only:
+    nothing is validated, stored or applied.
+    """
+    submitted = body.get("settings")
+    if not isinstance(submitted, dict):
+        raise HTTPException(status_code=422, detail="settings object required")
+    config = get_config()
+    view = config.overlay(_deep_merge(config.effective(), submitted))
+    executor = _executor(request)
+    with get_session_maker()() as session:
+        ctx = executor.budget_context(session)
+    return settings_risk_preview(view, ctx)
 
 
 @router.post("/settings")

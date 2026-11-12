@@ -253,6 +253,30 @@ async def test_anthropic_success_parses_and_sends_no_temperature() -> None:
     assert sent["max_tokens"] == 2048
 
 
+async def test_anthropic_complete_caches_system_prompt() -> None:
+    """complete() sends the system prompt as a cache_control block and
+    reports the three input buckets (086)."""
+    calls: list[dict[str, Any]] = []
+    msg = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="{}")],
+        stop_reason="end_turn",
+        usage=SimpleNamespace(
+            input_tokens=10,
+            output_tokens=5,
+            cache_read_input_tokens=4,
+            cache_creation_input_tokens=3,
+        ),
+    )
+    adapter = _adapter(_config(), _StubRawResponse(msg), calls)
+    resp = await adapter.complete(system="sys", user="u", model="claude-haiku-5-5")
+    assert calls[0]["system"] == [
+        {"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert resp.tokens_in == 17
+    assert resp.cached_tokens_in == 4
+    assert resp.cache_write_tokens_in == 3
+
+
 async def test_anthropic_refusal_maps_to_refused() -> None:
     adapter = _adapter(_config(), _StubRawResponse(_message("", "refusal")), [])
     resp = await adapter.complete(system="s", user="u", model="claude-haiku-5-5")

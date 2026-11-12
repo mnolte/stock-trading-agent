@@ -2,13 +2,32 @@
 
 Newest first.
 
-## 2026-11-12 — [086] Tests run in CI, not on the laptop (process)
+## 2026-11-12 — [087] Tests run in CI, not on the laptop (process)
 
 Marc asked on 12 Nov to lower the CPU load that tests put on the development laptop. No behaviour change.
 
 - **`AGENTS.md` → Commands:** locally only ruff on the changed files and the tests for the change; never the full suites, the e2e suite, the security run or an image build. Open a draft PR early, push in batches, and treat green CI as the proof. Three exceptions (CI not starting for 30 minutes, a local-only failure, screenshots), each named in the PR. Stop every process you started.
 - **`CLAUDE.md` → Tests:** the same for Claude; kickoffs point to CI; reviews read the CI results.
 - **PR template:** the test plan asks for green CI and the names of the locally run tests, instead of `make lint` and `make test`.
+
+## 2026-11-11 — [069] Settings UX, risk preview and save direction (build)
+
+Second build PR of 069 (steps 3–7) on branch `feat/069-settings-ux-2`, on top of #229.
+
+- **`POST /api/settings/preview`** (read-only): merges a partial settings tree over the active config via `AppConfig.overlay()` and returns dollar equivalents for the percentage-of-equity risk fields plus a plain-language summary — per-trade loss, losing-streak factor and length, whether max positions or open risk binds first, the daily-loss stop and the drawdown kill-switch equity level. It reuses the live `GateContext` and the canonical `streak_risk_factor()`; it never validates, saves or applies anything.
+- **`GET /api/settings`** now carries active shadows' override metadata so the page can note where a live value is overridden.
+- **Settings page**: percentage risk fields show a live USD amount beside them (debounced preview); a "What these limits mean today" summary box; an Advanced fold for the quote/broker timeout fields (auto-opens on Find or Changed-from-default matches); shadow override notes; decision-gate controls caught up to backend/spec support including v6.
+- **Save bar**: each changed field is labelled tighter, looser or neutral; looser-risk changes require a confirmation dialog before posting. Promotion and the reason requirement are unchanged.
+- **Components** extracted to `frontend/src/components/settings/` (controls, save bar, section nav, risk preview, override notes).
+- No setting, default, threshold or trading rule changed; `backend/config.example.yaml` untouched.
+
+## 2026-11-11 — [086] Prompt caching on `complete()` model calls (spec)
+
+Issue #224. `converse()` (Ask) already cached the system prompt and tool definitions and priced cached tokens; `complete()` — decisions, shadows, reviews, replays and evals — did not, so Anthropic calls were never cached and OpenAI's automatic cached-token discount was invisible to stored costs and monthly caps.
+
+- **Model providers → Model list:** `cached_input` and `cache_write` join `input`/`output` as optional per-model prices, each falling back to `input`.
+- **Model providers → Prompt caching** (new): every `complete()` call sends the system prompt as the cacheable prefix — Anthropic cache control, OpenAI automatic caching; cached reads at `cached_input`, Anthropic writes at `cache_write`; calls before the change keep their stored cost.
+- `backend/config.example.yaml`: `cached_input` prices for `gpt-4o-mini` ($0.075) and `gpt-4.1-mini` ($0.10) per million tokens.
 
 ## 2026-11-11 — [080] Security audit of the repository, and the rules that follow (spec)
 
