@@ -1643,3 +1643,180 @@ async def test_simulated_last_cycle_of_the_session_runs(
     assert await runner._market_open(CycleReport())
     report = await runner.run(scheduled)
     assert report.status == "done", report.errors
+
+
+# ----------------------------------------------------------------------
+# item 078: concurrent request batches
+
+
+
+
+def _wide_quotes(runner: CycleRunner) -> None:
+    """The fake bars' random walk drifts arbitrary symbols' closes far
+    from the fake quote's base price; widen the plausibility band so the
+    wave tests exercise concurrency, not the price gate."""
+    runner.config.yaml["execution"]["quote_max_deviation_pct"] = 50
+
+class _LatencyClient(FakeDecisionClient):
+    """FakeDecisionClient with per-symbol latency and an in-flight
+    counter — proves the wave's calls overlap without network."""
+
+    def __init__(
+        self,
+        *,
+        latencies: dict[str, float] | None = None,
+        default_latency: float = 0.01,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.latencies = latencies or {}
+        self.default_latency = default_latency
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.sent: list[str] = []
+
+    async def complete(self, **kwargs: Any) -> Any:
+        import asyncio
+
+        symbol = json.loads(kwargs["user"]).get("symbol", "?")
+        self.sent.append(symbol)
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(self.latencies.get(symbol, self.default_latency))
+            return await super().complete(**kwargs)
+        finally:
+            self.in_flight -= 1
+
+
+async def test_cycle_calls_run_as_one_batch_in_review_order(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Answers may arrive in any order; decisions are stored in review
+    order anyway (docs/SPEC.md, Concurrent requests)."""
+    symbols = [f"S{i:02d}" for i in range(8)]
+    # Staggered latencies so completion order differs from send order.
+    latencies = {s: 0.03 * ((i * 5) % 4 + 1) for i, s in enumerate(symbols)}
+    client = _LatencyClient(
+        latencies=latencies, default_latency=0.005, enter_symbols=set(symbols)
+    )
+    runner = _runner(
+        session_factory,
+        _evaluation(*[_item(s, "pass") for s in symbols]),
+        client=client,
+        universe=symbols,
+    )
+    _wide_quotes(runner)
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 8
+    assert client.max_in_flight > 1
+    called = [d for d in _decisions(session_factory) if d.model != "none"]
+    assert [d.symbol for d in sorted(called, key=lambda d: d.id)] == symbols
+
+
+async def test_call_cap_sends_exactly_max_calls(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """15 call-needed symbols with a cap of 10: exactly 10 calls are
+    sent and 5 no_call/call_cap rows are stored."""
+    symbols = [f"T{i:02d}" for i in range(15)]
+    client = _LatencyClient(enter_symbols=set(symbols))
+    runner = _runner(
+        session_factory,
+        _evaluation(*[_item(s, "pass") for s in symbols]),
+        client=client,
+        universe=symbols,
+    )
+    _wide_quotes(runner)
+    runner.config.yaml["decision"]["max_calls_per_cycle"] = 10
+    report = await runner.run(CYCLE_1246)
+    assert report.calls == 10
+    assert len(client.sent) == 10
+    decisions = {d.symbol: d for d in _decisions(session_factory)}
+    for symbol in symbols[10:]:
+        assert decisions[symbol].final_action == "no_call"
+        assert decisions[symbol].no_call_reason == "call_cap"
+        assert decisions[symbol].model == "none"
+
+
+async def test_max_requests_caps_model_calls_in_flight(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """concurrency.max_requests: 3 — never more than 3 calls in flight."""
+    symbols = [f"U{i:02d}" for i in range(8)]
+    client = _LatencyClient(
+        latencies={s: 0.02 for s in symbols},
+        enter_symbols=set(symbols),
+    )
+    runner = _runner(
+        session_factory,
+        _evaluation(*[_item(s, "pass") for s in symbols]),
+        client=client,
+        universe=symbols,
+    )
+    _wide_quotes(runner)
+    runner.config.yaml["concurrency"] = {"max_requests": 3}
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 8
+    assert client.max_in_flight <= 3
+    assert client.max_in_flight > 1
+
+
+async def test_failed_call_does_not_cancel_the_wave(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """One send that raises is stored as model_error; the rest of the
+    wave's answers are stored and applied as usual."""
+
+    class FailingClient(_LatencyClient):
+        async def complete(self, **kwargs: Any) -> Any:
+            symbol = json.loads(kwargs["user"]).get("symbol", "?")
+            if symbol == "BAD":
+                raise RuntimeError("provider exploded")
+            return await super().complete(**kwargs)
+
+    symbols = ["BAD", "OK1", "OK2", "OK3"]
+    client = FailingClient(enter_symbols={"OK1", "OK2", "OK3"})
+    runner = _runner(
+        session_factory,
+        _evaluation(*[_item(s, "pass") for s in symbols]),
+        client=client,
+        universe=symbols,
+    )
+    _wide_quotes(runner)
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    assert report.calls == 4
+    decisions = {d.symbol: d for d in _decisions(session_factory)}
+    assert decisions["BAD"].final_action == "no_call"
+    assert decisions["BAD"].no_call_reason == "model_error"
+    for symbol in ("OK1", "OK2", "OK3"):
+        assert decisions[symbol].model != "none"
+
+
+async def test_ten_slow_calls_finish_well_under_sequential(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """Ten calls at ~0.25 s each: as one batch the wave takes a fraction
+    of the ~2.5 s sequential total (docs/SPEC.md, Concurrent requests)."""
+    import time
+
+    symbols = [f"V{i:02d}" for i in range(10)]
+    client = _LatencyClient(
+        latencies={s: 0.25 for s in symbols}, enter_symbols=set(symbols)
+    )
+    runner = _runner(
+        session_factory,
+        _evaluation(*[_item(s, "pass") for s in symbols]),
+        client=client,
+        universe=symbols,
+    )
+    _wide_quotes(runner)
+    started = time.monotonic()
+    report = await runner.run(CYCLE_1246)
+    elapsed = time.monotonic() - started
+    assert report.status == "done"
+    assert report.calls == 10
+    assert elapsed < 2.0

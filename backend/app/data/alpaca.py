@@ -41,13 +41,14 @@ logger = logging.getLogger(__name__)
 # urllib3 pool keeps 10 connections per host. The daily-bar refresh and
 # the universe screen already run 10 reads at once, so any overlapping
 # call overflowed the pool ("Connection pool is full, discarding
-# connection"). 20 leaves headroom for concurrent cycles.
+# connection"). Item 078 sizes the pool to ``max(max_requests, 20)`` per
+# host; 20 stays the floor.
 _HTTP_POOL_MAXSIZE = 20
 
 
-def _mount_pool(client: RESTClient) -> None:
+def _mount_pool(client: RESTClient, maxsize: int) -> None:
     """Widen the client's urllib3 per-host pool (default 10)."""
-    client._session.mount("https://", HTTPAdapter(pool_maxsize=_HTTP_POOL_MAXSIZE))
+    client._session.mount("https://", HTTPAdapter(pool_maxsize=maxsize))
 
 
 def _parse_timestamp(value: Any) -> datetime:
@@ -272,11 +273,13 @@ class AlpacaDataClient:
         rate_limiter: RateLimiter | None = None,
         clock: Clock | None = None,
         adjustment: str = "split",
+        http_pool_size: int | None = None,
     ) -> None:
         self.limiter = rate_limiter or RateLimiter()
         self.clock = clock or RealClock()
         # All bar requests use the configured price adjustment (spec: split).
         self.adjustment = Adjustment(adjustment)
+        self._pool_size = http_pool_size or _HTTP_POOL_MAXSIZE
         self.update_credentials(api_key, secret_key)
 
     def update_credentials(self, api_key: str, secret_key: str) -> None:
@@ -294,7 +297,7 @@ class AlpacaDataClient:
             self.news,
             self.corporate_actions,
         ):
-            _mount_pool(client)
+            _mount_pool(client, self._pool_size)
 
     async def check_paper_account(self) -> DataResult[dict[str, Any]]:
         try:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, cast
@@ -45,6 +46,7 @@ from app.decide.v4 import v4_send_snapshot
 from app.engine.state import record_event
 from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
+from app.llm.models import model_effort, model_provider
 from app.logging_config import ev
 from app.market.clock import Clock, make_clock
 from app.notifications.service import Notifier, NullNotifier
@@ -81,6 +83,36 @@ def model_output_json(
     output: ModelOutput | ModelOutputV2 | ModelOutputV3 | ModelOutputV4
 ) -> dict[str, Any]:
     return cast(dict[str, Any], _jsonable(output.model_dump()))
+
+
+@dataclass
+class PreparedCall:
+    """One decision call split into prepare / send / finish (item 078).
+
+    ``prepare_call`` builds everything synchronously (send snapshot,
+    prompt, cache lookup); ``send_call`` is the async model request with
+    no database access — a cycle's batch runs many at once; and
+    ``finish_call`` validates and stores the decision and its llm_calls
+    row in one transaction on the caller's session.
+    """
+
+    cycle_id: int
+    symbol: str
+    context: str
+    snapshot_json: dict[str, Any]
+    rules: RulesResult | None
+    price: Decimal | None
+    atr_1h: Decimal | None
+    current_stop: Decimal | None
+    v2: V2Build | None
+    market_context: dict[str, Any] | None
+    send_snapshot: dict[str, Any]
+    user: str
+    prompt: Prompt
+    response: ModelResponse | None = None
+    sent_at: datetime | None = None
+    from_cache: bool = False
+    on_response: Callable[[ModelResponse], None] | None = None
 
 
 def rules_result_json(rules: RulesResult | None) -> dict[str, Any] | None:
@@ -199,6 +231,40 @@ class DecisionService:
         market_context: dict[str, Any] | None = None,
     ) -> Decision:
         """Call the model, validate the output and store the decision row."""
+        prepared = self.prepare_call(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            context=context,
+            snapshot_json=snapshot_json,
+            rules=rules,
+            price=price,
+            atr_1h=atr_1h,
+            current_stop=current_stop,
+            v2=v2,
+            on_response=on_response,
+            market_context=market_context,
+        )
+        await self.send_call(prepared)
+        return self.finish_call(session, prepared)
+
+    def prepare_call(
+        self,
+        *,
+        cycle_id: int,
+        symbol: str,
+        context: str,
+        snapshot_json: dict[str, Any],
+        rules: RulesResult | None,
+        price: Decimal | None,
+        atr_1h: Decimal | None,
+        current_stop: Decimal | None,
+        v2: V2Build | None = None,
+        on_response: Callable[[ModelResponse], None] | None = None,
+        market_context: dict[str, Any] | None = None,
+    ) -> PreparedCall:
+        """Build the send snapshot and prompt, and look the answer up in
+        the shared cache — everything before the request goes out. No
+        awaited I/O and no writes on the caller's session."""
         send_snapshot = (
             v4_send_snapshot(snapshot_json, self.config)
             if self._spec.is_v4
@@ -207,92 +273,146 @@ class DecisionService:
             else strip_internal(snapshot_json)
         )
         user = json.dumps(send_snapshot, indent=2)
-        response: ModelResponse | None = None
-        sent_at = None
-        from_cache = False
-        _model = str(self.config.get("decision", "model", default=""))
-        _temperature = self._temperature()
-        from app.llm.models import model_effort, model_provider
-
-        _provider = model_provider(self.config, _model)
-        _effort = (
-            model_effort(self.config, _model) if _provider == "anthropic" else None
+        prepared = PreparedCall(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            context=context,
+            snapshot_json=snapshot_json,
+            rules=rules,
+            price=price,
+            atr_1h=atr_1h,
+            current_stop=current_stop,
+            v2=v2,
+            market_context=market_context,
+            send_snapshot=send_snapshot,
+            user=user,
+            prompt=self._prompt,
+            on_response=on_response,
         )
         if self._cache is not None and self._cache_reads:
             hit = self._cache.lookup(
-                model=_model,
-                temperature=_temperature,
+                model=str(self.config.get("decision", "model", default="")),
+                temperature=self._temperature(),
                 prompt_version=self._prompt.version,
                 prompt_hash=self._prompt.sha256,
                 user=user,
-                provider=_provider,
-                effort=_effort,
+                provider=model_provider(
+                    self.config,
+                    str(self.config.get("decision", "model", default="")),
+                ),
+                effort=(
+                    model_effort(
+                        self.config,
+                        str(self.config.get("decision", "model", default="")),
+                    )
+                    if model_provider(
+                        self.config,
+                        str(self.config.get("decision", "model", default="")),
+                    )
+                    == "anthropic"
+                    else None
+                ),
             )
             if hit is not None:
-                response = ModelResponse(
+                prepared.response = ModelResponse(
                     raw=hit["response"],
                     model=str(self.config.get("decision", "model", default="")),
                     tokens_in=hit["tokens_in"],
                     tokens_out=hit["tokens_out"],
                     latency_ms=0,
                 )
-                from_cache = True
-        if response is None:
-            if self._before_call is not None:
-                await self._before_call()
-            sent_at = _naive_utc(self._clock.now())
-            ev(
-                logging.getLogger(f"app.model.{_provider}"), logging.DEBUG,
-                "model.call_sent",
-                f"{symbol}: model call sent "
-                f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
-                symbol=symbol,
-            )
-            model = str(self.config.get("decision", "model", default=""))
-            response = await self.client.complete(
-                system=self._prompt.text,
-                user=user,
-                schema=self._spec.json_schema,
-                model=model,
-                temperature=_temperature,
-            )
-            if on_response is not None:
-                on_response(response)
-            ev(
-                logging.getLogger(f"app.model.{_provider}"),
-                logging.DEBUG if response.error is None else logging.WARNING,
-                "model.call_returned" if response.error is None else "model.call_failed",
-                (
-                    f"{symbol}: {response.model} returned "
-                    f"{response.tokens_in}+{response.tokens_out} tok in "
-                    f"{response.latency_ms}ms"
-                    if response.error is None
-                    else f"{symbol}: model call failed ({response.error_type}: "
-                         f"{response.error})"
+                prepared.from_cache = True
+        return prepared
+
+    async def send_call(self, prepared: PreparedCall) -> None:
+        """Send the prepared call — the only awaited step. No database
+        access: a batch runs many of these at once on the event loop."""
+        if prepared.response is not None:
+            return  # cache hit: no request was sent
+        if self._before_call is not None:
+            await self._before_call()
+        prepared.sent_at = _naive_utc(self._clock.now())
+        _model = str(self.config.get("decision", "model", default=""))
+        _provider = model_provider(self.config, _model)
+        ev(
+            logging.getLogger(f"app.model.{_provider}"), logging.DEBUG,
+            "model.call_sent",
+            f"{prepared.symbol}: model call sent "
+            f"({self._prompt.version}, hash {self._prompt.sha256[:8]})",
+            symbol=prepared.symbol,
+        )
+        prepared.response = await self.client.complete(
+            system=prepared.prompt.text,
+            user=prepared.user,
+            schema=self._spec.json_schema,
+            model=_model,
+            temperature=self._temperature(),
+        )
+        response = prepared.response
+        if prepared.on_response is not None:
+            prepared.on_response(response)
+        ev(
+            logging.getLogger(f"app.model.{_provider}"),
+            logging.DEBUG if response.error is None else logging.WARNING,
+            "model.call_returned" if response.error is None else "model.call_failed",
+            (
+                f"{prepared.symbol}: {response.model} returned "
+                f"{response.tokens_in}+{response.tokens_out} tok in "
+                f"{response.latency_ms}ms"
+                if response.error is None
+                else f"{prepared.symbol}: model call failed ({response.error_type}: "
+                     f"{response.error})"
+            ),
+            symbol=prepared.symbol,
+        )
+
+    def finish_call(self, session: Session, prepared: PreparedCall) -> Decision:
+        """Validate the answer and store the decision row — synchronous,
+        on the caller's session, in the batch's order."""
+        response = prepared.response
+        assert response is not None  # noqa: S101 - send_call ran first
+        symbol = prepared.symbol
+        context = prepared.context
+        snapshot_json = prepared.snapshot_json
+        atr_1h = prepared.atr_1h
+        current_stop = prepared.current_stop
+        price = prepared.price
+        if (
+            self._cache is not None
+            and response.error is None
+            and response.raw is not None
+            and not prepared.from_cache
+        ):
+            cycle = session.get(Cycle, prepared.cycle_id)
+            self._cache.store(
+                model=str(self.config.get("decision", "model", default="")),
+                temperature=self._temperature(),
+                provider=model_provider(
+                    self.config,
+                    str(self.config.get("decision", "model", default="")),
                 ),
-                symbol=symbol,
+                effort=(
+                    model_effort(
+                        self.config,
+                        str(self.config.get("decision", "model", default="")),
+                    )
+                    if model_provider(
+                        self.config,
+                        str(self.config.get("decision", "model", default="")),
+                    )
+                    == "anthropic"
+                    else None
+                ),
+                prompt_version=self._prompt.version,
+                prompt_hash=self._prompt.sha256,
+                user=prepared.user,
+                cycle_time=(
+                    cycle.scheduled_time if cycle is not None else None
+                ),
+                response=response.raw,
+                tokens_in=response.tokens_in,
+                tokens_out=response.tokens_out,
             )
-            if (
-                self._cache is not None
-                and response.error is None
-                and response.raw is not None
-            ):
-                cycle = session.get(Cycle, cycle_id)
-                self._cache.store(
-                    model=_model,
-                    temperature=_temperature,
-                    provider=_provider,
-                    effort=_effort,
-                    prompt_version=self._prompt.version,
-                    prompt_hash=self._prompt.sha256,
-                    user=user,
-                    cycle_time=(
-                        cycle.scheduled_time if cycle is not None else None
-                    ),
-                    response=response.raw,
-                    tokens_in=response.tokens_in,
-                    tokens_out=response.tokens_out,
-                )
         if self._spec.is_v5:
             validation = validate_model_output_v5(
                 response.raw,
@@ -389,20 +509,20 @@ class DecisionService:
             )
         decision = self._store(
             session,
-            cycle_id=cycle_id,
+            cycle_id=prepared.cycle_id,
             symbol=symbol,
             context=context,
             snapshot_json=snapshot_json,
-            rules=rules,
+            rules=prepared.rules,
             response=response,
             validation=validation,
             final_action=NO_CALL if failed else validation.final_action,
             no_call_reason="model_error" if failed else None,
-            cached=from_cache,
-            sent_at=sent_at,
-            v2=v2,
-            send_snapshot=send_snapshot,
-            market_context=market_context,
+            cached=prepared.from_cache,
+            sent_at=prepared.sent_at,
+            v2=prepared.v2,
+            send_snapshot=prepared.send_snapshot,
+            market_context=prepared.market_context,
         )
         return decision
 

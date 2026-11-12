@@ -986,6 +986,8 @@ export interface SettingsResponse {
     } | null;
     fred: string;
   } | null;
+  /** Item 078: concurrency.max_requests — read at start, restart to change. */
+  concurrency?: { max_requests: number };
   /** Item 069: active shadows' settings overrides, flattened to dotted
    * paths — a row shows "Shadow A uses 45–65" when its value differs
    * from live. */

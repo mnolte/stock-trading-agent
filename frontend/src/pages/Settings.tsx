@@ -3606,6 +3606,17 @@ export default function Settings() {
             title="Server"
             blurb="Health of the server, its backups and outside monitoring. Shown when the app runs on a VPS."
           >
+            {data.concurrency && (
+              <Row
+                id="max-requests"
+                label="Requests at once"
+                help="The most requests one batch keeps in flight — model calls in a cycle wave, and each sync job's fetches. Also sizes the HTTP connection pools. Read at start — restart to change."
+              >
+                <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)' }}>
+                  {data.concurrency.max_requests}
+                </span>
+              </Row>
+            )}
             {authStatus && <ServerSection enabled={authStatus.required} />}
           </Section>
           </>)}

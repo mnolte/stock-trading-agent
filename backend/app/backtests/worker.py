@@ -982,10 +982,16 @@ def main() -> None:
         rpm = config.get_int("backtest", "alpaca_calls_per_minute", default=40)
         limiter = RateLimiter(RateLimitConfig(max_calls=rpm))
         key_id, secret = secrets.alpaca_pair()
+        # Item 078: the pool follows concurrency.max_requests like the
+        # live client's (at least 20 per host).
+        pool = max(
+            20, config.get_int("concurrency", "max_requests", default=20)
+        )
         alpaca = AlpacaDataClient(
             key_id or MISSING_KEY,
             secret or MISSING_KEY,
             rate_limiter=limiter,
+            http_pool_size=pool,
         )
         earnings_src = FinnhubEarningsSource(
             secrets.get("finnhub") or MISSING_KEY

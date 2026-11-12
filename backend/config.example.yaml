@@ -81,6 +81,9 @@ schedule:
 gui:
   near_stop_atr: 1.5          # positions closer to their stop than this turn amber (PR 35)
 
+concurrency:                     # item 078, docs/SPEC.md — Concurrent requests
+  max_requests: 20               # most requests one batch keeps in flight (1-50); also sizes the HTTP pools; restart to change
+
 api:
   broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
 

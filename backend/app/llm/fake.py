@@ -174,13 +174,54 @@ class FakeModelClient:
         model: str | None = None,
         temperature: float | None = None,
     ) -> ModelResponse:
-        started = time.monotonic()
         use_model = model or self.model
         provider = "fake"
+        gate = None
         if self._config is not None:
+            from app.concurrency import gate_for
             from app.llm.models import model_provider
 
             provider = model_provider(self._config, use_model)
+            # Item 078: simulated mode honours the same per-provider
+            # priority gate as the real dispatcher.
+            gate = gate_for(
+                f"model:{provider}",
+                limit=max(
+                    1,
+                    int(
+                        self._config.get(
+                            "concurrency", "max_requests", default=20
+                        )
+                    ),
+                ),
+            )
+        if gate is None:
+            return await self._complete(
+                system=system,
+                user=user,
+                schema=schema,
+                use_model=use_model,
+                provider=provider,
+            )
+        async with gate.slot():
+            return await self._complete(
+                system=system,
+                user=user,
+                schema=schema,
+                use_model=use_model,
+                provider=provider,
+            )
+
+    async def _complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        use_model: str,
+        provider: str,
+    ) -> ModelResponse:
+        started = time.monotonic()
         snapshot = json.loads(user)
         if "facts" in snapshot and "symbol" not in snapshot:
             # A review payload {"kind", "facts"}.
