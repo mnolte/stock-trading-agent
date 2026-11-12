@@ -6,7 +6,7 @@ import type { WatchlistResponse } from '../types/api';
 import { Card } from './Card';
 import { CardBody } from './cardState';
 import { SkeletonTable } from './skeletons';
-import { formatNyTitle } from './decisionFormat';
+import { formatAmsTime, formatNyTitle } from './decisionFormat';
 import {
   filterCounts,
   filterRows,
@@ -200,13 +200,17 @@ export function Watchlist({
         {screened && (
           <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
             Sorted by rank · {Math.min(watchlistRows, visible.length)} of {visible.length} eligible shown · held symbols always listed
+            <span className="sa-phone-inline"> · turn the phone sideways for sector, last action and earnings</span>
           </span>
         )}
       </div>
       <div style={{ overflowX: 'auto', minWidth: 0 }}>
-        <div role="list" aria-label="Watchlist" style={{ minWidth: '890px' }}>
+        {/* Item 073: on a phone the whole header hides and each row is two
+            lines — symbol/price/day, then rules with the last action. */}
+        <div role="list" aria-label="Watchlist" className="sa-wl" style={{ minWidth: '890px' }}>
           <div
             aria-hidden="true"
+            className="sa-hide-phone"
             style={{
               display: 'grid',
               gridTemplateColumns: screened ? GRID_RANKED : GRID,
@@ -250,7 +254,7 @@ export function Watchlist({
               <button
                 key={row.symbol}
                 type="button"
-                className="sa-row"
+                className="sa-row sa-wl-row"
                 aria-pressed={on}
                 aria-label={`${row.symbol}, chart it`}
                 onClick={() => onSelect(row.symbol)}
@@ -274,6 +278,7 @@ export function Watchlist({
               >
                 {screened && (
                   <span
+                    className="sa-hide-phone"
                     style={{
                       fontFamily: 'var(--sa-font-mono)',
                       fontSize: 'var(--sa-text-sm)',
@@ -302,6 +307,7 @@ export function Watchlist({
                   {formatDayChange(row.day_change_pct)}
                 </span>
                 <span
+                  className="sa-hide-phone"
                   style={{
                     fontFamily: 'var(--sa-font-mono)',
                     fontSize: 'var(--sa-text-sm)',
@@ -311,10 +317,25 @@ export function Watchlist({
                 >
                   {formatSector(row)}
                 </span>
-                <span style={{ fontSize: 'var(--sa-text-md)', color: rulesColor(row) }}>
+                <span className="sa-wl-rules" style={{ fontSize: 'var(--sa-text-md)', color: rulesColor(row) }}>
                   {rulesLabel(row)}
+                  {row.last_action && (
+                    <span
+                      className="sa-wl-act"
+                      title={row.last_action_time ? formatNyTitle(row.last_action_time) : undefined}
+                      style={{
+                        fontFamily: 'var(--sa-font-mono)',
+                        fontSize: 'var(--sa-text-sm)',
+                        color: actionColor(row.last_action),
+                      }}
+                    >
+                      {' '}· {row.last_action.replace(/_/g, ' ').toUpperCase()}
+                      {row.last_action_time ? ` ${formatAmsTime(row.last_action_time)}` : ''}
+                    </span>
+                  )}
                 </span>
                 <span
+                  className="sa-hide-phone"
                   title={row.last_action_time ? formatNyTitle(row.last_action_time) : undefined}
                   style={{
                     fontFamily: 'var(--sa-font-mono)',
@@ -325,6 +346,7 @@ export function Watchlist({
                   {formatLastAction(row.last_action, row.last_action_time)}
                 </span>
                 <span
+                  className="sa-hide-phone"
                   style={{
                     fontFamily: 'var(--sa-font-mono)',
                     fontSize: 'var(--sa-text-sm)',
