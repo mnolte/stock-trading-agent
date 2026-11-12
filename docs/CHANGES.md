@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-12 — [088] Code coverage report from CI (build, part 2)
+
+Second build PR of 088 on branch `ops/088-code-coverage-e2e` (steps 7–10 of the kickoff).
+
+- **Backend e2e coverage:** with `E2E_COVERAGE=1` the Playwright web server runs `coverage run --parallel-mode` (`sigterm` and `concurrency = ["thread"]` in `pyproject.toml`); Playwright's `gracefulShutdown` SIGTERM flushes `backend/.coverage.e2e.<project>.*` files. Without the variable the command line is unchanged.
+- **Frontend e2e coverage:** the shared `e2e/shots.ts` fixture wraps `context.newPage`, starts Chromium V8 coverage per page and collects on page close into `coverage-e2e/raw/*.jsonl`; `vite.config.ts` emits sourcemaps only under `E2E_COVERAGE=1`; `scripts/coverage-e2e.mjs` resolves served assets + sourcemaps and writes istanbul reports via `monocart-coverage-reports`.
+- **`coverage` job:** downloads the unit and e2e artifacts, combines backend data (`coverage combine`/`xml`/`html` for unit/e2e/all) and merges frontend istanbul maps (`scripts/coverage-merge.mjs`, unit/e2e/all, skipping `all` when statement maps differ), prints one summary and uploads `coverage-all` for 7 days.
+- **`scripts/coverage_summary.py`** now takes `--{backend,frontend}-{unit,e2e,all}` and prints Unit/E2E/All columns, package rows on All, the least-covered list and the e2e-only list (0% unit, >0% e2e, ≥50 statements).
+- **Deps:** `monocart-coverage-reports` (frontend dev), `defusedxml` (Python dev, for the summary script's XML parsing).
+
 ## 2026-11-12 — [088] Code coverage report from CI (build, part 1)
 
 First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kickoff; the e2e measurement follows in a second PR).

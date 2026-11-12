@@ -42,6 +42,7 @@ dev = [
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "types-pyyaml>=6.0.12",
+    "defusedxml>=0.7.1",
 ]
 
 [tool.ruff]
@@ -76,6 +77,11 @@ markers = [
 branch = true
 source = ["app"]
 relative_files = true
+# The app does its blocking work on asyncio.to_thread workers; no greenlet
+# (the SQLAlchemy engine is sync). sigterm lets `coverage run` write its
+# data when Playwright stops the e2e backend with SIGTERM.
+concurrency = ["thread"]
+sigterm = true
 
 [tool.coverage.report]
 show_missing = true
