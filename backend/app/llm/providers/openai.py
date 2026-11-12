@@ -16,6 +16,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 from app.decide.output import DECISION_JSON_SCHEMA
+from app.errors import safe_error
 from app.llm.base import (
     ConverseEvent,
     ConverseMessage,
@@ -120,7 +121,7 @@ class OpenAIAdapter:
                 tokens_in=None,
                 tokens_out=None,
                 latency_ms=int((time.monotonic() - started) * 1000),
-                error=str(exc),
+                error=safe_error(exc),
                 error_type=kind,
                 http_status=getattr(exc, "status_code", None),
                 error_code=getattr(exc, "code", None),
@@ -511,7 +512,7 @@ def _converse_error(model: str, exc: Exception, started: float, provider: str) -
         tokens_in=None,
         tokens_out=None,
         latency_ms=int((time.monotonic() - started) * 1000),
-        error=str(exc),
+        error=safe_error(exc),
         error_type=_classify_error(exc),
         http_status=getattr(exc, "status_code", None),
         error_code=getattr(exc, "code", None),
@@ -524,9 +525,11 @@ async def test_key(key: str) -> tuple[bool, str | None]:
     """The spec's key check: one OpenAI list-models call."""
     from openai import AsyncOpenAI
 
+    from app.errors import safe_error
+
     try:
         client = AsyncOpenAI(api_key=key, timeout=15)
         await client.models.list()
         return True, None
     except Exception as exc:  # noqa: BLE001
-        return False, str(exc)
+        return False, safe_error(exc, extra=[key])

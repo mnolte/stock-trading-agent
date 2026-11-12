@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.config import AppConfig
 
+from app.errors import safe_error
+
 logger = logging.getLogger("app")
 
 # Missed heartbeats tolerated before a live pid reads as recycled — pids
@@ -192,7 +194,7 @@ def quick_check(db_path: Path) -> str:
         with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
             rows = conn.execute("PRAGMA quick_check").fetchall()
     except sqlite3.Error as exc:
-        return f"quick_check failed: {exc}"
+        return f"quick_check failed: {safe_error(exc)}"
     result = "; ".join(str(r[0]) for r in rows)
     return "ok" if result == "ok" else result
 

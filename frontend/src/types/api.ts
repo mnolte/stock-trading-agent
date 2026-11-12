@@ -453,7 +453,9 @@ export interface ReviewsResponse {
 export interface ReviewContent {
   summary?: string;
   observations?: string[];
-  /** weekly.v2: {text, evidence} or null; weekly.v1 rows stored a string. */
+  /** weekly.v3 (item 079): the one-to-three-paragraph story. */
+  story?: string;
+  /** weekly.v2+: {text, evidence} or null; weekly.v1 rows stored a string. */
   suggestion?: { text: string; evidence: string } | string | null;
   text?: string;
   /** Briefings: the code-written status line shown above the text. */
@@ -504,10 +506,15 @@ export interface WeeklyFacts {
   };
   limits?: {
     weekly_summary_words?: number;
+    /** weekly.v3 (item 079): the story's word cap. */
+    weekly_story_words?: number;
     verdict_after_sessions?: number;
     skip_flat_pct?: number;
     [key: string]: unknown;
   };
+  /** Stories (item 079): term → one-sentence definition, for the terms
+   * this fact set uses. */
+  glossary?: Record<string, string>;
   return_pct: number | null;
   return_usd: number | null;
   equity_start: number | null;
@@ -566,8 +573,32 @@ export interface BriefingFacts {
   earnings_today: { symbol: string; time_of_day: string }[];
   earnings_tomorrow: { symbol: string; time_of_day: string }[];
   regime: string;
-  yesterday: { return_pct: number | null; return_usd: number | null };
+  /** briefing.v3 (item 079): the newest cycle's VIX facts, null until FRED
+   * has a close. */
+  vix?: {
+    close: number | null;
+    date: string | null;
+    percentile_1y: number | null;
+    stale: boolean;
+  } | null;
+  /** briefing.v3: the next scheduled economic release, null when the
+   * calendar has nothing coming. */
+  next_release?: {
+    type: string;
+    label: string;
+    date: string;
+    time: string;
+    sessions_away: number;
+  } | null;
+  yesterday: {
+    return_pct: number | null;
+    return_usd: number | null;
+    spy_return_pct?: number | null;
+  };
   banners: { kind: string; level: string }[];
+  /** Stories (item 079): term → one-sentence definition. */
+  glossary?: Record<string, string>;
+  limits?: Record<string, unknown>;
 }
 
 export interface ReviewDetail extends ReviewListItem {
@@ -576,6 +607,9 @@ export interface ReviewDetail extends ReviewListItem {
   content: ReviewContent | null;
   /** Briefings: the code-written status line shown above the text. */
   status_line?: string | null;
+  /** Briefings v3 (item 079): "The numbers" fold rows. */
+  numbers?: { label: string; value: string }[];
+  fact_count?: number;
   model: string | null;
   prompt_version: string | null;
   tokens: number | null;
@@ -1449,6 +1483,12 @@ export interface BriefingCardData {
   status_line: string | null;
   text: string;
   chips: BriefingChip[];
+  /** Stories (item 079): "The numbers" fold rows, the glossary the
+   * story's terms resolve against, and the fact count for the fold's
+   * summary. Present on briefing.v3+ cards; absent on older versions. */
+  numbers?: { label: string; value: string }[];
+  glossary?: Record<string, string>;
+  fact_count?: number;
   /** "model" = every number checked; "template" = plain fallback + reason. */
   source: 'model' | 'template' | string;
   reason: string | null;

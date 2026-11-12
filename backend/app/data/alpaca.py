@@ -33,6 +33,7 @@ from app.data.models import (
     Quote,
 )
 from app.data.rate_limiter import RateLimiter
+from app.errors import safe_error
 from app.market.clock import NY_TZ, UTC, Clock, RealClock
 
 logger = logging.getLogger(__name__)
@@ -312,7 +313,7 @@ class AlpacaDataClient:
                 )
             return DataResult(data=data, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data={}, error=str(exc), source="alpaca")
+            return DataResult(data={}, error=safe_error(exc), source="alpaca")
 
     async def fetch_calendar(
         self, start: date, end: date
@@ -325,7 +326,7 @@ class AlpacaDataClient:
             rows = list(raw) if isinstance(raw, list) else []
             return DataResult(data=parse_calendar(rows), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_clock(self) -> DataResult[MarketClock | None]:
         try:
@@ -340,7 +341,7 @@ class AlpacaDataClient:
             )
             return DataResult(data=clock, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     async def fetch_5m_bars(
         self, symbols: list[str], start: datetime, end: datetime
@@ -370,7 +371,7 @@ class AlpacaDataClient:
             ]
             return DataResult(data=bars, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_daily_bars(
         self, symbol: str, start: date, end: date
@@ -397,7 +398,7 @@ class AlpacaDataClient:
             raw_bars = dict(raw) if isinstance(raw, dict) else {}
             return DataResult(data=parse_daily_bars(raw_bars, symbol), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def fetch_quotes(
         self, symbols: list[str]
@@ -418,7 +419,7 @@ class AlpacaDataClient:
                 source="alpaca",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data={}, error=str(exc), source="alpaca")
+            return DataResult(data={}, error=safe_error(exc), source="alpaca")
 
     async def fetch_news(
         self, symbols: list[str], start: datetime, end: datetime
@@ -471,4 +472,4 @@ class AlpacaDataClient:
                 source="alpaca",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")

@@ -139,16 +139,16 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 076 | feat | Performance UX (issue #233) | `archive/076-feat-performance-ux.md` | #237 | #264 | building |
 | 077 | feat | Universe UX and Data sync (issue #234) | `077-feat-universe-ux.md` | #237 | — | planned |
 | 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `078-feat-concurrent-requests.md` | #237 | — | planned |
-| 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `079-feat-review-stories.md` | #237 | — | planned |
+| 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `archive/079-feat-review-stories.md` | #237 | #270 | building |
 | 080 | analysis | Security audit of the repository (`docs/analysis/080-security-audit.md`; issue #241 for the GitHub settings) | — | #251 | — | merged |
-| 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `081-fix-keys-out-of-error-text.md` | #251 | — | planned |
+| 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `archive/081-fix-keys-out-of-error-text.md` | #251 | #268 | building |
 | 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
 | 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
 | 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
 | 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
-| 088 | ops | Code coverage report from CI (issue #259) | `088-ops-code-coverage.md` | #260 | — | planned |
+| 088 | ops | Code coverage report from CI (issue #259) | `archive/088-ops-code-coverage.md` | #260 | #263, #267 | building |
 | 089 | spec | A PR closes only issues it resolves | — | #261 | — | merged |
 | 090 | fix | After-exit job's SQLite off the event loop | — | — | #262 | building |
 

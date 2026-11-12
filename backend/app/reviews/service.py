@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -42,6 +42,7 @@ from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
 from app.reviews.client import SCHEMAS, ReviewClient
+from app.reviews.contracts import parse_output
 from app.reviews.facts import (
     app_tz,
     briefing_facts,
@@ -50,9 +51,12 @@ from app.reviews.facts import (
     weekly_facts,
     weekly_period,
 )
-from app.reviews.numbercheck import bad_numbers
+from app.reviews.numbercheck import bad_numbers, format_problems
 from app.reviews.templates import briefing_status, plain_content
 from app.signals.service import SignalService
+
+if TYPE_CHECKING:
+    from app.data.releases import ReleaseCalendarService
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +80,11 @@ REASON_INVALID = "invalid model output"
 REASON_CAP = "cost cap reached"
 
 # The latest prompt version per review kind; config can pin an older one.
-_LATEST_PROMPT = {"weekly": "weekly.v2", "briefing": "briefing.v2", "verdict": "verdict.v2"}
+_LATEST_PROMPT = {"weekly": "weekly.v3", "briefing": "briefing.v3", "verdict": "verdict.v2"}
+
+# Story prompts (item 079): the model writes one to three plain
+# paragraphs; code checks the format and falls back to a prose template.
+REASON_FORMAT = "format check failed"
 
 # Briefing facts the model may never call "unavailable": they are always
 # lists — empty means none, a null would mean unavailable and never occurs.
@@ -143,6 +151,7 @@ class ReviewService:
         notifier: Notifier | None = None,
         secrets: Callable[[], list[str]] | None = None,
         key_ready: Callable[[str], bool] | None = None,
+        releases: ReleaseCalendarService | None = None,
     ) -> None:
         self.client = client
         self.config = config
@@ -158,6 +167,8 @@ class ReviewService:
         self._secrets = secrets
         # provider -> stored key passes its test (simulated mode: True).
         self._key_ready = key_ready or (lambda provider: True)
+        # Release calendar for the briefing's next-release fact (079).
+        self.releases = releases
 
     # ------------------------------------------------------------------
     # schedule helpers
@@ -234,8 +245,8 @@ class ReviewService:
     # Known prompt versions only). Adding a version requires code that
     # validates its output shape; unknown names raise.
     _REVIEW_CONTRACTS = {
-        "weekly": {"weekly.v1", "weekly.v2"},
-        "briefing": {"briefing.v1", "briefing.v2"},
+        "weekly": {"weekly.v1", "weekly.v2", "weekly.v3"},
+        "briefing": {"briefing.v1", "briefing.v2", "briefing.v3"},
         "verdict": {"verdict.v1", "verdict.v2"},
     }
 
@@ -314,7 +325,7 @@ class ReviewService:
             f" ({detail})" if detail else "",
         )
         return Composed(
-            content=plain_content(kind, facts),
+            content=plain_content(kind, facts, prompt.version),
             source="template",
             reason=reason,
             model=None,
@@ -327,63 +338,80 @@ class ReviewService:
             detail=detail,
         )
 
-    def _validate(self, kind: str, content: object) -> dict[str, Any] | None:
-        """Shape- and limit-check the model's JSON; None when unusable."""
-        if not isinstance(content, dict):
+    @staticmethod
+    def _story_version(kind: str, version: str) -> bool:
+        """v3+ prompts write the story shape (item 079)."""
+        try:
+            return int(version.rsplit(".", 1)[-1].lstrip("v")) >= 3
+        except (IndexError, ValueError):
+            return False
+
+    @staticmethod
+    def _validate(
+        kind: str,
+        version: str,
+        content: object,
+        config: AppConfig,
+    ) -> dict[str, Any] | None:
+        """Shape- and limit-check the model's JSON; None when unusable.
+
+        The per-version contract (``app.reviews.contracts``) fixes the
+        shape; the caps below are the older versions' fixed limits —
+        v3 stories are limited by the format check instead, so an
+        over-long story falls back with "format check failed", not
+        "invalid model output".
+        """
+        parsed = parse_output(version, content)
+        if parsed is None:
             return None
         if kind == "weekly":
-            summary = content.get("summary")
-            observations = content.get("observations")
-            suggestion = content.get("suggestion")
-            if not isinstance(summary, str) or not summary.strip():
-                return None
-            limit = int(
-                self.config.get(
-                    "reviews", "max_words", "weekly_summary", default=120
+            if version in ("weekly.v1", "weekly.v2"):
+                summary = parsed.get("summary")
+                limit = int(
+                    config.get(
+                        "reviews", "max_words", "weekly_summary", default=120
+                    )
                 )
-            )
-            if _words(summary) > limit:
-                return None
-            if not isinstance(observations, list) or len(observations) > 3:
-                return None
-            if not all(isinstance(o, str) for o in observations):
-                return None
-            # v1 suggestion is a string; v2 is {text, evidence} or null.
-            if suggestion is not None and not (
-                isinstance(suggestion, str)
-                or (
-                    isinstance(suggestion, dict)
-                    and isinstance(suggestion.get("text"), str)
-                    and isinstance(suggestion.get("evidence"), str)
-                )
+                if not isinstance(summary, str) or _words(summary) > limit:
+                    return None
+                observations = parsed.get("observations")
+                if (
+                    not isinstance(observations, list)
+                    or len(observations) > 3
+                    or not all(isinstance(o, str) for o in observations)
+                ):
+                    return None
+            suggestion = parsed.get("suggestion")
+            if version == "weekly.v1":
+                if suggestion is not None and not isinstance(suggestion, str):
+                    return None
+            elif suggestion is not None and not (
+                isinstance(suggestion, dict)
+                and isinstance(suggestion.get("text"), str)
+                and isinstance(suggestion.get("evidence"), str)
             ):
                 return None
-            return content
+            return parsed
         if kind == "briefing":
-            text = content.get("text")
+            text = parsed.get("text")
             if not isinstance(text, str) or not text.strip():
                 return None
-            limit = int(
-                self.config.get("reviews", "max_words", "briefing", default=80)
-            )
-            return content if _words(text) <= limit else None
-        verdict = content.get("verdict")
-        reason = content.get("reason")
-        # verdict.v2: the label is code's draft_verdict; a model-sent
-        # verdict field is ignored (schema rejects it outright).
-        if verdict is not None and verdict not in ("good_call", "bad_call", "unclear"):
-            return None
+            if version in ("briefing.v1", "briefing.v2") and _words(text) > 80:
+                # Fixed 80-word limit for the pre-story briefings.
+                return None
+            return parsed
+        reason = parsed.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             return None
-        thesis_check = content.get("thesis_check")
+        thesis_check = parsed.get("thesis_check")
         if thesis_check is not None and thesis_check not in (
             "consistent", "contradicts", "unclear"
         ):
             return None
-        contradiction = content.get("contradiction")
+        contradiction = parsed.get("contradiction")
         if contradiction is not None and not isinstance(contradiction, str):
             return None
-        return content
+        return parsed
 
     @staticmethod
     def _content_texts(content: dict[str, Any]) -> list[str]:
@@ -397,6 +425,88 @@ class ReviewService:
             elif isinstance(value, dict):
                 texts.extend(v for v in value.values() if isinstance(v, str))
         return texts
+
+    @staticmethod
+    def _screen_content(
+        kind: str,
+        version: str,
+        content: dict[str, Any],
+        facts: dict[str, Any],
+        config: AppConfig,
+    ) -> tuple[dict[str, Any] | None, str | None, str | None]:
+        """The checks every parsed model answer passes, in order: the
+        briefing's known-empty fact rule, the number check, the story
+        format check (v3+, item 079) and the weekly suggestion gate.
+        Returns ``(content, reason, detail)`` — ``content`` is None when
+        a check failed; a dropped suggestion still returns content."""
+        text = "\n".join(ReviewService._content_texts(content)).lower()
+        # A fact the code produced — an empty list included — is known,
+        # never "unavailable"; the model may not call it that. Clause
+        # boundaries include commas and dashes so a legitimate "unavailable"
+        # for a null fact (regime, yesterday's result) in the same sentence
+        # does not fail the check.
+        if kind == "briefing":
+            clauses = (
+                text.replace(";", ".")
+                .replace("\n", ".")
+                .replace(",", ".")
+                .replace("—", ".")
+                .replace("–", ".")
+                .split(".")
+            )
+            false_claims = [
+                clause.strip()
+                for clause in clauses
+                if "unavailable" in clause
+                and any(
+                    isinstance(facts.get(key), list) and label in clause
+                    for key, label in _STATUS_FACTS
+                )
+            ]
+            if false_claims:
+                return None, REASON_FACT_CHECK, "; ".join(false_claims)[:200]
+        bad = bad_numbers("\n".join(ReviewService._content_texts(content)), facts)
+        if bad:
+            return None, REASON_NUMBER_CHECK, ", ".join(bad)
+        # Stories (item 079): plain prose, 1–3 paragraphs, no markup,
+        # within the version's word cap — checked after the number check
+        # so the reason names what actually failed.
+        if ReviewService._story_version(kind, version):
+            story_key = "story" if kind == "weekly" else "text"
+            story = content.get(story_key)
+            cap_key = (
+                "weekly_story_words" if kind == "weekly" else "briefing_words"
+            )
+            cap = int(
+                (facts.get("limits") or {}).get(
+                    cap_key,
+                    config.get(
+                        "reviews",
+                        "max_words",
+                        "weekly_story" if kind == "weekly" else "briefing",
+                        default=350 if kind == "weekly" else 220,
+                    ),
+                )
+            )
+            problems = format_problems(str(story or ""), cap)
+            if problems:
+                return None, REASON_FORMAT, ", ".join(problems)[:200]
+        if (
+            kind == "weekly"
+            and content.get("suggestion") is not None
+            and facts.get("suggestion_allowed") is False
+        ):
+            # The sample is too small for a suggestion; drop it (INFO).
+            logger.info(
+                "weekly suggestion dropped: fewer than %d closed trades in the run",
+                int(
+                    config.get(
+                        "reviews", "min_closed_trades_for_suggestion", default=10
+                    )
+                ),
+            )
+            content = {**content, "suggestion": None}
+        return content, None, None
 
     async def _compose(
         self,
@@ -458,7 +568,7 @@ class ReviewService:
             parsed: object = json.loads(response.raw)
         except json.JSONDecodeError:
             parsed = None
-        content = self._validate(kind, parsed)
+        content = self._validate(kind, prompt.version, parsed, self.config)
         if content is None:
             return self._fallback(
                 session,
@@ -471,72 +581,23 @@ class ReviewService:
                 response=response,
                 sent_at=sent_at,
             )
-        text = "\n".join(self._content_texts(content)).lower()
-        # A fact the code produced — an empty list included — is known,
-        # never "unavailable"; the model may not call it that. Clause
-        # boundaries include commas and dashes so a legitimate "unavailable"
-        # for a null fact (regime, yesterday's result) in the same sentence
-        # does not fail the check.
-        if kind == "briefing":
-            clauses = (
-                text.replace(";", ".")
-                .replace("\n", ".")
-                .replace(",", ".")
-                .replace("—", ".")
-                .replace("–", ".")
-                .split(".")
-            )
-            false_claims = [
-                clause.strip()
-                for clause in clauses
-                if "unavailable" in clause
-                and any(
-                    isinstance(facts.get(key), list) and label in clause
-                    for key, label in _STATUS_FACTS
-                )
-            ]
-            if false_claims:
-                return self._fallback(
-                    session,
-                    kind=kind,
-                    ref=ref,
-                    facts=facts,
-                    reason=REASON_FACT_CHECK,
-                    prompt=prompt,
-                    detail="; ".join(false_claims)[:200],
-                    response=response,
-                    sent_at=sent_at,
-                )
-        bad = bad_numbers("\n".join(self._content_texts(content)), facts)
-        if bad:
+        screened, screen_reason, screen_detail = self._screen_content(
+            kind, prompt.version, content, facts, self.config
+        )
+        if screened is None:
             return self._fallback(
                 session,
                 kind=kind,
                 ref=ref,
                 facts=facts,
-                reason=REASON_NUMBER_CHECK,
+                reason=screen_reason or REASON_INVALID,
                 prompt=prompt,
-                detail=", ".join(bad),
+                detail=screen_detail,
                 response=response,
                 sent_at=sent_at,
             )
-        if (
-            kind == "weekly"
-            and content.get("suggestion") is not None
-            and facts.get("suggestion_allowed") is False
-        ):
-            # The sample is too small for a suggestion; drop it (INFO).
-            logger.info(
-                "weekly suggestion dropped: fewer than %d closed trades in the run",
-                int(
-                    self.config.get(
-                        "reviews", "min_closed_trades_for_suggestion", default=10
-                    )
-                ),
-            )
-            content = {**content, "suggestion": None}
         return Composed(
-            content=content,
+            content=screened,
             source="model",
             reason=None,
             model=response.model,
@@ -654,7 +715,11 @@ class ReviewService:
                 kind="weekly",
                 period=period,
                 facts=facts,
-                text=str(composed.content.get("summary", "")),
+                text=str(
+                    composed.content.get("story")
+                    or composed.content.get("summary")
+                    or ""
+                ),
                 content=composed.content,
                 source=composed.source,
                 reason=composed.reason,
@@ -679,7 +744,11 @@ class ReviewService:
         self._notifier.notify(
             "weekly_review",
             f"week {period} ready",
-            body=str(composed.content.get("summary", "")),
+            body=str(
+                composed.content.get("story")
+                or composed.content.get("summary")
+                or ""
+            ),
             link="/reviews",
         )
         self._notify({"reviews"})
@@ -721,6 +790,7 @@ class ReviewService:
                 signals=self.signals,
                 state=self.state,
                 day=day,
+                releases=self.releases,
             )
             composed = await self._compose(
                 session, kind="briefing", ref=period, facts=facts

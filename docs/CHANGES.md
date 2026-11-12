@@ -15,6 +15,40 @@ Build PR of 076 on branch `feat/076-performance-ux`.
 - **One banner**: below `performance.tail.min_trades` (20) closed trades the page shows a single small-sample banner under the summary; the Winners and tails card drops its own.
 - **Phone**: "On this page" chips; chart date labels stay non-overlapping.
 
+## 2026-11-12 — [088] Code coverage report from CI (build, part 2)
+
+Second build PR of 088 on branch `ops/088-code-coverage-e2e` (steps 7–10 of the kickoff).
+
+- **Backend e2e coverage:** with `E2E_COVERAGE=1` the Playwright web server runs `coverage run --parallel-mode` (`sigterm` and `concurrency = ["thread"]` in `pyproject.toml`); Playwright's `gracefulShutdown` SIGTERM flushes `backend/.coverage.e2e.<project>.*` files. Without the variable the command line is unchanged.
+- **Frontend e2e coverage:** the shared `e2e/shots.ts` fixture wraps `context.newPage`, starts Chromium V8 coverage per page and collects on page close into `coverage-e2e/raw/*.jsonl`; `vite.config.ts` emits sourcemaps only under `E2E_COVERAGE=1`; `scripts/coverage-e2e.mjs` resolves served assets + sourcemaps and writes istanbul reports via `monocart-coverage-reports`.
+- **`coverage` job:** downloads the unit and e2e artifacts, combines backend data (`coverage combine`/`xml`/`html` for unit/e2e/all) and merges frontend istanbul maps (`scripts/coverage-merge.mjs`, unit/e2e/all, skipping `all` when statement maps differ), prints one summary and uploads `coverage-all` for 7 days.
+- **`scripts/coverage_summary.py`** now takes `--{backend,frontend}-{unit,e2e,all}` and prints Unit/E2E/All columns, package rows on All, the least-covered list and the e2e-only list (0% unit, >0% e2e, ≥50 statements).
+- **Deps:** `monocart-coverage-reports` (frontend dev), `defusedxml` (Python dev, for the summary script's XML parsing).
+
+## 2026-11-12 — [088] Code coverage report from CI (build, part 1)
+
+First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kickoff; the e2e measurement follows in a second PR).
+
+- **Backend:** `pytest-cov` in the dev extra; `[tool.coverage.run]`/`[tool.coverage.report]` in `pyproject.toml` (branch coverage, `source = ["app"]`, `relative_files`). Only CI passes `--cov` options, so `make test-backend` locally measures nothing.
+- **Frontend:** `@vitest/coverage-v8` (same major as vitest); `test.coverage` in `vite.config.ts` (v8 provider, off unless `--coverage`); `make test-frontend VITEST_ARGS=--coverage` in CI.
+- **`scripts/coverage_summary.py`**: standard-library script that prints the Markdown table (lines and branches per side, backend per-package rows, 10 least-covered files with ≥50 statements) into `$GITHUB_STEP_SUMMARY` with `if: always()`; a missing report prints "no report" and never fails the step. Unit test: `backend/tests/test_coverage_summary.py`.
+- **Artifacts** `coverage-backend` (`backend/htmlcov/`, `backend/coverage.xml`) and `coverage-frontend` (`frontend/coverage/`), 7 days.
+- **Docs:** `AGENTS.md` → Commands (one-module coverage locally; a full coverage run joins the never-run-locally list), README gains a "Tests and coverage" section.
+
+## 2026-11-12 — [079] Review stories (build)
+
+Build PR of 079 on branch `feat/079-review-stories`.
+
+- **`backend/config.example.yaml` (spec-owned):** `reviews.prompts` defaults move to `weekly.v3` and `briefing.v3` (verdict stays `verdict.v2`); `reviews.max_words` gains `weekly_story: 350` and `briefing: 220` — `weekly_summary: 120` stays for the v1/v2 prompts, whose checks keep their own limits.
+
+## 2026-11-12 — [081] Keys out of error text (build, part 1)
+
+Build PR of 081 on branch `fix/081-keys-out-of-error-text` — the S1 part (issue #238); Ask settings and the heartbeat URL follow in the second PR.
+
+- **`safe_error`** (`app/errors.py`): exception-derived text loses every URL query string, gets the log scrubber's key patterns and all registered secret values (plus `extra`), and is cut to 300 characters. Every `DataResult(error=…)`, broker error, LLM error, API `detail=` built from an exception, notification, event detail, ops status and Ask error now goes through it; an AST test fails on any `str(exc)`/`{exc}`/`repr(exc)` outside logging and scrub calls.
+- **Second line:** `NotificationService.notify` scrubs line, body and details before the row is stored or emailed; `record_event` scrubs details at any depth.
+- **Stored rows, once:** at startup, after migrations and secret providers, `app/stored_scrub.py` rewrites `cycles.data_source_health`, `notifications.subject`/`body`, `events.details` and the Ask message columns in batches of 500, guarded by a `stored_text_scrub` event row. When rows changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2; leaves when both keys were replaced after the scrub, or on dismiss with a note).
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.
