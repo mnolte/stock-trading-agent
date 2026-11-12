@@ -128,6 +128,10 @@ class OpenAIAdapter:
                 provider=self.provider,
             )
         usage = completion.usage
+        # OpenAI's automatic prompt caching: cached_tokens is a subset of
+        # prompt_tokens, priced at the model's cached_input rate.
+        details = getattr(usage, "prompt_tokens_details", None)
+        cached = getattr(details, "cached_tokens", None) if details else None
         message = completion.choices[0].message if completion.choices else None
         finish = (
             getattr(completion.choices[0], "finish_reason", None)
@@ -155,6 +159,7 @@ class OpenAIAdapter:
             model=use_model,
             tokens_in=usage.prompt_tokens if usage else None,
             tokens_out=usage.completion_tokens if usage else None,
+            cached_tokens_in=cached,
             latency_ms=int((time.monotonic() - started) * 1000),
             error=error,
             error_type=error_type,

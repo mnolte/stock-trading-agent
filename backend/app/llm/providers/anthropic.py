@@ -162,7 +162,15 @@ class AnthropicAdapter:
             response = await self._client.messages.with_raw_response.create(
                 model=use_model,
                 max_tokens=max_tokens,
-                system=system,
+                # The system prompt is the shared prefix across calls, so
+                # it carries cache_control like converse() does.
+                system=[
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
                 messages=[{"role": "user", "content": user}],
                 output_config=cast(
                     "OutputConfigParam",
@@ -195,6 +203,11 @@ class AnthropicAdapter:
         usage = message.usage
         # Only the final text is kept — thinking is billed but never stored.
         raw = "".join(block.text for block in message.content if block.type == "text")
+        # Anthropic reports the three input buckets separately;
+        # tokens_in is their sum (same accounting as converse()).
+        cached = getattr(usage, "cache_read_input_tokens", 0) or 0
+        written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        plain_in = getattr(usage, "input_tokens", 0) or 0
         refused = message.stop_reason == "refusal"
         error: str | None = None
         error_type: str | None = None
@@ -212,8 +225,10 @@ class AnthropicAdapter:
         return ModelResponse(
             raw=raw if not refused else (raw or None),
             model=use_model,
-            tokens_in=usage.input_tokens if usage else None,
+            tokens_in=plain_in + cached + written if usage else None,
             tokens_out=usage.output_tokens if usage else None,
+            cached_tokens_in=cached if usage else None,
+            cache_write_tokens_in=written if usage else None,
             latency_ms=int((time.monotonic() - started) * 1000),
             error=error,
             error_type=error_type,
