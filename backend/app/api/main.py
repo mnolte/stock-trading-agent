@@ -65,6 +65,7 @@ from app.engine.state import (
     recover_interrupted_cycles,
     set_event_sink,
 )
+from app.errors import safe_error
 from app.llm.base import ModelClient
 from app.llm.clients import make_model_clients
 from app.llm.fake import FakeModelClient
@@ -327,7 +328,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
                 clock,
                 level="warning",
                 event_type="backup_failed",
-                details={"error": str(exc)},
+                details={"error": safe_error(exc)},
             )
             session.commit()
         # No copy on disk — nothing older than the keep window is pruned
@@ -368,7 +369,7 @@ def run_daily_backup(clock: Clock, market_data: MarketDataService, ops: Any = No
                     clock,
                     level="warning",
                     event_type="backup_failed",
-                    details={"error": f"offsite: {exc}"},
+                    details={"error": f"offsite: {safe_error(exc)}"},
                 )
                 session.commit()
 
@@ -456,7 +457,7 @@ async def ensure_broker_guard(broker: Any, clock: Clock, session_factory: Any) -
             if not ok:
                 details = {"read_back": cfg, "error": read.error}
     except Exception as exc:  # noqa: BLE001
-        details = {"error": str(exc)}
+        details = {"error": safe_error(exc)}
     if details:
         with session_factory() as session:
             record_event(
@@ -756,7 +757,7 @@ def check_models_at_startup(config: AppConfig) -> None:
         try:
             check_models(config, session)
         except (ValueError, UnpricedModelError) as exc:
-            raise RuntimeError(f"Refusing to start: {exc}") from exc
+            raise RuntimeError(f"Refusing to start: {safe_error(exc)}") from exc
 
 
 def check_prompt_versions_at_startup(config: AppConfig) -> None:
@@ -792,7 +793,7 @@ def check_prompt_versions_at_startup(config: AppConfig) -> None:
         for version in versions:
             prompt_spec(version)
     except UnknownPromptVersion as exc:
-        raise RuntimeError(f"Refusing to start: {exc}") from exc
+        raise RuntimeError(f"Refusing to start: {safe_error(exc)}") from exc
 
 
 def check_execution_mode(config: AppConfig) -> None:
@@ -1075,6 +1076,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         check_route_coverage(app)
 
+    # Item 081 step 4: one-time scrub of stored rows now that every
+    # secret provider is registered — runs once, flagged by its event.
+    from app.stored_scrub import run as run_stored_scrub
+
+    run_stored_scrub(get_session_maker(), clock)
+
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)
@@ -1169,6 +1176,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if config.env.mode != "simulated"
             else None
         ),
+        releases=release_service,
     )
     position_checker = PositionChecker(
         executor=executor,

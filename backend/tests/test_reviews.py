@@ -92,7 +92,8 @@ async def test_briefing_report_four_rejects_known_empty_as_unavailable(
     assert review is not None
     assert review.source == "template"
     assert review.reason == "fact check failed"
-    assert review.text.startswith("Positions: none.")
+    # weekly/briefing v3 (item 079): the fallback is the prose template.
+    assert "no positions are open" in review.text
     detail = str(
         (_fallback_events(session_factory)[0].details or {}).get("detail", "")
     )
@@ -562,8 +563,7 @@ async def test_fallback_on_number_check(
         _seed_week(session)
         session.commit()
     invented: dict[str, object] = {
-        "summary": "Return +9.99%, an invented figure.",
-        "observations": [],
+        "story": "Return +9.99%, an invented figure.",
         "suggestion": None,
     }
     service = _service(
@@ -700,9 +700,9 @@ async def test_model_text_passes_number_check(
     assert review.source == "model"
     assert review.reason is None
     assert review.model == "gpt-4o-mini"
-    assert review.prompt_version == "weekly.v2"
+    assert review.prompt_version == "weekly.v3"
     assert review.cost is not None
-    assert (review.content or {})["summary"] == review.text
+    assert (review.content or {})["story"] == review.text
     # A caught-up/scheduled write keeps the Saturday slot as due_at.
     assert review.due_at == _naive(SATURDAY)
 

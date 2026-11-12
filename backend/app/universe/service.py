@@ -55,6 +55,7 @@ from app.db.models import (
     UniverseScreenRow,
 )
 from app.engine.state import record_event
+from app.errors import safe_error
 from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock
@@ -821,12 +822,12 @@ class UniverseService:
                     details={
                         "session_date": today.isoformat(),
                         "mode": self.mode(),
-                        "error": str(exc)[:500],
+                        "error": safe_error(exc),
                     },
                 )
                 session.commit()
             self._ping()
-            return {"failed": str(exc)}
+            return {"failed": safe_error(exc)}
 
     async def _run_screen(self, now: datetime, today: date) -> dict[str, Any]:
         cfg = self._screen_cfg()

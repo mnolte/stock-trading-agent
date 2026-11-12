@@ -4,7 +4,7 @@ export interface StatCardProps {
   label: ReactNode;
   value: string;
   valueColor?: string;
-  sub?: string;
+  sub?: ReactNode;
   bar?: { width: string; color: string };
   /** Pinned to the tile's bottom edge (item 073: the "Open →" link). */
   footer?: ReactNode;

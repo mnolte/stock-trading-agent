@@ -8,6 +8,11 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 export default [
   { ignores: ['dist'] },
   js.configs.recommended,
+  {
+    // Node-side scripts (coverage tooling) — no-undef needs the globals.
+    files: ['**/*.mjs'],
+    languageOptions: { globals: globals.node },
+  },
   ...tsPlugin.configs['flat/recommended'],
   {
     files: ['**/*.{ts,tsx}'],
