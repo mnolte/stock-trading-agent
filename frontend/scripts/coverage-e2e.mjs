@@ -74,10 +74,13 @@ if (fs.existsSync(rawDir)) {
       if (!line.trim()) continue;
       const record = JSON.parse(line);
       for (const entry of record.entries ?? []) {
-        if (typeof entry?.url === 'string' && entry.source === undefined) {
+        // Playwright already returns the source text but never the
+        // sourcemap — without it monocart reports the minified bundle and
+        // the src/** filters drop everything.
+        if (typeof entry?.url === 'string') {
           const asset = localAsset(entry.url);
-          entry.source = asset.source;
-          entry.sourceMap = asset.sourceMap;
+          entry.source ??= asset.source;
+          entry.sourceMap ??= asset.sourceMap;
         }
         entries.push(entry);
       }

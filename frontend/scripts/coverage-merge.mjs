@@ -78,7 +78,14 @@ function loadVariant(dirs) {
       continue;
     }
     try {
-      files.push(normalizeKeys(JSON.parse(fs.readFileSync(found, 'utf8'))));
+      const normalized = normalizeKeys(
+        JSON.parse(fs.readFileSync(found, 'utf8')),
+      );
+      if (Object.keys(normalized).length === 0) {
+        console.log(`coverage-merge: ${found} has no file entries — skipped`);
+        continue;
+      }
+      files.push(normalized);
     } catch (error) {
       console.log(`coverage-merge: unreadable ${found}: ${error} — skipped`);
     }
