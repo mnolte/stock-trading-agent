@@ -668,6 +668,9 @@ class LlmCall(Base):
         Index("ix_llm_calls_strategy", "strategy_id"),
         Index("ix_llm_calls_latency", "latency_ms"),
         Index("ix_llm_calls_reasons", "reasons"),
+        # Top reasons / attention counts group by all three (item 074);
+        # the composite keeps that an index-only scan on the 100k fixture.
+        Index("ix_llm_calls_reasons_meta", "reasons", "attention", "kind"),
         Index(
             "ix_llm_calls_dims",
             "outcome", "source", "symbol", "final_action",
@@ -730,6 +733,16 @@ class LlmCall(Base):
         String(64), nullable=True
     )
     raw_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Item 074: none | watch | act — set once at write time by
+    # app.inspector.attention, never recomputed (docs/SPEC.md → Does it
+    # need me?). Existing rows backfill to "none".
+    attention: Mapped[str] = mapped_column(
+        String(8),
+        nullable=False,
+        default="none",
+        server_default="none",
+        index=True,
+    )
     backfilled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # The input snapshot exactly as sent to the model — the stripped
     # send copy for v3/v4 decision calls, null on rows written before

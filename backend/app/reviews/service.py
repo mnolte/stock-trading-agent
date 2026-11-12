@@ -35,6 +35,7 @@ from app.db.models import Cycle, Decision, Outcome, Review, Run, Verdict
 from app.decide.client import ModelResponse, token_cost
 from app.decide.prompt import Prompt, cached_prompt
 from app.engine.state import ExecutionState, record_event
+from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
 from app.llm.models import model_provider, provider_label
 from app.market.calendar import NY_TZ, CalendarProvider
@@ -577,8 +578,7 @@ class ReviewService:
         response = composed.response
         if response is None or composed.sent_at is None:
             return
-        session.add(
-            build_llm_call(
+        call_row = build_llm_call(
                 source="review",
                 kind=kind,
                 sent_at=composed.sent_at,
@@ -611,7 +611,12 @@ class ReviewService:
                 ),
                 scrub_values=self._secrets,
             )
+        call_row.attention = attention_for_call(
+            session,
+            call_row,
+            input_payload={"kind": kind, "facts": facts},
         )
+        session.add(call_row)
 
     # ------------------------------------------------------------------
     # weekly review

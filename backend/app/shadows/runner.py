@@ -92,6 +92,7 @@ from app.engine.selection import (
     score,
 )
 from app.engine.state import record_event
+from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call, sync_llm_call
 from app.llm.models import model_effort, model_provider
 from app.market.calendar import CalendarProvider
@@ -921,8 +922,7 @@ class ShadowRunner:
             # One llm_calls row per request actually sent, committed with
             # the shadow decision it produced (docs/SPEC.md, LLM call
             # history — Storage).
-            session.add(
-                build_llm_call(
+            call_row = build_llm_call(
                     source="shadow",
                     kind="decision",
                     sent_at=sent_at,
@@ -966,7 +966,10 @@ class ShadowRunner:
                     ),
                     scrub_values=self._secrets,
                 )
+            call_row.attention = attention_for_call(
+                session, call_row, input_payload=snap_json
             )
+            session.add(call_row)
             return row
 
         # ---- held positions first
@@ -2093,8 +2096,7 @@ class ShadowRunner:
         prompt = cached_prompt(str(strategy.prompt_version))
         cfg = strategy_config(self.config, strategy)
         spec = _spec(strategy)
-        session.add(
-            build_llm_call(
+        call_row = build_llm_call(
                 source="shadow",
                 kind="decision",
                 sent_at=oot.sent_at,
@@ -2127,7 +2129,10 @@ class ShadowRunner:
                 prompt_hash=prompt.sha256,
                 scrub_values=self._secrets,
             )
+        call_row.attention = attention_for_call(
+            session, call_row, input_payload=snap_json
         )
+        session.add(call_row)
 
     def _apply_held(
         self, row: ShadowDecision, sp: ShadowPosition, at: datetime,
