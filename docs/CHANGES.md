@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-12 — [078] Concurrent requests, part 1 (build)
+
+Build PR of 078 on branch `feat/078-concurrent-requests` (steps 1–4; sync jobs, shadows, storage and docs follow in the second PR).
+
+- **`concurrency.max_requests`** (20, 1–50): the most requests one batch keeps in flight; read at start, shown read-only in Settings → Server, and it sizes every Alpaca HTTP pool at `max(max_requests, 20)` per host.
+- **`app/concurrency.py`**: `run_batch` sends a set of independent requests together under a per-batch semaphore, returns results in item order (a value or the exception — one failure never cancels the others), records max in flight and wall time, and logs one INFO line per batch. A process-wide `SourceGate` per source sits in front of each rate limiter (the limiter itself is unchanged): live cycle requests go before waiting sync, shadow, review, Ask and backtest ones.
+- **The cycle's model calls run in two waves**: held positions' calls together, then candidates planned against the post-held state and called together; answers are still validated, stored and applied in order, orders stay sequential, and the call cap is unchanged. The account refresh and the 5-min bar refresh now run in parallel after reconciliation.
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.
