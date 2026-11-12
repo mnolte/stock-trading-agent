@@ -28,11 +28,27 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 
 ## Commands
 
-Run before every commit:
+**CI runs the tests, not the laptop** (decided 12 Nov, item 087). The full suites load every core of the development laptop for minutes. So:
+
+- **Locally, run only what you changed**, and keep it under about a minute:
+
+```bash
+uv run ruff check <changed files>                      # not the whole tree
+cd backend && uv run pytest tests/test_<area>.py -k <name>   # the tests for your change, no -n auto
+cd frontend && pnpm exec vitest run <changed test file>
+```
+
+- **Never run locally:** `make test`, `make test-backend`, `make test-perf`, `make test-slow`, `make test-e2e`, the Playwright suite, `make security`, or a Docker image build. CI runs all of them on every push to a pull request (`.github/workflows/ci.yml`, `image.yml`).
+- **Push early, as a draft PR.** Open the pull request as a draft once the first commit builds, so CI starts working while you continue. Push in batches, not after every small commit: a new push cancels the run before it.
+- **CI is the proof.** A step is done when its CI checks are green, not when a local run passed. Wait for the running checks; if one fails, read its log (`gh run view --log-failed`), fix it on the branch and push. Re-run locally only the one failing test.
+- **Exceptions**, said in the PR under "Test plan": CI hasn't started a run for 30 minutes (then run the affected test files, not the suite); a failure that only shows locally; screenshots for a UI PR, which need the app in simulated mode. Stop every process you started when you're done (by its PID, hard rule 12): a forgotten Vite server or watcher costs CPU all day.
+- **In kickoffs,** "make test and the e2e pass" means: they pass in CI.
+
+What CI runs, for reference:
 
 ```bash
 make lint        # ruff + mypy (backend), pnpm lint + pnpm typecheck (frontend)
-make test        # pytest with sockets blocked, vitest, playwright e2e when browsers are installed
+make test        # pytest with sockets blocked, vitest, playwright e2e
 ```
 
 `make dev` starts the backend (uvicorn --reload) and the Vite dev server; Ctrl-C stops both with a graceful shutdown. `make logs-reindex` rebuilds the log index from the log files. `make create-user` creates or resets the single account (server only). `deploy/` holds provision, deploy and restore scripts (see `docs/DEPLOY.md`); never run them from a PR. `make run` builds the GUI and serves everything from the backend on 127.0.0.1:SA_PORT. `MODE=simulated` with either command runs without network.
