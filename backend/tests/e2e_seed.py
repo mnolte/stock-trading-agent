@@ -27,9 +27,22 @@ def _seed_fingerprint() -> str:
     import hashlib
 
     here = Path(__file__).resolve().parent
+    backend = here.parent
     digest = hashlib.sha256()
     for name in ("e2e_seed.py", "e2e_backtest_seed.py"):
         digest.update((here / name).read_bytes())
+    # Reviews are written into the scratch DB at runtime, not seeded:
+    # a change to their prompts, facts, validation or fake answers must
+    # count as stale rows too (item 079 — the v2→v3 prompt bump left a
+    # cached DB serving weekly.v2/briefing.v2 rows to the story UI).
+    for pattern in (
+        "app/reviews/*.py",
+        "prompts/*.md",
+        "app/llm/fake.py",
+    ):
+        for path in sorted(backend.glob(pattern)):
+            digest.update(path.name.encode())
+            digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
