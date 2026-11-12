@@ -59,10 +59,16 @@ async def run_eval(
 
     if client is None:
         from app.llm.clients import make_model_clients
-        from app.market.clock import RealClock
-        from app.secrets_service import SecretsStore
 
-        client = make_model_clients(config, SecretsStore(config, RealClock()))
+        if config.env.mode == "simulated":
+            client = make_model_clients(config)
+        else:
+            from app.market.clock import RealClock
+            from app.secrets_service import SecretsStore
+
+            client = make_model_clients(
+                config, SecretsStore(config, RealClock())
+            )
 
     results: dict[str, list[bool]] = {p: [] for p in prompts}
     detail_rows: list[str] = []
