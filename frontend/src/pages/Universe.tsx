@@ -506,19 +506,27 @@ export default function Universe() {
     return q ? all.filter((r) => r.symbol.includes(q)) : all;
   }, [data, tab, find, sectorFilter]);
 
-  // The "All" pool view collapses its middle (design/screens/Universe.dc.html):
-  // first rows, a "n more eligible · show all" expander, then the tail with the
-  // warming-up and excluded rows. Filtering or searching shows everything.
-  const filtered = tab !== 'All' || find.trim() !== '' || sectorFilter !== null;
+  // The pool table collapses its middle (design/screens/Universe.dc.html):
+  // first rows, a "n more <filter> · show all" expander naming the active
+  // filter and count, then the tail with the warming-up and excluded rows.
   const HEAD = 8;
   const TAIL = 4;
-  const collapsible = !filtered && !showAllRows && rows.length > HEAD + TAIL + 2;
+  const collapsible = !showAllRows && rows.length > HEAD + TAIL + 2;
   const headRows = collapsible ? rows.slice(0, HEAD) : rows;
   const hiddenRows = collapsible ? rows.slice(HEAD, -TAIL) : [];
   const tailRows = collapsible ? rows.slice(-TAIL) : [];
-  const hiddenAllEligible = hiddenRows.every(
-    (r) => r.status === 'eligible' || r.status === 'eligible_fails',
-  );
+  const foldName =
+    tab !== 'All'
+      ? ` ${tab.toLowerCase()}`
+      : sectorFilter
+        ? ` in ${sectorFilter}`
+        : find.trim()
+          ? ` matching "${find.trim()}"`
+          : hiddenRows.every(
+                (r) => r.status === 'eligible' || r.status === 'eligible_fails',
+              )
+            ? ' eligible'
+            : '';
 
   const setSector = (sector: string | null) => {
     setSearchParams(
@@ -1156,7 +1164,10 @@ export default function Universe() {
                 aria-label="Find a symbol"
                 placeholder="Find a symbol"
                 value={find}
-                onChange={(e) => setFind(e.target.value)}
+                onChange={(e) => {
+                  setFind(e.target.value);
+                  setShowAllRows(false);
+                }}
                 style={{
                   height: 40,
                   boxSizing: 'border-box',
@@ -1227,7 +1238,7 @@ export default function Universe() {
                             cursor: 'pointer',
                           }}
                         >
-                          {hiddenRows.length} more{hiddenAllEligible ? ' eligible' : ''} · show all
+                          {hiddenRows.length} more{foldName} · show all
                         </button>
                       </td>
                     </tr>
