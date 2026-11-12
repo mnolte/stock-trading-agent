@@ -48,6 +48,7 @@ from app.decide.v3 import scheduled_exit_text
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
+from app.errors import safe_error
 from app.llm.models import REVIEW_TASKS, review_model
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
@@ -1165,7 +1166,7 @@ async def pause_resume(request: Request) -> dict[str, object]:
     try:
         await executor.resume_from_pause()
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"paused": False}
 
 
@@ -1189,7 +1190,7 @@ async def kill_switch_resume(
     try:
         await executor.resume(reason)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"kill_switch": False}
 
 
@@ -1230,7 +1231,7 @@ def dismiss_event(
             session.commit()
             dismissed_id = event.id
         except ReadinessError as exc:
-            detail = str(exc)
+            detail = safe_error(exc)
             if detail == "a note is required to dismiss an error":
                 raise HTTPException(status_code=422, detail=detail) from exc
             raise HTTPException(status_code=409, detail=detail) from exc
@@ -1271,7 +1272,7 @@ def readiness_manual(
             session.commit()
             row_id = row.id
         except ReadinessError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     _notify(request, "readiness")
     return {"saved": True, "id": row_id}
 
@@ -6509,7 +6510,7 @@ async def server_backup_now(request: Request) -> dict[str, object]:
     try:
         await run_in_threadpool(create_backup, _clock(request))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=[f"backup failed: {exc}"]) from exc
+        raise HTTPException(status_code=500, detail=[f"backup failed: {safe_error(exc)}"]) from exc
     return {"ok": True}
 
 
@@ -6637,7 +6638,7 @@ async def server_backup_credentials(
     try:
         endpoint = validate_public_https_url(endpoint)
     except UrlRejected as exc:
-        errors.append(f"endpoint: {exc}")
+        errors.append(f"endpoint: {safe_error(exc)}")
     for name, value in (
         ("bucket", bucket),
         ("access_key_id", access_key_id),

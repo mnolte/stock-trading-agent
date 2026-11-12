@@ -45,6 +45,7 @@ from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
 from app.engine.selection import ScoredEntry, SelectionBudget, choose, score
 from app.engine.state import record_event
+from app.errors import safe_error
 from app.inspector.record import sync_llm_call
 from app.llm.base import ModelResponse
 from app.market.calendar import CalendarProvider
@@ -490,13 +491,7 @@ class CycleRunner:
                     await self._run(session, cycle.id, scheduled_ny, now, report)
                 except Exception as exc:  # noqa: BLE001
                     report.status = "error"
-                    from app.logging_config import (
-                        _all_secrets,
-                        _scrub_text,
-                    )
-                    report.errors.append(
-                        _scrub_text(str(exc), _all_secrets())
-                    )
+                    report.errors.append(safe_error(exc))
                     logger.exception(
                         "Cycle %s failed at %s: %s",
                         report.cycle_id,
@@ -531,14 +526,7 @@ class CycleRunner:
                             )
                     except Exception as exc:
                         report.status = "error"
-                        from app.logging_config import (
-                            _all_secrets,
-                            _scrub_text,
-                        )
-
-                        report.errors.append(
-                            _scrub_text(str(exc), _all_secrets())
-                        )
+                        report.errors.append(safe_error(exc))
                         logger.exception("cycle %s outcomes failed", report.cycle_id)
                         session.rollback()
                         stored = session.get(Cycle, report.cycle_id)
