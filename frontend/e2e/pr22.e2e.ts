@@ -13,13 +13,20 @@ const SNAP = {
     session_date: '2026-12-18',
     computed_at: '2026-12-18T21:05:00',
     trades: 112,
+    answers: {
+      edge: 'Probably, but not proven yet. Trades earned +0.31R on average, and the 90% range runs from +0.09R to +0.53R — the range still includes zero. Beta 0.42: the result only partly follows the market.',
+      stands_out: '1 finding and 1 early signal. Entry cycle 10:46; Opening gap down >1%.',
+      trades_lost: 'The rules stop 7% of symbol checks. After the model, code checks (8) and risk gates (8) cost the most entries. Skipping adds value: more skipped setups would have hit their stop (28%) than their target (15%).',
+      conditions: 'Entry cycle: the best so far is 10:46 (+0.62R) and 11:46 (+0.20R) — 1 finding and 0 early signals.',
+      costs: 'Confidence is within its target — a gap of about 4 points (target: within 10). 2 stops filled through the stop for 0.46R extra. Overnight holds earned −$312.40 while the session earned +$1840.20.',
+    },
     headline: {
-      expectancy: { avg_r: '0.31', lo: '0.09', hi: '0.53', n: 112 },
-      edge_over_spy: { pts: '1.84', return_pct: '3.10', spy_return_pct: '5.04', exposure: '0.25' },
-      beta: { beta: '0.42', correlation: '0.61', sessions: 20 },
+      expectancy: { avg_r: '0.31', lo: '0.09', hi: '0.53', n: 112, needs: 10, have: 112 },
+      edge_over_spy: { pts: '1.84', return_pct: '3.10', spy_return_pct: '5.04', exposure: '0.25', needs: 10, have: 112 },
+      beta: { beta: '0.42', correlation: '0.61', sessions: 20, needs: 3, have: 20 },
       overnight: { in_session_usd: '1840.20', overnight_usd: '-312.40' },
       gaps: { count: 2, extra_r: '0.46' },
-      model_cost: { total_usd: '6.72', per_trade_usd: '0.06', pct_gross_profit: '1.40' },
+      model_cost: { total_usd: '6.72', per_trade_usd: '0.06', pct_gross_profit: '1.40', needs: 10, have: 112 },
     },
     funnel: {
       steps: [
@@ -85,7 +92,7 @@ const SNAP = {
         { label: '0.7–0.8', stated: '0.74', actual: '0.70', n: 17, status: 'early' },
         { label: '0.8–0.9', stated: '0.83', actual: '0.78', n: 9, status: 'hidden' },
       ],
-      hidden: 11, entries: 110, weighted_gap_pts: '4.20',
+      hidden: 11, entries: 110, weighted_gap_pts: '4.20', needs: 50, have: 110,
     },
     execution: {
       fill_rate: '92.31', filled: 120, placed: 130,
@@ -101,6 +108,9 @@ const SNAP = {
       earnings_exits: 8, earnings_avg_r: '0.85', earnings_median_move_pct: '1.20',
       dividends_usd: '12.30', dividend_positions: 3,
     },
+    filters_removed: [
+      { filter: 'rules', count: 120, decided: 140, target_first: 20, stop_first: 41, neither: 79, r_made: '-0.31', needs: 100, have: 140 },
+    ],
     overnight: {
       in_session_usd: '1840.20', overnight_usd: '-312.40',
       nights: 96, gapped_against: 41, gapped_pct: '42.71',
@@ -135,19 +145,26 @@ test('insights: headline, findings, funnel and slices', async ({ page }, testInf
   await expect(
     page.locator('main').getByRole('heading', { name: 'Insights' }),
   ).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText('Expectancy')).toBeVisible();
-  await expect(page.getByText('+0.31R')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Findings' })).toBeVisible();
+  // 075: the page reads as five numbered questions with answer sentences.
+  await expect(page.getByRole('heading', { name: 'Is there an edge?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What stands out?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Where are trades lost?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Which conditions work?' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'What do confidence, fills and nights cost?' })).toBeVisible();
+  await expect(page.getByText(/Probably, but not proven yet/)).toBeVisible();
+  await expect(page.locator('.sa-tiles').getByText('Expectancy')).toBeVisible();
+  await expect(page.getByText('+0.31R').first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Findings and early signals' })).toBeVisible();
   await expect(page.getByText('Entry cycle: 10:46')).toBeVisible();
   await expect(page.getByText('Test in a shadow')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Where trades come from' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Skipped setups' })).toBeVisible();
   await expect(page.getByText('No entries in the last cycle')).toBeVisible();
   await expect(page.getByText('16:46 Amsterdam').first()).toBeVisible();
-  await expect(page.getByText('Not filled — the limit was never touched:')).toBeVisible();
+  await expect(page.getByText('the limit was never touched')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Calibration' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Execution' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Overnight' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overnight and in session' })).toBeVisible();
 
   // Show the trades loads the slice's trade list from the API.
   await page.getByRole('button', { name: 'Show the trades' }).first().click();

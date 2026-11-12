@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.insights.answers import compute_answers, with_sample_states
 from app.market.clock import NY_TZ
 
 # ----------------------------------------------------------------------
@@ -899,7 +900,33 @@ def _slices(
                 finding_sigma=finding_sigma,
             )
             if status == "hidden":
-                hidden += len(members)
+                # Item 071 removed the last-cycle entry rule: until the
+                # last cycle has early_trades trades its row says when
+                # entries started instead of hiding like any empty
+                # slice (docs/SPEC.md → Insights → GUI).
+                if (
+                    key == "entry_cycle"
+                    and value == cycles[-1]
+                    and not last_cycle_no_entries
+                    and value not in rules_rows
+                ):
+                    rows.append(
+                        {
+                            "slice": value,
+                            "sub": _sub(key, value),
+                            "trades": len(members),
+                            "status": "note",
+                            "note": (
+                                "Entries from 11 Nov, when the "
+                                "last-cycle rule was removed · "
+                                f"{len(members)} "
+                                f"{'trade' if len(members) == 1 else 'trades'} "
+                                f"so far, shown from {early_trades}"
+                            ),
+                        }
+                    )
+                else:
+                    hidden += len(members)
                 continue
             won = sum(
                 1
@@ -1521,7 +1548,7 @@ def compute_insights(
             }
         )
 
-    return {
+    snapshot = {
         "trades": closed,
         "headline": headline,
         "funnel": funnel,
@@ -1533,3 +1560,13 @@ def compute_insights(
         "overnight": overnight,
         "filters_removed": filters_out,
     }
+    # The page's five answer sentences and the needs/have sample states
+    # are computed with the snapshot (item 075).
+    snapshot["answers"] = compute_answers(snapshot)
+    with_sample_states(
+        snapshot,
+        early_trades=early_trades,
+        min_trades=min_trades,
+        calibration_min=CALIBRATION_MIN,
+    )
+    return snapshot
