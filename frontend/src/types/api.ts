@@ -1681,6 +1681,7 @@ export interface UniverseThresholds {
   lookback_sessions: number;
   drop_after_failed_screens: number;
   max_position_pct: number;
+  max_calls_per_cycle?: number;
 }
 
 export interface UniverseFunnelStep {
@@ -1700,9 +1701,16 @@ export interface UniverseScreenSummary {
 
 export type UniverseRowStatus =
   | 'eligible'
+  | 'eligible_fails'
+  | 'ready'
   | 'excluded'
   | 'warming_up'
   | 'held';
+
+export interface UniverseWarmProgress {
+  daily: { have: number; need: number };
+  m5: { have: number; need: number };
+}
 
 export interface UniverseRow {
   symbol: string;
@@ -1710,6 +1718,8 @@ export interface UniverseRow {
   sector: string;
   added_at: string | null;
   status: UniverseRowStatus;
+  progress?: UniverseWarmProgress | null;
+  next_screen?: string | null;
   rank: number | null;
   last_close: string | null;
   avg_dollar_volume: string | null;
@@ -1726,9 +1736,18 @@ export interface UniverseRow {
 export interface UniverseCounts {
   pool: number;
   eligible: number;
+  ready: number;
   excluded: number;
   warming_up: number;
   held: number;
+}
+
+export interface UniverseSectorSummary {
+  sector: string;
+  pool: number;
+  eligible: number;
+  rank: number | null;
+  rank_total: number | null;
 }
 
 export interface UniverseResponse {
@@ -1743,7 +1762,47 @@ export interface UniverseResponse {
   pool?: { size: number; max: number };
   counts?: UniverseCounts;
   screen?: UniverseScreenSummary | null;
+  sectors?: UniverseSectorSummary[];
   rows?: UniverseRow[];
+}
+
+// ---- Sync runs (item 077) ---------------------------------------------------
+
+export interface UniverseSyncFailure {
+  what: string;
+  error: string;
+  next_retry: string | null;
+}
+
+export interface UniverseSyncJob {
+  job: string;
+  label: string;
+  status: 'running' | 'ok' | 'partial' | 'failed' | string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  done: number | null;
+  total: number | null;
+  failures: UniverseSyncFailure[];
+  schedule?: string | null;
+  late?: boolean;
+}
+
+export interface UniverseSyncHistory {
+  ready: number;
+  total: number | null;
+  eta_seconds: number | null;
+}
+
+export interface UniverseSyncResponse {
+  jobs: UniverseSyncJob[];
+  history: UniverseSyncHistory | null;
+  max_requests: number | null;
+}
+
+export interface UniverseSyncRetryResult {
+  job: string;
+  accepted: boolean;
 }
 
 export interface UniverseAddResult {

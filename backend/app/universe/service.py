@@ -31,6 +31,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+from datetime import time as dtime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -45,7 +46,14 @@ from app.config import AppConfig, _resolve_path
 from app.data.factory import DataSources
 from app.data.models import CalendarDay, DailyBar
 from app.data.service import MarketDataService
-from app.db.models import Event, Order, Position, UniversePoolRow, UniverseScreenRow
+from app.db.models import (
+    Cycle,
+    Event,
+    Order,
+    Position,
+    UniversePoolRow,
+    UniverseScreenRow,
+)
 from app.engine.state import record_event
 from app.errors import safe_error
 from app.logging_config import ev
@@ -82,6 +90,20 @@ class _HistoryWindows:
     started: list[CalendarDay]
     want_daily: int
     want_5m: int
+
+
+@dataclass
+class _WarmProgress:
+    """One symbol's history progress for the pool endpoint (item 077):
+    loaded flag, the human detail and the loaded-of-needed counts the
+    two progress bars show."""
+
+    loaded: bool
+    detail: str
+    daily_have: int
+    daily_need: int
+    m5_have: int
+    m5_need: int
 
 
 @dataclass
@@ -154,6 +176,20 @@ class UniverseService:
 
     def screen_time_ny(self) -> str:
         return str(self._screen_cfg().get("time_ny") or "08:10")
+
+    def _next_screen_text(self, now: datetime) -> str:
+        """"08:10 NY Fri 16 Oct" — the next daily screen's wall time,
+        today when it hasn't run yet, else the next trading day."""
+        hh, mm = (int(p) for p in self.screen_time_ny().split(":")[:2])
+        ny_now = now.astimezone(NY_TZ)
+        day = ny_now.date()
+        if self._calendar.session_for(day) is None or ny_now.time() >= dtime(
+            hh, mm
+        ):
+            nxt = self._calendar.next_trading_day(day)
+            if nxt is not None:
+                day = nxt.date
+        return f"{self.screen_time_ny()} NY {day.strftime('%a %d %b')}"
 
     def _daily_history_sessions(self) -> int:
         return int(self._schedule_cfg().get("daily_history_sessions") or 260)
@@ -580,10 +616,11 @@ class UniverseService:
 
     def _warming_details(
         self, symbols: list[str], now: datetime
-    ) -> dict[str, tuple[bool, str]]:
+    ) -> dict[str, _WarmProgress]:
         """The history check for many symbols at once: the windows are
         shared and each bar table is queried once, grouped by symbol,
-        instead of two per-symbol queries."""
+        instead of two per-symbol queries. Returns loaded/detail plus
+        the loaded-of-needed counts the progress bars need (item 077)."""
         if not symbols:
             return {}
         windows = self._history_windows(now)
@@ -597,16 +634,26 @@ class UniverseService:
             symbols, {s.date for s in windows.completed}
         )
         tolerance = self._history_tolerance()
-        return {
-            symbol: self._history_loaded(
-                daily.get(symbol, 0),
-                covered.get(symbol, 0),
+        out: dict[str, _WarmProgress] = {}
+        for symbol in symbols:
+            daily_have = daily.get(symbol, 0)
+            m5_have = covered.get(symbol, 0)
+            loaded, detail = self._history_loaded(
+                daily_have,
+                m5_have,
                 windows,
                 gaps.get(symbol, set()),
                 tolerance,
             )
-            for symbol in symbols
-        }
+            out[symbol] = _WarmProgress(
+                loaded=loaded,
+                detail=detail,
+                daily_have=daily_have,
+                daily_need=windows.want_daily,
+                m5_have=m5_have,
+                m5_need=windows.want_5m,
+            )
+        return out
 
     async def _refresh_history(self, symbols: list[str], today: date) -> dict[str, str]:
         """Top up the daily + 5m history for ``symbols``; symbol → error.
@@ -1117,6 +1164,9 @@ class UniverseService:
                 "drop_after_failed_screens": self._drop_after(),
                 "max_position_pct": self._risk_cfg().get("max_position_pct")
                 or 20,
+                "max_calls_per_cycle": self._config.get_int(
+                    "decision", "max_calls_per_cycle", default=10
+                ),
             },
         }
 
@@ -1125,31 +1175,57 @@ class UniverseService:
             pool = self._active_pool(session)
             latest_rows = self.latest_screen_rows()
 
-        # Symbols without a screen row get their warming progress here —
-        # batched: one shared session computation plus two grouped queries
-        # for the whole pool, not a calendar walk and two queries per row.
+        # Symbols without a screen row — plus rows still marked
+        # warming_up — get their history progress here: batched, one
+        # shared session computation plus two grouped queries for the
+        # whole pool, not a calendar walk and two queries per row.
         warming = self._warming_details(
-            [e.symbol for e in pool if e.symbol not in latest_rows], now
+            [
+                e.symbol
+                for e in pool
+                if e.symbol not in latest_rows
+                or latest_rows[e.symbol].status == "warming_up"
+            ],
+            now,
         )
+        next_screen = self._next_screen_text(now)
 
         rows: list[dict[str, Any]] = []
         for entry in pool:
             row = latest_rows.get(entry.symbol)
             check: dict[str, Any] = (row.check_results or {}) if row is not None else {}
-            if row is None:
-                loaded, detail = warming[entry.symbol]
-                # Not screened yet — never "eligible" off a screen row.
-                # A symbol warmed via forgiven source gaps keeps the gap
-                # note instead of the generic ready line.
-                status = "warming_up"
-                check = {
-                    "failed_check": None if loaded else "history",
-                    "detail": detail
-                    if detail.startswith("warmed ·") or not loaded
-                    else "ready — enters at the next screen",
-                }
+            progress: dict[str, Any] | None = None
+            if row is None or row.status == "warming_up":
+                warm = warming.get(entry.symbol)
+                if warm is not None:
+                    progress = {
+                        "daily": {"have": warm.daily_have, "need": warm.daily_need},
+                        "m5": {"have": warm.m5_have, "need": warm.m5_need},
+                    }
+                if warm is not None and warm.loaded:
+                    # History loaded, not yet screened — "ready", with
+                    # the next screen time (item 077).
+                    status = "ready"
+                    check = {
+                        "failed_check": None,
+                        "detail": (
+                            "history loaded · joins at the next screen · "
+                            f"{next_screen}"
+                        ),
+                    }
+                else:
+                    # Not screened yet — never "eligible" off a screen
+                    # row. A symbol warmed via forgiven source gaps keeps
+                    # the gap note instead of the generic ready line.
+                    status = "warming_up"
+                    check = {
+                        "failed_check": "history",
+                        "detail": warm.detail if warm is not None else "",
+                    }
             else:
                 status = row.status
+                if status == "eligible" and row.failed_in_a_row > 0:
+                    status = "eligible_fails"
             detail = str(check.get("detail") or "")
             if entry.removed_at is not None:  # held removal, pending close
                 detail = (
@@ -1163,6 +1239,8 @@ class UniverseService:
                     "sector": entry.sector,
                     "added_at": entry.added_at.isoformat(),
                     "status": status,
+                    "progress": progress,
+                    "next_screen": next_screen if status == "ready" else None,
                     "rank": row.rank if row is not None else None,
                     "last_close": str(row.last_close)
                     if row is not None and row.last_close is not None
@@ -1199,6 +1277,7 @@ class UniverseService:
                     "fails": 0,
                     "failed_check": None,
                     "detail": "",
+                    "progress": None,
                     "held": True,
                     "qty": held.get(symbol, 0),
                     "screened": False,
@@ -1206,10 +1285,17 @@ class UniverseService:
                 }
             )
 
-        order = {"eligible": 0, "warming_up": 1, "excluded": 2, "held": 3}
+        order = {
+            "eligible": 0,
+            "eligible_fails": 0,
+            "ready": 1,
+            "warming_up": 2,
+            "excluded": 3,
+            "held": 4,
+        }
         rows.sort(
             key=lambda r: (
-                order.get(str(r["status"]), 4),
+                order.get(str(r["status"]), 5),
                 r["rank"] if r["rank"] is not None else 10**6,
                 r["symbol"],
             )
@@ -1217,7 +1303,12 @@ class UniverseService:
 
         counts = {
             "pool": len(pool),
-            "eligible": sum(1 for r in rows if r["status"] == "eligible"),
+            "eligible": sum(
+                1
+                for r in rows
+                if r["status"] in ("eligible", "eligible_fails")
+            ),
+            "ready": sum(1 for r in rows if r["status"] == "ready"),
             "excluded": sum(1 for r in rows if r["status"] == "excluded"),
             "warming_up": sum(1 for r in rows if r["status"] == "warming_up"),
             "held": len(held),
@@ -1227,10 +1318,54 @@ class UniverseService:
                 "pool": {"size": len(pool), "max": self.max_pool()},
                 "counts": counts,
                 "screen": self._screen_summary(latest_rows, counts),
+                "sectors": self._sector_summary(pool, latest_rows),
                 "rows": rows,
             }
         )
         return payload
+
+    def _sector_summary(
+        self,
+        pool: list[Any],
+        latest_rows: dict[str, UniverseScreenRow],
+    ) -> list[dict[str, Any]]:
+        """Pool by sector for the Universe screen (item 077): pool and
+        eligible counts per sector plus the sector ETF's rank at the
+        last cycle (item 068) — null before the first breadth cycle."""
+        sector_ranks: dict[str, Any] = {}
+        rank_total = 0
+        with self._sf() as session:
+            cycle = session.execute(
+                select(Cycle)
+                .where(Cycle.sectors.is_not(None))
+                .order_by(Cycle.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if cycle is not None and isinstance(cycle.sectors, dict):
+                sector_ranks = cycle.sectors
+                rank_total = sum(
+                    1
+                    for entry in sector_ranks.values()
+                    if isinstance(entry, dict) and entry.get("rank") is not None
+                )
+        stats: dict[str, dict[str, Any]] = {}
+        for entry in pool:
+            name = entry.sector or "—"
+            st = stats.setdefault(
+                name, {"sector": name, "pool": 0, "eligible": 0}
+            )
+            st["pool"] += 1
+            row = latest_rows.get(entry.symbol)
+            if row is not None and row.status == "eligible":
+                st["eligible"] += 1
+        out = []
+        for st in stats.values():
+            entry = sector_ranks.get(st["sector"]) or {}
+            st["rank"] = entry.get("rank") if isinstance(entry, dict) else None
+            st["rank_total"] = rank_total or None
+            out.append(st)
+        out.sort(key=lambda s: (-s["pool"], s["sector"]))
+        return out
 
     def _screen_summary(
         self,

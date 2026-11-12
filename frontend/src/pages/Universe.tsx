@@ -1,19 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
 import { useLiveUpdates } from '../api/liveContext';
 import {
   getUniverse,
+  getUniverseSync,
   postUniverseAdd,
   postUniverseImport,
   postUniverseRemove,
+  postUniverseSyncRetry,
 } from '../api/state';
 import type {
   UniverseFunnelStep,
   UniverseResponse,
   UniverseRow,
+  UniverseSyncJob,
+  UniverseSyncResponse,
 } from '../types/api';
+import {
+  amsTime,
+  fmtDuration,
+  isoMs,
+  jobResultText,
+  statusWord,
+  syncAttention,
+} from './universeFormat';
 import { Banner } from '../components/Banner';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
@@ -105,43 +117,331 @@ function funnelLabel(step: UniverseFunnelStep, data: UniverseResponse): string {
   return step.key;
 }
 
-const TABS = ['All', 'Eligible', 'Held', 'Excluded', 'Warming up'] as const;
+const TABS = ['All', 'Eligible', 'Held', 'Excluded', 'Warming up', 'Ready'] as const;
 type Tab = (typeof TABS)[number];
 
 function inTab(row: UniverseRow, tab: Tab): boolean {
   switch (tab) {
     case 'Eligible':
-      return row.status === 'eligible';
+      return row.status === 'eligible' || row.status === 'eligible_fails';
     case 'Held':
       return row.held;
     case 'Excluded':
       return row.status === 'excluded';
     case 'Warming up':
       return row.status === 'warming_up';
+    case 'Ready':
+      return row.status === 'ready';
     default:
       return true;
   }
 }
 
 function StatusChip({ row }: { row: UniverseRow }) {
-  if (row.status === 'held' && !row.screened) return <Chip variant="info">held</Chip>;
-  if (row.held) return <Chip variant="info">held · {row.status}</Chip>;
-  if (row.status === 'eligible') {
-    return (
-      <Chip variant="positive">
-        {row.fails > 0 ? `eligible · ${row.fails} fail${row.fails === 1 ? '' : 's'}` : 'eligible'}
-      </Chip>
-    );
+  if (row.held) {
+    if (!row.screened) return <Chip variant="info">held</Chip>;
+    return <Chip variant="info">held · {statusWord(row)}</Chip>;
   }
+  if (row.status === 'eligible' || row.status === 'eligible_fails') {
+    return <Chip variant="positive">{statusWord(row)}</Chip>;
+  }
+  if (row.status === 'ready') return <Chip variant="info">ready</Chip>;
   if (row.status === 'warming_up') return <Chip variant="warning">warming up</Chip>;
   if (row.status === 'excluded') return <Chip variant="negative">excluded</Chip>;
   return <Chip variant="neutral">{row.status}</Chip>;
+}
+
+/** The two warm-up progress bars (daily bars, 5-min sessions) — item 077. */
+function WarmBars({ row }: { row: UniverseRow }) {
+  const p = row.progress;
+  if (!p) return null;
+  const bar = (label: string, have: number, need: number) => {
+    const pct = need > 0 ? Math.min(100, (have / need) * 100) : 0;
+    return (
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '84px minmax(60px, 1fr) auto',
+          gap: '8px',
+          alignItems: 'center',
+          fontSize: 'var(--sa-text-sm)',
+          color: 'var(--sa-text-muted)',
+        }}
+      >
+        <span>{label}</span>
+        <div style={{ height: 4, borderRadius: 2, background: 'var(--sa-raised)' }}>
+          <div
+            className="sa-bar-fill"
+            style={{ width: `${pct}%`, height: 4, borderRadius: 2, background: 'var(--sa-warning-text)' }}
+          />
+        </div>
+        <span style={{ fontFamily: 'var(--sa-font-mono)' }}>
+          {have} of {need}
+        </span>
+      </div>
+    );
+  };
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--sa-space-1)',
+        marginTop: 2,
+        minWidth: 220,
+      }}
+    >
+      {bar('daily bars', p.daily.have, p.daily.need)}
+      {bar('5-min', p.m5.have, p.m5.need)}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Data sync (item 077): one quiet line while every job is fine, the job
+// rows when something failed, is late or is running.
+
+function SyncJobRow({
+  job,
+  sync,
+  nowMs,
+  onRetry,
+  retrying,
+}: {
+  job: UniverseSyncJob;
+  sync: UniverseSyncResponse;
+  nowMs: number | null;
+  onRetry: (job: string) => void;
+  retrying: boolean;
+}) {
+  const dot =
+    job.status === 'running'
+      ? 'var(--sa-info)'
+      : job.status === 'ok'
+        ? 'var(--sa-positive)'
+        : job.status === 'partial'
+          ? 'var(--sa-warning-text)'
+          : 'var(--sa-negative-text)';
+  const resultTone =
+    job.status === 'failed' || job.status === 'partial'
+      ? 'var(--sa-negative-text)'
+      : 'var(--sa-text-2)';
+  let timeText: string;
+  if (job.status === 'running' && job.started_at) {
+    const startMs = isoMs(job.started_at);
+    const elapsed = nowMs !== null && startMs !== null ? (nowMs - startMs) / 1000 : null;
+    timeText =
+      elapsed !== null && elapsed >= 0
+        ? `running · ${fmtDuration(elapsed)} so far`
+        : `running · started ${amsTime(job.started_at)}`;
+  } else {
+    timeText = `${amsTime(job.finished_at ?? job.started_at)} · ${fmtDuration(job.duration_seconds)}`;
+  }
+  const canRetry = job.status !== 'running' && job.failures.length > 0;
+  return (
+    <div className="sa-job" style={{ padding: '10px 0', borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)' }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flex: '0 0 auto' }} />
+        <span style={{ minWidth: 0 }}>
+          <b style={{ fontWeight: 600 }}>{job.label}</b>
+          <br />
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            {job.schedule ?? ''}
+            {job.late ? ' · late' : ''}
+          </span>
+        </span>
+      </span>
+      <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)', whiteSpace: 'nowrap' }}>
+        {timeText}
+      </span>
+      <span className="sa-job-res" style={{ fontSize: 'var(--sa-text-sm)', color: resultTone, minWidth: 0 }}>
+        {jobResultText(job, sync)}
+      </span>
+      <span>
+        {canRetry && (
+          <Button variant="default" onClick={() => onRetry(job.job)} busy={retrying} busyLabel="Retrying…" waitingFor="the sync" style={{ height: 32, padding: '0 16px', fontSize: 'var(--sa-text-base)' }}>
+            Retry
+          </Button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function SyncCard({
+  sync,
+  nowMs,
+  onRetry,
+  retryingJob,
+}: {
+  sync: UniverseSyncResponse;
+  nowMs: number | null;
+  onRetry: (job: string) => void;
+  retryingJob: string | null;
+}) {
+  const attention = syncAttention(sync);
+  const needsAttention = attention.failed + attention.running + attention.late > 0;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? needsAttention;
+
+  if (!open) {
+    const finished = sync.jobs
+      .map((j) => j.finished_at)
+      .filter((v): v is string => Boolean(v))
+      .sort();
+    const last = finished.length > 0 ? finished[finished.length - 1] : null;
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: '6px 14px',
+          fontSize: 'var(--sa-text-md)',
+          color: 'var(--sa-text-muted)',
+        }}
+      >
+        <span>
+          {sync.jobs.length === 0
+            ? 'No sync runs recorded yet'
+            : `All ${sync.jobs.length} jobs ran on time${last ? ` · last ${amsTime(last)}` : ''}`}
+        </span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={() => setUserOpen(true)}
+          style={{
+            border: 0,
+            background: 'transparent',
+            color: 'var(--sa-accent)',
+            fontSize: 'var(--sa-text-md)',
+            fontWeight: 600,
+            cursor: 'pointer',
+            padding: '4px 0',
+          }}
+        >
+          Show jobs
+        </button>
+      </div>
+    );
+  }
+
+  const reasonText = [
+    attention.failed > 0 ? `${attention.failed} failed` : null,
+    attention.running > 0 ? `${attention.running} running` : null,
+    attention.late > 0 ? `${attention.late} late` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <h2
+          style={{
+            margin: 0,
+            fontSize: 'var(--sa-text-sm)',
+            fontWeight: 600,
+            color: 'var(--sa-text-2)',
+            textTransform: 'uppercase',
+            letterSpacing: 'var(--sa-label-tracking)',
+          }}
+        >
+          Data sync
+        </h2>
+        <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          {reasonText ? `open: ${reasonText}` : 'all jobs on time'}
+          {' · '}
+          <button
+            type="button"
+            onClick={() => setUserOpen(false)}
+            style={{
+              border: 0,
+              background: 'transparent',
+              color: 'var(--sa-accent)',
+              fontSize: 'var(--sa-text-md)',
+              fontWeight: 600,
+              cursor: 'pointer',
+              padding: 0,
+            }}
+          >
+            Hide jobs
+          </button>
+        </div>
+      </div>
+
+      {sync.history && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            padding: '12px 14px',
+            border: '1px solid var(--sa-warning-border)',
+            background: 'var(--sa-warning-bg)',
+            borderRadius: 'var(--sa-radius-md)',
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '6px 12px', fontSize: 'var(--sa-text-md)' }}>
+            <b style={{ fontWeight: 600, color: 'var(--sa-text)' }}>
+              Loading history · {sync.history.ready} of {sync.history.total ?? '?'} symbols ready
+            </b>
+            <span style={{ color: 'var(--sa-text-2)' }}>
+              {sync.history.eta_seconds !== null ? `about ${fmtDuration(sync.history.eta_seconds)} left` : ''}
+              {sync.max_requests ? `${sync.history.eta_seconds !== null ? ' · ' : ''}up to ${sync.max_requests} requests at once` : ''}
+            </span>
+          </div>
+          <div
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={sync.history.total ?? 1}
+            aria-valuenow={sync.history.ready}
+            aria-label="Symbols with their history loaded"
+            style={{ height: 8, borderRadius: 4, background: 'var(--sa-raised)' }}
+          >
+            <div
+              className="sa-bar-fill"
+              style={{
+                width: `${sync.history.total ? Math.min(100, (sync.history.ready / sync.history.total) * 100) : 0}%`,
+                height: 8,
+                borderRadius: 4,
+                background: 'var(--sa-warning-text)',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {sync.jobs.length === 0 && (
+        <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          No sync runs recorded yet — jobs write their first row when they next run.
+        </p>
+      )}
+      {sync.jobs.map((job) => (
+        <SyncJobRow
+          key={job.job}
+          job={job}
+          sync={sync}
+          nowMs={nowMs}
+          onRetry={onRetry}
+          retrying={retryingJob === job.job}
+        />
+      ))}
+
+      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+        Requests of one job run at the same time
+        {sync.max_requests ? `, at most ${sync.max_requests} at once (concurrency.max_requests)` : ''}
+        , and still within Alpaca's 150 calls per minute. Times in Amsterdam.
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 
 export default function Universe() {
   const [data, setData] = useState<UniverseResponse | null>(null);
+  const [sync, setSync] = useState<UniverseSyncResponse | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('All');
@@ -152,6 +452,11 @@ export default function Universe() {
   const [importOpen, setImportOpen] = useState(false);
   const [csv, setCsv] = useState('');
   const [busy, setBusy] = useState(false);
+  const [retryingJob, setRetryingJob] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sectorFilter = searchParams.get('sector');
 
   const refresh = useCallback(() => {
     getUniverse()
@@ -162,94 +467,78 @@ export default function Universe() {
       .catch((e) => setErrors(errorMessages(e)));
   }, []);
 
+  const refreshSync = useCallback(() => {
+    getUniverseSync()
+      .then(setSync)
+      .catch(() => {
+        // The card is secondary: a failed sync read never blocks the page.
+      });
+  }, []);
+
   useEffect(() => {
     refresh();
-  }, [refresh]);
-  useLiveUpdates(['universe'], refresh);
+    refreshSync();
+  }, [refresh, refreshSync]);
+  useLiveUpdates(['universe'], () => {
+    refresh();
+    refreshSync();
+  });
+
+  // Progress is written by the jobs at most once a second; poll faster
+  // only while something is running so the bars move. The tick also
+  // feeds the "running · N so far" labels (first tick lands within
+  // 5 s; until then the row shows its start time).
+  const anyRunning = sync?.jobs.some((j) => j.status === 'running') ?? false;
+  useEffect(() => {
+    if (!anyRunning) return;
+    const timer = setInterval(() => {
+      refreshSync();
+      setNowMs(Date.now());
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [anyRunning, refreshSync]);
 
   const rows = useMemo(() => {
-    const all = (data?.rows ?? []).filter((r) => inTab(r, tab));
+    const all = (data?.rows ?? []).filter(
+      (r) => inTab(r, tab) && (!sectorFilter || r.sector === sectorFilter),
+    );
     const q = find.trim().toUpperCase();
     return q ? all.filter((r) => r.symbol.includes(q)) : all;
-  }, [data, tab, find]);
+  }, [data, tab, find, sectorFilter]);
 
-  // The "All" pool view collapses its middle (design/screens/Universe.dc.html):
-  // first rows, a "n more eligible symbols" expander, then the tail with the
-  // warming-up and excluded rows. Filtering or searching shows everything.
-  const filtered = tab !== 'All' || find.trim() !== '';
+  // The pool table collapses its middle (design/screens/Universe.dc.html):
+  // first rows, a "n more <filter> · show all" expander naming the active
+  // filter and count, then the tail with the warming-up and excluded rows.
   const HEAD = 8;
   const TAIL = 4;
-  const collapsible = !filtered && !showAllRows && rows.length > HEAD + TAIL + 2;
+  const collapsible = !showAllRows && rows.length > HEAD + TAIL + 2;
   const headRows = collapsible ? rows.slice(0, HEAD) : rows;
   const hiddenRows = collapsible ? rows.slice(HEAD, -TAIL) : [];
   const tailRows = collapsible ? rows.slice(-TAIL) : [];
-  const renderRow = (r: UniverseRow) => {
-    const vs = vsSpy(r.return_vs_spy);
-    return (
-      <tr key={r.symbol}>
-        <td style={tdMono('var(--sa-text-muted)')}>{r.rank ?? '—'}</td>
-        <td style={{ ...td(), fontWeight: 600 }}>
-          {r.symbol}
-          <div
-            title="Used to tell headlines about this company from the rest (about_symbol). From Alpaca's asset name, cleaned; universe.names overrides it."
-            style={{ fontWeight: 400, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
-          >
-            {r.name ?? '—'}
-          </div>
-        </td>
-        <td style={{ ...td(), color: 'var(--sa-text-2)' }}>{r.sector || '—'}</td>
-        <td style={tdMono()}>{usd(r.last_close, 2)}</td>
-        <td style={tdMono()}>{dollarVolumeM(r.avg_dollar_volume)}</td>
-        <td
-          style={{
-            ...tdMono(),
-            color:
-              vs.up === null
-                ? 'var(--sa-text-muted)'
-                : vs.up
-                  ? 'var(--sa-positive)'
-                  : 'var(--sa-negative)',
-          }}
-        >
-          {vs.text}
-        </td>
-        <td style={td()}>
-          <StatusChip row={r} />
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
-            {r.detail}
-            {r.held && r.qty > 0 ? `${r.detail ? ' · ' : ''}${r.qty} sh` : ''}
-          </div>
-        </td>
-        <td style={{ ...td(), textAlign: 'right' }}>
-          {r.in_pool && r.symbol !== 'SPY' && (
-            <button
-              type="button"
-              aria-label={`Remove ${r.symbol} from the pool`}
-              title="Remove from the pool"
-              disabled={busy}
-              onClick={() => removeSymbol(r.symbol)}
-              style={{
-                width: 44,
-                height: 44,
-                border: 0,
-                borderRadius: 'var(--sa-radius-sm)',
-                background: 'transparent',
-                color: 'var(--sa-text-muted)',
-                cursor: 'pointer',
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <line x1="6" y1="6" x2="18" y2="18" />
-                <line x1="18" y1="6" x2="6" y2="18" />
-              </svg>
-            </button>
-          )}
-        </td>
-      </tr>
+  const foldName =
+    tab !== 'All'
+      ? ` ${tab.toLowerCase()}`
+      : sectorFilter
+        ? ` in ${sectorFilter}`
+        : find.trim()
+          ? ` matching "${find.trim()}"`
+          : hiddenRows.every(
+                (r) => r.status === 'eligible' || r.status === 'eligible_fails',
+              )
+            ? ' eligible'
+            : '';
+
+  const setSector = (sector: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (sector) next.set('sector', sector);
+        else next.delete('sector');
+        return next;
+      },
+      { replace: true },
     );
+    setShowAllRows(false);
   };
 
   if (!data) {
@@ -289,13 +578,16 @@ export default function Universe() {
   const heldSet = new Set(data.held_symbols);
   const ams = amsterdamForNy(data.screen_time_ny);
   const screen = data.screen;
+  const preScreen = !screen?.session_date;
 
-  const excludedRows = (data.rows ?? []).filter((r) => r.status === 'excluded');
+  const allRows = data.rows ?? [];
+  const excludedRows = allRows.filter((r) => r.status === 'excluded');
   const excludedReason =
     excludedRows
       .map((r) => r.failed_check)
       .find((k) => k && k in CHECK_LABEL) ?? null;
-  const warmingRows = (data.rows ?? []).filter((r) => r.status === 'warming_up');
+  const warmingRows = allRows.filter((r) => r.status === 'warming_up');
+  const readyRows = allRows.filter((r) => r.status === 'ready');
 
   const run = (work: () => Promise<unknown>, ok: (result: unknown) => void) => {
     setBusy(true);
@@ -338,12 +630,164 @@ export default function Universe() {
   };
 
   const removeSymbol = (symbol: string) => {
+    setConfirmRemove(null);
     run(
       () => postUniverseRemove(symbol),
       () => {
         setNotice(`${symbol} removed from the pool.`);
         refresh();
       },
+    );
+  };
+
+  const retrySync = (job: string) => {
+    setRetryingJob(job);
+    setErrors([]);
+    postUniverseSyncRetry(job)
+      .then(() => {
+        setNotice(`Retry started for ${job}.`);
+        refreshSync();
+      })
+      .catch((e) => setErrors(errorMessages(e)))
+      .finally(() => setRetryingJob(null));
+  };
+
+  const hintStyle: React.CSSProperties = {
+    fontSize: 'var(--sa-text-sm)',
+    color: 'var(--sa-text-faint)',
+  };
+
+  const renderRow = (r: UniverseRow) => {
+    const vs = vsSpy(r.return_vs_spy);
+    return (
+      <Fragment key={r.symbol}>
+        <tr>
+          <td style={tdMono('var(--sa-text-muted)')}>
+            {r.rank !== null ? r.rank : preScreen ? <span style={hintStyle}>after the first screen</span> : '—'}
+          </td>
+          <td style={{ ...td(), fontWeight: 600 }}>
+            {r.symbol}
+            <div
+              title="Used to tell headlines about this company from the rest (about_symbol). From Alpaca's asset name, cleaned; universe.names overrides it."
+              style={{ fontWeight: 400, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
+            >
+              {r.name ?? 'name pending'}
+            </div>
+          </td>
+          <td style={{ ...td(), minWidth: 150 }}>
+            <StatusChip row={r} />
+            {r.status === 'warming_up' && r.progress ? (
+              <WarmBars row={r} />
+            ) : (
+              <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
+                {r.detail}
+                {r.held && r.qty > 0 ? `${r.detail ? ' · ' : ''}${r.qty} sh` : ''}
+              </div>
+            )}
+          </td>
+          <td style={{ ...td(), color: 'var(--sa-text-2)' }}>{r.sector || '—'}</td>
+          <td style={tdMono()}>
+            {r.last_close !== null
+              ? usd(r.last_close, 2)
+              : preScreen
+                ? <span style={hintStyle}>after the first screen</span>
+                : '—'}
+          </td>
+          <td style={tdMono()}>
+            {r.avg_dollar_volume !== null
+              ? dollarVolumeM(r.avg_dollar_volume)
+              : preScreen
+                ? <span style={hintStyle}>after the first screen</span>
+                : '—'}
+          </td>
+          <td
+            style={{
+              ...tdMono(),
+              color:
+                vs.up === null
+                  ? 'var(--sa-text-muted)'
+                  : vs.up
+                    ? 'var(--sa-positive)'
+                    : 'var(--sa-negative)',
+            }}
+          >
+            {r.return_vs_spy !== null
+              ? vs.text
+              : preScreen
+                ? <span style={hintStyle}>after the first screen</span>
+                : '—'}
+          </td>
+          <td style={{ ...td(), textAlign: 'right' }}>
+            {r.in_pool && !r.held && r.symbol !== 'SPY' && (
+              <button
+                type="button"
+                aria-label={`Remove ${r.symbol} from the pool`}
+                title="Remove from the pool"
+                disabled={busy}
+                onClick={() => setConfirmRemove(r.symbol)}
+                style={{
+                  width: 32,
+                  height: 32,
+                  border: 0,
+                  borderRadius: 'var(--sa-radius-sm)',
+                  background: 'transparent',
+                  color: 'var(--sa-text-muted)',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                </svg>
+              </button>
+            )}
+          </td>
+        </tr>
+        {confirmRemove === r.symbol && (
+          <tr>
+            <td
+              colSpan={8}
+              style={{ padding: 0, borderBottom: '1px solid var(--sa-border)', background: 'var(--sa-raised)' }}
+            >
+              <div
+                role="group"
+                aria-label={`Confirm removal of ${r.symbol}`}
+                style={{
+                  position: 'sticky',
+                  left: 10,
+                  width: 'min(100%, calc(100vw - 100px))',
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: '10px 14px',
+                  fontSize: 'var(--sa-text-md)',
+                  padding: '10px',
+                }}
+              >
+                <span style={{ color: 'var(--sa-text)' }}>
+                  Remove {r.symbol} from the pool? Its cached bars stay for 120 sessions.
+                </span>
+                <span style={{ flex: 1 }} />
+                <Button
+                  variant="ghost"
+                  onClick={() => setConfirmRemove(null)}
+                  style={{ border: '1px solid var(--sa-border)' }}
+                  autoFocus
+                >
+                  Cancel
+                </Button>
+                <Button variant="danger" onClick={() => removeSymbol(r.symbol)} busy={busy} busyLabel="Removing…" waitingFor="the universe">
+                  Remove
+                </Button>
+              </div>
+            </td>
+          </tr>
+        )}
+      </Fragment>
     );
   };
 
@@ -363,7 +807,7 @@ export default function Universe() {
         </Banner>
       )}
 
-      {/* mode banner */}
+      {/* mode banner — the mode is said once, here */}
       <section
         aria-label="Universe mode"
         style={{
@@ -371,7 +815,7 @@ export default function Universe() {
           flexWrap: 'wrap',
           alignItems: 'center',
           gap: '10px 16px',
-          padding: 'var(--sa-space-3) var(--sa-space-4)',
+          padding: '14px 18px',
           border: '1px solid var(--sa-info-border)',
           background: 'var(--sa-info-bg)',
           borderRadius: 'var(--sa-radius-lg)',
@@ -441,27 +885,41 @@ export default function Universe() {
 
       {data.pool && counts && (
         <>
-          {/* summary tiles */}
-          <section aria-label="Universe summary" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)' }}>
+          {/* summary tiles — a zero stays in the normal text colour;
+              amber and red only appear above zero (item 077) */}
+          <section aria-label="Universe summary" className="sa-tiles sa-tiles-6">
             <CardBoundary name="Universe summary">
             {(
               [
                 ['Pool', String(data.pool.size), `limit ${data.pool.max}`, 'var(--sa-text)'],
-                ['Eligible', String(counts.eligible), data.preview ? 'preview' : 'next session', 'var(--sa-accent)'],
+                [
+                  'Eligible',
+                  String(counts.eligible),
+                  data.preview ? 'preview' : 'next session',
+                  counts.eligible > 0 ? 'var(--sa-accent)' : 'var(--sa-text)',
+                ],
                 ['Held', String(counts.held), data.held_symbols.join(', ') || '—', 'var(--sa-text)'],
                 [
                   'Excluded',
                   String(counts.excluded),
                   excludedReason ? CHECK_LABEL[excludedReason] : '—',
-                  'var(--sa-negative)',
+                  counts.excluded > 0 ? 'var(--sa-negative-text)' : 'var(--sa-text)',
                 ],
                 [
                   'Warming up',
                   String(counts.warming_up),
                   warmingRows.length
-                    ? `${warmingRows.map((r) => r.symbol).join(', ')} · history loading`
+                    ? `${warmingRows[0].symbol} · history loading`
                     : '—',
-                  'var(--sa-warning-text)',
+                  counts.warming_up > 0 ? 'var(--sa-warning-text)' : 'var(--sa-text)',
+                ],
+                [
+                  'Ready',
+                  String(counts.ready ?? 0),
+                  readyRows.length && readyRows[0].next_screen
+                    ? `${readyRows[0].symbol} · joins at ${readyRows[0].next_screen}`
+                    : '—',
+                  (counts.ready ?? 0) > 0 ? 'var(--sa-info)' : 'var(--sa-text)',
                 ],
               ] as const
             ).map(([label, value, sub, color]) => (
@@ -492,8 +950,14 @@ export default function Universe() {
             </CardBoundary>
           </section>
 
-          {/* today's screen + how it works */}
+          {/* Data sync next to Today's screen */}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', alignItems: 'flex-start' }}>
+            {sync && (
+              <Card ariaLabel="Data sync" style={{ flex: '1 1 520px' }}>
+                <SyncCard sync={sync} nowMs={nowMs} onRetry={retrySync} retryingJob={retryingJob} />
+              </Card>
+            )}
+
             <Card
               label="Today’s screen"
               right={
@@ -501,6 +965,7 @@ export default function Universe() {
                   ? `${data.screen_time_ny} NY · ${screen.funnel[0]?.count ?? 0} → ${screen.eligible_total}`
                   : 'no screen yet'
               }
+              style={{ flex: '1 1 380px' }}
             >
               {screen && screen.funnel.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
@@ -556,25 +1021,101 @@ export default function Universe() {
                   No screen yet — the first screen runs at {data.screen_time_ny} New York on the next trading day.
                 </p>
               )}
-            </Card>
 
-            <Card label="How the screen works">
-              <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
-                <li>
-                  A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
-                </li>
-                {!data.preview && (
-                  <li>Cycles trade this list — the rank orders the model calls.</li>
-                )}
-                <li>
-                  Rank is the return over the last {data.thresholds.lookback_sessions} sessions minus SPY’s, recomputed at the daily screen.
-                </li>
-              </ul>
+              {/* How the screen works — a fold, closed by default */}
+              <details style={{ borderTop: '1px solid var(--sa-border)', paddingTop: 10 }}>
+                <summary style={{ cursor: 'pointer', minHeight: 32, display: 'flex', alignItems: 'center', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+                  ▸ How the screen works
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+                    <li>
+                      A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
+                    </li>
+                    {!data.preview && (
+                      <li>
+                        Each cycle, held positions get a model call first. Candidates that pass the rules follow in rank order, up to {data.thresholds.max_calls_per_cycle ?? 10} calls, sent at the same time. The rest are stored as no_call (call cap).
+                      </li>
+                    )}
+                    <li>
+                      Rank is the return over the last {data.thresholds.lookback_sessions} sessions minus SPY’s, recomputed at the daily screen.
+                    </li>
+                    <li>
+                      The company name under each symbol is what code uses to mark headlines as about the symbol. It comes from Alpaca's asset name; <span style={{ fontFamily: 'var(--sa-font-mono)' }}>universe.names</span> in config overrides it.
+                    </li>
+                  </ul>
+                </div>
+              </details>
             </Card>
           </div>
 
+          {/* Pool by sector — click filters the pool (?sector= in the URL) */}
+          {(data.sectors ?? []).length > 0 && (
+            <Card
+              label="Pool by sector"
+              right={data.pool ? `${data.pool.size} in the pool` : undefined}
+            >
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {(data.sectors ?? []).map((s) => {
+                  const active = sectorFilter === s.sector;
+                  return (
+                    <button
+                      key={s.sector}
+                      type="button"
+                      aria-pressed={active}
+                      title={`Filter the pool to ${s.sector}`}
+                      onClick={() => setSector(active ? null : s.sector)}
+                      style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        alignItems: 'flex-start',
+                        minWidth: 150,
+                        padding: '8px 12px',
+                        borderRadius: 'var(--sa-radius-md)',
+                        border: `1px solid ${active ? 'var(--sa-accent-border)' : 'var(--sa-border)'}`,
+                        background: active ? 'var(--sa-accent-bg)' : 'var(--sa-raised)',
+                        color: 'var(--sa-text)',
+                        fontSize: 'var(--sa-text-md)',
+                        textAlign: 'left',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <b style={{ fontWeight: 600 }}>{s.sector}</b>
+                      <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        {s.eligible} of {s.pool} eligible · rank {s.rank ?? '—'}
+                        {s.rank !== null && s.rank_total ? `/${s.rank_total}` : ''}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                Rank: the sector ETF's strength against SPY at the last cycle, 1 of {data.sectors?.[0]?.rank_total ?? '?'} is the strongest. Click a sector to filter the pool.
+              </div>
+            </Card>
+          )}
+
           {/* pool table */}
-          <Card label="Pool" right="Sorted by rank">
+          <Card label="Pool" right={sectorFilter ? `sector: ${sectorFilter} · clear` : 'Sorted by rank · symbols without a rank last'}>
+            {sectorFilter && (
+              <button
+                type="button"
+                onClick={() => setSector(null)}
+                style={{
+                  alignSelf: 'flex-start',
+                  border: '1px solid var(--sa-border)',
+                  background: 'transparent',
+                  color: 'var(--sa-text-2)',
+                  borderRadius: 'var(--sa-radius-md)',
+                  padding: '4px 12px',
+                  fontSize: 'var(--sa-text-md)',
+                  cursor: 'pointer',
+                }}
+              >
+                Sector: {sectorFilter} ×
+              </button>
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
               <div role="group" aria-label="Filter the pool" style={{ display: 'inline-flex', flexWrap: 'wrap', padding: 3, background: 'var(--sa-raised)', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)' }}>
                 {TABS.map((t) => {
@@ -587,14 +1128,19 @@ export default function Universe() {
                           ? counts.held
                           : t === 'Excluded'
                             ? counts.excluded
-                            : counts.warming_up;
+                            : t === 'Warming up'
+                              ? counts.warming_up
+                              : (counts.ready ?? 0);
                   const selected = tab === t;
                   return (
                     <button
                       key={t}
                       type="button"
                       aria-pressed={selected}
-                      onClick={() => setTab(t)}
+                      onClick={() => {
+                        setTab(t);
+                        setShowAllRows(false);
+                      }}
                       style={{
                         height: 36,
                         padding: '0 12px',
@@ -618,7 +1164,10 @@ export default function Universe() {
                 aria-label="Find a symbol"
                 placeholder="Find a symbol"
                 value={find}
-                onChange={(e) => setFind(e.target.value)}
+                onChange={(e) => {
+                  setFind(e.target.value);
+                  setShowAllRows(false);
+                }}
                 style={{
                   height: 40,
                   boxSizing: 'border-box',
@@ -632,8 +1181,6 @@ export default function Universe() {
                   padding: '0 12px',
                 }}
               />
-              <span style={{ flex: 1 }} />
-              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>Sorted by rank</span>
             </div>
 
             <div style={{ overflowX: 'auto', minWidth: 0 }}>
@@ -644,11 +1191,11 @@ export default function Universe() {
                       [
                         ['Rank', 'Order in which candidates that pass the rules get a model call', 'left'],
                         ['Symbol', '', 'left'],
+                        ['Status', '', 'left'],
                         ['Sector', '', 'left'],
                         ['Price', '', 'right'],
                         [`Avg $ volume, ${data.thresholds.lookback_sessions} sessions ($M)`, '', 'right'],
                         [`vs SPY, ${data.thresholds.lookback_sessions} sessions`, 'Return over the last sessions minus SPY return', 'right'],
-                        ['Status', '', 'left'],
                         ['', '', 'right'],
                       ] as const
                     ).map(([head, title, align]) => (
@@ -691,7 +1238,7 @@ export default function Universe() {
                             cursor: 'pointer',
                           }}
                         >
-                          {hiddenRows.length} more eligible symbols — show all
+                          {hiddenRows.length} more{foldName} · show all
                         </button>
                       </td>
                     </tr>

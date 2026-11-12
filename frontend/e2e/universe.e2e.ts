@@ -80,7 +80,7 @@ test('universe: the daily screen shows as a preview in fixed mode', async ({
     page.getByText(/the screened pool is switched on/i).first()
   ).toBeVisible();
   await expect(
-    page.getByRole('heading', { name: 'Pool' })
+    page.getByRole('heading', { name: 'Pool', exact: true })
   ).toBeVisible();
   await expect(page.getByText('Today’s screen')).toBeVisible();
   await expect(
@@ -122,8 +122,9 @@ test('universe: a screened-mode screen becomes the list cycles trade', async ({
     page.getByText('screened pool', { exact: true })
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText(/Pool of \d+ · \d+ eligible/)).toBeVisible();
+  // 077: the mode banner says what cycles trade, once.
   await expect(
-    page.getByText(/Cycles trade this list — the rank orders the model calls/i)
+    page.getByText(/eligible list is fixed for the whole session/i)
   ).toBeVisible();
   await expect(
     page.getByText(/a preview, not used by cycles yet|a preview — cycles still trade/i)

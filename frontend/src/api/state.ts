@@ -44,6 +44,8 @@ import type {
   UniverseAddResult,
   UniverseImportResult,
   UniverseResponse,
+  UniverseSyncResponse,
+  UniverseSyncRetryResult,
   VerdictResolved,
   VerdictsResponse,
   VerdictValue,
@@ -304,6 +306,21 @@ export function postUniverseRemove(
 
 export function postUniverseScreen(): Promise<Record<string, unknown>> {
   return post<Record<string, unknown>>('/api/universe/screen', {});
+}
+
+export function getUniverseSync(
+  signal?: AbortSignal,
+): Promise<UniverseSyncResponse> {
+  return get<UniverseSyncResponse>('/api/universe/sync', signal);
+}
+
+export function postUniverseSyncRetry(
+  job: string,
+): Promise<UniverseSyncRetryResult> {
+  return post<UniverseSyncRetryResult>(
+    `/api/universe/sync/${encodeURIComponent(job)}/retry`,
+    {},
+  );
 }
 
 export function getStrategies(signal?: AbortSignal): Promise<StrategiesResponse> {
