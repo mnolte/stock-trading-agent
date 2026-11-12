@@ -209,3 +209,48 @@ def test_prompt_options_marks_versions_a_shadow_runs(
     assert options["decision.v5"]["shadows"] == ["E", "F"]
     assert options["decision.v4"]["shadows"] == []
     assert options["decision.v3"]["shadows"] == []
+
+
+def test_settings_lists_active_shadow_overrides(client: TestClient) -> None:
+    """Item 069: rows can show "Shadow A uses 45–65" — only values an
+    active shadow runs differently from live, never archived shadows."""
+    with get_session_maker()() as session:
+        session.add(
+            Strategy(
+                name="Shadow A",
+                kind="llm",
+                prompt_version="decision.v1",
+                model="gpt-4o-mini",
+                temperature=0.0,
+                status="active",
+                overrides={"rsi_min": 45, "rsi_max": 65},
+                created_at=datetime(2026, 10, 15, 18, 0),
+            )
+        )
+        session.add(
+            Strategy(
+                name="Old shadow",
+                kind="llm",
+                prompt_version="decision.v1",
+                model="gpt-4o-mini",
+                temperature=0.0,
+                status="archived",
+                overrides={"rsi_min": 10},
+                created_at=datetime(2026, 10, 15, 18, 0),
+            )
+        )
+        session.commit()
+
+    body = client.get("/api/settings").json()
+    overrides = body["strategy_overrides"]
+    assert overrides["rules.rsi_min"] == [
+        {"id": overrides["rules.rsi_min"][0]["id"], "name": "Shadow A", "value": 45}
+    ]
+    assert overrides["rules.rsi_max"][0]["name"] == "Shadow A"
+    assert overrides["rules.rsi_max"][0]["value"] == 65
+    # The archived shadow's override is not listed anywhere.
+    assert all(
+        entry["name"] != "Old shadow"
+        for entries in overrides.values()
+        for entry in entries
+    )

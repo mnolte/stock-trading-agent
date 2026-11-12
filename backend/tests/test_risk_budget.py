@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 from app.config import AppConfig
 from app.db.models import Position
-from app.risk.budget import meter_level, risk_budget
+from app.risk.budget import meter_level, risk_budget, settings_risk_preview
 from app.risk.gates import GateContext
 from app.risk.math import WorkingEntry, committed_entries, open_risk
 from fastapi.testclient import TestClient
@@ -234,3 +234,74 @@ def test_risk_budget_endpoint_shape(client: TestClient) -> None:
         "spy_1h_pct",
         "spy_session_pct",
     } <= set(body["shock_brake"])
+
+
+def test_settings_preview_example() -> None:
+    """Item 069's worked example: draft 0.4% risk at $10,184.30 equity."""
+    from typing import Any, cast
+
+    ctx = _ctx(
+        equity=Decimal("10184.30"),
+        peak_equity=Decimal("10212.40"),
+        losing_streak=3,
+    )
+    draft = CONFIG.overlay({"risk": {"risk_per_trade_pct": 0.4}})
+    out = settings_risk_preview(draft, ctx)
+    amounts = cast("dict[str, str]", out["amounts"])
+    summary = cast("dict[str, Any]", out["summary"])
+    assert set(amounts) == {
+        f"risk.{key}"
+        for key in (
+            "risk_per_trade_pct",
+            "max_position_pct",
+            "max_order_pct",
+            "max_open_risk_pct",
+            "daily_loss_limit_pct",
+        )
+    }
+    # 10,184.30 × 0.4% = $40.7372 — the GUI rounds to $40.74.
+    assert Decimal(amounts["risk.risk_per_trade_pct"]) == Decimal("40.7372")
+    assert Decimal(summary["loss_per_trade_usd"]) == Decimal("40.7372")
+    # Three losses in a row halve the per-trade risk.
+    assert Decimal(summary["loss_per_trade_streak_usd"]) == Decimal("20.3686")
+    # 4 × 0.4% = 1.6% fits inside the 2.5% open-risk budget: positions bind.
+    assert summary["binds_first"] == "positions"
+    assert Decimal(summary["positions_risk_pct"]) == Decimal("1.6")
+    assert Decimal(summary["daily_loss_stop_usd"]) == Decimal("203.686")
+    # Kill switch: 8% below the $10,212.40 peak.
+    assert Decimal(summary["kill_switch_equity_usd"]) == Decimal("9395.408")
+    assert Decimal(summary["peak_equity_usd"]) == Decimal("10212.40")
+
+
+def test_settings_preview_open_risk_binds_first() -> None:
+    """8 positions × 0.5% = 4% exceeds the 2.5% open-risk budget."""
+    from typing import Any, cast
+
+    ctx = _ctx()
+    draft = CONFIG.overlay({"risk": {"max_open_positions": 8}})
+    out = settings_risk_preview(draft, ctx)
+    summary = cast("dict[str, Any]", out["summary"])
+    assert summary["binds_first"] == "open_risk"
+    assert Decimal(summary["positions_risk_pct"]) == Decimal("4.0")
+
+
+def test_settings_preview_endpoint(client: TestClient) -> None:
+    """POST /settings/preview merges the draft and stores nothing."""
+    resp = client.post(
+        "/api/settings/preview",
+        json={"settings": {"risk": {"risk_per_trade_pct": 0.4}}},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert Decimal(body["amounts"]["risk.risk_per_trade_pct"]) == (
+        Decimal(body["equity"]) * Decimal("0.4") / 100
+    )
+    assert "summary" in body
+    # Read-only: nothing was saved or pended.
+    settings = client.get("/api/settings").json()
+    assert settings["pending_version"] is None
+
+
+def test_settings_preview_endpoint_rejects_bad_body(client: TestClient) -> None:
+    resp = client.post("/api/settings/preview", json={})
+    assert resp.status_code == 422

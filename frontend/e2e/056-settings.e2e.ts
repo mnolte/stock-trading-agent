@@ -43,8 +43,9 @@ test('settings: a Risk change survives switching to Trading and saves', async ({
   ).toBeVisible({ timeout: 60_000 });
 
   const box = page.locator('#rpt');
-  const current = await box.inputValue();
-  await box.fill(current === '0.5' ? '0.6' : '0.5');
+  // Always raise — a cached e2e DB can already hold 0.6, and a lower
+  // value is tighter and skips the looser-change dialog (item 069).
+  await box.fill(String(Math.round((Number(await box.inputValue()) + 0.1) * 100) / 100));
   await expect(page.getByText('1 unsaved change')).toBeVisible();
 
   // Switching sections keeps the edit; the save bar lists it everywhere.
@@ -62,6 +63,12 @@ test('settings: a Risk change survives switching to Trading and saves', async ({
 
   await page.getByLabel('Reason for this change').fill('e2e: risk tweak');
   await page.getByRole('button', { name: /^Save as v/ }).click();
+  // 0.5 → 0.6% loosens the agent: the save bar asks first and names the
+  // looser change (item 069).
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/Raises risk per trade/)).toBeVisible();
+  await dialog.getByRole('button', { name: /^Save as v/ }).click();
   await expect(
     page.getByText(/Saved as v\d+ · applies at the next cycle/),
   ).toBeVisible();
