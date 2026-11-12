@@ -195,9 +195,10 @@ test('insights breadth slice', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'desktop slice shots');
   await mockInsights(page);
   await page.goto('/insights');
-  const slices = page.locator('section').filter({ hasText: 'Slices' }).first();
-  await expect(slices).toBeVisible({ timeout: 60_000 });
-  await slices.getByRole('button', { name: 'Breadth' }).first().click();
+  // 075: the 21 dimension chips are one grouped <select> now.
+  const select = page.getByLabel('Dimension');
+  await expect(select).toBeVisible({ timeout: 60_000 });
+  await select.selectOption('breadth');
   await expect(page.getByText('high third').first()).toBeVisible();
   await page.screenshot({ path: shot(testInfo.project.name, 'insights-breadth'), fullPage: true });
 });
@@ -206,9 +207,9 @@ test('insights sector rank slice', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'desktop slice shots');
   await mockInsights(page);
   await page.goto('/insights');
-  const slices = page.locator('section').filter({ hasText: 'Slices' }).first();
-  await expect(slices).toBeVisible({ timeout: 60_000 });
-  await slices.getByRole('button', { name: 'Sector rank' }).first().click();
+  const select = page.getByLabel('Dimension');
+  await expect(select).toBeVisible({ timeout: 60_000 });
+  await select.selectOption('sector_rank');
   await expect(page.getByText('1–3').first()).toBeVisible();
   await page.screenshot({ path: shot(testInfo.project.name, 'insights-sector-rank'), fullPage: true });
 });
@@ -217,9 +218,10 @@ test('insights stock vs sector slice', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'desktop slice shots');
   await mockInsights(page);
   await page.goto('/insights');
-  const slices = page.locator('section').filter({ hasText: 'Slices' }).first();
-  await expect(slices).toBeVisible({ timeout: 60_000 });
-  await slices.getByRole('button', { name: 'Stock vs sector' }).first().click();
-  await expect(page.getByText('above 0').first()).toBeVisible();
+  const select = page.getByLabel('Dimension');
+  await expect(select).toBeVisible({ timeout: 60_000 });
+  await select.selectOption('stock_vs_sector');
+  // "above 0" also appears in the (closed) how-to-read fold — scope to the cell.
+  await expect(page.getByRole('cell', { name: 'above 0' })).toBeVisible();
   await page.screenshot({ path: shot(testInfo.project.name, 'insights-stock-vs-sector'), fullPage: true });
 });
