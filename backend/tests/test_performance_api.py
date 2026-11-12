@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 import pytest
 from app.db.base import get_session_maker
@@ -454,7 +455,7 @@ def test_summary_sentence_branches() -> None:
     winning, ahead of or behind SPY."""
     from app.engine.performance import summary_sentence
 
-    base = {
+    base: dict[str, Any] = {
         "sessions": 9,
         "closed": 6,
         "wins": 4,
