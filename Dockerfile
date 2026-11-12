@@ -34,6 +34,8 @@ RUN uv export --frozen --no-emit-project --extra dev --format requirements-txt \
     && uv pip install --python /opt/venv/bin/python --no-cache \
         -r /tmp/requirements-dev.txt
 COPY backend/ /srv/backend/
+# scripts/coverage_summary.py is exercised by backend/tests/.
+COPY scripts/ /srv/scripts/
 COPY --from=frontend /fe/dist /srv/frontend/dist
 ENV PYTHONPATH=/srv/backend \
     PYTHONDONTWRITEBYTECODE=1

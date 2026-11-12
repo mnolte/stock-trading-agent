@@ -10,6 +10,62 @@ Build PR of 081 on branch `fix/081-ask-settings-heartbeat` — the S3 and S9 par
 - **Every tool result is scrubbed:** `run_tool` passes each result (strings at any depth) through the shared scrubber and the registered secret values before it can reach the model or be stored.
 - **The heartbeat URL is a write-only secret:** stored in `secrets` as `heartbeat_url`, saved and removed through `POST /api/server/heartbeat` ("Confirm it is you", the https-and-public check) and `…/heartbeat/remove`. `GET /api/server` returns only `host/••••` + last four, the last ping and configured; `GET /api/settings` and History never contain it (`ops` left the editable settings, every saved tree blanks it, and stored versions are blanked once at startup by `migrate_heartbeat`, flagged by a `heartbeat_secret_migration` event). A config `ops.heartbeat_url` is imported once, with a warning, then ignored.
 
+## 2026-11-12 — [078] Concurrent requests, part 1 (build)
+
+Build PR of 078 on branch `feat/078-concurrent-requests` (steps 1–4; sync jobs, shadows, storage and docs follow in the second PR).
+
+- **`concurrency.max_requests`** (20, 1–50): the most requests one batch keeps in flight; read at start, shown read-only in Settings → Server, and it sizes every Alpaca HTTP pool at `max(max_requests, 20)` per host.
+- **`app/concurrency.py`**: `run_batch` sends a set of independent requests together under a per-batch semaphore, returns results in item order (a value or the exception — one failure never cancels the others), records max in flight and wall time, and logs one INFO line per batch. A process-wide `SourceGate` per source sits in front of each rate limiter (the limiter itself is unchanged): live cycle requests go before waiting sync, shadow, review, Ask and backtest ones.
+- **The cycle's model calls run in two waves**: held positions' calls together, then candidates planned against the post-held state and called together; answers are still validated, stored and applied in order, orders stay sequential, and the call cap is unchanged. The account refresh and the 5-min bar refresh now run in parallel after reconciliation.
+
+## 2026-11-12 — [077] Universe UX and Data sync (build)
+
+Build PRs of 077: #265 (sync runs and API) and #269 (page and per-symbol status) on branches `feat/077-universe-ux` and `feat/077-universe-ux-ui`.
+
+- **`sync_runs` table**: one row per Universe data job (`daily_bars`, `screen`, `bars_5m`, `history`, `earnings`, `corporate_actions`, `fred`, `ecb`) with start/finish, status (`running`, `ok`, `partial`, `failed`), done/total and structured failures (what, plain-language error, next retry). Rows kept 30 days; progress writes throttled to one per second and always written by the job, never guessed.
+- **`GET /api/universe/sync`** lists every job's latest run with schedule and late flag; **`POST /api/universe/sync/{job}/retry`** re-runs a failed job in the background, refusing with 409 during a cycle or a duplicate run and 422 for unknown jobs or nothing to retry.
+- **Pool endpoint**: each row carries one status — `warming_up` with daily-bars and 5-min progress, `ready` with the next screen time, `eligible`, `eligible_fails`, `held`, `excluded` with the failed check and numbers — plus `detail`, `progress` and `failed_check`; counts gain `ready`; a sector summary reports pool, eligible and rank per sector.
+- **Universe page**: mode banner said once, tiles coloured only above zero, a Data sync card that is one quiet line when healthy and opens itself with the reason when a job fails, runs late or is in progress (history progress with ETA and the concurrency cap, Retry per failed job), "How the screen works" as a fold, Pool by sector filtering via `?sector=`, Status as the third table column, an inline sticky remove confirm, `name pending`, "after the first screen" hints and a fold row naming its filter and count.
+
+## 2026-11-12 — [076] Performance UX (build)
+
+Build PR of 076 on branch `feat/076-performance-ux`.
+
+- **Summary sentence** (`performance.summary.sentence`): one to three sentences from a fixed template over the same numbers as the tiles — sessions, closed trades and wins, adjusted P&L in $ and %, the account's return against SPY's, positions still open. No model.
+- **Tiles in words**: each of the six tiles gets a plain-words line under the value and keeps its definition on hover.
+- **Equity curve**: the response gains `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %). Exits are rings on the curve — green won, red lost — with "symbol · result" on hover; the deepest drawdown is shaded from peak to low. Both are in the legend.
+- **Labels, not codes**: exit reasons and actions read through the shared label map everywhere on the screen.
+- **Folding**: By regime lists only regimes with closed trades plus one "No closed trades yet in: …" line; a regime that blocks entries (down · high vol) says so. While every after-exit row is pending the table is one line — "n trades are inside their 5-session window; the first result arrives <date>", the date the earliest exit plus five trading sessions from the calendar; once some are done, pending rows group at the bottom. Decisions waiting on prices say "waiting · first prices <date>".
+- **Closed trades**: newest first, 20 rows then "Show all n"; symbol and exit-reason filters kept in the URL; the R column gets a bar from −1R to the trade's R, capped at 2R wide.
+- **One banner**: below `performance.tail.min_trades` (20) closed trades the page shows a single small-sample banner under the summary; the Winners and tails card drops its own.
+- **Phone**: "On this page" chips; chart date labels stay non-overlapping.
+
+## 2026-11-12 — [088] Code coverage report from CI (build, part 2)
+
+Second build PR of 088 on branch `ops/088-code-coverage-e2e` (steps 7–10 of the kickoff).
+
+- **Backend e2e coverage:** with `E2E_COVERAGE=1` the Playwright web server runs `coverage run --parallel-mode` (`sigterm` and `concurrency = ["thread"]` in `pyproject.toml`); Playwright's `gracefulShutdown` SIGTERM flushes `backend/.coverage.e2e.<project>.*` files. Without the variable the command line is unchanged.
+- **Frontend e2e coverage:** the shared `e2e/shots.ts` fixture wraps `context.newPage`, starts Chromium V8 coverage per page and collects on page close into `coverage-e2e/raw/*.jsonl`; `vite.config.ts` emits sourcemaps only under `E2E_COVERAGE=1`; `scripts/coverage-e2e.mjs` resolves served assets + sourcemaps and writes istanbul reports via `monocart-coverage-reports`.
+- **`coverage` job:** downloads the unit and e2e artifacts, combines backend data (`coverage combine`/`xml`/`html` for unit/e2e/all) and merges frontend istanbul maps (`scripts/coverage-merge.mjs`, unit/e2e/all, skipping `all` when statement maps differ), prints one summary and uploads `coverage-all` for 7 days.
+- **`scripts/coverage_summary.py`** now takes `--{backend,frontend}-{unit,e2e,all}` and prints Unit/E2E/All columns, package rows on All, the least-covered list and the e2e-only list (0% unit, >0% e2e, ≥50 statements).
+- **Deps:** `monocart-coverage-reports` (frontend dev), `defusedxml` (Python dev, for the summary script's XML parsing).
+
+## 2026-11-12 — [088] Code coverage report from CI (build, part 1)
+
+First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kickoff; the e2e measurement follows in a second PR).
+
+- **Backend:** `pytest-cov` in the dev extra; `[tool.coverage.run]`/`[tool.coverage.report]` in `pyproject.toml` (branch coverage, `source = ["app"]`, `relative_files`). Only CI passes `--cov` options, so `make test-backend` locally measures nothing.
+- **Frontend:** `@vitest/coverage-v8` (same major as vitest); `test.coverage` in `vite.config.ts` (v8 provider, off unless `--coverage`); `make test-frontend VITEST_ARGS=--coverage` in CI.
+- **`scripts/coverage_summary.py`**: standard-library script that prints the Markdown table (lines and branches per side, backend per-package rows, 10 least-covered files with ≥50 statements) into `$GITHUB_STEP_SUMMARY` with `if: always()`; a missing report prints "no report" and never fails the step. Unit test: `backend/tests/test_coverage_summary.py`.
+- **Artifacts** `coverage-backend` (`backend/htmlcov/`, `backend/coverage.xml`) and `coverage-frontend` (`frontend/coverage/`), 7 days.
+- **Docs:** `AGENTS.md` → Commands (one-module coverage locally; a full coverage run joins the never-run-locally list), README gains a "Tests and coverage" section.
+
+## 2026-11-12 — [079] Review stories (build)
+
+Build PR of 079 on branch `feat/079-review-stories`.
+
+- **`backend/config.example.yaml` (spec-owned):** `reviews.prompts` defaults move to `weekly.v3` and `briefing.v3` (verdict stays `verdict.v2`); `reviews.max_words` gains `weekly_story: 350` and `briefing: 220` — `weekly_summary: 120` stays for the v1/v2 prompts, whose checks keep their own limits.
+
 ## 2026-11-12 — [081] Keys out of error text (build, part 1)
 
 Build PR of 081 on branch `fix/081-keys-out-of-error-text` — the S1 part (issue #238); Ask settings and the heartbeat URL follow in the second PR.

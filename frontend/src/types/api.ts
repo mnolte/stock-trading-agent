@@ -453,7 +453,9 @@ export interface ReviewsResponse {
 export interface ReviewContent {
   summary?: string;
   observations?: string[];
-  /** weekly.v2: {text, evidence} or null; weekly.v1 rows stored a string. */
+  /** weekly.v3 (item 079): the one-to-three-paragraph story. */
+  story?: string;
+  /** weekly.v2+: {text, evidence} or null; weekly.v1 rows stored a string. */
   suggestion?: { text: string; evidence: string } | string | null;
   text?: string;
   /** Briefings: the code-written status line shown above the text. */
@@ -504,10 +506,15 @@ export interface WeeklyFacts {
   };
   limits?: {
     weekly_summary_words?: number;
+    /** weekly.v3 (item 079): the story's word cap. */
+    weekly_story_words?: number;
     verdict_after_sessions?: number;
     skip_flat_pct?: number;
     [key: string]: unknown;
   };
+  /** Stories (item 079): term → one-sentence definition, for the terms
+   * this fact set uses. */
+  glossary?: Record<string, string>;
   return_pct: number | null;
   return_usd: number | null;
   equity_start: number | null;
@@ -566,8 +573,32 @@ export interface BriefingFacts {
   earnings_today: { symbol: string; time_of_day: string }[];
   earnings_tomorrow: { symbol: string; time_of_day: string }[];
   regime: string;
-  yesterday: { return_pct: number | null; return_usd: number | null };
+  /** briefing.v3 (item 079): the newest cycle's VIX facts, null until FRED
+   * has a close. */
+  vix?: {
+    close: number | null;
+    date: string | null;
+    percentile_1y: number | null;
+    stale: boolean;
+  } | null;
+  /** briefing.v3: the next scheduled economic release, null when the
+   * calendar has nothing coming. */
+  next_release?: {
+    type: string;
+    label: string;
+    date: string;
+    time: string;
+    sessions_away: number;
+  } | null;
+  yesterday: {
+    return_pct: number | null;
+    return_usd: number | null;
+    spy_return_pct?: number | null;
+  };
   banners: { kind: string; level: string }[];
+  /** Stories (item 079): term → one-sentence definition. */
+  glossary?: Record<string, string>;
+  limits?: Record<string, unknown>;
 }
 
 export interface ReviewDetail extends ReviewListItem {
@@ -576,6 +607,9 @@ export interface ReviewDetail extends ReviewListItem {
   content: ReviewContent | null;
   /** Briefings: the code-written status line shown above the text. */
   status_line?: string | null;
+  /** Briefings v3 (item 079): "The numbers" fold rows. */
+  numbers?: { label: string; value: string }[];
+  fact_count?: number;
   model: string | null;
   prompt_version: string | null;
   tokens: number | null;
@@ -986,6 +1020,8 @@ export interface SettingsResponse {
     } | null;
     fred: string;
   } | null;
+  /** Item 078: concurrency.max_requests — read at start, restart to change. */
+  concurrency?: { max_requests: number };
   /** Item 069: active shadows' settings overrides, flattened to dotted
    * paths — a row shows "Shadow A uses 45–65" when its value differs
    * from live. */
@@ -1173,6 +1209,7 @@ export interface PerformanceSummary {
   spy_return_pct: string | null;
   vs_spy_pct: string | null;
   adjusted_usd: string;
+  adjusted_pct?: string | null;
   slippage_pct: string;
   dividends_usd: string;
   win_rate_pct: string | null;
@@ -1181,6 +1218,10 @@ export interface PerformanceSummary {
   avg_r: string | null;
   max_drawdown_pct: string;
   kill_pct: string;
+  /** Item 076: the one-to-three-sentence run summary at the top. */
+  sentence?: string;
+  /** Closed trades below this show the page's small-sample banner. */
+  tail_min_trades?: number;
 }
 
 export interface PerformanceAggRow {
@@ -1197,6 +1238,8 @@ export interface DecisionOutcomeRow {
   count: number;
   avg_1session_pct: string | null;
   outcomes: number;
+  /** Item 076: NY date of the first 1-session price, while none is in. */
+  first_price_date?: string | null;
   read: string;
 }
 
@@ -1266,6 +1309,8 @@ export interface PerformanceTailsResponse {
   after_exit_sessions?: number;
   top_share_pct?: number;
   pending: number;
+  /** Item 076: NY date the first after-exit result arrives, if known. */
+  first_result_date?: string | null;
   unavailable: number;
   excluded: number;
   distribution: TailsBucket[];
@@ -1276,6 +1321,20 @@ export interface PerformanceTailsResponse {
   winners_kept: { share: string; winners: number } | null;
   after_exit: TailsAfterExitGroup[];
   rows: TailsTradeRow[];
+}
+
+/** Item 076: one agent trade's exit, drawn as a ring on the curve. */
+export interface PerformanceExit {
+  date: string;
+  symbol: string;
+  r: string | null;
+  won: boolean;
+}
+
+export interface PerformanceDrawdown {
+  peak_date: string;
+  low_date: string;
+  pct: string;
 }
 
 export interface PerformanceResponse {
@@ -1290,6 +1349,10 @@ export interface PerformanceResponse {
   };
   by_regime?: PerformanceAggRow[];
   by_symbol?: PerformanceAggRow[];
+  /** Item 076: regimes without closed trades, for the folded line. */
+  empty_regimes?: string[];
+  exits?: PerformanceExit[];
+  drawdown?: PerformanceDrawdown | null;
   decision_outcomes?: DecisionOutcomeRow[];
   closed_trades?: ClosedTradeRow[];
   open?: { count: number; symbols: string[]; unrealized: string };
@@ -1422,6 +1485,12 @@ export interface BriefingCardData {
   status_line: string | null;
   text: string;
   chips: BriefingChip[];
+  /** Stories (item 079): "The numbers" fold rows, the glossary the
+   * story's terms resolve against, and the fact count for the fold's
+   * summary. Present on briefing.v3+ cards; absent on older versions. */
+  numbers?: { label: string; value: string }[];
+  glossary?: Record<string, string>;
+  fact_count?: number;
   /** "model" = every number checked; "template" = plain fallback + reason. */
   source: 'model' | 'template' | string;
   reason: string | null;
@@ -1614,6 +1683,7 @@ export interface UniverseThresholds {
   lookback_sessions: number;
   drop_after_failed_screens: number;
   max_position_pct: number;
+  max_calls_per_cycle?: number;
 }
 
 export interface UniverseFunnelStep {
@@ -1633,9 +1703,16 @@ export interface UniverseScreenSummary {
 
 export type UniverseRowStatus =
   | 'eligible'
+  | 'eligible_fails'
+  | 'ready'
   | 'excluded'
   | 'warming_up'
   | 'held';
+
+export interface UniverseWarmProgress {
+  daily: { have: number; need: number };
+  m5: { have: number; need: number };
+}
 
 export interface UniverseRow {
   symbol: string;
@@ -1643,6 +1720,8 @@ export interface UniverseRow {
   sector: string;
   added_at: string | null;
   status: UniverseRowStatus;
+  progress?: UniverseWarmProgress | null;
+  next_screen?: string | null;
   rank: number | null;
   last_close: string | null;
   avg_dollar_volume: string | null;
@@ -1659,9 +1738,18 @@ export interface UniverseRow {
 export interface UniverseCounts {
   pool: number;
   eligible: number;
+  ready: number;
   excluded: number;
   warming_up: number;
   held: number;
+}
+
+export interface UniverseSectorSummary {
+  sector: string;
+  pool: number;
+  eligible: number;
+  rank: number | null;
+  rank_total: number | null;
 }
 
 export interface UniverseResponse {
@@ -1676,7 +1764,47 @@ export interface UniverseResponse {
   pool?: { size: number; max: number };
   counts?: UniverseCounts;
   screen?: UniverseScreenSummary | null;
+  sectors?: UniverseSectorSummary[];
   rows?: UniverseRow[];
+}
+
+// ---- Sync runs (item 077) ---------------------------------------------------
+
+export interface UniverseSyncFailure {
+  what: string;
+  error: string;
+  next_retry: string | null;
+}
+
+export interface UniverseSyncJob {
+  job: string;
+  label: string;
+  status: 'running' | 'ok' | 'partial' | 'failed' | string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  done: number | null;
+  total: number | null;
+  failures: UniverseSyncFailure[];
+  schedule?: string | null;
+  late?: boolean;
+}
+
+export interface UniverseSyncHistory {
+  ready: number;
+  total: number | null;
+  eta_seconds: number | null;
+}
+
+export interface UniverseSyncResponse {
+  jobs: UniverseSyncJob[];
+  history: UniverseSyncHistory | null;
+  max_requests: number | null;
+}
+
+export interface UniverseSyncRetryResult {
+  job: string;
+  accepted: boolean;
 }
 
 export interface UniverseAddResult {

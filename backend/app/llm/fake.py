@@ -13,6 +13,7 @@ template built from the given facts. ``responses`` overrides per symbol;
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -32,11 +33,22 @@ FakeHandler = Callable[[str, str], str]
 
 def default_review_reply(system: str, user: str) -> str:
     """Answer with the plain template built from the given facts — it
-    passes the number check by construction."""
+    passes the number check by construction. The prompt header names the
+    version, so v3 stories get their {story}/{text} shape (item 079)."""
     from app.reviews.templates import plain_content
 
     payload = json.loads(user)
-    return json.dumps(plain_content(str(payload.get("kind", "weekly")), payload.get("facts", {})))
+    version = None
+    match = re.search(r"version:\s*v(\d+)", system or "")
+    if match:
+        version = f"{payload.get('kind', 'weekly')}.v{match.group(1)}"
+    return json.dumps(
+        plain_content(
+            str(payload.get("kind", "weekly")),
+            payload.get("facts", {}),
+            version,
+        )
+    )
 
 
 def _try_parse(raw: str) -> Any:
@@ -174,13 +186,54 @@ class FakeModelClient:
         model: str | None = None,
         temperature: float | None = None,
     ) -> ModelResponse:
-        started = time.monotonic()
         use_model = model or self.model
         provider = "fake"
+        gate = None
         if self._config is not None:
+            from app.concurrency import gate_for
             from app.llm.models import model_provider
 
             provider = model_provider(self._config, use_model)
+            # Item 078: simulated mode honours the same per-provider
+            # priority gate as the real dispatcher.
+            gate = gate_for(
+                f"model:{provider}",
+                limit=max(
+                    1,
+                    int(
+                        self._config.get(
+                            "concurrency", "max_requests", default=20
+                        )
+                    ),
+                ),
+            )
+        if gate is None:
+            return await self._complete(
+                system=system,
+                user=user,
+                schema=schema,
+                use_model=use_model,
+                provider=provider,
+            )
+        async with gate.slot():
+            return await self._complete(
+                system=system,
+                user=user,
+                schema=schema,
+                use_model=use_model,
+                provider=provider,
+            )
+
+    async def _complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict[str, Any] | None = None,
+        use_model: str,
+        provider: str,
+    ) -> ModelResponse:
+        started = time.monotonic()
         snapshot = json.loads(user)
         if "facts" in snapshot and "symbol" not in snapshot:
             # A review payload {"kind", "facts"}.

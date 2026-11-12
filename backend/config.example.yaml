@@ -81,6 +81,9 @@ schedule:
 gui:
   near_stop_atr: 1.5          # positions closer to their stop than this turn amber (PR 35)
 
+concurrency:                     # item 078, docs/SPEC.md — Concurrent requests
+  max_requests: 20               # most requests one batch keeps in flight (1-50); also sizes the HTTP pools; restart to change
+
 api:
   broker_timeout_seconds: 5   # GUI reads from Alpaca answer from the last reconciled values (stale) past this
 
@@ -257,9 +260,11 @@ reviews:
     briefing: gpt-4.1-mini
     verdict: gpt-4.1-mini
   temperature: 0.2              # OpenAI models only
-  prompts: {weekly: weekly.v2, briefing: briefing.v2, verdict: verdict.v2}
+  prompts: {weekly: weekly.v3, briefing: briefing.v3, verdict: verdict.v2}
   min_closed_trades_for_suggestion: 10
-  max_words: {weekly_summary: 120, briefing: 80}
+  # v3 stories (item 079) get their own caps; weekly_summary and the
+  # briefing.v1/v2 checks keep theirs.
+  max_words: {weekly_summary: 120, weekly_story: 350, briefing: 220}
   monthly_cost_cap_usd: 2         # separate from trading decisions
 
 notifications:

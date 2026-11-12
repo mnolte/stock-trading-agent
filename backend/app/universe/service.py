@@ -23,7 +23,6 @@ switch applies at the next daily screen, never mid-session.
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import logging
@@ -31,6 +30,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+from datetime import time as dtime
 from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,16 +41,25 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
 from app.broker.models import OPEN_ORDER_STATUSES
+from app.concurrency import run_batch
 from app.config import AppConfig, _resolve_path
 from app.data.factory import DataSources
 from app.data.models import CalendarDay, DailyBar
 from app.data.service import MarketDataService
-from app.db.models import Event, Order, Position, UniversePoolRow, UniverseScreenRow
+from app.db.models import (
+    Cycle,
+    Event,
+    Order,
+    Position,
+    UniversePoolRow,
+    UniverseScreenRow,
+)
 from app.engine.state import record_event
 from app.errors import safe_error
 from app.logging_config import ev
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, Clock
+from app.syncs import SyncRuns, scrub_error
 from app.universe.names import clean_company_name
 
 UTC = ZoneInfo("UTC")
@@ -84,6 +93,20 @@ class _HistoryWindows:
 
 
 @dataclass
+class _WarmProgress:
+    """One symbol's history progress for the pool endpoint (item 077):
+    loaded flag, the human detail and the loaded-of-needed counts the
+    two progress bars show."""
+
+    loaded: bool
+    detail: str
+    daily_have: int
+    daily_need: int
+    m5_have: int
+    m5_need: int
+
+
+@dataclass
 class _ScreenMetrics:
     """One symbol's screen inputs and raw result."""
 
@@ -109,6 +132,7 @@ class UniverseService:
         clock: Clock,
         session_factory: sessionmaker[Session] | None = None,
         notify: Callable[[], None] | None = None,
+        syncs: SyncRuns | None = None,
     ) -> None:
         self._market_data = market_data
         self._sources = sources
@@ -118,6 +142,7 @@ class UniverseService:
         self._clock = clock
         self._sf = session_factory or market_data._session_factory
         self._notify = notify
+        self._syncs = syncs
 
     # ------------------------------------------------------------------
     # Configuration. The pending tree wins over the active one, so a saved
@@ -149,8 +174,31 @@ class UniverseService:
     def _screen_cfg(self) -> dict[str, Any]:
         return self._cfg().get("screen") or {}
 
+    def _max_requests(self) -> int:
+        """``concurrency.max_requests`` — one batch's in-flight cap
+        (item 078)."""
+        tree = self._tree()
+        return max(
+            1,
+            int((tree.get("concurrency") or {}).get("max_requests") or 20),
+        )
+
     def screen_time_ny(self) -> str:
         return str(self._screen_cfg().get("time_ny") or "08:10")
+
+    def _next_screen_text(self, now: datetime) -> str:
+        """"08:10 NY Fri 16 Oct" — the next daily screen's wall time,
+        today when it hasn't run yet, else the next trading day."""
+        hh, mm = (int(p) for p in self.screen_time_ny().split(":")[:2])
+        ny_now = now.astimezone(NY_TZ)
+        day = ny_now.date()
+        if self._calendar.session_for(day) is None or ny_now.time() >= dtime(
+            hh, mm
+        ):
+            nxt = self._calendar.next_trading_day(day)
+            if nxt is not None:
+                day = nxt.date
+        return f"{self.screen_time_ny()} NY {day.strftime('%a %d %b')}"
 
     def _daily_history_sessions(self) -> int:
         return int(self._schedule_cfg().get("daily_history_sessions") or 260)
@@ -577,10 +625,11 @@ class UniverseService:
 
     def _warming_details(
         self, symbols: list[str], now: datetime
-    ) -> dict[str, tuple[bool, str]]:
+    ) -> dict[str, _WarmProgress]:
         """The history check for many symbols at once: the windows are
         shared and each bar table is queried once, grouped by symbol,
-        instead of two per-symbol queries."""
+        instead of two per-symbol queries. Returns loaded/detail plus
+        the loaded-of-needed counts the progress bars need (item 077)."""
         if not symbols:
             return {}
         windows = self._history_windows(now)
@@ -594,16 +643,26 @@ class UniverseService:
             symbols, {s.date for s in windows.completed}
         )
         tolerance = self._history_tolerance()
-        return {
-            symbol: self._history_loaded(
-                daily.get(symbol, 0),
-                covered.get(symbol, 0),
+        out: dict[str, _WarmProgress] = {}
+        for symbol in symbols:
+            daily_have = daily.get(symbol, 0)
+            m5_have = covered.get(symbol, 0)
+            loaded, detail = self._history_loaded(
+                daily_have,
+                m5_have,
                 windows,
                 gaps.get(symbol, set()),
                 tolerance,
             )
-            for symbol in symbols
-        }
+            out[symbol] = _WarmProgress(
+                loaded=loaded,
+                detail=detail,
+                daily_have=daily_have,
+                daily_need=windows.want_daily,
+                m5_have=m5_have,
+                m5_need=windows.want_5m,
+            )
+        return out
 
     async def _refresh_history(self, symbols: list[str], today: date) -> dict[str, str]:
         """Top up the daily + 5m history for ``symbols``; symbol → error.
@@ -612,32 +671,86 @@ class UniverseService:
         skipped, the newest bar is refetched and symbols share batched
         requests, so a warm pool costs small requests instead of a full
         window per symbol (docs/SPEC.md, Cycles at scale).
+
+        Writes a ``history`` sync run (item 077): ``done`` counts symbols
+        whose daily+5m attempt has finished, failures land in the run's
+        JSON for the Data sync card and retry.
         """
-        daily = await self._market_data.refresh_daily(
-            today,
-            symbols=symbols,
-            session_count=self._daily_history_sessions(),
+        run = (
+            self._syncs.begin("history", total=len(symbols))
+            if self._syncs is not None and symbols
+            else None
         )
-        errors = {
-            symbol: f"daily bars: {res.error}"
-            for symbol, res in daily.items()
-            if res.error is not None
-        }
-        # A symbol whose daily fetch failed skips its 5m fetch too, like
-        # the serial loop did.
-        remaining = [s for s in symbols if s not in errors]
-        history = await self._market_data.refresh_history(
-            today,
-            symbols=remaining,
-            session_count=self._history_sessions(),
-        )
-        errors.update(
-            {
-                symbol: f"5m bars: {res.error}"
-                for symbol, res in history.items()
+        terminal: set[str] = set()
+        pending_5m: set[str] = set()
+
+        def report() -> None:
+            if run is not None:
+                run.progress(len(terminal), len(symbols))
+
+        def on_daily(sym: str, res: Any) -> None:
+            if res.error is not None:
+                terminal.add(sym)
+                if run is not None:
+                    run.fail(sym, str(res.error))
+            else:
+                pending_5m.add(sym)
+            report()
+
+        def on_5m(sym: str, res: Any) -> None:
+            if sym in pending_5m:
+                pending_5m.discard(sym)
+                terminal.add(sym)
+            if res.error is not None and run is not None:
+                run.fail(sym, str(res.error))
+            report()
+
+        try:
+            daily = await self._market_data.refresh_daily(
+                today,
+                symbols=symbols,
+                session_count=self._daily_history_sessions(),
+                on_symbol=on_daily if run is not None else None,
+            )
+            errors = {
+                symbol: f"daily bars: {res.error}"
+                for symbol, res in daily.items()
                 if res.error is not None
             }
-        )
+            # A symbol whose daily fetch failed skips its 5m fetch too,
+            # like the serial loop did.
+            remaining = [s for s in symbols if s not in errors]
+            history = await self._market_data.refresh_history(
+                today,
+                symbols=remaining,
+                session_count=self._history_sessions(),
+                on_symbol=on_5m if run is not None else None,
+            )
+            errors.update(
+                {
+                    symbol: f"5m bars: {res.error}"
+                    for symbol, res in history.items()
+                    if res.error is not None
+                }
+            )
+        except Exception as exc:
+            if run is not None:
+                run.abort(scrub_error(exc))
+            raise
+
+        if run is not None:
+            # Fetches that early-return (no calendar days, empty group)
+            # never fire on_symbol — every remaining symbol was still
+            # attempted, so count it terminal and record its error.
+            for sym in symbols:
+                if sym in terminal:
+                    continue
+                terminal.add(sym)
+                err = errors.get(sym)
+                if err is not None:
+                    run.fail(sym, err)
+            run.progress(len(terminal), len(symbols))
+            run.finish()
         return errors
 
     async def warm_up(
@@ -766,27 +879,40 @@ class UniverseService:
         started = [s for s in sessions if s.open <= now]
         want_5m = min(self._history_sessions(), len(started))
         symbols = [row.symbol for row in pool]
-        errors = await self._refresh_history(symbols, today)
-        if errors:
-            symbol = next(s for s in symbols if s in errors)
-            raise ScreenError(f"{symbol} {errors[symbol]}")
-
-        # 2. Check every symbol — the checks are independent, so they run
-        #    a few at a time instead of one broker call at a time.
-        completed = [s for s in daily_sessions if s.close <= now]
-        windows = _HistoryWindows(
-            completed=completed,
-            started=started,
-            want_daily=min(self._daily_history_sessions(), len(completed)),
-            want_5m=want_5m,
+        screen_run = (
+            self._syncs.begin("screen", total=len(symbols))
+            if self._syncs is not None
+            else None
         )
-        spy_bars = self._market_data.get_daily_bars("SPY", completed)
-        spy_return = _period_return(spy_bars, lookback)
-        semaphore = asyncio.Semaphore(10)
+        checked = 0
+        try:
+            errors = await self._refresh_history(symbols, today)
+            if errors:
+                symbol = next(s for s in symbols if s in errors)
+                raise ScreenError(f"{symbol} {errors[symbol]}")
 
-        async def check(symbol: str) -> tuple[str, _ScreenMetrics]:
-            async with semaphore:
-                return symbol, await self._screen_symbol(
+            # 2. Check every symbol — the checks are independent, so they
+            #    run a few at a time instead of one broker call at a time.
+            completed = [s for s in daily_sessions if s.close <= now]
+            windows = _HistoryWindows(
+                completed=completed,
+                started=started,
+                want_daily=min(
+                    self._daily_history_sessions(), len(completed)
+                ),
+                want_5m=want_5m,
+            )
+            spy_bars = self._market_data.get_daily_bars("SPY", completed)
+            spy_return = _period_return(spy_bars, lookback)
+            # Item 078: one symbol check per request, sent as a batch of
+            # at most concurrency.max_requests — like the old gather, the
+            # first failing check fails the screen and keeps the previous
+            # list.
+            async def check(
+                symbol: str,
+            ) -> tuple[str, _ScreenMetrics]:
+                nonlocal checked
+                result = await self._screen_symbol(
                     symbol,
                     windows,
                     min_price,
@@ -795,121 +921,141 @@ class UniverseService:
                     lookback,
                     spy_return,
                 )
+                checked += 1
+                if screen_run is not None:
+                    screen_run.progress(checked, len(symbols))
+                return symbol, result
 
-        metrics = dict(await asyncio.gather(*(check(s) for s in symbols)))
-
-        # 3. Hysteresis + rank, then persist.
-        with self._sf() as session:
-            previous = session.execute(
-                select(func.max(UniverseScreenRow.session_date)).where(
-                    UniverseScreenRow.session_date < today
-                )
-            ).scalar_one()
-            prev_rows: dict[str, UniverseScreenRow] = {}
-            if previous is not None:
-                for r in session.execute(
-                    select(UniverseScreenRow).where(
-                        UniverseScreenRow.session_date == previous
-                    )
-                ).scalars():
-                    prev_rows[r.symbol] = r
-
-            session.execute(
-                delete(UniverseScreenRow).where(
-                    UniverseScreenRow.session_date == today
-                )
+            batch = await run_batch(
+                symbols,
+                send=check,
+                limit=self._max_requests(),
+                kind="sync.screen",
             )
-            out_rows: list[UniverseScreenRow] = []
-            for row in pool:
-                m = metrics[row.symbol]
-                prev = prev_rows.get(row.symbol)
-                streak = (
-                    (prev.failed_in_a_row if prev else 0) + 1
-                    if m.status != "eligible"
-                    else 0
-                )
-                status = m.status
-                if (
-                    m.status != "eligible"
-                    and prev is not None
-                    and prev.status == "eligible"
-                    and streak < drop_after
-                ):
-                    status = "eligible"  # stays in, streak keeps counting
-                out_rows.append(
-                    UniverseScreenRow(
-                        session_date=today,
-                        symbol=row.symbol,
-                        status=status,
-                        check_results={
-                            **m.checks,
-                            "failed_check": _failed_check(m.checks),
-                            "detail": m.detail,
-                            "equity": str(equity),
-                            "max_position_usd": str(max_position_usd),
-                        },
-                        last_close=m.last_close,
-                        avg_dollar_volume=m.avg_dollar_volume,
-                        return_vs_spy=m.return_vs_spy,
-                        failed_in_a_row=streak,
+            metrics: dict[str, _ScreenMetrics] = {}
+            for item in batch:
+                if isinstance(item, BaseException):
+                    raise item
+                symbol, metrics[symbol] = item
+
+            # 3. Hysteresis + rank, then persist.
+            with self._sf() as session:
+                previous = session.execute(
+                    select(func.max(UniverseScreenRow.session_date)).where(
+                        UniverseScreenRow.session_date < today
+                    )
+                ).scalar_one()
+                prev_rows: dict[str, UniverseScreenRow] = {}
+                if previous is not None:
+                    for r in session.execute(
+                        select(UniverseScreenRow).where(
+                            UniverseScreenRow.session_date == previous
+                        )
+                    ).scalars():
+                        prev_rows[r.symbol] = r
+
+                session.execute(
+                    delete(UniverseScreenRow).where(
+                        UniverseScreenRow.session_date == today
                     )
                 )
+                out_rows: list[UniverseScreenRow] = []
+                for row in pool:
+                    m = metrics[row.symbol]
+                    prev = prev_rows.get(row.symbol)
+                    streak = (
+                        (prev.failed_in_a_row if prev else 0) + 1
+                        if m.status != "eligible"
+                        else 0
+                    )
+                    status = m.status
+                    if (
+                        m.status != "eligible"
+                        and prev is not None
+                        and prev.status == "eligible"
+                        and streak < drop_after
+                    ):
+                        status = "eligible"  # stays in, streak keeps counting
+                    out_rows.append(
+                        UniverseScreenRow(
+                            session_date=today,
+                            symbol=row.symbol,
+                            status=status,
+                            check_results={
+                                **m.checks,
+                                "failed_check": _failed_check(m.checks),
+                                "detail": m.detail,
+                                "equity": str(equity),
+                                "max_position_usd": str(max_position_usd),
+                            },
+                            last_close=m.last_close,
+                            avg_dollar_volume=m.avg_dollar_volume,
+                            return_vs_spy=m.return_vs_spy,
+                            failed_in_a_row=streak,
+                        )
+                    )
 
-            eligible = [r for r in out_rows if r.status == "eligible"]
-            eligible.sort(
-                key=lambda r: (
-                    r.return_vs_spy is None,
-                    -(r.return_vs_spy or Decimal(0)),
-                    r.avg_dollar_volume is None,
-                    -(r.avg_dollar_volume or Decimal(0)),
-                    r.symbol,
+                eligible = [r for r in out_rows if r.status == "eligible"]
+                eligible.sort(
+                    key=lambda r: (
+                        r.return_vs_spy is None,
+                        -(r.return_vs_spy or Decimal(0)),
+                        r.avg_dollar_volume is None,
+                        -(r.avg_dollar_volume or Decimal(0)),
+                        r.symbol,
+                    )
                 )
-            )
-            for rank, r in enumerate(eligible, start=1):
-                r.rank = rank
-            session.add_all(out_rows)
+                for rank, r in enumerate(eligible, start=1):
+                    r.rank = rank
+                session.add_all(out_rows)
 
-            # Company names for about_symbol: refreshed from the asset
-            # record every screen — this is also the backfill for rows
-            # added before the column existed (docs/SPEC.md, Fixes of
-            # 3 November). A failed asset read keeps the stored name.
-            for row in pool:
-                cleaned = clean_company_name(metrics[row.symbol].name)
-                if cleaned is not None:
-                    pool_row = session.get(UniversePoolRow, row.id)
-                    if pool_row is not None:
-                        pool_row.name = cleaned
+                # Company names for about_symbol: refreshed from the asset
+                # record every screen — this is also the backfill for rows
+                # added before the column existed (docs/SPEC.md, Fixes of
+                # 3 November). A failed asset read keeps the stored name.
+                for row in pool:
+                    cleaned = clean_company_name(metrics[row.symbol].name)
+                    if cleaned is not None:
+                        pool_row = session.get(UniversePoolRow, row.id)
+                        if pool_row is not None:
+                            pool_row.name = cleaned
 
-            funnel = _funnel_counts(out_rows)
-            ev(
-                _log, logging.INFO, "universe.screen",
-                f"universe screen {today}: {len(eligible)} eligible",
-                eligible=len(eligible), funnel=funnel,
-            )
-            record_event(
-                session,
-                self._clock,
-                level="info",
-                event_type="universe_screen",
-                details={
-                    "session_date": today.isoformat(),
-                    # Stamps which list this screen hands to cycles — the
-                    # cycle universe reads the newest success event.
-                    "mode": self.mode(),
-                    "equity": str(equity),
-                    "max_position_usd": str(max_position_usd),
-                    "funnel": funnel,
-                    "eligible": len(eligible),
-                },
-            )
-            session.commit()
-        self._ping()
-        return {
-            "session_date": today.isoformat(),
-            "pool": len(out_rows),
-            "eligible": len(eligible),
-            "funnel": funnel,
-        }
+                funnel = _funnel_counts(out_rows)
+                ev(
+                    _log, logging.INFO, "universe.screen",
+                    f"universe screen {today}: {len(eligible)} eligible",
+                    eligible=len(eligible), funnel=funnel,
+                )
+                record_event(
+                    session,
+                    self._clock,
+                    level="info",
+                    event_type="universe_screen",
+                    details={
+                        "session_date": today.isoformat(),
+                        # Stamps which list this screen hands to cycles — the
+                        # cycle universe reads the newest success event.
+                        "mode": self.mode(),
+                        "equity": str(equity),
+                        "max_position_usd": str(max_position_usd),
+                        "funnel": funnel,
+                        "eligible": len(eligible),
+                    },
+                )
+                session.commit()
+            self._ping()
+            if screen_run is not None:
+                screen_run.finish()
+            return {
+                "session_date": today.isoformat(),
+                "pool": len(out_rows),
+                "eligible": len(eligible),
+                "funnel": funnel,
+            }
+        except Exception as exc:
+            if screen_run is not None:
+                screen_run.abort(scrub_error(exc))
+            raise
 
     async def _screen_symbol(
         self,
@@ -1038,6 +1184,9 @@ class UniverseService:
                 "drop_after_failed_screens": self._drop_after(),
                 "max_position_pct": self._risk_cfg().get("max_position_pct")
                 or 20,
+                "max_calls_per_cycle": self._config.get_int(
+                    "decision", "max_calls_per_cycle", default=10
+                ),
             },
         }
 
@@ -1046,31 +1195,57 @@ class UniverseService:
             pool = self._active_pool(session)
             latest_rows = self.latest_screen_rows()
 
-        # Symbols without a screen row get their warming progress here —
-        # batched: one shared session computation plus two grouped queries
-        # for the whole pool, not a calendar walk and two queries per row.
+        # Symbols without a screen row — plus rows still marked
+        # warming_up — get their history progress here: batched, one
+        # shared session computation plus two grouped queries for the
+        # whole pool, not a calendar walk and two queries per row.
         warming = self._warming_details(
-            [e.symbol for e in pool if e.symbol not in latest_rows], now
+            [
+                e.symbol
+                for e in pool
+                if e.symbol not in latest_rows
+                or latest_rows[e.symbol].status == "warming_up"
+            ],
+            now,
         )
+        next_screen = self._next_screen_text(now)
 
         rows: list[dict[str, Any]] = []
         for entry in pool:
             row = latest_rows.get(entry.symbol)
             check: dict[str, Any] = (row.check_results or {}) if row is not None else {}
-            if row is None:
-                loaded, detail = warming[entry.symbol]
-                # Not screened yet — never "eligible" off a screen row.
-                # A symbol warmed via forgiven source gaps keeps the gap
-                # note instead of the generic ready line.
-                status = "warming_up"
-                check = {
-                    "failed_check": None if loaded else "history",
-                    "detail": detail
-                    if detail.startswith("warmed ·") or not loaded
-                    else "ready — enters at the next screen",
-                }
+            progress: dict[str, Any] | None = None
+            if row is None or row.status == "warming_up":
+                warm = warming.get(entry.symbol)
+                if warm is not None:
+                    progress = {
+                        "daily": {"have": warm.daily_have, "need": warm.daily_need},
+                        "m5": {"have": warm.m5_have, "need": warm.m5_need},
+                    }
+                if warm is not None and warm.loaded:
+                    # History loaded, not yet screened — "ready", with
+                    # the next screen time (item 077).
+                    status = "ready"
+                    check = {
+                        "failed_check": None,
+                        "detail": (
+                            "history loaded · joins at the next screen · "
+                            f"{next_screen}"
+                        ),
+                    }
+                else:
+                    # Not screened yet — never "eligible" off a screen
+                    # row. A symbol warmed via forgiven source gaps keeps
+                    # the gap note instead of the generic ready line.
+                    status = "warming_up"
+                    check = {
+                        "failed_check": "history",
+                        "detail": warm.detail if warm is not None else "",
+                    }
             else:
                 status = row.status
+                if status == "eligible" and row.failed_in_a_row > 0:
+                    status = "eligible_fails"
             detail = str(check.get("detail") or "")
             if entry.removed_at is not None:  # held removal, pending close
                 detail = (
@@ -1084,6 +1259,8 @@ class UniverseService:
                     "sector": entry.sector,
                     "added_at": entry.added_at.isoformat(),
                     "status": status,
+                    "progress": progress,
+                    "next_screen": next_screen if status == "ready" else None,
                     "rank": row.rank if row is not None else None,
                     "last_close": str(row.last_close)
                     if row is not None and row.last_close is not None
@@ -1120,6 +1297,7 @@ class UniverseService:
                     "fails": 0,
                     "failed_check": None,
                     "detail": "",
+                    "progress": None,
                     "held": True,
                     "qty": held.get(symbol, 0),
                     "screened": False,
@@ -1127,10 +1305,17 @@ class UniverseService:
                 }
             )
 
-        order = {"eligible": 0, "warming_up": 1, "excluded": 2, "held": 3}
+        order = {
+            "eligible": 0,
+            "eligible_fails": 0,
+            "ready": 1,
+            "warming_up": 2,
+            "excluded": 3,
+            "held": 4,
+        }
         rows.sort(
             key=lambda r: (
-                order.get(str(r["status"]), 4),
+                order.get(str(r["status"]), 5),
                 r["rank"] if r["rank"] is not None else 10**6,
                 r["symbol"],
             )
@@ -1138,7 +1323,12 @@ class UniverseService:
 
         counts = {
             "pool": len(pool),
-            "eligible": sum(1 for r in rows if r["status"] == "eligible"),
+            "eligible": sum(
+                1
+                for r in rows
+                if r["status"] in ("eligible", "eligible_fails")
+            ),
+            "ready": sum(1 for r in rows if r["status"] == "ready"),
             "excluded": sum(1 for r in rows if r["status"] == "excluded"),
             "warming_up": sum(1 for r in rows if r["status"] == "warming_up"),
             "held": len(held),
@@ -1148,10 +1338,54 @@ class UniverseService:
                 "pool": {"size": len(pool), "max": self.max_pool()},
                 "counts": counts,
                 "screen": self._screen_summary(latest_rows, counts),
+                "sectors": self._sector_summary(pool, latest_rows),
                 "rows": rows,
             }
         )
         return payload
+
+    def _sector_summary(
+        self,
+        pool: list[Any],
+        latest_rows: dict[str, UniverseScreenRow],
+    ) -> list[dict[str, Any]]:
+        """Pool by sector for the Universe screen (item 077): pool and
+        eligible counts per sector plus the sector ETF's rank at the
+        last cycle (item 068) — null before the first breadth cycle."""
+        sector_ranks: dict[str, Any] = {}
+        rank_total = 0
+        with self._sf() as session:
+            cycle = session.execute(
+                select(Cycle)
+                .where(Cycle.sectors.is_not(None))
+                .order_by(Cycle.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if cycle is not None and isinstance(cycle.sectors, dict):
+                sector_ranks = cycle.sectors
+                rank_total = sum(
+                    1
+                    for entry in sector_ranks.values()
+                    if isinstance(entry, dict) and entry.get("rank") is not None
+                )
+        stats: dict[str, dict[str, Any]] = {}
+        for entry in pool:
+            name = entry.sector or "—"
+            st = stats.setdefault(
+                name, {"sector": name, "pool": 0, "eligible": 0}
+            )
+            st["pool"] += 1
+            row = latest_rows.get(entry.symbol)
+            if row is not None and row.status == "eligible":
+                st["eligible"] += 1
+        out = []
+        for st in stats.values():
+            entry = sector_ranks.get(st["sector"]) or {}
+            st["rank"] = entry.get("rank") if isinstance(entry, dict) else None
+            st["rank_total"] = rank_total or None
+            out.append(st)
+        out.sort(key=lambda s: (-s["pool"], s["sector"]))
+        return out
 
     def _screen_summary(
         self,

@@ -8,7 +8,9 @@ Reconciliation against the broker runs at the start of every cycle.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -18,6 +20,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.concurrency import priority_scope, run_batch
 from app.config import AppConfig
 from app.data.cache import _aware_utc, _naive_utc
 from app.data.factory import DataSources
@@ -28,7 +31,7 @@ from app.data.vix import VixService
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Position
 from app.decide.output import decision_trade_prices
-from app.decide.service import DecisionService
+from app.decide.service import DecisionService, PreparedCall
 from app.decide.snapshot import build_input_snapshot
 from app.decide.v2inputs import HeldContext, V2Build, build_v2_fields
 from app.decide.v3 import build_v3_fields, held_v3
@@ -63,6 +66,7 @@ from app.risk.math import (
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
 from app.signals.breadth import BreadthService, CycleMarket
 from app.signals.service import SignalService, SymbolEval
+from app.syncs import SyncRuns, tracked_symbols
 
 NEWS_WINDOW = timedelta(hours=24)
 # Top-up window for the 5-minute bar cache each cycle.
@@ -85,6 +89,39 @@ class CycleReport:
     # Snapshots built for symbols only shadow strategies hold; live makes
     # no rules check, model call or decision for them.
     shadow_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Item 078: monotonic marks of the first model send and the last
+    # answer, and the most requests in flight at once — written to the
+    # cycle row as model_seconds / max_in_flight.
+    model_first_send: float | None = None
+    model_last_answer: float | None = None
+    max_in_flight: int = 0
+
+
+@dataclass
+class _WaveItem:
+    """One review item through the decide pipeline (item 078).
+
+    ``_prepare_item`` decides everything code decides — the snapshot,
+    the options, the code no_calls — and, for a call, builds the
+    ``PreparedCall`` whose send is the wave's only awaited step.
+    ``_finish_plan`` validates and stores the answer (or the no_call)
+    and ``_finish_wave`` applies it, all in plan order.
+    """
+
+    item: Any
+    quote: Quote | None
+    position: Position | None
+    cycle_id: int
+    context: str
+    outcome: str = ""  # "call" | "no_call"
+    reason: str | None = None
+    detail: str | None = None
+    snapshot_json: dict[str, Any] | None = None
+    v2: V2Build | None = None
+    price: Decimal | None = None
+    market_context: dict[str, Any] | None = None
+    prepared: PreparedCall | None = None
+    send_exc: BaseException | None = None
 
 
 class CycleRunner:
@@ -111,6 +148,7 @@ class CycleRunner:
         vix: VixService | None = None,
         breadth: BreadthService | None = None,
         releases: ReleaseCalendarService | None = None,
+        syncs: SyncRuns | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -147,6 +185,9 @@ class CycleRunner:
         # release_next_morning tags and the FOMC-row sync on promotion.
         # None leaves next_release null and skips the tags.
         self.releases = releases
+        # Sync-run records (item 077): the 5-minute bar refresh writes a
+        # "bars_5m" row per cycle for the Universe → Data sync card.
+        self.syncs = syncs
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -204,8 +245,14 @@ class CycleRunner:
     async def _update_bars(
         self, symbols: list[str], now: datetime, report: CycleReport
     ) -> None:
-        bar_results = await self.market_data.refresh_bars(
-            now - BAR_TOPUP, now, symbols
+        bar_results = await tracked_symbols(
+            self.syncs,
+            "bars_5m",
+            symbols,
+            lambda group, on_symbol: self.market_data.refresh_bars(
+                now - BAR_TOPUP, now, group, on_symbol=on_symbol
+            ),
+            "5m bars",
         )
         errors = {
             r.error for r in bar_results.values() if r.error is not None
@@ -488,7 +535,11 @@ class CycleRunner:
                 ev(logger, logging.INFO, "cycle.start",
                    f"Cycle c-{cycle.id:04d} started ({scheduled_ny:%H:%M} NY)")
                 try:
-                    await self._run(session, cycle.id, scheduled_ny, now, report)
+                    # Item 078: every request the live cycle sends —
+                    # batched or not — outranks waiting sync, shadow,
+                    # review, Ask and backtest ones on the same source.
+                    with priority_scope("live"):
+                        await self._run(session, cycle.id, scheduled_ny, now, report)
                 except Exception as exc:  # noqa: BLE001
                     report.status = "error"
                     report.errors.append(safe_error(exc))
@@ -541,6 +592,17 @@ class CycleRunner:
                     cycle.duration_seconds = (
                         cycle.finished_at - cycle.started_at
                     ).total_seconds()
+                # Item 078: model-call window and peak concurrency.
+                if (
+                    report.model_first_send is not None
+                    and report.model_last_answer is not None
+                ):
+                    cycle.model_seconds = (
+                        report.model_last_answer - report.model_first_send
+                    )
+                    cycle.max_in_flight = (
+                        report.max_in_flight or None
+                    )
                 report.duration_seconds = cycle.duration_seconds
                 # A cycle slower than the configured limit raises a warning
                 # banner — at scale the screen, fetches and model calls add up
@@ -727,9 +789,6 @@ class CycleRunner:
             report.data_source_health["broker"] = (
                 "ok" if rec.ok else f"failed: {'; '.join(rec.errors)}"
             )
-            account = await self.executor.refresh_account()
-            if account is None:
-                report.data_source_health["account"] = "error"
 
         symbols = self.market_data.universe()
         ev(logger, logging.DEBUG, "cycle.universe",
@@ -748,15 +807,23 @@ class CycleRunner:
         breadth_symbols = (
             self.breadth.reference_symbols() if self.breadth is not None else []
         )
-        await self._update_bars(
-            list(
-                dict.fromkeys(
-                    symbols + shadow_only + vix_symbols + breadth_symbols
-                )
-            ),
-            now,
-            report,
+        bar_symbols = list(
+            dict.fromkeys(
+                symbols + shadow_only + vix_symbols + breadth_symbols
+            )
         )
+        if self.executor is not None:
+            # Item 078, cycle step 2: the account refresh and the 5-min
+            # bar refresh are independent — they run together after
+            # reconciliation; each keeps its own health line.
+            account, _ = await asyncio.gather(
+                self.executor.refresh_account(),
+                self._update_bars(bar_symbols, now, report),
+            )
+            if account is None:
+                report.data_source_health["account"] = "error"
+        else:
+            await self._update_bars(bar_symbols, now, report)
         # The seven VIX fields are computed from stored closes and the
         # cached ETF bars before any decision — collection only, they
         # change nothing in trading (docs/SPEC.md, VIX).
@@ -897,25 +964,9 @@ class CycleRunner:
             == "expected_profit"
             and self.executor is not None
         )
-        # The called set decides the news fetch. Rank order walks the
-        # review list; expected_profit decides its call order inside the
-        # selection path and fetches news for exactly those symbols.
-        called: list[str] = []
-        if not ep_mode:
-            for item in reviews:
-                if len(called) >= max_calls:
-                    break
-                # Held positions are always reviewed; a stale or suspect
-                # market price only blocks a tighten_stop (docs/SPEC.md,
-                # Entries — Market price).
-                if (
-                    item.rules.status == STATUS_HELD
-                    or self._price_reason(item.symbol, quotes.get(item.symbol)) is None
-                ):
-                    called.append(item.symbol)
-            news = await self._fetch_news(called, now, report)
-        else:
-            news = None
+        # Each mode fetches the headlines its waves need: rank walks the
+        # review list for its called-set estimate, expected_profit the
+        # pre-scored candidates (docs/SPEC.md, Cycles at scale).
 
         earnings = self._earnings_map(
             session, [item.symbol for item in reviews], now
@@ -1005,7 +1056,6 @@ class CycleRunner:
         # Hard rule 13: the recorded no_call decisions are durable before
         # the first model call awaits I/O.
         session.commit()
-        capped_at: int | None = None
         # Real model calls this cycle — the live-decisions-failing check
         # reads them once every symbol settled (docs/SPEC.md, Decision
         # layer).
@@ -1031,92 +1081,25 @@ class CycleRunner:
                 symbol_sectors=sector_map,
             )
         else:
-            for i, item in enumerate(reviews):
-                if report.calls >= max_calls:
-                    capped_at = i
-                    break
-                quote = quotes.get(item.symbol)
-                decision = await self._decide_item(
-                    session,
-                    cycle_id,
-                    item,
-                    quote,
-                    position=positions.get(item.symbol),
-                    news_map=news,
-                    earnings=earnings,
-                    last_cycle=last_cycle,
-                    evaluation=evaluation,
-                    scheduled_ny=scheduled_ny,
-                    now=now,
-                    report=report,
-                    call_responses=call_responses,
-                    market=market,
-                    symbol_sectors=sector_map,
-                )
-                if self.executor is not None:
-                    await self._apply_item(
-                        session,
-                        item,
-                        decision,
-                        positions.get(item.symbol),
-                        quote,
-                        scheduled_ny,
-                        now=now,
-                        account=account,
-                        earnings=earnings,
-                        last_cycle=last_cycle,
-                        earnings_known=earnings_known,
-                    )
-                session.commit()
-                report.decisions.append(decision.id)
-            # Review items past the cap are recorded without a call — the
-            # tail starts where the loop stopped, not at ``max_calls``,
-            # since quote-missing candidates never consumed a call slot.
-            dev_pct = self.config.get_decimal(
-                "execution", "quote_max_deviation_pct", default=Decimal(1)
+            await self._run_rank_waves(
+                session,
+                cycle_id,
+                reviews,
+                quotes,
+                positions,
+                evaluation,
+                earnings,
+                last_cycle,
+                earnings_known,
+                scheduled_ny,
+                now,
+                report,
+                call_responses,
+                max_calls,
+                account,
+                market=market,
+                symbol_sectors=sector_map,
             )
-            for item in reviews[
-                capped_at if capped_at is not None else len(reviews):
-            ]:
-                capped_quote = quotes.get(item.symbol)
-                decision = self.decide.record_no_call(
-                    session,
-                    cycle_id=cycle_id,
-                    symbol=item.symbol,
-                    context="held" if item.rules.status == STATUS_HELD else "candidate",
-                    snapshot_json=build_input_snapshot(
-                        symbol=item.symbol,
-                        context=(
-                            "held" if item.rules.status == STATUS_HELD else "candidate"
-                        ),
-                        cycle_time_ny=scheduled_ny,
-                        price=None,
-                        regime=evaluation.regime,
-                        snapshot=item.snapshot,
-                        bars_1h=item.bars_1h,
-                        position=positions.get(item.symbol),
-                        news=None,
-                        rank=item.rank,
-                        quote=capped_quote,
-                        quote_plausible=(
-                            capped_quote.quote_plausible(dev_pct)
-                            if capped_quote is not None
-                            else False
-                        ),
-                        news_status=self._news_status.get(item.symbol, "failed"),
-                        last_bar=self.market_data.bars_cache.latest(
-                            item.symbol, now - timedelta(minutes=5),
-                        ),
-                    ),
-                    rules=item.rules,
-                    reason="call_cap",
-                    detail="call cap reached",
-                    market_context=self._market_context(
-                        item, market, sector_map
-                    ),
-                )
-                report.decisions.append(decision.id)
-            session.commit()
         if self.model_health is not None:
             self.model_health.settle_cycle(session, call_responses)
             session.commit()
@@ -1142,7 +1125,7 @@ class CycleRunner:
             sector_map.get(item.symbol), item.bars_1h
         )
 
-    async def _decide_item(
+    def _prepare_item(
         self,
         session: Session,
         cycle_id: int,
@@ -1156,13 +1139,13 @@ class CycleRunner:
         evaluation: Any,
         scheduled_ny: datetime,
         now: datetime,
-        report: CycleReport,
-        call_responses: list[ModelResponse],
         market: CycleMarket | None = None,
         symbol_sectors: dict[str, str] | None = None,
-    ) -> Decision:
-        """Build the snapshot and options, then either record the code
-        no_call or run the model call — one stored decision either way."""
+    ) -> _WaveItem:
+        """Build the snapshot and options, then either mark the code
+        no_call or prepare the model call — one stored decision either
+        way. Synchronous: the wave's send is the only awaited step
+        (item 078)."""
         market_context = self._market_context(
             item, market, symbol_sectors or {}
         )
@@ -1170,20 +1153,6 @@ class CycleRunner:
 
         context = "held" if item.rules.status == STATUS_HELD else "candidate"
         price_reason = self._price_reason(item.symbol, quote)
-        # A candidate outside the prefetched news set can still reach the
-        # model call (the call estimate doesn't know about checks/options
-        # no-calls) — fetch its headlines so it never calls blind. Not
-        # before the price check though: a price-blocked candidate never
-        # calls, so that fetch would be a guaranteed-wasted request.
-        if (
-            news_map is not None
-            and context == "candidate"
-            and price_reason is None
-            and item.symbol not in news_map
-        ):
-            extra = await self._fetch_news([item.symbol], now, report)
-            if extra:
-                news_map.update(extra)
         price = (
             quote.last
             if quote is not None and price_reason is None
@@ -1443,19 +1412,21 @@ class CycleRunner:
                             f"{name}={snap_checks.get(name)}" for name in failing
                         )
                     )
+        plan = _WaveItem(
+            item=item,
+            quote=quote,
+            position=position,
+            cycle_id=cycle_id,
+            context=context,
+            snapshot_json=snapshot_json,
+            v2=v2,
+            price=price,
+            market_context=market_context,
+        )
         if checks_blocked is not None:
-            decision = self.decide.record_no_call(
-                session,
-                cycle_id=cycle_id,
-                symbol=item.symbol,
-                context=context,
-                snapshot_json=snapshot_json,
-                rules=item.rules,
-                reason="checks",
-                detail=checks_blocked,
-                v2=v2,
-                market_context=market_context,
-            )
+            plan.outcome = "no_call"
+            plan.reason = "checks"
+            plan.detail = checks_blocked
         elif (
             context == "candidate"
             and price_reason is not None
@@ -1484,18 +1455,9 @@ class CycleRunner:
                 message = f"{item.symbol}: {price_reason}"
             ev(logger, logging.WARNING, "cycle.price_blocked",
                message, symbol=item.symbol)
-            decision = self.decide.record_no_call(
-                session,
-                cycle_id=cycle_id,
-                symbol=item.symbol,
-                context=context,
-                snapshot_json=snapshot_json,
-                rules=item.rules,
-                reason=price_reason,
-                detail=price_reason,
-                v2=v2,
-                market_context=market_context,
-            )
+            plan.outcome = "no_call"
+            plan.reason = price_reason
+            plan.detail = price_reason
         elif (
             context == "candidate"
             and v2 is not None
@@ -1505,22 +1467,12 @@ class CycleRunner:
             # the model is never asked (docs/SPEC.md, Decision v2).
             ev(logger, logging.DEBUG, "cycle.no_options",
                f"{item.symbol}: {v2.reason}", symbol=item.symbol)
-            decision = self.decide.record_no_call(
-                session,
-                cycle_id=cycle_id,
-                symbol=item.symbol,
-                context=context,
-                snapshot_json=snapshot_json,
-                rules=item.rules,
-                reason="no_options",
-                detail=v2.reason or "no option met the rules",
-                v2=v2,
-                market_context=market_context,
-            )
+            plan.outcome = "no_call"
+            plan.reason = "no_options"
+            plan.detail = v2.reason or "no option met the rules"
         else:
-            report.calls += 1
-            decision = await self.decide.decide(
-                session,
+            plan.outcome = "call"
+            plan.prepared = self.decide.prepare_call(
                 cycle_id=cycle_id,
                 symbol=item.symbol,
                 context=context,
@@ -1532,14 +1484,376 @@ class CycleRunner:
                     position.current_stop_price if position else None
                 ),
                 v2=v2,
-                on_response=(
-                    call_responses.append
-                    if self.model_health is not None
-                    else None
-                ),
                 market_context=market_context,
             )
-        return decision
+        return plan
+
+    # ------------------------------------------------------------------
+    # waves (item 078): prepare → send together → finish in order
+
+    async def _send_plan(self, plan: _WaveItem) -> None:
+        """The wave's only awaited step per item: the model request."""
+        assert plan.prepared is not None  # noqa: S101 - outcome == "call"
+        await self.decide.send_call(plan.prepared)
+
+    async def _send_wave(
+        self, plans: list[_WaveItem], *, kind: str, report: CycleReport
+    ) -> None:
+        """Send one wave's calls together: at most
+        ``concurrency.max_requests`` in flight, live priority so a
+        waiting sync, shadow, review, Ask or backtest request yields
+        (docs/SPEC.md, Concurrent requests)."""
+        callers = [p for p in plans if p.outcome == "call"]
+        if not callers:
+            return
+        limit = max(
+            1, int(self.config.get("concurrency", "max_requests", default=20))
+        )
+        # Item 078 storage: every call of the wave shares a batch id and
+        # knows the batch's size; the wave's wall time feeds the cycle's
+        # model_seconds and its peak feeds max_in_flight.
+        batch_id = f"{kind}-{callers[0].cycle_id}"
+        for plan in callers:
+            assert plan.prepared is not None  # noqa: S101 - outcome == "call"
+            plan.prepared.batch_id = batch_id
+            plan.prepared.batch_size = len(callers)
+        t0 = time.monotonic()
+        results = await run_batch(
+            callers,
+            send=self._send_plan,
+            limit=limit,
+            kind=kind,
+            priority="live",
+        )
+        t1 = time.monotonic()
+        if report.model_first_send is None:
+            report.model_first_send = t0
+        report.model_last_answer = t1
+        report.max_in_flight = max(
+            report.max_in_flight, results.stats.max_in_flight
+        )
+        for plan, result in zip(callers, results, strict=True):
+            if isinstance(result, BaseException):
+                # One failed send never cancels the wave; the answer is
+                # stored as a model_error decision like a provider
+                # error (docs/SPEC.md, Concurrent requests).
+                plan.send_exc = result
+
+    def _synthesize_failed_call(
+        self, prepared: PreparedCall, exc: BaseException
+    ) -> None:
+        """A send that raised still stores a model_error row: scrubbed
+        text only, never the raw exception (hard rule 9)."""
+        from app.llm.models import model_provider
+        from app.logging_config import _all_secrets, _scrub_text
+
+        model = str(self.config.get("decision", "model", default=""))
+        if prepared.sent_at is None:
+            prepared.sent_at = _naive_utc(self.clock.now())
+        prepared.response = ModelResponse(
+            raw=None,
+            model=model,
+            tokens_in=None,
+            tokens_out=None,
+            latency_ms=0,
+            error=_scrub_text(str(exc), _all_secrets()) or "call failed",
+            error_type="api_error",
+            provider=model_provider(self.config, model),
+        )
+
+    def _finish_plan(self, session: Session, plan: _WaveItem) -> Decision:
+        """Validate and store one plan's answer — or its code no_call —
+        on the caller's session, in plan order."""
+        if plan.outcome == "no_call":
+            assert plan.snapshot_json is not None  # noqa: S101 - set in prepare
+            assert plan.reason is not None  # noqa: S101 - same
+            return self.decide.record_no_call(
+                session,
+                cycle_id=plan.cycle_id,
+                symbol=plan.item.symbol,
+                context=plan.context,
+                snapshot_json=plan.snapshot_json,
+                rules=plan.item.rules,
+                reason=plan.reason,
+                detail=plan.detail,
+                v2=plan.v2,
+                market_context=plan.market_context,
+            )
+        prepared = plan.prepared
+        assert prepared is not None  # noqa: S101 - outcome == "call"
+        if plan.send_exc is not None:
+            self._synthesize_failed_call(prepared, plan.send_exc)
+        return self.decide.finish_call(session, prepared)
+
+    async def _finish_wave(
+        self,
+        session: Session,
+        plans: list[_WaveItem],
+        *,
+        scheduled_ny: datetime,
+        now: datetime,
+        report: CycleReport,
+        call_responses: list[ModelResponse],
+        account: Any,
+        earnings: dict[str, tuple[date, str]],
+        last_cycle: bool,
+        earnings_known: bool,
+        apply: bool,
+    ) -> None:
+        """Store and apply a wave's answers in plan order — never in the
+        order they arrived (docs/SPEC.md, Concurrent requests)."""
+        for plan in plans:
+            decision = self._finish_plan(session, plan)
+            prepared = plan.prepared
+            if (
+                self.model_health is not None
+                and prepared is not None
+                and prepared.response is not None
+                and not prepared.from_cache
+            ):
+                call_responses.append(prepared.response)
+            if apply and self.executor is not None:
+                await self._apply_item(
+                    session,
+                    plan.item,
+                    decision,
+                    plan.position,
+                    plan.quote,
+                    scheduled_ny,
+                    now=now,
+                    account=account,
+                    earnings=earnings,
+                    last_cycle=last_cycle,
+                    earnings_known=earnings_known,
+                )
+            session.commit()
+            report.decisions.append(decision.id)
+
+    def _call_cap_decision(
+        self,
+        session: Session,
+        cycle_id: int,
+        item: Any,
+        quote: Quote | None,
+        *,
+        positions: dict[str, Position],
+        evaluation: Any,
+        scheduled_ny: datetime,
+        now: datetime,
+        market: CycleMarket | None,
+        symbol_sectors: dict[str, str] | None,
+    ) -> Decision:
+        """The stored no_call for a review item past the call cap — the
+        cheap snapshot with no news, as before item 078."""
+        dev_pct = self.config.get_decimal(
+            "execution", "quote_max_deviation_pct", default=Decimal(1)
+        )
+        context = (
+            "held" if item.rules.status == STATUS_HELD else "candidate"
+        )
+        return self.decide.record_no_call(
+            session,
+            cycle_id=cycle_id,
+            symbol=item.symbol,
+            context=context,
+            snapshot_json=build_input_snapshot(
+                symbol=item.symbol,
+                context=context,
+                cycle_time_ny=scheduled_ny,
+                price=None,
+                regime=evaluation.regime,
+                snapshot=item.snapshot,
+                bars_1h=item.bars_1h,
+                position=positions.get(item.symbol),
+                news=None,
+                rank=item.rank,
+                quote=quote,
+                quote_plausible=(
+                    quote.quote_plausible(dev_pct) if quote is not None else False
+                ),
+                news_status=self._news_status.get(item.symbol, "failed"),
+                last_bar=self.market_data.bars_cache.latest(
+                    item.symbol, now - timedelta(minutes=5),
+                ),
+            ),
+            rules=item.rules,
+            reason="call_cap",
+            detail="call cap reached",
+            market_context=self._market_context(
+                item, market, symbol_sectors or {}
+            ),
+        )
+
+    async def _run_rank_waves(
+        self,
+        session: Session,
+        cycle_id: int,
+        reviews: list[Any],
+        quotes: dict[str, Quote],
+        positions: dict[str, Position],
+        evaluation: Any,
+        earnings: dict[str, tuple[date, str]],
+        last_cycle: bool,
+        earnings_known: bool,
+        scheduled_ny: datetime,
+        now: datetime,
+        report: CycleReport,
+        call_responses: list[ModelResponse],
+        max_calls: int,
+        account: Any,
+        market: CycleMarket | None = None,
+        symbol_sectors: dict[str, str] | None = None,
+    ) -> None:
+        """Rank mode's two waves (docs/SPEC.md, Concurrent requests).
+
+        Held calls go together and are applied in held order; then the
+        candidates are planned against the post-held state, their calls
+        go together, and answers are stored and applied in call order.
+        The cap counts calls, not items: a candidate that ends without
+        a call uses no slot, and once the slots are gone every later
+        review item is stored ``no_call``/``call_cap``.
+        """
+        held_items = [
+            item for item in reviews if item.rules.status == STATUS_HELD
+        ]
+        cand_items = [
+            item for item in reviews if item.rules.status != STATUS_HELD
+        ]
+
+        def prepare(
+            item: Any, news_map: dict[str, list[NewsItem]] | None
+        ) -> _WaveItem:
+            return self._prepare_item(
+                session,
+                cycle_id,
+                item,
+                quotes.get(item.symbol),
+                position=positions.get(item.symbol),
+                news_map=news_map,
+                earnings=earnings,
+                last_cycle=last_cycle,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                market=market,
+                symbol_sectors=symbol_sectors,
+            )
+
+        # The news estimate is the same walk as before item 078: held
+        # positions plus price-ok candidates, in review order, up to
+        # the cap (docs/SPEC.md, Cycles at scale). A caller outside it
+        # gets a top-up fetch below.
+        news_symbols: list[str] = []
+        for item in reviews:
+            if len(news_symbols) >= max_calls:
+                break
+            # Held positions are always reviewed; a stale or suspect
+            # market price only blocks a tighten_stop (docs/SPEC.md,
+            # Entries — Market price).
+            if (
+                item.rules.status == STATUS_HELD
+                or self._price_reason(item.symbol, quotes.get(item.symbol))
+                is None
+            ):
+                news_symbols.append(item.symbol)
+        news = await self._fetch_news(news_symbols, now, report)
+
+        # --- held wave -------------------------------------------------
+        held_plans: list[_WaveItem] = []
+        held_cap: list[Any] = []
+        slots = max_calls
+        for item in held_items:
+            if slots <= 0:
+                held_cap.append(item)
+                continue
+            plan = prepare(item, news)
+            held_plans.append(plan)
+            if plan.outcome == "call":
+                slots -= 1
+                report.calls += 1
+        await self._send_wave(held_plans, kind="cycle.held", report=report)
+        await self._finish_wave(
+            session,
+            held_plans,
+            scheduled_ny=scheduled_ny,
+            now=now,
+            report=report,
+            call_responses=call_responses,
+            account=account,
+            earnings=earnings,
+            last_cycle=last_cycle,
+            earnings_known=earnings_known,
+            apply=True,
+        )
+
+        # --- candidate wave, planned against the post-held state ------
+        cand_plans: list[_WaveItem] = []
+        cap_at: int | None = None
+        for j, item in enumerate(cand_items):
+            if slots <= 0:
+                cap_at = j
+                break
+            plan = prepare(item, news)
+            cand_plans.append(plan)
+            if plan.outcome == "call":
+                slots -= 1
+                report.calls += 1
+        # A candidate outside the news estimate can still reach the
+        # model call — fetch its headlines in one batch so it never
+        # calls blind, then rebuild just those plans (options do not
+        # depend on news, so the outcome cannot change).
+        if news is not None:
+            missing = [
+                idx
+                for idx, plan in enumerate(cand_plans)
+                if plan.outcome == "call" and plan.item.symbol not in news
+            ]
+            if missing:
+                extra = await self._fetch_news(
+                    [cand_plans[idx].item.symbol for idx in missing],
+                    now,
+                    report,
+                )
+                if extra is not None:
+                    news.update(extra)
+                    for idx in missing:
+                        cand_plans[idx] = prepare(cand_plans[idx].item, news)
+
+        await self._send_wave(cand_plans, kind="cycle.candidates", report=report)
+        await self._finish_wave(
+            session,
+            cand_plans,
+            scheduled_ny=scheduled_ny,
+            now=now,
+            report=report,
+            call_responses=call_responses,
+            account=account,
+            earnings=earnings,
+            last_cycle=last_cycle,
+            earnings_known=earnings_known,
+            apply=True,
+        )
+
+        # Review items past the cap are recorded without a call; the
+        # tail keeps review order (held overflow first, then candidates).
+        tail_items = held_cap + cand_items[
+            cap_at if cap_at is not None else len(cand_plans):
+        ]
+        for item in tail_items:
+            decision = self._call_cap_decision(
+                session,
+                cycle_id,
+                item,
+                quotes.get(item.symbol),
+                positions=positions,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                market=market,
+                symbol_sectors=symbol_sectors,
+            )
+            session.commit()
+            report.decisions.append(decision.id)
 
     async def _apply_item(
         self,
@@ -1670,20 +1984,23 @@ class CycleRunner:
         ]
 
         # 1. Held positions first, as in rank mode — with their news.
+        # The wave's calls go together; answers are applied in held
+        # order (item 078).
         news_held = await self._fetch_news(
             [it.symbol for it in held_items][:max_calls], now, report
         )
         capped_held: list[SymbolEval] = []
+        held_plans: list[_WaveItem] = []
+        slots = max_calls
         for item in held_items:
-            if report.calls >= max_calls:
+            if slots <= 0:
                 capped_held.append(item)
                 continue
-            quote = quotes.get(item.symbol)
-            decision = await self._decide_item(
+            plan = self._prepare_item(
                 session,
                 cycle_id,
                 item,
-                quote,
+                quotes.get(item.symbol),
                 position=positions.get(item.symbol),
                 news_map=news_held,
                 earnings=earnings,
@@ -1691,26 +2008,27 @@ class CycleRunner:
                 evaluation=evaluation,
                 scheduled_ny=scheduled_ny,
                 now=now,
-                report=report,
-                call_responses=call_responses,
                 market=market,
                 symbol_sectors=symbol_sectors or {},
             )
-            await self._apply_item(
-                session,
-                item,
-                decision,
-                positions.get(item.symbol),
-                quote,
-                scheduled_ny,
-                now=now,
-                account=account,
-                earnings=earnings,
-                last_cycle=last_cycle,
-                earnings_known=earnings_known,
-            )
-            session.commit()
-            report.decisions.append(decision.id)
+            held_plans.append(plan)
+            if plan.outcome == "call":
+                slots -= 1
+                report.calls += 1
+        await self._send_wave(held_plans, kind="cycle.held", report=report)
+        await self._finish_wave(
+            session,
+            held_plans,
+            scheduled_ny=scheduled_ny,
+            now=now,
+            report=report,
+            call_responses=call_responses,
+            account=account,
+            earnings=earnings,
+            last_cycle=last_cycle,
+            earnings_known=earnings_known,
+            apply=True,
+        )
 
         # 2. Pre-score: build the options and size option A — the
         # pre-score is the dollars at risk of that size; v1 candidates
@@ -1813,31 +2131,35 @@ class CycleRunner:
                 p["item"].symbol,
             )
         )
-        # The cap counts real model calls only (spec, Entry selection):
-        # a candidate that ends without a call — no options, a price
-        # check, the trend gate — uses no slot and the walk goes on.
-        capped: list[dict[str, Any]] = []
-        callable_pre: list[tuple[int, dict[str, Any]]] = []
-        for i, p in enumerate(prepared):
-            if report.calls >= max_calls:
-                capped.append(p)
-            else:
-                callable_pre.append((i, p))
-
-        # News for every symbol that might still be called.
+        # News for every symbol that might still be called — the
+        # pre-scored candidates, as before item 078. The cap counts
+        # real model calls only (spec, Entry selection): a candidate
+        # that ends without a call uses no slot and the walk goes on.
         news_map = await self._fetch_news(
-            sorted({p["item"].symbol for _i, p in callable_pre}), now, report
+            (
+                sorted({p["item"].symbol for p in prepared})
+                if slots > 0
+                else []
+            ),
+            now,
+            report,
         )
 
         # 3. Collect: every candidate answer first, nothing submitted.
+        # The calls go together in one wave (item 078); answers are
+        # stored in call order and nothing is submitted yet.
         collected: list[dict[str, Any]] = []
         position_of: dict[int, int] = {}
-        for i, p in callable_pre:
-            item = p["item"]
-            decision = await self._decide_item(
+        cap_at: int | None = None
+        cand_plans: list[tuple[int, dict[str, Any], _WaveItem]] = []
+        for j, p in enumerate(prepared):
+            if slots <= 0:
+                cap_at = j
+                break
+            plan = self._prepare_item(
                 session,
                 cycle_id,
-                item,
+                p["item"],
                 p["quote"],
                 position=None,
                 news_map=news_map,
@@ -1846,63 +2168,60 @@ class CycleRunner:
                 evaluation=evaluation,
                 scheduled_ny=scheduled_ny,
                 now=now,
-                report=report,
-                call_responses=call_responses,
                 market=market,
                 symbol_sectors=symbol_sectors or {},
             )
+            p["plan"] = plan
+            cand_plans.append((j, p, plan))
+            if plan.outcome == "call":
+                slots -= 1
+                report.calls += 1
+        await self._send_wave(
+            [plan for _j, _p, plan in cand_plans],
+            kind="cycle.candidates",
+            report=report,
+        )
+        for j, p, plan in cand_plans:
+            decision = self._finish_plan(session, plan)
+            prepared_call = plan.prepared
+            if (
+                self.model_health is not None
+                and prepared_call is not None
+                and prepared_call.response is not None
+                and not prepared_call.from_cache
+            ):
+                call_responses.append(prepared_call.response)
             session.commit()
             report.decisions.append(decision.id)
-            position_of[decision.id] = i + 1
+            position_of[decision.id] = j + 1
             collected.append({**p, "decision": decision})
-        dev_pct = self.config.get_decimal(
-            "execution", "quote_max_deviation_pct", default=Decimal(1)
-        )
-        for item in capped_held + [p["item"] for p in capped]:
-            capped_quote = quotes.get(item.symbol)
-            decision = self.decide.record_no_call(
+        capped_items = [
+            p["item"]
+            for p in prepared[
+                cap_at if cap_at is not None else len(cand_plans):
+            ]
+        ]
+        for item in capped_held + capped_items:
+            decision = self._call_cap_decision(
                 session,
-                cycle_id=cycle_id,
-                symbol=item.symbol,
-                context="held" if item.rules.status == STATUS_HELD else "candidate",
-                snapshot_json=build_input_snapshot(
-                    symbol=item.symbol,
-                    context=(
-                        "held" if item.rules.status == STATUS_HELD else "candidate"
-                    ),
-                    cycle_time_ny=scheduled_ny,
-                    price=None,
-                    regime=evaluation.regime,
-                    snapshot=item.snapshot,
-                    bars_1h=item.bars_1h,
-                    position=positions.get(item.symbol),
-                    news=None,
-                    rank=item.rank,
-                    quote=capped_quote,
-                    quote_plausible=(
-                        capped_quote.quote_plausible(dev_pct)
-                        if capped_quote is not None
-                        else False
-                    ),
-                    news_status=self._news_status.get(item.symbol, "failed"),
-                    last_bar=self.market_data.bars_cache.latest(
-                        item.symbol, now - timedelta(minutes=5),
-                    ),
-                ),
-                rules=item.rules,
-                reason="call_cap",
-                detail="call cap reached",
-                market_context=self._market_context(
-                    item, market, symbol_sectors or {}
-                ),
+                cycle_id,
+                item,
+                quotes.get(item.symbol),
+                positions=positions,
+                evaluation=evaluation,
+                scheduled_ny=scheduled_ny,
+                now=now,
+                market=market,
+                symbol_sectors=symbol_sectors,
             )
+            session.commit()
             report.decisions.append(decision.id)
         # Price-blocked candidates get their stored no_call too — the
         # same rows the rank path records.
         for item in cand_items:
             if self._price_reason(item.symbol, quotes.get(item.symbol)) is None:
                 continue
-            decision = await self._decide_item(
+            plan = self._prepare_item(
                 session,
                 cycle_id,
                 item,
@@ -1914,11 +2233,11 @@ class CycleRunner:
                 evaluation=evaluation,
                 scheduled_ny=scheduled_ny,
                 now=now,
-                report=report,
-                call_responses=call_responses,
                 market=market,
                 symbol_sectors=symbol_sectors or {},
             )
+            decision = self._finish_plan(session, plan)
+            session.commit()
             report.decisions.append(decision.id)
         session.commit()
 

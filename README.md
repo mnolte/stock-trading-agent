@@ -63,6 +63,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `schedule.*` | Cycle times, position checks, calendar and history loading |
 | `api.*` | GUI-facing behaviour: `api.broker_timeout_seconds` bounds a broker read before a card answers stale |
 | `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop |
+| `concurrency.*` | `concurrency.max_requests` (20, 1–50): most requests one batch keeps in flight; also sizes the HTTP pools; restart to change |
 | `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |
 | `indicators.*` | Indicator periods: EMA, RSI, ATR, OBV and RS lookbacks, daily SMAs, ATR-percentile window |
@@ -104,6 +105,10 @@ default is commented in `backend/config.example.yaml`. Blocks:
 - Starts paused after every restart; Pause/Resume, the kill switch and "Stop & flatten" are in the header. A kill switch that was on stays on after a restart.
 - Daily loss limit, drawdown kill switch, no re-entry the same session, earnings blackout.
 - Keys are stored encrypted, shown only as the last 4 characters, and never logged.
+
+## Tests and coverage
+
+CI runs the backend and frontend tests on every pull request. The **`coverage`** job's **Summary** page shows one table with Unit, E2E and All coverage per side (lines and branches, the least-covered files, and the files only the e2e reaches). The combined HTML reports are kept as the `coverage-all` artifact for 7 days; the per-job `coverage-backend` / `coverage-frontend` / `coverage-e2e-*` artifacts hold the unit-only and e2e-only reports.
 
 ## Build plan
 

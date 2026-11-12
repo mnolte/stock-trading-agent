@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import AppConfig
+from app.data.models import CalendarDay
 from app.data.service import MarketDataService
 from app.db.models import (
     CorporateAction,
@@ -81,6 +82,111 @@ _EXIT_LABELS = {
     "stop_breached": "stop breached",
 }
 
+MINUS = "−"  # U+2212, the design's minus sign
+
+
+def _plural(n: int, one: str, many: str | None = None) -> str:
+    return f"{n} {one if n == 1 else (many or one + 's')}"
+
+
+def _usd_abs(value: Decimal) -> str:
+    """"$1,234.56" — absolute value, the direction is a word."""
+    return f"${abs(value):,.2f}"
+
+
+def _pct_signed(value: Decimal) -> str:
+    """"+1.84%" / "−0.22%" — two decimals, the design's minus sign."""
+    sign = "+" if value > 0 else MINUS if value < 0 else ""
+    return f"{sign}{abs(value):.2f}%"
+
+
+def summary_sentence(
+    *,
+    sessions: int,
+    closed: int,
+    wins: int,
+    adjusted_usd: Decimal,
+    adjusted_pct: Decimal | None,
+    return_pct: Decimal | None,
+    spy_return_pct: Decimal | None,
+    open_count: int,
+    open_symbols: list[str],
+) -> str:
+    """The one-to-three-sentence run summary at the top of Performance
+    (docs/SPEC.md → Performance screen). A fixed template over the same
+    numbers as the tiles — no model."""
+    session_word = "session" if sessions == 1 else "sessions"
+    if closed == 0:
+        first = (
+            f"In {sessions} {session_word} the agent has not closed a "
+            "trade yet."
+        )
+    else:
+        first = (
+            f"In {sessions} {session_word} the agent closed "
+            f"{_plural(closed, 'trade')} and won {wins}."
+        )
+    if adjusted_usd > 0:
+        direction = f"up {_usd_abs(adjusted_usd)}"
+    elif adjusted_usd < 0:
+        direction = f"down {_usd_abs(adjusted_usd)}"
+    else:
+        direction = f"flat at {_usd_abs(adjusted_usd)}"
+    cost = f"After costs it is {direction}"
+    if adjusted_pct is not None:
+        cost += f" ({_pct_signed(adjusted_pct)})"
+    cost += ","
+    if return_pct is not None and spy_return_pct is not None:
+        cost += (
+            f" and the account is {_pct_signed(return_pct)} against "
+            f"SPY's {_pct_signed(spy_return_pct)} over the same days."
+        )
+    elif return_pct is not None:
+        cost += f" and the account is {_pct_signed(return_pct)} since the start."
+    else:
+        cost += " over the same days."
+    parts = [first, cost]
+    if open_count:
+        parts.append(
+            f"{_plural(open_count, 'position')} "
+            f"{'is' if open_count == 1 else 'are'} still open "
+            f"({', '.join(open_symbols)})."
+        )
+    return " ".join(parts)
+
+
+def _session_n_after(
+    calendar: CalendarProvider, day: date, n: int
+) -> CalendarDay | None:
+    """The nth trading session strictly after ``day`` (same rule as the
+    outcome worker's session targets)."""
+    session = None
+    cursor = day
+    for _ in range(n):
+        session = calendar.next_trading_day(cursor)
+        if session is None:
+            return None
+        cursor = session.date
+    return session
+
+
+def _first_price_date(
+    calendar: CalendarProvider, decision_time: datetime
+) -> date | None:
+    """New York date of the first 1-session price for a decision — the
+    same target the outcome worker fills (same NY time on the next
+    trading session, the close on early-close days)."""
+    decision_ny = _aware(decision_time).astimezone(NY_TZ)
+    session = calendar.session_for(decision_ny.date())
+    base_day = session.date if session is not None else decision_ny.date()
+    later = _session_n_after(calendar, base_day, 1)
+    if later is None:
+        return None
+    target_ny = datetime.combine(
+        later.date, decision_ny.timetz().replace(tzinfo=None), NY_TZ
+    )
+    return min(target_ny, later.close).astimezone(NY_TZ).date()
+
 
 def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
@@ -131,7 +237,10 @@ def _decision_price(decision: Decision) -> Decimal | None:
 
 
 def _decision_outcome_row(
-    key: str, decisions: list[tuple[Decision, Outcome | None, bool]]
+    key: str,
+    decisions: list[tuple[Decision, Outcome | None, bool]],
+    decision_times: dict[int, datetime],
+    calendar: CalendarProvider,
 ) -> dict[str, object]:
     """One row of the "Decisions and outcomes" table."""
     pcts: list[Decimal] = []
@@ -147,6 +256,19 @@ def _decision_outcome_row(
             if pct is not None:
                 pcts.append(pct)
     avg = sum(pcts, Decimal(0)) / len(pcts) if pcts else None
+
+    # No 1-session price in yet: when the first one lands, from the
+    # earliest decision still waiting (same rule as the outcome worker).
+    first_price_date = None
+    if avg is None:
+        times = [
+            decision_times[d.id]
+            for d, _, _ in decisions
+            if d.id in decision_times
+        ]
+        if times:
+            day = _first_price_date(calendar, min(times))
+            first_price_date = day.isoformat() if day is not None else None
 
     changed = sum(
         1
@@ -217,6 +339,7 @@ def _decision_outcome_row(
         "count": len(decisions),
         "avg_1session_pct": str(avg.quantize(Decimal("0.01"))) if avg is not None else None,
         "outcomes": len(pcts),
+        "first_price_date": first_price_date,
         "read": read,
     }
 
@@ -381,6 +504,7 @@ def compute_performance(
 
     trades: list[dict[str, Any]] = []
     agent_trades: list[tuple[Position, Decimal | None, str | None]] = []
+    exits: list[dict[str, Any]] = []
     adj_pnls: list[Decimal] = []
     adj_rs: list[Decimal] = []
     for p in closed_positions:
@@ -452,6 +576,24 @@ def compute_performance(
         )
         if p.origin == "agent":
             agent_trades.append((p, r_value, regime))
+            exits.append(
+                {
+                    "date": _aware(p.closed_at)  # type: ignore[arg-type]
+                    .astimezone(NY_TZ)
+                    .date()
+                    .isoformat(),
+                    "symbol": p.symbol,
+                    "r": (
+                        str(r_value.quantize(Decimal("0.01")))
+                        if r_value is not None
+                        else None
+                    ),
+                    "won": (
+                        p.realized_pnl_raw is not None
+                        and p.realized_pnl_raw > 0
+                    ),
+                }
+            )
             if adjusted is not None:
                 adj_pnls.append(adjusted)
             if r_adjusted is not None:
@@ -516,16 +658,17 @@ def compute_performance(
         del row["pnl_num"]
 
     by_regime_groups = _aggregate(lambda _p, regime: regime or "Unknown")
-    # The design's four fixed rows stay even when they have no trades.
-    fixed = ["Up · normal vol", "Up · high vol", "Sideways · any", "Down · normal or low"]
+    # Item 076: only regimes with closed trades get a row; the regimes
+    # without trades fold into one line on the page ("No closed trades
+    # yet in: …"). "Unknown" is not a regime and never joins that line.
+    empty_regimes = [
+        label for label in _REGIME_ORDER if label not in by_regime_groups
+    ]
+    empty_regimes = [label for label in empty_regimes if label != "Unknown"]
     by_regime: list[dict[str, Any]] = []
     for label in _REGIME_ORDER:
         group = by_regime_groups.pop(label, None)
         if group is None:
-            if label in fixed:
-                by_regime.append(
-                    {"label": label, "trades": 0, "won": None, "pnl": None, "avg_r": None}
-                )
             continue
         by_regime.append(_agg_row(label, group))
     for label in sorted(by_regime_groups):
@@ -533,7 +676,7 @@ def compute_performance(
 
     # ---- decisions and outcomes ------------------------------------------
     decision_rows = session.execute(
-        select(Decision, Outcome)
+        select(Decision, Outcome, Cycle.scheduled_time)
         .join(Cycle, Decision.cycle_id == Cycle.id)
         .outerjoin(Outcome, Outcome.decision_id == Decision.id)
         .where(
@@ -559,12 +702,14 @@ def compute_performance(
         ).all()
     }
     grouped: dict[str, list[tuple[Decision, Outcome | None, bool]]] = {}
-    for decision, outcome in decision_rows:
+    decision_times: dict[int, datetime] = {}
+    for decision, outcome, scheduled in decision_rows:
         key = _decision_category(decision)
         filled = decision.id in filled_entry_decisions
         grouped.setdefault(key, []).append((decision, outcome, filled))
+        decision_times[decision.id] = scheduled
     decision_outcomes = [
-        _decision_outcome_row(key, grouped[key])
+        _decision_outcome_row(key, grouped[key], decision_times, calendar)
         for key in _DECISION_ORDER
         if key in grouped
     ]
@@ -655,18 +800,48 @@ def compute_performance(
     curve_values = [run.starting_equity] + [
         Decimal(point["equity"]) for point in points
     ]
+    curve_dates = [start.astimezone(NY_TZ).date()] + [
+        date.fromisoformat(point["date"]) for point in points
+    ]
     peak = curve_values[0]
+    peak_date = curve_dates[0]
     max_dd = Decimal(0)
-    for value in curve_values:
-        peak = max(peak, value)
+    dd_peak_date = curve_dates[0]
+    dd_low_date = curve_dates[-1]
+    for value, day in zip(curve_values, curve_dates, strict=True):
+        if value > peak:
+            peak = value
+            peak_date = day
         if peak:
-            max_dd = max(max_dd, (peak - value) / peak * 100)
+            dd = (peak - value) / peak * 100
+            if dd > max_dd:
+                max_dd = dd
+                dd_peak_date = peak_date
+                dd_low_date = day
 
     unrealized = Decimal(0)
     for p in open_positions:
         price = _latest_price(market_data, p.symbol, now)
         if price is not None:
             unrealized += (price - p.avg_entry_price) * p.qty
+
+    open_symbols = [p.symbol for p in open_positions]
+    adjusted_pct_dec = (
+        adjusted_total / run.starting_equity * 100
+        if run.starting_equity
+        else None
+    )
+    sentence = summary_sentence(
+        sessions=sessions,
+        closed=len(scored),
+        wins=wins,
+        adjusted_usd=adjusted_total,
+        adjusted_pct=adjusted_pct_dec,
+        return_pct=return_pct,
+        spy_return_pct=spy_return,
+        open_count=len(open_positions),
+        open_symbols=open_symbols,
+    )
 
     fx = getattr(market_data, "latest_fx", None) if market_data else None
     eur_rate = fx.data.usd_per_eur if fx and fx.data else None
@@ -713,13 +888,13 @@ def compute_performance(
             ),
             "adjusted_usd": str(adjusted_total.quantize(Decimal("0.01"))),
             "adjusted_pct": (
-                str(
-                    (adjusted_total / run.starting_equity * 100).quantize(
-                        Decimal("0.01")
-                    )
-                )
-                if run.starting_equity
+                str(adjusted_pct_dec.quantize(Decimal("0.01")))
+                if adjusted_pct_dec is not None
                 else None
+            ),
+            "sentence": sentence,
+            "tail_min_trades": int(
+                config.get("performance", "tail", "min_trades", default=20)
             ),
             "slippage_pct": str(slip_pct),
             "dividends_usd": str(dividends_total.quantize(Decimal("0.01"))),
@@ -755,11 +930,18 @@ def compute_performance(
         },
         "by_regime": by_regime,
         "by_symbol": by_symbol,
+        "empty_regimes": empty_regimes,
+        "exits": exits,
+        "drawdown": {
+            "peak_date": dd_peak_date.isoformat(),
+            "low_date": dd_low_date.isoformat(),
+            "pct": str(max_dd.quantize(Decimal("0.01"))),
+        },
         "decision_outcomes": decision_outcomes,
         "closed_trades": trades,
         "open": {
             "count": len(open_positions),
-            "symbols": [p.symbol for p in open_positions],
+            "symbols": open_symbols,
             "unrealized": str(unrealized.quantize(Decimal("0.01"))),
         },
     }
@@ -1189,7 +1371,11 @@ def tails_trades(
 
 
 def compute_tails_payload(
-    session: Session, *, config: AppConfig, run_id: int | None
+    session: Session,
+    *,
+    config: AppConfig,
+    calendar: CalendarProvider,
+    run_id: int | None,
 ) -> dict[str, Any]:
     """``GET /api/performance/tails`` — numbers as decimal strings, never
     formatted text."""
@@ -1249,6 +1435,21 @@ def compute_tails_payload(
     top = result["top_share"]
     net = result["net_without_best"]
     kept = result["winners_kept"]
+
+    # Item 076: while every scored trade is still inside its after-exit
+    # window the card folds to one line — the date the first result
+    # arrives is the earliest pending exit plus the session window.
+    sessions_n = int(
+        config.get("performance", "tail", "after_exit_sessions", default=5)
+    )
+    first_result: date | None = None
+    for row in result["rows"]:
+        if row["after_exit_status"] != "pending":
+            continue
+        exit_day = _aware(row["closed_at"]).astimezone(NY_TZ).date()
+        end = _session_n_after(calendar, exit_day, sessions_n)
+        if end is not None and (first_result is None or end.date < first_result):
+            first_result = end.date
     return {
         "empty": False,
         "run": {
@@ -1258,13 +1459,14 @@ def compute_tails_payload(
         },
         "trades": result["trades"],
         "min_trades": result["min_trades"],
-        "after_exit_sessions": int(
-            config.get("performance", "tail", "after_exit_sessions", default=5)
-        ),
+        "after_exit_sessions": sessions_n,
         "top_share_pct": int(
             config.get("performance", "tail", "top_share_pct", default=20)
         ),
         "pending": result["pending"],
+        "first_result_date": (
+            first_result.isoformat() if first_result is not None else None
+        ),
         "unavailable": result["unavailable"],
         "excluded": result["excluded"],
         "distribution": distribution,

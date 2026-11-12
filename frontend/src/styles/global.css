@@ -275,6 +275,23 @@ button:not([disabled]):hover {
     background: transparent;
   }
 }
+/* Data sync job rows (item 077, design/screens/Universe.dc.html): four
+ * columns on desktop; below 760 px the result takes its own line. */
+.sa-job {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(110px, 1fr) minmax(0, 1.6fr) auto;
+  gap: 6px 14px;
+  align-items: center;
+}
+@media (max-width: 760px) {
+  .sa-job {
+    grid-template-columns: minmax(0, 1fr) auto !important;
+  }
+  .sa-job-res {
+    grid-column: 1 / -1;
+  }
+}
+
 .sa-bar-fill {
   transition: width var(--sa-fade) ease-out;
 }
