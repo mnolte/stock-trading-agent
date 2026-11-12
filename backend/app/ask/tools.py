@@ -1168,6 +1168,7 @@ SETTINGS_NEVER = frozenset(
         "auth",
         "ops",
         "storage",
+        "concurrency",
     }
 )
 
