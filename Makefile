@@ -84,6 +84,10 @@ test: test-backend test-perf test-frontend test-e2e ## pytest + Vitest (+ Playwr
 eval-ask:
 	cd backend && ../.venv/bin/python -m app.eval_ask --model "$(MODEL)"
 
+eval-reviews: ## run the review-story eval: make eval-reviews PROMPTS=briefing.v3,weekly.v3 [MODEL=]
+	cd backend && ../.venv/bin/python -m app.eval_reviews \
+		--prompts $(PROMPTS) $(if $(MODEL),--model $(MODEL),)
+
 test-backend:
 	cd backend && ../$(PYTEST) -v -m "not slow and not perf" -n $(TEST_WORKERS) --dist worksteal --durations=15
 

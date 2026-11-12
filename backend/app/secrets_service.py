@@ -34,6 +34,7 @@ from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Secret
 from app.engine.state import record_event
+from app.errors import safe_error
 from app.market.clock import Clock
 
 if TYPE_CHECKING:
@@ -219,7 +220,7 @@ class LiveKeyTesters:
             client = AlpacaDataClient(key_id, secret, clock=self._clock)
         except Exception as exc:  # noqa: BLE001
             return KeyTestResult(
-                ok=False, error=scrub(str(exc), [key_id, secret])
+                ok=False, error=safe_error(exc, extra=[key_id, secret])
             )
         result = await client.check_paper_account()
         if result.error is not None:
@@ -265,7 +266,7 @@ class LiveKeyTesters:
             )
             return KeyTestResult(ok=True)
         except Exception as exc:  # noqa: BLE001
-            return KeyTestResult(ok=False, error=scrub(str(exc), [key]))
+            return KeyTestResult(ok=False, error=safe_error(exc, extra=[key]))
 
     async def fred(self, key: str) -> KeyTestResult:
         """One VIXCLS observation through the FRED API (docs/SPEC.md,
@@ -725,7 +726,7 @@ class SecretsStore:
                             self.save(name, value, outcome, detail)
                         except SecretError as exc:
                             self.record_event(
-                                name, "imported", False, str(exc)
+                                name, "imported", False, safe_error(exc)
                             )
                             continue
                         self.record_event(name, "imported", outcome == "ok", detail)
@@ -756,7 +757,7 @@ class SecretsStore:
                     result.detail or result.error,
                 )
             except SecretError as exc:
-                self.record_event(name, "imported", False, str(exc))
+                self.record_event(name, "imported", False, safe_error(exc))
                 continue
             self.record_event(name, "imported", result.ok, result.detail or result.error)
             self.imported.append(name)

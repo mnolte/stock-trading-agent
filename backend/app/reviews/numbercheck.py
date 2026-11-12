@@ -86,3 +86,28 @@ def bad_numbers(text: str, facts: object) -> list[str]:
         if not any(abs(abs(v) - n) <= tolerance for v in allowed):
             bad.append(literal)
     return bad
+
+
+# v3 story format (docs/SPEC.md, Reviews — Stories, item 079): plain
+# prose, one to three paragraphs, no markup, within the word cap. Each
+# violation is one human-readable reason for the fallback label.
+_PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+_LIST_LINE = re.compile(r"^\s*(?:[-*•]|\d+\.)\s", re.MULTILINE)
+_HEADING = re.compile(r"^\s*#", re.MULTILINE)
+_WORD = re.compile(r"\S+")
+
+
+def format_problems(text: str, word_cap: int) -> list[str]:
+    """Why a v3 story fails its format rules; empty list = it passes."""
+    problems: list[str] = []
+    paragraphs = [p.strip() for p in _PARAGRAPH_BREAK.split(text.strip()) if p.strip()]
+    if not 1 <= len(paragraphs) <= 3:
+        problems.append(f"{len(paragraphs)} paragraphs (1–3 allowed)")
+    if _LIST_LINE.search(text):
+        problems.append("a list line")
+    if _HEADING.search(text):
+        problems.append("a heading")
+    words = len(_WORD.findall(text))
+    if words > word_cap:
+        problems.append(f"{words} words (cap {word_cap})")
+    return problems

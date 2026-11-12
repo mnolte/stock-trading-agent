@@ -43,6 +43,7 @@ from app.db.models import (
     Strategy,
     Verdict,
 )
+from app.errors import safe_error
 from app.llm.base import ConverseTool
 from app.log_index import index_path
 from app.market.clock import NY_TZ
@@ -1255,7 +1256,7 @@ def calculate_tool(session: Session, deps: AskDeps, args: CalculateArg) -> dict[
     try:
         value = calculate(args.expression)
     except (ValueError, InvalidOperation, ZeroDivisionError, SyntaxError) as exc:
-        return {"error": f"cannot evaluate: {exc}", "as_of": _as_of(deps)}
+        return {"error": f"cannot evaluate: {safe_error(exc)}", "as_of": _as_of(deps)}
     return {
         "as_of": _as_of(deps),
         "expression": args.expression,

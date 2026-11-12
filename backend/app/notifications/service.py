@@ -32,7 +32,7 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
-from typing import Protocol
+from typing import Protocol, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import desc, select
@@ -42,6 +42,8 @@ from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Notification, SmtpSettings
+from app.errors import safe_error
+from app.logging_config import scrub_text, scrub_value
 from app.market.clock import Clock
 from app.notifications.events import (
     CRITICAL,
@@ -271,6 +273,20 @@ class NotificationService:
         force: bool,
     ) -> _Pending:
         now = self.clock.now()
+        # Second line behind safe_error at the sources (item 081): any
+        # key-shaped or stored-secret text in a notification line, body
+        # or detail is replaced before it is persisted or emailed.
+        secrets = self._scrub_values()
+        line = scrub_text(line, secrets)
+        body = scrub_text(body, secrets) if body is not None else None
+        details = (
+            cast(
+                "dict[str, object] | None",
+                scrub_value(details, secrets),
+            )
+            if details is not None
+            else None
+        )
         severity = self._severity(event, severity)
         critical = severity == CRITICAL
         channels = (
@@ -566,9 +582,7 @@ class NotificationService:
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
-                error = scrub(
-                    str(exc), self._scrub_values()
-                )
+                error = safe_error(exc, extra=self._scrub_values())
         status = STATUS_FAILED if error else STATUS_SENT
         try:
             with self._session_factory() as session:
