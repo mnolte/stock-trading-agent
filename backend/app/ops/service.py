@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.db.backup import dated_backups
+from app.errors import safe_error
 from app.market.clock import NY_TZ
 from app.ops.offsite import OffsiteError, restore_latest
 from app.ops.urls import UrlRejected, validate_public_https_url
@@ -127,7 +128,7 @@ class OpsService:
         try:
             return validate_public_https_url(url, resolver=resolver)
         except UrlRejected as exc:
-            raise ValueError(f"heartbeat_url {exc}") from exc
+            raise ValueError(f"heartbeat_url {safe_error(exc)}") from exc
 
     async def _http_ping(self, url: str) -> bool:
         try:
@@ -407,7 +408,7 @@ class OpsService:
                 logger.exception("offsite backup failed")
             self._set(
                 "offsite_backup",
-                {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
+                {"at": self._clock.now().isoformat(), "ok": False, "error": safe_error(exc)},
             )
             raise  # the caller records the backup_failed event + alert
         self._set(
@@ -418,7 +419,7 @@ class OpsService:
         try:
             await asyncio.to_thread(self.run_offsite_backup_sync)
         except Exception as exc:  # noqa: BLE001
-            self._notify("backup_failed", f"offsite backup failed ({exc})")
+            self._notify("backup_failed", f"offsite backup failed ({safe_error(exc)})")
 
     async def run_restore_test(self) -> bool:
         """Monthly: restore the newest offsite snapshot into a temp folder
@@ -457,10 +458,10 @@ class OpsService:
                 logger.warning("monthly restore test failed: %s", exc)
             else:
                 logger.exception("restore test failed")
-            self._notify("backup_failed", f"restore test failed ({exc})")
+            self._notify("backup_failed", f"restore test failed ({safe_error(exc)})")
             self._set(
                 "restore_test",
-                {"at": self._clock.now().isoformat(), "ok": False, "error": str(exc)[:200]},
+                {"at": self._clock.now().isoformat(), "ok": False, "error": safe_error(exc)},
             )
             return False
         finally:

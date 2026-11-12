@@ -33,6 +33,7 @@ from app.ask.tools import TOOLS, AskDeps, run_tool, step_label
 from app.data.cache import _naive_utc
 from app.db.models import AskMessage, AskThread, LlmCall
 from app.decide.prompt import cached_prompt
+from app.errors import safe_error
 from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
 from app.llm.base import (
@@ -388,7 +389,9 @@ async def answer(
                     stopped = True
                     break
         except Exception as exc:  # noqa: BLE001
-            failed, error_text = True, str(exc)
+            failed, error_text = True, safe_error(
+                exc, extra=scrub_values() if scrub_values else ()
+            )
         if stopped:
             break
         if result is None:
