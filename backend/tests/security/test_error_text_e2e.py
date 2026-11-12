@@ -184,7 +184,9 @@ async def _surfaces(
         assert STORED_SECRET not in response.text, f"{name}: secret in {path}"
 
 
-async def _alpaca_error(kind: str) -> str:
+async def _alpaca_error(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> str:
     client = AlpacaDataClient(
         "PKFAKEKEY1234567890AB", "fake-secret", clock=FakeClock(NOW)
     )
@@ -192,7 +194,7 @@ async def _alpaca_error(kind: str) -> str:
     async def boom(*_args: object, **_kwargs: object) -> object:
         raise _http_error() if kind == "http" else _conn_error()
 
-    client.limiter.run_read = boom  # type: ignore[method-assign]
+    client.limiter.run_read = boom  # type: ignore
     result = await client.fetch_5m_bars(
         ["AAPL"], datetime(2026, 10, 14, 14, 0), datetime(2026, 10, 15, 14, 0)
     )
@@ -200,7 +202,9 @@ async def _alpaca_error(kind: str) -> str:
     return result.error
 
 
-async def _finnhub_error(kind: str) -> str:
+async def _finnhub_error(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> str:
     source = FinnhubEarningsSource("fake-key", clock=FakeClock(NOW))
 
     def boom(*_args: object) -> object:
@@ -214,40 +218,32 @@ async def _finnhub_error(kind: str) -> str:
     return result.error
 
 
-async def _fred_error(kind: str) -> str:
+async def _fred_error(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> str:
     source = FredVixSource(api_key="fake-fred-key", clock=FakeClock(NOW))
 
     def boom(*_args: object, **_kwargs: object) -> object:
         raise _http_error() if kind == "http" else _conn_error()
 
-    import app.data.fred as fred_module
-
-    original = fred_module.httpx.get
-    fred_module.httpx.get = boom  # type: ignore[assignment]
-    try:
-        result = await source.fetch_vix_closes(
-            date(2026, 10, 1), date(2026, 10, 15)
-        )
-    finally:
-        fred_module.httpx.get = original  # type: ignore[assignment]
+    monkeypatch.setattr(httpx, "get", boom)
+    result = await source.fetch_vix_closes(
+        date(2026, 10, 1), date(2026, 10, 15)
+    )
     assert result.error is not None
     return result.error
 
 
-async def _ecb_error(kind: str) -> str:
+async def _ecb_error(
+    kind: str, monkeypatch: pytest.MonkeyPatch
+) -> str:
     source = EcbFXSource(clock=FakeClock(NOW))
 
     def boom(*_args: object, **_kwargs: object) -> object:
         raise _http_error() if kind == "http" else _conn_error()
 
-    import app.data.ecb as ecb_module
-
-    original = ecb_module.httpx.get
-    ecb_module.httpx.get = boom  # type: ignore[assignment]
-    try:
-        result = await source.fetch_fx(date(2026, 10, 15))
-    finally:
-        ecb_module.httpx.get = original  # type: ignore[assignment]
+    monkeypatch.setattr(httpx, "get", boom)
+    result = await source.fetch_fx(date(2026, 10, 15))
     assert result.error is not None
     return result.error
 
@@ -268,8 +264,9 @@ async def test_source_error_scrubbed_end_to_end(
     kind: str,
     client: TestClient,
     session_factory: SessionFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    error = await _SOURCE_FNS[source_name](kind)
+    error = await _SOURCE_FNS[source_name](kind, monkeypatch)
     await _surfaces(
         source_name, error, client=client, session_factory=session_factory
     )
