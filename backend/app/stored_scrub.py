@@ -124,3 +124,83 @@ def run(
         session.commit()
     logger.info("stored text scrub changed rows: %s", counts)
     return counts
+
+
+HEARTBEAT_EVENT = "heartbeat_secret_migration"
+
+
+def migrate_heartbeat(
+    session_factory: sessionmaker[Session],
+    config: Any,
+    secrets: Any,
+    clock: Clock,
+) -> bool:
+    """Move ``ops.heartbeat_url`` into secrets once; blank stored versions.
+
+    Item 081: the dead-man's-switch URL is a write-only secret. A value
+    still sitting in config (or an old settings version) is imported
+    into the secrets store on the first boot after the change, then
+    ignored — the flag event row means later boots never re-import, so
+    removing the secret in Settings stays removed. Every stored
+    ``settings_versions`` row gets ``ops.heartbeat_url`` blanked so the
+    URL never appears in History.
+    """
+    from app.db.models import SettingsVersion
+    from app.engine.state import record_event
+
+    with session_factory() as session:
+        flag = session.execute(
+            select(Event.id)
+            .where(Event.event_type == HEARTBEAT_EVENT)
+            .limit(1)
+        ).first()
+        if flag is not None:
+            return False
+
+    url = str(config.get("ops", "heartbeat_url", default="") or "").strip()
+    imported = False
+    if url and secrets.get("heartbeat_url") is None:
+        from app.ops.urls import validate_public_https_url
+
+        try:
+            clean = validate_public_https_url(url)
+        except Exception:  # noqa: BLE001 - DNS or a bad stored value
+            clean = ""
+        if clean:
+            secrets.save("heartbeat_url", clean)
+            imported = True
+            logger.warning(
+                "imported ops.heartbeat_url into the secrets store; the "
+                "config value is ignored now — remove it from config"
+            )
+        else:
+            logger.warning(
+                "ops.heartbeat_url failed validation; not imported — "
+                "set it again in Settings → Server"
+            )
+
+    blanked = 0
+    with session_factory() as session:
+        for row in session.scalars(select(SettingsVersion)):
+            settings = row.settings
+            ops = settings.get("ops") if isinstance(settings, dict) else None
+            if isinstance(ops, dict) and ops.get("heartbeat_url"):
+                row.settings = {
+                    **settings,
+                    "ops": {**ops, "heartbeat_url": ""},
+                }
+                blanked += 1
+        record_event(
+            session,
+            clock,
+            level="info",
+            event_type=HEARTBEAT_EVENT,
+            details={"imported": imported, "versions_blanked": blanked},
+        )
+        session.commit()
+    logger.info(
+        "heartbeat secret migration: imported=%s versions_blanked=%s",
+        imported,
+        blanked,
+    )
+    return True

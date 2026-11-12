@@ -1124,18 +1124,94 @@ def search_model_calls(session: Session, deps: AskDeps, args: CallsArg) -> dict[
     return _bounded(items, args.limit, "narrow with source, symbol or outcome", deps)
 
 
+# Ask sees trading settings only (item 081, spec → Ask sees trading
+# settings only): the settings tool serves exactly these sections.
+# ``universe`` contributes mode and screen thresholds — never symbol
+# names. Every other top-level config section is never served.
+SETTINGS_SECTIONS = frozenset(
+    {
+        "execution",
+        "rules",
+        "regime",
+        "events",
+        "indicators",
+        "decision",
+        "selection",
+        "risk",
+        "schedule",
+        "universe",
+        "reviews",
+        "shadows",
+        "backtest",
+        "readiness",
+        "insights",
+        "performance",
+        "outcomes",
+    }
+)
+
+# Top-level sections that must never reach the model — the spec's
+# never-list plus every other section config.example.yaml defines.
+# A test fails when the example gains a section in neither set.
+SETTINGS_NEVER = frozenset(
+    {
+        "market",
+        "app",
+        "gui",
+        "api",
+        "notifications",
+        "ask",
+        "models",
+        "inspector",
+        "logging",
+        "security",
+        "auth",
+        "ops",
+        "storage",
+    }
+)
+
+
+def _universe_view(section: Any) -> Any:
+    """universe minus names: mode and the screen thresholds only."""
+    if not isinstance(section, dict):
+        return section
+    return {
+        "mode": section.get("mode"),
+        "screen": section.get("screen"),
+    }
+
+
+def _channels_view(deps: AskDeps) -> dict[str, str]:
+    """Notification channels as on/failing/off — never hosts or addresses."""
+    service = deps.notification_service
+    if service is None:
+        return {"email": "off", "browser": "off"}
+    status = service.smtp_status()
+    configured = bool(status.get("configured"))
+    email = "off"
+    if configured:
+        email = "failing" if getattr(service, "email_failures", 0) else "on"
+    return {"email": email, "browser": "on"}
+
+
 def settings(session: Session, deps: AskDeps, args: SettingsArg) -> dict[str, Any]:
-    """Current values, defaults, settings history, key/channel status."""
+    """Allowlisted current values and defaults, history, key/channel status."""
     effective = deps.config.effective()
     yaml_defaults = deps.config.yaml
     sections: dict[str, Any] = {}
-    wanted = {args.section} if args.section else set(effective)
+    wanted = ({args.section} if args.section else set(effective)) & SETTINGS_SECTIONS
     for name in sorted(wanted):
         if name not in effective:
             continue
+        current = effective.get(name)
+        defaults = yaml_defaults.get(name)
+        if name == "universe":
+            current = _universe_view(current)
+            defaults = _universe_view(defaults)
         sections[name] = {
-            "current": effective.get(name),
-            "defaults": yaml_defaults.get(name),
+            "current": current,
+            "defaults": defaults,
         }
     history = []
     if args.history:
@@ -1164,9 +1240,7 @@ def settings(session: Session, deps: AskDeps, args: SettingsArg) -> dict[str, An
         "sections": sections,
         "history": history,
         "keys": keys,
-        "channels": (
-            deps.notification_service.smtp_status() if deps.notification_service is not None else {}
-        ),
+        "channels": _channels_view(deps),
     }
 
 
@@ -1481,14 +1555,30 @@ TOOLS: dict[str, ToolSpec] = {
 def run_tool(
     session: Session, deps: AskDeps, name: str, arguments: dict[str, Any]
 ) -> tuple[dict[str, Any], str | None]:
-    """Validate arguments and run one tool; (result, error)."""
+    """Validate arguments and run one tool; (result, error).
+
+    Every result passes the scrubber (strings at any depth) before it
+    can reach the model or be stored — the same patterns and secret
+    values the log pipeline uses (item 081).
+    """
+    from app.logging_config import scrub_value
+
+    extra = (
+        deps.secrets.scrub_values() if deps.secrets is not None else ()
+    )
+
+    def _out(
+        result: dict[str, Any], terr: str | None
+    ) -> tuple[dict[str, Any], str | None]:
+        return cast("dict[str, Any]", scrub_value(result, extra)), terr
+
     spec = TOOLS.get(name)
     if spec is None:
-        return {"error": f"unknown tool {name!r}", "as_of": _as_of(deps)}, "unknown_tool"
+        return _out({"error": f"unknown tool {name!r}", "as_of": _as_of(deps)}, "unknown_tool")
     try:
         args = spec.args_model.model_validate(arguments or {})
     except ValidationError as exc:
-        return (
+        return _out(
             {
                 "error": f"bad arguments: {exc.errors()[0].get('msg', 'invalid')}",
                 "as_of": _as_of(deps),
@@ -1496,10 +1586,10 @@ def run_tool(
             "bad_arguments",
         )
     try:
-        return spec.fn(session, deps, args), None
+        return _out(spec.fn(session, deps, args), None)
     except Exception:  # noqa: BLE001 - a failing tool answers its error
         logger.exception("ask tool %s failed", name)
-        return {"error": "the lookup failed", "as_of": _as_of(deps)}, "tool_error"
+        return _out({"error": "the lookup failed", "as_of": _as_of(deps)}, "tool_error")
 
 
 def step_label(name: str, arguments: dict[str, Any]) -> str:

@@ -123,9 +123,9 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "auth": {
         "idle_hours": ("int", 1, 168),
     },
-    "ops": {
-        "heartbeat_url": ("url_or_empty", None, None),
-    },
+    # ``ops`` is gone on purpose (item 081): the heartbeat URL is a
+    # write-only secret saved through /api/server/heartbeat, never a
+    # settings value — it must not land in a settings version.
     "notifications": {
         "repeat_limit_minutes": ("int", 0, 1440),
         "quiet_hours": ("quiet_hours", None, None),
