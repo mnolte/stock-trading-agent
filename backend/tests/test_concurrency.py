@@ -6,6 +6,7 @@ No network: sends are plain coroutines.
 import asyncio
 import logging
 import random
+from collections.abc import Generator
 
 import pytest
 from app.concurrency import (
@@ -19,7 +20,7 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(autouse=True)
-def _clean_gates() -> None:
+def _clean_gates() -> Generator[None, None, None]:
     reset_gates()
     yield
     reset_gates()
@@ -67,15 +68,18 @@ async def test_run_batch_isolates_failures() -> None:
         return item
 
     results = await run_batch(list(range(5)), send, limit=2, kind="t.fail")
-    assert results[0] == 0
-    assert results[1] == 1
-    assert isinstance(results[2], ValueError)
-    assert results[3] == 3
-    assert results[4] == 4
+    items: list[object] = list(results)
+    assert items[0] == 0
+    assert items[1] == 1
+    assert isinstance(items[2], ValueError)
+    assert items[3] == 3
+    assert items[4] == 4
     assert results.stats.failures == 1
 
 
-async def test_run_batch_logs_one_info_line(caplog) -> None:
+async def test_run_batch_logs_one_info_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     async def send(item: int) -> int:
         return item
 
