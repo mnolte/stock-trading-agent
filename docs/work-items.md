@@ -148,7 +148,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
 | 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
-| 088 | ops | Code coverage report from CI (issue #259) | `archive/088-ops-code-coverage.md` | #260 | #263 | building |
+| 088 | ops | Code coverage report from CI (issue #259) | `archive/088-ops-code-coverage.md` | #260 | #263, #267 | building |
 | 089 | spec | A PR closes only issues it resolves | — | #261 | — | merged |
 | 090 | fix | After-exit job's SQLite off the event loop | — | — | #262 | building |
 

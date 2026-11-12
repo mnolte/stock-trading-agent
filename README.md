@@ -107,7 +107,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 
 ## Tests and coverage
 
-CI runs the backend and frontend tests on every pull request. Each job's **Summary** page shows a coverage table (line and branch percentages, the least-covered files), and the HTML reports are kept as artifacts for 7 days: on a PR open **Checks** → `backend-test` or `frontend-check` → **Summary**, or download the `coverage-backend` / `coverage-frontend` artifacts.
+CI runs the backend and frontend tests on every pull request. The **`coverage`** job's **Summary** page shows one table with Unit, E2E and All coverage per side (lines and branches, the least-covered files, and the files only the e2e reaches). The combined HTML reports are kept as the `coverage-all` artifact for 7 days; the per-job `coverage-backend` / `coverage-frontend` / `coverage-e2e-*` artifacts hold the unit-only and e2e-only reports.
 
 ## Build plan
 
