@@ -13,6 +13,7 @@ template built from the given facts. ``responses`` overrides per symbol;
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -32,11 +33,22 @@ FakeHandler = Callable[[str, str], str]
 
 def default_review_reply(system: str, user: str) -> str:
     """Answer with the plain template built from the given facts — it
-    passes the number check by construction."""
+    passes the number check by construction. The prompt header names the
+    version, so v3 stories get their {story}/{text} shape (item 079)."""
     from app.reviews.templates import plain_content
 
     payload = json.loads(user)
-    return json.dumps(plain_content(str(payload.get("kind", "weekly")), payload.get("facts", {})))
+    version = None
+    match = re.search(r"version:\s*v(\d+)", system or "")
+    if match:
+        version = f"{payload.get('kind', 'weekly')}.v{match.group(1)}"
+    return json.dumps(
+        plain_content(
+            str(payload.get("kind", "weekly")),
+            payload.get("facts", {}),
+            version,
+        )
+    )
 
 
 def _try_parse(raw: str) -> Any:

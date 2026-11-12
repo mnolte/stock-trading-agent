@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -191,12 +193,15 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         symbols: list[str] | None = None,
+        on_symbol: Callable[[str, DataResult[int]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fetch and cache 5-minute bars — one multi-symbol request.
 
         The eligible list at scale is too long for per-symbol calls; the
         bar source takes the whole universe in one request (docs/SPEC.md,
         Cycles at scale). ``symbols`` defaults to ``universe()``.
+        ``on_symbol`` fires once per symbol with its stored result — the
+        sync-run progress hook (item 077).
         """
         import logging
 
@@ -213,12 +218,16 @@ class MarketDataService:
                 f"bars fetch failed: {fetched.error}",
                 source=fetched.source,
             )
-            return {
+            results = {
                 symbol: DataResult(
                     data=0, error=fetched.error, source=fetched.source
                 )
                 for symbol in wanted
             }
+            if on_symbol is not None:
+                for symbol, result in results.items():
+                    on_symbol(symbol, result)
+            return results
         # SIP bars cover the full extended session (04:00-20:00 NY); the
         # cache is regular-hours only — the coverage counters, outcome
         # reads and shadow replay all assume it (docs/SPEC.md, Market
@@ -235,19 +244,24 @@ class MarketDataService:
             f"{sum(len(v) for v in grouped.values())} bars",
             source=fetched.source, symbols=len(wanted),
         )
-        return {
+        results = {
             symbol: DataResult(
                 data=self.bars_cache.store(grouped[symbol]),
                 source=fetched.source,
             )
             for symbol in wanted
         }
+        if on_symbol is not None:
+            for symbol, result in results.items():
+                on_symbol(symbol, result)
+        return results
 
     async def refresh_history(
         self,
         today: date,
         symbols: list[str] | None = None,
         session_count: int | None = None,
+        on_symbol: Callable[[str, DataResult[int]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fill the cache with ``history_sessions`` sessions of 5-minute bars.
 
@@ -299,11 +313,13 @@ class MarketDataService:
         ) -> tuple[datetime, dict[str, DataResult[int]]]:
             start, group = item
             try:
-                return start, await self.refresh_bars(start, end, symbols=group)
+                return start, await self.refresh_bars(
+                    start, end, symbols=group, on_symbol=on_symbol
+                )
             except Exception as exc:  # noqa: BLE001 - per-symbol error rows
                 # Exception text can carry request details — the class
                 # name is what the sync UI shows (hard rule 9).
-                return start, {
+                group_results = {
                     symbol: DataResult(
                         data=0,
                         error=f"bars: {type(exc).__name__}",
@@ -311,6 +327,10 @@ class MarketDataService:
                     )
                     for symbol in group
                 }
+                if on_symbol is not None:
+                    for symbol, res in group_results.items():
+                        on_symbol(symbol, res)
+                return start, group_results
 
         for item in await run_batch(
             list(groups.items()),
@@ -414,6 +434,7 @@ class MarketDataService:
         today: date,
         symbols: list[str] | None = None,
         session_count: int | None = None,
+        on_symbol: Callable[[str, DataResult[Any]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fetch and cache daily bars for ``daily_history_sessions`` sessions.
 
@@ -472,17 +493,20 @@ class MarketDataService:
             symbol: str,
         ) -> tuple[str, DataResult[list[DailyBar]]]:
             try:
-                return symbol, await self.sources.bars.fetch_daily_bars(
+                result = await self.sources.bars.fetch_daily_bars(
                     symbol, fetch_start[symbol], end
                 )
             except Exception as exc:  # noqa: BLE001 - per-symbol error row
                 # Exception text can carry request details — the class
                 # name is what the sync UI shows (hard rule 9).
-                return symbol, DataResult(
+                result = DataResult(
                     data=[],
                     error=f"daily bars: {type(exc).__name__}",
                     source="batch",
                 )
+            if on_symbol is not None:
+                on_symbol(symbol, result)
+            return symbol, result
 
         fetched = await run_batch(
             wanted,

@@ -24,6 +24,7 @@ from app.decide.prompt import (
     load_prompt,
     prompt_spec,
 )
+from app.errors import safe_error
 from app.market.clock import NY_TZ, SessionClock
 from app.notifications.events import EVENT_DEFS, EVENTS
 
@@ -632,7 +633,7 @@ async def validate_settings(
                         try:
                             out[key] = validate_public_https_url(text)
                         except UrlRejected as exc:
-                            raise SettingsError([f"{label}: {exc}"]) from None
+                            raise SettingsError([f"{label}: {safe_error(exc)}"]) from None
                     else:
                         out[key] = ""
                 elif kind == "int":

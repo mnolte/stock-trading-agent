@@ -48,6 +48,7 @@ from app.decide.v3 import scheduled_exit_text
 from app.engine.executor import Executor, spy_session_moves
 from app.engine.outcomes import OutcomeWorker
 from app.engine.performance import compute_performance, compute_tails_payload
+from app.errors import safe_error
 from app.llm.models import REVIEW_TASKS, review_model
 from app.market.calendar import CalendarProvider, WeekdayCalendarProvider
 from app.market.clock import (
@@ -92,6 +93,13 @@ from app.settings_service import (
 )
 from app.signals.indicators import ema_series
 from app.signals.service import SignalService
+from app.syncs import (
+    SYNC_JOBS,
+    SyncRuns,
+    tracked_fetch,
+    tracked_fetches,
+    tracked_symbols,
+)
 from app.universe.service import PoolError, UniverseService
 
 router = APIRouter()
@@ -1165,7 +1173,7 @@ async def pause_resume(request: Request) -> dict[str, object]:
     try:
         await executor.resume_from_pause()
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"paused": False}
 
 
@@ -1189,7 +1197,7 @@ async def kill_switch_resume(
     try:
         await executor.resume(reason)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     return {"kill_switch": False}
 
 
@@ -1230,7 +1238,7 @@ def dismiss_event(
             session.commit()
             dismissed_id = event.id
         except ReadinessError as exc:
-            detail = str(exc)
+            detail = safe_error(exc)
             if detail == "a note is required to dismiss an error":
                 raise HTTPException(status_code=422, detail=detail) from exc
             raise HTTPException(status_code=409, detail=detail) from exc
@@ -1271,7 +1279,7 @@ def readiness_manual(
             session.commit()
             row_id = row.id
         except ReadinessError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(status_code=422, detail=safe_error(exc)) from exc
     _notify(request, "readiness")
     return {"saved": True, "id": row_id}
 
@@ -4290,7 +4298,9 @@ def performance_tails(request: Request, run: int | None = None) -> dict[str, obj
     """
     config = get_config()
     with get_session_maker()() as session:
-        payload = compute_tails_payload(session, config=config, run_id=run)
+        payload = compute_tails_payload(
+            session, config=config, calendar=_calendar(request), run_id=run
+        )
     if payload.get("empty") and run is not None:
         raise HTTPException(status_code=404, detail="run not found")
     return payload
@@ -4564,6 +4574,135 @@ def _briefing_chips(facts: dict[str, Any]) -> list[dict[str, str]]:
     return chips
 
 
+def _ordinal(value: float) -> str:
+    n = int(value)
+    suffix = (
+        "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    )
+    return f"{n}{suffix}"
+
+
+def _briefing_numbers(facts: dict[str, Any]) -> list[dict[str, str]]:
+    """The "The numbers" fold rows for a briefing story (design Main and
+    Reviews, item 079): every fact the model was given, as label–value
+    rows in the design's order. The GUI only renders them."""
+    rows: list[dict[str, str]] = []
+
+    positions = facts.get("positions")
+    if isinstance(positions, list):
+        if not positions:
+            rows.append({"label": "Open positions", "value": "none"})
+        else:
+            bits = []
+            for p in positions:
+                price = p.get("price")
+                bits.append(
+                    f"{p.get('symbol')} {p.get('qty')} sh"
+                    + (f" @ ${float(price):,.2f}" if price is not None else "")
+                )
+            rows.append(
+                {"label": "Open positions", "value": f"{len(positions)} · " + ", ".join(bits)}
+            )
+            for p in positions:
+                price, stop, dist = (
+                    p.get("price"),
+                    p.get("stop"),
+                    p.get("stop_distance_pct"),
+                )
+                if price is None:
+                    value = "no fresh price"
+                else:
+                    value = f"last close ${float(price):,.2f}"
+                    if stop is not None:
+                        value += f" · stop ${float(stop):,.2f}"
+                    if dist is not None:
+                        value += f" · {float(dist):.1f}% above the stop"
+                rows.append({"label": str(p.get("symbol")), "value": value})
+    else:
+        rows.append({"label": "Open positions", "value": "unavailable"})
+
+    yesterday = facts.get("yesterday") or {}
+    y_pct, y_usd = yesterday.get("return_pct"), yesterday.get("return_usd")
+    rows.append(
+        {
+            "label": "Yesterday",
+            "value": (
+                f"{'+' if y_usd >= 0 else '−'}${abs(float(y_usd)):,.2f} · "
+                f"{float(y_pct):+.2f}%"
+                if y_pct is not None and y_usd is not None
+                else "unavailable"
+            ),
+        }
+    )
+    spy = yesterday.get("spy_return_pct")
+    rows.append(
+        {
+            "label": "SPY yesterday",
+            "value": f"{float(spy):+.2f}%" if spy is not None else "unavailable",
+        }
+    )
+    regime = facts.get("regime")
+    rows.append(
+        {
+            "label": "Regime",
+            "value": str(regime) if regime else "unavailable",
+        }
+    )
+    vix = facts.get("vix")
+    if isinstance(vix, dict) and vix.get("close") is not None:
+        pct = vix.get("percentile_1y")
+        vix_value = f"{float(vix['close']):g}"
+        if pct is not None:
+            vix_value += f" · {_ordinal(float(pct))} percentile"
+        rows.append({"label": "VIX", "value": vix_value})
+    else:
+        rows.append({"label": "VIX", "value": "unavailable"})
+
+    earnings = [
+        *(f"{e['symbol']} today" for e in facts.get("earnings_today") or []),
+        *(
+            f"{e['symbol']} tomorrow"
+            for e in facts.get("earnings_tomorrow") or []
+        ),
+    ]
+    rows.append(
+        {
+            "label": "Earnings today or tomorrow",
+            "value": " · ".join(earnings) if earnings else "none",
+        }
+    )
+    release = facts.get("next_release")
+    if isinstance(release, dict) and release.get("label"):
+        try:
+            day = datetime.fromisoformat(str(release.get("date"))).date()
+            when = f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+        except ValueError:
+            when = str(release.get("date") or "")
+        rows.append(
+            {
+                "label": "Next release",
+                "value": (
+                    f"{release['label']} · {when} "
+                    f"{release.get('time', '')} NY"
+                ),
+            }
+        )
+    else:
+        rows.append({"label": "Next release", "value": "none"})
+    banners = facts.get("banners") or []
+    rows.append(
+        {
+            "label": "Banners",
+            "value": (
+                " · ".join(str(b.get("kind", "")).replace("_", " ") for b in banners)
+                if banners
+                else "none"
+            ),
+        }
+    )
+    return rows
+
+
 def _briefing_card(
     request: Request, clock: Clock, app_tz: ZoneInfo, today_ny: date
 ) -> dict[str, Any]:
@@ -4596,6 +4735,11 @@ def _briefing_card(
             "status_line": status_line,
             "text": text,
             "chips": _briefing_chips(review.facts or {}),
+            # Stories (item 079): the fold's rows and the glossary the
+            # story's underlined terms resolve against.
+            "numbers": _briefing_numbers(review.facts or {}),
+            "glossary": (review.facts or {}).get("glossary") or {},
+            "fact_count": len(review.facts or {}),
             "source": review.source,
             "reason": review.reason,
             "model": review.model,
@@ -5728,6 +5872,9 @@ def review_detail(review_id: int) -> dict[str, object]:
                 **content,
                 "text": content["text"][len(status) :].lstrip(),
             }
+        # Stories (item 079): same "The numbers" rows as the dashboard.
+        detail["numbers"] = _briefing_numbers(review.facts or {})
+        detail["fact_count"] = len(review.facts or {})
     return detail
 
 
@@ -6052,6 +6199,146 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
     result = await _universe(request).run_screen()
     _notify(request, "universe", "banners", "header")
     return result
+
+
+# ----------------------------------------------------------------------
+# Sync runs (item 077): what the app is loading and what failed. The
+# sync_runs table is written by the jobs themselves; these routes only
+# read it and start a retry.
+
+
+def _syncs(request: Request) -> SyncRuns:
+    syncs = getattr(request.app.state, "syncs", None)
+    if syncs is None:
+        raise HTTPException(status_code=503, detail="sync tracking unavailable")
+    return cast(SyncRuns, syncs)
+
+
+@router.get("/universe/sync")
+def universe_sync(request: Request) -> dict[str, object]:
+    """The latest sync_runs row per job, plus the history job's live
+    progress (symbols ready of total, time left from its own pace)."""
+    return _syncs(request).describe()
+
+
+async def _retry_sync_job(
+    request: Request, job: str, symbols: list[str]
+) -> None:
+    """Re-run ``job`` for its failed symbols in the background.
+
+    Every fetch goes through the shared data services, so the retry
+    shares the Alpaca rate limiter with live work like any other job
+    (item 078's live-first rule applies to model calls; data fetches
+    already queue on the same limiter). Each path writes a fresh
+    sync_runs row through the same tracked wrappers the scheduled jobs
+    use.
+    """
+    from app.engine.cycle import BAR_TOPUP
+
+    syncs = _syncs(request)
+    market_data = getattr(request.app.state, "market_data", None)
+    sources = getattr(request.app.state, "data_sources", None)
+    clock = getattr(request.app.state, "clock", None)
+    if market_data is None or sources is None or clock is None:
+        logger.error("sync retry %s: services unavailable", job)
+        return
+    today = clock.now().astimezone(NY_TZ).date()
+    try:
+        if job == "daily_bars":
+            await tracked_symbols(
+                syncs,
+                "daily_bars",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_daily(
+                    today, symbols=group, on_symbol=on_symbol
+                ),
+                "daily bars",
+            )
+        elif job == "bars_5m":
+            now = clock.now()
+            await tracked_symbols(
+                syncs,
+                "bars_5m",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_bars(
+                    now - BAR_TOPUP, now, group, on_symbol=on_symbol
+                ),
+                "5m bars",
+            )
+        elif job == "history":
+            await _universe(request).warm_up(symbols or None)
+        elif job == "screen":
+            await _universe(request).run_screen()
+        elif job == "earnings":
+            await tracked_fetch(
+                syncs,
+                "earnings",
+                lambda: market_data.refresh_earnings(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "corporate_actions":
+            await tracked_fetch(
+                syncs,
+                "corporate_actions",
+                lambda: market_data.refresh_corporate_actions(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "ecb":
+            await tracked_fetch(
+                syncs, "ecb", lambda: sources.fx.fetch_fx(today)
+            )
+        elif job == "fred":
+            vix = getattr(request.app.state, "vix", None)
+            releases = getattr(request.app.state, "releases", None)
+            fetches = []
+            if vix is not None:
+                fetches.append(("VIX (FRED)", lambda: vix.refresh(today)))
+            if releases is not None:
+                fetches.append(
+                    ("release calendar", lambda: releases.refresh(today))
+                )
+            if fetches:
+                await tracked_fetches(syncs, "fred", fetches)
+    except Exception:  # noqa: BLE001 - the run row already records it
+        logger.exception("sync retry for %s failed", job)
+    finally:
+        _notify(request, "universe")
+
+
+@router.post("/universe/sync/{job}/retry", status_code=202)
+async def universe_sync_retry(request: Request, job: str) -> dict[str, object]:
+    """Re-run a failed sync job for its failed symbols (item 077).
+
+    409 while a cycle runs or the job itself is still running — a retry
+    is refused, never queued. 422 when the latest run has no failures.
+    """
+    if job not in SYNC_JOBS:
+        raise HTTPException(status_code=422, detail=f"unknown sync job {job!r}")
+    syncs = _syncs(request)
+    if syncs.cycle_active() or syncs.running(job):
+        raise HTTPException(
+            status_code=409, detail="a cycle or this job is already running"
+        )
+    latest = syncs.latest_run(job)
+    failures = list(latest.failures or []) if latest is not None else []
+    if not failures:
+        raise HTTPException(status_code=422, detail="the job has no failures")
+    # Per-symbol jobs record the symbol in ``what``; source-level jobs
+    # record the source, and an aborted run records the job itself —
+    # those retries cover the job's whole scope.
+    symbols = [
+        str(f.get("what"))
+        for f in failures
+        if f.get("what") not in (None, job)
+        and job in ("daily_bars", "bars_5m", "history")
+    ]
+    from app.spawn import spawn
+
+    spawn(_retry_sync_job(request, job, symbols), f"sync-retry-{job}")
+    _notify(request, "universe")
+    return {"job": job, "accepted": True}
 
 
 # ---------------------------------------------------------------------------
@@ -6516,7 +6803,7 @@ async def server_backup_now(request: Request) -> dict[str, object]:
     try:
         await run_in_threadpool(create_backup, _clock(request))
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=[f"backup failed: {exc}"]) from exc
+        raise HTTPException(status_code=500, detail=[f"backup failed: {safe_error(exc)}"]) from exc
     return {"ok": True}
 
 
@@ -6644,7 +6931,7 @@ async def server_backup_credentials(
     try:
         endpoint = validate_public_https_url(endpoint)
     except UrlRejected as exc:
-        errors.append(f"endpoint: {exc}")
+        errors.append(f"endpoint: {safe_error(exc)}")
     for name, value in (
         ("bucket", bucket),
         ("access_key_id", access_key_id),

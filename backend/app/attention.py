@@ -448,6 +448,55 @@ def build_attention(request: Request) -> dict[str, Any]:
                         )
                     )
 
+        #     Item 081: the startup scrub found key text in stored rows.
+        #     Order 2 with the other key/state items; leaves when both
+        #     the FRED and Finnhub keys were replaced after the scrub,
+        #     or on dismiss with a reason (events/{id}/dismiss).
+        scrub_event = session.execute(
+            select(Event)
+            .where(Event.event_type == "stored_text_scrub")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if (
+            scrub_event is not None
+            and scrub_event.resolved_at is None
+        ):
+            tables_raw = (scrub_event.details or {}).get("tables")
+            tables = tables_raw if isinstance(tables_raw, dict) else {}
+            changed = any(int(n) for n in tables.values())
+
+            def _replaced_after(name: str) -> bool:
+                status_fn = getattr(store, "secret_status", None)
+                status = status_fn(name) if status_fn is not None else None
+                saved = (status or {}).get("saved_at")
+                if not saved:
+                    return False
+                try:
+                    saved_at = datetime.fromisoformat(
+                        str(saved).replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    return False
+                return saved_at > _aware_utc(scrub_event.time)
+
+            if changed and not (
+                _replaced_after("fred") and _replaced_after("finnhub")
+            ):
+                item = _item(
+                    "stored_text_scrub",
+                    "warning",
+                    "A key appeared in stored error text. "
+                    "Replace the FRED and Finnhub keys",
+                    "The startup scrub cleaned the stored rows; a key "
+                    "sent or backed up before then may still be live.",
+                    "Fix in Settings",
+                    "/settings",
+                    scrub_event.time,
+                )
+                item["event_id"] = scrub_event.id
+                items.append(item)
+
         # 3. Entries waiting for approval, with their expiry.
         pending = session.execute(
             select(Approval).where(Approval.status == "pending")

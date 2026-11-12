@@ -46,10 +46,9 @@ test('briefings tab', async ({ page }, testInfo) => {
   await expect(
     page.getByRole('heading', { name: 'Verdicts to confirm' })
   ).toBeVisible({ timeout: 60_000 });
-  // A briefing detail renders its day title and the fact tiles.
-  await expect(
-    page.getByText('Open positions', { exact: true })
-  ).toBeVisible();
+  // briefing.v3 (item 079): the detail is the story plus the "The
+  // numbers" fold; older versions showed the fact tiles instead.
+  await expect(page.getByText('The numbers', { exact: false })).toBeVisible();
 
   await page.screenshot({
     path: path.join(outDir, `briefings-${suffix}.png`),

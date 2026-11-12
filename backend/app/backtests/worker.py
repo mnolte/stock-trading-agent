@@ -63,6 +63,7 @@ from app.db.models import (
 )
 from app.decide.client import FakeDecisionClient
 from app.decide.llm_cache import LLMCacheStore
+from app.errors import safe_error
 from app.market.clock import NY_TZ, Clock, FakeClock, RealClock, SessionClock
 
 logger = logging.getLogger("app.backtest.worker")
@@ -906,7 +907,7 @@ async def run_backtest(
         status = "done"
     except Exception as exc:  # noqa: BLE001
         logger.exception("backtest run %s failed", run_id)
-        warnings.append(str(exc)[:500])
+        warnings.append(safe_error(exc))
         status = "interrupted"
 
     with live_sf() as session:

@@ -23,6 +23,8 @@ dist/
 *.local
 frontend/test-results/
 frontend/playwright-report/
+frontend/coverage/
+frontend/coverage-e2e/
 docs/screenshots/e2e/
 
 # Local config / data

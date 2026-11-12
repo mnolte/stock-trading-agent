@@ -35,12 +35,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
+    "pytest-cov>=6.1.0",
     "pytest-socket>=0.7.0",
     "pytest-timeout>=2.3.0",
     "pytest-xdist>=3.6.0",
     "ruff>=0.7.0",
     "mypy>=1.13.0",
     "types-pyyaml>=6.0.12",
+    "defusedxml>=0.7.1",
 ]
 
 [tool.ruff]
@@ -66,6 +68,29 @@ addopts = "--disable-socket --allow-unix-socket --strict-markers --timeout=600"
 markers = [
     "slow: multi-minute tests (e.g. the 3-month replay) — run with make test-slow",
     "perf: timing-budget tests — run serially with make test-perf",
+]
+
+# Coverage is measured in CI only (item 088): pytest gets --cov options via
+# PYTEST_ADDOPTS there; a plain `make test-backend` measures nothing. pytest
+# runs from backend/, so every call passes --cov-config=../pyproject.toml.
+[tool.coverage.run]
+branch = true
+source = ["app"]
+relative_files = true
+# The app does its blocking work on asyncio.to_thread workers; no greenlet
+# (the SQLAlchemy engine is sync). sigterm lets `coverage run` write its
+# data when Playwright stops the e2e backend with SIGTERM.
+concurrency = ["thread"]
+sigterm = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+    "\\.\\.\\.",
 ]
 
 [tool.ruff.lint.per-file-ignores]

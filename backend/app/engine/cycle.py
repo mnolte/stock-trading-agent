@@ -48,6 +48,7 @@ from app.engine.live_calls import LiveModelHealth
 from app.engine.outcomes import OutcomeWorker
 from app.engine.selection import ScoredEntry, SelectionBudget, choose, score
 from app.engine.state import record_event
+from app.errors import safe_error
 from app.inspector.record import sync_llm_call
 from app.llm.base import ModelResponse
 from app.market.calendar import CalendarProvider
@@ -65,6 +66,7 @@ from app.risk.math import (
 from app.rules.prefilter import STATUS_HELD, STATUS_PASS
 from app.signals.breadth import BreadthService, CycleMarket
 from app.signals.service import SignalService, SymbolEval
+from app.syncs import SyncRuns, tracked_symbols
 
 NEWS_WINDOW = timedelta(hours=24)
 # Top-up window for the 5-minute bar cache each cycle.
@@ -146,6 +148,7 @@ class CycleRunner:
         vix: VixService | None = None,
         breadth: BreadthService | None = None,
         releases: ReleaseCalendarService | None = None,
+        syncs: SyncRuns | None = None,
     ) -> None:
         self.market_data = market_data
         self.signals = signals
@@ -182,6 +185,9 @@ class CycleRunner:
         # release_next_morning tags and the FOMC-row sync on promotion.
         # None leaves next_release null and skips the tags.
         self.releases = releases
+        # Sync-run records (item 077): the 5-minute bar refresh writes a
+        # "bars_5m" row per cycle for the Universe → Data sync card.
+        self.syncs = syncs
 
     # ------------------------------------------------------------------
     # scheduling helpers
@@ -239,8 +245,14 @@ class CycleRunner:
     async def _update_bars(
         self, symbols: list[str], now: datetime, report: CycleReport
     ) -> None:
-        bar_results = await self.market_data.refresh_bars(
-            now - BAR_TOPUP, now, symbols
+        bar_results = await tracked_symbols(
+            self.syncs,
+            "bars_5m",
+            symbols,
+            lambda group, on_symbol: self.market_data.refresh_bars(
+                now - BAR_TOPUP, now, group, on_symbol=on_symbol
+            ),
+            "5m bars",
         )
         errors = {
             r.error for r in bar_results.values() if r.error is not None
@@ -530,13 +542,7 @@ class CycleRunner:
                         await self._run(session, cycle.id, scheduled_ny, now, report)
                 except Exception as exc:  # noqa: BLE001
                     report.status = "error"
-                    from app.logging_config import (
-                        _all_secrets,
-                        _scrub_text,
-                    )
-                    report.errors.append(
-                        _scrub_text(str(exc), _all_secrets())
-                    )
+                    report.errors.append(safe_error(exc))
                     logger.exception(
                         "Cycle %s failed at %s: %s",
                         report.cycle_id,
@@ -571,14 +577,7 @@ class CycleRunner:
                             )
                     except Exception as exc:
                         report.status = "error"
-                        from app.logging_config import (
-                            _all_secrets,
-                            _scrub_text,
-                        )
-
-                        report.errors.append(
-                            _scrub_text(str(exc), _all_secrets())
-                        )
+                        report.errors.append(safe_error(exc))
                         logger.exception("cycle %s outcomes failed", report.cycle_id)
                         session.rollback()
                         stored = session.get(Cycle, report.cycle_id)

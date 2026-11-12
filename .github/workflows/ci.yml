@@ -46,12 +46,34 @@ jobs:
       - run: uv sync --extra dev --locked
       - run: make test-backend
         env:
-          PYTEST_ADDOPTS: --junitxml=junit-backend.xml
+          PYTEST_ADDOPTS: >-
+            --junitxml=junit-backend.xml
+            --cov=app --cov-config=../pyproject.toml
+            --cov-report=xml:coverage.xml --cov-report=html:htmlcov
+            --cov-report=term:skip-covered
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: pytest-backend
           path: backend/junit-backend.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-backend
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      # pytest-cov's combined data file for the coverage job's Unit column.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-raw-unit
+          path: backend/.coverage
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
 
@@ -96,7 +118,14 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
       - run: make lint-frontend
-      - run: make test-frontend
+      - run: make test-frontend VITEST_ARGS=--coverage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 7
 
   e2e:
     runs-on: ubuntu-latest
@@ -144,17 +173,49 @@ jobs:
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github
         env:
           E2E_PREVIEW: '1'
+          E2E_COVERAGE: '1'
+          E2E_PROJECT: ${{ matrix.project }}
       # The PR 23 sign-in spec runs against the auth backend: SA_AUTH=required
       # and the seeded single account (tests/e2e_auth_seed.py).
       - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github e2e/pr23.e2e.ts
         env:
           E2E_PREVIEW: '1'
           E2E_AUTH: '1'
+          E2E_COVERAGE: '1'
+          E2E_PROJECT: ${{ matrix.project }}.auth
+      # coverage run only writes its data on SIGTERM; a lost flush must fail
+      # loudly here, not pass as 0% in the combined report.
+      - name: check backend e2e coverage data
+        if: always()
+        run: |
+          main_files=$(compgen -G "backend/.coverage.e2e.${{ matrix.project }}.*" | grep -v '\.auth\.')
+          [ -n "$main_files" ] \
+            || { echo "error: no backend e2e coverage data for the main suite (backend/.coverage.e2e.${{ matrix.project }}.*)"; exit 1; }
+          compgen -G "backend/.coverage.e2e.${{ matrix.project }}.auth.*" >/dev/null \
+            || { echo "error: no backend e2e coverage data for the auth suite (backend/.coverage.e2e.${{ matrix.project }}.auth.*)"; exit 1; }
+      - name: convert frontend e2e coverage
+        if: always()
+        run: cd frontend && node scripts/coverage-e2e.mjs --project ${{ matrix.project }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: playwright-${{ matrix.project }}
           path: frontend/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-raw-e2e-${{ matrix.project }}
+          path: backend/.coverage.e2e.${{ matrix.project }}.*
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-e2e-frontend-${{ matrix.project }}
+          path: frontend/coverage-e2e/${{ matrix.project }}/
           if-no-files-found: ignore
           retention-days: 7
 
@@ -184,3 +245,128 @@ jobs:
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
       - name: dependency audits (pip-audit + pnpm audit --prod)
         run: ./security/run-audits.sh
+
+  # Item 088: one coverage report per PR — Unit (pytest + Vitest), E2E
+  # (Playwright runs) and All, per side. Never a required check and never
+  # fails the workflow when a report is missing.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [backend-test, frontend-check, e2e]
+    if: always()
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --extra dev --locked
+      - uses: pnpm/action-setup@5eea8caf49c844361c1e9ddc1324e179c54b58e9 # v6
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
+      # Each dataset gets its own directory: coverage's reporting commands
+      # auto-combine every "<data-file>.*" sibling, so .coverage and
+      # .coverage.e2e.* in one dir would merge into the wrong report.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-raw-unit
+          path: backend/cov-unit
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-raw-e2e-desktop
+          path: backend/cov-e2e
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-raw-e2e-mobile
+          path: backend/cov-e2e
+      - name: combine backend coverage (unit / e2e / all)
+        run: |
+          cd backend
+          COV=../.venv/bin/coverage
+          mkdir -p cov-all ../coverage-report
+          R="--rcfile=../pyproject.toml"
+          # Unit data is already combined by pytest-cov; cov-unit holds only
+          # .coverage, so the auto-combine on report finds no siblings.
+          if [ -f cov-unit/.coverage ]; then
+            $COV xml --data-file=cov-unit/.coverage $R \
+              -o ../coverage-report/backend-unit.xml
+          fi
+          # E2E: every raw file shares the .coverage.e2e. prefix
+          # (desktop, mobile and their .auth runs).
+          e2e_files=()
+          for f in cov-e2e/.coverage.e2e.*; do
+            [ -f "$f" ] && e2e_files+=("$f")
+          done
+          if [ ${#e2e_files[@]} -gt 0 ]; then
+            $COV combine --data-file=cov-e2e/.coverage.e2e "${e2e_files[@]}"
+            $COV xml --data-file=cov-e2e/.coverage.e2e $R \
+              -o ../coverage-report/backend-e2e.xml
+          fi
+          # All: unit data plus the combined e2e data, renamed into one
+          # prefix so `coverage combine` picks both up (it scans the data
+          # file's directory for "<data-file>.*" when given no paths).
+          if [ -f cov-unit/.coverage ]; then
+            cp cov-unit/.coverage cov-all/.coverage.all.unit
+          fi
+          if [ -f cov-e2e/.coverage.e2e ]; then
+            cp cov-e2e/.coverage.e2e cov-all/.coverage.all.e2e
+          fi
+          if ls cov-all/.coverage.all.* >/dev/null 2>&1; then
+            $COV combine --data-file=cov-all/.coverage.all
+            $COV xml --data-file=cov-all/.coverage.all $R \
+              -o ../coverage-report/backend-all.xml
+            $COV html --data-file=cov-all/.coverage.all $R \
+              -d ../coverage-report/backend-html
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-frontend
+          path: coverage-artifacts/unit
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-e2e-frontend-desktop
+          path: coverage-artifacts/e2e-desktop
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        continue-on-error: true
+        with:
+          name: coverage-e2e-frontend-mobile
+          path: coverage-artifacts/e2e-mobile
+      - name: merge frontend coverage (unit / e2e / all)
+        run: |
+          cd frontend
+          node scripts/coverage-merge.mjs \
+            --unit ../coverage-artifacts/unit \
+            --e2e ../coverage-artifacts/e2e-desktop \
+            --e2e ../coverage-artifacts/e2e-mobile \
+            --out ../coverage-report/frontend
+      - name: coverage summary
+        if: always()
+        run: |
+          .venv/bin/python scripts/coverage_summary.py \
+            --backend-unit coverage-report/backend-unit.xml \
+            --backend-e2e coverage-report/backend-e2e.xml \
+            --backend-all coverage-report/backend-all.xml \
+            --frontend-unit coverage-report/frontend/unit \
+            --frontend-e2e coverage-report/frontend/e2e \
+            --frontend-all coverage-report/frontend/all \
+            >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-all
+          path: coverage-report/
+          if-no-files-found: ignore
+          retention-days: 7

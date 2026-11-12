@@ -31,7 +31,7 @@ import shutil
 import sys
 import threading
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -126,6 +126,27 @@ def _all_secrets() -> list[str]:
         _collecting.active = False
 
 
+def scrub_text(text: str, secrets: Iterable[str] = ()) -> str:
+    """``_scrub_text`` for non-log text (stored rows, API answers, tool
+    results, notifications): every registered secret provider value plus
+    ``secrets`` and the key patterns, exactly what a log line gets."""
+    values = [v for v in _all_secrets() if v]
+    values.extend(v for v in secrets if v)
+    return _scrub_text(text, values)
+
+
+def scrub_value(value: Any, secrets: Iterable[str] = ()) -> Any:
+    """``scrub_text`` applied to every string inside a dict/list, any
+    depth — for structured data headed to a row, an event or a model."""
+    if isinstance(value, str):
+        return scrub_text(value, secrets)
+    if isinstance(value, dict):
+        return {k: scrub_value(v, secrets) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(scrub_value(v, secrets) for v in value)
+    return value
+
+
 class SecretScrubFilter(logging.Filter):
     """Removes stored keys, key-shaped strings and Authorization headers
     from every record before a handler writes it."""
@@ -166,8 +187,11 @@ class SecretScrubFilter(logging.Filter):
                     )
             except Exception as render_exc:  # noqa: BLE001 - never break logging
                 # A log filter must not log (recursion) — stderr only.
+                from app.errors import safe_error
+
                 print(
-                    f"log scrub: traceback render failed: {render_exc}",
+                    "log scrub: traceback render failed: "
+                    f"{safe_error(render_exc)}",
                     file=sys.stderr,
                 )
             record.exc_info = None
