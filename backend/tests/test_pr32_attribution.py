@@ -711,8 +711,7 @@ async def test_weekly_suggestion_dropped_and_kept(
         client=FakeReviewClient(
             handler=lambda _s, _u: json.dumps(
                 {
-                    "summary": "A quiet week.",
-                    "observations": [],
+                    "story": "A quiet week.",
                     "suggestion": suggestion,
                 }
             )
@@ -745,8 +744,7 @@ async def test_weekly_suggestion_dropped_and_kept(
         client=FakeReviewClient(
             handler=lambda _s, _u: json.dumps(
                 {
-                    "summary": "A busy week.",
-                    "observations": [],
+                    "story": "A busy week.",
                     "suggestion": suggestion,
                 }
             )
