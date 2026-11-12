@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-12 — [077] Universe UX and Data sync (build)
+
+Build PRs of 077: #265 (sync runs and API) and #269 (page and per-symbol status) on branches `feat/077-universe-ux` and `feat/077-universe-ux-ui`.
+
+- **`sync_runs` table**: one row per Universe data job (`daily_bars`, `screen`, `bars_5m`, `history`, `earnings`, `corporate_actions`, `fred`, `ecb`) with start/finish, status (`running`, `ok`, `partial`, `failed`), done/total and structured failures (what, plain-language error, next retry). Rows kept 30 days; progress writes throttled to one per second and always written by the job, never guessed.
+- **`GET /api/universe/sync`** lists every job's latest run with schedule and late flag; **`POST /api/universe/sync/{job}/retry`** re-runs a failed job in the background, refusing with 409 during a cycle or a duplicate run and 422 for unknown jobs or nothing to retry.
+- **Pool endpoint**: each row carries one status — `warming_up` with daily-bars and 5-min progress, `ready` with the next screen time, `eligible`, `eligible_fails`, `held`, `excluded` with the failed check and numbers — plus `detail`, `progress` and `failed_check`; counts gain `ready`; a sector summary reports pool, eligible and rank per sector.
+- **Universe page**: mode banner said once, tiles coloured only above zero, a Data sync card that is one quiet line when healthy and opens itself with the reason when a job fails, runs late or is in progress (history progress with ETA and the concurrency cap, Retry per failed job), "How the screen works" as a fold, Pool by sector filtering via `?sector=`, Status as the third table column, an inline sticky remove confirm, `name pending`, "after the first screen" hints and a fold row naming its filter and count.
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.
