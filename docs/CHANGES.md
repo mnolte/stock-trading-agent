@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-12 — [088] Code coverage report from CI (process)
+
+Marc asked on 12 Nov how to generate a code coverage report. There was none. No behaviour change and no spec section.
+
+- **Kickoff `088-ops-code-coverage.md`** (issue #259): CI measures the backend (pytest, lines and branches) and the frontend (Vitest) on every pull request, shows the totals and the 10 least covered files in the job summary, and keeps the HTML reports as artifacts for 7 days.
+- **Report only:** no minimum that fails CI. Slow, perf and e2e runs are not measured.
+- **Laptop:** never a full coverage run (item 087); one module at a time is allowed.
+
 ## 2026-11-12 — [087] Tests run in CI, not on the laptop (process)
 
 Marc asked on 12 Nov to lower the CPU load that tests put on the development laptop. No behaviour change.
