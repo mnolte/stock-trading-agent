@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -86,6 +87,12 @@ class CycleReport:
     # Snapshots built for symbols only shadow strategies hold; live makes
     # no rules check, model call or decision for them.
     shadow_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Item 078: monotonic marks of the first model send and the last
+    # answer, and the most requests in flight at once — written to the
+    # cycle row as model_seconds / max_in_flight.
+    model_first_send: float | None = None
+    model_last_answer: float | None = None
+    max_in_flight: int = 0
 
 
 @dataclass
@@ -586,6 +593,17 @@ class CycleRunner:
                     cycle.duration_seconds = (
                         cycle.finished_at - cycle.started_at
                     ).total_seconds()
+                # Item 078: model-call window and peak concurrency.
+                if (
+                    report.model_first_send is not None
+                    and report.model_last_answer is not None
+                ):
+                    cycle.model_seconds = (
+                        report.model_last_answer - report.model_first_send
+                    )
+                    cycle.max_in_flight = (
+                        report.max_in_flight or None
+                    )
                 report.duration_seconds = cycle.duration_seconds
                 # A cycle slower than the configured limit raises a warning
                 # banner — at scale the screen, fetches and model calls add up
@@ -1479,7 +1497,9 @@ class CycleRunner:
         assert plan.prepared is not None  # noqa: S101 - outcome == "call"
         await self.decide.send_call(plan.prepared)
 
-    async def _send_wave(self, plans: list[_WaveItem], *, kind: str) -> None:
+    async def _send_wave(
+        self, plans: list[_WaveItem], *, kind: str, report: CycleReport
+    ) -> None:
         """Send one wave's calls together: at most
         ``concurrency.max_requests`` in flight, live priority so a
         waiting sync, shadow, review, Ask or backtest request yields
@@ -1490,12 +1510,28 @@ class CycleRunner:
         limit = max(
             1, int(self.config.get("concurrency", "max_requests", default=20))
         )
+        # Item 078 storage: every call of the wave shares a batch id and
+        # knows the batch's size; the wave's wall time feeds the cycle's
+        # model_seconds and its peak feeds max_in_flight.
+        batch_id = f"{kind}-{callers[0].cycle_id}"
+        for plan in callers:
+            assert plan.prepared is not None  # noqa: S101 - outcome == "call"
+            plan.prepared.batch_id = batch_id
+            plan.prepared.batch_size = len(callers)
+        t0 = time.monotonic()
         results = await run_batch(
             callers,
             send=self._send_plan,
             limit=limit,
             kind=kind,
             priority="live",
+        )
+        t1 = time.monotonic()
+        if report.model_first_send is None:
+            report.model_first_send = t0
+        report.model_last_answer = t1
+        report.max_in_flight = max(
+            report.max_in_flight, results.stats.max_in_flight
         )
         for plan, result in zip(callers, results, strict=True):
             if isinstance(result, BaseException):
@@ -1736,7 +1772,7 @@ class CycleRunner:
             if plan.outcome == "call":
                 slots -= 1
                 report.calls += 1
-        await self._send_wave(held_plans, kind="cycle.held")
+        await self._send_wave(held_plans, kind="cycle.held", report=report)
         await self._finish_wave(
             session,
             held_plans,
@@ -1784,7 +1820,7 @@ class CycleRunner:
                     for idx in missing:
                         cand_plans[idx] = prepare(cand_plans[idx].item, news)
 
-        await self._send_wave(cand_plans, kind="cycle.candidates")
+        await self._send_wave(cand_plans, kind="cycle.candidates", report=report)
         await self._finish_wave(
             session,
             cand_plans,
@@ -1980,7 +2016,7 @@ class CycleRunner:
             if plan.outcome == "call":
                 slots -= 1
                 report.calls += 1
-        await self._send_wave(held_plans, kind="cycle.held")
+        await self._send_wave(held_plans, kind="cycle.held", report=report)
         await self._finish_wave(
             session,
             held_plans,
@@ -2142,7 +2178,9 @@ class CycleRunner:
                 slots -= 1
                 report.calls += 1
         await self._send_wave(
-            [plan for _j, _p, plan in cand_plans], kind="cycle.candidates"
+            [plan for _j, _p, plan in cand_plans],
+            kind="cycle.candidates",
+            report=report,
         )
         for j, p, plan in cand_plans:
             decision = self._finish_plan(session, plan)

@@ -113,6 +113,10 @@ class PreparedCall:
     sent_at: datetime | None = None
     from_cache: bool = False
     on_response: Callable[[ModelResponse], None] | None = None
+    # Item 078: set by the wave's send step — which batch this call was
+    # sent in and how many calls the batch held.
+    batch_id: str | None = None
+    batch_size: int | None = None
 
 
 def rules_result_json(rules: RulesResult | None) -> dict[str, Any] | None:
@@ -523,6 +527,8 @@ class DecisionService:
             v2=prepared.v2,
             send_snapshot=prepared.send_snapshot,
             market_context=prepared.market_context,
+            batch_id=prepared.batch_id,
+            batch_size=prepared.batch_size,
         )
         return decision
 
@@ -599,6 +605,8 @@ class DecisionService:
         v2: V2Build | None = None,
         send_snapshot: dict[str, Any] | None = None,
         market_context: dict[str, Any] | None = None,
+        batch_id: str | None = None,
+        batch_size: int | None = None,
     ) -> Decision:
         decision = Decision(
             cycle_id=cycle_id,
@@ -696,6 +704,8 @@ class DecisionService:
                     cost_source=decision.cost_source,
                     slow_ms=self._slow_ms(),
                     scrub_values=self._secrets,
+                    batch_id=batch_id,
+                    batch_size=batch_size,
                 )
             call_row.attention = attention_for_call(
                 session, call_row, input_payload=snapshot_json
