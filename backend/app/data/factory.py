@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.concurrency import gate_for
 from app.config import AppConfig
 from app.data.alpaca import AlpacaDataClient
 from app.data.ecb import EcbFXSource
@@ -88,7 +89,16 @@ def make_data_sources(
 
     max_calls = config.get_int("alpaca", "max_calls_per_minute", default=150)
     adjustment = str(config.get("schedule", "bar_adjustment", default="split"))
-    limiter = RateLimiter(RateLimitConfig(max_calls=max_calls))
+    # Item 078: one process-wide gate per source — live cycle requests
+    # before waiting sync/shadow/review/Ask/backtest ones — sized like
+    # the HTTP pools so parallel requests never overflow them.
+    max_requests = max(
+        1, config.get_int("concurrency", "max_requests", default=20)
+    )
+    limiter = RateLimiter(
+        RateLimitConfig(max_calls=max_calls),
+        gate=gate_for("alpaca", limit=max_requests),
+    )
     # Missing keys are no reason to refuse startup: the app comes up
     # paused, every Alpaca call fails as an ordinary error and the banner
     # points at Settings (docs/SPEC.md, API keys).
@@ -97,6 +107,7 @@ def make_data_sources(
         secret or MISSING_KEY,
         rate_limiter=limiter,
         adjustment=adjustment,
+        http_pool_size=max(max_requests, 20),
     )
     return DataSources(
         bars=alpaca,

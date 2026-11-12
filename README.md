@@ -63,6 +63,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `schedule.*` | Cycle times, position checks, calendar and history loading |
 | `api.*` | GUI-facing behaviour: `api.broker_timeout_seconds` bounds a broker read before a card answers stale |
 | `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop |
+| `concurrency.*` | `concurrency.max_requests` (20, 1–50): most requests one batch keeps in flight; also sizes the HTTP pools; restart to change |
 | `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |
 | `indicators.*` | Indicator periods: EMA, RSI, ATR, OBV and RS lookbacks, daily SMAs, ATR-percentile window |

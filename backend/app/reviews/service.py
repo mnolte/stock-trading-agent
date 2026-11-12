@@ -27,6 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.concurrency import run_batch
 from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.data.service import MarketDataService
@@ -860,7 +861,15 @@ class ReviewService:
 
     async def write_due_verdicts(self) -> int:
         """A draft verdict for every eligible decision whose 5-session
-        outcome is in and that has no verdict row yet. Returns the count."""
+        outcome is in and that has no verdict row yet. Returns the count.
+
+        Item 078: the model calls of the due verdicts are one batch —
+        each compose gets its own session (a fallback writes an event),
+        then the verdict rows are written one at a time, in due order,
+        committing per verdict as before.
+        """
+        now = _naive_utc(self.clock.now())
+        due: list[tuple[int, str, dict[str, Any]]] = []
         with self._session_factory() as session:
             rows = session.execute(
                 select(Decision, Cycle.scheduled_time, Outcome)
@@ -877,8 +886,6 @@ class ReviewService:
                 )
                 .order_by(Cycle.scheduled_time)
             ).all()
-            written = 0
-            now = _naive_utc(self.clock.now())
             for decision, scheduled, outcome in rows:
                 if not verdict_eligible(decision):
                     continue
@@ -901,9 +908,41 @@ class ReviewService:
                     outcome=outcome,
                 )
                 ref = f"decision {decision.id} ({decision.symbol})"
+                due.append((decision.id, ref, facts))
+
+        async def compose(
+            item: tuple[int, str, dict[str, Any]],
+        ) -> Composed:
+            _decision_id, ref, facts = item
+            with self._session_factory() as session:
                 composed = await self._compose(
                     session, kind="verdict", ref=ref, facts=facts
                 )
+                # Persist a fallback's review_fallback event; a model
+                # compose writes nothing here (the llm_calls row is
+                # written with the verdict below).
+                session.commit()
+                return composed
+
+        max_requests = max(
+            1,
+            int(self.config.get("concurrency", "max_requests", default=20)),
+        )
+        composed_rows = await run_batch(
+            due, send=compose, limit=max_requests, kind="review.verdicts"
+        )
+
+        written = 0
+        with self._session_factory() as session:
+            for (decision_id, _ref, facts), item in zip(
+                due, composed_rows, strict=True
+            ):
+                if isinstance(item, BaseException):
+                    logger.exception(
+                        "verdict compose failed for decision %s", decision_id
+                    )
+                    continue
+                composed = item
                 # The label always comes from code's draft_verdict; the
                 # model writes the reason and the thesis check only.
                 verdict_label = str(
@@ -911,7 +950,7 @@ class ReviewService:
                 )
                 thesis_check = composed.content.get("thesis_check")
                 verdict = Verdict(
-                    decision_id=decision.id,
+                    decision_id=decision_id,
                     verdict=verdict_label,
                     reason=str(composed.content["reason"]),
                     thesis_check=(

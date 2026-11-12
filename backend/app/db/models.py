@@ -146,6 +146,12 @@ class Cycle(Base):
     # in New York time; null when nothing is scheduled or the calendar is
     # missing (a missing calendar never blocks a cycle).
     next_release: Mapped[dict[str, object] | None] = mapped_column(JSONOrNull, nullable=True)
+    # Concurrent requests (item 078): model_seconds is the time from the
+    # cycle's first model call sent to the last answer; max_in_flight
+    # the most requests in flight at once during the cycle. Null on
+    # cycles with no model calls and on rows written before item 078.
+    model_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    max_in_flight: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class Decision(Base):
@@ -783,6 +789,10 @@ class LlmCall(Base):
     ask_message_id: Mapped[int | None] = mapped_column(
         ForeignKey("ask_messages.id"), nullable=True
     )
+    # Item 078: which concurrent batch the call was sent in and how big
+    # it was; null on unbatched calls and rows written before item 078.
+    batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    batch_size: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class AskThread(Base):

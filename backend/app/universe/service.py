@@ -23,7 +23,6 @@ switch applies at the next daily screen, never mid-session.
 
 from __future__ import annotations
 
-import asyncio
 import csv
 import io
 import logging
@@ -42,6 +41,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.base import Broker
 from app.broker.models import OPEN_ORDER_STATUSES
+from app.concurrency import run_batch
 from app.config import AppConfig, _resolve_path
 from app.data.factory import DataSources
 from app.data.models import CalendarDay, DailyBar
@@ -173,6 +173,15 @@ class UniverseService:
 
     def _screen_cfg(self) -> dict[str, Any]:
         return self._cfg().get("screen") or {}
+
+    def _max_requests(self) -> int:
+        """``concurrency.max_requests`` — one batch's in-flight cap
+        (item 078)."""
+        tree = self._tree()
+        return max(
+            1,
+            int((tree.get("concurrency") or {}).get("max_requests") or 20),
+        )
 
     def screen_time_ny(self) -> str:
         return str(self._screen_cfg().get("time_ny") or "08:10")
@@ -895,28 +904,39 @@ class UniverseService:
             )
             spy_bars = self._market_data.get_daily_bars("SPY", completed)
             spy_return = _period_return(spy_bars, lookback)
-            semaphore = asyncio.Semaphore(10)
-
+            # Item 078: one symbol check per request, sent as a batch of
+            # at most concurrency.max_requests — like the old gather, the
+            # first failing check fails the screen and keeps the previous
+            # list.
             async def check(
                 symbol: str,
             ) -> tuple[str, _ScreenMetrics]:
                 nonlocal checked
-                async with semaphore:
-                    result = await self._screen_symbol(
-                        symbol,
-                        windows,
-                        min_price,
-                        min_dv,
-                        max_position_usd,
-                        lookback,
-                        spy_return,
-                    )
+                result = await self._screen_symbol(
+                    symbol,
+                    windows,
+                    min_price,
+                    min_dv,
+                    max_position_usd,
+                    lookback,
+                    spy_return,
+                )
                 checked += 1
                 if screen_run is not None:
                     screen_run.progress(checked, len(symbols))
                 return symbol, result
 
-            metrics = dict(await asyncio.gather(*(check(s) for s in symbols)))
+            batch = await run_batch(
+                symbols,
+                send=check,
+                limit=self._max_requests(),
+                kind="sync.screen",
+            )
+            metrics: dict[str, _ScreenMetrics] = {}
+            for item in batch:
+                if isinstance(item, BaseException):
+                    raise item
+                symbol, metrics[symbol] = item
 
             # 3. Hysteresis + rank, then persist.
             with self._sf() as session:

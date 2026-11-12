@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -10,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.broker.models import OPEN_ORDER_STATUSES
+from app.concurrency import run_batch
 from app.config import AppConfig
 from app.data.aggregate import aggregate_1h, session_bars
 from app.data.cache import BarCache, RawBar5m, _naive_utc
@@ -52,6 +52,14 @@ class MarketDataService:
         self.bars_cache = bar_cache or BarCache(self._session_factory)
         self.latest_fx: DataResult[FXRate | None] | None = None
         self.latest_earnings: DataResult[int] | None = None
+
+    def _max_requests(self) -> int:
+        """``concurrency.max_requests`` — one batch's in-flight cap
+        (item 078); read per call so tests can change it."""
+        return max(
+            1,
+            int(self.config.get("concurrency", "max_requests", default=20)),
+        )
 
     def universe(self) -> list[str]:
         """The cycle universe — the list every data refresh and cycle runs.
@@ -297,12 +305,43 @@ class MarketDataService:
                 missing.append(days[-1])
             start = min(missing, key=lambda d: d.open).open.astimezone(UTC)
             groups.setdefault(start, []).append(symbol)
-        for start, group in groups.items():
-            results.update(
-                await self.refresh_bars(
+        # Item 078: one request per symbol group (same start date), sent
+        # as a batch; pages of one request stay in sequence inside
+        # ``refresh_bars``.
+        async def fetch_group(
+            item: tuple[datetime, list[str]],
+        ) -> tuple[datetime, dict[str, DataResult[int]]]:
+            start, group = item
+            try:
+                return start, await self.refresh_bars(
                     start, end, symbols=group, on_symbol=on_symbol
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 - per-symbol error rows
+                # Exception text can carry request details — the class
+                # name is what the sync UI shows (hard rule 9).
+                group_results = {
+                    symbol: DataResult(
+                        data=0,
+                        error=f"bars: {type(exc).__name__}",
+                        source="batch",
+                    )
+                    for symbol in group
+                }
+                if on_symbol is not None:
+                    for symbol, res in group_results.items():
+                        on_symbol(symbol, res)
+                return start, group_results
+
+        for item in await run_batch(
+            list(groups.items()),
+            send=fetch_group,
+            limit=self._max_requests(),
+            kind="sync.history",
+        ):
+            if isinstance(item, BaseException):
+                continue  # fetch_group already maps errors to rows
+            _start, group_results = item
+            results.update(group_results)
         return results
 
     def prune_5m_bars(self, now: datetime) -> int:
@@ -430,20 +469,6 @@ class MarketDataService:
         known_gaps = self.bars_cache.daily_gap_dates_many(
             wanted, {s.date for s in sessions}
         )
-        semaphore = asyncio.Semaphore(10)
-
-        async def fetch(
-            symbol: str, start: date
-        ) -> tuple[str, DataResult[list[DailyBar]]]:
-            async with semaphore:
-                sym, result = symbol, await self.sources.bars.fetch_daily_bars(
-                    symbol, start, end
-                )
-                if on_symbol is not None:
-                    on_symbol(sym, result)
-                return sym, result
-
-        fetches = []
         fetch_start: dict[str, date] = {}
         for symbol in wanted:
             gaps = known_gaps.get(symbol, set())
@@ -461,11 +486,39 @@ class MarketDataService:
             if end not in missing:
                 missing.append(end)
             fetch_start[symbol] = min(missing)
-            fetches.append(fetch(symbol, min(missing)))
 
-        fetched = await asyncio.gather(*fetches)
+        # Item 078: one request per symbol, sent as a batch — at most
+        # concurrency.max_requests in flight, results still per symbol.
+        async def fetch(
+            symbol: str,
+        ) -> tuple[str, DataResult[list[DailyBar]]]:
+            try:
+                result = await self.sources.bars.fetch_daily_bars(
+                    symbol, fetch_start[symbol], end
+                )
+            except Exception as exc:  # noqa: BLE001 - per-symbol error row
+                # Exception text can carry request details — the class
+                # name is what the sync UI shows (hard rule 9).
+                result = DataResult(
+                    data=[],
+                    error=f"daily bars: {type(exc).__name__}",
+                    source="batch",
+                )
+            if on_symbol is not None:
+                on_symbol(symbol, result)
+            return symbol, result
+
+        fetched = await run_batch(
+            wanted,
+            send=fetch,
+            limit=self._max_requests(),
+            kind="sync.daily_bars",
+        )
         results: dict[str, DataResult[int]] = {}
-        for symbol, result in fetched:
+        for item in fetched:
+            if isinstance(item, BaseException):
+                continue  # fetch already maps errors to DataResults
+            symbol, result = item
             if result.error is not None:
                 results[symbol] = DataResult(
                     data=0, error=result.error, source=result.source

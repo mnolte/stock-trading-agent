@@ -138,7 +138,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 075 | feat | Insights UX: five questions (issue #232) | `archive/075-feat-insights-ux.md` | #237 | #256 | building |
 | 076 | feat | Performance UX (issue #233) | `archive/076-feat-performance-ux.md` | #237 | #264 | building |
 | 077 | feat | Universe UX and Data sync (issue #234) | `archive/077-feat-universe-ux.md` | #237 | #265, #269 | building |
-| 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `078-feat-concurrent-requests.md` | #237 | — | planned |
+| 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `archive/078-feat-concurrent-requests.md` | #237 | #266 | building |
 | 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `archive/079-feat-review-stories.md` | #237 | #270 | building |
 | 080 | analysis | Security audit of the repository (`docs/analysis/080-security-audit.md`; issue #241 for the GitHub settings) | — | #251 | — | merged |
 | 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `archive/081-fix-keys-out-of-error-text.md` | #251 | #268 | building |

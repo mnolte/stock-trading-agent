@@ -803,6 +803,24 @@ def check_execution_mode(config: AppConfig) -> None:
         raise RuntimeError(f"Refusing to start: unknown execution.mode {mode!r}")
 
 
+def check_concurrency(config: AppConfig) -> None:
+    """``concurrency.max_requests`` is an integer 1-50 (item 078).
+
+    It sizes every batch and the HTTP pools, so a bad value refuses
+    startup rather than degrading mid-run.
+    """
+    raw = config.get("concurrency", "max_requests", default=20)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 0
+    if isinstance(raw, bool) or not 1 <= value <= 50:
+        raise RuntimeError(
+            f"Refusing to start: concurrency.max_requests must be an "
+            f"integer 1-50, got {raw!r}"
+        )
+
+
 def schedule_cycle_jobs(
     scheduler: AsyncIOScheduler,
     runner: CycleRunner,
@@ -984,6 +1002,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # them; the execution-mode check sees the effective mode.
     load_saved_settings(config)
     check_execution_mode(config)
+    check_concurrency(config)
     check_models_at_startup(config)
     check_prompt_versions_at_startup(config)
 

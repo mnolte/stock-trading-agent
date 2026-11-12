@@ -13,6 +13,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from app.concurrency import SourceGate, gate_for
 from app.llm.base import (
     ConverseMessage,
     ConverseTool,
@@ -65,6 +66,14 @@ class ProviderClients:
         self.model = self.default_model
         self._adapters: dict[str, ModelClient] = {}
 
+    def _gate(self, provider: str) -> SourceGate:
+        """The per-provider priority gate (item 078): live cycle calls
+        before waiting sync, shadow, review, Ask and backtest ones."""
+        limit = int(
+            self._config.get("concurrency", "max_requests", default=20)
+        )
+        return gate_for(f"model:{provider}", limit=max(1, limit))
+
     def _adapter(self, provider: str) -> ModelClient:
         adapter = self._adapters.get(provider)
         if adapter is None:
@@ -100,14 +109,16 @@ class ProviderClients:
         temperature: float | None = None,
     ) -> ModelResponse:
         use_model = model or self.default_model
-        adapter = self._adapter(model_provider(self._config, use_model))
-        return await adapter.complete(
-            system=system,
-            user=user,
-            schema=schema,
-            model=use_model,
-            temperature=temperature,
-        )
+        provider = model_provider(self._config, use_model)
+        adapter = self._adapter(provider)
+        async with self._gate(provider).slot():
+            return await adapter.complete(
+                system=system,
+                user=user,
+                schema=schema,
+                model=use_model,
+                temperature=temperature,
+            )
 
     async def converse(
         self,
@@ -120,15 +131,17 @@ class ProviderClients:
     ) -> Any:
         """Route the converse round to the model's provider adapter."""
         use_model = model or self.default_model
-        adapter = self._adapter(model_provider(self._config, use_model))
-        async for event in adapter.converse(
-            system=system,
-            messages=messages,
-            tools=tools,
-            model=use_model,
-            stream=stream,
-        ):
-            yield event
+        provider = model_provider(self._config, use_model)
+        adapter = self._adapter(provider)
+        async with self._gate(provider).slot():
+            async for event in adapter.converse(
+                system=system,
+                messages=messages,
+                tools=tools,
+                model=use_model,
+                stream=stream,
+            ):
+                yield event
 
 
 def secrets_key_for(secrets: Any) -> KeyFor:

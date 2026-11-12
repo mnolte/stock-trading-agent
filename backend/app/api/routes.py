@@ -3467,6 +3467,13 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
         "config_layers": config.layer_counts(),
+        # Item 078: read at start, shown read-only — a change needs a
+        # restart (it also sizes the HTTP pools).
+        "concurrency": {
+            "max_requests": config.get_int(
+                "concurrency", "max_requests", default=20
+            )
+        },
         "mode": config.env.mode,
         # Item 067: the release calendar's read-only display — FOMC date
         # count/next/last, tracked 08:30 releases and the next release.
