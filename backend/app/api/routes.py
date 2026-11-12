@@ -4283,7 +4283,9 @@ def performance_tails(request: Request, run: int | None = None) -> dict[str, obj
     """
     config = get_config()
     with get_session_maker()() as session:
-        payload = compute_tails_payload(session, config=config, run_id=run)
+        payload = compute_tails_payload(
+            session, config=config, calendar=_calendar(request), run_id=run
+        )
     if payload.get("empty") and run is not None:
         raise HTTPException(status_code=404, detail="run not found")
     return payload
