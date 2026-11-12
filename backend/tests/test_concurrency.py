@@ -8,7 +8,6 @@ import logging
 import random
 
 import pytest
-
 from app.concurrency import (
     SourceGate,
     gate_for,

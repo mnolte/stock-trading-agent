@@ -1746,7 +1746,7 @@ async def test_max_requests_caps_model_calls_in_flight(
     """concurrency.max_requests: 3 — never more than 3 calls in flight."""
     symbols = [f"U{i:02d}" for i in range(8)]
     client = _LatencyClient(
-        latencies={s: 0.02 for s in symbols},
+        latencies=dict.fromkeys(symbols, 0.02),
         enter_symbols=set(symbols),
     )
     runner = _runner(
@@ -1805,7 +1805,7 @@ async def test_ten_slow_calls_finish_well_under_sequential(
 
     symbols = [f"V{i:02d}" for i in range(10)]
     client = _LatencyClient(
-        latencies={s: 0.25 for s in symbols}, enter_symbols=set(symbols)
+        latencies=dict.fromkeys(symbols, 0.25), enter_symbols=set(symbols)
     )
     runner = _runner(
         session_factory,
