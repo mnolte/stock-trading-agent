@@ -6534,11 +6534,11 @@ def server_heartbeat_set(
     try:
         clean = ops.validate_heartbeat_url(url)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=[str(exc)]) from exc
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
     try:
         secrets.save("heartbeat_url", clean)
     except SecretError as exc:
-        raise HTTPException(status_code=422, detail=[str(exc)]) from exc
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
     return {"ok": True, "masked": ops.heartbeat_masked()}
 
 
