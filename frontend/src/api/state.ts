@@ -34,6 +34,7 @@ import type {
   RunsResponse,
   SaveKeyResult,
   SaveSettingsResult,
+  SettingsPreview,
   SettingsResponse,
   SmtpStatus,
   StartRunResult,
@@ -168,6 +169,12 @@ export function postSettings(
     reason,
     ...(promoteStrategyId !== undefined ? { promote_strategy_id: promoteStrategyId } : {}),
   });
+}
+
+export function postSettingsPreview(
+  settings: Record<string, Record<string, unknown>>,
+): Promise<SettingsPreview> {
+  return post<SettingsPreview>('/api/settings/preview', { settings });
 }
 
 export function getNotifications(

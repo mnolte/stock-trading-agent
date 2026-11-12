@@ -838,6 +838,7 @@ export interface SettingsForm {
       base_rate_sessions?: number;
       price_vs_signal_adverse_atr?: number;
     };
+    v6?: { sideways_max_target_atr?: number };
   };
   risk: {
     risk_per_trade_pct: number;
@@ -985,6 +986,38 @@ export interface SettingsResponse {
     } | null;
     fred: string;
   } | null;
+  /** Item 069: active shadows' settings overrides, flattened to dotted
+   * paths — a row shows "Shadow A uses 45–65" when its value differs
+   * from live. */
+  strategy_overrides?: Record<
+    string,
+    { id: number; name: string; value: unknown }[]
+  >;
+}
+
+/** POST /api/settings/preview — dollar amounts and summary figures for
+ * a draft risk tree at the current equity (item 069). Read-only. */
+export interface SettingsPreview {
+  equity: string;
+  /** "risk.<key>" -> USD amount at current equity, e.g. "40.7372". */
+  amounts: Record<string, string>;
+  summary: {
+    risk_per_trade_pct: string;
+    loss_per_trade_usd: string;
+    loss_per_trade_streak_usd: string;
+    streak_factor: string;
+    losing_streak: number;
+    losing_streak_len: number;
+    max_open_positions: number;
+    positions_risk_pct: string;
+    open_risk_limit_pct: string;
+    binds_first: 'positions' | 'open_risk';
+    daily_loss_limit_pct: string;
+    daily_loss_stop_usd: string;
+    drawdown_kill_pct: string;
+    kill_switch_equity_usd: string;
+    peak_equity_usd: string;
+  };
 }
 
 // ---- Notifications ----------------------------------------------------------
