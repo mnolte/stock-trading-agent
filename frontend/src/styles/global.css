@@ -328,3 +328,48 @@ button:not([disabled]):hover {
     margin-bottom: 0;
   }
 }
+
+/* ---- Insights (item 075): four headline tiles, the funnel row and
+ * wrapping finding buttons. See design/screens/Insights.dc.html. ---- */
+@media (min-width: 821px) {
+  .sa-tiles-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+/* Funnel rows: name | bar+note | count on wide screens; below 760 px the
+ * name and count share the first line and the bar takes the second. */
+.sa-funnel {
+  display: grid;
+  grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) 72px;
+  grid-template-areas: 'name bar n';
+  gap: 4px 12px;
+  align-items: center;
+}
+.sa-funnel-name {
+  grid-area: name;
+}
+.sa-funnel-bar {
+  grid-area: bar;
+}
+.sa-funnel-n {
+  grid-area: n;
+  font-family: var(--sa-font-mono);
+  text-align: right;
+}
+@media (max-width: 760px) {
+  .sa-funnel {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'name n'
+      'bar bar';
+  }
+}
+/* Finding buttons wrap their labels on phones instead of clipping. */
+.sa-btnwrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sa-space-3);
+}
+.sa-btnwrap > section {
+  flex: 1 1 100%;
+}
