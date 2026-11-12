@@ -821,8 +821,9 @@ async def test_describe_warming_progress(
     calendar: FakeCalendarSource,
     tmp_path: Path,
 ) -> None:
-    """Pool symbols with no screen row show warming progress — computed
-    for the whole pool from shared windows plus two grouped queries."""
+    """Pool symbols with no screen row show one consistent status
+    (item 077): loaded history is "ready" with the next screen time,
+    missing history is "warming_up" with loaded-of-needed counts."""
     config = make_config(
         tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
     )
@@ -830,13 +831,20 @@ async def test_describe_warming_progress(
     await service.warm_up(["AAPL"])  # full history; MSFT stays cold
     payload = service.describe()
     rows = {r["symbol"]: r for r in payload["rows"]}
-    assert rows["AAPL"]["status"] == "warming_up"
+    assert rows["AAPL"]["status"] == "ready"
     assert rows["AAPL"]["failed_check"] is None
-    assert rows["AAPL"]["detail"] == "ready — enters at the next screen"
+    assert "next screen" in rows["AAPL"]["detail"]
+    assert "NY" in rows["AAPL"]["detail"]
     assert rows["MSFT"]["status"] == "warming_up"
     assert rows["MSFT"]["failed_check"] == "history"
     assert "0 of " in rows["MSFT"]["detail"]
-    assert payload["counts"]["warming_up"] == 2
+    progress = rows["MSFT"]["progress"]
+    assert progress["daily"]["have"] == 0
+    assert progress["daily"]["need"] > 0
+    assert progress["m5"]["have"] == 0
+    assert progress["m5"]["need"] > 0
+    assert payload["counts"]["warming_up"] == 1
+    assert payload["counts"]["ready"] == 1
 
 
 @pytest.mark.slow

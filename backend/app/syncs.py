@@ -53,6 +53,11 @@ _PROGRESS_INTERVAL_SECONDS = 1.0
 # (docs/SPEC.md, Universe screen → Data sync).
 ETA_MIN_DONE = 5
 
+# A scheduled job counts as late once its time has passed by this much
+# and no run started after that time today (app boot and slow fetches
+# get this grace; docs/SPEC.md, Universe screen → Data sync).
+LATE_GRACE = timedelta(minutes=10)
+
 
 def _job_label(job: str) -> str:
     return {
@@ -400,15 +405,56 @@ class SyncRuns:
             "failures": row.failures or [],
         }
 
+    def _schedule_label(self, job: str) -> str:
+        """When the job normally runs, for the Data sync row."""
+        if job == "bars_5m":
+            return "each cycle"
+        if job == "history":
+            return "when a symbol is added"
+        hour, minute = _job_schedule(job, self._config)
+        label = f"{hour:02d}:{minute:02d} NY"
+        if job == "screen":
+            return f"{label} · trading days"
+        if job == "fred":
+            return f"{label} & 17:00 NY · daily"
+        return f"{label} · daily"
+
+    def _is_late(self, job: str, row: SyncRunRow | None) -> bool:
+        """A scheduled job is late when its New York time passed
+        ``LATE_GRACE`` ago and its latest run started before today's
+        scheduled time. On-demand jobs (``bars_5m``, ``history``) have
+        no due time and are never late; the screen is not due on a day
+        the market is closed."""
+        if job in ("bars_5m", "history"):
+            return False
+        now_ny = _aware(self._clock.now()).astimezone(NY_TZ)
+        hour, minute = _job_schedule(job, self._config)
+        due = datetime.combine(now_ny.date(), dtime(hour, minute), NY_TZ)
+        if now_ny < due + LATE_GRACE:
+            return False
+        if (
+            job == "screen"
+            and self._calendar is not None
+            and self._calendar.session_for(now_ny.date()) is None
+        ):
+            return False
+        if row is None or row.started_at is None:
+            return True
+        return _aware(row.started_at).astimezone(NY_TZ) < due
+
     def describe(self) -> dict[str, Any]:
         """GET /api/universe/sync: the latest run per job plus the
         history job's live progress and time left."""
         latest = self._latest_rows()
-        jobs = [
-            self._row_payload(latest[job])
-            for job in SYNC_JOBS
-            if job in latest
-        ]
+        jobs = []
+        for job in SYNC_JOBS:
+            row = latest.get(job)
+            if row is None:
+                continue
+            payload = self._row_payload(row)
+            payload["schedule"] = self._schedule_label(job)
+            payload["late"] = self._is_late(job, row)
+            jobs.append(payload)
         history = self.history_progress()
         return {
             "jobs": jobs,
