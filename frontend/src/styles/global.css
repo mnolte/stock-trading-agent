@@ -328,3 +328,19 @@ button:not([disabled]):hover {
     margin-bottom: 0;
   }
 }
+
+/* ---- LLM inspector (item 074): label–value rows stack under 760 px,
+ * the label above its text. ---- */
+.insp-kv {
+  display: grid;
+  grid-template-columns: minmax(96px, 120px) minmax(0, 1fr);
+  gap: 8px 14px;
+  font-size: var(--sa-text-md);
+  line-height: 1.5;
+}
+@media (max-width: 760px) {
+  .insp-kv {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 0;
+  }
+}

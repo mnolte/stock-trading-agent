@@ -1978,6 +1978,8 @@ export interface ReadinessResponse {
 
 export type LlmCallOutcome = 'success' | 'warning' | 'error';
 export type LlmCallSource = 'live' | 'shadow' | 'review' | 'ask' | 'backtest';
+/** Item 074: none | watch | act — set once at write time, never recomputed. */
+export type LlmCallAttention = 'none' | 'watch' | 'act';
 
 /** The ask metadata on an ask call: its thread and the question it
  * served ("Question k of n") with the screen it was asked on. */
@@ -2020,6 +2022,7 @@ export interface LlmCallRow {
   reasons: string[];
   error_type: string | null;
   http_status: number | null;
+  attention: LlmCallAttention;
   backfilled: boolean;
 }
 
@@ -2036,12 +2039,29 @@ export interface LlmCallsSummary {
   cost_total: number | null;
   cost_by_source: Record<LlmCallSource, number | null>;
   latency: { median_ms: number | null; p95_ms: number | null; counted: number };
+  /** Item 074: calls per attention level under the filters. */
+  attention: Record<LlmCallAttention, number>;
   buckets: {
     session_date: string;
+    /** One-session periods bucket per cycle; `key` is `cycle:<id>` or
+     * `after_close`, with `label` the cycle's New York time. */
+    key?: string;
+    cycle_id?: number | null;
+    label?: string | null;
     calls: number;
     success: number;
     warning: number;
     error: number;
+  }[];
+  /** Item 074: most frequent reasons, with fix, level and filter. */
+  top_reasons?: {
+    reason: string;
+    change_reason: string | null;
+    kind: string | null;
+    count: number;
+    fix: string | null;
+    attention: LlmCallAttention;
+    filter: string;
   }[];
   /** Session calendar under the other filters (date range ignored). */
   session_dates: string[];
@@ -2081,6 +2101,19 @@ export interface LlmCallDetail extends LlmCallRow {
   };
   result: string;
   explanation: string | null;
+  /** The action the model chose before code changed it (changed_by_code). */
+  model_action?: string | null;
+  /** Item 074: one "What happened" panel per reason — the spec's fixed
+   * text plus this call's own detail; the GUI never writes its own. */
+  explanations?: {
+    code: string;
+    title: string;
+    means: string;
+    cause: string;
+    fix: string;
+    detail: string | null;
+    links: { label: string; href: string }[];
+  }[];
   link: string | null;
   /** The model's configured effort — Claude models only. */
   effort?: string | null;

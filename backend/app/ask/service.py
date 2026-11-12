@@ -33,6 +33,7 @@ from app.ask.tools import TOOLS, AskDeps, run_tool, step_label
 from app.data.cache import _naive_utc
 from app.db.models import AskMessage, AskThread, LlmCall
 from app.decide.prompt import cached_prompt
+from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
 from app.llm.base import (
     ConverseMessage,
@@ -434,6 +435,7 @@ async def answer(
                 scrub_values=scrub_values,
             )
             row.ask_message_id = message_id
+            row.attention = attention_for_call(session, row)
             session.add(row)
             session.commit()
         if result.tokens_in:

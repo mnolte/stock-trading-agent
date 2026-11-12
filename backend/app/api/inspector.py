@@ -57,6 +57,18 @@ from app.decide.prompt import _manifest as _prompt_manifest
 from app.decide.snapshot import strip_internal
 from app.decide.v3 import v3_send_snapshot
 from app.decide.v4 import v4_send_snapshot
+from app.inspector.explain import change_reason_and_detail, explanation_items
+from app.llm.reasons import (
+    LINK_DECISION,
+    LINK_INSIGHTS,
+    LINK_KEYS,
+    LINK_LOGS,
+    LINK_POSITIONS,
+    LINK_REVIEWS,
+    LINK_SETTINGS,
+    LINK_STRATEGY,
+    REASONS,
+)
 
 router = APIRouter()
 
@@ -67,7 +79,7 @@ _OUTCOMES = ("success", "warning", "error")
 
 _FILTER_KEYS = (
     "from", "to", "outcome", "source", "symbol", "action", "reason",
-    "model", "prompt", "strategy", "cycle",
+    "model", "prompt", "strategy", "cycle", "attention", "kind",
 )
 
 
@@ -182,7 +194,58 @@ def _conditions(
         )
     if skip != "cycle" and (cycle := q.get("cycle")):
         conds.append(_cycle_cond(cycle))
+    if skip != "attention" and (attention := q.get("attention")):
+        conds.append(LlmCall.attention == attention)
+    if skip != "kind" and (kind := q.get("kind")):
+        conds.append(LlmCall.kind == kind)
     return conds
+
+
+def _cycle_buckets(
+    session: Session, conds: list[ColumnElement[bool]], day: date
+) -> list[dict[str, Any]]:
+    """Per-cycle buckets for a one-session period, plus the after-close
+    bucket for calls with no cycle (reviews, asks)."""
+    from app.market.clock import NY_TZ
+
+    rows = session.execute(
+        select(LlmCall.cycle_id, Cycle.scheduled_time, LlmCall.outcome, func.count())
+        .select_from(LlmCall)
+        .outerjoin(Cycle, LlmCall.cycle_id == Cycle.id)
+        .where(*conds)
+        .group_by(LlmCall.cycle_id, Cycle.scheduled_time, LlmCall.outcome)
+    ).all()
+    groups: dict[int | None, dict[str, Any]] = {}
+    times: dict[int, datetime] = {}
+    for cycle_id, scheduled, outcome, n in rows:
+        bucket = groups.setdefault(
+            cycle_id,
+            {
+                "session_date": day.isoformat(),
+                "key": f"cycle:{cycle_id}" if cycle_id is not None else "after_close",
+                "cycle_id": cycle_id,
+                "label": None,
+                "calls": 0,
+                "success": 0,
+                "warning": 0,
+                "error": 0,
+            },
+        )
+        if scheduled is not None:
+            times[cycle_id] = scheduled
+        bucket["calls"] += int(n)
+        if outcome in bucket:
+            bucket[outcome] += int(n)
+    for cycle_id, bucket in groups.items():
+        if cycle_id is None:
+            bucket["label"] = "After the close"
+        elif cycle_id in times:
+            bucket["label"] = times[cycle_id].replace(tzinfo=NY_TZ).strftime("%H:%M")
+    # Cycle ids are created in scheduled order, so they sort the buckets.
+    return sorted(
+        groups.values(),
+        key=lambda b: (b["cycle_id"] is None, b["cycle_id"] or 0),
+    )
 
 
 def _query_params(request: Request) -> dict[str, str | None]:
@@ -225,6 +288,7 @@ def _row_json(call: LlmCall, strategy_names: dict[int, str]) -> dict[str, Any]:
         "reasons": call.reasons,
         "error_type": call.error_type,
         "http_status": call.http_status,
+        "attention": call.attention,
         "backfilled": call.backfilled,
     }
 
@@ -388,6 +452,14 @@ def calls_summary(request: Request) -> dict[str, Any]:
             ]
         cost_total = sum(day_costs, Decimal(0)) if day_costs else None
 
+        # One session of calls buckets per cycle, with the reviews and
+        # asks that ran after the close in their own bucket
+        # (docs/SPEC.md, LLM call history — Summary).
+        period_from = _parse_day(q.get("from"), "from")
+        period_to = _parse_day(q.get("to"), "to")
+        if period_from is not None and period_from == period_to:
+            buckets = _cycle_buckets(session, conds, period_from)
+
         # Median/p95 without pulling every latency into Python: two
         # ordered offset lookups against the count.
         n_lat = session.execute(
@@ -467,14 +539,30 @@ def calls_summary(request: Request) -> dict[str, Any]:
         # Reasons are few distinct JSON lists: counting the raw values
         # uses the reasons index, then Python fans each list out into
         # per-reason counts — json_each per row was the slow option.
+        # Attention and kind ride along so Top reasons can show the
+        # level and the review kind, and the per-attention totals come
+        # free: every row lands in exactly one group (item 074).
         reason_options: dict[str, int] = {}
-        for raw, n in session.execute(
-            select(LlmCall.reasons, func.count())
+        reason_meta: dict[str, dict[str, Any]] = {}
+        attention_counts = dict.fromkeys(("none", "watch", "act"), 0)
+        _ATTENTION_RANK = {"none": 0, "watch": 1, "act": 2}
+        for raw, attention, kind, n in session.execute(
+            select(LlmCall.reasons, LlmCall.attention, LlmCall.kind, func.count())
             .where(*_conditions(q, skip="reason"))
-            .group_by(LlmCall.reasons)
+            .group_by(LlmCall.reasons, LlmCall.attention, LlmCall.kind)
         ):
+            if attention in attention_counts:
+                attention_counts[attention] += int(n)
             for reason in raw if isinstance(raw, list) else []:
                 reason_options[reason] = reason_options.get(reason, 0) + int(n)
+                meta = reason_meta.setdefault(
+                    reason, {"attention": "none", "kinds": set()}
+                )
+                if _ATTENTION_RANK.get(attention, 0) > _ATTENTION_RANK[
+                    meta["attention"]
+                ]:
+                    meta["attention"] = attention
+                meta["kinds"].add(str(kind))
         # "changed_by_code · <reason>" splits the warning by the stored
         # change reason (docs/SPEC.md, LLM call history — Filters).
         je = func.json_each(LlmCall.reasons).table_valued("value").alias(
@@ -489,8 +577,8 @@ def calls_summary(request: Request) -> dict[str, Any]:
             func.json_extract(ShadowDecision.gates_result, "$.blocked_by"),
             func.json_extract(ShadowDecision.validation_result, "$.reason"),
         )
-        for change_reason, n in session.execute(
-            select(cbc_reason, func.count())
+        for change_reason, attention, kind, n in session.execute(
+            select(cbc_reason, LlmCall.attention, LlmCall.kind, func.count())
             .select_from(LlmCall)
             .outerjoin(Decision, LlmCall.decision_id == Decision.id)
             .outerjoin(
@@ -498,13 +586,46 @@ def calls_summary(request: Request) -> dict[str, Any]:
                 LlmCall.shadow_decision_id == ShadowDecision.id,
             )
             .where(*_conditions(q, skip="reason"), cbc)
-            .group_by(cbc_reason)
+            .group_by(cbc_reason, LlmCall.attention, LlmCall.kind)
         ):
             if change_reason is None:
                 continue
             key = f"changed_by_code.{change_reason}"
             reason_options[key] = reason_options.get(key, 0) + int(n)
+            meta = reason_meta.setdefault(
+                key, {"attention": "none", "kinds": set()}
+            )
+            if _ATTENTION_RANK.get(attention, 0) > _ATTENTION_RANK[
+                meta["attention"]
+            ]:
+                meta["attention"] = attention
+            meta["kinds"].add(str(kind))
         options["reason"] = reason_options
+
+        # Top reasons: most frequent first, six rows at most, each with
+        # its one-line fix, attention level and the filter that lists
+        # those calls (docs/SPEC.md, LLM call history — Summary).
+        top_reasons = []
+        for key, count in sorted(
+            reason_options.items(), key=lambda kv: (-kv[1], kv[0])
+        )[:6]:
+            if key.startswith("changed_by_code."):
+                base_code, change_reason = "changed_by_code", key.split(".", 1)[1]
+            else:
+                base_code, change_reason = key, None
+            meta = reason_meta.get(key, {})
+            kinds = meta.get("kinds") or set()
+            top_reasons.append(
+                {
+                    "reason": base_code,
+                    "change_reason": change_reason,
+                    "kind": next(iter(kinds)) if len(kinds) == 1 else None,
+                    "count": count,
+                    "fix": REASONS.get(base_code).fix if base_code in REASONS else None,
+                    "attention": meta.get("attention", "none"),
+                    "filter": f"reason={key}",
+                }
+            )
 
     return {
         "total": int(total),
@@ -512,7 +633,9 @@ def calls_summary(request: Request) -> dict[str, Any]:
         "cost_total": _num(cost_total),
         "cost_by_source": {s: _num(cost_by_source.get(s)) for s in _SOURCES},
         "latency": {"median_ms": median, "p95_ms": p95, "counted": n_lat},
+        "attention": attention_counts,
         "buckets": buckets,
+        "top_reasons": top_reasons,
         "session_dates": session_dates,
         "options": options,
         # Every prompt version and kind, not only ones with calls —
@@ -584,7 +707,45 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
         }
 
         body["result"], body["explanation"] = _result_text(session, call)
+        body["model_action"] = _model_action(session, call)
         body["link"] = _link(call)
+
+        # One "What happened" panel per reason (item 074): the fixed
+        # text from app.llm.reasons plus this call's own details, all
+        # read from the stored rows.
+        gates: dict[str, Any] | None = None
+        validation: dict[str, Any] | None = None
+        if call.source == "live" and call.decision_id is not None:
+            row = session.get(Decision, call.decision_id)
+        elif call.source == "shadow" and call.shadow_decision_id is not None:
+            row = session.get(ShadowDecision, call.shadow_decision_id)
+        else:
+            row = None
+        if row is not None:
+            gates = row.gates_result if isinstance(row.gates_result, dict) else None
+            validation = (
+                row.validation_result
+                if isinstance(row.validation_result, dict)
+                else None
+            )
+        change_reason, change_detail = change_reason_and_detail(gates, validation)
+        config = get_config()
+        body["explanations"] = explanation_items(
+            call,
+            stored=stored,
+            change_reason=change_reason,
+            change_detail=change_detail,
+            touches_give_up_sessions=int(
+                config.get(
+                    "outcomes", "touches_give_up_sessions", default=2
+                )
+            ),
+            slow_call_seconds=float(
+                config.get("inspector", "slow_call_seconds", default=15)
+            ),
+            resolve_link=lambda kind: _explanation_link(call, kind),
+        )
+
         ask = _ask_meta(session, [call]).get(call.id)
         body["ask"] = ask
         if ask is not None:
@@ -709,8 +870,41 @@ def _result_text(session: Session, call: LlmCall) -> tuple[str, str | None]:
     elif call.outcome == "warning":
         result = "Valid response · " + ", ".join(call.reasons)
     else:
-        result = "Valid · used as chosen"
+        result = "Valid · used as the model chose."
     return result, explanation
+
+
+def _model_action(session: Session, call: LlmCall) -> str | None:
+    """The action the model chose before code changed it (item 074's
+    "The model answered enter → code made it skip" line)."""
+    row: Decision | ShadowDecision | None = None
+    if call.source == "live" and call.decision_id is not None:
+        row = session.get(Decision, call.decision_id)
+    elif call.source == "shadow" and call.shadow_decision_id is not None:
+        row = session.get(ShadowDecision, call.shadow_decision_id)
+    if row is None:
+        return None
+    raw = (row.validation_result or {}).get("model_action")
+    return raw if isinstance(raw, str) else None
+
+
+def _explanation_link(call: LlmCall, kind: str) -> str | None:
+    """Resolve an explanation's link kind to this call's href."""
+    if kind in (LINK_DECISION, LINK_STRATEGY):
+        return _link(call)
+    if kind == LINK_SETTINGS:
+        return "/settings"
+    if kind == LINK_KEYS:
+        return "/settings"
+    if kind == LINK_LOGS:
+        return "/logs"
+    if kind == LINK_INSIGHTS:
+        return "/insights"
+    if kind == LINK_POSITIONS:
+        return "/positions"
+    if kind == LINK_REVIEWS:
+        return "/reviews"
+    return None
 
 
 def _link(call: LlmCall) -> str | None:
