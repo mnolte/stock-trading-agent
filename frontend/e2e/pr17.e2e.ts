@@ -360,7 +360,11 @@ test('scale: 71-symbol pool — held picks + Find symbol, feed in collapsed cycl
   // configured 15 rows behind Show all.
   await page.goto('/');
   await expect(page.getByText(/Sorted by rank · 15 of \d+ eligible shown/)).toBeVisible();
-  await expect(page.getByText('Rank', { exact: true })).toBeVisible();
+  // Item 073: the column header (and the rank column) hide on a phone —
+  // rows become two lines there.
+  if (testInfo.project.name !== 'mobile') {
+    await expect(page.getByText('Rank', { exact: true })).toBeVisible();
+  }
   const rows = page.locator('[aria-label="Watchlist"] button.sa-row');
   await expect(rows).toHaveCount(15);
   await page.getByRole('button', { name: /Show all 71/ }).click();

@@ -162,6 +162,9 @@ async function mockInsights(page: import('@playwright/test').Page) {
 }
 
 test('watchlist with the Sector column', async ({ page }, testInfo) => {
+  // Item 073: rank/sector/earnings hide below 760 px — the phone rows are
+  // two lines (symbol/price/day, then rules + last action).
+  test.skip(testInfo.project.name === 'mobile', 'sector column is desktop-only');
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Watchlist' })).toBeVisible({
     timeout: 60_000,
