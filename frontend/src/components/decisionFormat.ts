@@ -1,6 +1,6 @@
 /** Formatting helpers for the inspector and decision detail screens. */
 
-import { ACTIONS, REASON_CODES, labelFor } from '../labels';
+import { ACTIONS, NO_CALL_REASONS, REASON_CODES, labelFor } from '../labels';
 
 export function actionColor(action: string | null): string {
   switch (action) {
@@ -67,6 +67,33 @@ export function actionLabel(action: string): string {
 /** Why a decision recorded no call: rules, call cap, quote missing, model error. */
 export function noCallReasonLabel(reason: string): string {
   return labelFor(REASON_CODES, reason);
+}
+
+/** "pre-filter: RSI 74 > 70" — the latest-decision card's one line for a
+ * no_call (item 073): the label-map phrase, a colon, then the stored
+ * detail. The card never shows "confidence —". */
+export function noCallLine(decision: {
+  no_call_reason: string | null;
+  why: string | null;
+}): string {
+  const reason = decision.no_call_reason ?? 'rules';
+  const label = labelFor(NO_CALL_REASONS, reason);
+  const detail = noCallDetail(decision.why, reason);
+  return detail ? `${label}: ${detail}` : label;
+}
+
+function noCallDetail(why: string | null, reason: string): string | null {
+  if (!why) return null;
+  let detail = why.trim();
+  // Older rows prefixed the detail with the reason code itself.
+  detail = detail.replace(
+    new RegExp(`^${reason.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[·:]\\s*`, 'i'),
+    '',
+  );
+  detail = detail.replace(/^checks_gate:\s*/, '');
+  detail = detail.replace(/\s*—\s*the model was not asked\.?$/i, '');
+  detail = detail.trim();
+  return detail || null;
 }
 
 export function formatAmsTime(iso: string): string {

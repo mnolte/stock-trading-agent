@@ -6,10 +6,12 @@ export interface StatCardProps {
   valueColor?: string;
   sub?: string;
   bar?: { width: string; color: string };
+  /** Pinned to the tile's bottom edge (item 073: the "Open →" link). */
+  footer?: ReactNode;
   style?: React.CSSProperties;
 }
 
-export function StatCard({ label, value, valueColor, sub, bar, style }: StatCardProps) {
+export function StatCard({ label, value, valueColor, sub, bar, footer, style }: StatCardProps) {
   return (
     <div
       style={{
@@ -52,6 +54,18 @@ export function StatCard({ label, value, valueColor, sub, bar, style }: StatCard
         </div>
       )}
       {sub && <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{sub}</div>}
+      {footer && (
+        <div
+          style={{
+            alignSelf: 'flex-end',
+            marginTop: 'auto',
+            fontSize: 'var(--sa-text-sm)',
+            color: 'var(--sa-accent)',
+          }}
+        >
+          {footer}
+        </div>
+      )}
     </div>
   );
 }
