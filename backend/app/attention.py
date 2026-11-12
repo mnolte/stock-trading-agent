@@ -27,6 +27,7 @@ from app.db.models import (
     Decision,
     Earning,
     Event,
+    LlmCall,
     Notification,
     Position,
     SettingsVersion,
@@ -83,6 +84,44 @@ def _item(
             else created_at
         ),
     }
+
+
+_PROVIDER_NAMES = {"openai": "OpenAI", "anthropic": "Anthropic"}
+
+
+def _llm_act_text(reason: str, call: LlmCall) -> tuple[str, str]:
+    """The Needs you headline and one-line fix for one act reason —
+    e.g. "OpenAI key refused (401)" · "replace the key"."""
+    from app.llm.reasons import REASONS, api_error_class
+
+    base = REASONS.get(reason)
+    if reason == "api_error":
+        cls = api_error_class(call.http_status)
+        provider = _PROVIDER_NAMES.get(
+            str(call.provider or "").lower(),
+            str(call.provider or "Provider").capitalize(),
+        )
+        status = call.http_status
+        if cls.key == "auth":
+            headline = f"{provider} key refused ({status or '4xx'})"
+        elif cls.key == "not_found":
+            headline = f"{provider} doesn't know the model ({status or 404})"
+        elif cls.key == "rate_limit":
+            headline = f"{provider} rate limited ({status or 429})"
+        elif cls.key == "server":
+            headline = f"{provider} failed ({status or '5xx'})"
+        else:
+            headline = f"{provider} unreachable"
+        return headline, cls.fix
+    if base is not None:
+        # The one-line fix: skip the "Once: nothing." opener, then the
+        # first sentence of what remains.
+        fix = base.fix
+        if fix.startswith("Once: nothing.") and ". " in fix:
+            fix = fix.split(". ", 1)[1]
+        fix = fix.split(". ", 1)[0].rstrip(".")
+        return base.title, fix or base.fix
+    return reason.replace("_", " ").capitalize(), "See the call in the inspector"
 
 
 def _fingerprint_groups(
@@ -448,6 +487,48 @@ def build_attention(request: Request) -> dict[str, Any]:
                     "Fix in Settings",
                     "/settings",
                     None,
+                )
+            )
+
+        # 4b. Model calls that need you (item 074, docs/SPEC.md →
+        #     Needs you): one item per reason at attention ``act``,
+        #     with its count and one-line fix. An item leaves when a
+        #     later call of that kind succeeds — the level itself is
+        #     never recomputed.
+        act_calls = session.execute(
+            select(LlmCall)
+            .where(LlmCall.attention == "act")
+            .order_by(LlmCall.sent_at.desc(), LlmCall.id.desc())
+            .limit(500)
+        ).scalars().all()
+        llm_groups: dict[tuple[str, str, str], list[LlmCall]] = {}
+        for call in act_calls:
+            for reason in call.reasons or []:
+                llm_groups.setdefault(
+                    (str(reason), call.kind, call.source), []
+                ).append(call)
+        for (reason, kind, source), calls in list(llm_groups.items())[:10]:
+            last_at = max(c.sent_at for c in calls)
+            recovered = session.execute(
+                select(func.count(LlmCall.id)).where(
+                    LlmCall.kind == kind,
+                    LlmCall.source == source,
+                    LlmCall.outcome == "success",
+                    LlmCall.sent_at > last_at,
+                )
+            ).scalar_one()
+            if recovered:
+                continue
+            headline, fix = _llm_act_text(reason, calls[0])
+            items.append(
+                _item(
+                    "llm_call",
+                    "warning",
+                    f"{headline} ×{len(calls)}",
+                    fix,
+                    "Open the inspector",
+                    f"/inspector?attention=act&reason={reason}",
+                    last_at,
                 )
             )
 

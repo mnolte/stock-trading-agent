@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 
@@ -26,6 +26,7 @@ import {
 } from '../components/decisionFormat';
 import { displayTime, nyTime, sessionDayShort } from '../format';
 import type {
+  LlmCallAttention,
   LlmCallDetail,
   LlmCallRow,
   LlmCallsPage,
@@ -35,8 +36,12 @@ import type {
 import {
   ACTION_OPTIONS,
   apiFilters,
+  ATTENTION_LEVELS,
+  attentionLabel,
   chipText,
   DEFAULT_SOURCES,
+  foldCalls,
+  foldLabel,
   groupBySession,
   moreFilterCount,
   OUTCOMES,
@@ -51,6 +56,7 @@ import {
   SOURCES,
   toSearchParams,
   type InspectorFilters,
+  type ListItem,
   type Period,
 } from './inspectorFilters';
 import { ACTIONS, REASON_CODES, labelFor } from '../labels';
@@ -75,6 +81,58 @@ const OUTCOME_STYLE = {
     border: 'var(--sa-negative-border)',
   },
 } as const;
+
+const ATTENTION_STYLE: Record<
+  LlmCallAttention,
+  { color: string; background: string; border: string }
+> = {
+  none: {
+    color: '#3DD68C',
+    background: '#123A27',
+    border: '#1E5A3E',
+  },
+  watch: {
+    color: '#FFD58A',
+    background: '#3A2A0E',
+    border: '#6B4E17',
+  },
+  act: {
+    color: '#FF8A8F',
+    background: '#3A1416',
+    border: '#7A2A2E',
+  },
+};
+
+/** The attention chip (item 074): its reason on hover. */
+function AttentionChip({
+  level,
+  why,
+}: {
+  level: LlmCallAttention;
+  why?: string;
+}) {
+  const style = ATTENTION_STYLE[level] ?? ATTENTION_STYLE.none;
+  return (
+    <span
+      title={why}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        height: '22px',
+        padding: '0 7px',
+        borderRadius: 'var(--sa-radius-sm)',
+        fontFamily: 'var(--sa-font-mono)',
+        fontSize: 'var(--sa-text-xs)',
+        whiteSpace: 'nowrap',
+        color: style.color,
+        background: style.background,
+        border: `1px solid ${style.border}`,
+      }}
+    >
+      {attentionLabel(level)}
+    </span>
+  );
+}
 
 const INPUT: CSSProperties = {
   height: '40px',
@@ -370,6 +428,27 @@ function Filters({
           onToggle={(v) => onUpdate({ outcome: v || undefined })}
         />
         <ToggleGroup
+          label="Attention"
+          options={[
+            { value: '', label: 'All' },
+            ...ATTENTION_LEVELS.map((l) => ({
+              value: l.value,
+              label: (
+                <>
+                  {l.label}{' '}
+                  <span style={{ fontFamily: 'var(--sa-font-mono)', fontWeight: 400 }}>
+                    {summary?.attention?.[l.value] ?? 0}
+                  </span>
+                </>
+              ),
+            })),
+          ]}
+          pressed={(v) => (filters.attention ?? '') === v}
+          onToggle={(v) =>
+            onUpdate({ attention: (v || undefined) as LlmCallAttention | undefined })
+          }
+        />
+        <ToggleGroup
           label="Source · pick one or more"
           options={SOURCES.map((s) => ({
             value: s.value,
@@ -491,9 +570,11 @@ function Filters({
 function SummarySection({
   summary,
   onPickDay,
+  onPickReason,
 }: {
   summary: LlmCallsSummary;
   onPickDay: (day: string) => void;
+  onPickReason: (filter: string) => void;
 }) {
   const share = (n: number) =>
     summary.total ? `${Math.round((n / summary.total) * 100)}%` : '—';
@@ -547,14 +628,69 @@ function SummarySection({
         ))}
       </div>
       <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)' }}>
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }} role="group" aria-label="Calls per session">
+        {summary.attention && (
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            {summary.attention.act} need you · {summary.attention.watch} to watch ·{' '}
+            {summary.attention.none} nothing to do
+          </div>
+        )}
+        {summary.top_reasons && summary.top_reasons.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px',
+              fontSize: 'var(--sa-text-sm)',
+            }}
+          >
+            <span style={{ color: 'var(--sa-text-muted)' }}>Top reasons</span>
+            {summary.top_reasons.map((row) => (
+              <button
+                key={row.filter}
+                type="button"
+                onClick={() => onPickReason(row.filter)}
+                title={row.fix ?? undefined}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 'var(--sa-space-2)',
+                  border: 0,
+                  background: 'transparent',
+                  padding: '2px 0',
+                  cursor: 'pointer',
+                  color: 'var(--sa-text-2)',
+                  fontSize: 'var(--sa-text-sm)',
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ fontFamily: 'var(--sa-font-mono)' }}>
+                  ×{row.count}
+                </span>
+                <span>
+                  {row.change_reason
+                    ? `Changed by code · ${labelFor(REASON_CODES, row.change_reason)}`
+                    : (REASON_LABELS[row.reason] ??
+                      labelFor(REASON_CODES, row.reason))}
+                  {row.kind ? ` · ${row.kind}` : ''}
+                </span>
+                <AttentionChip level={row.attention} />
+              </button>
+            ))}
+          </div>
+        )}
+        <div
+          style={{ display: 'flex', gap: '6px', alignItems: 'flex-end', overflowX: 'auto' }}
+          role="group"
+          aria-label="Calls per session"
+        >
           {[...summary.buckets].reverse().map((bucket) => {
             const scale = 96 / maxCalls;
+            const dayLabel = bucket.label ?? sessionDayShort(bucket.session_date);
             return (
               <button
-                key={bucket.session_date}
+                key={bucket.key ?? bucket.session_date}
                 type="button"
-                title={`${sessionDayShort(bucket.session_date)}: ${bucket.calls} calls · ${bucket.success} success · ${bucket.warning} warning · ${bucket.error} error. Click to show this session.`}
+                title={`${dayLabel}: ${bucket.calls} calls · ${bucket.success} success · ${bucket.warning} warning · ${bucket.error} error. Click to show this session.`}
                 onClick={() => onPickDay(bucket.session_date)}
                 style={{
                   flex: '1 1 0',
@@ -583,7 +719,7 @@ function SummarySection({
                   )}
                 </span>
                 <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', textAlign: 'center', color: 'var(--sa-text-muted)' }}>
-                  {sessionDayShort(bucket.session_date).replace(/ \w+$/, '')}
+                  {dayLabel.replace(/ \w+$/, '')}
                 </span>
               </button>
             );
@@ -663,16 +799,95 @@ function CallListRow({
   );
 }
 
+/** A folded run of identical calls — opens in place to the member rows. */
+function FoldRow({
+  item,
+  selectedId,
+  onSelect,
+}: {
+  item: Extract<ListItem, { type: 'fold' }>;
+  selectedId?: number;
+  onSelect: (id: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const first = item.calls[0];
+  const act = first.final_action ?? first.kind;
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="sa-row"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '44px minmax(0, 1fr) auto',
+          gap: '10px',
+          alignItems: 'center',
+          width: '100%',
+          minHeight: '52px',
+          padding: '6px 10px',
+          border: 0,
+          borderRadius: 'var(--sa-radius-sm)',
+          textAlign: 'left',
+          fontSize: 'var(--sa-text-base)',
+          color: 'var(--sa-text)',
+          background: 'transparent',
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+        }}
+      >
+        <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+          {displayTime(first.sent_at)}
+        </span>
+        <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <span style={{ display: 'flex', gap: 'var(--sa-space-2)', alignItems: 'baseline', minWidth: 0 }}>
+            <span style={{ fontWeight: 600 }}>{foldLabel(item)}</span>
+            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: actionColor(act) }}>
+              {labelFor(ACTIONS, act)}
+            </span>
+          </span>
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {rowContext(first)} · {first.model ?? 'not recorded'}
+            {first.provider ? ` · ${first.provider}` : ''}
+          </span>
+        </span>
+        <span style={{ display: 'inline-flex', gap: 'var(--sa-space-2)', alignItems: 'center' }}>
+          <AttentionChip level={first.attention} />
+          <Chip outcome={first.outcome} text={chipText(first)} />
+        </span>
+      </button>
+      {open &&
+        item.calls.map((call) => (
+          <CallListRow
+            key={call.id}
+            call={call}
+            selected={call.id === selectedId}
+            onSelect={() => onSelect(call.id)}
+          />
+        ))}
+    </div>
+  );
+}
+
 function CallDetails({
   detail,
   onCopy,
   copied,
   onBack,
+  onNewer,
+  onOlder,
+  canNewer,
+  canOlder,
 }: {
   detail: LlmCallDetail;
   onCopy: () => void;
   copied: boolean;
   onBack: (() => void) | null;
+  onNewer: () => void;
+  onOlder: () => void;
+  canNewer: boolean;
+  canOlder: boolean;
 }) {
   const location = useLocation();
   const style = OUTCOME_STYLE[detail.outcome];
@@ -711,15 +926,18 @@ function CallDetails({
     { label: 'Source', value: sourceLabel },
     {
       label: 'Model',
-      value: `${detail.model ?? '—'} · ${detail.provider ?? '—'} · temp ${detail.temperature ?? '—'}${detail.effort ? ` · effort ${detail.effort}` : ''}`,
+      value:
+        detail.model === null
+          ? 'not recorded'
+          : `${detail.model}${detail.temperature !== null ? ` · temperature ${detail.temperature}` : ''}${detail.effort ? ` · effort ${detail.effort}` : ''}`,
     },
-    { label: 'Prompt', value: detail.prompt_version ?? '—' },
+    { label: 'Prompt', value: detail.prompt_version ?? 'not recorded' },
     {
       label: 'Tokens in / out',
       value:
         detail.tokens_in !== null && detail.tokens_out !== null
           ? `${detail.tokens_in.toLocaleString('en-US')} / ${detail.tokens_out.toLocaleString('en-US')}`
-          : '— (no usage returned)',
+          : 'not recorded',
     },
     {
       label: 'Cost',
@@ -764,6 +982,28 @@ function CallDetails({
               : `${contextLabel(detail.context ?? 'candidate')}${price ? ` · price ${price}` : ''}`}
           </span>
           <span style={{ flex: 1 }} />
+          <span role="group" aria-label="Move through the list" style={{ display: 'inline-flex', gap: '6px' }}>
+            <button
+              type="button"
+              onClick={onNewer}
+              disabled={!canNewer}
+              title="Newer call (K or ↑)"
+              aria-label="Newer call"
+              style={{ ...GHOST_BUTTON, height: '32px', fontSize: 'var(--sa-text-md)', opacity: canNewer ? 1 : 0.45 }}
+            >
+              ↑ Newer
+            </button>
+            <button
+              type="button"
+              onClick={onOlder}
+              disabled={!canOlder}
+              title="Older call (J or ↓)"
+              aria-label="Older call"
+              style={{ ...GHOST_BUTTON, height: '32px', fontSize: 'var(--sa-text-md)', opacity: canOlder ? 1 : 0.45 }}
+            >
+              ↓ Older
+            </button>
+          </span>
           {detail.link && (
             <Link
               to={detail.link}
@@ -813,11 +1053,17 @@ function CallDetails({
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)', alignItems: 'center' }}>
             <Chip outcome={detail.outcome} text={detail.outcome} />
+            <AttentionChip
+              level={detail.attention}
+              why={detail.reasons
+                .map((r) => REASON_LABELS[r] ?? labelFor(REASON_CODES, r))
+                .join(' · ')}
+            />
             <b style={{ fontWeight: 600 }}>{detail.result}</b>
             {detail.reasons.length > 0 && (
-              <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              <code style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                 {detail.reasons.join(' · ')}
-              </span>
+              </code>
             )}
           </div>
           {(detail.explanation ?? (detail.outcome === 'success' ? 'No warnings.' : null)) && (
@@ -825,7 +1071,71 @@ function CallDetails({
               {detail.explanation ?? 'No warnings.'}
             </div>
           )}
+          {detail.model_action &&
+            detail.final_action &&
+            detail.model_action !== detail.final_action && (
+              <div style={{ color: 'var(--sa-text-2)', marginTop: '6px' }}>
+                The model answered{' '}
+                <code style={{ fontFamily: 'var(--sa-font-mono)' }}>{detail.model_action}</code> →
+                code made it{' '}
+                <code style={{ fontFamily: 'var(--sa-font-mono)' }}>{detail.final_action}</code>
+              </div>
+            )}
         </div>
+        {(detail.explanations ?? []).map((w) => (
+          <div
+            key={w.code}
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+              padding: '14px 16px',
+              border: '1px solid var(--sa-border)',
+              borderLeft: `3px solid ${
+                w.code === 'changed_by_code'
+                  ? 'var(--sa-accent)'
+                  : detail.outcome === 'error'
+                    ? 'var(--sa-negative)'
+                    : 'var(--sa-warning-text)'
+              }`,
+              borderRadius: 'var(--sa-radius-md)',
+              background: 'var(--sa-bg)',
+            }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '6px 10px' }}>
+              <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-md)' }}>
+                What happened · {w.title}
+              </b>
+              <code style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                {w.code}
+              </code>
+            </div>
+            <div className="insp-kv">
+              <span style={{ color: 'var(--sa-text-muted)' }}>What it means</span>
+              <span style={{ color: 'var(--sa-text-2)' }}>{w.means}</span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>Why here</span>
+              <span style={{ color: 'var(--sa-text-2)' }}>
+                {w.cause}
+                {w.detail ? ` Here: ${w.detail}.` : ''}
+              </span>
+              <span style={{ color: 'var(--sa-text-muted)' }}>What to do</span>
+              <span style={{ color: 'var(--sa-text)' }}>{w.fix}</span>
+            </div>
+            {w.links.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {w.links.map((l) => (
+                  <Link
+                    key={l.href + l.label}
+                    to={l.href}
+                    style={{ ...GHOST_BUTTON, height: '32px', fontSize: 'var(--sa-text-md)', textDecoration: 'none' }}
+                  >
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px' }}>
           {stats.map((stat) => (
             <div key={stat.label} style={{ padding: '10px', border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', minWidth: 0 }}>
@@ -891,7 +1201,11 @@ function CallDetails({
               ? 'User · question and context'
               : 'User · input snapshot as sent to the model'}
         </div>
-        <MonoPre>{detail.prompt.user ?? '—'}</MonoPre>
+        {detail.prompt.user !== null ? (
+          <StructuredView text={detail.prompt.user} />
+        ) : (
+          <span style={{ color: 'var(--sa-text-muted)' }}>—</span>
+        )}
         {detail.prompt.stored !== null && detail.prompt.stored !== detail.prompt.user && (
           <details style={{ fontSize: 'var(--sa-text-sm)' }}>
             <summary style={{ cursor: 'pointer', color: 'var(--sa-text-muted)' }}>
@@ -919,11 +1233,155 @@ function CallDetails({
           <h3 style={{ margin: 0, fontSize: 'var(--sa-text-md)', fontWeight: 600, color: 'var(--sa-text-2)', textTransform: 'uppercase', letterSpacing: 'var(--sa-label-tracking)' }}>
             Raw response
           </h3>
-          <MonoPre>{detail.raw_response}</MonoPre>
+          <StructuredView text={detail.raw_response} />
           </CardBoundary>
         </section>
       )}
     </>
+  );
+}
+
+// --- Structured input / answer rendering (item 074) -------------------------
+
+const FIELD_LABELS: Record<string, string> = {
+  action: 'Action',
+  confidence: 'Confidence',
+  stop: 'Stop',
+  target: 'Target',
+  thesis: 'Thesis',
+  invalidation: 'Invalidation',
+  risks: 'Risks',
+  headlines: 'Headlines',
+  symbol: 'Symbol',
+  price: 'Price',
+  question: 'Question',
+  answer: 'Answer',
+  kind: 'Kind',
+  model: 'Model',
+  session: 'Session',
+  context: 'Context',
+};
+
+function fieldLabel(key: string): string {
+  return (
+    FIELD_LABELS[key] ??
+    key
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+  );
+}
+
+const SNAKE_VALUE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+
+function scalarText(value: unknown): string {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'object') return JSON.stringify(value);
+  const text = String(value);
+  // Enum-like values ("swing_high") read as words, like the keys do.
+  return typeof value === 'string' && SNAKE_VALUE.test(text)
+    ? fieldLabel(text)
+    : text;
+}
+
+function JsonNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
+  if (value === null || typeof value !== 'object') {
+    return <span style={{ color: 'var(--sa-text-2)' }}>{scalarText(value)}</span>;
+  }
+  if (Array.isArray(value)) {
+    if (value.every((v) => v === null || typeof v !== 'object')) {
+      return (
+        <ul style={{ margin: 0, paddingLeft: '18px', color: 'var(--sa-text-2)' }}>
+          {value.map((v, i) => (
+            <li key={i}>{scalarText(v)}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {value.map((v, i) => (
+          <JsonNode key={i} value={v} depth={depth + 1} />
+        ))}
+      </div>
+    );
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  const scalars = entries.filter(([, v]) => v === null || typeof v !== 'object');
+  const nested = entries.filter(([, v]) => v !== null && typeof v === 'object');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {scalars.length > 0 && (
+        <div className="insp-kv">
+          {scalars.map(([k, v]) => (
+            <Fragment key={k}>
+              <span style={{ color: 'var(--sa-text-muted)' }}>{fieldLabel(k)}</span>
+              <span style={{ color: 'var(--sa-text-2)', whiteSpace: 'pre-wrap' }}>
+                {scalarText(v)}
+              </span>
+            </Fragment>
+          ))}
+        </div>
+      )}
+      {nested.map(([k, v]) => (
+        <section key={k} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <h4
+            style={{
+              margin: 0,
+              fontSize: 'var(--sa-text-sm)',
+              fontWeight: 600,
+              color: 'var(--sa-text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--sa-label-tracking)',
+            }}
+          >
+            {fieldLabel(k)}
+          </h4>
+          <JsonNode value={v} depth={depth + 1} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** Input snapshot / raw response: sections by default, raw JSON a click away. */
+function StructuredView({ text }: { text: string }) {
+  const parsed = useMemo(() => {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return undefined;
+    }
+  }, [text]);
+  const [raw, setRaw] = useState(false);
+  const structured = parsed !== undefined && parsed !== null && typeof parsed === 'object';
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {structured && (
+          <button
+            type="button"
+            onClick={() => setRaw((v) => !v)}
+            aria-pressed={raw}
+            style={{ ...GHOST_BUTTON, height: '28px', fontSize: 'var(--sa-text-sm)' }}
+          >
+            {raw ? 'Show as sections' : 'Raw JSON'}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => void navigator.clipboard?.writeText(text)}
+          style={{ ...GHOST_BUTTON, height: '28px', fontSize: 'var(--sa-text-sm)' }}
+        >
+          Copy
+        </button>
+      </div>
+      {structured && !raw ? (
+        <JsonNode value={parsed} />
+      ) : (
+        <MonoPre>{text}</MonoPre>
+      )}
+    </div>
   );
 }
 
@@ -1088,6 +1546,57 @@ export default function Inspector() {
     update({ call: newest.id });
   }, [filters.call, filters.order, listLoading, page.calls, update]);
 
+  // ↑ Newer / ↓ Older walk the loaded page; K/J and the arrow keys do
+  // the same (item 074). The list is newest-first unless order=asc.
+  const selectedIdx = page.calls.findIndex(
+    (c) => String(c.id) === String(filters.call),
+  );
+  const newerIdx =
+    selectedIdx < 0
+      ? -1
+      : filters.order === 'asc'
+        ? selectedIdx + 1
+        : selectedIdx - 1;
+  const olderIdx =
+    selectedIdx < 0
+      ? -1
+      : filters.order === 'asc'
+        ? selectedIdx - 1
+        : selectedIdx + 1;
+  const canNewer = newerIdx >= 0 && newerIdx < page.calls.length;
+  const canOlder = olderIdx >= 0 && olderIdx < page.calls.length;
+  const goTo = useCallback(
+    (idx: number) => {
+      const call = page.calls[idx];
+      if (call) update({ call: call.id });
+    },
+    [page.calls, update],
+  );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === 'INPUT' ||
+          t.tagName === 'TEXTAREA' ||
+          t.tagName === 'SELECT' ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey || selectedIdx < 0) return;
+      if (e.key === 'j' || e.key === 'J' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (canOlder) goTo(olderIdx);
+      } else if (e.key === 'k' || e.key === 'K' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (canNewer) goTo(newerIdx);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedIdx, canNewer, canOlder, newerIdx, olderIdx, goTo]);
+
   const sessionGroups = groupBySession(page.calls);
   const lastDate = dates?.[0];
 
@@ -1138,6 +1647,13 @@ export default function Inspector() {
               summary={summary.data}
               onPickDay={(day) =>
                 update({ period: 'custom', customFrom: day, customTo: day })
+              }
+              onPickReason={(filter) =>
+                update({
+                  reason: filter.startsWith('reason=')
+                    ? filter.slice('reason='.length)
+                    : filter,
+                })
               }
             />
           </>
@@ -1246,14 +1762,23 @@ export default function Inspector() {
                       </span>
                       <span style={{ color: 'var(--sa-text-muted)' }}>{counts}</span>
                     </div>
-                    {group.calls.map((call) => (
-                      <CallListRow
-                        key={call.id}
-                        call={call}
-                        selected={call.id === filters.call}
-                        onSelect={() => update({ call: call.id })}
-                      />
-                    ))}
+                    {foldCalls(group.calls, filters.call).map((item) =>
+                      item.type === 'call' ? (
+                        <CallListRow
+                          key={item.call.id}
+                          call={item.call}
+                          selected={item.call.id === filters.call}
+                          onSelect={() => update({ call: item.call.id })}
+                        />
+                      ) : (
+                        <FoldRow
+                          key={item.key}
+                          item={item}
+                          selectedId={filters.call}
+                          onSelect={(id) => update({ call: id })}
+                        />
+                      ),
+                    )}
                   </div>
                 );
               })
@@ -1328,6 +1853,10 @@ export default function Inspector() {
                   onCopy={copyLink}
                   copied={copied}
                   onBack={phone ? () => update({ call: undefined }) : null}
+                  onNewer={() => goTo(newerIdx)}
+                  onOlder={() => goTo(olderIdx)}
+                  canNewer={canNewer}
+                  canOlder={canOlder}
                 />
               )}
             </CardBody>

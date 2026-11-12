@@ -11,6 +11,16 @@ Marc asked on 12 Nov how to generate a code coverage report. There was none. No 
 - **Report only:** no minimum that fails CI (Marc: maybe later). Slow and perf runs are not measured.
 - **Laptop:** never a full coverage run (item 087); one module at a time is allowed.
 
+## 2026-11-12 — [074] LLM inspector UX (build)
+
+Build PR of 074 on branch `feat/074-inspector-ux`.
+
+- **Reasons dictionary** (`app/llm/reasons.py`): every warning/error reason carries a title, what it means, the likely cause, what to do, and links where relevant.
+- **Explanations** (`app/inspector/explain.py`): `GET /api/llm-calls/{id}` returns one "What happened" entry per reason — what it means, why it happened here, what to do — plus `model_action` for the "model answered X → code made it Y" line.
+- **Attention** (`app/inspector/attention.py`): `llm_calls.attention` (`none` | `watch` | `act`) is computed once at write time from history only and never recomputed; the spec's act/watch rules are implemented. `act` calls surface as Needs-you items on the dashboard.
+- **Summary**: `attention` counts, `top_reasons` (count, fix, attention, filter) and per-cycle buckets for single-session ranges; the `attention` filter joins the shared filters; list/detail rows carry `attention`.
+- **Frontend**: attention chips, What-happened panels, Top reasons, folded repeats in the list, structured input sections and answer rows with Raw JSON/Copy kept, ↑ Newer / ↓ Older with K/J and arrow keys.
+
 ## 2026-11-12 — [087] Tests run in CI, not on the laptop (process)
 
 Marc asked on 12 Nov to lower the CPU load that tests put on the development laptop. No behaviour change.

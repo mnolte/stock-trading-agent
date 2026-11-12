@@ -2,6 +2,10 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-12 — [074] LLM inspector UX (build)
+
+- **`Inspector.dc.html` implemented:** attention chips (Nothing to do / Keep an eye on it / Needs you) on rows, details and Top reasons; a "What happened" panel per reason with What it means / Why here / What to do and links; Top reasons rows that filter the list; repeated calls fold into one row that opens in place; input renders as labelled sections with a Raw JSON toggle; the answer renders as label–value rows; ↑ Newer / ↓ Older buttons with K/J and arrow keys; the success line reads "Valid · used as the model chose." Phone layout stacks the label–value rows.
+
 ## 2026-11-11 — [080] Security audit: Settings and Sign in
 
 - **`Settings.dc.html` → Access:** new group **Known browsers** above Signed-in devices (three browsers with "known since" and "last sign-in", Remove, the note on what a known browser may do and the break-glass command); the "Confirm before risky actions" text now names every loosening change (083, 082). New screenshot `Settings-access.png`.
