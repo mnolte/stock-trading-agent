@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.db.backup import dated_backups
+from app.errors import safe_error
 from app.ops.urls import UrlRejected, validate_public_https_url
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ def load_credentials(secrets: SecretsStore, resolver: object = None) -> OffsiteC
     try:
         endpoint = validate_public_https_url(endpoint, resolver=resolver)
     except UrlRejected as exc:
-        raise OffsiteError(f"backup endpoint refused: {exc}") from exc
+        raise OffsiteError(f"backup endpoint refused: {safe_error(exc)}") from exc
     if not bucket:
         raise OffsiteError("backup credentials have no bucket")
     for key in ("access_key_id", "secret_access_key"):

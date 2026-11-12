@@ -23,6 +23,7 @@ from app.db.models import Cycle, EquitySnapshot
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
 from app.engine.state import ExecutionState, record_event
+from app.errors import safe_error
 from app.market.clock import NY_TZ, Clock
 
 
@@ -94,7 +95,7 @@ class PositionChecker:
                     report.ok = False
                 except Exception as exc:  # noqa: BLE001
                     report.ok = False
-                    report.errors.append(str(exc))
+                    report.errors.append(safe_error(exc))
                     log.exception("position check %s failed", cycle.id)
                 cycle.status = "done" if report.ok else "error"
                 cycle.errors = report.errors or None
