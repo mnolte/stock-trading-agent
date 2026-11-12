@@ -9,8 +9,10 @@ keep their own shapes and word caps.
 import json
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+from sqlalchemy.orm import Session, sessionmaker
 from app.config import AppConfig
 from app.db.models import Cycle, Run
 from app.market.clock import FakeClock
@@ -39,11 +41,10 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-def session_factory(tmp_path):
+def session_factory(tmp_path: Path) -> sessionmaker[Session]:
     """Same shape as test_reviews': rows stay readable after commit."""
     from app.db.base import Base
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
 
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     Base.metadata.create_all(engine)
@@ -139,6 +140,7 @@ def test_v3_briefing_uses_config_cap_via_format_check() -> None:
     content = ReviewService._validate(
         "briefing", "briefing.v3", {"text": _words(221)}, config
     )
+    assert content is not None
     screened, reason, detail = ReviewService._screen_content(
         "briefing", "briefing.v3", content, facts, config
     )
@@ -166,6 +168,7 @@ def test_weekly_v3_story_cap_is_separate_from_summary_cap() -> None:
         {"story": _words(340), "suggestion": None},
         config,
     )
+    assert content is not None
     screened, reason, _ = ReviewService._screen_content(
         "weekly", "weekly.v3", content, facts, config
     )
@@ -177,6 +180,7 @@ def test_weekly_v3_story_cap_is_separate_from_summary_cap() -> None:
         {"story": _words(351), "suggestion": None},
         config,
     )
+    assert content is not None
     screened, reason, _ = ReviewService._screen_content(
         "weekly", "weekly.v3", content, facts, config
     )
@@ -196,7 +200,7 @@ def test_format_problems_rules() -> None:
 
 
 async def test_weekly_v3_format_failure_falls_back_to_prose(
-    session_factory,
+    session_factory: sessionmaker[Session],
 ) -> None:
     """A story-shaped answer that breaks the format rules gets the prose
     template labelled "format check failed" — not "invalid model output"."""
@@ -223,14 +227,18 @@ async def test_weekly_v3_format_failure_falls_back_to_prose(
 
 
 async def test_list_shaped_answer_falls_back_under_v3(
-    session_factory,
+    session_factory: sessionmaker[Session],
 ) -> None:
     """The old {summary, observations} shape is not a v3 answer: the
     fallback is the story template, labelled invalid model output."""
     with session_factory() as session:
         _seed_week(session)
         session.commit()
-    legacy = {"summary": "A summary.", "observations": [], "suggestion": None}
+    legacy: dict[str, object] = {
+        "summary": "A summary.",
+        "observations": [],
+        "suggestion": None,
+    }
     service = _service(
         session_factory,
         FakeClock(SATURDAY),
@@ -244,7 +252,9 @@ async def test_list_shaped_answer_falls_back_under_v3(
     assert "story" in (review.content or {})
 
 
-async def test_weekly_v3_suggestion_gate_unchanged(session_factory) -> None:
+async def test_weekly_v3_suggestion_gate_unchanged(
+    session_factory: sessionmaker[Session],
+) -> None:
     """The v2 suggestion rules apply to v3: kept when the sample allows
     it, dropped when it doesn't — the story itself still lands."""
     story = "A quiet week.\n\nNo trades closed.\n\nThe sample is still small."
@@ -279,7 +289,9 @@ async def test_weekly_v3_suggestion_gate_unchanged(session_factory) -> None:
     assert isinstance(kept, dict) and kept["text"] == "Wait for more trades."
 
 
-async def test_briefing_v3_format_failure_falls_back(session_factory) -> None:
+async def test_briefing_v3_format_failure_falls_back(
+    session_factory: sessionmaker[Session],
+) -> None:
     day = date(2026, 10, 22)
     with session_factory() as session:
         session.add(
@@ -367,7 +379,7 @@ def test_glossary_only_terms_with_facts() -> None:
 
 
 def test_briefing_facts_carry_glossary_and_limits(
-    session_factory,
+    session_factory: sessionmaker[Session],
 ) -> None:
     """The facts the model sees include the glossary and the v3 limits;
     a recorded VIX cycle surfaces the VIX terms."""

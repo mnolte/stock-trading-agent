@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-11-12 — [079] Review stories (build)
+
+Build PR of 079 on branch `feat/079-review-stories`.
+
+- **`backend/config.example.yaml` (spec-owned):** `reviews.prompts` defaults move to `weekly.v3` and `briefing.v3` (verdict stays `verdict.v2`); `reviews.max_words` gains `weekly_story: 350` and `briefing: 220` — `weekly_summary: 120` stays for the v1/v2 prompts, whose checks keep their own limits.
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.

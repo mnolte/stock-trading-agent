@@ -1066,7 +1066,9 @@ def test_v1_suggestion_string_shape_parses(
     service = _service(session_factory, FakeClock(SATURDAY))
     content = service._validate(
         "weekly",
+        "weekly.v1",
         {"summary": "Week recap.", "observations": [], "suggestion": "Try X."},
+        _config(),
     )
     assert content is not None
     assert content["suggestion"] == "Try X."
