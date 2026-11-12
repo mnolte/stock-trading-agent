@@ -4773,16 +4773,17 @@ def dashboard(request: Request, symbol: str | None = None) -> dict[str, object]:
         output = d.model_output or {}
         rules = d.rules_result or {}
         snapshot = d.input_snapshot or {}
-        if d.final_action == "no_call":
+        why = (
             # Item 073: the card prefixes the reason label itself
             # ("pre-filter: …"), so `why` carries the detail only.
-            why = _no_call_detail(d, rules, validation, last_cycle_calls)
-        else:
-            why = (
+            _no_call_detail(d, rules, validation, last_cycle_calls)
+            if d.final_action == "no_call"
+            else (
                 output.get("thesis")
                 or validation.get("note")
                 or validation.get("error")
             )
+        )
         latest_card = {
             "id": d.id,
             "symbol": d.symbol,
@@ -5289,7 +5290,7 @@ def _no_call_detail(
     return _NO_CALL_WHY.get(reason, reason.replace("_", " "))
 
 
-def _cycle_changes(decisions: list[Decision]) -> str:
+def _cycle_changes(decisions: Sequence[Decision]) -> str:
     """The strip sentence's last clause (item 073): what the cycle
     changed — "nothing changed", "1 entry: MSFT", "JPM stop raised"."""
     enters = [d.symbol for d in decisions if d.final_action == "enter"]

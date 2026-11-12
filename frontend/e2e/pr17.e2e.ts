@@ -445,8 +445,8 @@ test('off-hours: the dashboard shows the last session, not an empty today', asyn
 
   // Cycle strip: the last session's cycles, no "today", and a countdown
   // longer than a day shows day/time only — never "in 64:12".
-  await expect(page.getByText(/cycle 6 of 6/)).toBeVisible();
-  await expect(page.getByText(/next cycle Mon .* NY/)).toBeVisible();
+  await expect(page.getByText(/Cycle 6 of 6/)).toBeVisible();
+  await expect(page.getByText(/Next cycle Mon .* NY/)).toBeVisible();
   await expect(page.getByText(/\bin \d+:\d{2}\b/)).toHaveCount(0);
 
   // The latest decision is from Friday — the compact dated card.
