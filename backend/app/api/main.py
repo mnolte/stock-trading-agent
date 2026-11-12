@@ -1120,6 +1120,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             if config.env.mode != "simulated"
             else None
         ),
+        releases=release_service,
     )
     position_checker = PositionChecker(
         executor=executor,

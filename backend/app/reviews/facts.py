@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -41,7 +41,11 @@ from app.engine.state import ExecutionState
 from app.engine.trades import _trade_r
 from app.market.calendar import NY_TZ, CalendarProvider
 from app.market.clock import Clock
+from app.reviews.glossary import glossary_for
 from app.signals.service import SignalService
+
+if TYPE_CHECKING:
+    from app.data.releases import ReleaseCalendarService
 
 UTC = ZoneInfo("UTC")
 
@@ -420,7 +424,7 @@ def weekly_facts(
         calendar.session_for(monday + timedelta(days=i)) for i in range(5)
     ]
     iso = monday.isocalendar()
-    return {
+    facts: dict[str, Any] = {
         "kind": "weekly",
         "period": {
             "id": period_id,
@@ -442,6 +446,14 @@ def weekly_facts(
         "limits": {
             "weekly_summary_words": int(
                 config.get("reviews", "max_words", "weekly_summary", default=120)
+            ),
+            # weekly.v3 (item 079): the story's own cap; the summary cap
+            # above stays for weekly.v1/v2.
+            "weekly_story_words": int(
+                config.get("reviews", "max_words", "weekly_story", default=350)
+            ),
+            "drawdown_kill_pct": float(
+                config.get("risk", "drawdown_kill_pct", default=8)
             ),
             "verdict_after_sessions": int(
                 config.get("reviews", "verdict_after_sessions", default=5)
@@ -509,6 +521,9 @@ def weekly_facts(
             )
         ),
     }
+    # Stories (item 079): only the terms whose facts are present.
+    facts["glossary"] = glossary_for(facts, config)
+    return facts
 
 
 def _sample_facts(
@@ -720,6 +735,7 @@ def briefing_facts(
     signals: SignalService | None,
     state: ExecutionState | None,
     day: date,
+    releases: ReleaseCalendarService | None = None,
 ) -> dict[str, Any]:
     """Every fact for the daily briefing of trading day ``day`` (New York)."""
     now = clock.now()
@@ -788,7 +804,11 @@ def briefing_facts(
             regime = None
 
     # ---- yesterday's result ---------------------------------------------------
-    yesterday: dict[str, Any] = {"return_pct": None, "return_usd": None}
+    yesterday: dict[str, Any] = {
+        "return_pct": None,
+        "return_usd": None,
+        "spy_return_pct": None,
+    }
     prev = calendar.previous_trading_day(day)
     before_prev = (
         calendar.previous_trading_day(prev.date) if prev is not None else None
@@ -805,15 +825,50 @@ def briefing_facts(
             yesterday = {
                 "return_pct": _f(delta / start_snap.equity * 100),
                 "return_usd": _f(delta),
+                "spy_return_pct": _f(
+                    (end_snap.spy_benchmark_value - start_snap.spy_benchmark_value)
+                    / start_snap.spy_benchmark_value
+                    * 100
+                )
+                if start_snap.spy_benchmark_value
+                and end_snap.spy_benchmark_value is not None
+                else None,
             }
 
-    return {
+    # ---- VIX (item 079): the newest usable FRED close and its 1y
+    # percentile, from the latest cycle that recorded them ------------------
+    vix_cycle = session.execute(
+        select(Cycle)
+        .where(Cycle.kind == "cycle", Cycle.vix_close.is_not(None))
+        .order_by(Cycle.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    vix: dict[str, Any] | None = None
+    if vix_cycle is not None:
+        vix = {
+            "close": _f(vix_cycle.vix_close),
+            "date": (
+                vix_cycle.vix_date.isoformat()
+                if vix_cycle.vix_date is not None
+                else None
+            ),
+            "percentile_1y": _f(vix_cycle.vix_percentile_1y),
+            "stale": bool(vix_cycle.vix_stale),
+        }
+
+    next_release = (
+        releases.next_release(now) if releases is not None else None
+    )
+
+    facts: dict[str, Any] = {
         "kind": "briefing",
         "date": day.isoformat(),
         "positions": positions,
         "earnings_today": earnings_today,
         "earnings_tomorrow": earnings_tomorrow,
         "regime": regime or "unavailable",
+        "vix": vix,
+        "next_release": next_release,
         "yesterday": yesterday,
         "banners": banner_facts(
             session,
@@ -823,11 +878,19 @@ def briefing_facts(
             state=state,
         ),
         "limits": {
+            # briefing.v3 (item 079): the story's cap; briefing.v1/v2 keep
+            # their fixed 80-word check in code, not this number.
             "briefing_words": int(
-                config.get("reviews", "max_words", "briefing", default=80)
-            )
+                config.get("reviews", "max_words", "briefing", default=220)
+            ),
+            "earnings_blackout_days": int(
+                config.get("risk", "earnings_blackout_days", default=3)
+            ),
         },
     }
+    # Stories (item 079): only the terms whose facts are present.
+    facts["glossary"] = glossary_for(facts, config)
+    return facts
 
 
 def verdict_eligible(decision: Decision) -> bool:
