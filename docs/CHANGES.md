@@ -22,6 +22,20 @@ First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kic
 - **Artifacts** `coverage-backend` (`backend/htmlcov/`, `backend/coverage.xml`) and `coverage-frontend` (`frontend/coverage/`), 7 days.
 - **Docs:** `AGENTS.md` → Commands (one-module coverage locally; a full coverage run joins the never-run-locally list), README gains a "Tests and coverage" section.
 
+## 2026-11-12 — [079] Review stories (build)
+
+Build PR of 079 on branch `feat/079-review-stories`.
+
+- **`backend/config.example.yaml` (spec-owned):** `reviews.prompts` defaults move to `weekly.v3` and `briefing.v3` (verdict stays `verdict.v2`); `reviews.max_words` gains `weekly_story: 350` and `briefing: 220` — `weekly_summary: 120` stays for the v1/v2 prompts, whose checks keep their own limits.
+
+## 2026-11-12 — [081] Keys out of error text (build, part 1)
+
+Build PR of 081 on branch `fix/081-keys-out-of-error-text` — the S1 part (issue #238); Ask settings and the heartbeat URL follow in the second PR.
+
+- **`safe_error`** (`app/errors.py`): exception-derived text loses every URL query string, gets the log scrubber's key patterns and all registered secret values (plus `extra`), and is cut to 300 characters. Every `DataResult(error=…)`, broker error, LLM error, API `detail=` built from an exception, notification, event detail, ops status and Ask error now goes through it; an AST test fails on any `str(exc)`/`{exc}`/`repr(exc)` outside logging and scrub calls.
+- **Second line:** `NotificationService.notify` scrubs line, body and details before the row is stored or emailed; `record_event` scrubs details at any depth.
+- **Stored rows, once:** at startup, after migrations and secret providers, `app/stored_scrub.py` rewrites `cycles.data_source_health`, `notifications.subject`/`body`, `events.details` and the Ask message columns in batches of 500, guarded by a `stored_text_scrub` event row. When rows changed, Needs you shows "A key appeared in stored error text. Replace the FRED and Finnhub keys" (order 2; leaves when both keys were replaced after the scrub, or on dismiss with a note).
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.

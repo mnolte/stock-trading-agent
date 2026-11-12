@@ -445,7 +445,12 @@ def dismiss_error(
     if (
         event.resolved_at is not None
         or event.level not in ERROR_LEVELS
-        or event.affects == "none"
+        or (
+            event.affects == "none"
+            # The stored-text scrub flag (item 081) touches no
+            # decision/order/fill but is still dismissable with a note.
+            and event.event_type != "stored_text_scrub"
+        )
     ):
         raise ReadinessError("not an unresolved error")
     if event.event_type in STATE_ERROR_TYPES:

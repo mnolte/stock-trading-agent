@@ -49,6 +49,7 @@ from app.broker.models import (
 from app.data.alpaca import _parse_timestamp
 from app.data.models import DataResult
 from app.data.rate_limiter import RateLimiter
+from app.errors import safe_error
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_account(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def get_positions(self) -> DataResult[list[BrokerPosition]]:
@@ -237,7 +238,7 @@ class AlpacaPaperBroker:
             rows = [parse_position(p) for p in (list(raw) if raw else [])]
             return DataResult(data=rows, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def get_position(
         self, symbol: str
@@ -250,7 +251,7 @@ class AlpacaPaperBroker:
         except Exception as exc:  # noqa: BLE001
             # Alpaca answers a missing position with a 404 — that is a
             # flat answer, not an error. Other failures stay errors.
-            text = str(exc)
+            text = safe_error(exc)
             status = exc.status_code if isinstance(exc, APIError) else None
             # Prefer the HTTP status; a 5xx message mentioning a missing
             # position must not turn a failed read into a flat answer.
@@ -281,7 +282,7 @@ class AlpacaPaperBroker:
                 source="alpaca",
             )
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")  # type: ignore[arg-type]
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")  # type: ignore[arg-type]
 
     async def set_account_config(
         self, **fields: object
@@ -308,7 +309,7 @@ class AlpacaPaperBroker:
             )
             return await self.get_account_config()
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")  # type: ignore[arg-type]
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")  # type: ignore[arg-type]
 
     async def get_open_orders(self) -> DataResult[list[BrokerOrder]]:
         try:
@@ -352,7 +353,7 @@ class AlpacaPaperBroker:
                         orders.append(leg)
             return DataResult(data=orders, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def get_filled_orders(
         self, symbol: str, since: datetime
@@ -391,14 +392,14 @@ class AlpacaPaperBroker:
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("filled order history failed for %s", symbol)
-            return DataResult(data=[], error=str(exc), source="alpaca")
+            return DataResult(data=[], error=safe_error(exc), source="alpaca")
 
     async def get_order(self, order_id: str) -> DataResult[BrokerOrder | None]:
         try:
             raw = await self.limiter.run_read(self.trading.get_order_by_id, order_id)
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     async def get_order_by_client_id(
         self, client_order_id: str
@@ -409,7 +410,7 @@ class AlpacaPaperBroker:
             )
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     # ------------------------------------------------------------------
     # writes (one attempt each; reconciliation recovers after a failure)
@@ -441,7 +442,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def submit_stop_order(
@@ -466,7 +467,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def submit_oco_exit(
@@ -495,7 +496,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def submit_market_sell(
@@ -521,7 +522,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def replace_stop(
@@ -544,7 +545,7 @@ class AlpacaPaperBroker:
             return DataResult(data=parse_order(raw), source="alpaca")
         except Exception as exc:  # noqa: BLE001
             return DataResult(
-                data=None, error=str(exc), source="alpaca"  # type: ignore[arg-type]
+                data=None, error=safe_error(exc), source="alpaca"  # type: ignore[arg-type]
             )
 
     async def cancel_order(self, order_id: str) -> DataResult[None]:
@@ -552,7 +553,7 @@ class AlpacaPaperBroker:
             await self.limiter.run_write(self.trading.cancel_order_by_id, order_id)
             return DataResult(data=None, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     async def cancel_all_orders(self) -> DataResult[int]:
         try:
@@ -560,7 +561,7 @@ class AlpacaPaperBroker:
             cancelled = len(list(raw)) if raw else 0
             return DataResult(data=cancelled, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=0, error=str(exc), source="alpaca")
+            return DataResult(data=0, error=safe_error(exc), source="alpaca")
 
     async def close_all_positions(
         self, *, cancel_orders: bool = True
@@ -572,7 +573,7 @@ class AlpacaPaperBroker:
             orders = [parse_order(o) for o in (list(raw) if raw else [])]
             return DataResult(data=orders, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     async def get_asset(self, symbol: str) -> DataResult[BrokerAsset | None]:
         try:
@@ -595,7 +596,7 @@ class AlpacaPaperBroker:
             )
             return DataResult(data=asset, source="alpaca")
         except Exception as exc:  # noqa: BLE001
-            return DataResult(data=None, error=str(exc), source="alpaca")
+            return DataResult(data=None, error=safe_error(exc), source="alpaca")
 
     # ------------------------------------------------------------------
     # trade-updates stream
@@ -651,7 +652,7 @@ class AlpacaPaperBroker:
             )
             for failure_handler in self._failure_handlers:
                 failed: Future[None] = asyncio.run_coroutine_threadsafe(
-                    _await_failure_handler(failure_handler, str(exc)), loop
+                    _await_failure_handler(failure_handler, safe_error(exc)), loop
                 )
                 failed.add_done_callback(self._log_handler_result)
             return

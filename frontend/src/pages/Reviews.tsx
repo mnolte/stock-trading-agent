@@ -12,6 +12,8 @@ import {
 } from '../api/state';
 import { Card } from '../components/Card';
 import { CardBoundary } from '../components/CardBoundary';
+import { NumbersFold } from '../components/NumbersFold';
+import { StoryText } from '../components/StoryText';
 import { SkeletonLines } from '../components/cardState';
 import { SkeletonList } from '../components/skeletons';
 import { Chip } from '../components/Chip';
@@ -27,6 +29,7 @@ import {
   addDays,
   dayLabel,
   decidedLabel,
+  isStoryVersion,
   metaLine,
   modelCallText,
   noSuggestionText,
@@ -48,9 +51,9 @@ import { ACTIONS, CALL_KINDS, REASON_CODES, labelFor } from '../labels';
 const WEEKLY_EXPLAINER =
   'Written every Saturday 10:00 Amsterdam, covering Monday to Friday.';
 const BRIEFING_EXPLAINER =
-  'One card per trading day, written 09:00 New York with open positions and ' +
-  'stop distance, earnings today or tomorrow, the market regime, ' +
-  "yesterday's result and active banners, at most 80 words.";
+  'One card per trading day, written 09:00 New York as a short story of ' +
+  'one to three paragraphs: where the account stands, what the market ' +
+  'means for today, and what to watch.';
 
 const tileColor = {
   positive: 'var(--sa-positive)',
@@ -135,6 +138,10 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
   const miss = skips?.biggest_miss;
   const flatPct = facts.limits?.skip_flat_pct ?? 2;
   const nSessions = facts.limits?.verdict_after_sessions ?? 5;
+  // weekly.v3 (item 079): the story replaces the summary + observations;
+  // the fact tiles move under "The numbers".
+  const isStory = isStoryVersion(review.prompt_version);
+  const storyText = content?.story ?? review.text;
 
   return (
     <>
@@ -153,16 +160,34 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
           </h2>
           <MetaLine review={review} />
         </div>
-        <p
-          style={{
-            margin: 0,
-            maxWidth: '760px',
-            lineHeight: 1.6,
-            color: 'var(--sa-text-2)',
-          }}
-        >
-          {content?.summary ?? review.text}
-        </p>
+        {isStory ? (
+          <StoryText text={storyText} glossary={facts.glossary} />
+        ) : (
+          <p
+            style={{
+              margin: 0,
+              maxWidth: '760px',
+              lineHeight: 1.6,
+              color: 'var(--sa-text-2)',
+            }}
+          >
+            {content?.summary ?? review.text}
+          </p>
+        )}
+        {isStory && (
+          <div
+            style={{
+              fontSize: 'var(--sa-text-sm)',
+              fontWeight: 600,
+              color: 'var(--sa-text-muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              paddingTop: '4px',
+            }}
+          >
+            The numbers
+          </div>
+        )}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
           <StatTile
             label="Return"
@@ -446,6 +471,9 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
 
 function BriefingView({ review }: { review: ReviewDetail }) {
   const facts = review.facts as BriefingFacts | null;
+  // briefing.v3 (item 079): the story plus the "The numbers" fold; older
+  // versions keep the tile layout.
+  const isStory = isStoryVersion(review.prompt_version);
   return (
     <Card>
       <div
@@ -475,17 +503,30 @@ function BriefingView({ review }: { review: ReviewDetail }) {
           {review.status_line ?? review.content?.status_line}
         </p>
       )}
-      <p
-        style={{
-          margin: 0,
-          maxWidth: '760px',
-          lineHeight: 1.6,
-          color: 'var(--sa-text-2)',
-        }}
-      >
-        {review.content?.text ?? review.text}
-      </p>
-      {facts && (
+      {isStory ? (
+        <>
+          <StoryText
+            text={review.content?.text ?? review.text}
+            glossary={facts?.glossary}
+          />
+          <NumbersFold
+            rows={review.numbers ?? []}
+            factCount={review.fact_count}
+          />
+        </>
+      ) : (
+        <>
+          <p
+            style={{
+              margin: 0,
+              maxWidth: '760px',
+              lineHeight: 1.6,
+              color: 'var(--sa-text-2)',
+            }}
+          >
+            {review.content?.text ?? review.text}
+          </p>
+          {facts && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-2)' }}>
           <StatTile
             label="Open positions"
@@ -530,6 +571,8 @@ function BriefingView({ review }: { review: ReviewDetail }) {
             }
           />
         </div>
+          )}
+        </>
       )}
     </Card>
   );
