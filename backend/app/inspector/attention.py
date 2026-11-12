@@ -13,7 +13,7 @@ The rule numbers are the spec's fixed thresholds.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -132,7 +132,7 @@ def _incomplete_signature(payload: dict[str, Any] | None) -> str | None:
     return ",".join(sorted({m.split(".")[0].split("[")[0] for m in missing}))
 
 
-def _held_overnight(payload: dict[str, Any] | None, session_date: Any) -> bool:
+def _held_overnight(payload: dict[str, Any] | None, session_date: date) -> bool:
     """hold_below_breakeven on a position held overnight: the stored
     snapshot's position was opened on an earlier New York date."""
     position = payload.get("position") if isinstance(payload, dict) else None

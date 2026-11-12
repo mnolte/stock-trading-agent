@@ -118,7 +118,7 @@ def detail_for(
             parts.append(str(change_reason))
         return " · ".join(parts) or None
     if code == "input_incomplete":
-        parts: list[str] = []
+        detail_parts: list[str] = []
         if isinstance(stored, dict):
             facts = stored.get("facts")
             payload = facts if isinstance(facts, dict) else stored
@@ -127,21 +127,21 @@ def detail_for(
             # Collapse leaf noise to readable field names.
             names = sorted({m.split(".")[0].split("[")[0] for m in missing})
             if names:
-                parts.append("unavailable: " + ", ".join(names[:6]))
+                detail_parts.append("unavailable: " + ", ".join(names[:6]))
             status = _headline_status(payload)
             if status:
-                parts.append(f"headlines {status}")
+                detail_parts.append(f"headlines {status}")
             touches = _option_touches_missing(facts)
             if touches:
-                parts.append("option touches unavailable (" + ", ".join(touches[:4]) + ")")
+                detail_parts.append("option touches unavailable (" + ", ".join(touches[:4]) + ")")
                 give_up = (
                     _give_up_date(facts, touches_give_up_sessions)
                     if isinstance(facts, dict)
                     else None
                 )
                 if give_up:
-                    parts.append(f"marked unavailable by {give_up}")
-        return "; ".join(parts) if parts else None
+                    detail_parts.append(f"marked unavailable by {give_up}")
+        return "; ".join(detail_parts) if detail_parts else None
     if code in ("timeout", "api_error"):
         parts = []
         if call.error_type:

@@ -231,7 +231,7 @@ def _cycle_buckets(
                 "error": 0,
             },
         )
-        if scheduled is not None:
+        if cycle_id is not None and scheduled is not None:
             times[cycle_id] = scheduled
         bucket["calls"] += int(n)
         if outcome in bucket:
@@ -621,7 +621,9 @@ def calls_summary(request: Request) -> dict[str, Any]:
                     "change_reason": change_reason,
                     "kind": next(iter(kinds)) if len(kinds) == 1 else None,
                     "count": count,
-                    "fix": REASONS.get(base_code).fix if base_code in REASONS else None,
+                    "fix": (
+                        REASONS[base_code].fix if base_code in REASONS else None
+                    ),
                     "attention": meta.get("attention", "none"),
                     "filter": f"reason={key}",
                 }
@@ -715,6 +717,7 @@ def call_detail(request: Request, call_id: int) -> dict[str, Any]:
         # read from the stored rows.
         gates: dict[str, Any] | None = None
         validation: dict[str, Any] | None = None
+        row: Decision | ShadowDecision | None
         if call.source == "live" and call.decision_id is not None:
             row = session.get(Decision, call.decision_id)
         elif call.source == "shadow" and call.shadow_decision_id is not None:

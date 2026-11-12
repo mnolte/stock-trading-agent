@@ -257,6 +257,7 @@ class TestAttention:
                     sent_at=T0 + timedelta(minutes=i),
                 )
             session.flush()
+            assert second is not None
             assert _attention(session, second) == "watch"  # 2nd provider error
             session.rollback()
 
@@ -615,7 +616,8 @@ class TestAttention:
             _attention(session, later)
             session.flush()
             session.expire_all()
-            assert session.get(LlmCall, first.id).attention == "watch"
+            got = session.get(LlmCall, first.id)
+            assert got is not None and got.attention == "watch"
             session.rollback()
 
 

@@ -1061,9 +1061,9 @@ function CallDetails({
             />
             <b style={{ fontWeight: 600 }}>{detail.result}</b>
             {detail.reasons.length > 0 && (
-              <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              <code style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                 {detail.reasons.join(' · ')}
-              </span>
+              </code>
             )}
           </div>
           {(detail.explanation ?? (detail.outcome === 'success' ? 'No warnings.' : null)) && (
@@ -1106,9 +1106,9 @@ function CallDetails({
               <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-md)' }}>
                 What happened · {w.title}
               </b>
-              <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              <code style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
                 {w.code}
-              </span>
+              </code>
             </div>
             <div className="insp-kv">
               <span style={{ color: 'var(--sa-text-muted)' }}>What it means</span>
@@ -1271,11 +1271,17 @@ function fieldLabel(key: string): string {
   );
 }
 
+const SNAKE_VALUE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+
 function scalarText(value: unknown): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'boolean') return value ? 'yes' : 'no';
   if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
+  const text = String(value);
+  // Enum-like values ("swing_high") read as words, like the keys do.
+  return typeof value === 'string' && SNAKE_VALUE.test(text)
+    ? fieldLabel(text)
+    : text;
 }
 
 function JsonNode({ value, depth = 0 }: { value: unknown; depth?: number }) {
