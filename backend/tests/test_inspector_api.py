@@ -328,7 +328,7 @@ class TestDetail:
         assert data["prompt"]["mismatch"] is False
         assert '"NVDA"' in data["prompt"]["user"]
         assert data["link"] == f"/decisions/{decision_id}"
-        assert data["result"] == "Valid · used as chosen"
+        assert data["result"] == "Valid · used as the model chose."
 
     def test_hash_mismatch_reported_not_hidden(
         self, client: TestClient, seeded: dict[str, Any]

@@ -43,6 +43,7 @@ from app.decide.v2inputs import V2Build
 from app.decide.v3 import v3_send_snapshot
 from app.decide.v4 import v4_send_snapshot
 from app.engine.state import record_event
+from app.inspector.attention import attention_for_call
 from app.inspector.record import build_llm_call
 from app.logging_config import ev
 from app.market.clock import Clock, make_clock
@@ -541,8 +542,7 @@ class DecisionService:
             # transaction as the decision it made (docs/SPEC.md, LLM call
             # history). A cache hit made no request; a gates-changed final
             # action is folded in by apply_decision's sync.
-            session.add(
-                build_llm_call(
+            call_row = build_llm_call(
                     source="live",
                     kind="decision",
                     sent_at=sent_at or _naive_utc(self._clock.now()),
@@ -577,7 +577,10 @@ class DecisionService:
                     slow_ms=self._slow_ms(),
                     scrub_values=self._secrets,
                 )
+            call_row.attention = attention_for_call(
+                session, call_row, input_payload=snapshot_json
             )
+            session.add(call_row)
         return decision
 
     def _temperature(self) -> float:

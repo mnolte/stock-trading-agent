@@ -17,7 +17,7 @@ test('dashboard: cycle line, stat cards, chart, feed', async ({ page }, testInfo
   await expect(page.getByRole('button', { name: 'Kill switch' })).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText('Open risk')).toBeVisible();
+  await expect(page.getByText('Open risk', { exact: true })).toBeVisible();
   await expect(page.getByText('Re-entry')).toBeVisible();
   await expect(page.getByText('Since start')).toBeVisible();
   await expect(page.locator('[aria-label="Watchlist"] button.sa-row').first()).toBeVisible();
