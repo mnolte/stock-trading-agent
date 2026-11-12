@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-12 — [088] Code coverage report from CI (build, part 1)
+
+First build PR of 088 on branch `feat/088-code-coverage` (steps 1–6 of the kickoff; the e2e measurement follows in a second PR).
+
+- **Backend:** `pytest-cov` in the dev extra; `[tool.coverage.run]`/`[tool.coverage.report]` in `pyproject.toml` (branch coverage, `source = ["app"]`, `relative_files`). Only CI passes `--cov` options, so `make test-backend` locally measures nothing.
+- **Frontend:** `@vitest/coverage-v8` (same major as vitest); `test.coverage` in `vite.config.ts` (v8 provider, off unless `--coverage`); `make test-frontend VITEST_ARGS=--coverage` in CI.
+- **`scripts/coverage_summary.py`**: standard-library script that prints the Markdown table (lines and branches per side, backend per-package rows, 10 least-covered files with ≥50 statements) into `$GITHUB_STEP_SUMMARY` with `if: always()`; a missing report prints "no report" and never fails the step. Unit test: `backend/tests/test_coverage_summary.py`.
+- **Artifacts** `coverage-backend` (`backend/htmlcov/`, `backend/coverage.xml`) and `coverage-frontend` (`frontend/coverage/`), 7 days.
+- **Docs:** `AGENTS.md` → Commands (one-module coverage locally; a full coverage run joins the never-run-locally list), README gains a "Tests and coverage" section.
+
 ## 2026-11-12 — [089] A PR closes only issues it resolves (process)
 
 Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.

@@ -94,7 +94,7 @@ test-slow: ## pytest -m slow (multi-minute tests, e.g. the 3-month replay)
 	cd backend && ../$(PYTEST) -v -m slow -n $(TEST_WORKERS) --dist worksteal --durations=15
 
 test-frontend:
-	$(FE) test
+	$(FE) test $(VITEST_ARGS)
 
 test-e2e:
 	@if ls "$$HOME"/.cache/ms-playwright/chromium* >/dev/null 2>&1; then \
