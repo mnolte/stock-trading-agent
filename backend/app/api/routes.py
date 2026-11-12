@@ -92,6 +92,13 @@ from app.settings_service import (
 )
 from app.signals.indicators import ema_series
 from app.signals.service import SignalService
+from app.syncs import (
+    SYNC_JOBS,
+    SyncRuns,
+    tracked_fetch,
+    tracked_fetches,
+    tracked_symbols,
+)
 from app.universe.service import PoolError, UniverseService
 
 router = APIRouter()
@@ -6045,6 +6052,146 @@ async def universe_screen_now(request: Request) -> dict[str, object]:
     result = await _universe(request).run_screen()
     _notify(request, "universe", "banners", "header")
     return result
+
+
+# ----------------------------------------------------------------------
+# Sync runs (item 077): what the app is loading and what failed. The
+# sync_runs table is written by the jobs themselves; these routes only
+# read it and start a retry.
+
+
+def _syncs(request: Request) -> SyncRuns:
+    syncs = getattr(request.app.state, "syncs", None)
+    if syncs is None:
+        raise HTTPException(status_code=503, detail="sync tracking unavailable")
+    return cast(SyncRuns, syncs)
+
+
+@router.get("/universe/sync")
+def universe_sync(request: Request) -> dict[str, object]:
+    """The latest sync_runs row per job, plus the history job's live
+    progress (symbols ready of total, time left from its own pace)."""
+    return _syncs(request).describe()
+
+
+async def _retry_sync_job(
+    request: Request, job: str, symbols: list[str]
+) -> None:
+    """Re-run ``job`` for its failed symbols in the background.
+
+    Every fetch goes through the shared data services, so the retry
+    shares the Alpaca rate limiter with live work like any other job
+    (item 078's live-first rule applies to model calls; data fetches
+    already queue on the same limiter). Each path writes a fresh
+    sync_runs row through the same tracked wrappers the scheduled jobs
+    use.
+    """
+    from app.engine.cycle import BAR_TOPUP
+
+    syncs = _syncs(request)
+    market_data = getattr(request.app.state, "market_data", None)
+    sources = getattr(request.app.state, "data_sources", None)
+    clock = getattr(request.app.state, "clock", None)
+    if market_data is None or sources is None or clock is None:
+        logger.error("sync retry %s: services unavailable", job)
+        return
+    today = clock.now().astimezone(NY_TZ).date()
+    try:
+        if job == "daily_bars":
+            await tracked_symbols(
+                syncs,
+                "daily_bars",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_daily(
+                    today, symbols=group, on_symbol=on_symbol
+                ),
+                "daily bars",
+            )
+        elif job == "bars_5m":
+            now = clock.now()
+            await tracked_symbols(
+                syncs,
+                "bars_5m",
+                symbols or market_data.universe(),
+                lambda group, on_symbol: market_data.refresh_bars(
+                    now - BAR_TOPUP, now, group, on_symbol=on_symbol
+                ),
+                "5m bars",
+            )
+        elif job == "history":
+            await _universe(request).warm_up(symbols or None)
+        elif job == "screen":
+            await _universe(request).run_screen()
+        elif job == "earnings":
+            await tracked_fetch(
+                syncs,
+                "earnings",
+                lambda: market_data.refresh_earnings(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "corporate_actions":
+            await tracked_fetch(
+                syncs,
+                "corporate_actions",
+                lambda: market_data.refresh_corporate_actions(
+                    today - timedelta(days=30), today + timedelta(days=90)
+                ),
+            )
+        elif job == "ecb":
+            await tracked_fetch(
+                syncs, "ecb", lambda: sources.fx.fetch_fx(today)
+            )
+        elif job == "fred":
+            vix = getattr(request.app.state, "vix", None)
+            releases = getattr(request.app.state, "releases", None)
+            fetches = []
+            if vix is not None:
+                fetches.append(("VIX (FRED)", lambda: vix.refresh(today)))
+            if releases is not None:
+                fetches.append(
+                    ("release calendar", lambda: releases.refresh(today))
+                )
+            if fetches:
+                await tracked_fetches(syncs, "fred", fetches)
+    except Exception:  # noqa: BLE001 - the run row already records it
+        logger.exception("sync retry for %s failed", job)
+    finally:
+        _notify(request, "universe")
+
+
+@router.post("/universe/sync/{job}/retry", status_code=202)
+async def universe_sync_retry(request: Request, job: str) -> dict[str, object]:
+    """Re-run a failed sync job for its failed symbols (item 077).
+
+    409 while a cycle runs or the job itself is still running — a retry
+    is refused, never queued. 422 when the latest run has no failures.
+    """
+    if job not in SYNC_JOBS:
+        raise HTTPException(status_code=422, detail=f"unknown sync job {job!r}")
+    syncs = _syncs(request)
+    if syncs.cycle_active() or syncs.running(job):
+        raise HTTPException(
+            status_code=409, detail="a cycle or this job is already running"
+        )
+    latest = syncs.latest_run(job)
+    failures = list(latest.failures or []) if latest is not None else []
+    if not failures:
+        raise HTTPException(status_code=422, detail="the job has no failures")
+    # Per-symbol jobs record the symbol in ``what``; source-level jobs
+    # record the source, and an aborted run records the job itself —
+    # those retries cover the job's whole scope.
+    symbols = [
+        str(f.get("what"))
+        for f in failures
+        if f.get("what") not in (None, job)
+        and job in ("daily_bars", "bars_5m", "history")
+    ]
+    from app.spawn import spawn
+
+    spawn(_retry_sync_job(request, job, symbols), f"sync-retry-{job}")
+    _notify(request, "universe")
+    return {"job": job, "accepted": True}
 
 
 # ---------------------------------------------------------------------------
