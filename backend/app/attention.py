@@ -462,7 +462,8 @@ def build_attention(request: Request) -> dict[str, Any]:
             scrub_event is not None
             and scrub_event.resolved_at is None
         ):
-            tables = (scrub_event.details or {}).get("tables") or {}
+            tables_raw = (scrub_event.details or {}).get("tables")
+            tables = tables_raw if isinstance(tables_raw, dict) else {}
             changed = any(int(n) for n in tables.values())
 
             def _replaced_after(name: str) -> bool:
