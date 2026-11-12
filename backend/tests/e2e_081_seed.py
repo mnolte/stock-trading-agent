@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from app.api.main import get_session_maker
+from app.db.base import get_session_maker
 from app.db.models import Event
 from app.engine.state import record_event
 from app.market.clock import RealClock

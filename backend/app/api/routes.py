@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -2896,6 +2896,10 @@ def _held_symbols() -> set[str]:
     return held | pending
 
 
+@overload
+def _without_heartbeat(tree: dict[str, Any]) -> dict[str, Any]: ...
+@overload
+def _without_heartbeat(tree: None) -> None: ...
 def _without_heartbeat(tree: dict[str, Any] | None) -> dict[str, Any] | None:
     """Blank ``ops.heartbeat_url`` — a secret, never shown or diffed (081)."""
     if not isinstance(tree, dict):

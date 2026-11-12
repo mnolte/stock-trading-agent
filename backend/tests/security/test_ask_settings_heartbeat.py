@@ -171,7 +171,7 @@ def test_run_tool_scrubs_key_shapes_and_secret_values(
         def scrub_values(self) -> list[str]:
             return [stored_secret]
 
-    deps = _deps(session_factory, secrets=_Secrets())  # type: ignore[arg-type]
+    deps = _deps(session_factory, secrets=_Secrets())
     with session_factory() as s:
         result, err = run_tool(s, deps, "zz_leak", {})
     assert err is None
@@ -193,7 +193,7 @@ def test_no_tool_result_contains_a_stored_secret(
         def scrub_values(self) -> list[str]:
             return secrets_values
 
-    deps = _deps(session_factory, secrets=_Secrets())  # type: ignore[arg-type]
+    deps = _deps(session_factory, secrets=_Secrets())
     args = {
         "calculate": {"expression": "1 + 1"},
         "explain_rule": {"term": "rsi"},
