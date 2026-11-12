@@ -218,6 +218,7 @@ test('insights stock vs sector slice', async ({ page }, testInfo) => {
   const select = page.getByLabel('Dimension');
   await expect(select).toBeVisible({ timeout: 60_000 });
   await select.selectOption('stock_vs_sector');
-  await expect(page.getByText('above 0').first()).toBeVisible();
+  // "above 0" also appears in the (closed) how-to-read fold — scope to the cell.
+  await expect(page.getByRole('cell', { name: 'above 0' })).toBeVisible();
   await page.screenshot({ path: shot(testInfo.project.name, 'insights-stock-vs-sector'), fullPage: true });
 });

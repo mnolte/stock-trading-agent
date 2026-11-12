@@ -152,7 +152,7 @@ test('insights: headline, findings, funnel and slices', async ({ page }, testInf
   await expect(page.getByRole('heading', { name: 'Which conditions work?' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'What do confidence, fills and nights cost?' })).toBeVisible();
   await expect(page.getByText(/Probably, but not proven yet/)).toBeVisible();
-  await expect(page.getByText('Expectancy').first()).toBeVisible();
+  await expect(page.locator('.sa-tiles').getByText('Expectancy')).toBeVisible();
   await expect(page.getByText('+0.31R').first()).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Findings and early signals' })).toBeVisible();
   await expect(page.getByText('Entry cycle: 10:46')).toBeVisible();
