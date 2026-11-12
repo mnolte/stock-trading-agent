@@ -148,6 +148,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
 | 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
+| 089 | spec | A PR closes only issues it resolves | — | #PRNUM | — | merged |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
