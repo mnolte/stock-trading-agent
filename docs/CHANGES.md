@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-12 — [089] A PR closes only issues it resolves (process)
+
+Marc asked on 12 Nov that every issue a PR closes on merge is really resolved. No behaviour change.
+
+- **`AGENTS.md` → How to work:** before a PR is ready, read every issue it would close, check each point against the PR, and list them under "Issues closed". An open point means `Part of #n` and a comment on the issue, not `Closes`. Closing keywords only where meant; after the merge the issue must show as closed.
+- **`CLAUDE.md`:** the same for Claude's own PRs; in reviews an issue that would close with an open point is a blocking finding.
+- **PR template:** new section "Issues closed".
+
 ## 2026-11-12 — [088] Code coverage report from CI (process)
 
 Marc asked on 12 Nov how to generate a code coverage report. There was none. No behaviour change and no spec section.

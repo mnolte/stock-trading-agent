@@ -19,6 +19,13 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
   - screenshots in `docs/screenshots/NNN/`.
   Take the number and name from the kickoff's file name. When you open or merge the PR, update the item's row in `docs/work-items.md` (build PR and status).
   - If the item has a GitHub issue (its row in `docs/work-items.md` and its kickoff name it), write `Closes #<issue>` in the PR description, so GitHub closes the issue when the PR is merged. For an item built in several PRs, write `Part of #<issue>` in the earlier ones and `Closes #<issue>` in the last.
+  - **A PR closes only issues it resolves** (decided 12 Nov, item 089). Before you mark a PR ready, for every issue it would close:
+    1. Read the whole issue, comments included, not only its title or the kickoff.
+    2. List every thing it asks for. Check each against what is on `main` plus this PR: the file and line, or the test that proves it.
+    3. Write the result in the PR under "Issues closed": one line per issue with the points and where each is met.
+    4. If a point is not done: do it, or change the line to `Part of #<issue>` and comment on the issue what is left. Never close an issue with an open point, and never drop a point silently.
+  - GitHub closes on `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved` before `#n`, in the PR description and in commit messages. Write those words before an issue number only when you mean it; otherwise write `Refs #n` or `Part of #n`.
+  - After the merge the issue must show as closed. If it stayed open (for example a typo in the keyword), close it with a comment naming the PR.
   - In the build PR itself, move the kickoff unchanged to `docs/kickoffs/archive/` with `git mv`, in the same PR as the code. For an item built in several PRs, the first PR moves it and the later ones read it from `archive/`. An unchanged move needs no `spec change` label; don't edit the file in the same move.
 - **Ask instead of guessing.** If the spec is unclear, incomplete or contradicts itself on anything that changes behaviour, stop and ask in the PR. Don't invent a rule.
 - Every rule and gate gets a test for the pass case and the fail case.

@@ -10,6 +10,14 @@ Work item:
 
 Closes #
 
+## Issues closed
+
+<!-- For every issue this PR closes: read the whole issue and list each point
+     it asks for with where it is met (file, test). A point that is not done
+     means "Part of #n" above plus a comment on the issue, not "Closes"
+     (AGENTS.md → How to work). "None" if this PR closes no issue. -->
+
+
 ## Spec files changed
 
 <!-- "Spec files changed: none" or a list with the reason for each.
