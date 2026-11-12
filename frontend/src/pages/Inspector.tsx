@@ -678,7 +678,11 @@ function SummarySection({
             ))}
           </div>
         )}
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'flex-end' }} role="group" aria-label="Calls per session">
+        <div
+          style={{ display: 'flex', gap: '6px', alignItems: 'flex-end', overflowX: 'auto' }}
+          role="group"
+          aria-label="Calls per session"
+        >
           {[...summary.buckets].reverse().map((bucket) => {
             const scale = 96 / maxCalls;
             const dayLabel = bucket.label ?? sessionDayShort(bucket.session_date);
