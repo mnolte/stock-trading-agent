@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-11-12 — [088] Code coverage report from CI (process)
+
+Marc asked on 12 Nov how to generate a code coverage report. There was none. No behaviour change and no spec section.
+
+- **Kickoff `088-ops-code-coverage.md`** (issue #259): CI measures the backend (pytest, lines and branches) and the frontend (Vitest) on every pull request, shows the totals and the 10 least covered files in a job summary, and keeps the HTML reports as artifacts for 7 days.
+- **Playwright e2e runs are measured too** (Marc, 12 Nov): the backend under `coverage run`, the frontend with Chromium's V8 coverage and source maps, both only when CI sets `E2E_COVERAGE=1`. One `coverage` job shows Unit, E2E and All per side.
+- **Report only:** no minimum that fails CI (Marc: maybe later). Slow and perf runs are not measured.
+- **Laptop:** never a full coverage run (item 087); one module at a time is allowed.
+
 ## 2026-11-12 — [074] LLM inspector UX (build)
 
 Build PR of 074 on branch `feat/074-inspector-ux`.
