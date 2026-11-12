@@ -2,25 +2,29 @@
 
 Kickoff for Devin. Start the session with: "Build docs/kickoffs/088-ops-code-coverage.md."
 
-CI, `pyproject.toml`, the frontend's dev dependencies and Vitest config, one small script with its test, two doc lines. No application code and no behaviour changes. No spec section; `docs/CHANGES.md` entry [088]. No design. Issue: #259.
+CI, `pyproject.toml`, the frontend's dev dependencies, the Vitest and Playwright configs, one small script with its test, two doc lines. No application code and no behaviour changes. No spec section; `docs/CHANGES.md` entry [088]. No design. Issue: #259.
 
 ```text
 [088] Code coverage report from CI. Goal: every pull request shows how
-much of the backend (lines and branches) and the frontend its tests run,
-as totals in the job summary and as HTML reports to download — measured
-in CI only, with no minimum that fails the build yet.
+much of the backend (lines and branches) and the frontend its tests run
+— unit tests, the Playwright e2e runs, and both together — as totals in
+one job summary and as HTML reports to download. Measured in CI only,
+with no minimum that fails the build yet.
 Start from the latest main.
 
 Read first:
 1. AGENTS.md → Commands (CI runs the tests, not the laptop) and
    docs/README.md.
-2. .github/workflows/ci.yml (jobs backend-test and frontend-check),
-   the Makefile's test targets, pyproject.toml ([project.optional-
-   dependencies] dev, [tool.pytest.ini_options]), frontend/package.json.
+2. .github/workflows/ci.yml (jobs backend-test, frontend-check and
+   e2e), the Makefile's test targets, pyproject.toml ([project.optional-
+   dependencies] dev, [tool.pytest.ini_options]), frontend/package.json,
+   frontend/playwright.config.ts and the shared e2e fixture (the one
+   file with base.extend).
 3. docs/CHANGES.md [088].
 
-Move this kickoff to docs/kickoffs/archive/ with git mv in your PR.
-Put "Closes #259" in the PR description. One PR.
+Move this kickoff to docs/kickoffs/archive/ with git mv in your first PR.
+Two PRs: steps 1–6 (unit tests), then 7–10 (e2e and the combined
+report). Put "Part of #259" in the first and "Closes #259" in the second.
 
 1. Backend packages and config (pyproject.toml, uv.lock):
    - add pytest-cov to the dev extra; uv lock;
@@ -40,7 +44,7 @@ Put "Closes #259" in the PR description. One PR.
    `make test-backend` itself does not change: without those options it
    measures nothing, so a local run costs what it costs today.
    Not measured: backend-slow and the perf tests (timing budgets; the
-   tracer would skew them), and the e2e jobs.
+   tracer would skew them). The e2e jobs follow in step 7.
 
 3. Frontend (frontend/package.json, pnpm-lock.yaml, the Vitest config):
    - add @vitest/coverage-v8 at the same major version as vitest;
@@ -81,18 +85,94 @@ Put "Closes #259" in the PR description. One PR.
    - README: where to find the report (PR → Checks → backend-test →
      Summary; artifacts coverage-backend and coverage-frontend).
 
+7. Backend during e2e (second PR). Only when E2E_COVERAGE=1, which
+   only CI sets; without it playwright.config.ts starts exactly what it
+   starts today.
+   - the backend webServer command ends in
+       exec ../.venv/bin/python -m coverage run
+         --rcfile=../pyproject.toml --parallel-mode -m app.serve
+     (exec, so the signal reaches Python; the seed scripts before it are
+     not measured);
+   - Playwright kills web servers with SIGKILL by default, which loses
+     the data: set gracefulShutdown { signal: 'SIGTERM', timeout: 10000 }
+     on that server and sigterm = true under [tool.coverage.run]. Set
+     `concurrency` there to what the app really uses (thread, and
+     greenlet if the async database driver runs on it); say which in the
+     PR;
+   - COVERAGE_FILE=backend/.coverage.e2e-<project>; each matrix job
+     (and the E2E_AUTH invocation, if CI runs one) uploads its raw data
+     file as artifact coverage-raw-e2e-<project> (include-hidden-files:
+     true). backend-test uploads its combined .coverage the same way
+     (coverage-raw-unit).
+   Check: a run that produced no data file fails the step with a clear
+   message, so a lost SIGTERM can't pass as "0%".
+
+8. Frontend during e2e (second PR). No instrumented build: Chromium's
+   own V8 coverage plus source maps, so the tests run the same bundle
+   as today.
+   - with E2E_COVERAGE=1 the preview build has build.sourcemap = true
+     (never in the image build: test_image/compose must not ship maps);
+   - an auto fixture in the shared e2e fixture starts
+     page.coverage.startJSCoverage({ resetOnNavigation: false }) for
+     every page of the context and stops it at teardown; the one spec
+     that imports `test` from @playwright/test directly moves to the
+     shared fixture;
+   - convert to source-file coverage for src/** with one dev dependency
+     (monocart-coverage-reports, or v8-to-istanbul with istanbul's
+     report packages if that fits better; say which and why), writing
+     an istanbul coverage-final.json, json-summary and html to
+     frontend/coverage-e2e/<project>/;
+   - upload as coverage-e2e-frontend-<project>; add
+     frontend/coverage-e2e/ to .gitignore.
+   Chromium only is fine: both projects (desktop, mobile) use it.
+
+9. One report (second PR). New job `coverage` in ci.yml: needs
+   [backend-test, frontend-check, e2e], if: always(), timeout 10
+   minutes, never a required check, and it must not fail the workflow
+   when a report is missing.
+   - backend: download the raw files, `coverage combine` three ways
+     (unit only; e2e only = both projects; all) and write xml for each
+     plus one html for "all";
+   - frontend: merge the coverage-final.json files of Vitest (add the
+     "json" reporter in step 3's config) and of both e2e projects with
+     istanbul-lib-coverage (or nyc merge) into unit, e2e and all; one
+     html for "all". If the two tools' paths or statement maps don't
+     merge cleanly, show unit and e2e side by side, leave "all" out and
+     say so in the PR; don't invent a number;
+   - scripts/coverage_summary.py grows to three columns per side: Unit,
+     E2E, All (lines % and branches %), the per-package rows on All,
+     and two lists of 10: least covered files overall, and files that
+     only e2e reaches (0% in Unit, above 0% in E2E, 50 statements or
+     more). Extend its unit test for the three columns and a missing
+     column;
+   - the summary is written once, by this job, to $GITHUB_STEP_SUMMARY;
+     the per-job summaries of step 4 go away. Artifacts: coverage-all
+     (both "all" html reports and the xml/json files), 7 days.
+
+10. Docs (second PR): the README line of step 6 points to the `coverage`
+    job; "E2E_COVERAGE=1" joins the "Never run locally" list in
+    AGENTS.md → Commands.
+
 Rules: no third-party coverage service and no new action (the summary and
 the artifacts are enough); no coverage threshold, no --cov-fail-under;
 no application code touched to raise a number; no network in tests.
 Tests are proven in CI: open a draft PR early and read the checks; do
 not run the full suite, with or without coverage, on the laptop.
 
-Done when: all CI checks are green; the backend-test and frontend-check
-summaries show the tables; both artifacts open to an index.html with
-per-line detail; the PR names the four totals (backend lines, backend
-branches, frontend lines, frontend branches) and the backend-test wall
-time before and after (from the last green run on main). If it grew by
-more than 30%, say so in the PR instead of tuning it away.
+Done when, first PR: all CI checks are green; the backend-test and
+frontend-check summaries show the tables; both artifacts open to an
+index.html with per-line detail; the PR names the four totals (backend
+lines, backend branches, frontend lines, frontend branches) and the
+backend-test wall time before and after (from the last green run on
+main).
+Done when, second PR: all CI checks are green; the `coverage` job's
+summary shows Unit, E2E and All for both sides; coverage-all opens to
+per-line detail; a local `pnpm exec playwright test` without
+E2E_COVERAGE starts the same commands as before (a config unit test or
+the diff shows it); the PR names the totals and the wall time of both
+e2e jobs before and after.
+Both: if a job's time grew by more than 30%, say so in the PR instead
+of tuning it away.
 ```
 
 ## Why
@@ -104,9 +184,10 @@ Marc, 12 November: "How can I generate a code coverage report?" There was none: 
 - pytest-cov combines the data of the xdist workers by itself; `make test-backend` keeps `-n auto --dist worksteal`.
 - Tests that start a subprocess (12 test files import `subprocess`) are not measured inside that subprocess. The number for the code they start is therefore too low, never too high.
 - Branch coverage costs more time than line coverage. The 20-minute timeout of `backend-test` is expected to hold; the PR reports the real difference.
+- Playwright's `gracefulShutdown` option exists in the installed version; if not, stop the backend from a global teardown with SIGTERM by its PID (hard rule 12) instead.
+- The e2e runs use Chromium for both projects, so V8 coverage covers both. The `E2E_DRAWER_ONLY` and README-screens configs are not measured.
 - Coverage shows which lines ran, not which results were checked. It is a way to find untested files, not a quality score.
 
 ## Open questions for Marc
 
-- A minimum that fails CI (for example on `app/risk` and `app/engine`)? Left out on purpose until the first numbers are known; it would be its own small item.
-- Coverage of the Playwright e2e runs is left out (it needs an instrumented build). Say so if you want it.
+None. Decided by Marc on 12 Nov: a minimum that fails CI is "maybe later" (its own item once the numbers are known); coverage of the Playwright e2e runs is in (steps 7–10).
