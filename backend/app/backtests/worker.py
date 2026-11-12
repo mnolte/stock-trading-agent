@@ -41,6 +41,7 @@ from app.backtests.store import (
     run_dir_for,
     session_maker_for,
 )
+from app.concurrency import run_batch
 from app.config import AppConfig
 from app.data.aggregate import session_bars
 from app.data.cache import BarCache, _naive_utc
@@ -447,6 +448,13 @@ async def _fill_bar_store(
     if alpaca is None:
         return warnings
 
+    # Item 078: every (symbol, quarter) download is independent — one
+    # request each, at most concurrency.max_requests in flight; the
+    # backtest limiter still caps the rate at
+    # backtest.alpaca_calls_per_minute and the RunGate still pauses for
+    # live jobs. Bars land in the store in download order afterwards.
+    units: list[tuple[str, date, date]] = []
+    daily_symbols: list[str] = []
     for symbol in symbols:
         missing = [
             s
@@ -455,33 +463,74 @@ async def _fill_bar_store(
         ]
         if not missing:
             continue
+        daily_symbols.append(symbol)
         first, last = missing[0].date, missing[-1].date
-        for chunk_start, chunk_end in _quarters(first, last):
-            await gate.wait_for_call()
-            async with limiter.call_slot():
-                result = await alpaca.fetch_5m_bars(
-                    [symbol],
-                    datetime.combine(
-                        chunk_start, datetime.min.time(), tzinfo=NY_TZ
-                    ),
-                    datetime.combine(
-                        chunk_end, datetime.max.time(), tzinfo=NY_TZ
-                    ),
-                )
-            if result.error is not None:
-                warnings.append(
-                    f"5m bars download failed for {symbol} "
-                    f"{chunk_start}…{chunk_end}: {result.error}"
-                )
-                continue
-            # SIP returns the whole extended session; bundles keep the
-            # regular session only, same as the live cache.
-            store.store(session_bars(result.data, days))
+        units.extend(
+            (symbol, chunk_start, chunk_end)
+            for chunk_start, chunk_end in _quarters(first, last)
+        )
+
+    async def fetch_unit(
+        unit: tuple[str, date, date],
+    ) -> Any:
+        symbol, chunk_start, chunk_end = unit
         await gate.wait_for_call()
         async with limiter.call_slot():
-            result = await alpaca.fetch_daily_bars(
-                symbol, days[0].date, run.end
+            return await alpaca.fetch_5m_bars(
+                [symbol],
+                datetime.combine(
+                    chunk_start, datetime.min.time(), tzinfo=NY_TZ
+                ),
+                datetime.combine(
+                    chunk_end, datetime.max.time(), tzinfo=NY_TZ
+                ),
             )
+
+    max_requests = max(
+        1, int(config.get("concurrency", "max_requests", default=20))
+    )
+    fetched = await run_batch(
+        units, send=fetch_unit, limit=max_requests, kind="backtest.bars"
+    )
+    for (symbol, chunk_start, chunk_end), result in zip(
+        units, fetched, strict=True
+    ):
+        if isinstance(result, BaseException):
+            # Exception text can carry request details — the class name
+            # is enough for the run's warning list (hard rule 9).
+            warnings.append(
+                f"5m bars download failed for {symbol} "
+                f"{chunk_start}…{chunk_end}: {type(result).__name__}"
+            )
+            continue
+        if result.error is not None:
+            warnings.append(
+                f"5m bars download failed for {symbol} "
+                f"{chunk_start}…{chunk_end}: {result.error}"
+            )
+            continue
+        # SIP returns the whole extended session; bundles keep the
+        # regular session only, same as the live cache.
+        store.store(session_bars(result.data, days))
+
+    async def fetch_daily(symbol: str) -> Any:
+        await gate.wait_for_call()
+        async with limiter.call_slot():
+            return await alpaca.fetch_daily_bars(symbol, days[0].date, run.end)
+
+    daily_results = await run_batch(
+        daily_symbols,
+        send=fetch_daily,
+        limit=max_requests,
+        kind="backtest.daily_bars",
+    )
+    for symbol, result in zip(daily_symbols, daily_results, strict=True):
+        if isinstance(result, BaseException):
+            warnings.append(
+                f"daily bars download failed for {symbol}: "
+                f"{type(result).__name__}"
+            )
+            continue
         if result.error is None:
             store.store_daily(result.data)
         else:

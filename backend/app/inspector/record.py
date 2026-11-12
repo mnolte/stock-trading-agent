@@ -81,6 +81,8 @@ def build_llm_call(
     cost_source: str | None = None,
     slow_ms: int | None = None,
     scrub_values: ScrubValues | None = None,
+    batch_id: str | None = None,
+    batch_size: int | None = None,
 ) -> LlmCall:
     """One call-history row for a completed request.
 
@@ -140,6 +142,8 @@ def build_llm_call(
         raw_response=response.raw if response.error is None else None,
         backfilled=False,
         sent_input=sent_input,
+        batch_id=batch_id,
+        batch_size=batch_size,
     )
 
 

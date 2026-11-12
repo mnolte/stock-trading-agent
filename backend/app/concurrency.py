@@ -37,6 +37,7 @@ from typing import TypeVar, cast
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 # Batch priorities, highest first. Only "live" outranks the rest: the
 # spec orders live cycle requests before sync, shadow, review, Ask and
@@ -158,21 +159,21 @@ class BatchResults(list[T]):
         self.stats = stats
 
 
-async def run_batch[T](
+async def run_batch[T, R](
     items: Sequence[T],
-    send: Callable[[T], Awaitable[object]],
+    send: Callable[[T], Awaitable[R]],
     *,
     limit: int,
     kind: str = "batch",
     priority: str = _DEFAULT_PRIORITY,
-) -> BatchResults[T]:
+) -> BatchResults[R | BaseException]:
     """Send every item at once, at most ``limit`` in flight.
 
     ``send`` is the whole request — the source's rate limiter and
     timeout stay inside it. Returns a value or the exception per item,
     in ``items`` order; a failure never cancels the others.
     """
-    results: list[object] = [None] * len(items)
+    results: list[R | BaseException | None] = [None] * len(items)
     semaphore = asyncio.Semaphore(max(1, limit))
     in_flight = 0
     max_in_flight = 0
@@ -216,4 +217,6 @@ async def run_batch[T](
         stats.wall_seconds,
         stats.failures,
     )
-    return BatchResults(cast("list[T]", results), stats)
+    return BatchResults(
+        cast("list[R | BaseException]", results), stats
+    )
