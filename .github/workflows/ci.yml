@@ -272,51 +272,61 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
+      # Each dataset gets its own directory: coverage's reporting commands
+      # auto-combine every "<data-file>.*" sibling, so .coverage and
+      # .coverage.e2e.* in one dir would merge into the wrong report.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:
           name: coverage-raw-unit
-          path: backend/
+          path: backend/cov-unit
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:
           name: coverage-raw-e2e-desktop
-          path: backend/
+          path: backend/cov-e2e
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         continue-on-error: true
         with:
           name: coverage-raw-e2e-mobile
-          path: backend/
+          path: backend/cov-e2e
       - name: combine backend coverage (unit / e2e / all)
         run: |
           cd backend
           COV=../.venv/bin/coverage
-          mkdir -p ../coverage-report
-          # Unit data is already combined by pytest-cov.
-          if [ -f .coverage ]; then
-            $COV xml --data-file=.coverage --rcfile=../pyproject.toml \
+          mkdir -p cov-all ../coverage-report
+          R="--rcfile=../pyproject.toml"
+          # Unit data is already combined by pytest-cov; cov-unit holds only
+          # .coverage, so the auto-combine on report finds no siblings.
+          if [ -f cov-unit/.coverage ]; then
+            $COV xml --data-file=cov-unit/.coverage $R \
               -o ../coverage-report/backend-unit.xml
           fi
           # E2E: every raw file shares the .coverage.e2e. prefix
           # (desktop, mobile and their .auth runs).
           e2e_files=()
-          for f in .coverage.e2e.*; do
+          for f in cov-e2e/.coverage.e2e.*; do
             [ -f "$f" ] && e2e_files+=("$f")
           done
           if [ ${#e2e_files[@]} -gt 0 ]; then
-            $COV combine --keep --data-file=.coverage.e2e "${e2e_files[@]}"
-            $COV xml --data-file=.coverage.e2e --rcfile=../pyproject.toml \
+            $COV combine --data-file=cov-e2e/.coverage.e2e "${e2e_files[@]}"
+            $COV xml --data-file=cov-e2e/.coverage.e2e $R \
               -o ../coverage-report/backend-e2e.xml
           fi
-          # All: unit data plus every e2e file.
-          all_files=()
-          [ -f .coverage ] && all_files+=(".coverage")
-          all_files+=("${e2e_files[@]}")
-          if [ ${#all_files[@]} -gt 0 ]; then
-            $COV combine --keep --data-file=.coverage.all "${all_files[@]}"
-            $COV xml --data-file=.coverage.all --rcfile=../pyproject.toml \
+          # All: unit data plus the combined e2e data, renamed into one
+          # prefix so `coverage combine` picks both up (it scans the data
+          # file's directory for "<data-file>.*" when given no paths).
+          if [ -f cov-unit/.coverage ]; then
+            cp cov-unit/.coverage cov-all/.coverage.all.unit
+          fi
+          if [ -f cov-e2e/.coverage.e2e ]; then
+            cp cov-e2e/.coverage.e2e cov-all/.coverage.all.e2e
+          fi
+          if ls cov-all/.coverage.all.* >/dev/null 2>&1; then
+            $COV combine --data-file=cov-all/.coverage.all
+            $COV xml --data-file=cov-all/.coverage.all $R \
               -o ../coverage-report/backend-all.xml
-            $COV html --data-file=.coverage.all --rcfile=../pyproject.toml \
+            $COV html --data-file=cov-all/.coverage.all $R \
               -d ../coverage-report/backend-html
           fi
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -335,11 +345,13 @@ jobs:
           name: coverage-e2e-frontend-mobile
           path: coverage-artifacts/e2e-mobile
       - name: merge frontend coverage (unit / e2e / all)
-        run: cd frontend && node scripts/coverage-merge.mjs \
-          --unit ../coverage-artifacts/unit \
-          --e2e ../coverage-artifacts/e2e-desktop \
-          --e2e ../coverage-artifacts/e2e-mobile \
-          --out ../coverage-report/frontend
+        run: |
+          cd frontend
+          node scripts/coverage-merge.mjs \
+            --unit ../coverage-artifacts/unit \
+            --e2e ../coverage-artifacts/e2e-desktop \
+            --e2e ../coverage-artifacts/e2e-mobile \
+            --out ../coverage-report/frontend
       - name: coverage summary
         if: always()
         run: |
