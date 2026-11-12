@@ -43,9 +43,12 @@ Instructions for AI coding agents (Devin, Claude Code and others) working in thi
 uv run ruff check <changed files>                      # not the whole tree
 cd backend && uv run pytest tests/test_<area>.py -k <name>   # the tests for your change, no -n auto
 cd frontend && pnpm exec vitest run <changed test file>
+cd backend && uv run pytest tests/test_<area>.py \
+  --cov=app.<module> --cov-config=../pyproject.toml \
+  --cov-report=term-missing        # coverage for one module
 ```
 
-- **Never run locally:** `make test`, `make test-backend`, `make test-perf`, `make test-slow`, `make test-e2e`, the Playwright suite, `make security`, or a Docker image build. CI runs all of them on every push to a pull request (`.github/workflows/ci.yml`, `image.yml`).
+- **Never run locally:** `make test`, `make test-backend`, `make test-perf`, `make test-slow`, `make test-e2e`, the Playwright suite, `make security`, a full coverage run, or a Docker image build. CI runs all of them on every push to a pull request (`.github/workflows/ci.yml`, `image.yml`).
 - **Push early, as a draft PR.** Open the pull request as a draft once the first commit builds, so CI starts working while you continue. Push in batches, not after every small commit: a new push cancels the run before it.
 - **CI is the proof.** A step is done when its CI checks are green, not when a local run passed. Wait for the running checks; if one fails, read its log (`gh run view --log-failed`), fix it on the branch and push. Re-run locally only the one failing test.
 - **Exceptions**, said in the PR under "Test plan": CI hasn't started a run for 30 minutes (then run the affected test files, not the suite); a failure that only shows locally; screenshots for a UI PR, which need the app in simulated mode. Stop every process you started when you're done (by its PID, hard rule 12): a forgotten Vite server or watcher costs CPU all day.

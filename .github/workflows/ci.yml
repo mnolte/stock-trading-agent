@@ -46,12 +46,28 @@ jobs:
       - run: uv sync --extra dev --locked
       - run: make test-backend
         env:
-          PYTEST_ADDOPTS: --junitxml=junit-backend.xml
+          PYTEST_ADDOPTS: >-
+            --junitxml=junit-backend.xml
+            --cov=app --cov-config=../pyproject.toml
+            --cov-report=xml:coverage.xml --cov-report=html:htmlcov
+            --cov-report=term:skip-covered
+      - name: coverage summary
+        if: always()
+        run: python3 scripts/coverage_summary.py --backend backend/coverage.xml >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: pytest-backend
           path: backend/junit-backend.xml
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-backend
+          path: |
+            backend/htmlcov/
+            backend/coverage.xml
           if-no-files-found: ignore
           retention-days: 7
 
@@ -96,7 +112,17 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
       - run: make lint-frontend
-      - run: make test-frontend
+      - run: make test-frontend VITEST_ARGS=--coverage
+      - name: coverage summary
+        if: always()
+        run: python3 scripts/coverage_summary.py --frontend frontend/coverage/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: coverage-frontend
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 7
 
   e2e:
     runs-on: ubuntu-latest

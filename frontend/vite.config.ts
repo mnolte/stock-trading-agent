@@ -1,7 +1,8 @@
 import { resolve } from 'node:path';
 
 import react from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vitest/config';
+import { loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   // The backend port comes from VITE_API_PORT (tests/scripts), else SA_PORT
@@ -25,5 +26,20 @@ export default defineConfig(({ mode }) => {
     // E2E_PREVIEW=1 runs the e2e suite against the built bundle — one
     // build up front instead of per-module transforms on every page load.
     preview: { proxy },
+    test: {
+      coverage: {
+        provider: 'v8',
+        reporter: ['text-summary', 'html', 'json-summary', 'json'],
+        reportsDirectory: 'coverage',
+        include: ['src/**/*.{ts,tsx}'],
+        exclude: [
+          'src/**/*.test.{ts,tsx}',
+          'src/**/*.spec.{ts,tsx}',
+          'src/main.tsx',
+          'src/types/**',
+          'src/**/*.d.ts',
+        ],
+      },
+    },
   };
 });

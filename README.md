@@ -105,6 +105,10 @@ default is commented in `backend/config.example.yaml`. Blocks:
 - Daily loss limit, drawdown kill switch, no re-entry the same session, earnings blackout.
 - Keys are stored encrypted, shown only as the last 4 characters, and never logged.
 
+## Tests and coverage
+
+CI runs the backend and frontend tests on every pull request. Each job's **Summary** page shows a coverage table (line and branch percentages, the least-covered files), and the HTML reports are kept as artifacts for 7 days: on a PR open **Checks** → `backend-test` or `frontend-check` → **Summary**, or download the `coverage-backend` / `coverage-frontend` artifacts.
+
 ## Build plan
 
 1. Skeleton
