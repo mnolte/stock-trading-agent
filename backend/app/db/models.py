@@ -472,6 +472,34 @@ class UniverseScreenRow(Base):
     failed_in_a_row: Mapped[int] = mapped_column(nullable=False, default=0)
 
 
+class SyncRunRow(Base):
+    """One run of a Universe → Data sync job (item 077, docs/SPEC.md).
+
+    Written by the job itself — start, throttled progress (at most one
+    update a second), per-symbol/source failures and the end state —
+    never guessed by the GUI. ``failures`` is a list of
+    ``{"what", "error", "next_retry"}`` where ``what`` is a symbol or a
+    source name and ``error`` plain words. Rows older than 30 days are
+    pruned by the writer.
+    """
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # daily_bars | screen | bars_5m | history | earnings |
+    # corporate_actions | fred | ecb
+    job: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    started_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # running | ok | partial | failed
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    done: Mapped[int] = mapped_column(nullable=False, default=0)
+    total: Mapped[int | None] = mapped_column(nullable=True)
+    failures: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONOrNull, nullable=True
+    )
+
+
 class SettingsVersion(Base):
     """Versioned settings changes."""
 

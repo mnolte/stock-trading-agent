@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -183,12 +185,15 @@ class MarketDataService:
         start: datetime,
         end: datetime,
         symbols: list[str] | None = None,
+        on_symbol: Callable[[str, DataResult[int]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fetch and cache 5-minute bars — one multi-symbol request.
 
         The eligible list at scale is too long for per-symbol calls; the
         bar source takes the whole universe in one request (docs/SPEC.md,
         Cycles at scale). ``symbols`` defaults to ``universe()``.
+        ``on_symbol`` fires once per symbol with its stored result — the
+        sync-run progress hook (item 077).
         """
         import logging
 
@@ -205,12 +210,16 @@ class MarketDataService:
                 f"bars fetch failed: {fetched.error}",
                 source=fetched.source,
             )
-            return {
+            results = {
                 symbol: DataResult(
                     data=0, error=fetched.error, source=fetched.source
                 )
                 for symbol in wanted
             }
+            if on_symbol is not None:
+                for symbol, result in results.items():
+                    on_symbol(symbol, result)
+            return results
         # SIP bars cover the full extended session (04:00-20:00 NY); the
         # cache is regular-hours only — the coverage counters, outcome
         # reads and shadow replay all assume it (docs/SPEC.md, Market
@@ -227,19 +236,24 @@ class MarketDataService:
             f"{sum(len(v) for v in grouped.values())} bars",
             source=fetched.source, symbols=len(wanted),
         )
-        return {
+        results = {
             symbol: DataResult(
                 data=self.bars_cache.store(grouped[symbol]),
                 source=fetched.source,
             )
             for symbol in wanted
         }
+        if on_symbol is not None:
+            for symbol, result in results.items():
+                on_symbol(symbol, result)
+        return results
 
     async def refresh_history(
         self,
         today: date,
         symbols: list[str] | None = None,
         session_count: int | None = None,
+        on_symbol: Callable[[str, DataResult[int]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fill the cache with ``history_sessions`` sessions of 5-minute bars.
 
@@ -284,7 +298,11 @@ class MarketDataService:
             start = min(missing, key=lambda d: d.open).open.astimezone(UTC)
             groups.setdefault(start, []).append(symbol)
         for start, group in groups.items():
-            results.update(await self.refresh_bars(start, end, symbols=group))
+            results.update(
+                await self.refresh_bars(
+                    start, end, symbols=group, on_symbol=on_symbol
+                )
+            )
         return results
 
     def prune_5m_bars(self, now: datetime) -> int:
@@ -377,6 +395,7 @@ class MarketDataService:
         today: date,
         symbols: list[str] | None = None,
         session_count: int | None = None,
+        on_symbol: Callable[[str, DataResult[Any]], None] | None = None,
     ) -> dict[str, DataResult[int]]:
         """Fetch and cache daily bars for ``daily_history_sessions`` sessions.
 
@@ -417,9 +436,12 @@ class MarketDataService:
             symbol: str, start: date
         ) -> tuple[str, DataResult[list[DailyBar]]]:
             async with semaphore:
-                return symbol, await self.sources.bars.fetch_daily_bars(
+                sym, result = symbol, await self.sources.bars.fetch_daily_bars(
                     symbol, start, end
                 )
+                if on_symbol is not None:
+                    on_symbol(sym, result)
+                return sym, result
 
         fetches = []
         fetch_start: dict[str, date] = {}
