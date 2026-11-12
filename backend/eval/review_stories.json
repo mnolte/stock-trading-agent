@@ -1,0 +1,144 @@
+{
+  "cases": [
+    {
+      "name": "briefing-busy",
+      "kind": "briefing",
+      "facts": {
+        "kind": "briefing",
+        "date": "2026-10-15",
+        "positions": [
+          {"symbol": "JPM", "qty": 8, "price": 232.8, "stop": 226.1, "stop_distance_pct": 2.9},
+          {"symbol": "MSFT", "qty": 4, "price": 421.3, "stop": 409.6, "stop_distance_pct": 2.8}
+        ],
+        "earnings_today": [{"symbol": "JPM", "time_of_day": "before_open"}],
+        "earnings_tomorrow": [{"symbol": "XOM", "time_of_day": "after_close"}],
+        "regime": "Up · normal vol",
+        "vix": {"close": 17.4, "date": "2026-10-14", "percentile_1y": 42.0, "stale": false},
+        "next_release": {"type": "cpi", "label": "CPI", "date": "2026-10-16", "time": "08:30", "sessions_away": 1},
+        "yesterday": {"return_pct": 0.18, "return_usd": 18.4, "spy_return_pct": 0.42},
+        "banners": [],
+        "limits": {"briefing_words": 220, "earnings_blackout_days": 3},
+        "glossary": {
+          "stop": "The price at which Alpaca sells a position automatically, to cap the loss.",
+          "regime": "The state of the whole market, from SPY: its trend (up, sideways, down) and how much it moves (volatility).",
+          "VIX": "A measure of how much the market expects prices to swing over the next month. Higher means more nervous.",
+          "percentile": "Where the VIX close sits within the past year: a higher percentile means it was lower on fewer days.",
+          "release": "A government statistic published at a fixed time, such as inflation (CPI). Prices often jump when it lands.",
+          "earnings blackout": "No new entries within 3 trading days of a company's earnings report."
+        }
+      }
+    },
+    {
+      "name": "briefing-quiet",
+      "kind": "briefing",
+      "facts": {
+        "kind": "briefing",
+        "date": "2026-10-16",
+        "positions": [],
+        "earnings_today": [],
+        "earnings_tomorrow": [],
+        "regime": "Sideways · high vol",
+        "vix": {"close": 24.1, "date": "2026-10-15", "percentile_1y": 78.0, "stale": false},
+        "next_release": null,
+        "yesterday": {"return_pct": null, "return_usd": null, "spy_return_pct": null},
+        "banners": [{"kind": "earnings_down", "level": "warning"}],
+        "limits": {"briefing_words": 220, "earnings_blackout_days": 3},
+        "glossary": {
+          "regime": "The state of the whole market, from SPY: its trend (up, sideways, down) and how much it moves (volatility).",
+          "VIX": "A measure of how much the market expects prices to swing over the next month. Higher means more nervous.",
+          "percentile": "Where the VIX close sits within the past year: a higher percentile means it was lower on fewer days."
+        }
+      }
+    },
+    {
+      "name": "weekly-good",
+      "kind": "weekly",
+      "facts": {
+        "kind": "weekly",
+        "period": {"id": "2026-W42", "week": 42, "iso_year": 2026, "start": "2026-10-12", "end": "2026-10-16", "label": "12 – 16 Oct", "start_day": 12, "end_day": 16, "due": "2026-10-17", "trading_days": 5},
+        "limits": {"weekly_summary_words": 120, "weekly_story_words": 350, "drawdown_kill_pct": 8.0, "verdict_after_sessions": 5, "skip_flat_pct": 2.0, "min_closed_trades_for_suggestion": 10},
+        "return_pct": 1.49,
+        "return_usd": 149.0,
+        "equity_start": 10000.0,
+        "equity_end": 10149.0,
+        "spy_return_pct": 0.73,
+        "vs_spy_pts": 0.76,
+        "max_drawdown_pct": -0.49,
+        "trades_closed": 3,
+        "won": 2,
+        "lost": 1,
+        "avg_r": 1.07,
+        "model_cost_usd": 0.06,
+        "model_calls": 148,
+        "reviews_cost_usd": 0.002,
+        "trades": [
+          {"symbol": "META", "opened": "2026-10-08", "closed": "2026-10-09", "exit": "target", "r": 2.6, "pnl_usd": 78.0, "regime": "Up · normal vol"},
+          {"symbol": "AAPL", "opened": "2026-10-06", "closed": "2026-10-08", "exit": "target", "r": 1.6, "pnl_usd": 48.0, "regime": "Up · normal vol"},
+          {"symbol": "XOM", "opened": "2026-10-06", "closed": "2026-10-07", "exit": "stop", "r": -1.0, "pnl_usd": -30.0, "regime": "Up · high vol"}
+        ],
+        "best_trade": {"symbol": "META", "r": 2.6, "exit": "target"},
+        "worst_trade": {"symbol": "XOM", "r": -1.0, "exit": "stop"},
+        "skips": {"total": 8, "with_outcome": 8, "pending": 0, "up": 2, "flat": 5, "down": 1, "biggest_miss": {"symbol": "AMZN", "date": "2026-10-14", "pct": 2.9}},
+        "verdicts": {"total": 3, "entered": 1, "blocked": 0, "skips": 2, "good_call": 3, "bad_call": 0, "unclear": 0, "thesis_contradictions": 1},
+        "sample": {"closed_trades": {"week": 3, "run": 3}, "model_skips_with_outcome": {"week": 8, "run": 8}, "confirmed_verdicts": {"week": 3, "run": 3}},
+        "by_regime": [{"name": "Up · normal vol", "trades": 2, "won": 2, "avg_r": 2.1, "pnl_usd": 126.0}, {"name": "Up · high vol", "trades": 1, "won": 0, "avg_r": -1.0, "pnl_usd": -30.0}],
+        "by_symbol": [{"name": "AAPL", "trades": 1, "won": 1, "avg_r": 1.6, "pnl_usd": 48.0}, {"name": "META", "trades": 1, "won": 1, "avg_r": 2.6, "pnl_usd": 78.0}, {"name": "XOM", "trades": 1, "won": 0, "avg_r": -1.0, "pnl_usd": -30.0}],
+        "strategies": [],
+        "insights": {"new": [], "stopped": []},
+        "suggestion_allowed": false,
+        "glossary": {
+          "R": "What a trade risks: entry minus stop, times the shares. +1R earned as much as it risked; a stop-out is about −1R.",
+          "target": "The price at which Alpaca sells automatically to take the planned profit.",
+          "stop": "The price at which Alpaca sells a position automatically, to cap the loss.",
+          "drawdown": "How far the account fell from its highest point. The kill switch turns on at −8%.",
+          "adjusted P&L": "The result after costs: the assumed slippage and dividends are taken out.",
+          "win rate": "The share of closed trades that made money.",
+          "expectancy": "What a trade earns on average, measured in R.",
+          "sample": "How much evidence the result rests on; with few trades one can still swing it either way.",
+          "regime": "The state of the whole market, from SPY: its trend (up, sideways, down) and how much it moves (volatility).",
+          "volatility": "How much prices swing. In high volatility a stop is reached more easily by noise.",
+          "verdicts": "Your judgement of each model decision, once its 5-session result is in: good call, bad call or unclear."
+        }
+      }
+    },
+    {
+      "name": "weekly-quiet",
+      "kind": "weekly",
+      "facts": {
+        "kind": "weekly",
+        "period": {"id": "2026-W43", "week": 43, "iso_year": 2026, "start": "2026-10-19", "end": "2026-10-23", "label": "19 – 23 Oct", "start_day": 19, "end_day": 23, "due": "2026-10-24", "trading_days": 5},
+        "limits": {"weekly_summary_words": 120, "weekly_story_words": 350, "drawdown_kill_pct": 8.0, "verdict_after_sessions": 5, "skip_flat_pct": 2.0, "min_closed_trades_for_suggestion": 10},
+        "return_pct": -0.32,
+        "return_usd": -32.0,
+        "equity_start": 10149.0,
+        "equity_end": 10117.0,
+        "spy_return_pct": -0.10,
+        "vs_spy_pts": -0.22,
+        "max_drawdown_pct": -0.61,
+        "trades_closed": 0,
+        "won": 0,
+        "lost": 0,
+        "avg_r": null,
+        "model_cost_usd": 0.04,
+        "model_calls": 121,
+        "reviews_cost_usd": 0.002,
+        "trades": [],
+        "best_trade": null,
+        "worst_trade": null,
+        "skips": {"total": 11, "with_outcome": 9, "pending": 2, "up": 1, "flat": 6, "down": 2, "biggest_miss": null},
+        "verdicts": {"total": 0, "entered": 0, "blocked": 0, "skips": 0, "good_call": 0, "bad_call": 0, "unclear": 0, "thesis_contradictions": 0},
+        "sample": {"closed_trades": {"week": 0, "run": 3}, "model_skips_with_outcome": {"week": 9, "run": 17}, "confirmed_verdicts": {"week": 0, "run": 3}},
+        "by_regime": [],
+        "by_symbol": [],
+        "strategies": [],
+        "insights": {"new": [], "stopped": []},
+        "suggestion_allowed": false,
+        "glossary": {
+          "drawdown": "How far the account fell from its highest point. The kill switch turns on at −8%.",
+          "adjusted P&L": "The result after costs: the assumed slippage and dividends are taken out.",
+          "sample": "How much evidence the result rests on; with few trades one can still swing it either way."
+        }
+      }
+    }
+  ]
+}

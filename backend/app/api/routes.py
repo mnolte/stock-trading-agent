@@ -4558,6 +4558,135 @@ def _briefing_chips(facts: dict[str, Any]) -> list[dict[str, str]]:
     return chips
 
 
+def _ordinal(value: float) -> str:
+    n = int(value)
+    suffix = (
+        "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    )
+    return f"{n}{suffix}"
+
+
+def _briefing_numbers(facts: dict[str, Any]) -> list[dict[str, str]]:
+    """The "The numbers" fold rows for a briefing story (design Main and
+    Reviews, item 079): every fact the model was given, as label–value
+    rows in the design's order. The GUI only renders them."""
+    rows: list[dict[str, str]] = []
+
+    positions = facts.get("positions")
+    if isinstance(positions, list):
+        if not positions:
+            rows.append({"label": "Open positions", "value": "none"})
+        else:
+            bits = []
+            for p in positions:
+                price = p.get("price")
+                bits.append(
+                    f"{p.get('symbol')} {p.get('qty')} sh"
+                    + (f" @ ${float(price):,.2f}" if price is not None else "")
+                )
+            rows.append(
+                {"label": "Open positions", "value": f"{len(positions)} · " + ", ".join(bits)}
+            )
+            for p in positions:
+                price, stop, dist = (
+                    p.get("price"),
+                    p.get("stop"),
+                    p.get("stop_distance_pct"),
+                )
+                if price is None:
+                    value = "no fresh price"
+                else:
+                    value = f"last close ${float(price):,.2f}"
+                    if stop is not None:
+                        value += f" · stop ${float(stop):,.2f}"
+                    if dist is not None:
+                        value += f" · {float(dist):.1f}% above the stop"
+                rows.append({"label": str(p.get("symbol")), "value": value})
+    else:
+        rows.append({"label": "Open positions", "value": "unavailable"})
+
+    yesterday = facts.get("yesterday") or {}
+    y_pct, y_usd = yesterday.get("return_pct"), yesterday.get("return_usd")
+    rows.append(
+        {
+            "label": "Yesterday",
+            "value": (
+                f"{'+' if y_usd >= 0 else '−'}${abs(float(y_usd)):,.2f} · "
+                f"{float(y_pct):+.2f}%"
+                if y_pct is not None and y_usd is not None
+                else "unavailable"
+            ),
+        }
+    )
+    spy = yesterday.get("spy_return_pct")
+    rows.append(
+        {
+            "label": "SPY yesterday",
+            "value": f"{float(spy):+.2f}%" if spy is not None else "unavailable",
+        }
+    )
+    regime = facts.get("regime")
+    rows.append(
+        {
+            "label": "Regime",
+            "value": str(regime) if regime else "unavailable",
+        }
+    )
+    vix = facts.get("vix")
+    if isinstance(vix, dict) and vix.get("close") is not None:
+        pct = vix.get("percentile_1y")
+        vix_value = f"{float(vix['close']):g}"
+        if pct is not None:
+            vix_value += f" · {_ordinal(float(pct))} percentile"
+        rows.append({"label": "VIX", "value": vix_value})
+    else:
+        rows.append({"label": "VIX", "value": "unavailable"})
+
+    earnings = [
+        *(f"{e['symbol']} today" for e in facts.get("earnings_today") or []),
+        *(
+            f"{e['symbol']} tomorrow"
+            for e in facts.get("earnings_tomorrow") or []
+        ),
+    ]
+    rows.append(
+        {
+            "label": "Earnings today or tomorrow",
+            "value": " · ".join(earnings) if earnings else "none",
+        }
+    )
+    release = facts.get("next_release")
+    if isinstance(release, dict) and release.get("label"):
+        try:
+            day = datetime.fromisoformat(str(release.get("date"))).date()
+            when = f"{day.strftime('%a')} {day.day} {day.strftime('%b')}"
+        except ValueError:
+            when = str(release.get("date") or "")
+        rows.append(
+            {
+                "label": "Next release",
+                "value": (
+                    f"{release['label']} · {when} "
+                    f"{release.get('time', '')} NY"
+                ),
+            }
+        )
+    else:
+        rows.append({"label": "Next release", "value": "none"})
+    banners = facts.get("banners") or []
+    rows.append(
+        {
+            "label": "Banners",
+            "value": (
+                " · ".join(str(b.get("kind", "")).replace("_", " ") for b in banners)
+                if banners
+                else "none"
+            ),
+        }
+    )
+    return rows
+
+
 def _briefing_card(
     request: Request, clock: Clock, app_tz: ZoneInfo, today_ny: date
 ) -> dict[str, Any]:
@@ -4590,6 +4719,11 @@ def _briefing_card(
             "status_line": status_line,
             "text": text,
             "chips": _briefing_chips(review.facts or {}),
+            # Stories (item 079): the fold's rows and the glossary the
+            # story's underlined terms resolve against.
+            "numbers": _briefing_numbers(review.facts or {}),
+            "glossary": (review.facts or {}).get("glossary") or {},
+            "fact_count": len(review.facts or {}),
             "source": review.source,
             "reason": review.reason,
             "model": review.model,
@@ -5722,6 +5856,9 @@ def review_detail(review_id: int) -> dict[str, object]:
                 **content,
                 "text": content["text"][len(status) :].lstrip(),
             }
+        # Stories (item 079): same "The numbers" rows as the dashboard.
+        detail["numbers"] = _briefing_numbers(review.facts or {})
+        detail["fact_count"] = len(review.facts or {})
     return detail
 
 

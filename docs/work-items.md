@@ -139,7 +139,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 076 | feat | Performance UX (issue #233) | `076-feat-performance-ux.md` | #237 | — | planned |
 | 077 | feat | Universe UX and Data sync (issue #234) | `077-feat-universe-ux.md` | #237 | — | planned |
 | 078 | feat | Concurrent requests, `concurrency.max_requests` 20 (issue #235) | `078-feat-concurrent-requests.md` | #237 | — | planned |
-| 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `079-feat-review-stories.md` | #237 | — | planned |
+| 079 | feat | Daily briefing and weekly review as short stories (issue #236) | `archive/079-feat-review-stories.md` | #237 | #270 | building |
 | 080 | analysis | Security audit of the repository (`docs/analysis/080-security-audit.md`; issue #241 for the GitHub settings) | — | #251 | — | merged |
 | 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `archive/081-fix-keys-out-of-error-text.md` | #251 | #268 | building |
 | 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
