@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [096] Strategy db path built from stored values (build)
+
+Follow-up to 095 for the remaining `py/path-injection` alerts: `_strategy_sf` built `run-<id>/<slug>.db` from the request's `run_id` and `slug` path parameters. The slug was already whitelist-checked and matched against the run's strategies; the path now uses the row id and the matched stored slug, so request values are lookups only, never path expressions. No spec text changed.
+
 ## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
 
 Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
