@@ -17,15 +17,20 @@ calls.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from app.db.backup import dated_backups
 from app.errors import safe_error
@@ -160,6 +165,140 @@ def offsite_backup(config: AppConfig, secrets: SecretsStore) -> None:
         "restic forget",
     )
     logger.info("offsite backup ok (restic, %d files)", len(paths))
+
+
+# --- delete protection (item 084, S8) -------------------------------------
+#
+# The monthly restore test asks the bucket whether versioning is on, so
+# Settings → Server can show "Delete protection". One signed S3 request
+# (GetBucketVersioning) — restic can't ask, and the app's key needs no
+# delete permission for it. Any failure answers "unknown", never an
+# exception: the check must not block a backup or a restore.
+
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+def _sigv4_authorization(
+    *,
+    method: str,
+    canonical_uri: str,
+    canonical_query: str,
+    host: str,
+    region: str,
+    now: datetime,
+    creds: OffsiteCredentials,
+) -> tuple[str, str]:
+    """AWS Signature Version 4 for one request; returns (Authorization,
+    x-amz-date). Only the headers we send are signed."""
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    canonical_headers = (
+        f"host:{host}\n"
+        f"x-amz-content-sha256:{_EMPTY_SHA256}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(
+        [method, canonical_uri, canonical_query, canonical_headers, signed_headers, _EMPTY_SHA256]
+    )
+    scope = f"{date_stamp}/{region}/s3/aws4_request"
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            scope,
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        ]
+    )
+
+    def _h(key: bytes, msg: str) -> bytes:
+        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+    k_date = _h(f"AWS4{creds.secret_access_key}".encode(), date_stamp)
+    k_region = _h(k_date, region)
+    k_service = _h(k_region, "s3")
+    k_signing = _h(k_service, "aws4_request")
+    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()
+    authorization = (
+        f"AWS4-HMAC-SHA256 Credential={creds.access_key_id}/{scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+    return authorization, amz_date
+
+
+def _versioning_request(
+    creds: OffsiteCredentials, now: datetime
+) -> tuple[str, dict[str, str]]:
+    """``GET {endpoint}/{bucket}?versioning`` path-style, SigV4-signed —
+    the same layout restic's ``s3:endpoint/bucket`` repo uses."""
+    if not _BUCKET_RE.fullmatch(creds.bucket):
+        raise ValueError(f"invalid backup bucket name {creds.bucket!r}")
+    parts = urlsplit(creds.endpoint)
+    host = parts.netloc
+    if host.endswith(":443"):
+        host = host[: -len(":443")]
+    base_path = parts.path.rstrip("/")
+    canonical_uri = f"{base_path}/{creds.bucket}"
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-east-1"
+    )
+    authorization, amz_date = _sigv4_authorization(
+        method="GET",
+        canonical_uri=canonical_uri,
+        canonical_query="versioning=",
+        host=host,
+        region=region,
+        now=now,
+        creds=creds,
+    )
+    url = f"{creds.endpoint}{canonical_uri}?versioning"
+    return url, {
+        "Authorization": authorization,
+        "x-amz-content-sha256": _EMPTY_SHA256,
+        "x-amz-date": amz_date,
+    }
+
+
+def _versioning_status(body: str) -> str:
+    """Map the GetBucketVersioning XML to on / off / suspended."""
+    match = re.search(r"<Status>([^<]+)</Status>", body)
+    status = match.group(1).strip() if match else ""
+    return {"Enabled": "on", "Suspended": "off"}.get(status, "unknown")
+
+
+def bucket_delete_protection(
+    creds: OffsiteCredentials,
+    now: datetime,
+    *,
+    get: Callable[[str, dict[str, str]], Any] | None = None,
+) -> str:
+    """"on" / "off" / "unknown" — one signed GetBucketVersioning call.
+
+    ``get`` is injectable for tests: ``get(url, headers) -> response``
+    with ``.status_code`` and ``.text``. Never raises — a failed check
+    is "unknown", shown amber as "not confirmed".
+    """
+    try:
+        url, headers = _versioning_request(creds, now)
+        if get is not None:
+            response = get(url, headers)
+        else:
+            import httpx
+
+            with httpx.Client(timeout=15) as client:
+                response = client.get(url, headers=headers)
+        if int(getattr(response, "status_code", 0)) != 200:
+            logger.warning(
+                "delete-protection check answered HTTP %s",
+                getattr(response, "status_code", "?"),
+            )
+            return "unknown"
+        return _versioning_status(str(getattr(response, "text", "")))
+    except Exception:  # noqa: BLE001 — the check must never break a backup
+        logger.warning("delete-protection check failed", exc_info=True)
+        return "unknown"
 
 
 def restore_latest(

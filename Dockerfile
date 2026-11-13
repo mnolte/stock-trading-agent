@@ -80,7 +80,11 @@ COPY --from=deps /opt/venv /opt/venv
 COPY pyproject.toml /srv/pyproject.toml
 COPY backend/ /srv/backend/
 COPY --from=frontend /fe/dist /srv/frontend/dist
-RUN chown -R stockagent:stockagent /srv /data
+# Item 084: the runtime image ships no tests or eval data (the test
+# stage above keeps them), and /srv belongs to root — world-readable,
+# not writable by the app user. Everything writable lives on /data.
+RUN rm -rf /srv/backend/tests /srv/backend/eval \
+    && chown -R root:root /srv && chmod -R a+rX /srv
 USER stockagent
 WORKDIR /srv/backend
 ENV PYTHONPATH=/srv/backend

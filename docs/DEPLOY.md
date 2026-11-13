@@ -149,6 +149,48 @@ Settings → Server → "Backup credentials…", or in the API:
 The nightly job runs after the 03:00 local copy and keeps 30 daily and
 12 weekly snapshots. Check Settings → Server → "Offsite copy".
 
+### Delete protection (required)
+
+The key on this server can delete backup snapshots — that is how restic
+`forget --prune` works. What it must **not** be able to do is erase
+them. Turn on versioning **or** object lock on the bucket, with a
+retention of **at least 30 days**, so a delete only hides a backup and
+the monthly restore test can still see it. The app's key needs no
+extra permission for this — it only ever reads
+`GetBucketVersioning`; the protection lives on the bucket.
+
+With the AWS CLI (works for AWS S3 and most S3-compatible providers —
+for Backblaze B2, Wasabi and Cloudflare R2 use their dashboard or CLI
+equivalents; the requirement is the same):
+
+```bash
+# versioning on
+aws s3api put-bucket-versioning --bucket YOUR-BUCKET \
+    --versioning-configuration Status=Enabled
+
+# expire noncurrent versions after 30 days (the delete markers stay)
+aws s3api put-bucket-lifecycle-configuration --bucket YOUR-BUCKET \
+    --lifecycle-configuration '{
+      "Rules": [{
+        "ID": "expire-noncurrent-30d",
+        "Status": "Enabled",
+        "Filter": {},
+        "NoncurrentVersionExpiration": {"NoncurrentDays": 30},
+        "Expiration": {"ExpiredObjectDeleteMarker": true}
+      }]
+    }'
+```
+
+Object lock is the stronger option where the provider supports it
+(AWS S3, Wasabi, B2 file lock): enable it at bucket creation with a
+compliance or governance retention of 30 days or more. R2 has no object
+lock; keep versioning plus the lifecycle rule there.
+
+The monthly restore test asks the bucket (`GetBucketVersioning`) and
+Settings → Server → Backups shows "Delete protection": green `on`, or
+amber `not confirmed` when versioning is off, suspended, never checked
+or the check failed. It never blocks a backup.
+
 ## Heartbeat service
 
 Create a dead-man's-switch check at an external service

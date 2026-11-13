@@ -2,6 +2,35 @@
 
 Newest first.
 
+## 2026-11-13 — [084] Supply chain and containers (build, part 2)
+
+Second build PR of 084 on branch `ops/084-containers-audits-backups`
+(issues #245, #248, #249).
+
+- **Containers (S12):** Caddy gets `read_only`, `tmpfs /tmp`,
+  `cap_drop ALL` + `NET_BIND_SERVICE`, `no-new-privileges` and
+  `pids_limit 128`; the app gets `pids_limit 256`. The runtime image
+  ships no `backend/tests` or `backend/eval`, and `/srv` is root-owned,
+  world-readable, not writable by uid 10001 — everything writable stays
+  on `/data`. `.dockerignore` now also excludes `backend/config.yaml`,
+  `**/secret.key`, `**/*.db*`, `backups`. `provision.sh` lets
+  unattended-upgrades cover Docker's own repo (`"Docker:${distro_codename}"`).
+- **Audits (S11):** `security/run-audits.sh --all` audits the dev sets
+  too (`uv export --extra dev`, `pnpm audit` without `--prod`) and
+  prints a markdown table via `security/audit_table.py`; it never fails.
+  The weekly CI run posts the table to the job summary. `minimatch` is
+  bumped to 11.0.5 through a pnpm override past GHSA-g3hv-75wg-m249 —
+  eslint's `^10` ranges block 11.x, so the override was needed.
+- **Backup delete protection (S8):** the monthly restore test asks the
+  bucket `GetBucketVersioning` with one SigV4-signed request (path-style,
+  region from `AWS_REGION`/`AWS_DEFAULT_REGION`/`us-east-1`) and stores
+  `delete_protection` on/off/unknown/ suspended with the result — a
+  failure is "unknown" and never blocks. Settings → Server → Backups
+  shows "Delete protection": green `on` or amber "not confirmed".
+  `docs/DEPLOY.md` requires versioning or object lock with ≥30 days'
+  retention, with the AWS CLI commands and the note that the app's key
+  needs no delete-version permission.
+
 ## 2026-11-13 — [084] Supply chain and containers (build, part 1)
 
 Build PR of 084 on branch `ops/084-supply-chain-and-containers` — the

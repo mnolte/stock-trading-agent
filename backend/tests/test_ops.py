@@ -435,3 +435,119 @@ def test_restore_test_old_failure_masked_when_not_set_up(
     assert backups["offsite"] == {"not_set_up": True}
     # The stored failure is kept as the history, not deleted.
     assert ops._status["restore_test"]["ok"] is False
+
+
+# --- delete protection (item 084) ----------------------------------------
+
+
+def _creds() -> offsite.OffsiteCredentials:
+    return offsite.OffsiteCredentials(
+        endpoint="https://s3.example.com",
+        bucket="backups-b1",
+        access_key_id="AKIDEXAMPLE",
+        secret_access_key="secret",
+        password="pw",
+    )
+
+
+class _Resp:
+    def __init__(self, code: int, text: str = "") -> None:
+        self.status_code = code
+        self.text = text
+
+
+_VERSIONING_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">'
+    "<Status>{}</Status></VersioningConfiguration>"
+)
+
+
+def test_delete_protection_on_off_and_unknown() -> None:
+    seen: dict[str, Any] = {}
+
+    def get(url: str, headers: dict[str, str]) -> _Resp:
+        seen["url"] = url
+        seen["headers"] = headers
+        return _Resp(200, _VERSIONING_XML.format("Enabled"))
+
+    assert offsite.bucket_delete_protection(_creds(), NOW, get=get) == "on"
+    # One signed path-style request: endpoint/bucket?versioning, SigV4.
+    assert seen["url"] == "https://s3.example.com/backups-b1?versioning"
+    auth = seen["headers"]["Authorization"]
+    assert auth.startswith("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/")
+    assert "SignedHeaders=host;x-amz-content-sha256;x-amz-date" in auth
+    assert seen["headers"]["x-amz-date"] == "20261028T120000Z"
+
+    def suspended(url: str, headers: dict[str, str]) -> _Resp:
+        return _Resp(200, _VERSIONING_XML.format("Suspended"))
+
+    def forbidden(url: str, headers: dict[str, str]) -> _Resp:
+        return _Resp(403, "<Error/>")
+
+    def garbage(url: str, headers: dict[str, str]) -> _Resp:
+        return _Resp(200, "not xml")
+
+    assert offsite.bucket_delete_protection(_creds(), NOW, get=suspended) == "off"
+    assert offsite.bucket_delete_protection(_creds(), NOW, get=forbidden) == "unknown"
+    assert offsite.bucket_delete_protection(_creds(), NOW, get=garbage) == "unknown"
+
+    def boom(url: str, headers: dict[str, str]) -> _Resp:
+        raise OSError("network down")
+
+    assert offsite.bucket_delete_protection(_creds(), NOW, get=boom) == "unknown"
+
+
+def test_delete_protection_bad_bucket_is_unknown() -> None:
+    creds = offsite.OffsiteCredentials(
+        endpoint="https://s3.example.com",
+        bucket="../escape",
+        access_key_id="a",
+        secret_access_key="s",
+        password="p",
+    )
+    def get_ok(url: str, headers: dict[str, str]) -> _Resp:
+        return _Resp(200)
+
+    assert offsite.bucket_delete_protection(creds, NOW, get=get_ok) == "unknown"
+
+
+def test_restore_test_stores_delete_protection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The monthly check records on/off/unknown with the result."""
+    import asyncio
+    import sqlite3
+
+    values = {
+        "backup_password": "pw",
+        "backup_credentials": json.dumps(
+            {
+                "endpoint": "https://s3.example.com",
+                "bucket": "backups-b1",
+                "access_key_id": "a",
+                "secret_access_key": "s",
+            }
+        ),
+    }
+    ops = _ops(tmp_path, values=values)
+    monkeypatch.setattr(
+        "app.ops.service.load_credentials", lambda secrets, resolver=None: _creds()
+    )
+    monkeypatch.setattr(
+        "app.ops.service.bucket_delete_protection",
+        lambda creds, now: "on",
+    )
+
+    def fake_restore(config: Any, secrets: Any, target: Path) -> Path:
+        target.mkdir(parents=True, exist_ok=True)
+        db = target / "stock-agent.db.2026-10-28"
+        with sqlite3.connect(db) as conn:
+            conn.execute("create table t (x int)")
+        return db
+
+    monkeypatch.setattr("app.ops.service.restore_latest", fake_restore)
+    assert asyncio.run(ops.run_restore_test()) is True
+    stored = ops.status["restore_test"]
+    assert stored["ok"] is True
+    assert stored["delete_protection"] == "on"
