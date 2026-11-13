@@ -5,18 +5,18 @@
 # the bind address is SA_HOST/SA_PORT (never bind flags anywhere).
 
 ######################## frontend build ########################
-FROM node:22-alpine AS frontend
+FROM node:22-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS frontend
 WORKDIR /fe
 RUN corepack enable
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --allow-build=esbuild
 COPY frontend/ ./
 RUN pnpm build
 
 ######################## python deps ########################
-FROM python:3.12-slim AS deps
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS deps
 WORKDIR /srv
-RUN pip install --no-cache-dir "uv>=0.9,<1"
+RUN pip install --no-cache-dir "uv==0.13.7"
 COPY pyproject.toml uv.lock ./
 # --no-emit-project: the app runs from the source tree at /srv/backend so
 # app.config.ROOT keeps pointing at the layout it expects (.env, prompts,
@@ -57,7 +57,7 @@ CMD ["/opt/venv/bin/python", "-m", "pytest", "backend/tests", \
      "--deselect", "backend/tests/test_shutdown.py::test_lock_recycled_pid_is_stale"]
 
 ######################## runtime ########################
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Europe/Amsterdam \
@@ -80,7 +80,11 @@ COPY --from=deps /opt/venv /opt/venv
 COPY pyproject.toml /srv/pyproject.toml
 COPY backend/ /srv/backend/
 COPY --from=frontend /fe/dist /srv/frontend/dist
-RUN chown -R stockagent:stockagent /srv /data
+# Item 084: the runtime image ships no tests or eval data (the test
+# stage above keeps them), and /srv belongs to root — world-readable,
+# not writable by the app user. Everything writable lives on /data.
+RUN rm -rf /srv/backend/tests /srv/backend/eval \
+    && chown -R root:root /srv && chmod -R a+rX /srv
 USER stockagent
 WORKDIR /srv/backend
 ENV PYTHONPATH=/srv/backend

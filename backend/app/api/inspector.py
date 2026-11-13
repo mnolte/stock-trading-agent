@@ -20,7 +20,6 @@ the New York date it was sent. Numbers go out as numbers.
 
 from __future__ import annotations
 
-import csv
 import io
 import json
 import typing
@@ -36,6 +35,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import get_config
+from app.csv_safe import writer as csv_writer
 from app.db.base import get_session_maker
 from app.db.models import (
     AskMessage,
@@ -335,7 +335,7 @@ def export_calls(request: Request) -> StreamingResponse:
 
     def gen() -> Iterator[str]:
         buf = io.StringIO()
-        writer = csv.writer(buf)
+        writer = csv_writer(buf)
         writer.writerow(
             [
                 "time", "session_date", "source", "strategy", "kind",

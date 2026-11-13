@@ -5,6 +5,12 @@
 # caddy_data's pki/authorities/local/root.crt into the browser/OS.
 services:
   app:
+    # The laptop/CI stack builds the runtime target locally — no
+    # registry login and no digest needed.
+    build:
+      context: .
+      target: runtime
+    image: stock-agent:local
     environment:
       # The laptop/CI test stack runs against the fakes — no Alpaca keys
       # needed and shutdown is deterministic (no broker calls to drain).

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import csv
 import io
 import sqlite3
 import threading
@@ -27,6 +26,7 @@ from app.backtests.estimate import (
 from app.backtests.manager import BacktestManager, store_usage
 from app.backtests.store import run_dir_for
 from app.config import get_config
+from app.csv_safe import writer as csv_writer
 from app.db.base import get_session_maker
 from app.db.models import Backtest, Cycle, Decision, Outcome, Position, Strategy
 from app.decide.client import priced_models
@@ -768,7 +768,7 @@ def export_csv(
         get_config().get("security", "export_max_rows", default=100000)
     )
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = csv_writer(buf)
     capped = False
     with sf() as session:
         if kind == "decisions":

@@ -399,6 +399,7 @@ security:                       # PR 28, request gate and limits (see SPEC → S
   max_upload_kb: 5120           # the CSV import
   export_max_rows: 100000       # logs, LLM calls and CSV exports
   client_error_senders: 1000    # addresses remembered for the frontend error rate limit
+  allow_private_smtp: false     # let the SMTP host resolve to a private address (loopback is refused even then)
 
 auth:                           # PR 23; only used when SA_AUTH=required
   idle_hours: 12                # sign out after this long without activity
