@@ -465,6 +465,8 @@ class OpsService:
         except OffsiteError:
             # Unreadable credentials — the restore reports that itself.
             logger.debug("delete-protection check skipped: no usable credentials")
+        except Exception:  # noqa: BLE001 — the check must never block a restore
+            logger.warning("delete-protection check failed", exc_info=True)
 
         target_root: Path | None = None
         try:
