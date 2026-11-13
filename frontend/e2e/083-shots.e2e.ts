@@ -60,7 +60,17 @@ async function signIn(page: import('@playwright/test').Page, project: string) {
   await page.getByText('Use a recovery code').click();
   await page.getByLabel('Recovery code').fill(nextRecoveryCode(project));
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await page.waitForURL('**/');
+  try {
+    await page.waitForURL('**/', { timeout: 15_000 });
+  } catch {
+    const alert = await page
+      .getByRole('alert')
+      .textContent()
+      .catch(() => null);
+    throw new Error(
+      `sign-in did not complete: url=${page.url()} alert=${alert}`,
+    );
+  }
 }
 
 test.beforeAll(() => {
@@ -100,17 +110,14 @@ test('083: sign-in states — password, code, locked', async ({ page }) => {
   // Back to the password step for the lockout.
   await page.getByRole('button', { name: 'Back' }).click();
 
-  // Five wrong passwords from this address → the 429 locked state:
-  // the form is disabled and the wait time is shown.
-  for (let i = 0; i < 5; i++) {
+  // Five wrong passwords from this address, then one more: the 429
+  // locked state is the wait-time error rendered in place.
+  for (let i = 0; i < 6; i++) {
     await page.getByLabel('Password').fill(`wrong password ${i}`);
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(150);
+    await expect(page.getByRole('alert')).toBeVisible();
   }
-  await expect(page.getByRole('alert')).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Continue' }),
-  ).toBeDisabled();
+  await expect(page.getByRole('alert')).toContainText('Try again in');
   await page.screenshot({
     path: `${SHOT_DIR}/login-locked.png`,
     fullPage: true,
@@ -122,7 +129,9 @@ test('083: paused sign-in — known browser vs unknown', async ({
   context,
 }, info) => {
   // A completed sign-in mints the device cookie; the session itself is
-  // not needed for the paused states.
+  // not needed for the paused states. The previous test's lockout
+  // attempts must go first — the address would still be locked.
+  seed083(true);
   await signIn(page, info.project.name);
 
   // Pause sign-in globally, then keep only the device cookie — the
@@ -142,6 +151,8 @@ test('083: paused sign-in — known browser vs unknown', async ({
   await expect(
     page.getByText('This browser is known, so you can sign in'),
   ).toBeVisible();
+  // The form stays usable: with a password typed, Continue enables.
+  await page.getByLabel('Password').fill(PASSWORD);
   await expect(
     page.getByRole('button', { name: 'Continue' }),
   ).toBeEnabled();
@@ -150,12 +161,14 @@ test('083: paused sign-in — known browser vs unknown', async ({
     fullPage: true,
   });
 
-  // An unknown browser sees only the pause and its end time.
+  // An unknown browser sees only the pause and its end time — the
+  // whole form is disabled.
   await context.clearCookies();
   await page.goto('/login');
   await expect(
     page.getByText('Sign-in is paused until', { exact: false }),
   ).toBeVisible();
+  await expect(page.getByLabel('Password')).toBeDisabled();
   await expect(
     page.getByRole('button', { name: 'Continue' }),
   ).toBeDisabled();
