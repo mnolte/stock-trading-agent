@@ -6,6 +6,8 @@ import { Button } from './Button';
 interface ServerStatus {
   version: string;
   image_tag: string;
+  image_digest?: string;
+  image_verified_at?: string;
   deployed_at: string;
   public_url: string;
   instance_id: string;
@@ -18,7 +20,12 @@ interface ServerStatus {
   backups: {
     local: { latest: string | null; age_hours: number | null; level: string } | null;
     offsite: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
-    restore_test: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
+    restore_test: {
+      at?: string;
+      ok?: boolean;
+      not_set_up?: boolean;
+      delete_protection?: string | null;
+    } | null;
   } | null;
   host: { pending_updates?: number; next_reboot_window?: string } | null;
   heartbeat: { masked: string | null; last_ping: string | null; configured: boolean };
@@ -102,6 +109,10 @@ const fmtWhen = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString() : 'never';
 const fmtStarted = (epoch: number | null) =>
   epoch ? new Date(epoch * 1000).toLocaleString() : '—';
+
+// sha256:3f9a1c2e…b71d — the design's short digest.
+const shortDigest = (digest: string) =>
+  digest.length > 20 ? `${digest.slice(0, 16)}…${digest.slice(-4)}` : digest;
 
 /**
  * Settings → Server (design/screens/Settings.dc.html): health of the
@@ -243,6 +254,16 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         help="Deploys only outside 09:30–16:00 New York; the previous image is kept for rollback."
         right={`v${data.version}${data.image_tag ? ` · image ${data.image_tag}` : ''}${data.deployed_at ? ` · deployed ${fmtWhen(data.deployed_at)}` : ''}`}
       />
+      <Row
+        label="Image"
+        help="Signed by this repository's tag workflow; the deploy script refuses an image it can't verify and runs it by digest."
+        right={
+          data.image_digest
+            ? `${shortDigest(data.image_digest)} · ${data.image_verified_at ? 'signature verified at deploy' : 'not verified'}`
+            : '—'
+        }
+        level={data.image_digest ? (data.image_verified_at ? 'ok' : 'warning') : undefined}
+      />
       {data.config_layers && (
         <Row
           label="Config"
@@ -329,6 +350,16 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
             : backups?.restore_test
               ? (backups.restore_test.ok ? 'ok' : 'warning')
               : 'unknown'
+        }
+      />
+      <Row
+        label="Delete protection"
+        help="The bucket should keep deleted backups for at least 30 days (versioning or object lock), so this server alone can't erase them. Checked at the monthly restore test; see DEPLOY.md."
+        right={
+          backups?.restore_test?.delete_protection === 'on' ? 'on' : 'not confirmed'
+        }
+        level={
+          backups?.restore_test?.delete_protection === 'on' ? 'ok' : 'warning'
         }
       />
 

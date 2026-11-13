@@ -10,6 +10,77 @@ Build PR of 083 on branch `feat/083-sign-in-resilience` (issues #243, #244).
 - **Break-glass kill switch:** `python -m app.ops.kill_switch --reason "…" [--flatten] [--status]` writes `data/kill.request` (JSON, 0600, `O_EXCL`) and waits up to 30 s for `kill.result`; the app polls the file every 5 s inside its own loop — read, never executed — and runs the same code path as the button with event source `cli`. It never resumes trading. DEPLOY.md gains "If you can't sign in".
 - **WebSocket sessions:** the feed re-checks its session every 60 s and closes 1008 `session_expired`; sign-out, sign out everywhere, a password change and device removal close the affected sockets at once through the AuthService registry. `security.max_sockets` (20) caps open sockets — a new one closes the oldest — and applies with `SA_AUTH=off` too.
 
+## 2026-11-13 — [084] Supply chain and containers (build, part 2)
+
+Second build PR of 084 on branch `ops/084-containers-audits-backups`
+(issues #245, #248, #249).
+
+- **Containers (S12):** Caddy gets `read_only`, `tmpfs /tmp`,
+  `cap_drop ALL` + `NET_BIND_SERVICE`, `no-new-privileges` and
+  `pids_limit 128`; the app gets `pids_limit 256`. The runtime image
+  ships no `backend/tests` or `backend/eval`, and `/srv` is root-owned,
+  world-readable, not writable by uid 10001 — everything writable stays
+  on `/data`. `.dockerignore` now also excludes `backend/config.yaml`,
+  `**/secret.key`, `**/*.db*`, `backups`. `provision.sh` lets
+  unattended-upgrades cover Docker's own repo (`"Docker:${distro_codename}"`).
+- **Audits (S11):** `security/run-audits.sh --all` audits the dev sets
+  too (`uv export --extra dev`, `pnpm audit` without `--prod`) and
+  prints a markdown table via `security/audit_table.py`; it never fails.
+  The weekly CI run posts the table to the job summary. `minimatch` is
+  bumped to 11.0.5 through a pnpm override past GHSA-g3hv-75wg-m249 —
+  eslint's `^10` ranges block 11.x, so the override was needed.
+- **Backup delete protection (S8):** the monthly restore test asks the
+  bucket `GetBucketVersioning` with one SigV4-signed request (path-style,
+  region from `AWS_REGION`/`AWS_DEFAULT_REGION`/`us-east-1`) and stores
+  `delete_protection` on/off/unknown/ suspended with the result — a
+  failure is "unknown" and never blocks. Settings → Server → Backups
+  shows "Delete protection": green `on` or amber "not confirmed".
+  `docs/DEPLOY.md` requires versioning or object lock with ≥30 days'
+  retention, with the AWS CLI commands and the note that the app's key
+  needs no delete-version permission.
+
+## 2026-11-13 — [085] CSV formulas and outbound addresses (build)
+
+Build PR of 085 on branch `fix/085-csv-formulas-and-outbound-addresses`.
+
+- **`app/csv_safe.py`**: the one CSV writer. A text cell starting with
+  `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`; a
+  test walks `app/` and fails on any `csv.writer` outside the helper.
+  Both exports (LLM calls, backtest trades/decisions) use it.
+- **Checked at use**: the heartbeat ping resolves the host at every
+  ping and connects to the checked address with the original Host and
+  SNI, no redirects; the backup endpoint is resolved before each
+  restic run (restic resolves again itself — noted in a comment); the
+  SMTP host must resolve public at save, at test and at send unless
+  `security.allow_private_smtp` (new key, default false) is on —
+  loopback is refused even then. A refused SMTP host answers 422 "must
+  not point at a private address" at save and test, and counts as a
+  send failure with the category "address refused" at send.
+
+## 2026-11-13 — [084] Supply chain and containers (build, part 1)
+
+Build PR of 084 on branch `ops/084-supply-chain-and-containers` — the
+image chain (issue #242; containers, audits and backup delete protection
+follow in the second PR).
+
+- **Signed in CI:** the tag workflow's `push-image` job signs the pushed
+  image with cosign (keyless, GitHub OIDC — `id-token: write`) and writes
+  tag and digest to the job summary.
+- **Deploy by digest:** `deploy/deploy.sh <tag>` resolves the tag with
+  `docker buildx imagetools inspect`, verifies the signature against this
+  repository's `image.yml` tag workflow, and only then backs up, pulls
+  and restarts — a moved tag or unsigned image stops before anything
+  changes. `.env` gains `SA_IMAGE` (`repo@sha256:…`), `SA_IMAGE_PREVIOUS`
+  for rollback and `SA_IMAGE_VERIFIED`; Compose runs `${SA_IMAGE}`.
+  `--unverified` works only with `--emergency` and marks the image
+  unverified. `provision.sh` installs cosign pinned to v3.1.4 with a
+  sha256 check.
+- **Pins:** `node`, `python` (both stages) and `caddy` are pinned by
+  digest, `uv` to `==0.13.7`, and Dependabot gets a `docker` ecosystem
+  entry covering the Dockerfile and compose files.
+- **Settings → Server** shows the Image row: the short digest and
+  "signature verified at deploy", or amber "not verified".
+
 ## 2026-11-13 — [091] Number check: numbers inside fact strings (build)
 
 Build PR of 091 on branch `fix/091-number-check-fact-strings`.

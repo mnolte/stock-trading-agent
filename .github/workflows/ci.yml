@@ -245,6 +245,11 @@ jobs:
       - run: cd frontend && pnpm install --frozen-lockfile --allow-build=esbuild
       - name: dependency audits (pip-audit + pnpm audit --prod)
         run: ./security/run-audits.sh
+      # Item 084: the weekly run also audits the dev sets and posts the
+      # table to the job summary; it never fails the job.
+      - name: full audit incl. dev dependencies
+        if: github.event_name == 'schedule'
+        run: ./security/run-audits.sh --all >> "$GITHUB_STEP_SUMMARY"
 
   # Item 088: one coverage report per PR — Unit (pytest + Vitest), E2E
   # (Playwright runs) and All, per side. Never a required check and never

@@ -23,7 +23,13 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from starlette.websockets import WebSocketDisconnect
 
-from tests.helpers import PASSWORD, auth_app, csrf_headers, sign_in
+from tests.helpers import (
+    PASSWORD,
+    auth_app,
+    csrf_headers,
+    public_resolver,
+    sign_in,
+)
 
 
 @pytest.fixture
@@ -326,6 +332,8 @@ def test_first_smtp_save_requires_confirm(app_auth: Any) -> None:
         client.post(
             "/api/auth/confirm", json={"secret": PASSWORD}, headers=csrf_headers(client)
         )
+        # The SMTP host must resolve public (item 085) — fake the lookup.
+        app.state.notification_service._resolver = public_resolver
         r = client.post("/api/notifications/smtp", json=body, headers=csrf_headers(client))
         assert r.status_code == 200, r.text
 
