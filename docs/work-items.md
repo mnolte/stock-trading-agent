@@ -145,7 +145,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
 | 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
 | 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
-| 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `085-fix-csv-formulas-and-outbound-addresses.md` | #251 | — | planned |
+| 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `archive/085-fix-csv-formulas-and-outbound-addresses.md` | #251 | #274 | building |
 | 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
 | 088 | ops | Code coverage report from CI (issue #259) | `archive/088-ops-code-coverage.md` | #260 | #263, #267 | building |

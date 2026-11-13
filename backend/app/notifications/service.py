@@ -53,6 +53,7 @@ from app.notifications.events import (
     format_recorded,
 )
 from app.notifications.mail import Mailer, SmtpConfig, SmtpMessage, make_mailer
+from app.ops.urls import UrlRejected, resolve_public
 from app.secrets_service import SecretsStore, scrub
 
 logger = logging.getLogger(__name__)
@@ -133,10 +134,12 @@ class NotificationService:
         mailer: Mailer | None = None,
         publish: Callable[[set[str]], None] | None = None,
         session_factory: sessionmaker[Session] | None = None,
+        resolver: object = None,
     ) -> None:
         self.config = config
         self.clock = clock
         self._secrets = secrets
+        self._resolver = resolver
         self._mailer = mailer or make_mailer(config)
         self._publish = publish or (lambda topics: None)
         self._session_factory = session_factory or get_session_maker()
@@ -549,6 +552,26 @@ class NotificationService:
             "updated_at": None,
         }
 
+    def _allow_private_smtp(self) -> bool:
+        return bool(
+            self.config.get("security", "allow_private_smtp", default=False)
+        )
+
+    def _check_smtp_host(self, host: str) -> None:
+        """The SMTP host must not resolve to a private address — at save,
+        at the test send and at every send (item 085). Raises
+        ``UrlRejected``; loopback is refused even when
+        ``security.allow_private_smtp`` is on. A name that does not
+        resolve at all is left to the mailer's own failure: it has no
+        address to refuse, and smtplib resolves again by itself anyway
+        (the same two-lookup caveat as restic)."""
+        resolve_public(
+            host,
+            resolver=self._resolver,
+            allow_private=self._allow_private_smtp(),
+            missing_ok=True,
+        )
+
     def _smtp_config(self) -> SmtpConfig | None:
         fields = self._smtp_fields()
         if not fields["host"] or not fields["to_addr"]:
@@ -574,15 +597,24 @@ class NotificationService:
             error = "email is not configured — set it under Settings → Notifications"
         else:
             try:
-                await asyncio.to_thread(
-                    self._mailer.send,
-                    config,
-                    SmtpMessage(
-                        to_addr=config.to_addr, subject=subject, body=body
-                    ),
-                )
-            except Exception as exc:  # noqa: BLE001
-                error = safe_error(exc, extra=self._scrub_values())
+                # The host is checked again at send: it may have been
+                # saved while public and point somewhere private now
+                # (item 085). A refusal is a send failure, not a
+                # connection attempt.
+                await asyncio.to_thread(self._check_smtp_host, config.host)
+            except UrlRejected:
+                error = "address refused"
+            else:
+                try:
+                    await asyncio.to_thread(
+                        self._mailer.send,
+                        config,
+                        SmtpMessage(
+                            to_addr=config.to_addr, subject=subject, body=body
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error = safe_error(exc, extra=self._scrub_values())
         status = STATUS_FAILED if error else STATUS_SENT
         try:
             with self._session_factory() as session:
@@ -655,6 +687,15 @@ class NotificationService:
         a failed test; the password goes to ``secrets.smtp_password``."""
         if password is None and self._secrets is not None:
             password = self._secrets.get("smtp_password")
+        try:
+            # Refused before any connection: the test send below would
+            # otherwise probe the ports of whatever the name resolves to
+            # now (item 085).
+            await asyncio.to_thread(self._check_smtp_host, host)
+        except UrlRejected as exc:
+            detail = safe_error(exc, extra=self._scrub_values())
+            self._record_smtp_test(False, detail)
+            return {"ok": False, "error": detail}
         config = SmtpConfig(
             host=host,
             port=port,

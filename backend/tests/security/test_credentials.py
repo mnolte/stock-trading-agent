@@ -15,6 +15,8 @@ from app.secrets_service import KeyTestResult
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from tests.helpers import public_resolver
+
 SMTP_BODY = {
     "host": "mail.saved.example",
     "port": 587,
@@ -74,7 +76,10 @@ def _smtp_service(client: TestClient) -> NotificationService:
 
 def _smtp_configured(client: TestClient) -> _RecMailer:
     mailer = _RecMailer()
-    _smtp_service(client)._mailer = mailer
+    service = _smtp_service(client)
+    service._mailer = mailer
+    # The saved host must resolve public (item 085) — fake the lookup.
+    service._resolver = public_resolver
     r = client.post("/api/notifications/smtp", json=SMTP_BODY)
     assert r.status_code == 200, r.text
     return mailer
