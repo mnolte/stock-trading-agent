@@ -43,6 +43,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.helpers import public_resolver
+
 FAKE_KEY = "sk-proj-FAKEKEY1234567890"
 STORED_SECRET = "stored-value-not-key-shaped-1"
 NOW = datetime(2026, 10, 15, 14, 0, tzinfo=UTC)
@@ -118,6 +120,7 @@ async def _surfaces(
         secrets=secrets,
         mailer=mailer,
         session_factory=session_factory,
+        resolver=public_resolver,
     )
     secrets.save("smtp_password", "smtp-secret-98765")
     result = await service.save_smtp(

@@ -8,6 +8,7 @@ CEST, so Amsterdam is UTC+2 (quiet hours 23:00–08:00 = 21:00–06:00 UTC).
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -24,6 +25,8 @@ from app.secrets_service import SecretsStore
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
+
+from tests.helpers import public_resolver
 
 pytestmark = pytest.mark.anyio
 
@@ -89,6 +92,7 @@ def service(
         secrets=secrets,
         mailer=mailer,
         session_factory=session_factory,
+        resolver=public_resolver,
     )
 
 
@@ -486,6 +490,9 @@ async def test_send_test_goes_to_every_channel(
 
 async def test_api_never_returns_the_password(client: TestClient) -> None:
     """Save over HTTP, then scan the response and the settings payload."""
+    cast(Any, client.app).state.notification_service._resolver = (
+        public_resolver
+    )
     response = client.post(
         "/api/notifications/smtp",
         json={
@@ -561,3 +568,129 @@ async def test_drain_waits_for_an_in_flight_item(
     (row,) = _rows(session_factory)
     assert row.event == "new_error"
     assert "in-flight regression item" in (row.subject or "")
+
+
+# ---------------------------------------------------------------------------
+# outbound address checks (item 085, S13)
+
+
+def _resolver_to(address: str) -> Callable[..., list[Any]]:
+    def resolve(host: str, *_a: Any) -> list[Any]:
+        return [(0, 0, 0, "", (address, 0))]
+
+    return resolve
+
+
+_PRIVATE = _resolver_to("10.0.0.2")
+
+
+async def test_smtp_private_host_refused_at_save(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+) -> None:
+    """A host that resolves private is refused before any connection —
+    the 422 says why and nothing is saved or sent."""
+    service._resolver = _PRIVATE
+    result = await service.save_smtp(
+        host="smtp.lan",
+        port=587,
+        username="agent@test",
+        from_addr="agent@test",
+        to_addr="marc@test",
+    )
+    assert result["ok"] is False
+    assert "must not point at a private address" in str(result["error"])
+    assert mailer.sent == []
+    assert service.smtp_status()["configured"] is False
+
+
+async def test_smtp_public_at_save_private_at_send(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    session_factory: SessionFactory,
+) -> None:
+    """The name was public when saved and resolves private now: the
+    send fails with the 'address refused' category, no connection."""
+    await _configure_smtp(service, secrets)
+    mailer.sent.clear()
+    service._resolver = _PRIVATE
+    service.notify("new_error", "address turned private")
+    await service.drain()
+    (row,) = _rows(session_factory)
+    assert row.channel_status["email"] == "failed"
+    assert row.error == "address refused"
+    assert mailer.sent == []
+
+
+async def test_smtp_send_test_refused_when_private(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    session_factory: SessionFactory,
+) -> None:
+    """'Send test' hits the same at-send check."""
+    await _configure_smtp(service, secrets)
+    mailer.sent.clear()
+    service._resolver = _PRIVATE
+    await service.send_test()
+    (row,) = _rows(session_factory)
+    assert row.channel_status["email"] == "failed"
+    assert row.error == "address refused"
+    assert mailer.sent == []
+
+
+async def test_allow_private_smtp_permits_private_not_loopback(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+    config: AppConfig,
+) -> None:
+    """security.allow_private_smtp exists for a private relay: 10.0.0.2
+    passes, loopback is refused even then."""
+    config._active.setdefault("security", {})["allow_private_smtp"] = True
+    service._resolver = _PRIVATE
+    result = await service.save_smtp(
+        host="smtp.lan",
+        port=587,
+        username="agent@test",
+        from_addr="agent@test",
+        to_addr="marc@test",
+    )
+    assert result["ok"] is True
+    assert len(mailer.sent) == 1
+
+    service._resolver = _resolver_to("127.0.0.1")
+    result = await service.save_smtp(
+        host="smtp.lan",
+        port=587,
+        username="agent@test",
+        from_addr="agent@test",
+        to_addr="marc@test",
+    )
+    assert result["ok"] is False
+    assert "must not point at a private address" in str(result["error"])
+
+
+async def test_smtp_unresolvable_host_is_left_to_the_mailer(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+) -> None:
+    """A name that does not resolve has no address to refuse — the
+    check passes and the mailer's own result decides (item 085)."""
+
+    def nxdomain(host: str, *_a: Any) -> list[Any]:
+        raise OSError("NXDOMAIN")
+
+    service._resolver = nxdomain
+    result = await service.save_smtp(
+        host="no-such-host.invalid",
+        port=587,
+        username="agent@test",
+        from_addr="agent@test",
+        to_addr="marc@test",
+    )
+    assert result["ok"] is True
+    assert len(mailer.sent) == 1

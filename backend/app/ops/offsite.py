@@ -125,6 +125,11 @@ def _check(proc: subprocess.CompletedProcess[bytes], what: str) -> None:
 def offsite_backup(config: AppConfig, secrets: SecretsStore) -> None:
     """Encrypt the database and secret.key into the offsite repository,
     then prune to 30 daily + 12 weekly snapshots."""
+    # The endpoint is resolved and checked here, before the run — but
+    # restic resolves the host again by itself for every call, so the
+    # check and the use are two lookups: a name that turns private
+    # between them is not caught (item 085; restic offers no way to pin
+    # the address it connects to).
     creds = load_credentials(secrets)
     repo = _repo(creds)
     data = Path(config.env.sa_data_dir)
@@ -166,6 +171,8 @@ def restore_latest(
     config: AppConfig, secrets: SecretsStore, target: Path
 ) -> Path:
     """Restore the newest snapshot into ``target``; returns the db path."""
+    # Same two-lookup caveat as offsite_backup: the check runs here,
+    # restic resolves the endpoint host itself (item 085).
     creds = load_credentials(secrets)
     target.mkdir(parents=True, exist_ok=True)
     _check(
