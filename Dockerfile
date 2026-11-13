@@ -7,8 +7,9 @@
 ######################## frontend build ########################
 FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS frontend
 WORKDIR /fe
-RUN npm install -g corepack && corepack enable
-COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+COPY frontend/package.json ./
+RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.split('@').pop()")"
+COPY frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --allow-build=esbuild
 COPY frontend/ ./
 RUN pnpm build
