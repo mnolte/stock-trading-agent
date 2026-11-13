@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` and `Reviews.dc.html`. The briefing status line is the design's subtle strip (shared `StatusLine` component) on the dashboard card and the Reviews briefing view; trade and skip dates carry the month (`Thu 8 → Fri 9 Oct`, `Wed 7 Oct`); the briefings explainer keeps `(15:00 Amsterdam)` and `(briefing.v3)`; the verdicts card regains its explainer row with a neutral `Confirm all N drafts` button, and the verdict buttons match the design's 36 px / 6 px-radius / 13 px metrics with `Change…` as a real disclosure that keeps `Decision →` visible. No spec text changed.
+
 ## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
 
 Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
