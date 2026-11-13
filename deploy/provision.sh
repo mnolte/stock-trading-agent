@@ -133,6 +133,29 @@ fi
 usermod -aG docker "$DEPLOY_USER"
 log "docker on; $DEPLOY_USER in the docker group"
 
+# --- cosign: deploy.sh verifies the image signature with it -----------------
+# Pinned version + checksum (never curl | sh). deploy.sh --unverified exists
+# for the day Sigstore is unreachable.
+COSIGN_VERSION="3.1.4"
+case "$(uname -m)" in
+    x86_64)  COSIGN_ARCH=amd64
+             COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa ;;
+    aarch64) COSIGN_ARCH=arm64
+             COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2 ;;
+    *) die "no pinned cosign build for $(uname -m)" ;;
+esac
+if ! command -v cosign >/dev/null 2>&1; then
+    log "installing cosign v$COSIGN_VERSION ($COSIGN_ARCH)"
+    tmpdir="$(mktemp -d)"
+    trap 'rm -rf "$tmpdir"' EXIT
+    curl -fsSL \
+        "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}" \
+        -o "$tmpdir/cosign"
+    echo "$COSIGN_SHA256  $tmpdir/cosign" | sha256sum -c - >/dev/null
+    install -m 0755 "$tmpdir/cosign" /usr/local/bin/cosign
+    log "cosign installed"
+fi
+
 # --- layout -----------------------------------------------------------------
 install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" /srv/stock-agent
 if [[ ! -f /srv/stock-agent/.env ]]; then
@@ -142,6 +165,9 @@ MODE=paper
 SA_PUBLIC_URL=https://stock.example.nl
 SA_DOMAIN=stock.example.nl
 SA_VERSION=dev
+# SA_IMAGE=ghcr.io/mnolte/stock-agent@sha256:…  # set once by hand, then deploy.sh keeps it
+SA_IMAGE=
+SA_IMAGE_VERIFIED=
 SA_DEPLOYED_AT=
 EOF
     log "wrote /srv/stock-agent/.env — edit SA_DOMAIN/SA_PUBLIC_URL"

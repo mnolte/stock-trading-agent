@@ -144,7 +144,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 081 | fix | Keys out of error text; Ask sees trading settings only; heartbeat URL as a secret (issues #238, #240, #246) | `archive/081-fix-keys-out-of-error-text.md` | #251 | #268, #272 | building |
 | 082 | feat | Confirm every loosening (issue #239) | `082-feat-confirm-every-loosening.md` | #251 | — | planned |
 | 083 | feat | Sign-in resilience: known browsers, break-glass kill switch, WebSocket sessions (issues #243, #244) | `083-feat-sign-in-resilience.md` | #251 | — | planned |
-| 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `084-ops-supply-chain-and-containers.md` | #251 | — | planned |
+| 084 | ops | Supply chain and containers (issues #242, #245, #248, #249) | `archive/084-ops-supply-chain-and-containers.md` | #251 | #275 | building |
 | 085 | fix | CSV formulas and outbound addresses (issues #247, #250) | `archive/085-fix-csv-formulas-and-outbound-addresses.md` | #251 | #274 | building |
 | 086 | feat | Prompt caching on `complete()` model calls (issue #224) | `archive/086-feat-prompt-caching-complete.md` | — | #253 | building |
 | 087 | spec | Tests run in CI, not on the laptop | — | #254 | — | merged |
