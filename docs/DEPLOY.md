@@ -134,6 +134,24 @@ re-reads the account and prints `guard confirmed`. The app also
 re-checks this at every start and refuses to run entries when
 unconfirmed.
 
+## If you can't sign in
+
+If the password, the authenticator or sign-in itself is the problem —
+a lost phone, a paused sign-in after many failed attempts — the kill
+switch can still be turned on from the server. SSH in and run:
+
+```bash
+docker compose exec app python -m app.ops.kill_switch --reason "lost authenticator, stop trading"
+```
+
+Add `--flatten` to also cancel every order and sell every position.
+The app picks the request up within 5 seconds, runs the same path as
+the button, and prints `kill switch is on` when done.
+`python -m app.ops.kill_switch --status` shows whether the app runs and
+whether the switch is on. A reason is required, and the switch never
+resumes trading by itself — resume stays a Settings decision once you
+can sign in again.
+
 ## Offsite storage
 
 Create a bucket and access keys at a *different* provider (e.g.

@@ -18,13 +18,15 @@ the password or the code was wrong.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth.guard import auth_required
@@ -32,6 +34,7 @@ from app.auth.passwords import (
     hash_password,
     hash_token,
     new_csrf_token,
+    new_device_token,
     new_pending_token,
     new_recovery_codes,
     new_session_token,
@@ -44,9 +47,12 @@ from app.auth.passwords import (
 from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
-from app.db.models import AuthSession, SignInAttempt, User
+from app.db.models import AuthSession, SignInAttempt, TrustedDevice, User
 from app.market.clock import Clock
 from app.notifications.service import Notifier, NullNotifier
+
+if TYPE_CHECKING:
+    from starlette.websockets import WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,17 @@ PENDING_TTL = timedelta(minutes=10)
 PENDING_MAX_ATTEMPTS = 3
 # A busy GUI makes many calls a minute; last_seen updates are throttled.
 LAST_SEEN_WRITE_SECONDS = 60
+# Trusted devices (item 083): at most this many browsers are remembered.
+MAX_DEVICES = 10
+# Close code for sockets ended by the session rules (item 083, S7).
+WS_SESSION_END_CODE = 1008
+
+
+class _Socket(Protocol):
+    """The slice of WebSocket the registry needs (kept untyped so this
+    module never imports the web layer)."""
+
+    async def close(self, code: int = ..., reason: str | None = ...) -> None: ...
 
 
 class AuthError(Exception):
@@ -77,6 +94,7 @@ class AuthError(Exception):
         message: str,
         retry_after: int | None = None,
         fields: list[dict[str, str]] | None = None,
+        clear_device_cookie: bool = False,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -86,6 +104,9 @@ class AuthError(Exception):
         # 422 answers may carry per-field messages; the top-level
         # ``message`` is the registry sentence for the code (PR 25).
         self.fields = fields
+        # The device cookie presented on this request was just revoked —
+        # the endpoint deletes it so the browser stops presenting it.
+        self.clear_device_cookie = clear_device_cookie
 
 
 # The generic failure line — identical for a wrong password and a wrong
@@ -136,6 +157,9 @@ class SignedIn:
     session_token: str
     csrf_token: str
     keep_signed_in: bool
+    # Set only when this sign-in minted a new trusted device — the
+    # endpoint writes the cookie; a reused device needs no new value.
+    device_token: str | None = None
 
 
 class AuthService:
@@ -160,6 +184,13 @@ class AuthService:
         # token hash (spec, Sign-in — Confirm and password change).
         self._confirm_failures: dict[str, list[datetime]] = {}
         self._scrub_warned = False
+        # WebSocket registry (item 083, S7): every open feed socket with
+        # its session id (None without sign-in) and the loop it runs on,
+        # plus the per-session index used to close sockets at once.
+        self._sockets: OrderedDict[
+            _Socket, tuple[int | None, asyncio.AbstractEventLoop]
+        ] = OrderedDict()
+        self._sockets_by_session: dict[int, set[_Socket]] = {}
 
     # ------------------------------------------------------------------
     # basics
@@ -191,6 +222,221 @@ class AuthService:
             )
             self._totp_cache = (blob, fernet.decrypt(blob.encode()).decode())
         return self._totp_cache[1]
+
+    # ------------------------------------------------------------------
+    # trusted devices (item 083, S6)
+
+    def _device_for_token(
+        self, session: Session, token: str | None
+    ) -> TrustedDevice | None:
+        """The trusted-device row a presented cookie maps to, or None."""
+        if not token:
+            return None
+        return session.execute(
+            select(TrustedDevice).where(
+                TrustedDevice.token_hash == hash_token(token)
+            )
+        ).scalar_one_or_none()
+
+    def known_device(self, token: str | None) -> bool:
+        """True only while the presented device cookie is a live row —
+        the open status endpoint reports this and nothing more."""
+        with self._factory() as session:
+            return self._device_for_token(session, token) is not None
+
+    def global_pause_until(self) -> datetime | None:
+        """The persisted global pause end (aware UTC), for /auth/status."""
+        with self._factory() as session:
+            return self._global_pause_until(self._user(session))
+
+    def paused_until_iso(self) -> str | None:
+        """The pause end as ISO while the global pause is on, else None —
+        what the open status endpoint may show the sign-in page."""
+        pause = self.global_pause_until()
+        if pause is None or pause <= self._now():
+            return None
+        return pause.isoformat()
+
+    def _count_device_failure(
+        self, session: Session, device: TrustedDevice | None
+    ) -> bool:
+        """A failed sign-in step with a valid device cookie also counts
+        on the device: ``auth.lockout_failures`` inside
+        ``auth.lockout_window_minutes`` revokes it. Returns True when the
+        row was just deleted."""
+        if device is None:
+            return False
+        window = timedelta(
+            minutes=int(
+                self._config.get("auth", "lockout_window_minutes", default=15)
+            )
+        )
+        cutoff = (_naive_utc(self._now()) - window).isoformat()
+        fails = [t for t in device.failures if t >= cutoff]
+        fails.append(_naive_utc(self._now()).isoformat())
+        device.failures = fails
+        needed = int(self._config.get("auth", "lockout_failures", default=5))
+        if len(fails) >= needed:
+            # Sessions keep working — they are authenticated — but lose
+            # the device link so the FK lets the row go.
+            self._unlink_sessions(session, [device.id])
+            session.delete(device)
+            logger.info("trusted device revoked after %d failed sign-ins", needed)
+            return True
+        return False
+
+    def _add_device(
+        self, session: Session, user_agent: str, now: datetime
+    ) -> tuple[TrustedDevice, str]:
+        """A fresh trusted-device row + its cookie token; at most
+        ``MAX_DEVICES`` rows — the oldest by ``last_used_at`` goes."""
+        token = new_device_token()
+        count = session.execute(
+            select(func.count(TrustedDevice.id))
+        ).scalar_one()
+        if count >= MAX_DEVICES:
+            oldest = session.execute(
+                select(TrustedDevice)
+                .order_by(TrustedDevice.last_used_at.asc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if oldest is not None:
+                self._unlink_sessions(session, [oldest.id])
+                session.delete(oldest)
+        row = TrustedDevice(
+            token_hash=hash_token(token),
+            device_name=describe_device(user_agent),
+            created_at=_naive_utc(now),
+            last_used_at=_naive_utc(now),
+            failures=[],
+        )
+        session.add(row)
+        session.flush()
+        return row, token
+
+    def list_devices(self, device_token: str | None) -> list[dict[str, object]]:
+        """Settings → Access → Known browsers; hashes never leave here."""
+        current_hash = hash_token(device_token) if device_token else ""
+        out: list[dict[str, object]] = []
+        with self._factory() as session:
+            rows = session.execute(
+                select(TrustedDevice).order_by(TrustedDevice.last_used_at.desc())
+            ).scalars().all()
+            for row in rows:
+                out.append(
+                    {
+                        "id": row.id,
+                        "name": row.device_name,
+                        "created_at": row.created_at.replace(tzinfo=UTC).isoformat(),
+                        "last_used_at": row.last_used_at.replace(tzinfo=UTC).isoformat(),
+                        "this_browser": row.token_hash == current_hash,
+                    }
+                )
+        return out
+
+    def _unlink_sessions(self, session: Session, device_ids: list[int]) -> None:
+        """Sessions keep their row but lose the device link — SQLite
+        enforces the FK, so a device row can only go once nothing points
+        at it."""
+        if device_ids:
+            session.execute(
+                update(AuthSession)
+                .where(AuthSession.trusted_device_id.in_(device_ids))
+                .values(trusted_device_id=None)
+            )
+
+    def _session_ids_for_devices(self, session: Session, device_ids: list[int]) -> set[int]:
+        if not device_ids:
+            return set()
+        return set(
+            session.execute(
+                select(AuthSession.id).where(
+                    AuthSession.trusted_device_id.in_(device_ids)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    def remove_device(self, device_id: int) -> bool:
+        """Revoke one known browser; sockets of its sessions close at once."""
+        with self._factory() as session:
+            row = session.get(TrustedDevice, device_id)
+            if row is None:
+                return False
+            session_ids = self._session_ids_for_devices(session, [row.id])
+            self._unlink_sessions(session, [row.id])
+            session.delete(row)
+            session.commit()
+        self._close_session_sockets(session_ids, reason="device_removed")
+        return True
+
+    def revoke_all_devices(self) -> None:
+        """Every trusted device goes (password change, sign out
+        everywhere, new recovery codes — spec, Audit of 11 November)."""
+        with self._factory() as session:
+            rows = session.execute(select(TrustedDevice)).scalars().all()
+            if not rows:
+                return
+            session_ids = self._session_ids_for_devices(
+                session, [row.id for row in rows]
+            )
+            self._unlink_sessions(session, [row.id for row in rows])
+            for row in rows:
+                session.delete(row)
+            session.commit()
+        self._close_session_sockets(session_ids, reason="devices_revoked")
+
+    # ------------------------------------------------------------------
+    # WebSocket registry (item 083, S7)
+
+    def register_socket(
+        self, websocket: WebSocket, session_id: int | None
+    ) -> None:
+        """Track a feed socket; ``security.max_sockets`` caps the total —
+        a new socket closes the oldest. With SA_AUTH=off only the cap
+        applies (session_id stays None)."""
+        cap = int(self._config.get("security", "max_sockets", default=20))
+        while len(self._sockets) >= max(cap, 1):
+            oldest, (old_session, old_loop) = self._sockets.popitem(last=False)
+            if old_session is not None:
+                self._sockets_by_session.get(old_session, set()).discard(oldest)
+            self._close_socket(oldest, old_loop, "socket_limit")
+        loop = asyncio.get_running_loop()
+        self._sockets[websocket] = (session_id, loop)
+        if session_id is not None:
+            self._sockets_by_session.setdefault(session_id, set()).add(websocket)
+
+    def unregister_socket(self, websocket: WebSocket) -> None:
+        entry = self._sockets.pop(websocket, None)
+        if entry is not None and entry[0] is not None:
+            self._sockets_by_session.get(entry[0], set()).discard(websocket)
+
+    def _close_socket(
+        self, websocket: _Socket, loop: asyncio.AbstractEventLoop, reason: str
+    ) -> None:
+        async def _do() -> None:
+            try:
+                await websocket.close(code=WS_SESSION_END_CODE, reason=reason)
+            except Exception:  # noqa: BLE001 - already closed is fine
+                logger.debug("socket close failed (already closed)")
+
+        try:
+            asyncio.run_coroutine_threadsafe(_do(), loop)
+        except RuntimeError:
+            logger.debug("socket loop already closed")
+
+    def _close_session_sockets(
+        self, session_ids: set[int], *, reason: str
+    ) -> None:
+        """Close every socket bound to these sessions — sign-out,
+        sign out everywhere, a password change and a device removal
+        reach their sockets at once (spec, Audit of 11 November)."""
+        for session_id in session_ids:
+            for websocket in list(self._sockets_by_session.pop(session_id, set())):
+                entry = self._sockets.pop(websocket, None)
+                if entry is not None:
+                    self._close_socket(websocket, entry[1], reason)
 
     # ------------------------------------------------------------------
     # attempts and rate limits
@@ -238,11 +484,16 @@ class AuthService:
             return None
         return user.global_locked_until.replace(tzinfo=UTC)
 
-    def _check_allowed(self, session: Session, ip: str) -> None:
-        """Raise 429 when sign-in is paused globally or this address waits."""
+    def _check_allowed(
+        self, session: Session, ip: str, device: TrustedDevice | None = None
+    ) -> None:
+        """Raise 429 when sign-in is paused globally or this address waits.
+
+        A valid trusted-device cookie skips the global pause only — the
+        per-address lockout is unchanged (item 083, S6)."""
         now = self._now()
         pause = self._global_pause_until(self._user(session))
-        if pause is not None and now < pause:
+        if pause is not None and now < pause and device is None:
             retry = int((pause - now).total_seconds())
             self._record_attempt(session, ip, "locked")
             session.commit()
@@ -266,9 +517,15 @@ class AuthService:
                 retry_after=max(retry, 1),
             )
 
-    def _failed(self, session: Session, ip: str) -> AuthError:
+    def _failed(
+        self,
+        session: Session,
+        ip: str,
+        device: TrustedDevice | None = None,
+    ) -> AuthError:
         """Record a failed step and apply the lockout rules."""
         self._record_attempt(session, ip, "wrong")
+        device_revoked = self._count_device_failure(session, device)
         session.commit()
         failures = self._recent_failures(session, ip)
         needed = int(self._config.get("auth", "lockout_failures", default=5))
@@ -315,22 +572,36 @@ class AuthService:
                 "Too many failed sign-ins — sign-in is paused for now. "
                 "You were notified by email.",
                 retry_after=3600,
+                clear_device_cookie=device_revoked,
             )
-        return AuthError(401, "invalid_credentials", _WRONG)
+        return AuthError(
+            401,
+            "invalid_credentials",
+            _WRONG,
+            clear_device_cookie=device_revoked,
+        )
 
     # ------------------------------------------------------------------
     # the two sign-in steps
 
-    def start_sign_in(self, password: str, remember: bool, ip: str, user_agent: str) -> str:
+    def start_sign_in(
+        self,
+        password: str,
+        remember: bool,
+        ip: str,
+        user_agent: str,
+        device_token: str | None = None,
+    ) -> str:
         """Password step → a pending token for the code step."""
         with self._factory() as session:
-            self._check_allowed(session, ip)
+            device = self._device_for_token(session, device_token)
+            self._check_allowed(session, ip, device)
             user = self._user(session)
             if user is None:
                 logger.error("sign-in attempted but no user exists")
                 raise AuthError(503, "unavailable", "Sign-in is not set up.")
             if not verify_password(user.password_hash, password):
-                raise self._failed(session, ip)
+                raise self._failed(session, ip, device)
         # Drop expired tickets while we're here so _pending can't grow.
         now = self._now()
         for key, ticket in list(self._pending.items()):
@@ -349,7 +620,13 @@ class AuthService:
     def _drop_pending(self, key: str) -> None:
         self._pending.pop(key, None)
 
-    def finish_sign_in(self, pending_token: str, code: str, ip: str) -> SignedIn:
+    def finish_sign_in(
+        self,
+        pending_token: str,
+        code: str,
+        ip: str,
+        device_token: str | None = None,
+    ) -> SignedIn:
         """Code step → session + CSRF tokens. TOTP or a recovery code."""
         key = hash_token(pending_token)
         ticket = self._pending.get(key)
@@ -362,7 +639,8 @@ class AuthService:
             self._drop_pending(key)
             raise AuthError(401, "invalid_credentials", _WRONG)
         with self._factory() as session:
-            self._check_allowed(session, ip)
+            device = self._device_for_token(session, device_token)
+            self._check_allowed(session, ip, device)
             user = self._user(session)
             if user is None:
                 raise AuthError(503, "unavailable", "Sign-in is not set up.")
@@ -388,13 +666,24 @@ class AuthService:
                 ticket["attempts"] = attempts
                 if attempts >= PENDING_MAX_ATTEMPTS:
                     self._drop_pending(key)
-                raise self._failed(session, ip)
+                raise self._failed(session, ip, device)
             if matched_step >= 0:
                 user.last_totp_step = matched_step
             self._record_attempt(session, ip, "ok")
             remember = bool(ticket["remember"])
             days = int(self._config.get("auth", "remember_days", default=30))
             ua = str(ticket["ua"])
+            # The browser becomes a known device: a live cookie is
+            # reused (last_used moves), anything else mints a new row —
+            # the cookie value only ever leaves here once, in SignedIn.
+            new_device_token_value: str | None = None
+            if device is not None:
+                device.last_used_at = _naive_utc(now)
+                device_row = device
+            else:
+                device_row, new_device_token_value = self._add_device(
+                    session, ua, now
+                )
             token = new_session_token()
             row = AuthSession(
                 token_hash=hash_token(token),
@@ -405,17 +694,18 @@ class AuthService:
                 last_seen_at=_naive_utc(now),
                 expires_at=_naive_utc(now + timedelta(days=days)),
                 keep_signed_in=remember,
+                trusted_device_id=device_row.id,
             )
             session.add(row)
             session.commit()
-            device = row.device_name
+            device_label = row.device_name
         self._drop_pending(key)
         self._notifier.notify(
             "new_sign_in",
-            f"{device} from {mask_ip(ip)}",
+            f"{device_label} from {mask_ip(ip)}",
             link="/settings",
         )
-        return SignedIn(token, new_csrf_token(), remember)
+        return SignedIn(token, new_csrf_token(), remember, new_device_token_value)
 
     # ------------------------------------------------------------------
     # sessions
@@ -452,7 +742,9 @@ class AuthService:
         until = row.confirmed_until.replace(tzinfo=UTC)
         return until > self._now()
 
-    def _session_failed(self, session: Session, key: str, ip: str) -> None:
+    def _session_failed(
+        self, session: Session, key: str, ip: str, session_id: int | None = None
+    ) -> None:
         """A wrong secret for a live session — counts per session like a
         sign-in failure counts per address (spec: after 5 in 15 minutes
         the session is signed out and the "Failed sign-ins" warning
@@ -475,6 +767,8 @@ class AuthService:
             )
             self._confirm_failures.pop(key, None)
             session.commit()
+            if session_id is not None:
+                self._close_session_sockets({session_id}, reason="session_ended")
             logger.warning("session signed out after %d failed confirm attempts", needed)
             self._notifier.notify(
                 "sign_in_lockout",
@@ -508,7 +802,7 @@ class AuthService:
                 if ok and matched_step <= (user.last_totp_step or -1):
                     ok = False
             if not ok:
-                self._session_failed(session, key, row.ip)
+                self._session_failed(session, key, row.ip, row.id)
                 raise AuthError(401, "invalid_credentials", _WRONG)
             if matched_step >= 0:
                 user.last_totp_step = matched_step
@@ -544,24 +838,46 @@ class AuthService:
 
     def sign_out(self, token: str) -> None:
         with self._factory() as session:
+            sid = session.execute(
+                select(AuthSession.id).where(
+                    AuthSession.token_hash == hash_token(token)
+                )
+            ).scalar_one_or_none()
             session.execute(
                 delete(AuthSession).where(AuthSession.token_hash == hash_token(token))
             )
             session.commit()
+        if sid is not None:
+            self._close_session_sockets({sid}, reason="signed_out")
 
     def sign_out_others(self, token: str) -> int:
         with self._factory() as session:
+            ids = set(
+                session.execute(
+                    select(AuthSession.id).where(
+                        AuthSession.token_hash != hash_token(token)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             result = session.execute(
                 delete(AuthSession).where(AuthSession.token_hash != hash_token(token))
             )
             session.commit()
-            return int(getattr(result, "rowcount", 0) or 0)
+        self._close_session_sockets(ids, reason="signed_out")
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def sign_out_everywhere(self) -> int:
         with self._factory() as session:
+            ids = set(session.execute(select(AuthSession.id)).scalars().all())
             result = session.execute(delete(AuthSession))
             session.commit()
-            return int(getattr(result, "rowcount", 0) or 0)
+        self._close_session_sockets(ids, reason="signed_out")
+        # "Sign out everywhere" also forgets every known browser (spec,
+        # Audit of 11 November → Sign-in can't be paused).
+        self.revoke_all_devices()
+        return int(getattr(result, "rowcount", 0) or 0)
 
     def sign_out_by_id(self, session_id: int) -> None:
         with self._factory() as session:
@@ -569,6 +885,7 @@ class AuthService:
                 delete(AuthSession).where(AuthSession.id == session_id)
             )
             session.commit()
+        self._close_session_sockets({session_id}, reason="signed_out")
 
     def failed_attempts_summary(self) -> dict[str, object]:
         """"Failed sign-ins in the last 7 days" for Settings → Access."""
@@ -620,16 +937,29 @@ class AuthService:
             ).scalar_one_or_none()
             if user is None or not verify_password(user.password_hash, current):
                 if row is not None:
-                    self._session_failed(session, key, row.ip)
+                    self._session_failed(session, key, row.ip, row.id)
                 raise user_error
             user.password_hash = hash_password(new)
             user.password_changed_at = _naive_utc(self._now())
+            other_ids = set(
+                session.execute(
+                    select(AuthSession.id).where(
+                        AuthSession.token_hash != hash_token(token)
+                    )
+                )
+                .scalars()
+                .all()
+            )
             session.execute(
                 delete(AuthSession).where(
                     AuthSession.token_hash != hash_token(token)
                 )
             )
             session.commit()
+            self._close_session_sockets(other_ids, reason="signed_out")
+            # A password change forgets every known browser too (spec,
+            # Audit of 11 November → Sign-in can't be paused).
+            self.revoke_all_devices()
 
     def reset_totp(self) -> dict[str, object]:
         """A new authenticator secret; returns what is shown once."""
@@ -666,6 +996,9 @@ class AuthService:
                 hash_token(normalise_recovery_code(c)) for c in codes
             ]
             session.commit()
+            # New recovery codes revoke every known browser (spec,
+            # Audit of 11 November → Sign-in can't be paused).
+            self.revoke_all_devices()
             return codes
 
     def codes_left(self) -> int:

@@ -136,8 +136,14 @@ class AuthMiddleware:
         if scope["type"] == "websocket":
             # Host and Origin are the request gate's job — it runs in
             # front of this middleware on every scope, WebSocket included,
-            # and its _split_host handles IPv6 brackets.
-            scope["state"] = {**scope.get("state", {}), "session": row}
+            # and its _split_host handles IPv6 brackets. The raw token
+            # rides along so the feed loop can re-check the session
+            # every 60 s (item 083, S7).
+            scope["state"] = {
+                **scope.get("state", {}),
+                "session": row,
+                "session_token": token,
+            }
             await self.app(scope, receive, send)
             return
 
@@ -150,7 +156,11 @@ class AuthMiddleware:
             ):
                 await _send_error(send, 403, "forbidden")
                 return
-        scope["state"] = {**scope.get("state", {}), "session": row}
+        scope["state"] = {
+            **scope.get("state", {}),
+            "session": row,
+            "session_token": token,
+        }
         await self.app(scope, receive, send)
 
 
