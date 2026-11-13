@@ -912,6 +912,44 @@ def test_manager_create_refuse_delete_and_orphans() -> None:
         assert session.get(Backtest, refused.id) is None
 
 
+def test_manager_delete_ignores_stored_run_dir() -> None:
+    """The folder removed on delete comes from the run id alone: a
+    ``run_dir`` value pointing at another ``run-<id>`` folder elsewhere
+    is never used (hard rule 19 — stored text is not a path)."""
+    config = AppConfig()
+    clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))
+    manager = BacktestManager(config, clock)
+    row = manager.create(
+        name="t",
+        start=D0,
+        end=D0 + timedelta(days=1),
+        universe_mode="fixed",
+        strategies=[
+            {"ref": "x", "name": "x", "kind": "rules_only", "slug": "x"}
+        ],
+        starting_equity=Decimal(100),
+        slippage_pct=Decimal("0.05"),
+    )
+    canonical = run_dir_for(config, row.id)
+    canonical.mkdir(parents=True)
+    (canonical / "marker.db").write_text("x")
+    victim = Path(config.env.sa_data_dir).parent / "other" / f"run-{row.id}"
+    victim.mkdir(parents=True)
+    (victim / "keep.txt").write_text("x")
+    with get_session_maker()() as session:
+        stored = session.get(Backtest, row.id)
+        assert stored is not None
+        stored.status = "done"
+        stored.run_dir = str(victim)
+        session.commit()
+
+    assert manager.delete(row.id)
+    assert not canonical.exists()
+    assert (victim / "keep.txt").exists()
+    with get_session_maker()() as session:
+        assert session.get(Backtest, row.id) is None
+
+
 def test_manager_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     config = AppConfig()
     clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))

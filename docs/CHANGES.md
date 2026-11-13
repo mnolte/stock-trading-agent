@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
+
+Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
+
 ## 2026-11-13 — [094] rules_only backtests answer through the wave API (build)
 
 Fix for a regression from 078 (PR #266): the cycle's prepare/send/finish waves call `decide.prepare_call`/`send_call`/`finish_call` and never `decide()`, so `RulesOnlyDecisionService`'s override was bypassed and rules-only backtests went through the fake model client — which only enters for MSFT — producing empty books and a red `backend-slow` on main since `fe181dd`. The service now implements the wave API: prepare delegates to the base class, send is a no-op and finish stores the same deterministic enter/hold decision as before. No spec text changed.

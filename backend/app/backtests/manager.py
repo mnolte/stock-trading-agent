@@ -206,11 +206,13 @@ class BacktestManager:
             row = session.get(Backtest, run_id)
             if row is None or row.status in ACTIVE_STATUSES:
                 return False
-            folder = row.run_dir or str(run_dir_for(self.config, run_id))
             session.delete(row)
             session.commit()
-        path = Path(folder)
-        if path.exists() and path.name == f"run-{run_id}":
+        # The folder comes from the run id alone — never the stored
+        # ``run_dir`` string — so stored or request-influenced text can
+        # never pick a path to delete (hard rule 19).
+        path = run_dir_for(self.config, run_id)
+        if path.exists():
             shutil.rmtree(path, ignore_errors=True)
         return True
 
@@ -371,7 +373,7 @@ class BacktestManager:
             for row in session.execute(
                 select(Backtest).where(Backtest.run_dir != "")
             ).scalars():
-                row.size_bytes = dir_size(Path(row.run_dir))
+                row.size_bytes = dir_size(run_dir_for(self.config, row.id))
             session.commit()
 
 
