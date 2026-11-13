@@ -93,6 +93,7 @@ export function Layout() {
     registerConfirmHandler((req) => {
       setConfirmReq({
         action: req.action,
+        changes: req.changes,
         resolve: (ok) => {
           req.resolve(ok);
           setConfirmReq(null);

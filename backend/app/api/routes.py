@@ -83,9 +83,11 @@ from app.secrets_service import (
     scrub,
 )
 from app.settings_service import (
+    DIRECTIONS,
     SettingsError,
     _deep_merge,
     _nested_get,
+    confirm_fields,
     pending_change_map,
     save_version,
     schedule_table,
@@ -3490,6 +3492,9 @@ def settings(request: Request) -> dict[str, object]:
             )
         },
         "mode": config.env.mode,
+        # Item 082: the backend's looser/tighter map — the GUI's tags
+        # and its own copy of the map are gone; this is the one map.
+        "directions": dict(DIRECTIONS),
         # Item 067: the release calendar's read-only display — FOMC date
         # count/next/last, tracked 08:30 releases and the next release.
         "economic_releases": (
@@ -3567,18 +3572,19 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     promote_id = int(promote_raw) if isinstance(promote_raw, int | str) and str(
         promote_raw
     ).isdigit() else None
-    # Promote, and loosening any risk limit, need "Confirm it is you";
-    # tightening a limit never asks (design, Settings → Access).
-    loosens = _settings_loosen_risk(cleaned, base)
-    if promote_id is not None or loosens:
-        from app.auth.api import require_confirmed
-
-        require_confirmed(request)
+    # Promote, and every loosening (item 082), need "Confirm it is
+    # you"; tightening never asks (design, Settings → Access). The 403
+    # carries the changes that need it so the dialog can list them.
     new_tree = _deep_merge(base, cleaned)
     # The heartbeat URL is a write-only secret (item 081): it never
     # belongs to a settings version, so every saved tree blanks it —
     # including a value still sitting in config or an old version.
     new_tree.setdefault("ops", {})["heartbeat_url"] = ""
+    confirm = confirm_fields(base, new_tree)
+    if promote_id is not None or confirm:
+        from app.auth.api import require_confirmed
+
+        require_confirmed(request, fields=confirm or None)
     with get_session_maker()() as session:
         if promote_id is not None:
             check_promotion(session, config, promote_id)
@@ -3635,25 +3641,6 @@ def _model_options(request: Request) -> list[dict[str, object]]:
 def _clock(request: Request) -> Clock:
     clock = getattr(request.app.state, "clock", None)
     return clock if clock is not None else make_clock()
-
-
-def _settings_loosen_risk(
-    submitted: dict[str, object], base: dict[str, object]
-) -> bool:
-    """True when a numeric risk limit goes up — loosening asks for a
-    fresh confirmation; tightening never does (design, Access)."""
-    new_risk = submitted.get("risk")
-    if not isinstance(new_risk, dict):
-        return False
-    old_risk = _nested_get(base, "risk") or {}
-    for key, value in new_risk.items():
-        old = old_risk.get(key) if isinstance(old_risk, dict) else None
-        try:
-            if value is not None and old is not None and float(value) > float(old):
-                return True
-        except (TypeError, ValueError):
-            continue
-    return False
 
 
 # ----------------------------------------------------------------------
