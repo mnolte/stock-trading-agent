@@ -473,6 +473,34 @@ class TestExportCsv:
         filtered = client.get("/api/llm-calls/export.csv?symbol=AAPL")
         assert len(list(csv.reader(io.StringIO(filtered.text)))) == 3
 
+    def test_formula_names_export_as_text(
+        self, client: TestClient, seeded: dict[str, Any]
+    ) -> None:
+        """A strategy name that looks like a formula gets a leading '
+        so Excel shows it as text (item 085, S10); numbers stay numbers."""
+        with get_session_maker()() as session:
+            strategy = Strategy(
+                name='=HYPERLINK("http://evil.example")',
+                kind="llm",
+                status="active",
+                created_at=UTC_SENT,
+            )
+            session.add(strategy)
+            session.flush()
+            _call(session, strategy_id=strategy.id, symbol="EVIL")
+            session.commit()
+        response = client.get("/api/llm-calls/export.csv")
+        assert response.status_code == 200
+        rows = list(csv.reader(io.StringIO(response.text)))
+        strategy_col = rows[0].index("strategy")
+        cost_col = rows[0].index("cost")
+        evil = [r for r in rows if "HYPERLINK" in r[strategy_col]]
+        assert len(evil) == 1
+        assert evil[0][strategy_col] == '\'=HYPERLINK("http://evil.example")'
+        # A cost is written as a number — no quote prefix.
+        assert not evil[0][cost_col].startswith("'")
+        assert Decimal(evil[0][cost_col]) > 0
+
 
 class TestErrorRowsWrittenByCalls:
     """A timeout and an HTTP 503 land as error rows with details."""

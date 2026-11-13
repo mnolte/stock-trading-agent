@@ -34,6 +34,8 @@ from app.secrets_service import SecretsStore
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.helpers import public_resolver
+
 FAKE_KEY = "sk-proj-FAKEKEY1234567890"
 STORED_SECRET = "abc123secret00"
 
@@ -259,6 +261,7 @@ async def test_notification_row_and_email_are_scrubbed(
         secrets=secrets,
         mailer=mailer,
         session_factory=session_factory,
+        resolver=public_resolver,
     )
     secrets.save("smtp_password", "smtp-secret-98765")
     result = await service.save_smtp(
