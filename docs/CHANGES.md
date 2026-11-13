@@ -31,6 +31,24 @@ Second build PR of 084 on branch `ops/084-containers-audits-backups`
   retention, with the AWS CLI commands and the note that the app's key
   needs no delete-version permission.
 
+## 2026-11-13 — [085] CSV formulas and outbound addresses (build)
+
+Build PR of 085 on branch `fix/085-csv-formulas-and-outbound-addresses`.
+
+- **`app/csv_safe.py`**: the one CSV writer. A text cell starting with
+  `=`, `+`, `-`, `@`, a tab or a carriage return gets a leading `'`; a
+  test walks `app/` and fails on any `csv.writer` outside the helper.
+  Both exports (LLM calls, backtest trades/decisions) use it.
+- **Checked at use**: the heartbeat ping resolves the host at every
+  ping and connects to the checked address with the original Host and
+  SNI, no redirects; the backup endpoint is resolved before each
+  restic run (restic resolves again itself — noted in a comment); the
+  SMTP host must resolve public at save, at test and at send unless
+  `security.allow_private_smtp` (new key, default false) is on —
+  loopback is refused even then. A refused SMTP host answers 422 "must
+  not point at a private address" at save and test, and counts as a
+  send failure with the category "address refused" at send.
+
 ## 2026-11-13 — [084] Supply chain and containers (build, part 1)
 
 Build PR of 084 on branch `ops/084-supply-chain-and-containers` — the

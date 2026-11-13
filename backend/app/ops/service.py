@@ -38,7 +38,7 @@ from app.ops.offsite import (
     load_credentials,
     restore_latest,
 )
-from app.ops.urls import UrlRejected, validate_public_https_url
+from app.ops.urls import UrlRejected, resolve_public, validate_public_https_url
 
 if TYPE_CHECKING:
     from app.config import AppConfig
@@ -69,6 +69,8 @@ class OpsService:
         secrets: SecretsStore | None = None,
         data_client: ClockSource | None = None,
         pinger: Any = None,
+        resolver: object = None,
+        ping_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._config = config
         self._clock = clock
@@ -76,6 +78,8 @@ class OpsService:
         self._secrets = secrets
         self._data_client = data_client
         self._pinger = pinger or self._http_ping
+        self._resolver = resolver
+        self._ping_transport = ping_transport
         self._status_path = Path(config.env.sa_data_dir) / _STATUS_NAME
         self._status: dict[str, Any] = self._load()
         self.last_heartbeat_at: str | None = self._status.get("heartbeat_at")
@@ -150,12 +154,47 @@ class OpsService:
         except UrlRejected as exc:
             raise ValueError(f"heartbeat_url {safe_error(exc)}") from exc
 
+    @staticmethod
+    def _ping_request(url: str, address: str) -> tuple[str, dict[str, str], dict[str, str]]:
+        """The request for one checked address: connect to ``address``
+        while the Host header and the TLS SNI keep the original name —
+        the lookup that was checked is the lookup that is used (item
+        085)."""
+        parsed = urlparse(url)
+        port = parsed.port or 443
+        ip_host = f"[{address}]" if ":" in address else address
+        target = f"https://{ip_host}:{port}{parsed.path or '/'}"
+        if parsed.query:
+            target += f"?{parsed.query}"
+        host = parsed.hostname or ""
+        host_header = host if port == 443 else f"{host}:{port}"
+        return target, {"Host": host_header}, {"sni_hostname": host}
+
     async def _http_ping(self, url: str) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                response = await client.get(url)
+            parsed = urlparse(url)
+            if parsed.scheme != "https" or not parsed.hostname:
+                return False
+            addresses = resolve_public(
+                parsed.hostname, resolver=self._resolver
+            )
+        except (UrlRejected, ValueError):
+            logger.warning("heartbeat ping refused: address check failed")
+            return False
+        try:
+            target, headers, extensions = self._ping_request(url, addresses[0])
+        except ValueError:
+            logger.warning("heartbeat ping refused: bad URL")
+            return False
+        try:
+            async with httpx.AsyncClient(
+                timeout=10, transport=self._ping_transport
+            ) as client:
+                response = await client.get(
+                    target, headers=headers, extensions=extensions
+                )
             # 4xx is a miss too — a wrong URL returning 404 must not
-            # read as a live heartbeat.
+            # read as a live heartbeat. Redirects are not followed.
             return response.status_code < 400
         except httpx.HTTPError:
             return False
