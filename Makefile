@@ -7,9 +7,9 @@ ALEMBIC := .venv/bin/alembic
 RUFF := .venv/bin/ruff
 MYPY := .venv/bin/mypy
 PYTEST := .venv/bin/pytest
-# pytest-xdist workers for the parallel suites; cap on small machines:
-# make test-backend TEST_WORKERS=4
-TEST_WORKERS ?= auto
+# pytest-xdist workers for the parallel suites; CI passes TEST_WORKERS=auto
+# (every core) and override locally: make test-backend TEST_WORKERS=8
+TEST_WORKERS ?= 4
 PNPM := $(shell command -v pnpm 2>/dev/null || echo $(HOME)/.local/bin/pnpm)
 FE := cd frontend && PATH="$(HOME)/.local/bin:$(PATH)" $(PNPM)
 

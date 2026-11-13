@@ -46,6 +46,7 @@ jobs:
       - run: uv sync --extra dev --locked
       - run: make test-backend
         env:
+          TEST_WORKERS: auto
           PYTEST_ADDOPTS: >-
             --junitxml=junit-backend.xml
             --cov=app --cov-config=../pyproject.toml
@@ -94,6 +95,7 @@ jobs:
       - run: uv sync --extra dev --locked
       - run: make test-slow
         env:
+          TEST_WORKERS: auto
           PYTEST_ADDOPTS: --junitxml=junit-slow.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
