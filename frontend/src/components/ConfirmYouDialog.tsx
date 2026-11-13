@@ -56,6 +56,20 @@ function ConfirmYouForm({ request }: { request: ConfirmRequest }) {
         {request.action} is a risky action. Enter your password or a code from your
         authenticator to continue.
       </p>
+      {request.changes && request.changes.length > 0 && (
+        <div style={{ margin: '0 0 12px' }}>
+          <p style={{ margin: '0 0 6px', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)' }}>
+            These changes loosen the agent:
+          </p>
+          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text)', lineHeight: 1.6 }}>
+            {request.changes.map((c) => (
+              <li key={c.key}>
+                {c.label}: {c.old} → {c.new}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <label
         htmlFor="confirm-secret"
         style={{ display: 'block', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', marginBottom: 6 }}
