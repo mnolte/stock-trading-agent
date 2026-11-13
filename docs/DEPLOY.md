@@ -46,7 +46,8 @@ The script creates a `stockagent` user (uid 10001, matching the
 container), authorizes your key, turns off password and root SSH login,
 configures ufw (22/80/443 only), fail2ban, unattended security updates
 with reboots only in the Sunday 05:00 Amsterdam window, chrony for time
-sync, Docker, and `/srv/stock-agent/.env`.
+sync, Docker, cosign (pinned version and checksum), and
+`/srv/stock-agent/.env`.
 
 Move the repo into place and fill in `.env`:
 
@@ -58,7 +59,12 @@ sudo -u stockagent editor /srv/stock-agent/.env
 # SA_PUBLIC_URL=https://stock.example.nl
 ```
 
-`.env` holds no secrets — only the domain, image tag and deploy stamp.
+`.env` holds no secrets — only the domain, the image reference and the
+deploy stamps. `SA_IMAGE` is the digest form
+`ghcr.io/mnolte/stock-agent@sha256:…`; `deploy/deploy.sh` keeps it
+current. The very first deploy after this change is done by hand once:
+set `SA_IMAGE` (and `SA_VERSION`) in `.env` to the image you are
+already running, then use the script from the next tag on.
 
 ## First deploy
 
@@ -81,12 +87,20 @@ Then deploy the tag — the script refuses inside 09:30–16:00 New York:
 cd /srv/stock-agent && deploy/deploy.sh v1.0.0
 ```
 
+Before anything changes, the script resolves the tag to the digest CI
+built, verifies the cosign signature against this repository's tag
+workflow, and only then backs up, pulls by digest and restarts. A tag
+that was moved or an unsigned image stops the deploy before the backup.
+If Sigstore is unreachable, `deploy/deploy.sh v1.0.0 --emergency
+--unverified` deploys without the check and marks the image unverified
+in Settings → Server.
+
 It makes a backup first, pulls, runs migrations in a one-off container,
 restarts and checks `/healthz` plus a clean startup reconciliation.
-Failure inside two minutes rolls back to the previous image (restoring
-the pre-deploy backup when a migration ran). The site briefly serves
-nothing while the app restarts; PR 25's maintenance page plugs that gap
-via the marked hooks.
+Failure inside two minutes rolls back to the previous image by digest
+(restoring the pre-deploy backup when a migration ran). The site briefly
+serves nothing while the app restarts; PR 25's maintenance page plugs
+that gap via the marked hooks.
 
 ## `make create-user`
 
@@ -177,11 +191,12 @@ deploy/deploy.sh v1.2.3        # refuses inside 09:30–16:00 New York
 deploy/deploy.sh v1.2.3 --emergency   # only when it can't wait
 ```
 
-Rollback is automatic on a failed health check (previous image +
+Rollback is automatic on a failed health check (previous image digest +
 pre-deploy backup when a migration ran). To roll back by hand:
 
 ```bash
-# set SA_VERSION=<previous tag> in .env, then:
+# set SA_IMAGE=<previous repo@sha256:…> and SA_VERSION=<previous tag>
+# in .env (SA_IMAGE_PREVIOUS holds the last one), then:
 docker compose pull app && docker compose up -d app
 # if a migration ran in between, restore first:
 deploy/restore.sh <backup-name>   # e.g. stock-agent.db.2026-11-02

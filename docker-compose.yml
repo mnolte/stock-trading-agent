@@ -19,10 +19,10 @@ volumes:
 
 services:
   app:
-    build:
-      context: .
-      target: runtime
-    image: ghcr.io/mnolte/stock-agent:${SA_VERSION:-dev}
+    # The image CI built and signed, by digest — deploy.sh resolves the
+    # tag, verifies the cosign signature and writes SA_IMAGE. The local
+    # stack builds instead (docker-compose.local.yml).
+    image: ${SA_IMAGE:?set SA_IMAGE in .env}
     container_name: stock-agent-app
     restart: unless-stopped
     # Longer than the 60 s graceful shutdown, so docker stop never cuts
@@ -54,6 +54,10 @@ services:
       SA_INSTANCE_ID: sa-vps-1
       SA_VERSION: ${SA_VERSION:-dev}
       SA_DEPLOYED_AT: ${SA_DEPLOYED_AT:-}
+      # The digest and when its signature was verified at deploy —
+      # Settings → Server shows them (item 084).
+      SA_IMAGE: ${SA_IMAGE:-}
+      SA_IMAGE_VERIFIED: ${SA_IMAGE_VERIFIED:-}
     healthcheck:
       # localhost:SA_PORT is a Host the PR 28 request gate accepts.
       test:
@@ -67,7 +71,8 @@ services:
       start_period: 60s
 
   caddy:
-    image: caddy:2-alpine
+    # Pinned by digest (item 084); dependabot's docker ecosystem bumps it.
+    image: caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     container_name: stock-agent-caddy
     restart: unless-stopped
     ports:

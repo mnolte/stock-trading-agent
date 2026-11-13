@@ -6781,10 +6781,22 @@ def server_status(request: Request) -> dict[str, object]:
 
     db = Path(config.env.sa_db_path)
     backups = sorted(dated_backups(db.parent / "backups", db.name))
+    # Item 084: the image runs by digest; SA_IMAGE_VERIFIED is the UTC
+    # time deploy.sh verified the cosign signature, "no" for --unverified.
+    image = os.environ.get("SA_IMAGE", "")
+    image_digest = (
+        image.rsplit("@", 1)[-1] if "@sha256:" in image else ""
+    )
+    image_verified = os.environ.get("SA_IMAGE_VERIFIED", "")
     return {
         "version": request.app.version,
         "image_tag": os.environ.get("SA_VERSION", ""),
-        "deployed_at": os.environ.get("SA_DEPLOYED_AT", ""),
+        "image_digest": image_digest,
+        # UTC time deploy.sh verified the signature; "" when the image
+        # ran with --unverified or was never verified.
+        "image_verified_at": (
+            image_verified if image_verified not in ("", "no") else ""
+        ),
         "public_url": config.env.sa_public_url,
         "instance_id": config.env.sa_instance_id,
         "started_at": started_at,

@@ -28,6 +28,10 @@ export SA_PUBLIC_URL="${SA_PUBLIC_URL:-https://localhost}"
 export SA_DOMAIN="${SA_DOMAIN:-localhost}"
 export SA_VERSION="${SA_VERSION:-test}"
 export SA_DEPLOYED_AT="${SA_DEPLOYED_AT:-}"
+# The base file pins the app image to ${SA_IMAGE:?} — the local override
+# swaps in the local build, but compose still interpolates the base file.
+export SA_IMAGE="${SA_IMAGE:-stock-agent:local}"
+export SA_IMAGE_VERIFIED="${SA_IMAGE_VERIFIED:-}"
 COMPOSE=(env COMPOSE_PROJECT_NAME=stock-agent "$DOCKER" compose
     -f docker-compose.yml -f docker-compose.local.yml)
 BASE=https://localhost:8443

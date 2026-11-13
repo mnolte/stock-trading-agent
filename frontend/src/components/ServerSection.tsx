@@ -6,6 +6,8 @@ import { Button } from './Button';
 interface ServerStatus {
   version: string;
   image_tag: string;
+  image_digest?: string;
+  image_verified_at?: string;
   deployed_at: string;
   public_url: string;
   instance_id: string;
@@ -102,6 +104,10 @@ const fmtWhen = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString() : 'never';
 const fmtStarted = (epoch: number | null) =>
   epoch ? new Date(epoch * 1000).toLocaleString() : '—';
+
+// sha256:3f9a1c2e…b71d — the design's short digest.
+const shortDigest = (digest: string) =>
+  digest.length > 20 ? `${digest.slice(0, 16)}…${digest.slice(-4)}` : digest;
 
 /**
  * Settings → Server (design/screens/Settings.dc.html): health of the
@@ -242,6 +248,16 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         label="Version"
         help="Deploys only outside 09:30–16:00 New York; the previous image is kept for rollback."
         right={`v${data.version}${data.image_tag ? ` · image ${data.image_tag}` : ''}${data.deployed_at ? ` · deployed ${fmtWhen(data.deployed_at)}` : ''}`}
+      />
+      <Row
+        label="Image"
+        help="Signed by this repository's tag workflow; the deploy script refuses an image it can't verify and runs it by digest."
+        right={
+          data.image_digest
+            ? `${shortDigest(data.image_digest)} · ${data.image_verified_at ? 'signature verified at deploy' : 'not verified'}`
+            : '—'
+        }
+        level={data.image_digest ? (data.image_verified_at ? 'ok' : 'warning') : undefined}
       />
       {data.config_layers && (
         <Row

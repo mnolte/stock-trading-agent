@@ -2,6 +2,30 @@
 
 Newest first.
 
+## 2026-11-13 — [084] Supply chain and containers (build, part 1)
+
+Build PR of 084 on branch `ops/084-supply-chain-and-containers` — the
+image chain (issue #242; containers, audits and backup delete protection
+follow in the second PR).
+
+- **Signed in CI:** the tag workflow's `push-image` job signs the pushed
+  image with cosign (keyless, GitHub OIDC — `id-token: write`) and writes
+  tag and digest to the job summary.
+- **Deploy by digest:** `deploy/deploy.sh <tag>` resolves the tag with
+  `docker buildx imagetools inspect`, verifies the signature against this
+  repository's `image.yml` tag workflow, and only then backs up, pulls
+  and restarts — a moved tag or unsigned image stops before anything
+  changes. `.env` gains `SA_IMAGE` (`repo@sha256:…`), `SA_IMAGE_PREVIOUS`
+  for rollback and `SA_IMAGE_VERIFIED`; Compose runs `${SA_IMAGE}`.
+  `--unverified` works only with `--emergency` and marks the image
+  unverified. `provision.sh` installs cosign pinned to v3.1.4 with a
+  sha256 check.
+- **Pins:** `node`, `python` (both stages) and `caddy` are pinned by
+  digest, `uv` to `==0.13.7`, and Dependabot gets a `docker` ecosystem
+  entry covering the Dockerfile and compose files.
+- **Settings → Server** shows the Image row: the short digest and
+  "signature verified at deploy", or amber "not verified".
+
 ## 2026-11-13 — [091] Number check: numbers inside fact strings (build)
 
 Build PR of 091 on branch `fix/091-number-check-fact-strings`.
