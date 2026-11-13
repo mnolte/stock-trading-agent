@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { changeDirection, DIRECTION, diffDirections, diffMap, diffSettings } from './settingsDiff';
+import { changeDirection, diffDirections, diffMap, diffSettings } from './settingsDiff';
 import type { SettingsForm } from '../types/api';
 
 function base(): SettingsForm {
@@ -268,59 +268,64 @@ describe('diffSettings', () => {
   });
 });
 
-describe('changeDirection (item 069)', () => {
+// The backend's map (GET /api/settings → directions), item 082 — a
+// representative slice; the backend test walks all of config.example.yaml.
+const DIRS: Record<string, string> = {
+  'risk.risk_per_trade_pct': 'up',
+  'risk.max_open_positions': 'up',
+  'risk.hold_through_earnings': 'on',
+  'rules.require_daily_above_sma50': 'off',
+  'rules.rsi_min': 'down',
+  'rules.rsi_max': 'up',
+  'decision.min_confidence_enter': 'down',
+  'decision.model': 'neutral',
+  'decision.v5.trend_gate': 'off',
+  'decision.v5.trend_gate_regimes': 'longer',
+  'execution.time_in_force': 'neutral',
+  'universe.names': 'neutral',
+};
+
+describe('changeDirection (item 069, map from the API since 082)', () => {
   it('tags the kickoff examples', () => {
     // risk per trade down = tighter, up = looser
-    expect(changeDirection('risk.risk_per_trade_pct', 0.6, 0.5)).toBe('tighter');
-    expect(changeDirection('risk.risk_per_trade_pct', 0.5, 0.6)).toBe('looser');
+    expect(changeDirection('risk.risk_per_trade_pct', 0.6, 0.5, DIRS)).toBe('tighter');
+    expect(changeDirection('risk.risk_per_trade_pct', 0.5, 0.6, DIRS)).toBe('looser');
     // max open positions up = looser
-    expect(changeDirection('risk.max_open_positions', 4, 5)).toBe('looser');
+    expect(changeDirection('risk.max_open_positions', 4, 5, DIRS)).toBe('looser');
     // a narrower RSI range = tighter on both ends
-    expect(changeDirection('rules.rsi_min', 40, 45)).toBe('tighter');
-    expect(changeDirection('rules.rsi_max', 70, 65)).toBe('tighter');
+    expect(changeDirection('rules.rsi_min', 40, 45, DIRS)).toBe('tighter');
+    expect(changeDirection('rules.rsi_max', 70, 65, DIRS)).toBe('tighter');
     // trend gate off = looser
-    expect(changeDirection('decision.v5.trend_gate', true, false)).toBe('looser');
+    expect(changeDirection('decision.v5.trend_gate', true, false, DIRS)).toBe('looser');
     // adding a regime to trend_gate_regimes = looser
     expect(
-      changeDirection('decision.v5.trend_gate_regimes', ['up'], ['up', 'sideways']),
+      changeDirection('decision.v5.trend_gate_regimes', ['up'], ['up', 'sideways'], DIRS),
     ).toBe('looser');
     expect(
-      changeDirection('decision.v5.trend_gate_regimes', ['up', 'sideways'], ['up']),
+      changeDirection('decision.v5.trend_gate_regimes', ['up', 'sideways'], ['up'], DIRS),
     ).toBe('tighter');
+    // on / off kinds
+    expect(changeDirection('risk.hold_through_earnings', false, true, DIRS)).toBe('looser');
+    expect(changeDirection('rules.require_daily_above_sma50', true, false, DIRS)).toBe('looser');
+    expect(changeDirection('rules.require_daily_above_sma50', false, true, DIRS)).toBe('tighter');
   });
 
-  it('leaves settings outside risk/brakes/rules/gates untagged', () => {
-    expect(changeDirection('performance.slippage_pct_per_side', 0.05, 0.1)).toBeNull();
-    expect(changeDirection('notifications.repeat_limit_minutes', 30, 60)).toBeNull();
-    expect(changeDirection('decision.model', 'a', 'b')).toBeNull();
+  it('leaves neutral and unmapped settings untagged', () => {
+    expect(changeDirection('decision.model', 'a', 'b', DIRS)).toBeNull();
+    expect(changeDirection('execution.time_in_force', 'gtc', 'ioc', DIRS)).toBeNull();
+    expect(changeDirection('performance.slippage_pct_per_side', 0.05, 0.1, DIRS)).toBeNull();
+    expect(changeDirection('notifications.repeat_limit_minutes', 30, 60, DIRS)).toBeNull();
+    // Ancestor entries cover nested leaves (universe.names.SPY).
+    expect(changeDirection('universe.names.SPY', 'a', 'b', DIRS)).toBeNull();
   });
 
-  it('covers every key in the direction map', () => {
-    for (const [path, rule] of Object.entries(DIRECTION)) {
-      if (rule === 'list') {
-        expect(
-          changeDirection(path, ['up'], ['up', 'sideways']),
-          path,
-        ).toBe('looser');
-        expect(changeDirection(path, ['up', 'sideways'], ['up']), path).toBe(
-          'tighter',
-        );
-      } else if (rule.startsWith('on_')) {
-        expect(changeDirection(path, true, false), path).not.toBeNull();
-        expect(changeDirection(path, false, true), path).not.toBeNull();
-      } else {
-        expect(changeDirection(path, 1, 2), path).not.toBeNull();
-        expect(changeDirection(path, 2, 1), path).not.toBeNull();
-      }
-    }
-  });
-
-  it('diffDirections follows diffMap paths', () => {
+  it('diffDirections follows diffMap paths and the API map', () => {
     const current = base();
+    current.decision.v5 = { trend_gate: true };
     const edited = base();
     edited.risk.risk_per_trade_pct = 0.6;
-    edited.decision.v5 = { ...(edited.decision.v5 ?? {}), trend_gate: false };
-    const dirs = diffDirections(current, edited);
+    edited.decision.v5 = { trend_gate: false };
+    const dirs = diffDirections(current, edited, DIRS);
     expect(dirs['risk.risk_per_trade_pct']).toBe('looser');
     expect(dirs['decision.v5.trend_gate']).toBe('looser');
     expect(dirs['performance.slippage_pct_per_side']).toBeUndefined();
