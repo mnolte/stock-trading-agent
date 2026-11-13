@@ -1029,6 +1029,11 @@ export interface SettingsResponse {
     string,
     { id: number; name: string; value: unknown }[]
   >;
+  /** Item 082: the backend's looser/tighter map — dotted leaf path to
+   * direction kind ("up" | "down" | "on" | "off" | "wider" | "longer" |
+   * "shorter" | "neutral"). The one map; the tighter/looser tags and
+   * the confirm gate both read it. */
+  directions: Record<string, string>;
 }
 
 /** POST /api/settings/preview — dollar amounts and summary figures for
