@@ -17,6 +17,10 @@ export interface AuthStatus {
   idle_hours: number;
   confirm_minutes: number;
   instance_id: string;
+  /** ISO end of the global sign-in pause, while it lasts (item 083). */
+  paused_until: string | null;
+  /** True only with a live trusted-device cookie (item 083). */
+  known_device: boolean;
 }
 
 export interface AuthDevice {
@@ -38,6 +42,19 @@ export interface AuthSessions {
     last_ip: string | null;
   };
   recovery_codes_left: number;
+}
+
+/** A trusted browser (item 083, Settings → Access → Known browsers). */
+export interface TrustedDevice {
+  id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string;
+  this_browser: boolean;
+}
+
+export interface TrustedDevices {
+  devices: TrustedDevice[];
 }
 
 export function useAuthStatus(): AuthStatus | null {
