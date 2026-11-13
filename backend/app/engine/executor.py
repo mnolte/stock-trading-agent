@@ -386,8 +386,10 @@ class Executor:
         automatic: bool,
         flatten: bool = False,
         new_run_required: bool = False,
+        source: str = "gui",
     ) -> None:
-        """Turn the switch on and log it. ``flatten`` is stop & flatten."""
+        """Turn the switch on and log it. ``flatten`` is stop & flatten.
+        ``source`` is who asked — ``gui`` or ``cli`` (break-glass, item 083)."""
         self.state.kill_switch_on = True
         self.state.kill_switch_since = self.clock.now()
         self.state.kill_switch_reason = reason
@@ -407,6 +409,7 @@ class Executor:
                     "automatic": automatic,
                     "flatten": flatten,
                     "new_run_required": new_run_required,
+                    "source": source,
                 },
             )
             session.commit()
@@ -512,13 +515,16 @@ class Executor:
             session.commit()
         self._notify({"banners", "header", "attention"})
 
-    async def flatten(self) -> dict[str, object]:
+    async def flatten(
+        self, *, reason: str = "stop & flatten", source: str = "gui"
+    ) -> dict[str, object]:
         """Stop & flatten: kill switch on, cancel all orders, sell everything.
 
         Outside regular hours the sells are queued as market-on-open.
+        ``source`` is ``gui`` or ``cli`` (break-glass, item 083).
         """
         await self.activate_kill_switch(
-            reason="stop & flatten", automatic=False, flatten=True
+            reason=reason, automatic=False, flatten=True, source=source
         )
         cancelled = await self.broker.cancel_all_orders()
         now = self.clock.now()

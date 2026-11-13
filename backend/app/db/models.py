@@ -1308,6 +1308,34 @@ class AuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     keep_signed_in: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     confirmed_until: Mapped[datetime | None] = mapped_column(nullable=True)
+    # The trusted device this session was opened through (item 083);
+    # revoking the device closes the session's sockets.
+    trusted_device_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trusted_devices.id"), nullable=True
+    )
+
+
+class TrustedDevice(Base):
+    """A browser that completed sign-in before (item 083, S6).
+
+    The ``__Host-sa_device`` cookie carries a random token; only its
+    SHA-256 is stored. A valid one lifts only the global sign-in pause —
+    the password, the code and the per-address lockout still apply.
+    ``failures`` is a JSON list of naive-UTC ISO times of failed sign-in
+    steps made with this device; ``auth.lockout_failures`` inside
+    ``auth.lockout_window_minutes`` revokes the row.
+    """
+
+    __tablename__ = "trusted_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    device_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(nullable=False)
+    last_used_at: Mapped[datetime] = mapped_column(nullable=False)
+    failures: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
 
 class SignInAttempt(Base):
