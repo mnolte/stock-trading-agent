@@ -6242,7 +6242,8 @@ async def _retry_sync_job(
     if market_data is None or sources is None or clock is None:
         logger.error("sync retry %s: services unavailable", job)
         return
-    today = clock.now().astimezone(NY_TZ).date()
+    now = clock.now()
+    today = now.astimezone(NY_TZ).date()
     try:
         if job == "daily_bars":
             await tracked_symbols(
@@ -6250,12 +6251,11 @@ async def _retry_sync_job(
                 "daily_bars",
                 symbols or market_data.universe(),
                 lambda group, on_symbol: market_data.refresh_daily(
-                    today, symbols=group, on_symbol=on_symbol
+                    today, now, symbols=group, on_symbol=on_symbol
                 ),
                 "daily bars",
             )
         elif job == "bars_5m":
-            now = clock.now()
             await tracked_symbols(
                 syncs,
                 "bars_5m",
