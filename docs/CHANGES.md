@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [094] rules_only backtests answer through the wave API (build)
+
+Fix for a regression from 078 (PR #266): the cycle's prepare/send/finish waves call `decide.prepare_call`/`send_call`/`finish_call` and never `decide()`, so `RulesOnlyDecisionService`'s override was bypassed and rules-only backtests went through the fake model client — which only enters for MSFT — producing empty books and a red `backend-slow` on main since `fe181dd`. The service now implements the wave API: prepare delegates to the base class, send is a no-op and finish stores the same deterministic enter/hold decision as before. No spec text changed.
+
 ## 2026-11-13 — [093] Universe screen: stale detail and no re-run (work item)
 
 New fix item from the same 13 Nov incident: after the daily bars were backfilled, the Universe page kept showing the 08:10 screen's "258 of 259 daily bars" detail and there is no way to re-run the screen in paper mode. The kickoff (`docs/kickoffs/093-fix-stale-screen-detail.md`) frames the spec question — re-run on demand vs live detail for screened rows vs accept the staleness. No spec text changed.
