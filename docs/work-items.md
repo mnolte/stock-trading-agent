@@ -152,7 +152,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 089 | spec | A PR closes only issues it resolves | — | #261 | — | merged |
 | 090 | fix | After-exit job's SQLite off the event loop | — | — | #262 | building |
 | 091 | fix | Number check: numbers inside fact strings | `archive/091-fix-number-check-fact-strings.md` | — | #273 | building |
-| 092 | fix | Daily bars: no source gap before the session closes | `docs/kickoffs/092-fix-premature-source-gaps.md` | #284 | — | planned |
+| 092 | fix | Daily bars: no source gap before the session closes | `archive/092-fix-premature-source-gaps.md` | #284 | #290 | building |
 | 093 | fix | Universe screen: stale detail and no re-run | `docs/kickoffs/093-fix-stale-screen-detail.md` | #286 | — | planned |
 | 094 | fix | rules_only backtests: wave API bypassed decide() | — | — | #288 | building |
 
