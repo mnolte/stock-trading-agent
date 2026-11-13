@@ -708,6 +708,7 @@ class UniverseService:
         try:
             daily = await self._market_data.refresh_daily(
                 today,
+                self._clock.now(),
                 symbols=symbols,
                 session_count=self._daily_history_sessions(),
                 on_symbol=on_daily if run is not None else None,

@@ -76,7 +76,7 @@ async def test_full_session_two_shadows_and_rules_only_never_delay_live(
     await calendar.load(DAY - timedelta(days=600), DAY + timedelta(days=30))
     market_data = MarketDataService(sources, calendar, config, session_factory=sf)
     await market_data.refresh_earnings(DAY - timedelta(days=30), DAY + timedelta(days=90))
-    await market_data.refresh_daily(DAY)
+    await market_data.refresh_daily(DAY, clock.now())
     await market_data.refresh_history(DAY)
     from app.signals.service import SignalService
 
@@ -262,7 +262,7 @@ async def test_v2_shadow_runs_a_full_session(sf: sessionmaker[Session]) -> None:
     await calendar.load(DAY - timedelta(days=600), DAY + timedelta(days=30))
     market_data = MarketDataService(sources, calendar, config, session_factory=sf)
     await market_data.refresh_earnings(DAY - timedelta(days=30), DAY + timedelta(days=90))
-    await market_data.refresh_daily(DAY)
+    await market_data.refresh_daily(DAY, clock.now())
     await market_data.refresh_history(DAY)
     from app.signals.service import SignalService
 
@@ -368,7 +368,7 @@ async def test_v3_shadow_runs_beside_live(sf: sessionmaker[Session]) -> None:
     await calendar.load(DAY - timedelta(days=600), DAY + timedelta(days=30))
     market_data = MarketDataService(sources, calendar, config, session_factory=sf)
     await market_data.refresh_earnings(DAY - timedelta(days=30), DAY + timedelta(days=90))
-    await market_data.refresh_daily(DAY)
+    await market_data.refresh_daily(DAY, clock.now())
     await market_data.refresh_history(DAY)
     from app.signals.service import SignalService
 

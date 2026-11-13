@@ -173,7 +173,8 @@ async def refresh_calendar_and_daily_data(
     Universe → Data sync card can show the last run, its duration and
     its failures.
     """
-    today = clock.now().astimezone(NY_TZ).date()
+    now = clock.now()
+    today = now.astimezone(NY_TZ).date()
     start, end = calendar_load_range(config, today)
     await calendar_store.load(start, end)
     # Independent sources fetched together — the calendar must load first
@@ -208,7 +209,7 @@ async def refresh_calendar_and_daily_data(
             "daily_bars",
             market_data.universe(),
             lambda symbols, on_symbol: market_data.refresh_daily(
-                today, symbols=symbols, on_symbol=on_symbol
+                today, now, symbols=symbols, on_symbol=on_symbol
             ),
             "daily bars",
         ),

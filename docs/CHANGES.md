@@ -10,6 +10,12 @@ Follow-up to 095 for the remaining `py/path-injection` alerts: `_strategy_sf` bu
 
 Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
 
+## 2026-11-13 — [092] Daily bars: no source gap before the session closes (build)
+
+Build PR of 092 on branch `fix/092-premature-source-gaps`.
+
+- `MarketDataService.refresh_daily` takes `now` — the fetch time, injected from the callers' clocks, never `datetime.now()`. A session's absence is written to `daily_source_gaps` only once its New York date is safely past: a session still open, or just closed while the vendor may still be publishing its daily bar, stays missing and is asked for again on the next refresh instead of becoming a permanent source gap. Every caller passes its clock: the 08:00 scheduled refresh, the sync retry, the universe history warm-up, the VIX refresh and smoke-data.
+
 ## 2026-11-13 — [094] rules_only backtests answer through the wave API (build)
 
 Fix for a regression from 078 (PR #266): the cycle's prepare/send/finish waves call `decide.prepare_call`/`send_call`/`finish_call` and never `decide()`, so `RulesOnlyDecisionService`'s override was bypassed and rules-only backtests went through the fake model client — which only enters for MSFT — producing empty books and a red `backend-slow` on main since `fe181dd`. The service now implements the wave API: prepare delegates to the base class, send is a no-op and finish stores the same deterministic enter/hold decision as before. No spec text changed.
