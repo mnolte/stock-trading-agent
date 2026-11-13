@@ -3,6 +3,7 @@ import type {
   UniverseSyncJob,
   UniverseSyncResponse,
 } from '../types/api';
+import { sessionDayShort } from '../format';
 
 /** Parse a sync timestamp (naive UTC + "Z", or already zoned) to ms. */
 export function isoMs(iso: string | null | undefined): number | null {
@@ -49,6 +50,20 @@ export function statusWord(row: UniverseRow): string {
     return `eligible · ${row.fails} fail${row.fails === 1 ? '' : 's'}`;
   }
   return row.status.replace('_', ' ');
+}
+
+/** The line under the chip for a row that kept its place with a failed
+ * history check (item 093): the screen's numbers and the current ones.
+ * Status, rank and fail count stay the screen's record — only a screen
+ * changes them. Null for every other row. */
+export function historyNowText(row: UniverseRow): string | null {
+  const now = row.history_now;
+  if (!now) return null;
+  const screen = `Screen of ${sessionDayShort(row.screen_date)}: ${row.detail}`;
+  if (now.loaded) {
+    return `${screen}. Now: history loaded. The fail clears at the next passing screen.`;
+  }
+  return `${screen}. Now: ${now.detail}.`;
 }
 
 /** Counts that decide whether the Data sync card needs attention. */

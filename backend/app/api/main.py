@@ -822,6 +822,29 @@ def check_concurrency(config: AppConfig) -> None:
         )
 
 
+def check_universe_screen(config: AppConfig) -> None:
+    """``universe.screen.history_fail_data_error_pct`` is an integer
+    1-100 (item 093).
+
+    It decides when a mass history failure counts as a screen-wide data
+    error, so a bad value refuses startup rather than firing at the
+    wrong share mid-screen.
+    """
+    raw = config.get(
+        "universe", "screen", "history_fail_data_error_pct", default=50
+    )
+    if (
+        isinstance(raw, bool)
+        or not isinstance(raw, int)
+        or not 1 <= raw <= 100
+    ):
+        raise RuntimeError(
+            "Refusing to start: universe.screen."
+            "history_fail_data_error_pct must be an integer 1-100, "
+            f"got {raw!r}"
+        )
+
+
 def schedule_cycle_jobs(
     scheduler: AsyncIOScheduler,
     runner: CycleRunner,
@@ -1004,6 +1027,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     load_saved_settings(config)
     check_execution_mode(config)
     check_concurrency(config)
+    check_universe_screen(config)
     check_models_at_startup(config)
     check_prompt_versions_at_startup(config)
 

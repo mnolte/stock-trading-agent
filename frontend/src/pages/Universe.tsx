@@ -21,6 +21,7 @@ import type {
 import {
   amsTime,
   fmtDuration,
+  historyNowText,
   isoMs,
   jobResultText,
   statusWord,
@@ -680,7 +681,7 @@ export default function Universe() {
               <WarmBars row={r} />
             ) : (
               <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 4 }}>
-                {r.detail}
+                {historyNowText(r) ?? r.detail}
                 {r.held && r.qty > 0 ? `${r.detail ? ' · ' : ''}${r.qty} sh` : ''}
               </div>
             )}

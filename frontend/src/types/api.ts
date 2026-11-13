@@ -1734,6 +1734,11 @@ export interface UniverseRow {
   fails: number;
   failed_check: string | null;
   detail: string;
+  /** Live history check for a row whose screen failed on history
+   * (item 093); null for every other row. */
+  history_now?: { loaded: boolean; detail: string } | null;
+  /** The screen session date ("YYYY-MM-DD") the row's record is from. */
+  screen_date?: string | null;
   held: boolean;
   qty: number;
   screened: boolean;
