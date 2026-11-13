@@ -150,11 +150,15 @@ def _resolve(config: AppConfig, value: str) -> Path:
     return path
 
 
-def run_dir_for(config: AppConfig, run_id: int) -> Path:
-    base = _resolve(
+def run_base_for(config: AppConfig) -> Path:
+    """The folder that holds every ``run-<id>`` directory."""
+    return _resolve(
         config, str(config.get("backtest", "data_dir", default="backtests"))
     )
-    return base / f"run-{run_id}"
+
+
+def run_dir_for(config: AppConfig, run_id: int) -> Path:
+    return run_base_for(config) / f"run-{run_id}"
 
 
 def bar_store_path(config: AppConfig) -> Path:

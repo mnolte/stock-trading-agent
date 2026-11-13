@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
+
+Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.
+
 ## 2026-11-13 — [092] Daily bars: no source gap before the session closes (build)
 
 Build PR of 092 on branch `fix/092-premature-source-gaps`.
