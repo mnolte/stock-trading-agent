@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [093] Universe screen: stale detail and no re-run (work item)
+
+New fix item from the same 13 Nov incident: after the daily bars were backfilled, the Universe page kept showing the 08:10 screen's "258 of 259 daily bars" detail and there is no way to re-run the screen in paper mode. The kickoff (`docs/kickoffs/093-fix-stale-screen-detail.md`) frames the spec question — re-run on demand vs live detail for screened rows vs accept the staleness. No spec text changed.
+
 ## 2026-11-13 — [092] Daily bars: no source gap before the session closes (work item)
 
 New fix item from the 13 Nov live incident: the pre-market daily refresh marked the still-open session as a source-confirmed gap, gap dates are never refetched, and every symbol sat at "Warming up" with no entries all day. The kickoff (`docs/kickoffs/092-fix-premature-source-gaps.md`) sets the rule — a session's absence is a gap only once it has closed — and the false gap rows for 2026-11-12 were already deleted by hand. No spec text changed.
