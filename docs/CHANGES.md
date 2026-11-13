@@ -2,6 +2,25 @@
 
 Newest first.
 
+## 2026-11-13 — [091] Number check: numbers inside fact strings (build)
+
+Build PR of 091 on branch `fix/091-number-check-fact-strings`.
+
+- **The bug:** on 12 Nov seven draft verdicts fell back to the plain
+  template with "number check failed" (detail `1.5`/`1.50`) — all
+  `shock_brake` blocks whose `change_text` reads "SPY fell past 1.50%
+  last hour". The verdict model quoted the threshold as "1.5%", a number
+  it was given, but the number check only accepted numeric JSON leaves
+  of `facts`; a number inside a string did not count.
+- **The rule:** a number inside code-written fact prose counts as a
+  fact the model was given. `_screen_content` now adds the numbers
+  `extract_numbers` finds in `facts.change_text` to the allowed set —
+  the gate or check detail code wrote for the verdict. `thesis` (the
+  decision model's own text) and date strings stay excluded.
+- Every other gate or code-check detail with numbers (spread, position
+  and sector caps, daily loss, earnings blackout, reward-to-risk math)
+  had the same latent trap; quoting any of them now passes the check.
+
 ## 2026-11-12 — [081] Keys out of error text (build, part 2)
 
 Build PR of 081 on branch `fix/081-ask-settings-heartbeat` — the S3 and S9 parts (issues #240, #246).

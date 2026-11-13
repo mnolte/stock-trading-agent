@@ -52,7 +52,7 @@ from app.reviews.facts import (
     weekly_facts,
     weekly_period,
 )
-from app.reviews.numbercheck import bad_numbers, format_problems
+from app.reviews.numbercheck import bad_numbers, extract_numbers, format_problems
 from app.reviews.templates import briefing_status, plain_content
 from app.signals.service import SignalService
 
@@ -466,7 +466,21 @@ class ReviewService:
             ]
             if false_claims:
                 return None, REASON_FACT_CHECK, "; ".join(false_claims)[:200]
-        bad = bad_numbers("\n".join(ReviewService._content_texts(content)), facts)
+        # A number inside code-written fact prose (a gate or check detail
+        # quoted as change_text) is a fact the model was given too —
+        # without it every quoted threshold fails the check. Only
+        # change_text qualifies: thesis is model-written and dates would
+        # admit junk literals.
+        check_facts = facts
+        change_text = facts.get("change_text")
+        if isinstance(change_text, str) and change_text:
+            check_facts = {
+                **facts,
+                "change_text_numbers": extract_numbers(change_text),
+            }
+        bad = bad_numbers(
+            "\n".join(ReviewService._content_texts(content)), check_facts
+        )
         if bad:
             return None, REASON_NUMBER_CHECK, ", ".join(bad)
         # Stories (item 079): plain prose, 1–3 paragraphs, no markup,
