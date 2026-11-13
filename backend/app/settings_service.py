@@ -314,6 +314,427 @@ LABELS.update(
 )
 
 
+# ----------------------------------------------------------------------
+# Which way is looser (item 082, docs/SPEC.md — Every loosening asks
+# "Confirm it is you"). One entry per leaf setting in the trading
+# sections; the settings API serves the map and ``classify`` turns a
+# save's diff into tighter / looser / neutral per change. A key in a
+# covered section with no entry — and no covering ancestor — counts as
+# looser (fails closed); ``neutral`` is a deliberate opt-out with a
+# comment saying why.
+
+Direction = str  # "up" | "down" | "on" | "off" | "wider" | "longer" | "shorter" | "neutral"
+
+DIRECTION_SECTIONS = (
+    "risk",
+    "execution",
+    "rules",
+    "regime",
+    "events",
+    "decision",
+    "selection",
+    "schedule",
+    "universe",
+)
+
+DIRECTIONS: dict[str, Direction] = {
+    # risk — every raised cap or loosened brake is looser.
+    "risk.risk_per_trade_pct": "up",
+    "risk.max_position_pct": "up",
+    "risk.max_open_risk_pct": "up",
+    "risk.max_open_positions": "up",
+    "risk.max_per_sector": "up",
+    "risk.cash_only": "off",  # off allows margin-style exposure
+    "risk.daily_loss_limit_pct": "up",
+    "risk.losing_streak": "up",  # more losses before sizing halves
+    "risk.losing_streak_risk_factor": "up",  # less reduction per loss
+    "risk.shock_brake_1h_pct": "up",  # the brake trips later
+    "risk.shock_brake_session_pct": "up",
+    "risk.earnings_blackout_days": "down",
+    "risk.hold_through_earnings": "on",
+    "risk.reentry_same_session": "off",  # on blocks same-session re-entry
+    "risk.drawdown_kill_pct": "up",  # the kill switch arms later
+    "risk.adopted_stop_atr": "up",  # wider protective stop on adoption
+    "risk.protective_stop_fallback_pct": "up",
+    "risk.max_order_pct": "up",
+    "risk.max_orders_per_cycle": "up",
+    "risk.failed_cycles_kill": "up",  # more failures before the kill
+    # execution — a wider envelope or a later alert is looser.
+    "execution.mode": "neutral",  # supervised → automatic is its own rule
+    "execution.entry_limit_offset_pct": "up",
+    "execution.entry_timeout_minutes": "up",
+    "execution.entry_cutoff": "up",  # HH:MM compares as text; later = more entries
+    "execution.pending_exit_failures_alert": "up",  # alerts later = quieter
+    "execution.stream_update_grace_seconds": "up",  # degraded marks later
+    "execution.stream_degraded_minutes": "down",  # banner clears sooner = quieter
+    "execution.fill_settle_seconds": "up",  # qty checks skipped longer
+    "execution.exit_in_flight_seconds": "up",  # sells count as protection longer
+    "execution.max_spread_pct": "up",
+    "execution.quote_max_deviation_pct": "up",
+    "execution.quote_max_age_seconds": "up",
+    "execution.tighten_quote_max_age_seconds": "up",
+    "execution.time_in_force": "neutral",  # order enum, no looser value
+    # rules — a narrower RSI band or a dropped filter is looser.
+    "rules.rsi_min": "down",
+    "rules.rsi_max": "up",
+    "rules.require_daily_above_sma50": "off",
+    "rules.require_ema20_above_ema50": "off",
+    # regime — the block list shrinks = looser; the vol boundaries label
+    # regimes and which side is safer depends on the strategy.
+    "regime.vol_low_below_pct": "neutral",
+    "regime.vol_high_above_pct": "neutral",
+    "regime.block_entries_in": "shorter",
+    # events — a shorter FOMC window or fewer blocked dates is looser;
+    # release ids, times and fetch horizons don't move risk.
+    "events.fomc.enabled": "off",
+    "events.fomc.time": "neutral",
+    "events.fomc.block_minutes_before": "down",
+    "events.fomc.block_minutes_after": "down",
+    "events.fomc.dates": "shorter",
+    "events.fred_releases.cpi": "neutral",
+    "events.fred_releases.jobs": "neutral",
+    "events.fred_releases.pce": "neutral",
+    "events.release_time": "neutral",
+    "events.lookahead_days": "neutral",
+    "events.next_release_sessions": "neutral",
+    # decision — gates: a lower bar, a wider stop band or a shorter
+    # regime list is looser. Model and prompt changes are their own rule.
+    "decision.model": "neutral",  # a live model change asks on its own
+    "decision.temperature": "up",  # more randomness, less disciplined
+    "decision.prompt": "neutral",  # a live prompt change asks on its own
+    "decision.min_confidence_enter": "down",
+    "decision.entry_gate": "neutral",  # floor vs ev: neither is strictly looser
+    "decision.min_ev_r": "down",
+    "decision.stop_atr_min": "down",
+    "decision.stop_atr_max": "up",
+    "decision.min_reward_risk": "down",
+    "decision.tighten_min_atr_below_price": "neutral",  # stop-placement floor, both ways arguable
+    "decision.breakeven_min_r": "up",  # break-even comes later = wider stops longer
+    "decision.max_calls_per_cycle": "neutral",  # cost cap, not a risk dial
+    "decision.call_timeout_seconds": "neutral",
+    "decision.max_output_tokens": "neutral",
+    "decision.options.swing_strength": "neutral",
+    "decision.options.swing_lookback_bars_1h": "neutral",
+    "decision.options.swing_lookback_sessions": "neutral",
+    "decision.options.max_levels_each_side": "neutral",
+    "decision.options.level_buffer_atr": "up",  # wider buffer = wider stops
+    "decision.options.atr_stop_multiples": "neutral",  # offered sizes, the model picks
+    "decision.options.target_r_multiples": "neutral",
+    "decision.options.dedupe_atr": "neutral",
+    "decision.options.max_stops": "neutral",
+    "decision.options.max_options": "neutral",
+    "decision.options.held_trail_atr": "up",  # wider trail = looser
+    "decision.v3.min_room_atr": "down",
+    "decision.v3.room_level_kinds": "longer",  # more kinds count as room
+    "decision.v3.min_edge": "down",
+    "decision.v3.min_stop_move_atr": "neutral",  # held-stop dedupe threshold
+    "decision.v3.breakeven_min_r": "up",
+    "decision.v3.held_stop_min_atr": "up",  # held stops sit further below price
+    "decision.v3.level_merge_atr": "neutral",
+    "decision.v4.max_headlines": "neutral",  # context size, not a gate
+    "decision.v4.max_level_distance_atr": "neutral",
+    "decision.v4.flip_min_move_atr": "neutral",
+    "decision.v4.max_confidence_above_anchor": "up",  # the warning fires later
+    "decision.v4.checks_gate": "off",  # on = code-enforced checklist
+    "decision.v4.near_level_atr": "neutral",  # pinned by the prompt versions
+    "decision.v5.exit_margin": "down",  # exits earlier = tighter
+    "decision.v5.overnight_margin": "down",  # holds only from a higher neutral
+    "decision.v5.gap_sessions": "neutral",  # stats window
+    "decision.v5.long_target_minutes": "neutral",
+    "decision.v5.trend_gate": "off",
+    "decision.v5.trend_gate_regimes": "longer",
+    "decision.v5.max_rr": "up",  # higher cap = looser options allowed
+    "decision.v5.base_rate_sessions": "neutral",  # stats window
+    "decision.v5.base_rate_min_n": "neutral",
+    "decision.v5.price_vs_signal_adverse_atr": "up",
+    "decision.v6.sideways_max_target_atr": "up",
+    "decision.replay.confirm_above_usd": "neutral",  # replay-only threshold
+    # selection — rank vs expected profit and the blend weight have no
+    # single looser side; the last-slot bar does.
+    "selection.mode": "neutral",
+    "selection.confidence_weight": "neutral",
+    "selection.last_slot_min_ev_r": "down",  # null = off = loosest
+    # schedule — more cycles or fewer checks is looser; data windows and
+    # display knobs are neutral.
+    "schedule.market_timezone": "neutral",  # the exchange clock's zone
+    "schedule.cycles": "longer",
+    "schedule.last_cycle_no_entries": "off",
+    "schedule.position_checks": "shorter",
+    "schedule.position_check_failures_alert": "up",  # alerts later = quieter
+    "schedule.calendar_refresh": "neutral",
+    "schedule.misfire_grace_seconds": "neutral",
+    "schedule.history_sessions": "neutral",
+    "schedule.daily_history_sessions": "neutral",
+    "schedule.history_missing_tolerance": "neutral",
+    "schedule.bar_adjustment": "neutral",
+    "schedule.bars_5m_keep_sessions": "neutral",
+    "schedule.cycle_duration_warn_minutes": "up",  # warns later = quieter
+    # universe — a bigger or wider pool is looser; names, the rank and
+    # the display row count are neutral. mode has its own rule
+    # (fixed → screened asks).
+    "universe.symbols": "longer",
+    "universe.names": "neutral",  # display names keyed by ticker
+    "universe.sectors": "neutral",  # sector labels keyed by ticker
+    "universe.mode": "neutral",  # fixed → screened asks on its own
+    "universe.pool_file": "neutral",
+    "universe.max_pool": "up",
+    "universe.screen.time_ny": "neutral",
+    "universe.screen.min_price": "down",
+    "universe.screen.min_avg_dollar_volume": "down",
+    "universe.screen.lookback_sessions": "neutral",
+    "universe.screen.drop_after_failed_screens": "up",  # stays in pool longer
+    "universe.rank_by": "neutral",
+    "universe.watchlist_rows": "neutral",
+    "universe.allowed_sectors": "longer",
+}
+
+
+def _direction_for(path: str) -> Direction | None:
+    """The direction entry for a dotted leaf path: exact match first,
+    then the nearest covering ancestor (``universe.names.SPY`` reads
+    ``universe.names``). ``None`` = no entry — the caller fails closed."""
+    node = path
+    while node:
+        found = DIRECTIONS.get(node)
+        if found is not None:
+            return found
+        node = node.rpartition(".")[0]
+    return None
+
+
+def _flatten_leaves(tree: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """``{"a.b.c": value}`` for every non-dict leaf; dicts recurse."""
+    out: dict[str, Any] = {}
+    for key, value in tree.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            out.update(_flatten_leaves(value, path))
+        else:
+            out[path] = value
+    return out
+
+
+def _order_key(value: Any) -> tuple[int, float | str]:
+    """Total order for up/down compares: null sorts lowest, numbers
+    numerically, everything else as text (``HH:MM`` times compare right)."""
+    if value is None:
+        return (0, 0.0)
+    if isinstance(value, bool):
+        return (1, float(value))
+    try:
+        return (1, float(value))
+    except (TypeError, ValueError):
+        return (2, str(value))
+
+
+def _set_members(value: Any) -> set[Any] | None:
+    if isinstance(value, (list, tuple, set, frozenset)):
+        try:
+            return set(value)
+        except TypeError:
+            return None
+    return None
+
+
+def _classify_change(kind: Direction, old: Any, new: Any) -> str:
+    """``"looser" | "tighter" | "neutral"`` for one changed leaf."""
+    if kind == "neutral":
+        return "neutral"
+    if kind in ("on", "off"):
+        was_on = bool(old)
+        is_on = bool(new)
+        if was_on == is_on:
+            return "neutral"
+        return "looser" if is_on == (kind == "on") else "tighter"
+    if kind in ("up", "down"):
+        o, n = _order_key(old), _order_key(new)
+        if o == n:
+            return "neutral"
+        rose = o < n
+        return "looser" if rose == (kind == "up") else "tighter"
+    if kind in ("longer", "shorter"):
+        old_set = _set_members(old)
+        new_set = _set_members(new)
+        if old_set is None or new_set is None:
+            return "neutral"
+        added, removed = new_set - old_set, old_set - new_set
+        grew = bool(added) and not removed
+        shrank = bool(removed) and not added
+        if kind == "longer":
+            if grew:
+                return "looser"
+            if shrank:
+                return "tighter"
+        else:
+            if shrank:
+                return "looser"
+            if grew:
+                return "tighter"
+        return "neutral"
+    if kind == "wider":
+        # A [low, high] pair (or {"min","max"}): wider is looser.
+        pair_old = _range_pair(old)
+        pair_new = _range_pair(new)
+        if pair_old is None or pair_new is None:
+            return "neutral"
+        lo_old, hi_old = (_order_key(v) for v in pair_old)
+        lo_new, hi_new = (_order_key(v) for v in pair_new)
+        widened = lo_new < lo_old or hi_new > hi_old
+        narrowed = lo_new > lo_old or hi_new < hi_old
+        if widened and not narrowed:
+            return "looser"
+        if narrowed and not widened:
+            return "tighter"
+        return "neutral"
+    return "neutral"
+
+
+def _range_pair(value: Any) -> tuple[Any, Any] | None:
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return value[0], value[1]
+    if isinstance(value, dict) and "min" in value and "max" in value:
+        return value["min"], value["max"]
+    return None
+
+
+def classify(old_tree: dict[str, Any], new_tree: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every changed leaf in the trading sections, tagged tighter /
+    looser / neutral (item 082). A covered key without a DIRECTIONS
+    entry counts as looser — the map fails closed."""
+    out: list[dict[str, Any]] = []
+    old_flat = _flatten_leaves(old_tree)
+    new_flat = _flatten_leaves(new_tree)
+    missing = object()
+    for path in sorted(set(old_flat) | set(new_flat)):
+        section = path.partition(".")[0]
+        if section not in DIRECTION_SECTIONS:
+            continue
+        old = old_flat.get(path, missing)
+        new = new_flat.get(path, missing)
+        if old is missing:
+            old = None
+        if new is missing:
+            new = None
+        if old == new:
+            continue
+        kind = _direction_for(path)
+        direction = (
+            "looser"
+            if kind is None
+            else _classify_change(kind, old, new)
+        )
+        out.append({"key": path, "old": old, "new": new, "direction": direction})
+    return out
+
+
+def _field_label(path: str) -> str:
+    section, _, rest = path.partition(".")
+    return LABELS.get((section, rest)) or LABELS.get((section, "")) or path
+
+
+def _fmt_field(value: Any) -> str:
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value) or "—"
+    return str(value)
+
+
+def _confirm_entry(path: str, old: Any, new: Any) -> dict[str, str]:
+    return {
+        "key": path,
+        "label": _field_label(path),
+        "old": _fmt_field(old),
+        "new": _fmt_field(new),
+    }
+
+
+def _quiet_hours_minutes(value: Any) -> int | None:
+    """Quiet-hours span in minutes; overnight windows count past
+    midnight. ``None`` when the shape isn't ``{start, end}``."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        start = datetime.strptime(str(value["start"]), "%H:%M")  # noqa: DTZ007
+        end = datetime.strptime(str(value["end"]), "%H:%M")  # noqa: DTZ007
+    except (KeyError, ValueError):
+        return None
+    span = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)
+    return span % (24 * 60) or 24 * 60
+
+
+def _quiet_hours_text(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"{value.get('start', '?')}–{value.get('end', '?')}"
+    return _fmt_field(value)
+
+
+def confirm_fields(
+    old_tree: dict[str, Any], new_tree: dict[str, Any]
+) -> list[dict[str, str]]:
+    """The changes a save must confirm (item 082): every looser leaf
+    from ``classify`` plus the rules that sit outside the direction
+    map — supervised → automatic, an alert event losing a channel,
+    longer quiet hours, fixed → screened, and a live model or prompt
+    change. Each entry is ``{key, label, old, new}`` for the 403
+    ``confirm_required`` answer and the dialog's list."""
+    fields = [
+        _confirm_entry(c["key"], c["old"], c["new"])
+        for c in classify(old_tree, new_tree)
+        if c["direction"] == "looser"
+    ]
+    # execution.mode: only supervised → automatic asks.
+    old_mode = _nested_get(old_tree, "execution", "mode")
+    new_mode = _nested_get(new_tree, "execution", "mode")
+    if old_mode == "supervised" and new_mode == "automatic":
+        fields.append(_confirm_entry("execution.mode", old_mode, new_mode))
+    # universe.mode: only fixed → screened asks.
+    old_uni = _nested_get(old_tree, "universe", "mode")
+    new_uni = _nested_get(new_tree, "universe", "mode")
+    if old_uni == "fixed" and new_uni == "screened":
+        fields.append(_confirm_entry("universe.mode", old_uni, new_uni))
+    # A live decision model or prompt change alters every decision.
+    for key in ("model", "prompt"):
+        old_value = _nested_get(old_tree, "decision", key)
+        new_value = _nested_get(new_tree, "decision", key)
+        if old_value != new_value:
+            fields.append(_confirm_entry(f"decision.{key}", old_value, new_value))
+    # A notification event losing a channel, or quiet hours getting
+    # longer, makes the agent quieter.
+    old_events = _nested_get(old_tree, "notifications", "events") or {}
+    new_events = _nested_get(new_tree, "notifications", "events") or {}
+    if isinstance(old_events, dict) and isinstance(new_events, dict):
+        for event in sorted(set(old_events) | set(new_events)):
+            old_channels = old_events.get(event) or []
+            new_channels = new_events.get(event) or []
+            if set(old_channels) - set(new_channels):
+                fields.append(
+                    _confirm_entry(
+                        f"notifications.events.{event}", old_channels, new_channels
+                    )
+                )
+    old_quiet = _nested_get(old_tree, "notifications", "quiet_hours")
+    new_quiet = _nested_get(new_tree, "notifications", "quiet_hours")
+    if old_quiet != new_quiet:
+        old_minutes = _quiet_hours_minutes(old_quiet)
+        new_minutes = _quiet_hours_minutes(new_quiet)
+        if (
+            old_minutes is not None
+            and new_minutes is not None
+            and new_minutes > old_minutes
+        ):
+            fields.append(
+                _confirm_entry(
+                    "notifications.quiet_hours",
+                    _quiet_hours_text(old_quiet),
+                    _quiet_hours_text(new_quiet),
+                )
+            )
+    return fields
+
+
 class SettingsError(Exception):
     """Validation failed; ``errors`` are shown on the settings form."""
 

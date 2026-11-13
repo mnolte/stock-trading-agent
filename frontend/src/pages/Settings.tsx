@@ -1286,7 +1286,7 @@ export default function Settings() {
   // the hook) and the tighter/looser tag per changed leaf.
   const riskPreview = useRiskPreview(form?.risk ?? null);
   const directions = useMemo(
-    () => (data && form ? diffDirections(data.settings, form) : {}),
+    () => (data && form ? diffDirections(data.settings, form, data.directions) : {}),
     [data, form],
   );
 
@@ -1683,6 +1683,7 @@ export default function Settings() {
           path,
           settingLeaf(data.settings, path),
           settingLeaf(form, path),
+          data.directions,
         )
       : null;
     const phrase =

@@ -274,11 +274,15 @@ def _session_row(request: Request) -> tuple[AuthService, AuthSession]:
     return auth, row
 
 
-def require_confirmed(request: Request) -> None:
+def require_confirmed(
+    request: Request, fields: list[dict[str, str]] | None = None
+) -> None:
     """The "Confirm it is you" gate for risky actions (PR 23 step 4).
 
     With SA_AUTH=off this is a no-op. Otherwise the session must have a
-    confirmation younger than ``auth.confirm_minutes``.
+    confirmation younger than ``auth.confirm_minutes``. ``fields``
+    names the changes that need it (item 082) so the dialog can list
+    them.
     """
     if not auth_required(get_config()):
         return
@@ -288,6 +292,7 @@ def require_confirmed(request: Request) -> None:
             403,
             "confirm_required",
             "Confirm it is you before this action.",
+            fields=fields,
         )
 
 

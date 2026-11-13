@@ -10,6 +10,14 @@ Build PR of 083 on branch `feat/083-sign-in-resilience` (issues #243, #244).
 - **Break-glass kill switch:** `python -m app.ops.kill_switch --reason "…" [--flatten] [--status]` writes `data/kill.request` (JSON, 0600, `O_EXCL`) and waits up to 30 s for `kill.result`; the app polls the file every 5 s inside its own loop — read, never executed — and runs the same code path as the button with event source `cli`. It never resumes trading. DEPLOY.md gains "If you can't sign in".
 - **WebSocket sessions:** the feed re-checks its session every 60 s and closes 1008 `session_expired`; sign-out, sign out everywhere, a password change and device removal close the affected sockets at once through the AuthService registry. `security.max_sockets` (20) caps open sockets — a new one closes the oldest — and applies with `SA_AUTH=off` too.
 
+## 2026-11-13 — [082] Confirm every loosening (build)
+
+Build PR of 082 on branch `feat/082-confirm-every-loosening` (issue #239, audit S2).
+
+- **One direction map, in the backend.** `settings_service.DIRECTIONS` gives every leaf setting in `risk`, `execution`, `rules`, `regime`, `events`, `decision` (all gate versions), `selection`, `schedule` and `universe` its direction — up, down, on, off, wider, longer, shorter or neutral with a comment. `GET /api/settings` returns it as `directions`; the tighter/looser tags (item 069) and the frontend's own map are gone — the GUI reads the API's.
+- **`classify` + `confirm_fields`.** A save's diff is classified per leaf; any looser change asks "Confirm it is you", as do supervised → automatic, an alert event losing a channel, longer quiet hours, fixed → screened, and a live model or prompt change. A covered key with no map entry counts as looser (fails closed; a test walks `config.example.yaml`). The 403 `confirm_required` answer carries `fields` — `{key, label, old, new}` for each change — and the confirm dialog lists them.
+- **Access text.** Settings → Access shows the design's "Confirm before risky actions" row.
+
 ## 2026-11-13 — [084] Supply chain and containers (build, part 2)
 
 Second build PR of 084 on branch `ops/084-containers-audits-backups`
