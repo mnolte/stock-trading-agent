@@ -57,11 +57,9 @@ def _clear_device_cookie(client: TestClient) -> None:
     """Drop every ``__Host-sa_device`` entry from the jar (httpx keeps
     cookies per domain/path, so clear them all)."""
     jar = client.cookies.jar
-    for domain, paths in list(jar._cookies.items()):  # noqa: SLF001
-        for path, cookies in list(paths.items()):
-            for name in list(cookies):
-                if name == "__Host-sa_device":
-                    jar.clear(domain=domain, path=path, name=name)
+    for cookie in list(jar):
+        if cookie.name == "__Host-sa_device":
+            jar.clear(domain=cookie.domain, path=cookie.path, name=cookie.name)
 
 
 def _device_cookie(client: TestClient) -> str:

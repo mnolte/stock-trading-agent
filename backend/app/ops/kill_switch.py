@@ -25,14 +25,11 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from app.config import get_config
 from app.errors import safe_error
 from app.shutdown import RunLock
-
-if TYPE_CHECKING:
-    from app.engine.executor import Executor
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +41,25 @@ POLL_SECONDS = 5.0
 WAIT_SECONDS = 30.0
 # run.lock heartbeats older than this mean the app isn't running.
 LOCK_STALE_SECONDS = 90.0
+
+
+class KillSwitchExecutor(Protocol):
+    """The executor surface the break-glass path needs — ``Executor``
+    satisfies it; tests pass a fake."""
+
+    async def activate_kill_switch(
+        self,
+        *,
+        reason: str,
+        automatic: bool,
+        flatten: bool = False,
+        new_run_required: bool = False,
+        source: str = "gui",
+    ) -> None: ...
+
+    async def flatten(
+        self, *, reason: str = "stop & flatten", source: str = "gui"
+    ) -> dict[str, object]: ...
 
 
 def _paths(data_dir: str | None = None) -> tuple[Path, Path, Path]:
@@ -75,7 +91,7 @@ def _write_result(result_path: Path, payload: dict[str, Any]) -> None:
 
 
 async def process_kill_request(
-    executor: Executor, request_path: Path, result_path: Path
+    executor: KillSwitchExecutor, request_path: Path, result_path: Path
 ) -> bool:
     """Handle one ``kill.request`` file: read it, run the kill path,
     write ``kill.result``, remove the request. Returns True when a
@@ -124,7 +140,7 @@ async def process_kill_request(
 
 
 async def watch_kill_requests(
-    executor: Executor,
+    executor: KillSwitchExecutor,
     data_dir: str,
     shutdown: Any,
 ) -> None:
