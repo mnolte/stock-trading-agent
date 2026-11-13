@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [092] Daily bars: no source gap before the session closes (work item)
+
+New fix item from the 13 Nov live incident: the pre-market daily refresh marked the still-open session as a source-confirmed gap, gap dates are never refetched, and every symbol sat at "Warming up" with no entries all day. The kickoff (`docs/kickoffs/092-fix-premature-source-gaps.md`) sets the rule — a session's absence is a gap only once it has closed — and the false gap rows for 2026-11-12 were already deleted by hand. No spec text changed.
+
 ## 2026-11-13 — [083] Sign-in resilience (build)
 
 Build PR of 083 on branch `feat/083-sign-in-resilience` (issues #243, #244).
