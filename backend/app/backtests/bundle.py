@@ -10,6 +10,7 @@ Engine).
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -23,8 +24,10 @@ from app.config import AppConfig
 from app.data.cache import BarCache
 from app.data.factory import DataSources
 from app.data.service import MarketDataService
-from app.decide.client import DecisionClient
-from app.decide.service import DecisionService
+from app.db.models import Decision
+from app.decide.client import DecisionClient, ModelResponse
+from app.decide.service import DecisionService, PreparedCall
+from app.decide.v2inputs import V2Build
 from app.engine.cycle import CycleRunner
 from app.engine.executor import Executor
 from app.engine.outcomes import OutcomeWorker
@@ -32,6 +35,7 @@ from app.engine.position_check import PositionChecker
 from app.engine.state import ExecutionState
 from app.market.calendar import CalendarStore
 from app.market.clock import Clock
+from app.rules.prefilter import RulesResult
 from app.signals.service import SignalService
 from app.universe.service import UniverseService
 
@@ -255,76 +259,95 @@ class RulesOnlyDecisionService(DecisionService):
 
         super().__init__(FakeDecisionClient(), config, session_factory=session_factory)
 
-    async def decide(
+    def prepare_call(
         self,
-        session: Session,
         *,
         cycle_id: int,
         symbol: str,
         context: str,
         snapshot_json: dict[str, Any],
-        rules: Any,
+        rules: RulesResult | None,
         price: Decimal | None,
         atr_1h: Decimal | None,
         current_stop: Decimal | None,
-        v2: Any = None,
-        on_response: Any = None,
+        v2: V2Build | None = None,
+        on_response: Callable[[ModelResponse], None] | None = None,
         market_context: dict[str, Any] | None = None,
-    ) -> Any:
-        from app.decide.output import ModelOutput, ValidationResult
-
-        if context == "held" or price is None or atr_1h is None or atr_1h <= 0:
-            return self._store(
-                session,
-                cycle_id=cycle_id,
-                symbol=symbol,
-                context=context,
-                snapshot_json=snapshot_json,
-                rules=rules,
-                response=None,
-                validation=ValidationResult(
-                    valid=True,
-                    output=ModelOutput(
-                        symbol=symbol, action="hold", confidence=1.0
-                    ),
-                    model_action="hold",
-                    final_action="hold",
-                    note="rules only — hold",
-                ),
-                final_action="hold",
-                market_context=market_context,
-            )
-        k = Decimal(
-            str(self.config.get("shadows", "rules_only", "stop_atr", default=2.0))
-        )
-        r_mult = Decimal(
-            str(self.config.get("shadows", "rules_only", "target_r", default=2.0))
-        )
-        stop = price - k * atr_1h
-        target = price + r_mult * (price - stop)
-        output = ModelOutput(
-            symbol=symbol,
-            action="enter",
-            confidence=1.0,
-            stop_price=stop,
-            target_price=target,
-            thesis="rules-only baseline",
-        )
-        return self._store(
-            session,
+    ) -> PreparedCall:
+        # Item 078's wave API calls prepare/send/finish, never decide();
+        # the baseline prepares like any call but never sends one.
+        return super().prepare_call(
             cycle_id=cycle_id,
             symbol=symbol,
             context=context,
             snapshot_json=snapshot_json,
             rules=rules,
+            price=price,
+            atr_1h=atr_1h,
+            current_stop=current_stop,
+            v2=v2,
+            on_response=on_response,
+            market_context=market_context,
+        )
+
+    async def send_call(self, prepared: PreparedCall) -> None:
+        """No request leaves the process — finish_call answers from the rules."""
+
+    def finish_call(self, session: Session, prepared: PreparedCall) -> Decision:
+        from app.decide.output import ModelOutput, ValidationResult
+
+        symbol = prepared.symbol
+        if (
+            prepared.context == "held"
+            or prepared.price is None
+            or prepared.atr_1h is None
+            or prepared.atr_1h <= 0
+        ):
+            action = "hold"
+            output = ModelOutput(symbol=symbol, action="hold", confidence=1.0)
+            note = "rules only — hold"
+        else:
+            action = "enter"
+            k = Decimal(
+                str(
+                    self.config.get(
+                        "shadows", "rules_only", "stop_atr", default=2.0
+                    )
+                )
+            )
+            r_mult = Decimal(
+                str(
+                    self.config.get(
+                        "shadows", "rules_only", "target_r", default=2.0
+                    )
+                )
+            )
+            stop = prepared.price - k * prepared.atr_1h
+            target = prepared.price + r_mult * (prepared.price - stop)
+            output = ModelOutput(
+                symbol=symbol,
+                action="enter",
+                confidence=1.0,
+                stop_price=stop,
+                target_price=target,
+                thesis="rules-only baseline",
+            )
+            note = "rules only — enter"
+        return self._store(
+            session,
+            cycle_id=prepared.cycle_id,
+            symbol=symbol,
+            context=prepared.context,
+            snapshot_json=prepared.snapshot_json,
+            rules=prepared.rules,
             response=None,
             validation=ValidationResult(
                 valid=True,
                 output=output,
-                model_action="enter",
-                final_action="enter",
-                note="rules only — enter",
+                model_action=action,
+                final_action=action,
+                note=note,
             ),
-            final_action="enter",
-            market_context=market_context,
+            final_action=action,
+            market_context=prepared.market_context,
         )

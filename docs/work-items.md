@@ -154,6 +154,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 091 | fix | Number check: numbers inside fact strings | `archive/091-fix-number-check-fact-strings.md` | — | #273 | building |
 | 092 | fix | Daily bars: no source gap before the session closes | `docs/kickoffs/092-fix-premature-source-gaps.md` | #284 | — | planned |
 | 093 | fix | Universe screen: stale detail and no re-run | `docs/kickoffs/093-fix-stale-screen-detail.md` | #286 | — | planned |
+| 094 | fix | rules_only backtests: wave API bypassed decide() | — | — | #288 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
