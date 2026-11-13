@@ -1,2 +1,6 @@
 allowBuilds:
   esbuild: true
+# GHSA-g3hv-75wg-m249: eslint's ^10 ranges block minimatch 11, so the
+# fix (>=11.0.1) comes in through an override (item 084).
+overrides:
+  minimatch: 11.0.5

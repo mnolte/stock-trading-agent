@@ -17,3 +17,12 @@ frontend/dist
 frontend/test-results
 frontend/playwright-report
 *.log
+
+# Item 084: nothing local may bake into the image — no config with real
+# thresholds, no key material, no databases, no backups.
+backend/config.yaml
+**/secret.key
+**/*.db
+**/*.db-wal
+**/*.db-shm
+backups

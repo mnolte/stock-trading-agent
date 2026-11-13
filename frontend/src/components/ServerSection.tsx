@@ -20,7 +20,12 @@ interface ServerStatus {
   backups: {
     local: { latest: string | null; age_hours: number | null; level: string } | null;
     offsite: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
-    restore_test: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
+    restore_test: {
+      at?: string;
+      ok?: boolean;
+      not_set_up?: boolean;
+      delete_protection?: string | null;
+    } | null;
   } | null;
   host: { pending_updates?: number; next_reboot_window?: string } | null;
   heartbeat: { masked: string | null; last_ping: string | null; configured: boolean };
@@ -345,6 +350,16 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
             : backups?.restore_test
               ? (backups.restore_test.ok ? 'ok' : 'warning')
               : 'unknown'
+        }
+      />
+      <Row
+        label="Delete protection"
+        help="The bucket should keep deleted backups for at least 30 days (versioning or object lock), so this server alone can't erase them. Checked at the monthly restore test; see DEPLOY.md."
+        right={
+          backups?.restore_test?.delete_protection === 'on' ? 'on' : 'not confirmed'
+        }
+        level={
+          backups?.restore_test?.delete_protection === 'on' ? 'ok' : 'warning'
         }
       />
 

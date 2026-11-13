@@ -32,7 +32,12 @@ import httpx
 from app.db.backup import dated_backups
 from app.errors import safe_error
 from app.market.clock import NY_TZ
-from app.ops.offsite import OffsiteError, restore_latest
+from app.ops.offsite import (
+    OffsiteError,
+    bucket_delete_protection,
+    load_credentials,
+    restore_latest,
+)
 from app.ops.urls import UrlRejected, resolve_public, validate_public_https_url
 
 if TYPE_CHECKING:
@@ -487,6 +492,21 @@ class OpsService:
         import sqlite3
         import tempfile
 
+        # Item 084: ask the bucket whether versioning protects the
+        # backups (one signed request) — stored with the result, shown
+        # as "Delete protection" in Settings → Server. Never blocks.
+        delete_protection = "unknown"
+        try:
+            creds = load_credentials(self._secrets)
+            delete_protection = await asyncio.to_thread(
+                bucket_delete_protection, creds, self._clock.now()
+            )
+        except OffsiteError:
+            # Unreadable credentials — the restore reports that itself.
+            logger.debug("delete-protection check skipped: no usable credentials")
+        except Exception:  # noqa: BLE001 — the check must never block a restore
+            logger.warning("delete-protection check failed", exc_info=True)
+
         target_root: Path | None = None
         try:
             target_root = Path(tempfile.mkdtemp(prefix="sa-restore-test-"))
@@ -498,7 +518,11 @@ class OpsService:
             ok = integrity == "ok"
             self._set(
                 "restore_test",
-                {"at": self._clock.now().isoformat(), "ok": ok},
+                {
+                    "at": self._clock.now().isoformat(),
+                    "ok": ok,
+                    "delete_protection": delete_protection,
+                },
             )
             if not ok:
                 self._notify("backup_failed", "restore test failed integrity_check")
@@ -515,7 +539,12 @@ class OpsService:
             self._notify("backup_failed", f"restore test failed ({safe_error(exc)})")
             self._set(
                 "restore_test",
-                {"at": self._clock.now().isoformat(), "ok": False, "error": safe_error(exc)},
+                {
+                    "at": self._clock.now().isoformat(),
+                    "ok": False,
+                    "error": safe_error(exc),
+                    "delete_protection": delete_protection,
+                },
             )
             return False
         finally:

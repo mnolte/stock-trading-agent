@@ -38,6 +38,7 @@ services:
     # Measured peak under a backtest + live check in the container:
     # ~160 MiB → 512m leaves >3x headroom.
     mem_limit: 512m
+    pids_limit: 256
     networks:
       - internal
     volumes:
@@ -75,6 +76,16 @@ services:
     image: caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     container_name: stock-agent-caddy
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE # ports 80/443 are below 1024
+    pids_limit: 128
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"

@@ -85,7 +85,11 @@ log "fail2ban on sshd (5 tries in 15m → 1h ban)"
 
 # --- automatic security updates, Sunday 05:00 Amsterdam reboot window ------
 cat >/etc/apt/apt.conf.d/51-stock-agent-unattended <<'EOF'
-Unattended-Upgrade::Allowed-Origins { "${distro_id}:${distro_codename}-security"; };
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    # Docker's own repo (o=Docker, a=<codename>) — item 084.
+    "Docker:${distro_codename}";
+};
 Unattended-Upgrade::Automatic-Reboot "false";
 EOF
 # The reboot window is Sunday 05:00 Europe/Amsterdam — the box runs UTC
