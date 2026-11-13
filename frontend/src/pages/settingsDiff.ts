@@ -372,54 +372,23 @@ export function diffMap(
 }
 
 // ---------------------------------------------------------------------------
-// Tighter / looser (item 069): the save bar tags every risk, brake, entry
-// rule and decision-gate change with the direction it moves the agent.
-// Settings outside those categories carry no tag.
+// Tighter / looser (item 069, widened by 082): the save bar tags every
+// change with the direction it moves the agent. The map itself comes
+// from the backend — GET /api/settings returns `directions`, the one
+// map that also decides which saves need "Confirm it is you".
 
 export type ChangeDirection = 'tighter' | 'looser';
 
-type NumDirection = 'higher_tighter' | 'higher_looser';
-type BoolDirection = 'on_tighter' | 'on_looser';
-
-export const DIRECTION: Record<string, NumDirection | BoolDirection | 'list'> = {
-  // Risk limits — every raise of an exposure cap is looser.
-  'risk.risk_per_trade_pct': 'higher_looser',
-  'risk.max_position_pct': 'higher_looser',
-  'risk.max_order_pct': 'higher_looser',
-  'risk.max_open_risk_pct': 'higher_looser',
-  'risk.max_open_positions': 'higher_looser',
-  'risk.max_per_sector': 'higher_looser',
-  'risk.daily_loss_limit_pct': 'higher_looser',
-  'risk.losing_streak': 'higher_looser', // halving starts later
-  'risk.shock_brake_1h_pct': 'higher_looser', // brake trips later
-  'risk.shock_brake_session_pct': 'higher_looser',
-  'risk.earnings_blackout_days': 'higher_tighter',
-  'risk.hold_through_earnings': 'on_looser',
-  'risk.drawdown_kill_pct': 'higher_looser', // kill switch arms later
-  'risk.max_orders_per_cycle': 'higher_looser',
-  // Entry rules — a narrower RSI band or a tighter order envelope.
-  'rules.rsi_min': 'higher_tighter',
-  'rules.rsi_max': 'higher_looser', // narrowing the band is tighter
-  'execution.max_spread_pct': 'higher_looser',
-  'execution.entry_limit_offset_pct': 'higher_looser',
-  'execution.entry_timeout_minutes': 'higher_looser',
-  'events.fomc.enabled': 'on_tighter',
-  'events.fomc.block_minutes_before': 'higher_tighter',
-  'events.fomc.block_minutes_after': 'higher_tighter',
-  // Decision gates.
-  'decision.min_confidence_enter': 'higher_tighter',
-  'decision.stop_atr_min': 'higher_tighter',
-  'decision.stop_atr_max': 'higher_looser', // narrowing the band is tighter
-  'decision.min_reward_risk': 'higher_tighter',
-  'decision.min_ev_r': 'higher_tighter',
-  'decision.v3.min_room_atr': 'higher_tighter',
-  'decision.v3.min_edge': 'higher_tighter',
-  'decision.v5.trend_gate': 'on_tighter',
-  'decision.v5.trend_gate_regimes': 'list',
-  'decision.v5.max_rr': 'higher_looser',
-  'decision.v5.price_vs_signal_adverse_atr': 'higher_looser',
-  'decision.v6.sideways_max_target_atr': 'higher_looser',
-};
+/** The backend's direction kinds (settings_service.DIRECTIONS). */
+export type SettingDirection =
+  | 'up'
+  | 'down'
+  | 'on'
+  | 'off'
+  | 'wider'
+  | 'longer'
+  | 'shorter'
+  | 'neutral';
 
 export function settingLeaf(tree: unknown, path: string): unknown {
   let cur = tree;
@@ -430,49 +399,127 @@ export function settingLeaf(tree: unknown, path: string): unknown {
   return cur;
 }
 
-/** Direction of one changed leaf, or null when the setting carries no
- * tag (anything outside risk, brakes, entry rules and decision gates). */
+/** The direction entry for a dotted leaf path: exact match first, then
+ * the nearest covering ancestor — mirrors the backend's lookup. */
+export function directionFor(
+  path: string,
+  directions: Record<string, string>,
+): SettingDirection | null {
+  let node = path;
+  while (node) {
+    const found = directions[node];
+    if (found !== undefined) return found as SettingDirection;
+    const cut = node.lastIndexOf('.');
+    node = cut < 0 ? '' : node.slice(0, cut);
+  }
+  return null;
+}
+
+/** Total order for up/down compares: null sorts lowest, numbers
+ * numerically, everything else as text (HH:MM times compare right). */
+function orderKey(value: unknown): [number, number | string] {
+  if (value === null || value === undefined) return [0, 0];
+  if (typeof value === 'boolean') return [1, value ? 1 : 0];
+  if (typeof value === 'number') return [1, value];
+  if (typeof value === 'string' && value !== '') {
+    const n = Number(value);
+    if (!Number.isNaN(n)) return [1, n];
+  }
+  return [2, String(value)];
+}
+
+function keyLess(a: [number, number | string], b: [number, number | string]): boolean {
+  return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+}
+
+function asSet(value: unknown): Set<unknown> | null {
+  if (!Array.isArray(value)) return null;
+  return new Set(value);
+}
+
+function rangePair(value: unknown): [unknown, unknown] | null {
+  if (Array.isArray(value) && value.length === 2) {
+    return [value[0], value[1]];
+  }
+  if (value !== null && typeof value === 'object') {
+    const rec = value as Record<string, unknown>;
+    if ('min' in rec && 'max' in rec) return [rec.min, rec.max];
+  }
+  return null;
+}
+
+/** Direction of one changed leaf, or null when the setting is neutral
+ * or outside the backend's map (anything the map doesn't cover). */
 export function changeDirection(
   path: string,
   from: unknown,
   to: unknown,
+  directions: Record<string, string>,
 ): ChangeDirection | null {
-  const rule = DIRECTION[path];
-  if (rule === undefined) return null;
-  if (rule === 'list') {
-    const a = Array.isArray(from) ? from : [];
-    const b = Array.isArray(to) ? to : [];
-    const added = b.some((v) => !a.includes(v));
-    const removed = a.some((v) => !b.includes(v));
-    if (added && !removed) return 'looser';
-    if (removed && !added) return 'tighter';
+  const kind = directionFor(path, directions);
+  if (kind === null || kind === 'neutral') return null;
+  if (kind === 'on' || kind === 'off') {
+    const was = Boolean(from);
+    const is = Boolean(to);
+    if (was === is) return null;
+    return is === (kind === 'on') ? 'looser' : 'tighter';
+  }
+  if (kind === 'up' || kind === 'down') {
+    const a = orderKey(from);
+    const b = orderKey(to);
+    if (a[0] === b[0] && a[1] === b[1]) return null;
+    const rose = keyLess(a, b);
+    return rose === (kind === 'up') ? 'looser' : 'tighter';
+  }
+  if (kind === 'longer' || kind === 'shorter') {
+    const a = asSet(from);
+    const b = asSet(to);
+    if (a === null || b === null) return null;
+    const added = [...b].some((v) => !a.has(v));
+    const removed = [...a].some((v) => !b.has(v));
+    const grew = added && !removed;
+    const shrank = removed && !added;
+    if (kind === 'longer') {
+      if (grew) return 'looser';
+      if (shrank) return 'tighter';
+    } else {
+      if (shrank) return 'looser';
+      if (grew) return 'tighter';
+    }
     return null;
   }
-  if (rule.startsWith('on_')) {
-    const tighterOn = rule === 'on_tighter';
-    return Boolean(to) === tighterOn ? 'tighter' : 'looser';
+  if (kind === 'wider') {
+    const a = rangePair(from);
+    const b = rangePair(to);
+    if (a === null || b === null) return null;
+    const loWidened = keyLess(orderKey(b[0]), orderKey(a[0]));
+    const hiWidened = keyLess(orderKey(a[1]), orderKey(b[1]));
+    const loNarrowed = keyLess(orderKey(a[0]), orderKey(b[0]));
+    const hiNarrowed = keyLess(orderKey(b[1]), orderKey(a[1]));
+    const widened = loWidened || hiWidened;
+    const narrowed = loNarrowed || hiNarrowed;
+    if (widened && !narrowed) return 'looser';
+    if (narrowed && !widened) return 'tighter';
+    return null;
   }
-  const fromN = Number(from);
-  const toN = Number(to);
-  if (Number.isNaN(fromN) || Number.isNaN(toN) || fromN === toN) return null;
-  const rose = toN > fromN;
-  const tighterOnRise = rule === 'higher_tighter';
-  return rose === tighterOnRise ? 'tighter' : 'looser';
+  return null;
 }
 
 /** path -> direction for every changed leaf (keys of diffMap). */
 export function diffDirections(
   current: SettingsForm,
   edited: SettingsForm,
+  directions: Record<string, string>,
 ): Record<string, ChangeDirection> {
   const out: Record<string, ChangeDirection> = {};
   for (const path of Object.keys(diffMap(current, edited))) {
     // diffMap also emits synthetic universe.sector.* paths — they have
-    // no rule and no leaf in the form, so they stay untagged.
+    // no entry in the backend's map and stay untagged.
     const dir = changeDirection(
       path,
       settingLeaf(current, path),
       settingLeaf(edited, path),
+      directions,
     );
     if (dir !== null) out[path] = dir;
   }
@@ -480,24 +527,47 @@ export function diffDirections(
 }
 
 /** Verb for the looser-change confirmation: "Raises risk per trade …". */
-export function changeVerb(path: string, from: unknown, to: unknown): string | null {
-  const rule = DIRECTION[path];
-  if (rule === undefined) return null;
-  if (rule === 'list') {
-    const a = Array.isArray(from) ? from : [];
-    const b = Array.isArray(to) ? to : [];
-    const added = b.some((v) => !a.includes(v));
-    const removed = a.some((v) => !b.includes(v));
+export function changeVerb(
+  path: string,
+  from: unknown,
+  to: unknown,
+  directions: Record<string, string>,
+): string | null {
+  const kind = directionFor(path, directions);
+  if (kind === null || kind === 'neutral') return null;
+  if (kind === 'on' || kind === 'off') {
+    const on = Boolean(to);
+    return on ? 'Turns on' : 'Turns off';
+  }
+  if (kind === 'up' || kind === 'down') {
+    const a = orderKey(from);
+    const b = orderKey(to);
+    if (a[0] === b[0] && a[1] === b[1]) return null;
+    return keyLess(a, b) ? 'Raises' : 'Lowers';
+  }
+  if (kind === 'longer' || kind === 'shorter') {
+    const a = asSet(from);
+    const b = asSet(to);
+    if (a === null || b === null) return null;
+    const added = [...b].some((v) => !a.has(v));
+    const removed = [...a].some((v) => !b.has(v));
     if (added && !removed) return 'Adds';
     if (removed && !added) return 'Removes';
     return null;
   }
-  if (rule.startsWith('on_')) {
-    const on = to === true || to === 'on' || to === 'true' || to === 1;
-    return on ? 'Turns on' : 'Turns off';
+  if (kind === 'wider') {
+    const a = rangePair(from);
+    const b = rangePair(to);
+    if (a === null || b === null) return null;
+    const widened =
+      keyLess(orderKey(b[0]), orderKey(a[0])) ||
+      keyLess(orderKey(a[1]), orderKey(b[1]));
+    const narrowed =
+      keyLess(orderKey(a[0]), orderKey(b[0])) ||
+      keyLess(orderKey(b[1]), orderKey(a[1]));
+    if (widened && !narrowed) return 'Widens';
+    if (narrowed && !widened) return 'Narrows';
+    return null;
   }
-  const fromN = Number(from);
-  const toN = Number(to);
-  if (Number.isNaN(fromN) || Number.isNaN(toN) || fromN === toN) return null;
-  return toN > fromN ? 'Raises' : 'Lowers';
+  return null;
 }
