@@ -29,7 +29,7 @@ dependencies = [
     "cryptography>=41.0.0",
     "argon2-cffi>=23.1.0",
     "qrcode>=7.4.2",
-    "anthropic>=1.17,<2.4",
+    "anthropic>=1.17,<2.7",
 ]
 
 [project.optional-dependencies]
