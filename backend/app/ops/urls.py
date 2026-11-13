@@ -35,7 +35,11 @@ def _check_address(
 
 
 def resolve_public(
-    host: str, resolver: object = None, *, allow_private: bool = False
+    host: str,
+    resolver: object = None,
+    *,
+    allow_private: bool = False,
+    missing_ok: bool = False,
 ) -> list[str]:
     """The checked addresses for ``host`` — the list a caller connects
     to, so the lookup that was checked is the lookup that is used.
@@ -43,7 +47,10 @@ def resolve_public(
     ``resolver`` is injectable so tests never touch the network — same
     signature as ``socket.getaddrinfo``. ``allow_private`` is the SMTP
     escape hatch (``security.allow_private_smtp``): private addresses
-    pass, loopback and unspecified never do.
+    pass, loopback and the other never-relay ranges do not.
+    ``missing_ok`` is for callers whose connection fails on its own
+    when the name does not resolve (SMTP): an unresolvable name has no
+    address to refuse, so it returns ``[]`` instead of raising.
     """
     try:
         literal = ipaddress.ip_address(host)
@@ -56,6 +63,8 @@ def resolve_public(
     try:
         infos = resolve(host, None)  # type: ignore[operator]
     except Exception:  # noqa: BLE001 — a failed lookup is never "public"
+        if missing_ok:
+            return []
         raise UrlRejected("does not resolve to a public address") from None
     addresses: list[str] = []
     for info in infos:
@@ -68,7 +77,7 @@ def resolve_public(
         text = str(ip)
         if text not in addresses:
             addresses.append(text)
-    if not addresses:
+    if not addresses and not missing_ok:
         raise UrlRejected("does not resolve to a public address")
     return addresses
 

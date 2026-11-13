@@ -441,8 +441,11 @@ async def test_new_error_notification_once_per_fingerprint(
     assert len(rows) == 2
     assert all(row.severity == "warning" for row in rows)
     assert all(row.link == "/logs" for row in rows)
-    assert rows[0].body is not None
-    assert "broker call failed" in rows[0].body
+    # The background worker and the manual drain can commit the two
+    # rows in either order — assert on the set, not rows[0].
+    bodies = [row.body or "" for row in rows]
+    assert any("broker call failed" in body for body in bodies)
+    assert any("a different failure" in body for body in bodies)
 
 
 def test_library_loggers_warning_unless_library_debug(

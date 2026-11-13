@@ -558,14 +558,18 @@ class NotificationService:
         )
 
     def _check_smtp_host(self, host: str) -> None:
-        """The SMTP host must resolve to a public address — at save, at
-        the test send and at every send (item 085). Raises
+        """The SMTP host must not resolve to a private address — at save,
+        at the test send and at every send (item 085). Raises
         ``UrlRejected``; loopback is refused even when
-        ``security.allow_private_smtp`` is on."""
+        ``security.allow_private_smtp`` is on. A name that does not
+        resolve at all is left to the mailer's own failure: it has no
+        address to refuse, and smtplib resolves again by itself anyway
+        (the same two-lookup caveat as restic)."""
         resolve_public(
             host,
             resolver=self._resolver,
             allow_private=self._allow_private_smtp(),
+            missing_ok=True,
         )
 
     def _smtp_config(self) -> SmtpConfig | None:

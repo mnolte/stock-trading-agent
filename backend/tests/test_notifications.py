@@ -671,3 +671,26 @@ async def test_allow_private_smtp_permits_private_not_loopback(
     )
     assert result["ok"] is False
     assert "must not point at a private address" in str(result["error"])
+
+
+async def test_smtp_unresolvable_host_is_left_to_the_mailer(
+    service: NotificationService,
+    secrets: SecretsStore,
+    mailer: FakeMailer,
+) -> None:
+    """A name that does not resolve has no address to refuse — the
+    check passes and the mailer's own result decides (item 085)."""
+
+    def nxdomain(host: str, *_a: Any) -> list[Any]:
+        raise OSError("NXDOMAIN")
+
+    service._resolver = nxdomain
+    result = await service.save_smtp(
+        host="no-such-host.invalid",
+        port=587,
+        username="agent@test",
+        from_addr="agent@test",
+        to_addr="marc@test",
+    )
+    assert result["ok"] is True
+    assert len(mailer.sent) == 1
