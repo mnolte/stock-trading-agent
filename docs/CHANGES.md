@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-13 — [083] Sign-in resilience (build)
+
+Build PR of 083 on branch `feat/083-sign-in-resilience` (issues #243, #244).
+
+- **Known browsers:** a completed sign-in mints a trusted-device cookie (`__Host-sa_device`, `sad_` token, 180 days, HttpOnly, SameSite=Strict; `sa_device` on plain-http loopback). At most 10 per account; the oldest by last use goes. A valid one lifts only the global sign-in pause — the password, the code and the per-address lockout still apply. `auth.lockout_failures` wrong steps inside `auth.lockout_window_minutes` revoke the row and clear the cookie. A password change, "Sign out everywhere" and new recovery codes revoke every device; Settings → Access → Known browsers lists them and removes one behind "Confirm it is you". `GET /api/auth/status` gains `paused_until` and `known_device`; the sign-in page shows the pause with its end time and disables the form for unknown browsers, and an amber note for known ones.
+- **Break-glass kill switch:** `python -m app.ops.kill_switch --reason "…" [--flatten] [--status]` writes `data/kill.request` (JSON, 0600, `O_EXCL`) and waits up to 30 s for `kill.result`; the app polls the file every 5 s inside its own loop — read, never executed — and runs the same code path as the button with event source `cli`. It never resumes trading. DEPLOY.md gains "If you can't sign in".
+- **WebSocket sessions:** the feed re-checks its session every 60 s and closes 1008 `session_expired`; sign-out, sign out everywhere, a password change and device removal close the affected sockets at once through the AuthService registry. `security.max_sockets` (20) caps open sockets — a new one closes the oldest — and applies with `SA_AUTH=off` too.
+
 ## 2026-11-13 — [091] Number check: numbers inside fact strings (build)
 
 Build PR of 091 on branch `fix/091-number-check-fact-strings`.

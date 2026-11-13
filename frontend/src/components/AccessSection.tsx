@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 
 import { get, post, errorMessages } from '../api/client';
-import type { AuthSessions, AuthStatus } from '../api/auth';
+import type { AuthSessions, AuthStatus, TrustedDevices } from '../api/auth';
 import { Button } from './Button';
+import { displayDayTime, fmtDayMonthIn } from '../format';
 
 const inputStyle: React.CSSProperties = {
   height: 40,
@@ -23,6 +24,7 @@ const inputStyle: React.CSSProperties = {
  */
 export function AccessSection({ auth }: { auth: AuthStatus }) {
   const [sessions, setSessions] = useState<AuthSessions | null>(null);
+  const [trusted, setTrusted] = useState<TrustedDevices | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // password change
@@ -38,6 +40,9 @@ export function AccessSection({ auth }: { auth: AuthStatus }) {
     get<AuthSessions>('/api/auth/sessions')
       .then(setSessions)
       .catch((e) => setError(errorMessages(e)[0]));
+    get<TrustedDevices>('/api/auth/devices')
+      .then(setTrusted)
+      .catch(() => setTrusted(null));
   };
   useEffect(refresh, [auth.required]);
 
@@ -101,6 +106,17 @@ export function AccessSection({ auth }: { auth: AuthStatus }) {
   const signOutDevice = async (id: number) => {
     try {
       await post(`/api/auth/sessions/${id}/sign-out`, {});
+      refresh();
+    } catch (e) {
+      setError(errorMessages(e)[0]);
+    }
+  };
+
+  const removeDevice = async (id: number) => {
+    try {
+      // The write answers 403 confirm_required → "Confirm it is you".
+      await post(`/api/auth/devices/${id}/remove`, {});
+      setNotice('That browser is forgotten.');
       refresh();
     } catch (e) {
       setError(errorMessages(e)[0]);
@@ -218,6 +234,79 @@ export function AccessSection({ auth }: { auth: AuthStatus }) {
           </div>
         </div>
       )}
+
+      <h3
+        style={{
+          margin: '18px 0 0',
+          fontSize: 'var(--sa-text-xs)',
+          fontWeight: 600,
+          color: 'var(--sa-text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: 'var(--sa-label-tracking)',
+        }}
+      >
+        Known browsers
+      </h3>
+      <div style={{ padding: '4px 0 6px' }}>
+        <p style={{ margin: '4px 0 6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
+          A browser that signed in before can still sign in while sign-in is paused after many failed attempts from elsewhere. It still needs the password and a code.
+        </p>
+        {(trusted?.devices ?? []).map((d) => (
+          <div
+            key={d.id}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1.4fr) auto',
+              gap: 10,
+              alignItems: 'center',
+              padding: '10px 0',
+              borderBottom: '1px solid var(--sa-border)',
+              fontSize: 'var(--sa-text-md)',
+            }}
+          >
+            <span>
+              <b style={{ fontWeight: 600 }}>{d.this_browser ? 'This browser' : d.name}</b>
+              <br />
+              <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{d.name}</span>
+            </span>
+            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)' }}>
+              known since {fmtDayMonthIn(d.created_at)} · last sign-in {displayDayTime(d.last_used_at)}
+            </span>
+            <span style={{ textAlign: 'right' }}>
+              {d.this_browser ? (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    height: 24,
+                    padding: '0 8px',
+                    borderRadius: 6,
+                    fontFamily: 'var(--sa-font-mono)',
+                    fontSize: 'var(--sa-text-sm)',
+                    background: 'var(--sa-raised)',
+                    color: 'var(--sa-positive)',
+                    border: '1px solid var(--sa-border)',
+                  }}
+                >
+                  this browser
+                </span>
+              ) : (
+                <Button onClick={() => removeDevice(d.id)}>Remove</Button>
+              )}
+            </span>
+          </div>
+        ))}
+        {trusted && trusted.devices.length === 0 && (
+          <p style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>
+            No known browsers yet — each browser that completes sign-in is remembered for 180 days.
+          </p>
+        )}
+        <p style={{ margin: '10px 0 0', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+          At most 10. A password change, "Sign out everywhere" and new recovery codes remove them all. If you can't sign in at all: on the server,{' '}
+          <code style={{ fontFamily: 'var(--sa-font-mono)' }}>docker compose exec app python -m app.ops.kill_switch --reason "…"</code>{' '}
+          turns the kill switch on.
+        </p>
+      </div>
 
       <h3
         style={{

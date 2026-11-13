@@ -28,6 +28,13 @@ from app.auth.service import (
 from app.config import get_config
 from app.db.models import AuthSession
 
+# The trusted-device cookie (item 083): __Host-sa_device over HTTPS,
+# sa_device on plain-http loopback — same rule as the session cookie.
+DEVICE_COOKIE = "sa_device"
+DEVICE_COOKIE_SECURE = "__Host-sa_device"
+# 180 days, per the item 083 decision.
+DEVICE_COOKIE_DAYS = 180
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth")
@@ -103,6 +110,19 @@ def _set_session_cookies(request: Request, response: Response, signed: SignedIn)
         samesite="strict",
         path="/",
     )
+    if signed.device_token:
+        # A browser that just completed sign-in is a known device for
+        # 180 days (item 083); the value is a convenience credential —
+        # it lifts only the global sign-in pause.
+        response.set_cookie(
+            device_cookie_name(request),
+            signed.device_token,
+            max_age=DEVICE_COOKIE_DAYS * 86400,
+            httponly=True,
+            secure=secure,
+            samesite="strict",
+            path="/",
+        )
 
 
 def _set_pending_cookie(request: Request, response: Response, token: str) -> None:
@@ -132,6 +152,23 @@ def session_cookie_name(request: Request) -> str:
     return "__Host-sa_session" if _secure_cookies(request) else SESSION_COOKIE
 
 
+def device_cookie_name(request: Request) -> str:
+    """``__Host-sa_device`` over HTTPS, ``sa_device`` on loopback —
+    the same scheme rule as the session cookie."""
+    return DEVICE_COOKIE_SECURE if _secure_cookies(request) else DEVICE_COOKIE
+
+
+def _device_token(request: Request) -> str:
+    """The trusted-device cookie for this request's scheme; the other
+    name is never accepted, like the session cookie."""
+    return request.cookies.get(device_cookie_name(request)) or ""
+
+
+def _clear_device_cookie(request: Request, response: Response) -> None:
+    for name in (device_cookie_name(request), DEVICE_COOKIE, DEVICE_COOKIE_SECURE):
+        response.delete_cookie(name, path="/")
+
+
 def _secure_cookies(request: Request) -> bool:
     """Secure cookies on HTTPS — the real scheme, or the trusted
     ``X-Forwarded-Proto`` behind Caddy on the VPS."""
@@ -139,15 +176,26 @@ def _secure_cookies(request: Request) -> bool:
 
 
 @router.get("/status")
-def auth_status(request: Request) -> dict[str, object]:
-    """Open endpoint: only what the sign-in gate itself needs to know."""
+async def auth_status(request: Request) -> dict[str, object]:
+    """Open endpoint: only what the sign-in gate itself needs to know —
+    plus the global pause end and whether this browser is a known
+    device (item 083). It reveals nothing else about the account."""
     required = auth_required(get_config())
     auth = getattr(request.app.state, "auth", None)
     signed_in = False
+    paused_until: str | None = None
+    known_device = False
     if required and auth is not None:
         row, _ = auth.authenticate(_session_token(request) or None)
         signed_in = row is not None
-    return {"required": required, "signed_in": signed_in}
+        paused_until = auth.paused_until_iso()
+        known_device = auth.known_device(_device_token(request) or None)
+    return {
+        "required": required,
+        "signed_in": signed_in,
+        "paused_until": paused_until,
+        "known_device": known_device,
+    }
 
 
 @router.post("/sign-in")
@@ -165,9 +213,13 @@ async def sign_in(request: Request, body: _SignInBody) -> Response:
             body.remember,
             ip,
             ua,
+            device_token=_device_token(request) or None,
         )
     except AuthError as exc:
-        return error_response(exc)
+        response = error_response(exc)
+        if exc.clear_device_cookie:
+            _clear_device_cookie(request, response)
+        return response
     response = JSONResponse({"step": "code"})
     _set_pending_cookie(request, response, pending)
     return response
@@ -183,9 +235,14 @@ async def sign_in_code(request: Request, body: _CodeBody) -> Response:
     ip = client_ip(request, get_config())
     pending = request.cookies.get(PENDING_COOKIE, "")
     try:
-        signed = auth.finish_sign_in(pending, body.code, ip)
+        signed = auth.finish_sign_in(
+            pending, body.code, ip, device_token=_device_token(request) or None
+        )
     except AuthError as exc:
-        return error_response(exc)
+        response = error_response(exc)
+        if exc.clear_device_cookie:
+            _clear_device_cookie(request, response)
+        return response
     response = JSONResponse({"ok": True})
     response.delete_cookie(PENDING_COOKIE, path="/")
     _set_session_cookies(request, response, signed)
@@ -286,6 +343,29 @@ def sessions(request: Request) -> dict[str, object]:
         "failed": auth.failed_attempts_summary(),
         "recovery_codes_left": auth.codes_left(),
     }
+
+
+@router.get("/devices")
+def devices(request: Request) -> dict[str, object]:
+    """Settings → Access → Known browsers (item 083)."""
+    auth = _auth(request)
+    return {"devices": auth.list_devices(_device_token(request) or None)}
+
+
+@router.post("/devices/{device_id}/remove")
+def remove_device(request: Request, device_id: int) -> Response:
+    """Revoke one known browser — a risky action behind 'Confirm it is
+    you', like the other Access changes."""
+    from fastapi.responses import JSONResponse
+
+    try:
+        require_confirmed(request)
+        auth = _auth(request)
+        if not auth.remove_device(device_id):
+            raise AuthError(404, "not_found", "That browser is not known.")
+    except AuthError as exc:
+        return error_response(exc)
+    return JSONResponse({"ok": True})
 
 
 @router.post("/sessions/{session_id}/sign-out")

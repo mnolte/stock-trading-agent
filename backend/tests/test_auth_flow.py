@@ -497,9 +497,16 @@ def test_status_endpoint_is_open(app_auth: Any) -> None:
         r = client.get("/api/auth/status")
         assert r.status_code == 200
         body = r.json()
-        assert set(body) == {"required", "signed_in"}
+        assert set(body) == {
+            "required",
+            "signed_in",
+            "paused_until",
+            "known_device",
+        }
         assert body["required"] is True
         assert body["signed_in"] is False
+        assert body["paused_until"] is None
+        assert body["known_device"] is False
 
 
 def test_scheduled_jobs_run_without_session(app_auth: Any) -> None:
