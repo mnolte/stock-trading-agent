@@ -177,7 +177,7 @@ jobs:
           E2E_PROJECT: ${{ matrix.project }}
       # The PR 23 sign-in spec runs against the auth backend: SA_AUTH=required
       # and the seeded single account (tests/e2e_auth_seed.py).
-      - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github e2e/pr23.e2e.ts
+      - run: cd frontend && pnpm exec playwright test --project=${{ matrix.project }} --reporter=github e2e/pr23.e2e.ts e2e/083-shots.e2e.ts
         env:
           E2E_PREVIEW: '1'
           E2E_AUTH: '1'
