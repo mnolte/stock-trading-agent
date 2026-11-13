@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, overload
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -78,6 +78,7 @@ from app.secrets_service import (
     MISSING_KEY,
     SECRET_TOO_SHORT,
     KeyTesters,
+    SecretError,
     SecretsStore,
     scrub,
 )
@@ -2902,6 +2903,20 @@ def _held_symbols() -> set[str]:
     return held | pending
 
 
+@overload
+def _without_heartbeat(tree: dict[str, Any]) -> dict[str, Any]: ...
+@overload
+def _without_heartbeat(tree: None) -> None: ...
+def _without_heartbeat(tree: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Blank ``ops.heartbeat_url`` — a secret, never shown or diffed (081)."""
+    if not isinstance(tree, dict):
+        return tree
+    ops = tree.get("ops")
+    if not isinstance(ops, dict) or "heartbeat_url" not in ops:
+        return tree
+    return {**tree, "ops": {**ops, "heartbeat_url": ""}}
+
+
 def _settings_form(config: object) -> dict[str, object]:
     """Current effective values in the shape the settings form expects."""
     from app.reviews.service import _LATEST_PROMPT
@@ -3428,8 +3443,8 @@ def settings(request: Request) -> dict[str, object]:
                 "reason": row.reason,
             }
         )
-    pending_tree = config.pending()
-    active_tree = config.effective()
+    pending_tree = _without_heartbeat(config.pending())
+    active_tree = _without_heartbeat(config.effective())
     return {
         "settings": _settings_form(config),
         "strategy_overrides": _strategy_overrides(config),
@@ -3555,17 +3570,15 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
     # Promote, and loosening any risk limit, need "Confirm it is you";
     # tightening a limit never asks (design, Settings → Access).
     loosens = _settings_loosen_risk(cleaned, base)
-    # Changing the heartbeat URL is a confirm action too (design, Access).
-    new_hb = (cleaned.get("ops") or {}).get("heartbeat_url")
-    hb_changed = (
-        new_hb is not None
-        and new_hb != _nested_get(base, "ops", "heartbeat_url")
-    )
-    if promote_id is not None or loosens or hb_changed:
+    if promote_id is not None or loosens:
         from app.auth.api import require_confirmed
 
         require_confirmed(request)
     new_tree = _deep_merge(base, cleaned)
+    # The heartbeat URL is a write-only secret (item 081): it never
+    # belongs to a settings version, so every saved tree blanks it —
+    # including a value still sitting in config or an old version.
+    new_tree.setdefault("ops", {})["heartbeat_url"] = ""
     with get_session_maker()() as session:
         if promote_id is not None:
             check_promotion(session, config, promote_id)
@@ -6783,7 +6796,7 @@ def server_status(request: Request) -> dict[str, object]:
         "backups": status.get("backups"),
         "host": ops.host_status() if ops is not None else {},
         "heartbeat": {
-            "url": (ops.heartbeat_url() if ops is not None else ""),
+            "masked": ops.heartbeat_masked() if ops is not None else None,
             "last_ping": getattr(ops, "last_heartbeat_at", None),
             "configured": bool(ops and ops.heartbeat_url()),
         },
@@ -6791,6 +6804,45 @@ def server_status(request: Request) -> dict[str, object]:
         # "Config: n local overrides · n unknown keys" (item 050).
         "config_layers": config.layer_counts(),
     }
+
+
+@router.post("/server/heartbeat")
+def server_heartbeat_set(
+    request: Request, body: dict[str, object]
+) -> dict[str, object]:
+    """Save the dead-man's-switch URL — write-only like an API key.
+
+    ``ops.heartbeat_url`` in config is imported into secrets once at
+    startup and ignored afterwards (item 081); the API only ever shows
+    the masked host. Saving asks for "Confirm it is you".
+    """
+    ops = _ops(request)
+    secrets = _secrets(request)
+    if ops is None or secrets is None:
+        raise HTTPException(status_code=404, detail="not available")
+    from app.auth.api import require_confirmed
+
+    require_confirmed(request)
+    url = str(body.get("url") or "").strip()
+    try:
+        clean = ops.validate_heartbeat_url(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
+    try:
+        secrets.save("heartbeat_url", clean)
+    except SecretError as exc:
+        raise HTTPException(status_code=422, detail=[safe_error(exc)]) from exc
+    return {"ok": True, "masked": ops.heartbeat_masked()}
+
+
+@router.post("/server/heartbeat/remove")
+def server_heartbeat_remove(request: Request) -> dict[str, object]:
+    """Delete the stored heartbeat URL."""
+    secrets = _secrets(request)
+    if secrets is None:
+        raise HTTPException(status_code=404, detail="not available")
+    secrets.remove("heartbeat_url")
+    return {"ok": True}
 
 
 @router.post("/server/backup-now")

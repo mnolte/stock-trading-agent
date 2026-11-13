@@ -21,7 +21,7 @@ interface ServerStatus {
     restore_test: { at?: string; ok?: boolean; not_set_up?: boolean } | null;
   } | null;
   host: { pending_updates?: number; next_reboot_window?: string } | null;
-  heartbeat: { url: string; last_ping: string | null; configured: boolean };
+  heartbeat: { masked: string | null; last_ping: string | null; configured: boolean };
   config_layers?: { local_overrides: number; unknown_keys: number };
   latest_backup: string | null;
 }
@@ -131,7 +131,7 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
     get<ServerStatus>('/api/server')
       .then((d) => {
         setData(d);
-        setHbUrl(d.heartbeat.url || '');
+        setHbUrl('');
       })
       .catch((e) => setError(errorMessages(e)[0]));
   };
@@ -196,12 +196,22 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
   const saveHeartbeat = async () => {
     setError(null);
     try {
-      await post('/api/settings', {
-        settings: { ops: { heartbeat_url: hbUrl } },
-        reason: 'Heartbeat URL',
-      });
+      await post('/api/server/heartbeat', { url: hbUrl });
+      setHbUrl('');
       setHbEditing(false);
       setNotice('Heartbeat URL saved.');
+      refresh();
+    } catch (e) {
+      setError(errorMessages(e)[0]);
+    }
+  };
+
+  const removeHeartbeat = async () => {
+    setError(null);
+    try {
+      await post('/api/server/heartbeat/remove', {});
+      setHbEditing(false);
+      setNotice('Heartbeat URL removed.');
       refresh();
     } catch (e) {
       setError(errorMessages(e)[0]);
@@ -335,11 +345,16 @@ export function ServerSection({ enabled }: { enabled: boolean }) {
         </span>
         <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-positive)', textAlign: 'right' }}>
           {data.heartbeat.configured
-            ? `last ping ${fmtWhen(data.heartbeat.last_ping)} · after each cycle and check`
+            ? `${data.heartbeat.masked ?? ''} · last ping ${fmtWhen(data.heartbeat.last_ping)} · after each cycle and check`
             : 'Heartbeat not set'}
           <Button style={{ marginLeft: 8 }} onClick={() => setHbEditing((v) => !v)}>
-            {data.heartbeat.configured ? 'Change…' : 'Set…'}
+            {data.heartbeat.configured ? 'Replace…' : 'Set…'}
           </Button>
+          {data.heartbeat.configured && (
+            <Button style={{ marginLeft: 6 }} onClick={removeHeartbeat}>
+              Remove
+            </Button>
+          )}
         </span>
       </div>
       {hbEditing && (

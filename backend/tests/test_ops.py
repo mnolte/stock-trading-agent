@@ -101,16 +101,40 @@ def test_heartbeat_called_once_per_unit(tmp_path: Path) -> None:
         calls.append(url)
         return True
 
-    ops = _ops(tmp_path, pinger=pinger)
-    get_config()._active.setdefault("ops", {})["heartbeat_url"] = "https://hc-ping.com/x"
+    ops = _ops(
+        tmp_path,
+        values={"heartbeat_url": "https://hc-ping.com/abc123f9a"},
+        pinger=pinger,
+    )
 
     async def run() -> None:
         assert await ops.ping_heartbeat()
         assert await ops.ping_heartbeat()
 
     asyncio.run(run())
-    assert calls == ["https://hc-ping.com/x"] * 2
+    assert calls == ["https://hc-ping.com/abc123f9a"] * 2
     assert ops.last_heartbeat_at is not None
+
+
+def test_heartbeat_masked_shows_host_and_last4(tmp_path: Path) -> None:
+    ops = _ops(
+        tmp_path, values={"heartbeat_url": "https://hc-ping.com/abc123f9a"}
+    )
+    assert ops.heartbeat_masked() == "hc-ping.com/••••3f9a"
+    assert ops.heartbeat_url() == "https://hc-ping.com/abc123f9a"
+
+
+def test_heartbeat_config_value_is_ignored(tmp_path: Path) -> None:
+    """ops.heartbeat_url in config no longer feeds the ping (item 081)."""
+    ops = _ops(tmp_path)
+    get_config()._active.setdefault("ops", {})["heartbeat_url"] = (
+        "https://hc-ping.com/from-config"
+    )
+    try:
+        assert ops.heartbeat_url() is None
+        assert ops.heartbeat_masked() is None
+    finally:
+        get_config()._active["ops"]["heartbeat_url"] = ""
 
 
 def test_heartbeat_not_called_without_url(tmp_path: Path) -> None:
@@ -123,7 +147,6 @@ def test_heartbeat_not_called_without_url(tmp_path: Path) -> None:
         return True
 
     ops = _ops(tmp_path, pinger=pinger)
-    get_config()._active.setdefault("ops", {})["heartbeat_url"] = ""
     assert not asyncio.run(ops.ping_heartbeat())
     assert calls == []
 

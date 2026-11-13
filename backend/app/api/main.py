@@ -1101,6 +1101,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     run_stored_scrub(get_session_maker(), clock)
 
+    # Item 081 step 7: ops.heartbeat_url becomes a write-only secret —
+    # imported from config once, then blanked out of settings versions.
+    from app.stored_scrub import migrate_heartbeat
+
+    migrate_heartbeat(get_session_maker(), config, secrets_store, clock)
+
     sources = make_data_sources(config, secrets_store)
     if config.env.mode != "simulated":
         await startup_key_checks(secrets_store, key_testers, sources)

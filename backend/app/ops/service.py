@@ -120,8 +120,23 @@ class OpsService:
     # ------------------------------------------------------------------
     # heartbeat
 
-    def heartbeat_url(self) -> str:
-        return str(self._config.get("ops", "heartbeat_url", default="") or "")
+    def heartbeat_url(self) -> str | None:
+        """The dead-man's-switch URL — a write-only secret (item 081).
+
+        ``ops.heartbeat_url`` in config is imported into secrets once at
+        startup and ignored afterwards; nothing else may read it.
+        """
+        if self._secrets is None:
+            return None
+        return self._secrets.get("heartbeat_url")
+
+    def heartbeat_masked(self) -> str | None:
+        """The only form of the URL the API may show: host, mask, last 4."""
+        url = self.heartbeat_url()
+        if not url:
+            return None
+        host = urlparse(url).netloc or urlparse(url).path
+        return f"{host}/••••{url[-4:]}"
 
     def validate_heartbeat_url(self, url: str, resolver: object = None) -> str:
         """https + public — the rule from Stored credentials."""

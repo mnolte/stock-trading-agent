@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-11-12 — [081] Keys out of error text (build, part 2)
+
+Build PR of 081 on branch `fix/081-ask-settings-heartbeat` — the S3 and S9 parts (issues #240, #246).
+
+- **Ask sees trading settings only:** the `settings` tool serves an explicit allowlist (`execution`, `rules`, `regime`, `events`, `indicators`, `decision`, `selection`, `risk`, `schedule`, `universe`, `reviews`, `shadows`, `backtest`, `readiness`, `insights`, `performance`, `outcomes`); `universe` contributes mode and screen thresholds, never names. `ops`, `notifications`, `security`, `auth`, `logging`, `storage` and every other section are never served, and a `section` argument cannot bypass the list. Notification channels report `on`/`failing`/`off` — never hosts or addresses.
+- **Every tool result is scrubbed:** `run_tool` passes each result (strings at any depth) through the shared scrubber and the registered secret values before it can reach the model or be stored.
+- **The heartbeat URL is a write-only secret:** stored in `secrets` as `heartbeat_url`, saved and removed through `POST /api/server/heartbeat` ("Confirm it is you", the https-and-public check) and `…/heartbeat/remove`. `GET /api/server` returns only `host/••••` + last four, the last ping and configured; `GET /api/settings` and History never contain it (`ops` left the editable settings, every saved tree blanks it, and stored versions are blanked once at startup by `migrate_heartbeat`, flagged by a `heartbeat_secret_migration` event). A config `ops.heartbeat_url` is imported once, with a warning, then ignored.
+
 ## 2026-11-12 — [078] Concurrent requests, part 1 (build)
 
 Build PR of 078 on branch `feat/078-concurrent-requests` (steps 1–4; sync jobs, shadows, storage and docs follow in the second PR).
