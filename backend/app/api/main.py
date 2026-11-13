@@ -1806,9 +1806,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     heartbeat_task = spawn(_heartbeat(), "run-lock-heartbeat")
 
+    # Break-glass kill switch (item 083): the app itself watches
+    # data/kill.request every 5 s on this loop, so a lost sign-in can
+    # still stop trading from the server shell.
+    from app.ops.kill_switch import watch_kill_requests
+
+    kill_watch_task = spawn(
+        watch_kill_requests(
+            executor,
+            config.env.sa_data_dir,
+            shutdown_manager,
+        ),
+        "kill-request-watch",
+    )
+
     try:
         yield
     finally:
+        kill_watch_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await kill_watch_task
         # Clean shutdown (docs/SPEC.md). A second Ctrl+C/SIGTERM during
         # this block skips the grace wait — cleanup still runs.
         import signal as _signal
