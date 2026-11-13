@@ -868,7 +868,7 @@ async def test_equity_snapshot_carries_benchmark_and_fx(
     clock = FakeClock(now)
     worker, market_data = _worker(session_factory, clock)
     await _cache_bars(market_data, now - timedelta(days=3), now)
-    await market_data.refresh_daily(now.astimezone(NY_TZ).date())
+    await market_data.refresh_daily(now.astimezone(NY_TZ).date(), now)
     market_data.latest_fx = await market_data.sources.fx.fetch_fx(
         now.date()
     )

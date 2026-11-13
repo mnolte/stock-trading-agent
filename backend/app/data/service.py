@@ -432,6 +432,7 @@ class MarketDataService:
     async def refresh_daily(
         self,
         today: date,
+        now: datetime,
         symbols: list[str] | None = None,
         session_count: int | None = None,
         on_symbol: Callable[[str, DataResult[Any]], None] | None = None,
@@ -444,6 +445,10 @@ class MarketDataService:
         checked like ``refresh_history``: each symbol's request starts at
         its earliest missing session and the newest session is always
         refetched — a warm cache costs one small request per symbol.
+
+        ``now`` is the fetch time: a session's absence counts as a source
+        gap only once its New York date is safely past, so the still-open
+        newest session stays missing and is asked for again (item 092).
 
         ``symbols`` defaults to ``universe()``; ``session_count`` defaults
         to ``schedule.daily_history_sessions`` — callers that read the
@@ -461,6 +466,7 @@ class MarketDataService:
                 for symbol in wanted
             }
         end = sessions[-1].date
+        gap_cutoff = now.astimezone(NY_TZ).date()
         # Batched coverage first: only symbols short of the full window
         # get the per-symbol date query. Sessions the source already
         # confirmed it has no bar for are known, not missing — without
@@ -530,12 +536,18 @@ class MarketDataService:
             # symbol → "Gaps at the source"); a failed fetch writes none.
             returned = {b.date for b in result.data}
             self.bars_cache.clear_daily_gaps(symbol, returned)
+            # A session is a source gap only once its New York date is
+            # safely past: a session still open — or just closed, while
+            # the vendor may still be publishing its daily bar — stays
+            # missing, so the next refresh asks for it again (item 092).
             self.bars_cache.record_daily_gaps(
                 symbol,
                 [
                     s.date
                     for s in sessions
-                    if s.date >= fetch_start[symbol] and s.date not in returned
+                    if s.date >= fetch_start[symbol]
+                    and s.date not in returned
+                    and s.date < gap_cutoff
                 ],
             )
             results[symbol] = DataResult(data=inserted, source=result.source)
