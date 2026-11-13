@@ -219,6 +219,23 @@ export function AccessSection({ auth }: { auth: AuthStatus }) {
         </div>
       )}
 
+      <div style={row}>
+        <div style={rowLabel}>
+          <span style={{ fontSize: 'var(--sa-text-base)' }}>Confirm before risky actions</span>
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.45 }}>
+            Asked again for Stop &amp; flatten, Resume after the kill switch, Reset paper account,
+            Start new run, Promote strategy, replacing keys or the heartbeat URL, changing
+            sign-in, and every change that makes the agent looser or quieter: any setting
+            tagged &quot;looser&quot;, supervised → automatic, an alert losing a channel,
+            longer quiet hours, a new model or prompt for live, and the SMTP server or To
+            address. Tightening never asks.
+          </span>
+        </div>
+        <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)' }}>
+          password or code
+        </span>
+      </div>
+
       <h3
         style={{
           margin: '18px 0 0',
