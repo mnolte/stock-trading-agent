@@ -75,7 +75,7 @@ function base(): SettingsForm {
       error_auto_resolve_minutes: 60,
     },
     auth: { idle_hours: 12 },
-    schedule: { cycles: ['10:46', '11:46'] },
+    schedule: { cycles: ['10:46', '11:46'], last_cycle_no_entries: false },
     notifications: {
       repeat_limit_minutes: 30,
       quiet_hours: { start: '23:00', end: '08:00' },

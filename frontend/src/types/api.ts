@@ -918,7 +918,7 @@ export interface SettingsForm {
     max_price_blocked_pct: number;
     error_auto_resolve_minutes: number;
   };
-  schedule: { cycles: string[] };
+  schedule: { cycles: string[]; last_cycle_no_entries: boolean };
   /** Economic releases (item 067): only the editable FOMC window
    * fields — dates, times and FRED ids are read-only on the page. */
   events?: {
