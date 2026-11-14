@@ -2,6 +2,14 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control
+
+Marc, 14 Nov: "I want a button I can flip." Build: kickoff `101-feat-last-cycle-switch-and-saved-values.md`.
+
+- **`Settings.dc.html` → Schedule:** a switch under the cycle table, **New entries in the last cycle**, with what on and off do and that turning it on asks to confirm. The intro says it is the one thing that can be changed here. New `Settings-schedule.png`.
+- **`Settings.dc.html` → Settings history:** an amber block on top, "2 saved values differ from the config and have no control": the setting with its key, the saved value (in use), the config value, the version it dates from, and **Use the config value** per row; the text for an empty list is in the block's last line. New `Settings-stored.png`.
+- `Settings.png`, `-1024` and `-390` are unchanged (they show Risk limits).
+
 ## 2026-11-12 — [074] LLM inspector UX (build)
 
 - **`Inspector.dc.html` implemented:** attention chips (Nothing to do / Keep an eye on it / Needs you) on rows, details and Top reasons; a "What happened" panel per reason with What it means / Why here / What to do and links; Top reasons rows that filter the list; repeated calls fold into one row that opens in place; input renders as labelled sections with a Raw JSON toggle; the answer renders as label–value rows; ↑ Newer / ↓ Older buttons with K/J and arrow keys; the success line reads "Valid · used as the model chose." Phone layout stacks the label–value rows.

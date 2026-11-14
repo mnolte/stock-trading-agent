@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control (spec)
+
+Follows item 098. Marc decided on 14 Nov: the last-cycle rule gets a button on the Settings screen, and saved values keep winning over the config file but must be visible. Kickoff `101-feat-last-cycle-switch-and-saved-values.md`, issue #298. No change to what the rule does.
+
+- **Config layers → Saved values without a control:** code lists every setting whose saved value differs from the config file and that has no control. Settings → History shows the list with **Use the config value**; Needs you shows one item while it isn't empty; a test requires a control for every setting the API accepts.
+- **GUI → Settings screen → Schedule:** the switch **New entries in the last cycle**. Turning it on asks "Confirm it is you".
+- **GUI → Needs you:** one more row at order 7.
+- **Rules pre-filter:** the last-cycle paragraph names the switch. **Build plan** item 58.
+- Rejected: letting settings without a control follow the config file on every save. An unrelated save could then change a trading rule, and a version would stop being a full record.
+
 ## 2026-11-14 — [098] Last-cycle entries setting (build)
 
 `schedule.last_cycle_no_entries` joins `EDITABLE` as a bool, so a settings save can finally change it. Every `settings_versions` row since 18 Oct carried the pre-071 `true`, and saved trees merge over the YAML — the 071 default flip never reached installs with a saved version, and no in-app path could fix it. The key stays display-only on the Schedule card (spec: Schedule is read-only; `schedule.cycles` is likewise API-editable with no control), so the change is API-only for now — the GUI control and the wider question of GUI-hidden keys following YAML defaults are open in the PR. Turning the flag off is a loosening ("off" in `DIRECTIONS`) and asks "Confirm it is you". No spec text changed.
