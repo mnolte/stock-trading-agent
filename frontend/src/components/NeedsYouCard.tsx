@@ -86,7 +86,7 @@ function HealthLine({ health }: { health: AttentionResponse['health'] }) {
         <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
           <Dot color={color} />
           <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>{' '}
-          <span style={{ color: color === muted ? 'var(--sa-text-2)' : color }}>{value}</span>
+          <span style={{ color: color === ok || color === muted ? 'var(--sa-text-2)' : color }}>{value}</span>
         </span>
       ))}
     </div>

@@ -328,7 +328,7 @@ test('scale: 71-symbol pool — held picks + Find symbol, feed in collapsed cycl
   // Feed: grouped per cycle; the latest cycle is open, earlier cycles show
   // their changes only.
   await expect(
-    page.getByRole('heading', { name: "Today's decisions" }),
+    page.getByRole('heading', { name: "Today’s decisions" }),
   ).toBeVisible();
   const headers = page.locator('button[aria-expanded]').filter({
     hasText: 'cycle',
