@@ -483,6 +483,7 @@ DIRECTIONS: dict[str, Direction] = {
     "universe.screen.min_avg_dollar_volume": "down",
     "universe.screen.lookback_sessions": "neutral",
     "universe.screen.drop_after_failed_screens": "up",  # stays in pool longer
+    "universe.screen.history_fail_data_error_pct": "up",  # screen aborts less often
     "universe.rank_by": "neutral",
     "universe.watchlist_rows": "neutral",
     "universe.allowed_sectors": "longer",

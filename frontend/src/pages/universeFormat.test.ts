@@ -4,6 +4,7 @@ import type { UniverseRow, UniverseSyncJob, UniverseSyncResponse } from '../type
 import {
   amsTime,
   fmtDuration,
+  historyNowText,
   isoMs,
   jobResultText,
   statusWord,
@@ -62,6 +63,47 @@ describe('statusWord', () => {
     expect(statusWord(row({ status: 'warming_up' }))).toBe('warming up');
     expect(statusWord(row({ status: 'excluded' }))).toBe('excluded');
     expect(statusWord(row({ status: 'held' }))).toBe('held');
+  });
+});
+
+describe('historyNowText', () => {
+  const detail = '258 of 259 daily bars · 59 of 59 sessions';
+
+  it('shows the screen numbers and "history loaded" once the gap is backfilled', () => {
+    const text = historyNowText(
+      row({
+        status: 'eligible_fails',
+        fails: 1,
+        failed_check: 'history',
+        detail,
+        screen_date: '2026-11-13',
+        history_now: { loaded: true, detail: '260 of 260 daily bars · 60 of 60 sessions' },
+      }),
+    );
+    expect(text).toBe(
+      'Screen of Fri 13 Nov: 258 of 259 daily bars · 59 of 59 sessions. Now: history loaded. The fail clears at the next passing screen.',
+    );
+  });
+
+  it('shows the current counts while the history is still missing', () => {
+    const text = historyNowText(
+      row({
+        status: 'eligible_fails',
+        fails: 1,
+        failed_check: 'history',
+        detail,
+        screen_date: '2026-11-13',
+        history_now: { loaded: false, detail: '259 of 260 daily bars · 60 of 60 sessions' },
+      }),
+    );
+    expect(text).toBe(
+      'Screen of Fri 13 Nov: 258 of 259 daily bars · 59 of 59 sessions. Now: 259 of 260 daily bars · 60 of 60 sessions.',
+    );
+  });
+
+  it('is null for rows without a live history check', () => {
+    expect(historyNowText(row({}))).toBeNull();
+    expect(historyNowText(row({ history_now: null, screen_date: '2026-11-13' }))).toBeNull();
   });
 });
 

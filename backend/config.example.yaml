@@ -56,6 +56,7 @@ universe:
     min_avg_dollar_volume: 100000000
     lookback_sessions: 20       # dollar volume and rank
     drop_after_failed_screens: 3
+    history_fail_data_error_pct: 50  # history failing for this share (%) of the previously eligible pool fails the whole screen as a data error
   rank_by: return_vs_spy        # 20-session return minus SPY's
   watchlist_rows: 15            # dashboard rows in screened mode before "Show all"
   allowed_sectors: [Communication Services, Consumer Discretionary, Consumer Staples, Energy, Financials, Health Care, Industrials, Materials, Real Estate, Technology, Utilities, Index]   # 11 GICS sectors (Information Technology written as Technology) + Index
