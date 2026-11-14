@@ -3047,6 +3047,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "schedule": {
             "cycles": get("schedule", "cycles", default=[]),
+            "last_cycle_no_entries": get(
+                "schedule", "last_cycle_no_entries", default=False
+            ),
         },
         "events": {
             # Only the editable FOMC sub-keys — dates, times and FRED

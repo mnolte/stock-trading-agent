@@ -93,6 +93,19 @@ def test_save_quiet_hours(client: TestClient) -> None:
     assert pending["notifications.quiet_hours.end"] == "07:15"
 
 
+def test_save_last_cycle_no_entries(client: TestClient) -> None:
+    """Item 098: the flag is editable — every saved version carried the
+    pre-071 ``true`` forward with no way to change it."""
+    resp = _save(client, {"schedule": {"last_cycle_no_entries": True}})
+    assert resp.status_code == 200, resp.text
+    pending = client.get("/api/settings").json()["pending"]
+    assert pending["schedule.last_cycle_no_entries"] is True
+
+    resp = _save(client, {"schedule": {"last_cycle_no_entries": "yes"}})
+    assert resp.status_code == 422
+    assert "must be true or false" in resp.text
+
+
 def test_save_quiet_hours_rejects_bad_time(client: TestClient) -> None:
     resp = _save(
         client,

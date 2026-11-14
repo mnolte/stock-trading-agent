@@ -56,6 +56,7 @@ export const FIELD_LABELS: Record<string, string> = {
   'ask.keep_days': 'Ask chats kept for',
   'ask.instructions': 'Ask standing instructions',
   'schedule.cycles': 'Cycle times',
+  'schedule.last_cycle_no_entries': 'No new entries in the last cycle',
   'notifications.repeat_limit_minutes': 'Repeat limit',
   'notifications.quiet_hours.start': 'Quiet hours from',
   'notifications.quiet_hours.end': 'Quiet hours to',
