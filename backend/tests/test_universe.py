@@ -26,15 +26,19 @@ from app.data.fake import (
 from app.data.models import Bar5m, CalendarDay, DailyBar, DataResult
 from app.data.service import MarketDataService
 from app.db.models import (
+    Bar1d,
+    DailySourceGap,
     Event,
     Order,
     Position,
+    SyncRunRow,
     UniversePoolRow,
     UniverseScreenRow,
 )
 from app.market.clock import NY_TZ, UTC, FakeClock
+from app.syncs import SyncRuns
 from app.universe.service import SYMBOL_RE, PoolError, UniverseService
-from sqlalchemy import select
+from sqlalchemy import delete, event, select
 from sqlalchemy.orm import Session, sessionmaker
 
 pytestmark = pytest.mark.anyio
@@ -110,6 +114,7 @@ def make_service(
     config: AppConfig,
     bars: StubBars | None = None,
     broker: FakeBroker | None = None,
+    syncs: SyncRuns | None = None,
 ) -> tuple[UniverseService, MarketDataService, FakeBroker, StubBars]:
     bars = bars or StubBars(calendar)
     sources = DataSources(
@@ -134,6 +139,7 @@ def make_service(
         config,
         clock,
         session_factory=session_factory,
+        syncs=syncs,
     )
     return service, market_data, broker, bars
 
@@ -1279,3 +1285,302 @@ def test_symbol_names_pool_and_config_override(
         fixed_names = symbol_names(fixed, session)
         assert "KO" not in fixed_names  # pool is screened-mode only
         assert fixed_names["MSFT"] == "MSFT Corp"
+
+
+# ----------------------------------------------------------------------
+# Item 093 — live history detail and the mass history data error
+
+
+def _drop_daily_bar(
+    session_factory: sessionmaker[Session], symbol: str, day: date
+) -> None:
+    """Remove one cached daily bar, like a source gap leaving a hole."""
+    with session_factory() as session:
+        session.execute(
+            delete(Bar1d).where(Bar1d.symbol == symbol, Bar1d.date == day)
+        )
+        session.commit()
+
+
+def _drop_source_gap(
+    session_factory: sessionmaker[Session], symbol: str, day: date
+) -> None:
+    with session_factory() as session:
+        session.execute(
+            delete(DailySourceGap).where(
+                DailySourceGap.symbol == symbol,
+                DailySourceGap.session_date == day,
+            )
+        )
+        session.commit()
+
+
+async def test_describe_history_now_shows_live_detail(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """A row that kept its place with a failed history check shows the
+    screen's numbers and the current ones; status, rank, fails and the
+    stored detail stay the screen's record (item 093)."""
+    config = make_config(
+        tmp_path,
+        [
+            ("AAPL", "Technology"),
+            ("MSFT", "Technology"),
+            ("GOOGL", "Communication Services"),
+            ("JPM", "Financials"),
+            ("XOM", "Energy"),
+            ("LOWV", "Technology"),
+        ],
+    )
+    bars = StubBars(calendar)
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars
+    )
+    sessions = market_data.recent_sessions(SCREEN_DATE, 260)
+    # LOWV fails dollar volume every screen; its history stays loaded.
+    bars.daily["LOWV"] = daily_series(
+        "LOWV", sessions, Decimal("50"), Decimal("50"), volume=10_000
+    )
+    await service.run_screen()
+    assert screen_rows(session_factory)["LOWV"].status == "excluded"
+
+    # Day 2: AAPL loses the newest completed session's daily bar — the
+    # hysteresis keeps it eligible with one history fail.
+    bars.daily["AAPL"] = daily_series(
+        "AAPL", sessions[:-1], Decimal("100"), Decimal("110")
+    )
+    _drop_daily_bar(session_factory, "AAPL", SCREEN_DATE)
+    next_trading_day(clock, calendar)
+    day2 = clock.now().astimezone(NY_TZ).date()
+    await service.run_screen()
+    row = screen_rows(session_factory)["AAPL"]
+    assert row.status == "eligible" and row.failed_in_a_row == 1
+    assert _checks(row)["failed_check"] == "history"
+    stored = {
+        "fails": row.failed_in_a_row,
+        "rank": row.rank,
+        "detail": _checks(row)["detail"],
+    }
+
+    shown = {r["symbol"]: r for r in service.describe()["rows"]}
+    aapl = shown["AAPL"]
+    assert aapl["status"] == "eligible_fails"
+    assert aapl["fails"] == stored["fails"]
+    assert aapl["rank"] == stored["rank"]
+    assert aapl["detail"] == stored["detail"]
+    assert aapl["screen_date"] == day2.isoformat()
+    assert aapl["history_now"]["loaded"] is False
+    assert "daily bars" in aapl["history_now"]["detail"]
+    # A plain eligible row and a dollar-volume exclusion are unchanged.
+    assert shown["MSFT"]["history_now"] is None
+    assert shown["LOWV"]["history_now"] is None
+    assert shown["LOWV"]["failed_check"] == "dollar_volume"
+
+    # The bar is backfilled: the same row now reports history loaded,
+    # its record untouched.
+    bars.daily["AAPL"] = daily_series(
+        "AAPL", sessions, Decimal("100"), Decimal("110")
+    )
+    _drop_source_gap(session_factory, "AAPL", SCREEN_DATE)
+    await market_data.refresh_daily(day2, clock.now(), symbols=["AAPL"])
+    aapl = {
+        r["symbol"]: r for r in service.describe()["rows"]
+    }["AAPL"]
+    assert aapl["history_now"]["loaded"] is True
+    assert aapl["detail"] == stored["detail"]
+    assert aapl["fails"] == stored["fails"]
+    assert aapl["rank"] == stored["rank"]
+
+
+async def test_describe_history_now_queries_do_not_scale_with_rows(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Seventy history-fail rows cost the same queries as one: the live
+    detail rides the one batched warming query (item 093)."""
+    symbols = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(70)]
+    config = make_config(
+        tmp_path, [(s, "Technology") for s in symbols]
+    )
+    service, *_ = make_service(session_factory, clock, calendar, config)
+    await service.run_screen()
+
+    def mark_history_fail(count: int) -> None:
+        with session_factory() as session:
+            for row in session.execute(
+                select(UniverseScreenRow)
+            ).scalars():
+                checks = dict(row.check_results or {})
+                if row.symbol in set(symbols[:count]):
+                    row.failed_in_a_row = 1
+                    checks["failed_check"] = "history"
+                    checks["detail"] = "259 of 260 daily bars · 60 of 60 sessions"
+                else:
+                    row.failed_in_a_row = 0
+                    checks["failed_check"] = None
+                row.check_results = checks
+            session.commit()
+
+    def describe_queries() -> int:
+        engine = session_factory.kw["bind"]
+        count = 0
+
+        def record(*_args: object) -> None:
+            nonlocal count
+            count += 1
+
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            service.describe()
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        return count
+
+    mark_history_fail(70)
+    many = describe_queries()
+    mark_history_fail(1)
+    one = describe_queries()
+    assert many == one
+
+
+async def test_mass_history_fail_is_a_screen_data_error(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Half the previously eligible pool failing history is a data
+    error, not that many fails: no row is written, no fail count moves,
+    the screen's sync run ends failed (item 093)."""
+    symbols = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(10)]
+    config = make_config(tmp_path, [(s, "Technology") for s in symbols])
+    bars = StubBars(calendar)
+    syncs = SyncRuns(session_factory, clock, config)
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars, syncs=syncs
+    )
+    sessions = market_data.recent_sessions(SCREEN_DATE, 260)
+    await service.run_screen()
+    assert all(
+        r.status == "eligible" for r in screen_rows(session_factory).values()
+    )
+
+    broken = symbols[:5]
+    for symbol in broken:
+        bars.daily[symbol] = daily_series(
+            symbol, sessions[:-1], Decimal("100"), Decimal("110")
+        )
+        _drop_daily_bar(session_factory, symbol, SCREEN_DATE)
+    next_trading_day(clock, calendar)
+    result = await service.run_screen()
+    assert "failed" in result
+    assert "5 of 10" in result["failed"]
+
+    # No row for today; yesterday's list and fail counts are untouched.
+    with session_factory() as session:
+        dates = session.execute(
+            select(UniverseScreenRow.session_date).distinct()
+        ).scalars().all()
+        assert dates == [SCREEN_DATE]
+        failed_event = session.execute(
+            select(Event)
+            .where(Event.event_type == "universe_screen_failed")
+            .order_by(Event.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert "5 of 10" in str(failed_event.details)
+        run = session.execute(
+            select(SyncRunRow)
+            .where(SyncRunRow.job == "screen")
+            .order_by(SyncRunRow.id.desc())
+            .limit(1)
+        ).scalar_one()
+        assert run.status == "failed"
+    rows = screen_rows(session_factory)
+    assert len(rows) == 10
+    assert all(r.failed_in_a_row == 0 for r in rows.values())
+    assert all(r.status == "eligible" for r in rows.values())
+    assert service.last_screen_failed()
+
+
+async def test_history_fail_below_threshold_completes(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """Four of ten previously eligible symbols failing history is under
+    the 50% data-error line: the screen completes and those four get
+    their ordinary fail (item 093)."""
+    symbols = [f"{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(10)]
+    config = make_config(tmp_path, [(s, "Technology") for s in symbols])
+    bars = StubBars(calendar)
+    service, market_data, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars
+    )
+    sessions = market_data.recent_sessions(SCREEN_DATE, 260)
+    await service.run_screen()
+
+    broken = symbols[:4]
+    for symbol in broken:
+        bars.daily[symbol] = daily_series(
+            symbol, sessions[:-1], Decimal("100"), Decimal("110")
+        )
+        _drop_daily_bar(session_factory, symbol, SCREEN_DATE)
+    next_trading_day(clock, calendar)
+    result = await service.run_screen()
+    assert "failed" not in result and "skipped" not in result
+
+    rows = screen_rows(session_factory)
+    assert len(rows) == 10
+    for symbol in broken:
+        row = rows[symbol]
+        assert row.status == "eligible"  # hysteresis keeps it in
+        assert row.failed_in_a_row == 1
+        assert _checks(row)["failed_check"] == "history"
+    for symbol in symbols[4:]:
+        assert rows[symbol].failed_in_a_row == 0
+
+
+async def test_history_fail_rule_needs_a_previous_screen(
+    session_factory: sessionmaker[Session],
+    clock: FakeClock,
+    calendar: FakeCalendarSource,
+    tmp_path: Path,
+) -> None:
+    """First run with every symbol warming: there is no previous eligible
+    list, so the data-error rule does not apply and the screen writes
+    its warming_up rows (item 093)."""
+    config = make_config(
+        tmp_path, [("AAPL", "Technology"), ("MSFT", "Technology")]
+    )
+    bars = No5mBars(calendar)
+    bars.no_5m.update({"AAPL", "MSFT"})
+    service, *_ = make_service(
+        session_factory, clock, calendar, config, bars=bars
+    )
+    result = await service.run_screen()
+    assert "failed" not in result and "skipped" not in result
+    rows = screen_rows(session_factory)
+    assert {r.status for r in rows.values()} == {"warming_up"}
+
+
+def test_history_fail_pct_config_bounds(tmp_path: Path) -> None:
+    """``universe.screen.history_fail_data_error_pct`` is an integer
+    1-100; anything else refuses to start (item 093)."""
+    from app.api.main import check_universe_screen
+
+    config = AppConfig()
+    config.yaml["universe"]["screen"]["history_fail_data_error_pct"] = 50
+    check_universe_screen(config)  # no raise
+    for bad in (0, 101, -1, "abc", 50.5, True):
+        config.yaml["universe"]["screen"][
+            "history_fail_data_error_pct"
+        ] = bad
+        with pytest.raises(RuntimeError, match="history_fail_data_error_pct"):
+            check_universe_screen(config)

@@ -212,6 +212,13 @@ class UniverseService:
     def _drop_after(self) -> int:
         return int(self._screen_cfg().get("drop_after_failed_screens") or 3)
 
+    def _history_fail_pct(self) -> int:
+        """``screen.history_fail_data_error_pct`` — the share of the
+        previously eligible pool whose history check may fail before the
+        screen itself counts as a data error (item 093)."""
+        raw = self._screen_cfg().get("history_fail_data_error_pct")
+        return 50 if raw is None else int(raw)
+
     def pool_path(self) -> str:
         return _resolve_path(
             str(self._cfg().get("pool_file") or "backend/universe/pool.csv")
@@ -955,6 +962,34 @@ class UniverseService:
                     ).scalars():
                         prev_rows[r.symbol] = r
 
+                # A history check failing across the previously eligible
+                # pool is a data error, not that many symbol fails
+                # (item 093): the screen fails whole, no fail count moves
+                # and the previous list stays. With no previous screen —
+                # or none eligible in it — there is nothing to compare
+                # and warming symbols just warm up.
+                prev_eligible = sorted(
+                    s for s, r in prev_rows.items() if r.status == "eligible"
+                )
+                if prev_eligible:
+                    checked_prev = [s for s in prev_eligible if s in metrics]
+                    bad = [
+                        s
+                        for s in checked_prev
+                        if metrics[s].checks.get("history") != "pass"
+                    ]
+                    if (
+                        bad
+                        and len(bad) * 100
+                        >= self._history_fail_pct() * len(checked_prev)
+                    ):
+                        first = bad[0]
+                        raise ScreenError(
+                            f"history incomplete for {len(bad)} of "
+                            f"{len(checked_prev)} eligible symbols "
+                            f"(first: {first}, {metrics[first].detail})"
+                        )
+
                 session.execute(
                     delete(UniverseScreenRow).where(
                         UniverseScreenRow.session_date == today
@@ -1056,6 +1091,7 @@ class UniverseService:
         except Exception as exc:
             if screen_run is not None:
                 screen_run.abort(scrub_error(exc))
+                screen_run.finish()
             raise
 
     async def _screen_symbol(
@@ -1199,13 +1235,23 @@ class UniverseService:
         # Symbols without a screen row — plus rows still marked
         # warming_up — get their history progress here: batched, one
         # shared session computation plus two grouped queries for the
-        # whole pool, not a calendar walk and two queries per row.
+        # whole pool, not a calendar walk and two queries per row. Rows
+        # that kept their place with a failed history check get the same
+        # live detail as history_now (item 093): the stored detail stays
+        # the screen's record, the current counts show beside it.
         warming = self._warming_details(
             [
                 e.symbol
                 for e in pool
                 if e.symbol not in latest_rows
                 or latest_rows[e.symbol].status == "warming_up"
+                or (
+                    latest_rows[e.symbol].status != "warming_up"
+                    and (latest_rows[e.symbol].check_results or {}).get(
+                        "failed_check"
+                    )
+                    == "history"
+                )
             ],
             now,
         )
@@ -1216,6 +1262,7 @@ class UniverseService:
             row = latest_rows.get(entry.symbol)
             check: dict[str, Any] = (row.check_results or {}) if row is not None else {}
             progress: dict[str, Any] | None = None
+            history_now: dict[str, Any] | None = None
             if row is None or row.status == "warming_up":
                 warm = warming.get(entry.symbol)
                 if warm is not None:
@@ -1247,6 +1294,13 @@ class UniverseService:
                 status = row.status
                 if status == "eligible" and row.failed_in_a_row > 0:
                     status = "eligible_fails"
+                if check.get("failed_check") == "history":
+                    warm = warming.get(entry.symbol)
+                    if warm is not None:
+                        history_now = {
+                            "loaded": warm.loaded,
+                            "detail": warm.detail,
+                        }
             detail = str(check.get("detail") or "")
             if entry.removed_at is not None:  # held removal, pending close
                 detail = (
@@ -1275,6 +1329,10 @@ class UniverseService:
                     "fails": row.failed_in_a_row if row is not None else 0,
                     "failed_check": check.get("failed_check"),
                     "detail": detail,
+                    "history_now": history_now,
+                    "screen_date": row.session_date.isoformat()
+                    if row is not None
+                    else None,
                     "held": entry.symbol in held,
                     "qty": held.get(entry.symbol, 0),
                     "screened": row is not None,
@@ -1298,6 +1356,8 @@ class UniverseService:
                     "fails": 0,
                     "failed_check": None,
                     "detail": "",
+                    "history_now": None,
+                    "screen_date": None,
                     "progress": None,
                     "held": True,
                     "qty": held.get(symbol, 0),
