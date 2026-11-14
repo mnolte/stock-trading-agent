@@ -15,6 +15,9 @@ Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the
 - **Logs screen:** recurring problems carry "Does it need you?" (needs you, watch, nothing to do), are sorted by it and counted above the list. New setting `gui.log_watch_min_count` (5): the count from which a recurring warning shows "watch". It goes into the example config in the build PR, with the README table. Log lines stack on a phone.
 - **Error pages → GUI:** in the phone shell below 820 px.
 - **Build plan** item 57.
+## 2026-11-14 — [098] Last-cycle entries setting (build)
+
+`schedule.last_cycle_no_entries` joins `EDITABLE` as a bool, so a settings save can finally change it. Every `settings_versions` row since 18 Oct carried the pre-071 `true`, and saved trees merge over the YAML — the 071 default flip never reached installs with a saved version, and no in-app path could fix it. The key stays display-only on the Schedule card (spec: Schedule is read-only; `schedule.cycles` is likewise API-editable with no control), so the change is API-only for now — the GUI control and the wider question of GUI-hidden keys following YAML defaults are open in the PR. Turning the flag off is a loosening ("off" in `DIRECTIONS`) and asks "Confirm it is you". No spec text changed.
 
 ## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
 
