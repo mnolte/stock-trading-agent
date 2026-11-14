@@ -136,10 +136,11 @@ export function PriceChart({
       })),
     );
 
-    const line = (color: string): ISeriesApi<'Line'> =>
+    const line = (color: string, dashed = false): ISeriesApi<'Line'> =>
       chart.addSeries(LineSeries, {
         color,
         lineWidth: 1,
+        lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
@@ -148,13 +149,14 @@ export function PriceChart({
     const addLine = (
       pick: (b: ChartBar) => string | null,
       color: string,
+      dashed = false,
     ) => {
       const data = bars
         .filter((b) => pick(b) !== null)
         .map((b) => ({ time: amsTimestamp(b.time), value: Number(pick(b)) }));
-      if (data.length > 0) line(color).setData(data);
+      if (data.length > 0) line(color, dashed).setData(data);
     };
-    addLine((b) => b.vwap, VWAP);
+    addLine((b) => b.vwap, VWAP, true);
     addLine((b) => b.ema20, EMA20);
     addLine((b) => b.ema50, EMA50);
 
@@ -200,7 +202,7 @@ export function PriceChart({
     <div
       ref={host}
       data-testid="price-chart"
-      style={{ width: '100%', height: '340px' }}
+      style={{ width: '100%', height: '320px' }}
     />
   );
 }

@@ -21,7 +21,7 @@ test('dashboard: cycle line, stat cards, chart, feed', async ({ page }, testInfo
   await expect(page.getByText('Re-entry')).toBeVisible();
   await expect(page.getByText('Since start')).toBeVisible();
   await expect(page.locator('[aria-label="Watchlist"] button.sa-row').first()).toBeVisible();
-  await expect(page.getByText("Today's decisions")).toBeVisible();
+  await expect(page.getByText("Today’s decisions")).toBeVisible();
   await expect(page.locator('[data-testid="price-chart"]')).toBeVisible();
 
   await page.screenshot({ path: shot('main', testInfo.project.name), fullPage: true });
@@ -43,7 +43,7 @@ test('positions: recon strip, cards, account, order history', async ({ page }, t
 
 test('decision detail: sections render', async ({ page }, testInfo) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: "Today's decisions" })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('heading', { name: "Today’s decisions" })).toBeVisible({ timeout: 60_000 });
 
   const items = await page.evaluate(async () => {
     const res = await fetch('/api/decisions');

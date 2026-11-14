@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import type { AttentionItem, AttentionResponse } from '../types/api';
 import type { Resource } from '../api/useResource';
-import { displayTime } from '../format';
+import { displayTime, signed } from '../format';
 import { CardBody } from './cardState';
 import { CardBoundary } from './CardBoundary';
 import { SkeletonText } from './skeletons';
@@ -40,6 +40,16 @@ function icon(severity: AttentionItem['severity']) {
   );
 }
 
+/** "18:46:03" — Amsterdam time with seconds (the health line's sync stamp). */
+function hms(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: 'Europe/Amsterdam',
+  });
+}
+
 function Dot({ color }: { color: string }) {
   return <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, flex: '0 0 8px' }} />;
 }
@@ -50,11 +60,11 @@ function HealthLine({ health }: { health: AttentionResponse['health'] }) {
   const bad = 'var(--sa-negative-text)';
   const muted = 'var(--sa-text-muted)';
   const entries: [string, string, string][] = [
-    ['Alpaca', health.alpaca.ok ? `in sync${health.alpaca.at ? ` ${displayTime(health.alpaca.at)}` : ''}` : 'mismatch', health.alpaca.ok ? ok : bad],
+    ['Alpaca', health.alpaca.ok ? `in sync${health.alpaca.at ? ` ${hms(health.alpaca.at)}` : ''}` : 'mismatch', health.alpaca.ok ? ok : bad],
     ['Order stream', health.stream, health.stream === 'connected' ? ok : health.stream === 'unknown' ? muted : warn],
     [
       'Clock',
-      health.clock.offset_ms !== null ? `${(health.clock.offset_ms / 1000).toFixed(1)} s` : '—',
+      `${signed((health.clock.offset_ms ?? 0) / 1000, 1)} s`,
       health.clock.level === 'ok' ? ok : health.clock.level === 'warning' ? warn : muted,
     ],
     [
@@ -76,7 +86,7 @@ function HealthLine({ health }: { health: AttentionResponse['health'] }) {
         <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
           <Dot color={color} />
           <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>{' '}
-          <span style={{ color: color === muted ? 'var(--sa-text-2)' : color }}>{value}</span>
+          <span style={{ color: color === ok || color === muted ? 'var(--sa-text-2)' : color }}>{value}</span>
         </span>
       ))}
     </div>
@@ -189,21 +199,29 @@ export function NeedsYouCard({ res }: { res: Resource<AttentionResponse> }) {
                       route: item.link,
                     })
                   }
+                  title="Ask the agent about this item"
+                  aria-label="Ask the agent about this item"
                   style={{
                     height: 36,
-                    padding: '0 12px',
+                    padding: '0 10px',
                     display: 'inline-flex',
                     alignItems: 'center',
+                    gap: 6,
                     borderRadius: 'var(--sa-radius-sm)',
                     border: '1px solid var(--sa-border)',
                     background: 'transparent',
-                    color: 'var(--sa-text-2)',
-                    fontSize: 'var(--sa-text-sm)',
+                    color: 'var(--sa-text-muted)',
+                    fontSize: 'var(--sa-text-md)',
                     cursor: 'pointer',
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  Ask about this
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px' }}>
+                    <path d="M4 5h16v11H9l-5 4z" />
+                    <line x1="8" y1="9" x2="16" y2="9" />
+                    <line x1="8" y1="12" x2="13" y2="12" />
+                  </svg>
+                  Ask
                 </button>
                 <Link
                   to={item.link}

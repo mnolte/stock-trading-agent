@@ -24,26 +24,42 @@ function cycleOutcomes(s: CycleSummary): string[] {
   return out;
 }
 
+/** The strip's sentence split for the design layout (item 097): the
+ * label bold, "· HH:MM NY" muted, then the rest of the sentence. */
+export function cycleSentenceParts(line: DashboardCycleLine): {
+  label: string;
+  ny: string | null;
+  rest: string | null;
+} {
+  const s = line.summary;
+  let rest: string | null;
+  if (!s) {
+    rest = line.text ?? null;
+  } else {
+    const checked = `${s.checked} symbol${s.checked === 1 ? '' : 's'} checked`;
+    const passed = `${s.passed} passed the pre-filter`;
+    const calls = `${s.calls} asked the model`;
+    const outcomes = cycleOutcomes(s);
+    const detail = outcomes.length ? `: ${outcomes.join(', ')}` : '';
+    const changes = s.changes ? ` ${capitalize(s.changes)}.` : '';
+    rest = `${checked}, ${passed} and ${calls}${detail}.${changes}`;
+  }
+  return {
+    label: line.label,
+    ny: line.time ? `${nyTime(line.time)} NY` : null,
+    rest,
+  };
+}
+
 /** The strip's first part (item 073): "18:46 cycle · 12:46 NY · 69
  * symbols checked, 8 passed the pre-filter and 8 asked the model: both
  * positions held, every candidate skipped. Nothing changed." Falls back
  * to the backend's `text` when there is no per-cycle summary (the
  * market-closed line). */
 export function cycleSentence(line: DashboardCycleLine): string {
-  const head = line.time
-    ? `${line.label} · ${nyTime(line.time)} NY`
-    : line.label;
-  const s = line.summary;
-  if (!s) {
-    return line.text ? `${head} · ${line.text}` : head;
-  }
-  const checked = `${s.checked} symbol${s.checked === 1 ? '' : 's'} checked`;
-  const passed = `${s.passed} passed the pre-filter`;
-  const calls = `${s.calls} asked the model`;
-  const outcomes = cycleOutcomes(s);
-  const detail = outcomes.length ? `: ${outcomes.join(', ')}` : '';
-  const changes = s.changes ? ` ${capitalize(s.changes)}.` : '';
-  return `${head} · ${checked}, ${passed} and ${calls}${detail}.${changes}`;
+  const { label, ny, rest } = cycleSentenceParts(line);
+  const head = ny ? `${label} · ${ny}` : label;
+  return rest ? `${head} · ${rest}` : head;
 }
 
 /** Cost as a number, never a concatenated string — "$0.003", with extra

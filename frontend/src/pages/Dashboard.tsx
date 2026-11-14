@@ -18,6 +18,7 @@ import type {
   DashboardLatestDecision,
   DashboardResponse,
   MarketClosedCard,
+  PositionRow,
   PositionsResponse,
 } from '../types/api';
 import { ApprovalCard } from '../components/ApprovalCard';
@@ -50,6 +51,7 @@ import {
   displayWeekdayDateTime,
   displayWeekdayTime,
   elapsedHm,
+  fmtDayMonthIn,
   fmtWeekdayDayShort,
   formatDuration,
   joinParts,
@@ -61,7 +63,7 @@ import {
   signedUsd,
 } from '../format';
 import { CycleValues } from '../components/cycleLine';
-import { cycleSentence } from '../components/cycleLineFormat';
+import { cycleSentenceParts } from '../components/cycleLineFormat';
 import {
   actionBadgeStyle,
   formatAmsTime,
@@ -97,7 +99,7 @@ function FeedRowLink({ row }: { row: FeedRow }) {
       style={{
         display: 'grid',
         gridTemplateColumns: '108px minmax(0, 1fr) auto',
-        gap: 'var(--sa-space-3)',
+        gap: '10px',
         alignItems: 'center',
         minHeight: 'var(--sa-control-height)',
         padding: '6px 8px',
@@ -164,7 +166,7 @@ function CycleGroup({
           display: 'flex',
           width: '100%',
           alignItems: 'baseline',
-          gap: 'var(--sa-space-3)',
+          gap: '10px',
           minHeight: '40px',
           padding: 'var(--sa-space-2) 0 var(--sa-space-1)',
           border: 0,
@@ -213,15 +215,16 @@ function Feed({ res }: { res: Resource<DashboardResponse> }) {
   const title =
     sess && !sess.shown_is_today
       ? `${sessionDayLabel(sess.shown_date)} · last session`
-      : "Today's decisions";
+      : 'Today’s decisions';
 
   return (
     <Card
       label={title}
+      ariaLabel={title}
       right={<Link to="/inspector">All model calls</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: 1 }}
+      style={{ flex: 1, gap: '14px' }}
     >
       <CardBody
         res={res}
@@ -280,7 +283,7 @@ function toneStyle(tone: number): React.CSSProperties {
         ? 'var(--sa-positive-bg)'
         : tone < 0
           ? 'var(--sa-negative-bg)'
-          : 'var(--sa-raised)',
+          : 'var(--sa-subtle)',
     color:
       tone > 0
         ? 'var(--sa-positive)'
@@ -298,35 +301,76 @@ const GROUP_LABEL: React.CSSProperties = {
   letterSpacing: '0.08em',
 };
 
+/** "MSFT · 18:46 cycle · 12:46 NY · gpt-4.1-mini · decision.v6" — a
+ * no_call says "no model call" instead of the model (item 073). */
+function decisionMeta(d: DashboardLatestDecision): string {
+  const noCall = d.final_action === 'no_call';
+  const called = !noCall && d.model !== null && d.model !== 'none';
+  return joinParts(
+    d.symbol,
+    `${displayTime(d.time)} cycle`,
+    `${nyTime(d.time)} NY`,
+    called ? joinParts(d.model, d.prompt_version ?? undefined) : 'no model call',
+  );
+}
+
 function LatestDecision({ res }: { res: Resource<DashboardResponse> }) {
   const location = useLocation();
   const d = res.data?.latest_decision ?? null;
   // Off-session fallback (design/screens/States.dc.html): the card shows
   // the most recent decision for the symbol, with its date.
   const compact = d !== null && !d.in_session;
+  const title = compact && d !== null ? `Latest decision · ${d.symbol}` : 'Latest decision';
   return (
     <Card
-      label={compact ? `Latest decision · ${d.symbol}` : 'Latest decision'}
+      ariaLabel="Latest decision"
       busy={res.loading}
       refreshing={res.refreshing}
       style={{ padding: '20px', gap: '16px' }}
-      right={
-        d ? (
-          <Link
-            to={`/decisions/${d.id}`}
-            state={{ backgroundLocation: location }}
-            style={{ fontSize: 'var(--sa-text-md)', whiteSpace: 'nowrap' }}
-          >
-            Open full decision →
-          </Link>
-        ) : (
-          // Keeps the header's right edge stable while loading.
-          <span style={{ visibility: 'hidden', fontSize: 'var(--sa-text-md)' }}>
-            Open full decision →
-          </span>
-        )
-      }
     >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            justifyContent: 'space-between',
+            gap: '8px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 'var(--sa-text-md)',
+              fontWeight: 600,
+              color: 'var(--sa-text-2)',
+              textTransform: 'uppercase',
+              letterSpacing: 'var(--sa-label-tracking)',
+            }}
+          >
+            {title}
+          </h2>
+          {d ? (
+            <Link
+              to={`/decisions/${d.id}`}
+              state={{ backgroundLocation: location }}
+              style={{ fontSize: 'var(--sa-text-md)', whiteSpace: 'nowrap' }}
+            >
+              Open full decision →
+            </Link>
+          ) : (
+            // Keeps the header's right edge stable while loading.
+            <span style={{ visibility: 'hidden', fontSize: 'var(--sa-text-md)' }}>
+              Open full decision →
+            </span>
+          )}
+        </div>
+        {d !== null && !compact && (
+          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+            {decisionMeta(d)}
+          </span>
+        )}
+      </div>
       <CardBody
         res={res}
         what="the latest decision"
@@ -385,21 +429,12 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
   const chip = actionText(d.final_action);
   const badge = actionBadgeStyle(d.final_action);
   const noCall = d.final_action === 'no_call';
-  const called = !noCall && d.model !== null && d.model !== 'none';
   const regimeVariant: 'positive' | 'negative' | 'neutral' =
     d.regime?.trend === 'up'
       ? 'positive'
       : d.regime?.trend === 'down'
         ? 'negative'
         : 'neutral';
-  // "MSFT · 18:46 cycle · 12:46 NY · gpt-4.1-mini · decision.v6" — a
-  // no_call says "no model call" instead of the model (item 073).
-  const meta = joinParts(
-    d.symbol,
-    `${displayTime(d.time)} cycle`,
-    `${nyTime(d.time)} NY`,
-    called ? joinParts(d.model, d.prompt_version ?? undefined) : 'no model call',
-  );
   const sub = noCall
     ? noCallLine(d)
     : joinParts(
@@ -407,12 +442,7 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
         d.chosen_option ? `option ${d.chosen_option}` : null,
       );
   return (
-    <>
-      <span
-        style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}
-      >
-        {meta}
-      </span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
         <div
           style={{
@@ -434,7 +464,7 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
           {chip.label}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-          <span style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>{d.symbol}</span>
+          <span style={{ fontWeight: 600, fontSize: 'var(--sa-text-lg)' }}>{d.symbol}</span>
           <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.4 }}>
             {sub}
           </span>
@@ -445,7 +475,6 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
         <p
           style={{
             margin: 0,
-            fontSize: 'var(--sa-text-md)',
             color: 'var(--sa-text-2)',
             lineHeight: 1.55,
             display: '-webkit-box',
@@ -479,7 +508,23 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
               <Chip variant={d.vix.stale ? 'warning' : 'neutral'}>{vixChipLabel(d.vix)}</Chip>
             </span>
           )}
-          <Chip variant="neutral">{earningsChipLabel(d.earnings)}</Chip>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: '24px',
+              padding: '0 8px',
+              borderRadius: 'var(--sa-radius-sm)',
+              fontFamily: 'var(--sa-font-mono)',
+              fontSize: 'var(--sa-text-sm)',
+              whiteSpace: 'nowrap',
+              background: 'var(--sa-subtle)',
+              color: 'var(--sa-text-2)',
+              border: '1px solid var(--sa-border-strong)',
+            }}
+          >
+            {earningsChipLabel(d.earnings)}
+          </span>
           {(d.release_next_morning ?? []).map((rel, i) => (
             <Chip key={`${rel.type}-${rel.date}-${i}`} variant="warning">
               {rel.label ?? rel.type.toUpperCase()} {fmtWeekdayDayShort(rel.date)}
@@ -543,8 +588,41 @@ function LatestDecisionBody({ d }: { d: DashboardLatestDecision }) {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
+}
+
+/** " Both have a stop and target at Alpaca; MSFT earnings exit on 27 Oct."
+ * — the design's second footnote sentence (Main.dc.html), emitted only
+ * for what is true of the open positions. */
+function brokerFootnote(open: PositionRow[]): string {
+  if (open.length === 0) return '';
+  const guarded = open.filter(
+    (p) =>
+      p.current_stop_price !== null &&
+      p.target_price !== null &&
+      !p.stop_missing,
+  );
+  const exits = open
+    .map((p) => {
+      const m = p.scheduled_exit?.match(/^earnings exit (\d{4}-\d{2}-\d{2})$/);
+      if (!m) return null;
+      const day = fmtDayMonthIn(m[1]);
+      return day ? `${p.symbol} earnings exit on ${day}` : null;
+    })
+    .filter((s): s is string => s !== null);
+  const clauses: string[] = [];
+  if (guarded.length === open.length) {
+    clauses.push(
+      open.length === 1
+        ? 'It has a stop and target at Alpaca'
+        : open.length === 2
+          ? 'Both have a stop and target at Alpaca'
+          : 'All have a stop and target at Alpaca',
+    );
+  }
+  clauses.push(...exits);
+  return clauses.length ? ` ${clauses.join('; ')}.` : '';
 }
 
 function OpenPositionsMini({
@@ -565,13 +643,19 @@ function OpenPositionsMini({
       : displayWeekdayTime(nextCycle)
     : null;
   const open = res.data?.open ?? [];
+  const cap = res.data?.max_open_positions;
+  const positionsLabel =
+    cap !== null && cap !== undefined
+      ? `Open positions · ${open.length} of ${cap}`
+      : 'Open positions';
   return (
     <Card
-      label="Open positions"
+      label={positionsLabel}
+      ariaLabel={positionsLabel}
       right={<Link to="/positions">Positions & orders</Link>}
       busy={res.loading}
       refreshing={res.refreshing}
-      style={{ flex: 1 }}
+      style={{ flex: '1 1 520px', gap: '14px' }}
     >
       <CardBody
         res={res}
@@ -602,7 +686,7 @@ function OpenPositionsMini({
         }
       >
         {() => (
-        <div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           {open.map((p) => {
             const near = Number(res.data?.near_stop_atr ?? 1.5);
             const closeToStop =
@@ -684,10 +768,11 @@ function OpenPositionsMini({
               </Link>
             );
           })}
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5, paddingTop: 'var(--sa-space-2)' }}>
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
             Bar: stop (red) to target (green), entry tick, white dot for the last
             price. Under {res.data?.near_stop_atr ?? '1.5'} ATR (1h) to the stop
             the distance turns amber.
+            {brokerFootnote(open)}
           </div>
         </div>
         )}
@@ -1142,7 +1227,8 @@ export default function Dashboard() {
       {(dashboard === null ||
         dashboard.cycle_line !== null ||
         dashboard.cycle_counter !== null) && (
-        <div
+        <section
+          aria-label="This cycle"
           style={{
             display: 'flex',
             flexWrap: 'wrap',
@@ -1178,23 +1264,41 @@ export default function Dashboard() {
                         }}
                       >
                         {(() => {
-                        const sentence = cycleSentence(d.cycle_line);
-                        const at = sentence.indexOf('pre-filter');
-                        if (at < 0) return sentence;
+                        const parts = cycleSentenceParts(d.cycle_line);
+                        const rest = parts.rest ?? '';
+                        const at = rest.indexOf('pre-filter');
                         return (
                           <>
-                            {sentence.slice(0, at)}
-                            <span
-                              title="The rules check that decides whether the model is asked at all."
-                              style={{
-                                textDecoration: 'underline dotted',
-                                textUnderlineOffset: '3px',
-                                cursor: 'help',
-                              }}
-                            >
-                              pre-filter
-                            </span>
-                            {sentence.slice(at + 'pre-filter'.length)}
+                            <b style={{ fontWeight: 600, color: 'var(--sa-text)' }}>
+                              {parts.label}
+                            </b>
+                            {parts.ny && (
+                              <>
+                                {' '}
+                                <span style={{ color: 'var(--sa-text-muted)' }}>
+                                  · {parts.ny}
+                                </span>
+                              </>
+                            )}
+                            {parts.rest && ' · '}
+                            {at < 0 ? (
+                              rest
+                            ) : (
+                              <>
+                                {rest.slice(0, at)}
+                                <span
+                                  title="The rules check that decides whether the model is asked at all."
+                                  style={{
+                                    textDecoration: 'underline dotted',
+                                    textUnderlineOffset: '3px',
+                                    cursor: 'help',
+                                  }}
+                                >
+                                  pre-filter
+                                </span>
+                                {rest.slice(at + 'pre-filter'.length)}
+                              </>
+                            )}
                           </>
                         );
                         })()}
@@ -1207,6 +1311,8 @@ export default function Dashboard() {
                   )}
                   {d.cycle_counter && (
                     <div
+                      role="timer"
+                      aria-label="Cycle counter"
                       className="sa-cyc-counter"
                       style={{
                         flex: '0 1 340px',
@@ -1226,7 +1332,7 @@ export default function Dashboard() {
             }
           </CardBody>
           </CardBoundary>
-        </div>
+        </section>
       )}
 
       {dashboardRes.failure && (
@@ -1246,7 +1352,8 @@ export default function Dashboard() {
           </div>
         )
       ) : (
-      <div
+      <section
+        aria-label="Account summary"
         className="sa-tiles sa-tiles-4"
         style={{ opacity: dashboardRes.failure ? 0.55 : 1 }}
       >
@@ -1383,7 +1490,7 @@ export default function Dashboard() {
           />
         </Link>
         </CardBoundary>
-      </div>
+      </section>
       )}
 
       <div
@@ -1425,11 +1532,11 @@ export default function Dashboard() {
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'flex-start',
-          gap: 'var(--sa-space-4)',
+          gap: 'var(--sa-space-5)',
         }}
       >
         <span id="chart" style={{ display: 'block', height: 0, scrollMarginTop: '16px' }} />
-        <div style={{ flex: '2 1 600px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: '999 1 600px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
           <Card
             ariaLabel={chartSymbol ? `Chart for ${chartSymbol}` : 'Chart'}
             busy={chartRes.loading}
@@ -1438,8 +1545,8 @@ export default function Dashboard() {
             <div
               style={{
                 display: 'flex',
-                alignItems: 'center',
-                gap: 'var(--sa-space-3)',
+                alignItems: 'baseline',
+                gap: '8px 16px',
                 flexWrap: 'wrap',
               }}
             >
@@ -1460,7 +1567,7 @@ export default function Dashboard() {
                   <span
                     style={{
                       fontFamily: 'var(--sa-font-mono)',
-                      fontSize: 'var(--sa-text-md)',
+                      fontSize: 'var(--sa-text-base)',
                       color:
                         chart.day_change_pct !== null && chart.day_change_pct >= 0
                           ? 'var(--sa-positive)'
@@ -1555,9 +1662,9 @@ export default function Dashboard() {
               res={chartRes}
               what={chartSymbol ? `the chart for ${chartSymbol}` : 'the chart'}
               isEmpty={(d) => d === null || d.bars.length === 0}
-              skeleton={<SkeletonChart height={340} />}
+              skeleton={<SkeletonChart height={320} />}
               empty={
-                <div style={{ height: '340px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
+                <div style={{ height: '320px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--sa-text-muted)' }}>
                   {chartSymbol
                     ? `No bars loaded for ${chartSymbol} yet — bars appear after its first data pull.`
                     : 'Pick a symbol to chart.'}
@@ -1566,13 +1673,13 @@ export default function Dashboard() {
             >
               {(d) => d !== null && <PriceChart bars={d.bars} levels={d.levels} />}
             </CardBody>
-            <div style={{ display: 'flex', gap: 'var(--sa-space-4)', flexWrap: 'wrap', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-              <Legend swatch="var(--sa-chart-ema20)" label="EMA 20" />
-              <Legend swatch="var(--sa-chart-ema50)" label="EMA 50" />
-              <Legend swatch="var(--sa-chart-vwap)" label="Session VWAP" />
-              {chart?.levels.entry && <Legend swatch="var(--sa-text-2)" label="Entry" />}
-              {chart?.levels.stop && <Legend swatch="var(--sa-negative)" label="Stop" />}
-              {chart?.levels.target && <Legend swatch="var(--sa-positive)" label="Target" />}
+            <div style={{ display: 'flex', gap: '8px 16px', flexWrap: 'wrap', marginTop: '18px', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              <Legend kind="bar" swatch="var(--sa-chart-ema20)" label="EMA 20" />
+              <Legend kind="bar" swatch="var(--sa-chart-ema50)" label="EMA 50" />
+              <Legend kind="dashed" swatch="var(--sa-chart-vwap)" width={2} label="Session VWAP" />
+              {chart?.levels.entry && <Legend kind="dashed" swatch="var(--sa-text-2)" label="Entry" />}
+              {chart?.levels.stop && <Legend kind="line" swatch="var(--sa-negative)" label="Stop" />}
+              {chart?.levels.target && <Legend kind="line" swatch="var(--sa-positive)" label="Target" />}
             </div>
           </Card>
         </div>
@@ -1623,10 +1730,30 @@ export default function Dashboard() {
   );
 }
 
-function Legend({ swatch, label }: { swatch: string; label: string }) {
+function Legend({
+  kind,
+  swatch,
+  width,
+  label,
+}: {
+  kind: 'bar' | 'line' | 'dashed';
+  swatch: string;
+  width?: number;
+  label: string;
+}) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-      <span style={{ width: '14px', height: '3px', borderRadius: '2px', background: swatch }} />
+      <span
+        style={
+          kind === 'bar'
+            ? { width: '14px', height: '2px', background: swatch }
+            : {
+                width: '14px',
+                height: 0,
+                borderTop: `${width ?? 1}px ${kind === 'dashed' ? 'dashed' : 'solid'} ${swatch}`,
+              }
+        }
+      />
       {label}
     </span>
   );

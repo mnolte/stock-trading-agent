@@ -137,7 +137,7 @@ export function RiskBudgetCard({
       aria-busy={res.loading || res.refreshing || undefined}
       style={{
         position: res.refreshing ? 'relative' : undefined,
-        flex: '1 1 560px',
+        flex: '1 1 420px',
         minWidth: 0,
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',
@@ -145,7 +145,7 @@ export function RiskBudgetCard({
         padding: 'var(--sa-space-4) var(--sa-space-5)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 'var(--sa-space-3)',
+        gap: '14px',
         boxSizing: 'border-box',
       }}
     >
@@ -163,7 +163,7 @@ export function RiskBudgetCard({
         <h2
           style={{
             margin: 0,
-            fontSize: 'var(--sa-text-sm)',
+            fontSize: 'var(--sa-text-md)',
             fontWeight: 600,
             color: 'var(--sa-text-2)',
             textTransform: 'uppercase',
@@ -192,7 +192,7 @@ export function RiskBudgetCard({
             flex: '1 1 300px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 'var(--sa-space-3)',
+            gap: '14px',
             minWidth: 0,
           }}
         >

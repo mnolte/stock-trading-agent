@@ -27,7 +27,6 @@ export function Chip({ variant, children, wrap = false }: { variant: ChipVariant
         color: s.color,
         fontFamily: 'var(--sa-font-mono)',
         fontSize: 'var(--sa-text-sm)',
-        fontWeight: 500,
         whiteSpace: wrap ? 'normal' : 'nowrap',
         overflowWrap: wrap ? 'anywhere' : undefined,
       }}
