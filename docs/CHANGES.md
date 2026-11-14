@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out (spec)
+
+Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews. This pass read the other screens at 1440 px and 390 px. One work item, kickoff `100-feat-ux-pass-remaining-screens.md`, issue #296, three build PRs. No trading behaviour changes. The design side is in `design/CHANGES.md` [100].
+
+- **GUI → Interaction and states:** three rules for every screen. A control that can't be used says why, as text beside it. An empty card says what is empty and what will fill it, from fixed texts in `design/screens/States.dc.html`. A bar that sticks to the bottom of a phone screen is one line and opens on tap.
+- **GUI → Positions at a glance:** three links per position (Chart, Ask about this position, Latest decision); order history with the order and its status as the first two columns, newest first.
+- **GUI → Settings screen:** the unsaved-changes bar on a phone. Settings → Display gets `gui.log_watch_min_count`.
+- **Strategies and shadows → GUI:** small samples first; the columns; reasons on New shadow and Promote; the synthetic-price count per strategy; disagreements with **who was better**, decided by code only where one side entered and the other didn't, a tally over the whole run and a filter. The API gives `better`, the shadow's decision id and the three counts.
+- **Backtesting → GUI:** runs before the form; the estimate opens with a budget line and a cutoff line; the results header has the actions (View n trades, View decisions, Download CSV), an answer sentence written by code and stored with the run, and "evidence about the past, never a forecast".
+- **Readiness → GUI:** the stored statuses stay; the screen words them by what is needed (building up, below target, needs data). A neutral verdict banner with the count. A **What moves this forward** card written by code from the snapshot, with one sentence and one button per below-target criterion from a fixed table.
+- **Logs screen:** recurring problems carry "Does it need you?" (needs you, watch, nothing to do), are sorted by it and counted above the list. New setting `gui.log_watch_min_count` (5): the count from which a recurring warning shows "watch". It goes into the example config in the build PR, with the README table. Log lines stack on a phone.
+- **Error pages → GUI:** in the phone shell below 820 px.
+- **Build plan** item 57.
+
 ## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
 
 Design-fidelity pass on `design/screens/Main.dc.html` and `Reviews.dc.html`. The briefing status line is the design's subtle strip (shared `StatusLine` component) on the dashboard card and the Reviews briefing view; trade and skip dates carry the month (`Thu 8 → Fri 9 Oct`, `Wed 7 Oct`); the briefings explainer keeps `(15:00 Amsterdam)` and `(briefing.v3)`; the verdicts card regains its explainer row with a neutral `Confirm all N drafts` button, and the verdict buttons match the design's 36 px / 6 px-radius / 13 px metrics with `Change…` as a real disclosure that keeps `Decision →` visible. No spec text changed.
