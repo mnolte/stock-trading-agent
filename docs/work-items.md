@@ -158,6 +158,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 095 | fix | CodeQL py/path-injection: backtest delete used stored run_dir | — | — | #289 | building |
 | 096 | fix | CodeQL py/path-injection: strategy db path used request values | — | — | #291 | building |
 | 097 | fix | Dashboard briefing card and Reviews match the design screens | — | — | #292 | building |
+| 098 | fix | Last-cycle entries setting | `archive/098-fix-last-cycle-entries-setting.md` | — | #294 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
