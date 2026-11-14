@@ -58,7 +58,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | --- | --- |
 | `market.*` | Market-data extras: `market.vix.*` collects the VIX close (FRED) and the VIXY reference ETF's bars for display only |
 | `events.*` | Economic releases: `events.fomc.*` the FOMC decision window that blocks new entries, `events.fred_releases.*` the CPI, jobs and PCE release ids fetched from FRED, `events.release_time`, `events.lookahead_days` and `events.next_release_sessions` |
-| `universe.*` | Watched symbols, sectors, screen pool and ranking |
+| `universe.*` | Watched symbols, sectors, screen pool and ranking; `universe.screen.history_fail_data_error_pct` (50) is the share of the previously eligible pool whose history check may fail before the screen counts as a data error |
 | `app.timezone` | Display timezone |
 | `schedule.*` | Cycle times, position checks, calendar and history loading |
 | `api.*` | GUI-facing behaviour: `api.broker_timeout_seconds` bounds a broker read before a card answers stale |
