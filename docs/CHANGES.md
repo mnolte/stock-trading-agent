@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [099] Dashboard page matches Main.dc.html (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` beyond the briefing card fixed in 097. Card labels are 13 px with 14 px gaps and the design's padding; dashboard rows use the design's flex bases (chart `999 1 600px`, positions 520 px, risk budget 420 px, 20 px gaps); the positions heading reads "Open positions · N of M" with matching aria-labels; the chart is 320 px with the design's legend swatches and dashed VWAP; Latest decision uses the design's badge and signal colours, 16 px symbol and earnings chip; the feed heading keeps the curly apostrophe with 10 px row gaps; the cycle strip renders the design's bold/muted sentence, 15 px countdown and the release line's border and tooltip; Needs you gets the Ask icon and label and the design's health line; the watchlist matches the design's header wording, tabs, rank column, footer and show-all control; shared header gaps, chip weight, stop-tick colour and the centred 1440 px layout follow the design. No spec text changed.
+
 ## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
 
 Design-fidelity pass on `design/screens/Main.dc.html` and `Reviews.dc.html`. The briefing status line is the design's subtle strip (shared `StatusLine` component) on the dashboard card and the Reviews briefing view; trade and skip dates carry the month (`Thu 8 → Fri 9 Oct`, `Wed 7 Oct`); the briefings explainer keeps `(15:00 Amsterdam)` and `(briefing.v3)`; the verdicts card regains its explainer row with a neutral `Confirm all N drafts` button, and the verdict buttons match the design's 36 px / 6 px-radius / 13 px metrics with `Change…` as a real disclosure that keeps `Decision →` visible. No spec text changed.
