@@ -14,6 +14,10 @@ Build PR of 093 on branch `fix/093-stale-screen-detail` (no issue). Marc decided
 - A history check failing for `universe.screen.history_fail_data_error_pct` (50) percent or more of the symbols eligible at the previous screen is a screen-wide data error: `_run_screen` raises `ScreenError` before any row is written, so no fail count moves and the previous list stays. New config key (integer 1–100, refuses to start otherwise), in `config.example.yaml` and the README table.
 - SPEC.md: one sentence in "Daily screen" and one bullet under "Status per symbol". The GUI line itself is new wording — noted under "Design differences" in the PR for `design/` to pick up.
 
+## 2026-11-13 — [096] Strategy db path built from stored values (build)
+
+Follow-up to 095 for the remaining `py/path-injection` alerts: `_strategy_sf` built `run-<id>/<slug>.db` from the request's `run_id` and `slug` path parameters. The slug was already whitelist-checked and matched against the run's strategies; the path now uses the row id and the matched stored slug, so request values are lookups only, never path expressions. No spec text changed.
+
 ## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
 
 Fix for the CodeQL `py/path-injection` alert on `BacktestManager.delete`: the folder passed to `shutil.rmtree` came from the `run_dir` column, which static analysis treats as uncontrolled. `run_dir` is only ever written as `str(run_dir_for(config, id))`, and the worker and API already derive every run path from the id — `delete()` and `refresh_sizes()` now do the same, so stored text can never pick a path. No spec text changed.

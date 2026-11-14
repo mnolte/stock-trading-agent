@@ -950,6 +950,46 @@ def test_manager_delete_ignores_stored_run_dir() -> None:
         assert session.get(Backtest, row.id) is None
 
 
+def test_strategy_db_path_uses_stored_values(client: Any) -> None:
+    """``_strategy_sf`` builds the db path from the row id and the stored
+    slug — the request's run_id/slug are lookups only (hard rule 19)."""
+    from app.backtests.bundle import init_strategy_db
+
+    config = AppConfig()
+    with get_session_maker()() as session:
+        row = Backtest(
+            name="s",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[
+                {
+                    "ref": "x",
+                    "name": "x",
+                    "kind": "rules_only",
+                    "slug": "rules-only",
+                }
+            ],
+            starting_equity=Decimal(10),
+            slippage_pct=Decimal(0),
+            status="done",
+            run_dir="",
+            created_at=_naive_utc(datetime(2024, 6, 3, 14, 0)),
+        )
+        session.add(row)
+        session.commit()
+        run_id = row.id
+    run_dir = run_dir_for(config, run_id)
+    run_dir.mkdir(parents=True)
+    init_strategy_db(run_dir / "rules-only.db")
+
+    base = f"/api/backtests/{run_id}/strategies"
+    assert client.get(f"{base}/rules-only/trades").status_code == 200
+    assert client.get(f"{base}/other/trades").status_code == 404
+    assert client.get(f"{base}/BAD_SLUG/trades").status_code == 422
+    assert client.get(f"{base}/rules-only/export.csv").status_code == 200
+
+
 def test_manager_one_run_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
     config = AppConfig()
     clock = FakeClock(datetime(2024, 6, 3, 10, 0, tzinfo=NY_TZ))

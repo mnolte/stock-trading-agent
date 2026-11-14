@@ -521,9 +521,16 @@ def _strategy_sf(request: Request, run_id: int, slug: str) -> sessionmaker[Sessi
         row = session.get(Backtest, run_id)
         if row is None:
             raise HTTPException(404, "run not found")
-        if not any(s["slug"] == slug for s in row.strategies):
+        stored_slug = next(
+            (s["slug"] for s in row.strategies if s["slug"] == slug), None
+        )
+        if stored_slug is None:
             raise HTTPException(404, "strategy not in run")
-    path = run_dir_for(get_config(), run_id) / f"{slug}.db"
+        run_row_id = row.id
+    # The path is built from stored values only — the request's run_id and
+    # slug are used in lookups, never in a path expression (hard rule 19,
+    # CodeQL py/path-injection).
+    path = run_dir_for(get_config(), run_row_id) / f"{stored_slug}.db"
     if not path.exists():
         raise HTTPException(404, "strategy database not found")
     _migrate_strategy_db_if_behind(path)
