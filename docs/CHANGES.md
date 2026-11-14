@@ -13,7 +13,6 @@ Build PR of 093 on branch `fix/093-stale-screen-detail` (no issue). Marc decided
 - `UniverseService.describe` recomputes the history check live for screened rows whose stored `failed_check` is `history` (status other than `warming_up`): the row gains `history_now` (`loaded`, `detail`) and `screen_date`; status, rank, fails and the stored detail stay the screen's record. Display only — nothing cycles read changes.
 - A history check failing for `universe.screen.history_fail_data_error_pct` (50) percent or more of the symbols eligible at the previous screen is a screen-wide data error: `_run_screen` raises `ScreenError` before any row is written, so no fail count moves and the previous list stays. New config key (integer 1–100, refuses to start otherwise), in `config.example.yaml` and the README table.
 - SPEC.md: one sentence in "Daily screen" and one bullet under "Status per symbol". The GUI line itself is new wording — noted under "Design differences" in the PR for `design/` to pick up.
->>>>>>> origin/main
 
 ## 2026-11-13 — [095] Backtest delete never uses the stored run_dir (build)
 
