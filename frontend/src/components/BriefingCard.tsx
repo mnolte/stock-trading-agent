@@ -9,6 +9,7 @@ import { SkeletonText } from './skeletons';
 import { formatCost } from './decisionFormat';
 import { displayWeekdayDateTime } from '../format';
 import { NumbersFold } from './NumbersFold';
+import { StatusLine } from './StatusLine';
 import { StoryText } from './StoryText';
 import { isStoryVersion } from '../pages/reviewsFormat';
 
@@ -98,18 +99,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
             )}
             {enabled && card !== null && isStoryVersion(card.prompt_version) && (
               <>
-                {card.status_line && (
-                  <p
-                    style={{
-                      margin: 0,
-                      lineHeight: 1.5,
-                      fontSize: 'var(--sa-text-sm)',
-                      color: 'var(--sa-text-muted)',
-                    }}
-                  >
-                    {card.status_line}
-                  </p>
-                )}
+                {card.status_line && <StatusLine text={card.status_line} />}
                 <StoryText text={card.text} glossary={card.glossary} />
                 <NumbersFold
                   rows={card.numbers ?? []}
@@ -156,18 +146,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
             )}
             {enabled && card !== null && !isStoryVersion(card.prompt_version) && (
               <>
-                {card.status_line && (
-                  <p
-                    style={{
-                      margin: 0,
-                      lineHeight: 1.5,
-                      fontSize: 'var(--sa-text-sm)',
-                      color: 'var(--sa-text-muted)',
-                    }}
-                  >
-                    {card.status_line}
-                  </p>
-                )}
+                {card.status_line && <StatusLine text={card.status_line} />}
                 <p style={{ margin: 0, lineHeight: 1.65, color: 'var(--sa-text-2)' }}>
                   {card.text}
                 </p>
