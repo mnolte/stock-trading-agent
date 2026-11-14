@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` and `Reviews.dc.html`. The briefing status line is the design's subtle strip (shared `StatusLine` component) on the dashboard card and the Reviews briefing view; trade and skip dates carry the month (`Thu 8 → Fri 9 Oct`, `Wed 7 Oct`); the briefings explainer keeps `(15:00 Amsterdam)` and `(briefing.v3)`; the verdicts card regains its explainer row with a neutral `Confirm all N drafts` button, and the verdict buttons match the design's 36 px / 6 px-radius / 13 px metrics with `Change…` as a real disclosure that keeps `Decision →` visible. No spec text changed.
+
 ## 2026-11-13 — [093] Universe screen: live history detail, mass history fail (build)
 
 Build PR of 093 on branch `fix/093-stale-screen-detail` (no issue). Marc decided option B on 13 Nov, plus a screen rule the kickoff did not list.

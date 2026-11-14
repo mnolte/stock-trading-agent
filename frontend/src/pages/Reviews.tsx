@@ -13,6 +13,7 @@ import {
 import { Card } from '../components/Card';
 import { CardBoundary } from '../components/CardBoundary';
 import { NumbersFold } from '../components/NumbersFold';
+import { StatusLine } from '../components/StatusLine';
 import { StoryText } from '../components/StoryText';
 import { SkeletonLines } from '../components/cardState';
 import { SkeletonList } from '../components/skeletons';
@@ -51,9 +52,9 @@ import { ACTIONS, CALL_KINDS, REASON_CODES, labelFor } from '../labels';
 const WEEKLY_EXPLAINER =
   'Written every Saturday 10:00 Amsterdam, covering Monday to Friday.';
 const BRIEFING_EXPLAINER =
-  'One card per trading day, written 09:00 New York as a short story of ' +
-  'one to three paragraphs: where the account stands, what the market ' +
-  'means for today, and what to watch.';
+  'One card per trading day, written 09:00 New York (15:00 Amsterdam) ' +
+  'as a short story of one to three paragraphs (briefing.v3): where the ' +
+  'account stands, what the market means for today, and what to watch.';
 
 const tileColor = {
   positive: 'var(--sa-positive)',
@@ -258,7 +259,7 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
                 >
                   <b style={{ fontWeight: 600 }}>{t.symbol}</b>
                   <span style={{ color: 'var(--sa-text-2)' }}>
-                    {dayLabel(t.opened)} → {dayLabel(t.closed)}{' '}
+                    {dayLabel(t.opened)} → {decidedLabel(t.closed)}{' '}
                     <span style={{ color: 'var(--sa-text-muted)' }}>· {t.exit}</span>
                   </span>
                   <span
@@ -340,7 +341,7 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
                     <>
                       {' '}
                       Biggest miss: <b style={{ fontWeight: 600 }}>{miss.symbol}</b>{' '}
-                      skipped {dayLabel(miss.date)}
+                      skipped {decidedLabel(miss.date)}
                       {miss.confidence != null &&
                         ` at confidence ${miss.confidence.toFixed(2)}`}
                       , then rose {miss.pct}%.
@@ -491,17 +492,7 @@ function BriefingView({ review }: { review: ReviewDetail }) {
         <MetaLine review={review} />
       </div>
       {(review.status_line ?? review.content?.status_line) && (
-        <p
-          style={{
-            margin: 0,
-            maxWidth: '760px',
-            fontSize: 'var(--sa-text-sm)',
-            color: 'var(--sa-text-muted)',
-            lineHeight: 1.5,
-          }}
-        >
-          {review.status_line ?? review.content?.status_line}
-        </p>
+        <StatusLine text={review.status_line ?? review.content?.status_line ?? ''} />
       )}
       {isStory ? (
         <>
@@ -587,15 +578,15 @@ const VERDICT_CHOICES: { value: VerdictValue; label: string }[] = [
   { value: 'unclear', label: 'Unclear' },
 ];
 
-const pickStyle = (accent: boolean): React.CSSProperties => ({
-  height: 'var(--sa-control-height)',
-  padding: '0 var(--sa-space-3)',
-  borderRadius: 'var(--sa-radius-md)',
+const pickStyle = (accent: boolean, weight = 600): React.CSSProperties => ({
+  height: '36px',
+  padding: accent ? '0 14px' : '0 var(--sa-space-3)',
+  borderRadius: 'var(--sa-radius-sm)',
   border: `1px solid ${accent ? 'var(--sa-accent)' : 'var(--sa-border-strong)'}`,
   background: accent ? 'var(--sa-accent)' : 'var(--sa-raised)',
-  color: accent ? 'var(--sa-bg)' : 'var(--sa-text-2)',
-  fontSize: 'var(--sa-text-sm)',
-  fontWeight: 600,
+  color: accent ? 'var(--sa-bg)' : 'var(--sa-text)',
+  fontSize: 'var(--sa-text-md)',
+  fontWeight: weight,
   cursor: 'pointer',
   fontFamily: 'inherit',
   whiteSpace: 'nowrap',
@@ -615,27 +606,26 @@ function VerdictPick({
   const [changing, setChanging] = useState(false);
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--sa-space-2)' }}>
-      {!changing ? (
-        <>
-          <button
-            type="button"
-            style={pickStyle(true)}
-            onClick={() => onResolve(item.id, item.verdict)}
-          >
-            Confirm {verdictLabel(item.verdict).toLowerCase()}
-          </button>
-          <button type="button" style={pickStyle(false)} onClick={() => setChanging(true)}>
-            Change…
-          </button>
-          <Link
-            to={`/decisions/${item.decision_id}`}
-            state={{ backgroundLocation: location }}
-            style={{ fontSize: 'var(--sa-text-sm)', whiteSpace: 'nowrap' }}
-          >
-            Decision →
-          </Link>
-        </>
-      ) : (
+      <button
+        type="button"
+        style={pickStyle(true)}
+        title="Confirms the draft label"
+        onClick={() => onResolve(item.id, item.verdict)}
+      >
+        Confirm {verdictLabel(item.verdict).toLowerCase()}
+      </button>
+      <button
+        type="button"
+        style={pickStyle(false, 500)}
+        aria-expanded={changing}
+        title={`Pick another label: ${VERDICT_CHOICES.filter((c) => c.value !== item.verdict)
+          .map((c) => c.label)
+          .join(' · ')}`}
+        onClick={() => setChanging((c) => !c)}
+      >
+        Change…
+      </button>
+      {changing &&
         VERDICT_CHOICES.filter((c) => c.value !== item.verdict).map((c) => (
           <button
             key={c.value}
@@ -645,8 +635,22 @@ function VerdictPick({
           >
             {c.label}
           </button>
-        ))
-      )}
+        ))}
+      <Link
+        to={`/decisions/${item.decision_id}`}
+        state={{ backgroundLocation: location }}
+        title="Open the decision drawer"
+        style={{
+          height: '36px',
+          padding: '0 10px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          fontSize: 'var(--sa-text-md)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Decision →
+      </Link>
     </div>
   );
 }
@@ -665,15 +669,8 @@ function VerdictsCard({
     <Card
       label="Verdicts to confirm"
       right={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--sa-space-3)' }}>
-          <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-            {items.length} waiting
-          </span>
-          {items.length > 0 && (
-            <button type="button" style={pickStyle(true)} onClick={onResolveAll}>
-              Confirm all {items.length} drafts
-            </button>
-          )}
+        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          {items.length} waiting
         </span>
       }
     >
@@ -683,112 +680,132 @@ function VerdictsCard({
           result is in.
         </div>
       ) : (
-        items.map((v, i) => {
-          const thesis = thesisCheckChip(v.thesis_check);
-          return (
-            <div
-              key={v.id}
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 'var(--sa-space-2) var(--sa-space-4)',
-                padding: 'var(--sa-space-3) 0',
-                borderBottom:
-                  i < items.length - 1 ? '1px solid var(--sa-border)' : 'none',
-              }}
-            >
+        <>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 'var(--sa-space-2)',
+              paddingBottom: '4px',
+            }}
+          >
+            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              Each draft was written by the model from the 5-session result;
+              code set the label. Confirm one by one, or all at once.
+            </span>
+            <button type="button" style={pickStyle(false)} onClick={onResolveAll}>
+              Confirm all {items.length} drafts
+            </button>
+          </div>
+          {items.map((v, i) => {
+            const thesis = thesisCheckChip(v.thesis_check);
+            return (
               <div
+                key={v.id}
                 style={{
-                  flex: '1 1 320px',
-                  minWidth: 0,
                   display: 'flex',
-                  flexDirection: 'column',
-                  gap: '5px',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: 'var(--sa-space-2) var(--sa-space-4)',
+                  padding: 'var(--sa-space-3) 0',
+                  borderBottom:
+                    i < items.length - 1 ? '1px solid var(--sa-border)' : 'none',
                 }}
               >
-                <div style={{ fontSize: 'var(--sa-text-md)' }}>
-                  <Link
-                    to={`/decisions/${v.decision_id}`}
-                    state={{ backgroundLocation: location }}
-                    style={{ fontWeight: 600, color: 'var(--sa-text)', textDecoration: 'none' }}
-                  >
-                    {v.symbol}
-                  </Link>{' '}
-                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                    model
-                  </span>{' '}
-                  <span
-                    style={{
-                      fontFamily: 'var(--sa-font-mono)',
-                      fontSize: 'var(--sa-text-sm)',
-                      color: 'var(--sa-text-2)',
-                    }}
-                  >
-                    {modelCallText(v.model_action, v.option_id)}
-                  </span>
-                  {v.changed_by_code && (
-                    <>
-                      {' '}
-                      <span style={{ color: 'var(--sa-text-muted)' }}>→</span>{' '}
-                      <span
-                        style={{
-                          fontFamily: 'var(--sa-font-mono)',
-                          fontSize: 'var(--sa-text-sm)',
-                          color: 'var(--sa-warning-text)',
-                        }}
-                      >
-                        {labelFor(ACTIONS, v.final_action).toUpperCase()}
-                      </span>{' '}
-                      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-warning-text)' }}>
-                        by code{v.change_text
-                          ? ` · ${v.change_text}`
-                          : v.change_reason
-                            ? ` · ${labelFor(REASON_CODES, v.change_reason)}`
-                            : ''}
-                      </span>
-                    </>
-                  )}{' '}
-                  <span style={{ color: 'var(--sa-text-muted)' }}>
-                    · {decidedLabel(v.decided_at)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                  Outcome:{' '}
-                  <span style={{ color: 'var(--sa-text-2)' }}>
-                    {verdictOutcomeText(v.outcome)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
-                  Draft:{' '}
-                  <Chip variant={verdictVariant(v.verdict)}>
-                    {verdictLabel(v.verdict)}
-                  </Chip>{' '}
-                  {v.label_by_code && (
+                <div
+                  style={{
+                    flex: '1 1 320px',
+                    minWidth: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '5px',
+                  }}
+                >
+                  <div style={{ fontSize: 'var(--sa-text-md)' }}>
+                    <Link
+                      to={`/decisions/${v.decision_id}`}
+                      state={{ backgroundLocation: location }}
+                      style={{ fontWeight: 600, color: 'var(--sa-text)', textDecoration: 'none' }}
+                    >
+                      {v.symbol}
+                    </Link>{' '}
                     <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                      label by code ·{' '}
+                      model
+                    </span>{' '}
+                    <span
+                      style={{
+                        fontFamily: 'var(--sa-font-mono)',
+                        fontSize: 'var(--sa-text-sm)',
+                        color: 'var(--sa-text-2)',
+                      }}
+                    >
+                      {modelCallText(v.model_action, v.option_id)}
                     </span>
-                  )}
-                  <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                    {v.reason}
-                  </span>
-                </div>
-                {thesis && (
-                  <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                    Thesis check: <Chip variant={thesis.variant}>{thesis.text}</Chip>
-                    {v.contradiction && (
+                    {v.changed_by_code && (
                       <>
                         {' '}
-                        <span style={{ color: 'var(--sa-text-2)' }}>{v.contradiction}</span>
+                        <span style={{ color: 'var(--sa-text-muted)' }}>→</span>{' '}
+                        <span
+                          style={{
+                            fontFamily: 'var(--sa-font-mono)',
+                            fontSize: 'var(--sa-text-sm)',
+                            color: 'var(--sa-warning-text)',
+                          }}
+                        >
+                          {labelFor(ACTIONS, v.final_action).toUpperCase()}
+                        </span>{' '}
+                        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-warning-text)' }}>
+                          by code{v.change_text
+                            ? ` · ${v.change_text}`
+                            : v.change_reason
+                              ? ` · ${labelFor(REASON_CODES, v.change_reason)}`
+                              : ''}
+                        </span>
                       </>
-                    )}
+                    )}{' '}
+                    <span style={{ color: 'var(--sa-text-muted)' }}>
+                      · {decidedLabel(v.decided_at)}
+                    </span>
                   </div>
-                )}
+                  <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                    Outcome:{' '}
+                    <span style={{ color: 'var(--sa-text-2)' }}>
+                      {verdictOutcomeText(v.outcome)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+                    Draft:{' '}
+                    <Chip variant={verdictVariant(v.verdict)}>
+                      {verdictLabel(v.verdict)}
+                    </Chip>{' '}
+                    {v.label_by_code && (
+                      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        label by code ·{' '}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                      {v.reason}
+                    </span>
+                  </div>
+                  {thesis && (
+                    <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                      Thesis check: <Chip variant={thesis.variant}>{thesis.text}</Chip>
+                      {v.contradiction && (
+                        <>
+                          {' '}
+                          <span style={{ color: 'var(--sa-text-2)' }}>{v.contradiction}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <VerdictPick item={v} onResolve={onResolve} />
               </div>
-              <VerdictPick item={v} onResolve={onResolve} />
-            </div>
-          );
-        })
+            );
+          })}
+        </>
       )}
       <div
         style={{
