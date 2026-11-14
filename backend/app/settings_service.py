@@ -113,6 +113,7 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
         "cycles": ("cycles", None, None),
+        "last_cycle_no_entries": ("bool", None, None),
     },
     "events": {
         # Economic releases (item 067): the FOMC window switch and its
@@ -274,6 +275,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "prompts.verdict"): "Verdict prompt",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
+    ("schedule", "last_cycle_no_entries"): "No new entries in the last cycle",
     ("events", ""): "Economic releases",
     ("events", "fomc.enabled"): "FOMC window",
     ("events", "fomc.block_minutes_before"): "FOMC window blocks from",

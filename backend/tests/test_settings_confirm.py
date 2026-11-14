@@ -113,6 +113,9 @@ def test_directions_only_cover_the_trading_sections() -> None:
         ("rules.require_daily_above_sma50", False, True, "tighter"),
         ("events.fomc.enabled", True, False, "looser"),
         ("decision.v5.trend_gate", True, False, "looser"),
+        # 098 — blocking last-cycle entries is the tighter side
+        ("schedule.last_cycle_no_entries", True, False, "looser"),
+        ("schedule.last_cycle_no_entries", False, True, "tighter"),
         # longer / shorter — lists
         ("decision.v5.trend_gate_regimes", ["up"], ["up", "sideways"], "looser"),
         ("decision.v5.trend_gate_regimes", ["up", "sideways"], ["up"], "tighter"),
@@ -385,6 +388,26 @@ def test_api_quiet_hours_longer_asks(app_auth: Any) -> None:
             client,
             {"notifications": {"quiet_hours": {"start": "22:00", "end": "09:00"}}},
         )
+        assert r.status_code == 200, r.text
+
+
+def test_api_last_cycle_entries_flag_asks(app_auth: Any) -> None:
+    """098: turning the last-cycle entry block off allows entries — a
+    loosening that asks "Confirm it is you"; turning it on never does."""
+    app, secret, _codes = app_auth
+    with TestClient(app, base_url="https://testserver") as client:
+        sign_in(client, secret, remember=True)
+        # On (block entries) is tighter: no confirmation needed.
+        r = _save(client, {"schedule": {"last_cycle_no_entries": True}})
+        assert r.status_code == 200, r.text
+        # Off lets the last cycle enter: looser, asks.
+        r = _save(client, {"schedule": {"last_cycle_no_entries": False}})
+        assert r.status_code == 403, r.text
+        error = r.json()["error"]
+        assert error["code"] == "confirm_required"
+        assert error["fields"][0]["key"] == "schedule.last_cycle_no_entries"
+        _confirm(client)
+        r = _save(client, {"schedule": {"last_cycle_no_entries": False}})
         assert r.status_code == 200, r.text
 
 
