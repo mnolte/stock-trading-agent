@@ -451,7 +451,9 @@ The layout must also work at phone width, so the VPS version can be checked from
 - On Positions:
   - a totals line: unrealized P&L, the result if every stop hits (in $ and % of equity), open risk against its cap, and the position closest to its stop;
   - per position: the bar, the result if the stop hits ($ and R; "locked in" when the stop is above the entry), the distance to the stop and to the target (with levels in the way), the planned exit, and the latest decision with a link;
-  - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state.
+  - the Alpaca legs fold into one line ("3 legs · entry filled, stop and target open ✓"). The line opens by itself, in amber, when a leg is missing or not in its expected state;
+  - three links per position (item 100): **Chart** (the dashboard with that symbol selected), **Ask about this position** (the Ask drawer with the position as its context) and the latest decision;
+  - **Order history** (item 100): the first column names the order (symbol, side, leg, with the time under it) and the second holds its status; then quantity, price, fill, slippage and type. Newest first. A long status wraps instead of being cut off.
 
 **Daily briefing card.** Next to the risk budget card the dashboard shows today's briefing (see Reviews): the text (from item 079 a story of one to three paragraphs with its terms explained; see Stories), chips for the facts it used, whether every number was checked or the plain template was used (and why), the model, prompt version and cost, and when the next briefing is written. Before 15:00 Amsterdam on a trading day it shows the previous briefing with its date; with briefings turned off it says so and links to Settings. A briefing never changes after it is written; what changed since is in the cards around it.
 
@@ -478,6 +480,9 @@ The layout must also work at phone width, so the VPS version can be checked from
   - Numbers arrive as numbers and are formatted in the browser (minus sign −).
   - Copy that names a setting reads it from settings.
 - **Browser tab:** the title shows the agent's state (open, paused, kill switch).
+- **A control that can't be used says why** (item 100). An unavailable button stays visible and focusable (`aria-disabled`, not `disabled`), with its reason as text beside it, not only in a tooltip: "All 3 slots in use · archive a shadow to add one", "Promote needs 20 closed trades · B has 4". The numbers come from settings.
+- **Empty states** (item 100). An empty card shows two lines and at most one action: what is empty, then what will fill it or what to do, with times and thresholds read from the schedule and settings ("No weekly review yet. The first is written on Saturday at 10:00, covering Monday to Friday."). A filter or search that matches nothing offers to clear it and never says "yet". Where empty is the good outcome it says so ("No order problems in the last 5 sessions. That is the normal state."). The texts are fixed in `design/screens/States.dc.html` → Empty states; a second line whose value the screen doesn't have is left out, never guessed.
+- **Sticky bars on a phone** (item 100). Below 760 px a bar that sticks to the bottom of the screen is one line (48 px) and opens on tap.
 
 **Next release.** When a release is within 2 sessions, the this-cycle strip names it before the cycle counter: "CPI tomorrow 08:30" or "FOMC today 14:00 · no entries in the 13:46 cycle"; an open position tagged `release_next_morning` shows the same as a chip on its card (item 067).
 
@@ -519,6 +524,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 - **Chart axes** drop labels as the chart narrows (first, last and every third stay); labels never overlap.
 
 **Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
+- **Unsaved changes on a phone** (item 100). Below 760 px the bar is one line, "2 unsaved changes · Review and save". It opens to the list of changes with their tighter or looser tags, the reason field, Discard and "Save as v<n>"; the same rules apply (a reason is required, a looser change asks once more).
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
 - **What these limits mean today.** Risk limits opens with three plain sentences computed from the values on screen, unsaved changes included: what a stopped-out trade loses (and after the losing-streak halving); whether the open-risk budget or the position count limits first (positions × risk per trade against total open risk); where new entries stop for the day and where the kill switch turns on, in dollars.
 - **Two-value settings are labelled** per field (shock brake: "1h bar" and "since the open"), not "1.5 to 2.5".
@@ -705,6 +711,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 54. **Sign-in resilience** (item 083). Trusted devices, the break-glass kill switch command, WebSocket session checks and the socket cap.
 55. **Supply chain and containers** (item 084). Signed images deployed by digest, pinned base images, container limits, backup delete protection, the full weekly audit.
 56. **CSV formulas and outbound addresses** (item 085). The one CSV writer; address checks at use; the SMTP host check.
+57. **UX pass on the remaining screens** (item 100). Strategies (small samples first, who was better), Backtest (runs first, the estimate in words, an answer sentence), Readiness (statuses by what is needed, What moves this forward), Logs (Does it need you?, phone rows), Positions (links, order history), the phone save bar in Settings, error pages on a phone, empty states, and reasons on unavailable controls.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.
@@ -849,6 +856,15 @@ A shadow strategy decides on exactly the same inputs as live, every cycle, but n
 
 **GUI.** A Strategies screen in the Learn group: the comparison table (live, shadows and baselines), a warning while samples are small, equity curves with SPY, the selected strategy's configuration (what differs from live) with Pause, Archive and Promote, and the disagreements list. "New shadow" opens a dialog to name it, pick the kind, prompt version, model and temperature, and set rule overrides.
 
+From item 100:
+- **Small samples first.** While any strategy has fewer than `shadows.promote_min_closed_trades` (20) closed trades, the Compare card opens with the warning: the sessions so far, the range of closed trades, and that a difference starts to mean something from that count. Each row shows its closed trades against that count as a bar ("4 of 20").
+- **Columns.** Strategy (name, kind and configuration in one cell), return since the run started, vs SPY, average R, closed trades with won and lost, max drawdown, same as live with its count ("86% of 212"), model cost.
+- **New shadow** with every slot in use: unavailable, with "All 3 slots in use · archive a shadow to add one" beside it. **Promote** before the minimum: unavailable, with "Promote needs 20 closed trades · B has 4."
+- **Selected strategy.** Label–value rows: what differs from live, what is the same, when it started, model calls and cost, open virtual positions, and how many of its entries used a synthetic price ("1 of 6 entries").
+- **Disagreements.** Newest first. A row shows the symbol and date, both final actions with their confidence, the result in words ("B's trade: −1.0R at the stop", "B's trade is open", "+1.2% after 5 sessions"), who was better, and links to both decisions.
+- **Who was better** is decided by code, only where one side entered and the other didn't: the side that entered is better when its trade closed above 0R, the side that stayed out when that trade closed below 0R. Everything else is "not decided": an open or unfilled trade, a trade closed at exactly 0R, and a disagreement in which neither side or both sides traded.
+- **Tally and filter.** Above the list one sentence counts all disagreements of the run: "14 disagreements in 9 sessions. B's choice ended better in 3, live's in 2, and 9 are not decided yet." A filter shows All, the shadow better, live better or not decided. The API gives every item `better` (`shadow`, `live` or null) and the shadow's decision id, and the three counts over the whole run, not only the rows loaded.
+
 ## Backtesting (v0.2)
 
 A backtest replays strategies over past sessions with the same code that trades live, so results are comparable with the paper run. Built as PR 14.
@@ -868,6 +884,13 @@ A backtest replays strategies over past sessions with the same code that trades 
 **Results.** Per strategy: return, difference with SPY buy and hold over the same sessions, max drawdown, closed trades, win rate, average R, profit factor and time in market; equity curves with SPY; results by market regime and by symbol; the trade list; and every decision, opened in the same decision drawer as live. A "Read with care" list names every assumption the run relied on (assumed spreads, missing earnings days, same-bar stop and target, cache hits, survivorship). CSV export of trades and decisions. A backtest is evidence about the past, never a forecast; the screen says so and the weekly review never cites a backtest as a reason to change anything.
 
 **GUI.** A Backtest screen in the Learn group: the new-backtest form with quick ranges, strategy picker, the estimate and the cutoff check; the runs list with status, progress, cost and cancel; and the selected run's results, as one table with a column per strategy and one for SPY buy and hold. The form's From and To default from the agent's clock (in simulated mode the simulated date), never the computer's, and Run says what is missing while it can't start.
+
+From item 100:
+- **Order.** The runs list comes first, then the form; the selected run's results are beside them. On a phone: runs, results, then the form, with "On this page" chips.
+- **Before you run.** The estimate opens with two lines written by code, then one row per number (sessions, bars to download with the time, model calls with the cache hits, model cost with the cost at the call cap):
+  - the budget: "Fits this month's budget: about $6.70 of the $8.54 left", "May stop early: up to $9.10 at the call cap, $8.54 left" (amber), or "Over this month's budget: about $9.10, $8.54 left" (red, Run unavailable);
+  - the knowledge cutoff: "Starts after gpt-4.1-mini's knowledge cutoff (Oct 2023)" or the reason the run would be refused.
+- **Results header.** The run's title and settings, its actions (**View n trades**, **View decisions**, **Download CSV**), and an answer written by code from the results table: the first strategy's return against SPY buy and hold with the difference in points, both deepest falls, and the time in the market; then one sentence per further strategy with its return and the difference with the first. Under it, always: "This is evidence about the past, never a forecast." The sentence is stored with the run's results, so it never changes between page loads.
 
 ## Readiness
 
@@ -915,6 +938,24 @@ A Readiness screen in the Control group shows whether the paper evidence would j
 **Notifications.** A new Info event "Readiness changed" (browser on, email off) when a criterion passes or stops passing.
 
 **GUI.** A verdict banner ("Not ready for live trading" until everything passes), summary tiles (pass, not yet, waiting, manual items, earliest possible), the Evidence, Model and Operations groups with current value, target, a progress bar for counts and the status, the manual items, and History. Every criterion explains how it is measured on hover and links to the screen with the details.
+
+From item 100. The stored statuses don't change; the screen words them by what is needed:
+
+| Stored | On screen | When |
+| --- | --- | --- |
+| pass | pass (green) | — |
+| not yet | building up (blue), with the estimate | Closed trades and Paper sessions: counts that grow by themselves |
+| not yet | below target (red) | every other criterion |
+| waiting for data | needs data (neutral), with "needs 30 closed trades · 3 so far" | the minimum sample isn't reached |
+| to do | to do (neutral) | manual items |
+
+- **Verdict banner.** Neutral, not red, while the run is not ready: "Not ready for live trading · 8 of 17 criteria pass". While the run has fewer sessions than `readiness.min_sessions` it adds "That is expected n sessions into a run." Green only when every criterion passes and every manual item is done.
+- **Tiles.** Pass, Below target, Building up, Needs data, Manual items, Earliest possible; two per row on a phone.
+- **What moves this forward.** A card under the tiles, written by code from the latest snapshot (it never measures a criterion again):
+  1. **You can act on these now**: every below-target criterion with its value and target, one sentence on what moves it, and one button to the screen where that happens. The sentence and the button come from one table in code, one row per criterion. With none: "Nothing to act on now."
+  2. **Only time fixes these**: the building-up counts with their estimates, and the needs-data criteria grouped by what they need.
+  3. **Yours to do whenever you choose**: the open manual items, with a link to them.
+  A group with nothing in it is left out.
 
 ## LLM call history
 
@@ -1149,7 +1190,9 @@ Every part of the app logs what it does, so a cycle, an order or a failure can b
 - **Clear filters** and **Download .jsonl**.
 - **Warnings and errors per day.** Stacked bars; clicking one shows that day.
 - **Recurring problems.** Grouped by fingerprint with level, count, first and last seen and examples. Clicking one filters the log on it. ERROR and CRITICAL problems show their review state: unreviewed, expected or fixed, with a Review button. Review opens a dialog: Expected or Fixed, plus a required note. These reviews feed Readiness (see Readiness → Errors in the log).
-- **Log.** Grouped per day under sticky headers, newest first. Each line shows its time (Amsterdam, New York on hover), a level chip, the message, the component and context chips (cycle, symbol). Context chips link to the cycle filter, the decision or the order.
+  - **Does it need you?** (item 100). Every problem carries one of the three levels of item 074, decided by code: **needs you** for a CRITICAL problem and for an ERROR problem without a review (the rule Needs you and Readiness use); **watch** for a WARNING problem counted `gui.log_watch_min_count` (5) times or more in the chosen period; **nothing to do** for the rest. The list is sorted by that level, then by count, and the three counts stand above it ("2 need you · 2 to watch · 4 nothing to do").
+  - On a phone each problem is a stacked row: the problem, then its level and review.
+- **Log.** Grouped per day under sticky headers, newest first. Each line shows its time (Amsterdam, New York on hover), a level chip, the message, the component and context chips (cycle, symbol). Context chips link to the cycle filter, the decision or the order. Below 760 px the time and level share one line and the message gets the full width under them (item 100).
 - **Opening a line.** It shows:
   - the exception with its traceback;
   - the stored JSON;
@@ -1581,7 +1624,7 @@ Every failure the browser can see has a defined page or message, and none of the
 
 **Not covered.** Caddy's own failure or the server being off can't be shown by the server. The outside uptime check and heartbeat cover those (see VPS deployment → Monitoring).
 
-**GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written.
+**GUI.** `design/screens/Errors.dc.html` shows every page above. The texts are final; copy them as written. Below 820 px an in-app error page sits in the phone shell (top bar, no sidebar) and its text uses the full width (item 100).
 
 ## Security hardening
 

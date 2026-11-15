@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out (spec)
+
+Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews. This pass read the other screens at 1440 px and 390 px. One work item, kickoff `100-feat-ux-pass-remaining-screens.md`, issue #296, three build PRs. No trading behaviour changes. The design side is in `design/CHANGES.md` [100].
+
+- **GUI → Interaction and states:** three rules for every screen. A control that can't be used says why, as text beside it. An empty card says what is empty and what will fill it, from fixed texts in `design/screens/States.dc.html`. A bar that sticks to the bottom of a phone screen is one line and opens on tap.
+- **GUI → Positions at a glance:** three links per position (Chart, Ask about this position, Latest decision); order history with the order and its status as the first two columns, newest first.
+- **GUI → Settings screen:** the unsaved-changes bar on a phone. Settings → Display gets `gui.log_watch_min_count`.
+- **Strategies and shadows → GUI:** small samples first; the columns; reasons on New shadow and Promote; the synthetic-price count per strategy; disagreements with **who was better**, decided by code only where one side entered and the other didn't, a tally over the whole run and a filter. The API gives `better`, the shadow's decision id and the three counts.
+- **Backtesting → GUI:** runs before the form; the estimate opens with a budget line and a cutoff line; the results header has the actions (View n trades, View decisions, Download CSV), an answer sentence written by code and stored with the run, and "evidence about the past, never a forecast".
+- **Readiness → GUI:** the stored statuses stay; the screen words them by what is needed (building up, below target, needs data). A neutral verdict banner with the count. A **What moves this forward** card written by code from the snapshot, with one sentence and one button per below-target criterion from a fixed table.
+- **Logs screen:** recurring problems carry "Does it need you?" (needs you, watch, nothing to do), are sorted by it and counted above the list. New setting `gui.log_watch_min_count` (5): the count from which a recurring warning shows "watch". It goes into the example config in the build PR, with the README table. Log lines stack on a phone.
+- **Error pages → GUI:** in the phone shell below 820 px.
+- **Build plan** item 57.
+
 ## 2026-11-14 — [098] Last-cycle entries setting (build)
 
 `schedule.last_cycle_no_entries` joins `EDITABLE` as a bool, so a settings save can finally change it. Every `settings_versions` row since 18 Oct carried the pre-071 `true`, and saved trees merge over the YAML — the 071 default flip never reached installs with a saved version, and no in-app path could fix it. The key stays display-only on the Schedule card (spec: Schedule is read-only; `schedule.cycles` is likewise API-editable with no control), so the change is API-only for now — the GUI control and the wider question of GUI-hidden keys following YAML defaults are open in the PR. Turning the flag off is a loosening ("off" in `DIRECTIONS`) and asks "Confirm it is you". No spec text changed.
