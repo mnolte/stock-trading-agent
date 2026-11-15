@@ -975,7 +975,7 @@ function SmtpCard({
   };
 
   return (
-    <div style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div data-setting="notifications.email.smtp_host notifications.email.smtp_port notifications.email.username notifications.email.from notifications.email.to" style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
         <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>Email (SMTP)</b>
         <span style={chip(status.tone)}>{status.text}</span>

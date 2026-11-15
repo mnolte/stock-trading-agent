@@ -33,6 +33,7 @@ def test_comparison_filters_and_numeric_equality() -> None:
     layers: dict[str, Any] = {
         "concurrency": {"max_requests": 20},
         "risk": {"max_open_positions": 4},
+        "notifications": {"email": {"smtp_host": "new.example.test"}},
         "test": {"equal": 10, "decimal": Decimal("10.0")},
         "models": {"model": {"price": 2}},
         "universe": {"sectors": {"SPY": "ETF"}, "names": {"SPY": "SPY"}},
@@ -42,6 +43,7 @@ def test_comparison_filters_and_numeric_equality() -> None:
     saved = copy.deepcopy(layers)
     saved["concurrency"]["max_requests"] = 10
     saved["risk"]["max_open_positions"] = 2
+    saved["notifications"]["email"]["smtp_host"] = "old.example.test"
     saved["test"] = {"equal": 10.0, "decimal": 10}
     saved["models"]["model"]["price"] = 1
     saved["universe"] = {"sectors": {"SPY": "old"}, "names": {"SPY": "old"}}
