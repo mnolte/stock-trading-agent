@@ -6652,7 +6652,7 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             logging.getLogger("app.api").debug("log_reviews not available yet")
             unreviewed_fps = None
     attention_rank = {"act": 0, "watch": 1, "none": 2}
-    out: list[dict[str, object]] = []
+    out: list[dict[str, Any]] = []
     for fp, lv, fts, ts, n, smp in problems:
         unreviewed = (
             fp not in reviews
@@ -6682,7 +6682,7 @@ def api_logs_summary(request: Request) -> dict[str, object]:
     out.sort(
         key=lambda p: (
             attention_rank[str(p["attention"])],
-            -int(p["count"]),  # type: ignore[arg-type]
+            -int(p["count"]),
         )
     )
     return {
