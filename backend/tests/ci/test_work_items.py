@@ -9,22 +9,28 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "work_items.py"
 
+REGISTER = REPO_ROOT / "docs" / "work-items.md"
+
+# The image ships scripts/ but not docs/: these tests need both, so they
+# skip there and run in CI's checkout and locally.
 pytestmark = pytest.mark.skipif(
-    not SCRIPT.exists(), reason="scripts/work_items.py not in this environment"
+    not (SCRIPT.exists() and REGISTER.exists()),
+    reason="scripts/work_items.py or docs/ not in this environment",
 )
 
 
 @pytest.fixture(scope="module")
-def wi():
+def wi() -> ModuleType:
     spec = importlib.util.spec_from_file_location("work_items", SCRIPT)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
     sys.modules["work_items"] = mod  # dataclasses look the module up
     spec.loader.exec_module(mod)
     return mod
@@ -58,11 +64,11 @@ def write(folder: Path, name: str, text: str) -> Path:
     return p
 
 
-def test_the_repository_files_pass(wi) -> None:
+def test_the_repository_files_pass(wi: ModuleType) -> None:
     assert wi.check() == []
 
 
-def test_good_file_parses(wi, tmp_path: Path) -> None:
+def test_good_file_parses(wi: ModuleType, tmp_path: Path) -> None:
     it = wi.parse(write(tmp_path, "123-feat-new-thing.md", GOOD))
     got = (it.item, it.type, it.status, it.issue, it.spec_prs, it.build_prs)
     assert got == (123, "feat", "planned", 400, [401], [])
@@ -84,18 +90,20 @@ def test_good_file_parses(wi, tmp_path: Path) -> None:
         (OK, GOOD.replace("title: New thing", "title: New thing\nowner: me"), "unknown header"),
     ],
 )
-def test_bad_files_are_refused(wi, tmp_path: Path, name: str, text: str, message: str) -> None:
+def test_bad_files_are_refused(
+    wi: ModuleType, tmp_path: Path, name: str, text: str, message: str
+) -> None:
     with pytest.raises(ValueError, match=message):
         wi.parse(write(tmp_path, name, text))
 
 
-def test_items_before_102_are_refused(wi, tmp_path: Path) -> None:
+def test_items_before_102_are_refused(wi: ModuleType, tmp_path: Path) -> None:
     text = GOOD.replace("123", "101").replace("kickoff: 101-feat-new-thing.md", "kickoff: —")
     with pytest.raises(ValueError, match="stay in docs/work-items.md"):
         wi.parse(write(tmp_path, "101-feat-new-thing.md", text))
 
 
-def test_a_number_used_twice_is_a_problem(wi, tmp_path: Path) -> None:
+def test_a_number_used_twice_is_a_problem(wi: ModuleType, tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     write(docs, "123-feat-new-thing.md", GOOD)
     other = GOOD.replace("New thing", "Other thing").replace("new-thing", "other-thing")
@@ -104,7 +112,7 @@ def test_a_number_used_twice_is_a_problem(wi, tmp_path: Path) -> None:
     assert any("also used by" in p for p in problems), problems
 
 
-def test_design_file_needs_its_item_file(wi, tmp_path: Path) -> None:
+def test_design_file_needs_its_item_file(wi: ModuleType, tmp_path: Path) -> None:
     docs, design = tmp_path / "docs", tmp_path / "design"
     write(docs, "123-feat-new-thing.md", GOOD)
     write(design, "123-feat-new-thing.md", "# 123 · feat · New thing\n")
@@ -115,13 +123,13 @@ def test_design_file_needs_its_item_file(wi, tmp_path: Path) -> None:
     ]
 
 
-def test_readme_is_skipped(wi, tmp_path: Path) -> None:
+def test_readme_is_skipped(wi: ModuleType, tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     write(docs, "README.md", "format\n")
     assert wi.check(docs, tmp_path / "design") == []
 
 
-def test_register_appends_item_rows_to_the_old_table(wi, tmp_path: Path) -> None:
+def test_register_appends_item_rows_to_the_old_table(wi: ModuleType, tmp_path: Path) -> None:
     docs = tmp_path / "docs"
     write(docs, "123-feat-new-thing.md", GOOD)
     out = wi.register(docs)
