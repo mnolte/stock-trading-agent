@@ -39,7 +39,11 @@ test('last-cycle switch previews unsaved entries and marks the loosening', async
   await page.getByRole('button', { name: 'Discard', exact: true }).click();
   await expect(toggle).toHaveAttribute('aria-checked', 'false');
   await page.getByRole('searchbox', { name: 'Find a setting' }).fill('New entries in the last cycle');
-  await expect(page.getByRole('button', { name: /New entries in the last cycle/ })).toBeVisible();
+  const found = page.getByRole('checkbox', { name: 'New entries in the last cycle' });
+  await expect(found).not.toBeChecked();
+  await found.check();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await expect(page.locator('#schedule tbody tr').last()).toContainText('yes, sent by 15:50');
 });
 
 test('History shows hidden saved values, prefills the reason and clears after recovery', async ({ page }) => {

@@ -1824,12 +1824,12 @@ export default function Settings() {
                             <input
                               type="checkbox"
                               aria-label={item.label}
-                              checked={Boolean(current)}
+                              checked={item.path === 'schedule.last_cycle_no_entries' ? !current : Boolean(current)}
                               onChange={(e) =>
                                 patch(
                                   parts[0] as keyof SettingsForm,
                                   parts[1],
-                                  e.target.checked,
+                                  item.path === 'schedule.last_cycle_no_entries' ? !e.target.checked : e.target.checked,
                                 )
                               }
                             />
