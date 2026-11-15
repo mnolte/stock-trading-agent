@@ -85,9 +85,9 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
       'Max drawdown',
       'Average R (adjusted)',
       'Profit factor',
+      'Beats rules-only',
     ],
     Model: [
-      'Beats rules-only',
       'Entry proposals that pass code checks',
       'Confidence calibration',
     ],
