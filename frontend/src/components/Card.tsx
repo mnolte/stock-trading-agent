@@ -49,7 +49,7 @@ export function Card({ label, right, children, style, busy, refreshing, ariaLabe
           <h2
             style={{
               margin: 0,
-              fontSize: 'var(--sa-text-sm)',
+              fontSize: 'var(--sa-text-md)',
               fontWeight: 600,
               color: 'var(--sa-text-2)',
               textTransform: 'uppercase',
