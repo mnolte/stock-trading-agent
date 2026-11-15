@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from app.api.main import check_model_prices_at_startup, run_migrations
@@ -304,11 +305,11 @@ def _pair(
         session.commit()
 
 
-def _items(client: TestClient, sid: int) -> tuple[dict[str, object], list[dict[str, object]]]:
+def _items(client: TestClient, sid: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     rows = client.get("/api/strategies").json()["rows"]
     shadow = next(r for r in rows if r["id"] == sid)
-    d = shadow["disagreements"]
-    return d, d["items"]
+    d = cast(dict[str, Any], shadow["disagreements"])
+    return d, cast(list[dict[str, Any]], d["items"])
 
 
 def test_disagreement_shadow_entered_and_won(client: TestClient) -> None:

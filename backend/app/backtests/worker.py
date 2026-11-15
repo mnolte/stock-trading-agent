@@ -970,7 +970,7 @@ def _finish(
     if row is None:
         return
     run_dir = run_dir_for(config, run_id)
-    summary = {}
+    summary: dict[str, Any] = {}
     for spec in bundles_hint.strategies:
         db = run_dir / f"{spec['slug']}.db"
         if db.exists():

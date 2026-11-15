@@ -76,7 +76,7 @@ describe('estimateVerdicts', () => {
     );
     expect(v.cutoff).toEqual({
       ok: false,
-      text: 'Starts before gpt-4.1-mini’s knowledge cutoff (Oct 2023) — the run is refused.',
+      text: 'gpt-4.1-mini’s knowledge cutoff is 2023-10-01 — the earliest start is 2023-10-02',
     });
   });
 

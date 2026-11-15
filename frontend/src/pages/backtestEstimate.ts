@@ -27,18 +27,18 @@ export function estimateVerdicts(
   start: string,
 ): EstimateVerdicts {
   // Budget: the estimate against what the month has left.
-  let budget: Verdict | null = null;
-  if (est.cost_usd <= est.cap_remaining_usd) {
-    budget = {
-      ok: true,
-      text: `Fits this month’s budget: about ${money(est.cost_usd)} of the ${money(est.cap_remaining_usd)} left.`,
-    };
-  } else {
-    budget = {
-      ok: false,
-      text: `Doesn’t fit this month’s budget: about ${money(est.cost_usd)} against the ${money(est.cap_remaining_usd)} left.`,
-    };
-  }
+  const budget: Verdict =
+    est.cost_usd <= est.cap_remaining_usd
+      ? {
+          ok: true,
+          text: `Fits this month’s budget: about ${money(est.cost_usd)} of the ${money(est.cap_remaining_usd)} left.`,
+        }
+      : {
+          ok: false,
+          text:
+            est.disabled_reason ??
+            `Doesn’t fit this month’s budget: about ${money(est.cost_usd)} against the ${money(est.cap_remaining_usd)} left.`,
+        };
   const stopEarly: Verdict | null =
     budget.ok && est.may_stop_early
       ? {
@@ -54,7 +54,10 @@ export function estimateVerdicts(
     const model = est.cutoff_label.split('’s knowledge cutoff')[0].split("'s knowledge cutoff")[0];
     cutoff = {
       ok: false,
-      text: `Starts before ${model}’s knowledge cutoff (${fmtMonthYear(est.cutoff)}) — the run is refused.`,
+      // The refusal names the date and the earliest allowed start.
+      text:
+        est.disabled_reason ??
+        `Starts before ${model}’s knowledge cutoff (${fmtMonthYear(est.cutoff)}) — the run is refused.`,
     };
   } else {
     const latest = est.strategies

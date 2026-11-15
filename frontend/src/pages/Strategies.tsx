@@ -643,7 +643,14 @@ export default function Strategies() {
                   </OutlineButton>
                   <OutlineButton onClick={() => setArchiveOpen(true)}>Archive</OutlineButton>
                   {selected.promote && !selected.promote.allowed ? (
-                    <UnavailableButton id="promote-blocked" reason={selected.promote.reason ?? ''}>
+                    <UnavailableButton
+                      id="promote-blocked"
+                      reason={
+                        selected.kind === 'rules_only'
+                          ? (selected.promote.reason ?? '')
+                          : `Promote needs ${selected.promote.needed} closed trades · ${short} has ${selected.promote.closed}.`
+                      }
+                    >
                       Promote to live…
                     </UnavailableButton>
                   ) : (

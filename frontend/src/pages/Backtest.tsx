@@ -724,9 +724,7 @@ function NewBacktestCard({
                 </>
               );
             })()}
-            {estimate.disabled_reason && !estimate.cutoff && (
-              <EstimateVerdict verdict={{ ok: false, text: estimate.disabled_reason }} />
-            )}
+            {/* A refusal already shows inside the verdicts above. */}
             <EstimateRow label="Sessions" value={estimate.sessions.toLocaleString()} />
             <EstimateRow
               label="Bars to download"

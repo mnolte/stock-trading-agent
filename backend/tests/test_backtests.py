@@ -1941,5 +1941,5 @@ def test_answer_sentence_stored_once_for_done_runs_only(client: Any) -> None:
     # The sentence is stored, not recomputed per request.
     with get_session_maker()() as session:
         stored = session.get(Backtest, done_id)
-        assert stored is not None
+        assert stored is not None and stored.summary is not None
         assert stored.summary["answer"] == runs[done_id]["summary"]["answer"]
