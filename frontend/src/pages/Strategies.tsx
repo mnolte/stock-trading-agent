@@ -19,7 +19,7 @@ import { numVariant, signedPct, signedPts, signedR } from './reviewsFormat';
 import {
   cost,
   differsLine,
-  disagreementFooter,
+  disagreementTally,
   drawdown,
   num,
   openPositionsLine,
@@ -66,23 +66,6 @@ const td: CSSProperties = {
   fontFamily: 'var(--sa-font-mono)',
 };
 
-function KeyRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        gap: 'var(--sa-space-3)',
-        padding: '8px 0',
-        borderBottom: '1px solid var(--sa-subtle)',
-        fontSize: 'var(--sa-text-md)',
-      }}
-    >
-      <span style={{ color: 'var(--sa-text-muted)' }}>{label}</span>
-      <span style={{ color: 'var(--sa-text-2)', textAlign: 'right' }}>{children}</span>
-    </div>
-  );
-}
 
 function OutlineButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
@@ -102,6 +85,47 @@ function OutlineButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
         whiteSpace: 'nowrap',
       }}
     />
+  );
+}
+
+/** A control that can't be used stays visible and focusable
+ * (`aria-disabled`, never `disabled`) and says why beside it (item 100,
+ * docs/SPEC.md → Interaction and states). */
+function UnavailableButton({
+  id,
+  reason,
+  children,
+}: {
+  id: string;
+  reason: string;
+  children: ReactNode;
+}) {
+  return (
+    <span style={{ display: 'inline-flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 12px' }}>
+      <button
+        type="button"
+        aria-disabled="true"
+        aria-describedby={id}
+        onClick={(e) => e.preventDefault()}
+        style={{
+          height: 'var(--sa-input-height)',
+          padding: '0 var(--sa-space-4)',
+          borderRadius: 'var(--sa-radius-md)',
+          border: '1px solid var(--sa-border)',
+          background: 'transparent',
+          color: 'var(--sa-text-disabled)',
+          fontSize: 'var(--sa-text-base)',
+          fontWeight: 600,
+          cursor: 'not-allowed',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {children}
+      </button>
+      <span id={id} style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-warning-text)' }}>
+        {reason}
+      </span>
+    </span>
   );
 }
 
@@ -301,7 +325,7 @@ function NewShadowDialog({
 
 export default function Strategies() {
   const [data, setData] = useState<StrategiesResponse | null>(null);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedId, setSelectedId] = useState<number | null>(() => {
     // Settings override notes deep-link here (?strategy=<id>, item 069).
     const raw = searchParams.get('strategy');
@@ -318,6 +342,7 @@ export default function Strategies() {
   });
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [showAllDis, setShowAllDis] = useState(false);
   const navigate = useNavigate();
 
   const refresh = useCallback(() => {
@@ -377,6 +402,7 @@ export default function Strategies() {
 
   const since = data.run ? shortDate(data.run.started_at) : '—';
   const warning = sampleWarning(data.run?.sessions ?? null, rows, data.promote_min_closed_trades);
+  const needed = data.promote_min_closed_trades;
   const slotsFull = data.slots.used >= data.slots.max;
 
   const act = (id: number, action: 'pause' | 'resume' | 'archive') => {
@@ -425,28 +451,45 @@ export default function Strategies() {
           this month · {data.slots.used} of {data.slots.max} slots
         </span>
         {data.cost.cap_reached && <Chip variant="warning">LLM shadows paused until next month</Chip>}
-        <OutlineButton
-          onClick={() => setDialog(true)}
-          disabled={slotsFull}
-          title={slotsFull ? `All ${data.slots.max} slots are in use; archive a shadow first` : undefined}
-        >
-          New shadow…
-        </OutlineButton>
+        {slotsFull ? (
+          <UnavailableButton id="slots-full" reason={`All ${data.slots.max} slots in use · archive a shadow to add one`}>
+            New shadow…
+          </UnavailableButton>
+        ) : (
+          <OutlineButton onClick={() => setDialog(true)}>New shadow…</OutlineButton>
+        )}
       </div>
 
-      <Card label="Compare" right={<div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>this run · since {since}</div>}>
+      <Card
+        label="Compare"
+        right={
+          <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+            this run · since {since} · select a row for its details
+          </div>
+        }
+      >
+        {warning && (
+          <Banner variant="warning">
+            <b style={{ fontWeight: 600 }}>{warning.lead}</b> {warning.body}
+          </Banner>
+        )}
         <div style={{ overflowX: 'auto', minWidth: 0 }}>
-          <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse' }}>
+          <table style={{ width: '100%', minWidth: '860px', borderCollapse: 'collapse' }}>
             <thead>
               <tr>
                 <th scope="col" style={{ ...th, textAlign: 'left' }}>Strategy</th>
-                <th scope="col" style={{ ...th, textAlign: 'left' }} />
-                <th scope="col" style={th} title="Adjusted: slippage per side and dividends, for live and shadows alike">
-                  Since {since} · adjusted
+                <th scope="col" style={th} title="Adjusted return since the run started: slippage and dividends included, like-for-like with shadow fills">
+                  Since {since}
                 </th>
-                <th scope="col" style={th}>vs SPY</th>
-                <th scope="col" style={th}>Closed trades</th>
-                <th scope="col" style={th}>Average R</th>
+                <th scope="col" style={th} title="Return minus SPY bought on the first session and held, in percentage points">
+                  vs SPY
+                </th>
+                <th scope="col" style={th} title="Average result per closed trade, in units of what the trade risked">
+                  Average R
+                </th>
+                <th scope="col" style={th} title={`The bar shows them against the ${needed} a comparison and Promote need`}>
+                  Closed trades
+                </th>
                 <th scope="col" style={th}>Max drawdown</th>
                 <th scope="col" style={th} title={SAME_AS_LIVE_RULE}>Same as live</th>
                 <th scope="col" style={th}>Model cost</th>
@@ -469,19 +512,42 @@ export default function Strategies() {
                     }}
                   >
                     <td style={{ ...td, textAlign: 'left', fontFamily: 'var(--sa-font-sans)' }}>
-                      <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        <span style={{ width: 10, height: 10, borderRadius: 3, background: colours[i].css, flex: '0 0 10px' }} />
-                        <div>
-                          <div style={{ fontWeight: 600 }}>{r.name}</div>
-                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{r.description}</div>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 3, background: colours[i].css, flex: '0 0 10px', marginTop: 5 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 8px', alignItems: 'center' }}>
+                            {r.id !== null ? (
+                              <button
+                                type="button"
+                                aria-pressed={isSelected}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedId(r.id);
+                                }}
+                                style={{
+                                  padding: 0,
+                                  border: 0,
+                                  background: 'none',
+                                  color: 'var(--sa-text)',
+                                  fontSize: 'var(--sa-text-md)',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  textAlign: 'left',
+                                }}
+                              >
+                                {r.name}
+                              </button>
+                            ) : (
+                              <span style={{ fontWeight: 600 }}>{r.name}</span>
+                            )}
+                            <Chip variant={ROLE_CHIP[r.role]}>{r.role}</Chip>
+                            {r.status === 'paused' && <Chip variant="neutral">paused</Chip>}
+                          </div>
+                          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', marginTop: 2 }}>
+                            {r.description}
+                          </div>
                         </div>
                       </div>
-                    </td>
-                    <td style={{ ...td, textAlign: 'left' }}>
-                      <span style={{ display: 'inline-flex', gap: 6 }}>
-                        <Chip variant={ROLE_CHIP[r.role]}>{r.role}</Chip>
-                        {r.status === 'paused' && <Chip variant="neutral">paused</Chip>}
-                      </span>
                     </td>
                     <td
                       style={{ ...td, color: TONE[numVariant(ret)] }}
@@ -490,13 +556,27 @@ export default function Strategies() {
                       {signedPct(ret)}
                     </td>
                     <td style={{ ...td, color: TONE[numVariant(vs)] }}>{signedPts(vs)}</td>
+                    <td style={td}>{signedR(num(r.avg_r))}</td>
                     <td style={{ ...td, fontFamily: 'var(--sa-font-sans)' }}>
                       <span style={{ fontFamily: 'var(--sa-font-mono)' }}>{r.closed}</span>
-                      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                        {r.won} won · {r.lost} lost
+                      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        {' '}· {r.won} won · {r.lost} lost
+                      </span>
+                      <div
+                        title={`${r.closed} of the ${needed} closed trades a comparison needs`}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginTop: 5 }}
+                      >
+                        <span style={{ width: 72, height: 4, borderRadius: 2, background: 'var(--sa-border)', overflow: 'hidden', display: 'inline-block' }}>
+                          <span
+                            className="sa-bar-fill"
+                            style={{ display: 'block', width: `${Math.min(100, (r.closed / needed) * 100)}%`, height: '100%', background: 'var(--sa-info)' }}
+                          />
+                        </span>
+                        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', fontFamily: 'var(--sa-font-mono)' }}>
+                          {r.closed} of {needed}
+                        </span>
                       </div>
                     </td>
-                    <td style={td}>{signedR(num(r.avg_r))}</td>
                     <td style={td}>{drawdown(r.max_drawdown_pct)}</td>
                     <td style={td} title={SAME_AS_LIVE_RULE}>{sameAsLive(r.same_as_live_pct, r.same_as_live_count)}</td>
                     <td style={td}>{cost(r.model_cost)}</td>
@@ -506,7 +586,6 @@ export default function Strategies() {
             </tbody>
           </table>
         </div>
-        {warning && <Banner variant="warning">{warning}</Banner>}
       </Card>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', alignItems: 'stretch' }}>
@@ -535,32 +614,43 @@ export default function Strategies() {
           <div style={{ flex: 1, minWidth: 0 }}>
             {selected ? (
               <Card label={selected.name} right={<Chip variant={ROLE_CHIP[selected.role]}>{selected.role}</Chip>}>
-                <div>
-                  <KeyRow label="Differs from live">
-                    <span style={{ fontFamily: 'var(--sa-font-mono)' }}>{differsLine(selected.differences?.differs ?? [])}</span>
-                  </KeyRow>
-                  <KeyRow label="Same as live">{sameLine(selected.differences?.same ?? [])}</KeyRow>
-                  <KeyRow label="Started">{startedLine(selected.started_at, selected.starting_equity)}</KeyRow>
-                  <KeyRow label="Calls">
+                <div className="sa-kv2">
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Differs from live</span>
+                  <span style={{ fontFamily: 'var(--sa-font-mono)' }}>{differsLine(selected.differences?.differs ?? [])}</span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Same as live</span>
+                  <span>{sameLine(selected.differences?.same ?? [])}</span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Started</span>
+                  <span>{startedLine(selected.started_at, selected.starting_equity)}</span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Calls</span>
+                  <span>
                     {selected.kind === 'llm'
                       ? `${selected.calls ?? 0} · ${cost(selected.model_cost)} · runs after each live cycle`
                       : 'no model · runs after each live cycle'}
                     {selected.missed ? ` · ${selected.missed} missed` : ''}
-                  </KeyRow>
-                  <KeyRow label="Open virtual positions">{openPositionsLine(selected.open_positions)}</KeyRow>
+                  </span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Synthetic prices</span>
+                  <span title="An entry can use a synthetic price when Alpaca gives no quote">
+                    {(selected.synthetic_entries ?? 0) > 0
+                      ? `${selected.synthetic_entries} of ${selected.entries ?? selected.synthetic_entries} ${selected.entries === 1 ? 'entry' : 'entries'}`
+                      : 'none'}
+                  </span>
+                  <span style={{ color: 'var(--sa-text-muted)' }}>Open virtual positions</span>
+                  <span>{openPositionsLine(selected.open_positions)}</span>
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, paddingTop: 12 }}>
                   <OutlineButton onClick={() => act(selected.id as number, selected.status === 'paused' ? 'resume' : 'pause')}>
                     {selected.status === 'paused' ? 'Resume' : 'Pause'}
                   </OutlineButton>
                   <OutlineButton onClick={() => setArchiveOpen(true)}>Archive</OutlineButton>
-                  <OutlineButton
-                    disabled={!selected.promote?.allowed}
-                    title={selected.promote?.reason ?? undefined}
-                    onClick={() => navigate(`/settings?promote=${selected.id}`)}
-                  >
-                    Promote to live…
-                  </OutlineButton>
+                  {selected.promote && !selected.promote.allowed ? (
+                    <UnavailableButton id="promote-blocked" reason={selected.promote.reason ?? ''}>
+                      Promote to live…
+                    </UnavailableButton>
+                  ) : (
+                    <OutlineButton onClick={() => navigate(`/settings?promote=${selected.id}`)}>
+                      Promote to live…
+                    </OutlineButton>
+                  )}
                 </div>
                 <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', paddingTop: 6 }}>
                   Promote opens Settings with {onlyModel ? 'this model' : "this shadow's differences"} filled in as a new
@@ -583,47 +673,135 @@ export default function Strategies() {
         <Card
           label={`Where ${short} and live disagreed`}
           right={
-            selected.disagreements.items.length > 0 ? (
-              <Link to={`/decisions/${selected.disagreements.items[0].live_decision_id}`} style={{ fontSize: 'var(--sa-text-md)' }}>
-                Open a decision
-              </Link>
-            ) : undefined
+            <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+              newest first · outcome after 5 sessions or at exit
+            </span>
           }
         >
-          {selected.disagreements.items.length === 0 && (
-            <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>No disagreements yet.</div>
+          {selected.disagreements.total === 0 ? (
+            <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+              No disagreements yet. They appear when live's final action on a symbol and cycle differs from {short}'s.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', marginBottom: 10 }}>
+                {disagreementTally(
+                  selected.disagreements.total,
+                  selected.disagreements.sessions,
+                  selected.disagreements.counts,
+                  short,
+                )}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 4 }}>
+                {(
+                  [
+                    ['all', `All · ${selected.disagreements.total}`],
+                    ['shadow', `${short} better · ${selected.disagreements.counts.shadow_better}`],
+                    ['live', `live better · ${selected.disagreements.counts.live_better}`],
+                    ['undecided', `not decided · ${selected.disagreements.counts.undecided}`],
+                  ] as const
+                ).map(([value, label]) => {
+                  const active = (searchParams.get('better') ?? 'all') === value;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() =>
+                        setSearchParams((p) => {
+                          const next = new URLSearchParams(p);
+                          if (value === 'all') next.delete('better');
+                          else next.set('better', value);
+                          return next;
+                        })
+                      }
+                      style={{
+                        height: 'var(--sa-input-height)',
+                        padding: '0 var(--sa-space-4)',
+                        borderRadius: 999,
+                        border: `1px solid ${active ? 'var(--sa-accent)' : 'var(--sa-border)'}`,
+                        background: active ? 'var(--sa-accent-bg)' : 'transparent',
+                        color: 'var(--sa-text)',
+                        fontSize: 'var(--sa-text-md)',
+                        fontWeight: active ? 600 : 400,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {(() => {
+                const filter = searchParams.get('better') ?? 'all';
+                const items = selected.disagreements.items.filter(
+                  (d) => filter === 'all' || (d.better ?? 'undecided') === filter,
+                );
+                const visible = showAllDis ? items : items.slice(0, 8);
+                return (
+                  <>
+                    {visible.length === 0 && (
+                      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', padding: '10px 0' }}>
+                        None of the loaded rows is in this state.
+                        {items.length === 0 && selected.disagreements.total > visible.length
+                          ? ' Show all rows or pick another filter.'
+                          : ''}
+                      </div>
+                    )}
+                    {visible.map((d) => {
+                      const betterLabel =
+                        d.better === 'shadow' ? `${short} better` : d.better === 'live' ? 'live better' : 'not decided';
+                      const betterTone =
+                        d.better === 'shadow' ? 'var(--sa-ok)' : d.better === 'live' ? 'var(--sa-warn)' : 'var(--sa-text-muted)';
+                      return (
+                        <div key={`${d.time}-${d.symbol}`} className="dis-row">
+                          <span className="dis-sym" style={{ minWidth: 0 }}>
+                            <b style={{ fontWeight: 600 }}>{d.symbol}</b>{' '}
+                            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                              {sessionDay(d.date)}
+                            </span>
+                          </span>
+                          <span className="dis-acts">
+                            <span>
+                              <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>live </span>
+                              {d.live_label}
+                            </span>
+                            <span>
+                              <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}>{short} </span>
+                              {d.shadow_label}
+                            </span>
+                          </span>
+                          <span className="dis-res" style={{ color: 'var(--sa-text-2)' }}>{d.result_text}</span>
+                          <span className="dis-better" style={{ fontSize: 'var(--sa-text-sm)', fontWeight: 600, color: betterTone }}>
+                            {betterLabel}
+                          </span>
+                          <span className="dis-links">
+                            {d.shadow_decision_id !== null && (
+                              <Link to={`/decisions/${d.shadow_decision_id}`}>{short}</Link>
+                            )}
+                            <Link to={`/decisions/${d.live_decision_id}`}>live</Link>
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, paddingTop: 10, alignItems: 'baseline' }}>
+                      <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                        Better: the side that entered while the other stayed out, scored by what its closed trade did —
+                        positive r, it was right to enter; negative, the side that stayed out was right. Ties and
+                        undecided trades count as not decided.
+                      </span>
+                      {items.length > 8 && (
+                        <OutlineButton onClick={() => setShowAllDis((v) => !v)}>
+                          {showAllDis ? 'Show less' : `Show all ${items.length}`}
+                        </OutlineButton>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </>
           )}
-          {selected.disagreements.items.map((d) => (
-            <Link
-              key={`${d.time}-${d.symbol}`}
-              to={`/decisions/${d.live_decision_id}`}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '96px 60px 1fr auto',
-                gap: 10,
-                alignItems: 'baseline',
-                padding: '10px 0',
-                borderBottom: '1px solid var(--sa-border)',
-                fontSize: 'var(--sa-text-md)',
-                color: 'var(--sa-text)',
-                textDecoration: 'none',
-              }}
-            >
-              <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-                {sessionDay(d.date)}
-              </span>
-              <b style={{ fontWeight: 600 }}>{d.symbol}</b>
-              <span style={{ color: 'var(--sa-text-2)' }}>
-                live {d.live_label} · {short} {d.shadow_label}
-              </span>
-              <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-sm)', color: d.tone === 'neutral' ? 'var(--sa-text-muted)' : TONE[d.tone] }}>
-                {d.result}
-              </span>
-            </Link>
-          ))}
-          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', paddingTop: 8 }}>
-            {disagreementFooter(selected.disagreements.total, selected.disagreements.sessions)}
-          </div>
         </Card>
       )}
 
