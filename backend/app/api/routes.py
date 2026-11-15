@@ -2952,6 +2952,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "gui": {
             "near_stop_atr": get("gui", "near_stop_atr", default=1.5),
+            "log_watch_min_count": get(
+                "gui", "log_watch_min_count", default=5
+            ),
         },
         "inspector": {
             "slow_call_seconds": get(
