@@ -3470,6 +3470,8 @@ def settings(request: Request) -> dict[str, object]:
         "schedule": schedule_table(config, clock, _calendar(request)),
         "connections": _connections(request),
         "history": history,
+        "saved_without_control": config.saved_without_control,
+        "entry_cutoff": config.get("execution", "entry_cutoff"),
         "reviews_spend_usd": _reviews_spend(request),
         "notification_events": [
             {
@@ -3507,6 +3509,48 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
     }
+
+
+@router.post("/settings/use-config")
+async def use_config_setting(request: Request, body: dict[str, object]) -> dict[str, object]:
+    from app.settings_service import (
+        _confirm_entry,
+        _direction_for,
+        refresh_saved_without_control,
+    )
+
+    config = get_config()
+    reason = body.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise HTTPException(status_code=422, detail=["a reason is required"])
+    with get_session_maker()() as session:
+        refresh_saved_without_control(config, session)
+    item = next(
+        (row for row in config.saved_without_control if row["key"] == body.get("key")),
+        None,
+    )
+    if item is None:
+        raise HTTPException(status_code=422, detail="key is not a saved value without a control")
+    key = item["key"]
+    if item["direction"] == "looser" or _direction_for(key) is None:
+        from app.auth.api import require_confirmed
+
+        require_confirmed(request, fields=[_confirm_entry(key, item["saved"], item["config"])])
+    new_tree = config.pending() or config.effective()
+    new_tree = _deep_merge(new_tree, {})
+    node = new_tree
+    parts = key.split(".")
+    for part in parts[:-1]:
+        node = node[part]
+    node[parts[-1]] = item["config"]
+    result = _store_settings(
+        request,
+        new_tree,
+        reason,
+        [version_change_summary(config.pending() or config.effective(), new_tree)],
+    )
+    result["effective_from"] = "next cycle; restart required for settings read at start"
+    return result
 
 
 @router.post("/settings/preview")
@@ -3588,6 +3632,22 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         from app.auth.api import require_confirmed
 
         require_confirmed(request, fields=confirm or None)
+    return _store_settings(request, new_tree, reason, changes, promote_id, cleaned)
+
+
+def _store_settings(
+    request: Request,
+    new_tree: dict[str, Any],
+    reason: str,
+    changes: list[str],
+    promote_id: int | None = None,
+    cleaned: dict[str, Any] | None = None,
+) -> dict[str, object]:
+    from app.settings_service import refresh_saved_without_control
+
+    config = get_config()
+    base = config.pending() or config.effective()
+    cleaned = cleaned or {}
     with get_session_maker()() as session:
         if promote_id is not None:
             check_promotion(session, config, promote_id)
@@ -3598,6 +3658,8 @@ async def update_settings(request: Request, body: dict[str, object]) -> dict[str
         if promote_id is not None:
             finish_promotion(session, promote_id, version, _clock(request).now())
         session.commit()
+        refresh_saved_without_control(config, session)
+    logger.info("settings version %s saved", version)
     # The pending version must be the full merged tree, same as the stored
     # row — passing only ``cleaned`` would silently revert every earlier
     # saved change at the next cycle's promotion.

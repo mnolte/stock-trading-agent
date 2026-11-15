@@ -9,8 +9,10 @@ decision cycle. Anything not listed here stays read-only in the API.
 from __future__ import annotations
 
 import copy
+import json
 import re
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -112,7 +114,6 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
-        "cycles": ("cycles", None, None),
         "last_cycle_no_entries": ("bool", None, None),
     },
     "events": {
@@ -148,12 +149,10 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "max_drawdown_pct": ("number", 0, 100),
         "min_avg_r": ("number", -10, 10),
         "min_profit_factor": ("number", 0, 100),
-        "ratio_min_trades": ("int", 1, 1000),
         "min_proposal_pass_pct": ("number", 0, 100),
         "max_calibration_gap_pts": ("number", 0, 100),
         "min_cycles_completed_pct": ("number", 0, 100),
         "max_price_blocked_pct": ("number", 0, 100),
-        "error_auto_resolve_minutes": ("int", 1, 1440),
     },
 }
 
@@ -1321,6 +1320,99 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 # ----------------------------------------------------------------------
 # version rows
+
+
+def control_keys() -> set[str]:
+    from app.config import ROOT
+
+    candidates = (
+        ROOT / "frontend" / "dist" / "settings-controls.json",
+        ROOT / "frontend" / "public" / "settings-controls.json",
+    )
+    path = next((p for p in candidates if p.exists()), candidates[-1])
+    return set(json.loads(path.read_text(encoding="utf-8")))
+
+
+def has_control(key: str) -> bool:
+    keys = control_keys()
+    return key in keys or (
+        key.startswith("notifications.events.")
+        and key.count(".") == 2
+        and "notifications.events.*" in keys
+    )
+
+
+def saved_without_control(
+    config_layers: dict[str, Any],
+    active_version: SettingsVersion | None,
+    versions: list[SettingsVersion],
+) -> list[dict[str, Any]]:
+    if active_version is None:
+        return []
+    from app.config import OPEN_MAPS
+
+    excluded = tuple(".".join(path) for path in OPEN_MAPS) + (
+        "secrets",
+        "ops.heartbeat_url",
+        "smtp.password",
+    )
+    baseline = _flatten_leaves(_json_safe(config_layers))
+    saved = _flatten_leaves(_json_safe(dict(active_version.settings)))
+    history = sorted(
+        (row for row in versions if row.version <= active_version.version),
+        key=lambda row: row.version,
+        reverse=True,
+    )
+    out = []
+    for key, value in sorted(saved.items()):
+        if (
+            key not in baseline
+            or has_control(key)
+            or any(key == prefix or key.startswith(prefix + ".") for prefix in excluded)
+        ):
+            continue
+        if _same_value(value, baseline[key]):
+            continue
+        since = active_version
+        for row in history:
+            leaves = _flatten_leaves(_json_safe(dict(row.settings)))
+            if key not in leaves or not _same_value(leaves[key], value):
+                break
+            since = row
+        kind = _direction_for(key)
+        out.append(
+            {
+                "key": key,
+                "label": _field_label(key),
+                "saved": value,
+                "config": baseline[key],
+                "since_version": since.version,
+                "since_at": since.changed_at.replace(tzinfo=ZoneInfo("UTC")).isoformat(),
+                "direction": "looser"
+                if kind is None
+                else _classify_change(kind, value, baseline[key]),
+            }
+        )
+    return out
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, int | float | Decimal) and isinstance(right, int | float | Decimal):
+        return Decimal(str(left)) == Decimal(str(right))
+    return left == right
+
+
+def refresh_saved_without_control(config: AppConfig, session: Session) -> None:
+    from app.db.models import SettingsVersion
+
+    versions = list(session.scalars(select(SettingsVersion).order_by(SettingsVersion.version)))
+    config.saved_without_control = saved_without_control(
+        config.yaml,
+        versions[-1] if versions else None,
+        versions,
+    )
 
 
 def latest_version(session: Session) -> SettingsVersion | None:

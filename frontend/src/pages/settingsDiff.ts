@@ -56,7 +56,7 @@ export const FIELD_LABELS: Record<string, string> = {
   'ask.keep_days': 'Ask chats kept for',
   'ask.instructions': 'Ask standing instructions',
   'schedule.cycles': 'Cycle times',
-  'schedule.last_cycle_no_entries': 'No new entries in the last cycle',
+  'schedule.last_cycle_no_entries': 'New entries in the last cycle',
   'notifications.repeat_limit_minutes': 'Repeat limit',
   'notifications.quiet_hours.start': 'Quiet hours from',
   'notifications.quiet_hours.end': 'Quiet hours to',
@@ -97,6 +97,7 @@ function fmtVal(value: unknown): string {
 
 /** Display value for a leaf path — money fields show units. */
 export function fmtPath(path: string, value: unknown): string {
+  if (path === 'schedule.last_cycle_no_entries') return value ? 'off' : 'on';
   if (path === 'universe.screen.min_avg_dollar_volume') {
     const n = Number(value);
     return Number.isNaN(n) ? String(value) : `$${n / 1_000_000}M`;
