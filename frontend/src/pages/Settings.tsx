@@ -179,6 +179,7 @@ const SECTION_OF: Record<string, string> = {
   'decision.v5.price_vs_signal_adverse_atr': 'gates',
   'decision.v6.sideways_max_target_atr': 'gates',
   'gui.near_stop_atr': 'display',
+  'gui.log_watch_min_count': 'display',
   'inspector.slow_call_seconds': 'display',
   'performance.slippage_pct_per_side': 'trading',
   'risk.risk_per_trade_pct': 'risk',
@@ -3012,6 +3013,21 @@ export default function Settings() {
                   accent={'gui.near_stop_atr' in changed}
                   invalid={!!fieldErrors['gui.near_stop_atr']}
                   onChange={(v) => patch('gui', 'near_stop_atr', v)}
+                />
+              ),
+            })}
+            {row('gui.log_watch_min_count', {
+              id: 'logwatch',
+              label: 'Recurring warning counts as “watch” from',
+              help: 'Logs → Recurring problems marks a warning “watch” when it was counted this often in the chosen period. · default 5 times',
+              children: (
+                <NumBox
+                  id="logwatch"
+                  value={s.gui?.log_watch_min_count ?? 5}
+                  unit="times"
+                  accent={'gui.log_watch_min_count' in changed}
+                  invalid={!!fieldErrors['gui.log_watch_min_count']}
+                  onChange={(v) => patch('gui', 'log_watch_min_count', v)}
                 />
               ),
             })}

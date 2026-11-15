@@ -515,3 +515,145 @@ def test_error_summary_bare_file_ref_and_length() -> None:
     assert "config.py" not in summary
     assert len(summary) <= SUMMARY_LIMIT
     assert summary.endswith("…")
+
+
+# ---- Item 100: the "Does it need you?" attention level -------------
+
+
+def _attention(
+    client: TestClient, needle: str, **params: str
+) -> dict[str, object]:
+    q = "&".join(f"{k}={v}" for k, v in params.items())
+    summary = client.get(f"/api/logs/summary?{q}").json()
+    return next(
+        p for p in summary["problems"] if needle in str(p["sample"])
+    )
+
+
+def test_attention_critical_and_unreviewed_error_act(
+    client: TestClient,
+) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("attn crit", logging.CRITICAL))
+    handler.emit(_rec("attn err", logging.ERROR))
+    handler.flush()
+    assert _attention(client, "attn crit")["attention"] == "act"
+    assert _attention(client, "attn err")["attention"] == "act"
+
+
+def test_attention_warning_watch_threshold(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app) .state.log_index_handler
+    for _ in range(5):
+        handler.emit(_rec("attn warm five", logging.WARNING))
+    for _ in range(4):
+        handler.emit(_rec("attn warm four", logging.WARNING))
+    handler.flush()
+    assert _attention(client, "attn warm five")["attention"] == "watch"
+    assert _attention(client, "attn warm four")["attention"] == "none"
+
+
+def test_attention_reviewed_expected_is_none(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("attn expected boom", logging.ERROR))
+    handler.flush()
+    fp = str(_attention(client, "attn expected boom")["fingerprint"])
+    resp = client.post(
+        "/api/logs/review",
+        json={
+            "fingerprint": fp,
+            "review": "expected",
+            "note": "outside failure",
+            "level": "ERROR",
+            "sample": "attn expected boom",
+        },
+    )
+    assert resp.status_code == 200
+    assert _attention(client, "attn expected boom")["attention"] == "none"
+
+
+def test_attention_fixed_error_returning_is_act(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("attn fixed boom", logging.ERROR))
+    handler.flush()
+    fp = str(_attention(client, "attn fixed boom")["fingerprint"])
+    resp = client.post(
+        "/api/logs/review",
+        json={
+            "fingerprint": fp,
+            "review": "fixed",
+            "note": "patched",
+            "level": "ERROR",
+            "sample": "attn fixed boom",
+        },
+    )
+    assert resp.status_code == 200
+    # It happens again after the review → unreviewed again.
+    handler.emit(_rec("attn fixed boom", logging.ERROR))
+    handler.flush()
+    with sqlite3.connect(handler.db_path) as conn:
+        conn.execute(
+            "UPDATE log_lines SET ts = '2099-01-01T00:00:00.000Z' "
+            "WHERE fingerprint = ? AND ts = (SELECT max(ts) FROM "
+            "log_lines WHERE fingerprint = ?)",
+            (fp, fp),
+        )
+        conn.commit()
+    assert _attention(client, "attn fixed boom")["attention"] == "act"
+
+
+def test_attention_counts_and_sort(client: TestClient) -> None:
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("sort err", logging.ERROR))
+    for _ in range(6):
+        handler.emit(_rec("sort warm", logging.WARNING))
+    handler.emit(_rec("sort quiet", logging.WARNING))
+    handler.flush()
+    summary = client.get("/api/logs/summary").json()
+    ranked = [
+        p for p in summary["problems"]
+        if str(p["sample"]).startswith("sort ")
+    ]
+    assert [str(p["attention"]) for p in ranked] == ["act", "watch", "none"]
+    counts = summary["attention_counts"]
+    assert counts["act"] >= 1 and counts["watch"] >= 1
+
+
+def test_attention_watch_min_count_setting(client: TestClient) -> None:
+    """gui.log_watch_min_count is read live; bounds 1–1000."""
+    from app.config import get_config
+
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    handler.emit(_rec("attn once", logging.WARNING))
+    handler.flush()
+    try:
+        get_config().yaml["gui"]["log_watch_min_count"] = 1
+        assert _attention(client, "attn once")["attention"] == "watch"
+        get_config().yaml["gui"]["log_watch_min_count"] = 1000
+        assert _attention(client, "attn once")["attention"] == "none"
+    finally:
+        get_config().yaml["gui"]["log_watch_min_count"] = 5
+
+
+def test_attention_count_scoped_to_period(client: TestClient) -> None:
+    """Watch counts lines inside the chosen period only."""
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    for _ in range(6):
+        handler.emit(_rec("attn period", logging.WARNING))
+    handler.flush()
+    fp = str(_attention(client, "attn period")["fingerprint"])
+    with sqlite3.connect(handler.db_path) as conn:
+        # Four of the six lines fall outside the chosen period.
+        conn.execute(
+            "UPDATE log_lines SET ts = '2020-01-01T00:00:00.000Z' "
+            "WHERE fingerprint = ? AND id IN (SELECT id FROM "
+            "log_lines WHERE fingerprint = ? ORDER BY id LIMIT 4)",
+            (fp, fp),
+        )
+        conn.commit()
+    p = _attention(
+        client,
+        "attn period",
+        **{"from": "2021-01-01T00:00:00Z"},
+    )
+    assert p["count"] == 2
+    assert p["attention"] == "none"

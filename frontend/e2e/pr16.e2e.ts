@@ -49,10 +49,10 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
     page.getByText('Pass', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('Not yet', { exact: true }),
+    page.getByText('Below target', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('Waiting for data', { exact: true }),
+    page.getByText('Needs data', { exact: true }).first(),
   ).toBeVisible();
   await expect(
     page
@@ -93,9 +93,9 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
     ).toBeVisible();
   }
 
-  // The seeded run is a week old: count criteria miss their target and the
-  // sample-bound criteria wait for data — all three chips show.
-  await expect(page.getByText('waiting for data').first()).toBeVisible();
+  // The seeded run is a week old: count criteria are building up and the
+  // sample-bound criteria need data — the item-100 chips show.
+  await expect(page.getByText('needs data').first()).toBeVisible();
 
   // Manual items: tick needs a note, lands in History.
   await expect(page.getByText('0 of 5 done')).toBeVisible();

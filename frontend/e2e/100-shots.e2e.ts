@@ -327,3 +327,208 @@ test('backtest: runs first, verdicts, answer sentence', async ({ page }, testInf
   await expect(page.getByText(/Fits this month’s budget/)).toBeVisible();
   await page.screenshot({ path: shot('backtest', testInfo.project.name), fullPage: true });
 });
+
+// --- PR 2: Readiness + Logs -------------------------------------------------
+
+type Crit = {
+  key: string;
+  group: string;
+  label: string;
+  value: string;
+  target: string;
+  progress: number | null;
+  status: 'pass' | 'not_yet' | 'waiting';
+  sample: number | null;
+  sub: string | null;
+  hint: string;
+  estimate: string | null;
+  estimate_date: string | null;
+  needs: string | null;
+  detail: Record<string, unknown>;
+};
+
+const crit = (over: Partial<Crit>): Crit => ({
+  key: 'x',
+  group: 'Evidence',
+  label: 'Criterion',
+  value: '—',
+  target: '—',
+  progress: null,
+  status: 'pass',
+  sample: null,
+  sub: null,
+  hint: 'how it is measured',
+  estimate: null,
+  estimate_date: null,
+  needs: null,
+  detail: {},
+  ...over,
+});
+
+const READINESS_CRITERIA: Crit[] = [
+  crit({ key: 'closed_trades', label: 'Closed trades', value: '9', target: '≥ 20', progress: 0.45, status: 'not_yet', sample: 9, sub: 'about 27 Nov', estimate: '27 Nov', estimate_date: '2026-11-27' }),
+  crit({ key: 'sessions', label: 'Paper sessions in this run', value: '9', target: '≥ 60', progress: 0.15, status: 'not_yet', sample: 9, sub: 'about 15 Jan', estimate: '15 Jan', estimate_date: '2027-01-15' }),
+  crit({ key: 'return_vs_spy', label: 'Return vs SPY (adjusted)', value: '+1.2%', target: '≥ 0.0%', progress: 0.6, status: 'pass' }),
+  crit({ key: 'max_drawdown', label: 'Max drawdown', value: '4.1%', target: '≤ 8%', progress: 0.51, status: 'pass' }),
+  crit({ key: 'avg_r', label: 'Average R (adjusted)', value: '—', target: '≥ +0.2R', status: 'waiting', sample: 3, needs: '30 closed trades' }),
+  crit({ key: 'profit_factor', label: 'Profit factor', value: '—', target: '≥ 1.2', status: 'waiting', sample: 3, needs: '30 closed trades', group: 'Evidence' }),
+  crit({ key: 'beats_rules', label: 'Beats rules-only', value: '—', target: 'positive', status: 'waiting', needs: 'an active rules-only shadow', sub: 'no active rules-only shadow', group: 'Model' }),
+  crit({ key: 'proposals', label: 'Entry proposals that pass code checks', value: '58%', target: '≥ 70%', progress: 0.58, status: 'not_yet', group: 'Model' }),
+  crit({ key: 'calibration', label: 'Confidence calibration', value: '—', target: 'calibrated', status: 'waiting', sample: 4, needs: '20 answered calls', group: 'Model' }),
+  crit({ key: 'cycles', label: 'Cycles completed', value: '96%', target: '≥ 98%', progress: 0.96, status: 'not_yet', group: 'Operations', detail: { missed: 4 } }),
+  crit({ key: 'missing_stops', label: 'Positions without a stop', value: '1', target: '0', status: 'not_yet', group: 'Operations' }),
+  crit({ key: 'kill_switch', label: 'Kill switch events', value: '0', target: '0', status: 'pass', group: 'Operations' }),
+  crit({ key: 'unresolved_errors', label: 'Unresolved errors', value: '2', target: '0', status: 'not_yet', group: 'Operations' }),
+  crit({ key: 'price_data', label: 'Price data quality', value: '99%', target: '≥ 98%', progress: 0.99, status: 'pass', group: 'Operations' }),
+  crit({ key: 'reconciliation', label: 'Reconciliation', value: 'clean', target: 'clean', status: 'pass', group: 'Operations' }),
+];
+
+const readinessPayload = (clean: boolean) => ({
+  run: { id: 4, started_at: '2026-09-21T13:30:00Z' },
+  snapshot: {
+    session_date: '2026-10-02',
+    created_at: '2026-10-02T21:05:00Z',
+    criteria: clean
+      ? READINESS_CRITERIA.map((c) =>
+          c.status === 'not_yet' &&
+          !['closed_trades', 'sessions'].includes(c.key)
+            ? { ...c, status: 'pass' as const, value: c.target.replace('≥ ', '').replace('≤ ', '') }
+            : c,
+        )
+      : READINESS_CRITERIA,
+  },
+  summary: {
+    pass: clean ? 9 : 6,
+    not_yet: clean ? 2 : 5,
+    waiting: 4,
+    total: 15,
+    manual_done: 1,
+    manual_total: 5,
+    earliest: { label: 'Paper sessions in this run', date: '2027-01-15', text: '15 Jan' },
+    sessions: 9,
+    min_sessions: 60,
+  },
+  manual: [
+    { item: 'tax', label: 'Dutch tax treatment checked', detail: 'Box 3 vs box 1 for a paper-run account.', done: true, note: 'checked with accountant', changed_at: '2026-09-28T10:00:00Z' },
+    { item: 'money', label: 'Live money decided', detail: 'How much goes into the live account.', done: false, note: null, changed_at: null },
+    { item: 'kill', label: 'Kill switch rehearsed', detail: 'Press it once on paper.', done: false, note: null, changed_at: null },
+    { item: 'alerts', label: 'Alert mail checked', detail: 'One test mail arrived.', done: false, note: null, changed_at: null },
+    { item: 'backup', label: 'Backup restored once', detail: 'A restore was rehearsed.', done: false, note: null, changed_at: null },
+  ],
+  forward: clean
+    ? {
+        act: [],
+        time: [
+          { kind: 'count', key: 'closed_trades', name: 'Closed trades', text: '9 of 20 · about 27 Nov' },
+          { kind: 'count', key: 'sessions', name: 'Paper sessions in this run', text: '9 of 60 · about 15 Jan' },
+          { kind: 'needs', text: 'Average R (adjusted), Profit factor need 30 closed trades (3 so far); Confidence calibration needs 20 answered calls' },
+        ],
+        time_count: 6,
+        manual_open: 4,
+      }
+    : {
+        act: [
+          { key: 'unresolved_errors', name: 'Unresolved errors', value_text: '2 · target 0', sentence: 'Two errors wait for a review; expected or fixed clears them.', button: 'Open Logs', href: '/logs' },
+          { key: 'missing_stops', name: 'Positions without a stop', value_text: '1 · target 0', sentence: 'One position missed its stop on 30 Sep; the window clears on 14 Oct.', button: 'Open Positions', href: '/positions' },
+          { key: 'proposals', name: 'Entry proposals that pass code checks', value_text: '58% · target ≥ 70%', sentence: '42% of entry proposals were rejected by the code checks; the reasons are in Insights.', button: 'Open Insights', href: '/insights' },
+        ],
+        time: [
+          { kind: 'count', key: 'closed_trades', name: 'Closed trades', text: '9 of 20 · about 27 Nov' },
+          { kind: 'count', key: 'sessions', name: 'Paper sessions in this run', text: '9 of 60 · about 15 Jan' },
+          { kind: 'needs', text: 'Average R (adjusted), Profit factor need 30 closed trades (3 so far); Confidence calibration needs 20 answered calls' },
+        ],
+        time_count: 6,
+        manual_open: 4,
+      },
+  errors: clean
+    ? []
+    : [
+        { id: 12, time: '2026-10-02T14:31:00Z', level: 'ERROR', event_type: 'broker', affects: 'cycle', message: 'broker read timed out after 20s', resolves_at: '2026-10-09T14:31:00Z' },
+        { id: 14, time: '2026-10-02T15:02:00Z', level: 'ERROR', event_type: 'data', affects: 'prices', message: 'price bar gap for MSFT', resolves_at: '2026-10-09T15:02:00Z' },
+      ],
+  history: [],
+});
+
+test('readiness: verdict, tiles, forward card', async ({ page }, testInfo) => {
+  await page.route('**/api/readiness', (route) =>
+    route.fulfill({ contentType: 'application/json', json: readinessPayload(false) }),
+  );
+  await page.goto('/readiness');
+  await expect(page.getByText('Not ready for live trading · 6 of 15 criteria pass')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/That is expected 9 sessions into a run/)).toBeVisible();
+  await expect(page.getByText('What moves this forward')).toBeVisible();
+  await expect(page.getByText('You can act on these now · 3')).toBeVisible();
+  await page.screenshot({ path: shot('readiness', testInfo.project.name), fullPage: true });
+});
+
+test('readiness: nothing below target', async ({ page }, testInfo) => {
+  await page.route('**/api/readiness', (route) =>
+    route.fulfill({ contentType: 'application/json', json: readinessPayload(true) }),
+  );
+  await page.goto('/readiness');
+  await expect(
+    page.getByText('Not ready for live trading · 9 of 15 criteria pass'),
+  ).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText('Nothing to act on now.')).toBeVisible();
+  await page.screenshot({
+    path: shot('readiness-clean', testInfo.project.name),
+    fullPage: true,
+  });
+});
+
+const LOG_LINES = [
+  { id: 41, ts: '2026-10-02T15:02:10Z', level: 'ERROR', logger: 'app.data', event: 'price_gap', message: 'price bar gap for MSFT', context: {}, cycle: 'c-9', symbol: 'MSFT', process: 'engine', pid: 1, error_id: 'e-41', exception_type: null, exception_message: null, traceback: null, fingerprint: 'fp1' },
+  { id: 40, ts: '2026-10-02T14:31:00Z', level: 'ERROR', logger: 'app.broker', event: 'timeout', message: 'broker read timed out after 20s', context: {}, cycle: 'c-8', symbol: null, process: 'engine', pid: 1, error_id: 'e-40', exception_type: 'TimeoutError', exception_message: 'timed out', traceback: 'Traceback: broker read timed out', fingerprint: 'fp2' },
+  { id: 39, ts: '2026-10-02T14:05:00Z', level: 'WARNING', logger: 'app.feed', event: 'retry', message: 'price feed retry 3 of 5', context: {}, cycle: 'c-8', symbol: null, process: 'engine', pid: 1, error_id: null, exception_type: null, exception_message: null, traceback: null, fingerprint: 'fp3' },
+  { id: 38, ts: '2026-10-02T13:59:00Z', level: 'WARNING', logger: 'app.feed', event: 'retry', message: 'price feed retry 2 of 5', context: {}, cycle: 'c-8', symbol: null, process: 'engine', pid: 1, error_id: null, exception_type: null, exception_message: null, traceback: null, fingerprint: 'fp3' },
+];
+
+const logsSummary = (clean: boolean) => ({
+  days: [
+    { day: '2026-09-30', level: 'WARNING', count: 3 },
+    { day: '2026-10-01', level: 'WARNING', count: 4 },
+    { day: '2026-10-02', level: 'WARNING', count: 6 },
+    { day: '2026-10-02', level: 'ERROR', count: 2 },
+  ],
+  level_counts: { WARNING: 13, ERROR: 2, CRITICAL: 0 },
+  problems: clean
+    ? [
+        { fingerprint: 'fp3', level: 'WARNING', first_ts: '2026-09-28T13:00:00Z', last_ts: '2026-10-02T14:05:00Z', count: 6, sample: 'app.feed: price feed retry', review: 'expected', unreviewed: false, attention: 'none' },
+      ]
+    : [
+        { fingerprint: 'fp2', level: 'ERROR', first_ts: '2026-09-29T14:31:00Z', last_ts: '2026-10-02T14:31:00Z', count: 9, sample: 'app.broker: broker read timed out', review: null, unreviewed: true, attention: 'act' },
+        { fingerprint: 'fp3', level: 'WARNING', first_ts: '2026-09-28T13:00:00Z', last_ts: '2026-10-02T14:05:00Z', count: 6, sample: 'app.feed: price feed retry', review: null, unreviewed: false, attention: 'watch' },
+        { fingerprint: 'fp4', level: 'WARNING', first_ts: '2026-10-01T09:00:00Z', last_ts: '2026-10-02T09:00:00Z', count: 2, sample: 'app.feed: slow poll', review: 'expected', unreviewed: false, attention: 'none' },
+      ],
+  attention_counts: clean ? { act: 0, watch: 0, none: 1 } : { act: 1, watch: 1, none: 1 },
+  index_available: true,
+});
+
+const routeLogs = (page: import('@playwright/test').Page, clean: boolean) => {
+  void page.route('**/api/logs/summary**', (route) =>
+    route.fulfill({ contentType: 'application/json', json: logsSummary(clean) }),
+  );
+  void page.route('**/api/logs?**', (route) =>
+    route.fulfill({
+      contentType: 'application/json',
+      json: { lines: LOG_LINES, next_cursor: null, index_available: true },
+    }),
+  );
+};
+
+test('logs: attention chips and stacked rows', async ({ page }, testInfo) => {
+  routeLogs(page, false);
+  await page.goto('/logs');
+  await expect(page.getByText('Recurring problems')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText('1 need you')).toBeVisible();
+  await expect(page.getByText(/9 times in 7 days/)).toBeVisible();
+  await page.screenshot({ path: shot('logs', testInfo.project.name), fullPage: true });
+});
+
+test('logs: no problem needs you', async ({ page }, testInfo) => {
+  routeLogs(page, true);
+  await page.goto('/logs');
+  await expect(page.getByText('Recurring problems')).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText('0 need you')).toBeVisible();
+  await page.screenshot({ path: shot('logs-clean', testInfo.project.name), fullPage: true });
+});
