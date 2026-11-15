@@ -331,6 +331,20 @@ describe('changeDirection (item 069, map from the API since 082)', () => {
     expect(dirs['performance.slippage_pct_per_side']).toBeUndefined();
   });
 
+  it('shows the inverted last-cycle switch and its loosening direction', () => {
+    const current = base();
+    current.schedule.last_cycle_no_entries = true;
+    const edited = base();
+    expect(diffSettings(current, edited)).toEqual([{
+      label: 'New entries in the last cycle', from: 'off', to: 'on',
+    }]);
+    expect(diffMap(current, edited)['schedule.last_cycle_no_entries']).toBe('off');
+    expect(diffDirections(current, edited, { 'schedule.last_cycle_no_entries': 'off' }))
+      .toEqual({ 'schedule.last_cycle_no_entries': 'looser' });
+    expect(diffDirections(edited, current, { 'schedule.last_cycle_no_entries': 'off' }))
+      .toEqual({ 'schedule.last_cycle_no_entries': 'tighter' });
+  });
+
   it('diffMap reports decision.v6 leaves', () => {
     const current = base();
     const edited = base();

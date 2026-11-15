@@ -3536,8 +3536,8 @@ async def use_config_setting(request: Request, body: dict[str, object]) -> dict[
         from app.auth.api import require_confirmed
 
         require_confirmed(request, fields=[_confirm_entry(key, item["saved"], item["config"])])
-    new_tree = config.pending() or config.effective()
-    new_tree = _deep_merge(new_tree, {})
+    base = config.pending() or config.effective()
+    new_tree = _without_heartbeat(_deep_merge(base, {}))
     node = new_tree
     parts = key.split(".")
     for part in parts[:-1]:
@@ -3547,9 +3547,11 @@ async def use_config_setting(request: Request, body: dict[str, object]) -> dict[
         request,
         new_tree,
         reason,
-        [version_change_summary(config.pending() or config.effective(), new_tree)],
+        [version_change_summary(base, new_tree)],
+        cleaned={parts[0]: new_tree[parts[0]]},
     )
-    result["effective_from"] = "next cycle; restart required for settings read at start"
+    if key.startswith(("concurrency.", "logging.", "api.", "app.", "ops.")):
+        result["effective_from"] = "restart required"
     return result
 
 

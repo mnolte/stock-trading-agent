@@ -30,7 +30,7 @@ def version(number: int, settings: dict[str, Any]) -> SettingsVersion:
 
 
 def test_comparison_filters_and_numeric_equality() -> None:
-    layers = {
+    layers: dict[str, Any] = {
         "concurrency": {"max_requests": 20},
         "risk": {"max_open_positions": 4},
         "test": {"equal": 10, "decimal": Decimal("10.0")},
@@ -100,8 +100,10 @@ def seed_saved(path: str, value: Any) -> dict[str, Any]:
     for part in parts[:-1]:
         node = node[part]
     node[parts[-1]] = value
+    from app.settings_service import _json_safe
+
     with get_session_maker()() as session:
-        session.add(version(1, tree))
+        session.add(version(1, _json_safe(tree)))
         session.commit()
         config.apply_saved(tree, 1)
         refresh_saved_without_control(config, session)
@@ -220,3 +222,34 @@ def test_use_config_confirmation(
                 headers=csrf_headers(client),
             )
             assert response.status_code == 200
+
+
+def test_startup_warning_names_only(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
+    from app.api.main import load_saved_settings
+
+    seed_saved("concurrency.max_requests", 123456)
+    caplog.clear()
+    load_saved_settings(get_config())
+    warnings = [record.message for record in caplog.records
+                if record.message.startswith("saved values differ from config:")]
+    assert warnings == ["saved values differ from config: concurrency.max_requests"]
+    assert "123456" not in " ".join(warnings)
+
+
+def test_use_config_preserves_an_unrelated_pending_save(client: TestClient) -> None:
+    seed_saved("concurrency.max_requests", 10)
+    saved = client.post("/api/settings", json={
+        "settings": {"risk": {"max_open_positions": 2}}, "reason": "tighter",
+    })
+    assert saved.status_code == 200
+    assert client.get("/api/settings").json()["saved_without_control"]
+    result = client.post("/api/settings/use-config", json={
+        "key": "concurrency.max_requests", "reason": "take config",
+    })
+    assert result.status_code == 200
+    pending = get_config().pending()
+    assert pending is not None
+    assert pending["risk"]["max_open_positions"] == 2
+    assert pending["concurrency"]["max_requests"] == (
+        get_config().yaml["concurrency"]["max_requests"]
+    )

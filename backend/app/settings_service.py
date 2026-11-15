@@ -13,6 +13,8 @@ import json
 import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -645,9 +647,13 @@ def _fmt_field(value: Any) -> str:
 
 
 def _confirm_entry(path: str, old: Any, new: Any) -> dict[str, str]:
+    label = _field_label(path)
+    if path == "schedule.last_cycle_no_entries":
+        label = "New entries in the last cycle"
+        old, new = not bool(old), not bool(new)
     return {
         "key": path,
-        "label": _field_label(path),
+        "label": label,
         "old": _fmt_field(old),
         "new": _fmt_field(new),
     }
@@ -1322,15 +1328,15 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 # version rows
 
 
-def control_keys() -> set[str]:
-    from app.config import ROOT
-
+@cache
+def control_keys() -> frozenset[str]:
+    root = Path(__file__).resolve().parents[2]
     candidates = (
-        ROOT / "frontend" / "dist" / "settings-controls.json",
-        ROOT / "frontend" / "public" / "settings-controls.json",
+        root / "frontend" / "public" / "settings-controls.json",
+        root / "frontend" / "dist" / "settings-controls.json",
     )
     path = next((p for p in candidates if p.exists()), candidates[-1])
-    return set(json.loads(path.read_text(encoding="utf-8")))
+    return frozenset(json.loads(path.read_text(encoding="utf-8")))
 
 
 def has_control(key: str) -> bool:
@@ -1398,10 +1404,10 @@ def saved_without_control(
 
 def _same_value(left: Any, right: Any) -> bool:
     if isinstance(left, bool) or isinstance(right, bool):
-        return type(left) is type(right) and left == right
+        return type(left) is type(right) and bool(left == right)
     if isinstance(left, int | float | Decimal) and isinstance(right, int | float | Decimal):
         return Decimal(str(left)) == Decimal(str(right))
-    return left == right
+    return bool(left == right)
 
 
 def refresh_saved_without_control(config: AppConfig, session: Session) -> None:

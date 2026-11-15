@@ -761,7 +761,7 @@ function EventChannelTable({
                   const critical = ev.severity === 'critical';
                   const rowChanged = `notifications.events.${ev.key}` in changed;
                   return (
-                    <tr key={ev.key}>
+                    <tr key={ev.key} data-setting="notifications.events.*">
                       <td style={{ ...cell, fontSize: 'var(--sa-text-md)' }}>
                         {ev.label}
                         {ev.description && (
@@ -1658,6 +1658,7 @@ export default function Settings() {
     },
   ) => (
     <Row
+      paths={path}
       key={path}
       id={props.id}
       label={props.label}
@@ -1891,6 +1892,7 @@ export default function Settings() {
           {currentId === 'trading' && (<>
           <Section id="trading" title="Trading" blurb="How orders are sent and which symbols are watched.">
             <Row
+              paths="execution.mode"
               id="mode"
               label="Execution mode"
               help={
@@ -1932,6 +1934,7 @@ export default function Settings() {
             </Row>
 
             <Row
+              paths="universe.mode"
               id="umode"
               label="Universe"
               help={
@@ -2072,7 +2075,7 @@ export default function Settings() {
                 <option>Return vs SPY, 20 sessions</option>
               </select>
             </Row>
-            <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div data-setting="universe.symbols" style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <span style={{ fontSize: 'var(--sa-text-base)' }}>Fixed list</span>
@@ -2363,6 +2366,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="risk.shock_brake_1h_pct risk.shock_brake_session_pct"
               label="Shock brake"
               help="No new entries this session when SPY drops this much in the last 1h bar or since the open."
               changed={'risk.shock_brake_1h_pct' in changed || 'risk.shock_brake_session_pct' in changed}
@@ -2427,6 +2431,7 @@ export default function Settings() {
           <Section id="rules" title="Entry rules and checks" blurb="The pre-filter before a model call, and the checks on what the model proposes.">
             <h3 style={subHead}>Before the model is asked</h3>
             <Row
+              paths="rules.rsi_min rules.rsi_max"
               label="RSI range (1h)"
               help={
                 <>
@@ -2465,6 +2470,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="decision.stop_atr_min decision.stop_atr_max"
               label="Stop distance"
               help={
                 <>
@@ -2557,6 +2563,7 @@ export default function Settings() {
               return (
                 <>
                   <Row
+                    paths="events.fomc.enabled"
                     id="fomc"
                     label="FOMC window"
                     help="No new entries in a cycle that starts from 30 minutes before to 45 minutes after a 14:00 FOMC decision: the 13:46 cycle. Holds and exits are not affected. Strategy-overridable."
@@ -2573,6 +2580,7 @@ export default function Settings() {
                     />
                   </Row>
                   <Row
+                    paths="events.fomc.block_minutes_before events.fomc.block_minutes_after"
                     id="fomcmin"
                     label="FOMC window minutes"
                     help="Around the 14:00 New York decision."
@@ -3249,6 +3257,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="ask.instructions"
               label="Standing instructions"
               help="How the agent answers — never what it may do. At most 1,000 characters."
               changed={'ask.instructions' in changed}
@@ -3333,6 +3342,7 @@ export default function Settings() {
             })}
 
             <Row
+              paths="notifications.quiet_hours.start notifications.quiet_hours.end"
               label="Quiet hours (Amsterdam)"
               help="Only critical alerts are sent in this window; the rest wait until it ends."
               changed={
@@ -3532,6 +3542,7 @@ export default function Settings() {
           >
             {authStatus && authStatus.required && (
               <Row
+                paths="auth.idle_hours"
                 id="idle-hours"
                 label="Sign out after inactivity"
                 help="A device that is kept signed in still signs out after 30 days."
