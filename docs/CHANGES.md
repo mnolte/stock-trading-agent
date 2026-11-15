@@ -15,9 +15,14 @@ Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the
 - **Logs screen:** recurring problems carry "Does it need you?" (needs you, watch, nothing to do), are sorted by it and counted above the list. New setting `gui.log_watch_min_count` (5): the count from which a recurring warning shows "watch". It goes into the example config in the build PR, with the README table. Log lines stack on a phone.
 - **Error pages → GUI:** in the phone shell below 820 px.
 - **Build plan** item 57.
+
 ## 2026-11-14 — [098] Last-cycle entries setting (build)
 
 `schedule.last_cycle_no_entries` joins `EDITABLE` as a bool, so a settings save can finally change it. Every `settings_versions` row since 18 Oct carried the pre-071 `true`, and saved trees merge over the YAML — the 071 default flip never reached installs with a saved version, and no in-app path could fix it. The key stays display-only on the Schedule card (spec: Schedule is read-only; `schedule.cycles` is likewise API-editable with no control), so the change is API-only for now — the GUI control and the wider question of GUI-hidden keys following YAML defaults are open in the PR. Turning the flag off is a loosening ("off" in `DIRECTIONS`) and asks "Confirm it is you". No spec text changed.
+
+## 2026-11-13 — [099] Dashboard page matches Main.dc.html (build)
+
+Design-fidelity pass on `design/screens/Main.dc.html` beyond the briefing card fixed in 097. Card labels are 13 px with 14 px gaps and the design's padding; dashboard rows use the design's flex bases (chart `999 1 600px`, positions 520 px, risk budget 420 px, 20 px gaps); the positions heading reads "Open positions · N of M" with matching aria-labels; the chart is 320 px with the design's legend swatches and dashed VWAP; Latest decision uses the design's badge and signal colours, 16 px symbol and earnings chip; the feed heading keeps the curly apostrophe with 10 px row gaps; the cycle strip renders the design's bold/muted sentence, 15 px countdown and the release line's border and tooltip; Needs you gets the Ask icon and label and the design's health line; the watchlist matches the design's header wording, tabs, rank column, footer and show-all control; shared header gaps, chip weight, stop-tick colour and the centred 1440 px layout follow the design. No spec text changed.
 
 ## 2026-11-13 — [097] Dashboard briefing card and Reviews match the design screens (build)
 

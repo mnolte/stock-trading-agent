@@ -35,13 +35,15 @@ export function actionBadgeStyle(action: string): { bg: string; color: string } 
     case 'exit':
       return { bg: 'var(--sa-negative-bg)', color: 'var(--sa-negative-text)' };
     case 'skip':
-      return { bg: 'var(--sa-warning-bg)', color: 'var(--sa-warning-text)' };
+      return { bg: 'var(--sa-warning-bg)', color: 'var(--sa-accent)' };
     case 'tighten_stop':
       return { bg: 'var(--sa-info-bg)', color: 'var(--sa-info)' };
     case 'blocked':
       return { bg: 'var(--sa-negative-bg)', color: 'var(--sa-negative-text)' };
+    case 'hold':
+      return { bg: 'var(--sa-subtle)', color: 'var(--sa-text-2)' };
     default:
-      return { bg: 'var(--sa-raised)', color: 'var(--sa-text-2)' };
+      return { bg: 'var(--sa-subtle)', color: 'var(--sa-text-muted)' };
   }
 }
 

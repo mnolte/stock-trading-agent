@@ -43,10 +43,10 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
         background: 'var(--sa-panel)',
         border: '1px solid var(--sa-border)',
         borderRadius: 'var(--sa-radius-lg)',
-        padding: 'var(--sa-space-4) var(--sa-space-5)',
+        padding: '20px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 'var(--sa-space-3)',
+        gap: '14px',
         boxSizing: 'border-box',
       }}
     >
@@ -64,7 +64,7 @@ export function BriefingCard({ res }: { res: Resource<DashboardResponse> }) {
         <h2
           style={{
             margin: 0,
-            fontSize: 'var(--sa-text-sm)',
+            fontSize: 'var(--sa-text-md)',
             fontWeight: 600,
             color: 'var(--sa-text-2)',
             textTransform: 'uppercase',
