@@ -1,7 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { expect, type Page } from '@playwright/test';
 
-import controls from '../public/settings-controls.json';
 import { test } from './shots';
+
+const controls: Record<string, string> = JSON.parse(
+  readFileSync(new URL('../public/settings-controls.json', import.meta.url), 'utf8'),
+);
 
 const hidden = {
   key: 'concurrency.max_requests', label: 'Requests at once', saved: 10, config: 20,
@@ -78,7 +82,10 @@ test('every shared control key has an actual form control on its section', async
     for (const [key, expectedSection] of Object.entries(controls)) {
       if (expectedSection !== section) continue;
       const row = page.locator(`[data-setting~="${key}"]`).first();
-      await expect(row.locator('input,select,textarea,button[role="switch"],button[role="radio"],button[role="checkbox"],button[aria-pressed]').first()).toBeAttached();
+      const inputs = row.locator('input,select,textarea,button[role="switch"],button[role="radio"],button[role="checkbox"],button[aria-pressed]');
+      await expect(inputs.first()).toBeAttached();
+      const keys = (await row.getAttribute('data-setting') ?? '').split(' ');
+      expect(await inputs.count()).toBeGreaterThanOrEqual(keys.length);
       rendered.add(key);
     }
   }

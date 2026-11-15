@@ -538,7 +538,7 @@ export function changeVerb(
   const kind = directionFor(path, directions);
   if (kind === null || kind === 'neutral') return null;
   if (kind === 'on' || kind === 'off') {
-    const on = Boolean(to);
+    const on = path === 'schedule.last_cycle_no_entries' ? !to : Boolean(to);
     return on ? 'Turns on' : 'Turns off';
   }
   if (kind === 'up' || kind === 'down') {

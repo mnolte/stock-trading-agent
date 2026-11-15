@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { changeDirection, diffDirections, diffMap, diffSettings } from './settingsDiff';
+import { changeDirection, changeVerb, diffDirections, diffMap, diffSettings } from './settingsDiff';
 import type { SettingsForm } from '../types/api';
 
 function base(): SettingsForm {
@@ -339,6 +339,12 @@ describe('changeDirection (item 069, map from the API since 082)', () => {
       label: 'New entries in the last cycle', from: 'off', to: 'on',
     }]);
     expect(diffMap(current, edited)['schedule.last_cycle_no_entries']).toBe('off');
+    expect(changeVerb('schedule.last_cycle_no_entries', true, false, {
+      'schedule.last_cycle_no_entries': 'off',
+    })).toBe('Turns on');
+    expect(changeVerb('schedule.last_cycle_no_entries', false, true, {
+      'schedule.last_cycle_no_entries': 'off',
+    })).toBe('Turns off');
     expect(diffDirections(current, edited, { 'schedule.last_cycle_no_entries': 'off' }))
       .toEqual({ 'schedule.last_cycle_no_entries': 'looser' });
     expect(diffDirections(edited, current, { 'schedule.last_cycle_no_entries': 'off' }))
