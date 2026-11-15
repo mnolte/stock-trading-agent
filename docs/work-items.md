@@ -1,6 +1,8 @@
 # Work items
 
-Every piece of work that gets a kickoff — a feature, a fix, an analysis, an ops change — is a **work item** with a number and a name. This file is the register: one row per item, newest at the bottom. Claude adds the row when the spec PR is opened; whoever opens or merges a PR for the item updates its PR and status columns. This file is not spec-owned, so Devin can update it without the `spec change` label.
+Every piece of work that gets a kickoff — a feature, a fix, an analysis, an ops change — is a **work item** with a number and a name. This file defines the name and holds the register up to item 101.
+
+**One file per work item** (decided 15 Nov, item 102). From item 102 on, an item's register fields and change notes are in its own file, `docs/changes/NNN-type-slug.md`, with its design notes in `design/changes/` under the same name. The format and who writes what are in `docs/changes/README.md`. The table below is not extended; `python3 scripts/work_items.py` prints it together with the newer items. Rows up to 101 are still updated here until those items are done. The reason: every PR added its row at the same place in this file and its entry at the top of the two change logs, so two open PRs always conflicted.
 
 ## The name
 
@@ -10,7 +12,14 @@ NNN-type-slug        for example   099-fix-ko-overnight-exit
 
 The examples use 099 as a made-up number.
 
-- **NNN.** Three digits, one sequence for all types, never reused or renumbered. It continues the build plan: items 001–037 are build plan items 1–37. The next free number is one above the highest of: the last row below on `main`, and every `[NNN]` in the title of an open pull request (`gh pr list`), so two PRs open at the same time don't take the same number. If two merged items still share a number, the one whose first PR was opened later moves to the next free number, with a note in its row and its `docs/CHANGES.md` entry; that is the only renumbering (049, 7 Nov).
+- **NNN.** Three digits, one sequence for all types, never reused. Items 001–037 are build plan items 1–37.
+  - **A number is claimed by opening its issue** (decided 15 Nov, item 102), before the branch, the kickoff or the item file. The issue title starts with `[NNN]`. The next free number is one above the highest `[NNN]` at the start of any issue or PR title, open or closed:
+    ```bash
+    gh api "repos/mnolte/stock-trading-agent/issues?state=all&per_page=100" --jq '.[].title' \
+      | grep -oE '^\[[0-9]{3}\]' | sort | tail -1
+    ```
+    (GitHub lists pull requests among issues, so this covers both.) Every item has an issue from 102 on.
+  - If two items still end up with the same number, the one whose issue was opened later takes the next free number and says so in its issue; that is the only renumbering. Before 102 this happened three times (072, 086, 098).
 - **type:**
   - `feat`: new behaviour or a new screen;
   - `fix`: behaviour that is wrong against the spec, or a bug;
@@ -33,8 +42,9 @@ The examples use 099 as a made-up number.
 | Commits | start with `[NNN]` | `[099] Exit before the close when the stop sits inside the gap` |
 | Screenshots | `docs/screenshots/NNN/` | `docs/screenshots/099/` |
 | Analysis report | `docs/analysis/NNN-slug.md`, date in its first line | `docs/analysis/099-entry-filters.md` |
-| Changelog heading | `## YYYY-MM-DD — [NNN] Title` | `## 2026-11-05 — [099] KO overnight exit` |
-| Build plan (SPEC) | item number = work item number | `99. **KO overnight exit.**` |
+| Issue | `[NNN] Title`, opened first | `[099] KO overnight exit` |
+| Change notes (from 102) | `docs/changes/NNN-type-slug.md`, design notes in `design/changes/` | `docs/changes/099-fix-ko-overnight-exit.md` |
+| Section in the notes | `## YYYY-MM-DD · spec PR` or `· build PR #n` | `## 2026-11-05 · build PR #110` |
 | Start Devin | one line | "Build docs/kickoffs/099-fix-ko-overnight-exit.md." |
 
 - **Item numbers and GitHub PR numbers never mix.** An item is always written with three digits (`099`, `[099]`, "item 099"), a GitHub PR always with `#` (`#106`).
@@ -48,10 +58,10 @@ The examples use 099 as a made-up number.
 
 `docs/kickoffs/` holds only kickoffs nobody has started building. The PR that builds a kickoff moves it to `docs/kickoffs/archive/` in the same PR as the code, with `git mv`, same file name, content unchanged (decided 7 Nov):
 
-- one build PR: that PR moves it, and sets the row to the build PR and `building`; Devin sets `merged` after the merge, or the next PR does;
+- one build PR: that PR moves it and sets the item's status to `merged` in its file (from 102; the file reaches `main` only with the merge, so `main` is right). Up to 101: it sets the row to the build PR and `building`, and Devin sets `merged` after the merge, or the next PR does;
 - several build PRs (a phased item such as 046, or steps in separate PRs): the first one moves it; the later ones read it from `archive/` and leave it there;
 - a `spec` or `analysis` item without a build: the PR that completes it;
-- a `dropped` item's kickoff moves too, with the reason in its row.
+- a `dropped` item's kickoff moves too, with the reason in its file (its row, up to 101).
 
 An unchanged move into `archive/` needs no `spec change` label (the gate checks that the file is identical and keeps its name); a move with any edit, or out of the archive, does. If the kickoff must change, change it in a spec PR first. Old paths in `docs/CHANGES.md` and in code comments are not rewritten: a kickoff that isn't in `docs/kickoffs/` is in `docs/kickoffs/archive/`. `archive/DEVIN_KICKOFF.md` holds items 001–028.
 
@@ -162,6 +172,8 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 099 | fix | Dashboard page matches Main.dc.html | — | — | #295 | building |
 | 100 | feat | UX pass on the remaining screens (issue #296) | `100-feat-ux-pass-remaining-screens.md` | #297 | — | planned |
 | 101 | feat | A switch for last-cycle entries; saved values without a control (issue #298) | `101-feat-last-cycle-switch-and-saved-values.md` | #299 | — | planned |
+
+The table ends at 101. From 102: `docs/changes/`, or `python3 scripts/work_items.py` for the whole list.
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 
