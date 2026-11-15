@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control (spec)
+
+Follows item 098. Marc decided on 14 Nov: the last-cycle rule gets a button on the Settings screen, and saved values keep winning over the config file but must be visible. Kickoff `101-feat-last-cycle-switch-and-saved-values.md`, issue #298. No change to what the rule does.
+
+- **Config layers → Saved values without a control:** code lists every setting whose saved value differs from the config file and that has no control. Settings → History shows the list with **Use the config value**; Needs you shows one item while it isn't empty; a test requires a control for every setting the API accepts.
+- **GUI → Settings screen → Schedule:** the switch **New entries in the last cycle**. Turning it on asks "Confirm it is you".
+- **GUI → Needs you:** one more row at order 7.
+- **Rules pre-filter:** the last-cycle paragraph names the switch. **Build plan** item 58.
+- Rejected: letting settings without a control follow the config file on every save. An unrelated save could then change a trading rule, and a version would stop being a full record.
+
 ## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out (spec)
 
 Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews. This pass read the other screens at 1440 px and 390 px. One work item, kickoff `100-feat-ux-pass-remaining-screens.md`, issue #296, three build PRs. No trading behaviour changes. The design side is in `design/CHANGES.md` [100].

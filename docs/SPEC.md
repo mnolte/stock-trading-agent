@@ -283,7 +283,7 @@ Code decides what is allowed; the model only chooses among allowed actions and e
 - Outside the FOMC window (see Economic releases).
 - Regime is not Down + High.
 
-New entries are allowed in every cycle, the last one (15:46) included (decided 11 November, item 071). Until then the 15:46 cycle made exits only; no reason was ever written down. An entry sent at 15:46 has 14 minutes to fill, its limit order is cancelled after 10 minutes if unfilled (Alpaca integration), and the spread check still applies. `schedule.last_cycle_no_entries` (now `false`) turns the old rule back on. **Entry cutoff:** no entry order is sent after `execution.entry_cutoff` (15:50 New York), so the 10-minute fill window always ends by the close; this matters for an approval in supervised mode that arrives late in the last cycle (the approval then expires with "too close to the close").
+New entries are allowed in every cycle, the last one (15:46) included (decided 11 November, item 071). Until then the 15:46 cycle made exits only; no reason was ever written down. An entry sent at 15:46 has 14 minutes to fill, its limit order is cancelled after 10 minutes if unfilled (Alpaca integration), and the spread check still applies. `schedule.last_cycle_no_entries` (now `false`; a switch in Settings → Schedule, item 101) turns the old rule back on. **Entry cutoff:** no entry order is sent after `execution.entry_cutoff` (15:50 New York), so the 10-minute fill window always ends by the close; this matters for an approval in supervised mode that arrives late in the last cycle (the approval then expires with "too close to the close").
 
 All thresholds live in config (see Config layers).
 
@@ -294,6 +294,14 @@ All thresholds live in config (see Config layers).
 3. The active settings version.
 
 So a key added to the example in a release reaches every install, even one whose `config.yaml` or saved settings predate it. (Until now the first file found was the only one read, so a local `config.yaml` hid every later default: `supports_temperature` for gpt-6.1-sol and the email channel for `missing_stop` were both missing on 4 November.)
+
+**Saved values without a control** (decided 14 November, item 101). A settings version stores every setting, also the ones the Settings screen can't change, and layer 3 wins. So a default changed in the example does not reach an install whose saved version still holds the old value: `schedule.last_cycle_no_entries` stayed `true` from 18 October to 14 November this way (item 098). The rule:
+
+- Saved values keep winning. A save never changes a setting it didn't name, and a version stays the full record of what the agent ran with.
+- At every start and after every save, code compares the active version with layers 1 and 2 and lists every setting whose saved value differs and that has no control on the Settings screen. Open-ended maps and secrets are left out.
+- Settings → History shows that list on top: the setting, the saved value (in use), the config value, the version it dates from, and **Use the config value**. That saves a new version with a reason, like any change. A looser value asks "Confirm it is you"; so does a setting with no known direction.
+- While the list isn't empty, the Settings section list shows its count on History, the start writes one WARNING line with the settings' names, and Needs you shows one item.
+- A setting that the API accepts must have a control on the Settings screen. A test compares the two lists.
 
 Open-ended maps: `models` and the symbol-keyed `universe.sectors` and `universe.names` keep entries the example doesn't list — a model id or ticker is user data, not a config key. Every other dict stays strict.
 
@@ -434,6 +442,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 | 5 | Errors not reviewed (ERROR fingerprints without a review, as counted on Readiness) | reviewed on Logs |
 | 6 | Verdicts to confirm | confirmed or changed |
 | 7 | Settings or prompts saved but waiting for a restart or the next run (for example a review prompt) | applied |
+| 7 | Saved values that differ from the config file and have no control (item 101): "2 saved values differ from the config file", with Open Settings | each one is taken over, or the config matches again |
 
 - Under the list, one **health line**, always shown:
   - Alpaca: in sync, with the last reconcile time;
@@ -524,6 +533,7 @@ The layout must also work at phone width, so the VPS version can be checked from
 - **Chart axes** drop labels as the chart narrows (first, last and every third stay); labels never overlap.
 
 **Settings screen.** One section at a time (decided 9 Nov, item 056): a section list on the left (a Section select on a phone) picks it, and each section has its own address (`/settings/risk`, `/settings/notifications` …; plain `/settings` opens the last section used, else API keys and data). The section list is grouped (item 069): **Trading** (Trading, Risk limits, Entry rules, Entry selection, Decision gates, Earnings), **Model** (Model and reviews, with Ask the agent), **Alerts and display** (Notifications, Display), **Connections** (API keys and data, Access, Server) and **Records** (Readiness, Schedule, History, Paper account); previous and next follow that order. On a phone the Section select has the same groups, and Find a setting stays above it. "Find a setting" and "Changed from default" show matching rows from every section, grouped by section. Unsaved changes are kept when switching sections, and the save bar lists all of them. Sections: API keys and data, Trading (execution mode, universe, slippage, and Prices and timeouts: quote ages, fill settle time, the Alpaca read timeout), Risk limits (per trade, portfolio, brakes), Entry rules and checks, Entry selection, Decision gates (the v3–v5 thresholds, each strategy-overridable), Economic releases under Entry rules (the FOMC window on or off with its minutes, the FOMC dates in config with the last one, the FRED releases tracked; item 067), Earnings, Model and reviews (three groups: Decisions, Reviews, Ask the agent; the list links to the last), Display (near-stop distance, slow-call threshold), Notifications (the event table folded behind its counts), Readiness, Schedule (read-only), History, Access, Server and Paper account (decided 7 Nov). Each setting is one row: name, one-line explanation ending in its default ("· default 2.5%"), and the control with its unit. Values fixed by the spec (cash only, one share fits, cycle times) are shown as text with a lock ("Always on · fixed by the spec"), not as a disabled control. Item 069 adds:
+- **Schedule** (item 101). The cycle times are read-only. One switch sits under the table: **New entries in the last cycle** (on means `schedule.last_cycle_no_entries` is `false`). Turning it on is the looser side and asks "Confirm it is you"; the table's last row follows the unsaved value ("yes, sent by 15:50" or "no").
 - **Unsaved changes on a phone** (item 100). Below 760 px the bar is one line, "2 unsaved changes · Review and save". It opens to the list of changes with their tighter or looser tags, the reason field, Discard and "Save as v<n>"; the same rules apply (a reason is required, a looser change asks once more).
 - **Money next to percentages.** Every "% of equity" setting shows its dollar amount at today's equity beside the control ("= $40.74"), from the same equity and function the risk gates use, updated as the value is typed.
 - **What these limits mean today.** Risk limits opens with three plain sentences computed from the values on screen, unsaved changes included: what a stopped-out trade loses (and after the losing-streak halving); whether the open-risk budget or the position count limits first (positions × risk per trade against total open risk); where new entries stop for the day and where the kill switch turns on, in dollars.
@@ -712,6 +722,7 @@ Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. P
 55. **Supply chain and containers** (item 084). Signed images deployed by digest, pinned base images, container limits, backup delete protection, the full weekly audit.
 56. **CSV formulas and outbound addresses** (item 085). The one CSV writer; address checks at use; the SMTP host check.
 57. **UX pass on the remaining screens** (item 100). Strategies (small samples first, who was better), Backtest (runs first, the estimate in words, an answer sentence), Readiness (statuses by what is needed, What moves this forward), Logs (Does it need you?, phone rows), Positions (links, order history), the phone save bar in Settings, error pages on a phone, empty states, and reasons on unavailable controls.
+58. **Last-cycle switch and saved values without a control** (item 101). The switch in Settings → Schedule; the list in Settings → History with Use the config value; the Needs you item; the test that every changeable setting has a control.
 ## Reviews
 
 The model writes a weekly review, a daily briefing and a draft verdict on each decision, so the 4-week paper run can be read without digging through the log. Code computes every fact; the model only writes sentences about them. Reviews never change settings, prompts or trading. Built as PR 9, before the 4-week paper run.

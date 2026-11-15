@@ -2,6 +2,14 @@
 
 Newest first. Each entry names the screens it touches.
 
+## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control
+
+Marc, 14 Nov: "I want a button I can flip." Build: kickoff `101-feat-last-cycle-switch-and-saved-values.md`.
+
+- **`Settings.dc.html` → Schedule:** a switch under the cycle table, **New entries in the last cycle**, with what on and off do and that turning it on asks to confirm. The intro says it is the one thing that can be changed here. New `Settings-schedule.png`.
+- **`Settings.dc.html` → Settings history:** an amber block on top, "2 saved values differ from the config and have no control": the setting with its key, the saved value (in use), the config value, the version it dates from, and **Use the config value** per row; the text for an empty list is in the block's last line. New `Settings-stored.png`.
+- `Settings.png`, `-1024` and `-390` are unchanged (they show Risk limits).
+
 ## 2026-11-14 — [100] UX pass on the screens the 11 Nov pass left out
 
 Marc asked on 14 Nov for another pass on the design. Items 073–079 covered the dashboard, the inspector, Insights, Performance, Universe and Reviews; this pass covers the rest. Every screen was read at 1440 px and 390 px. Build: kickoff `100-feat-ux-pass-remaining-screens.md`.

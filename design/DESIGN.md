@@ -14,7 +14,7 @@ How Stock Trading Agent looks and what it says. It uses the same visual language
 | --- | --- |
 | `tokens.css` | Every colour, font, size, spacing and radius. Copy it into `frontend/src/styles/`; use only these variables. |
 | `screens/` | One HTML file per screen (25): the exact source for styles, layout and wording. |
-| `screenshots/` | One PNG per screen at 1440 px (drawers at 560 px, `AskStates` at 2000 px, `States` is a reference sheet), a `-390.png` at phone width for every app screen and for `Decision` and `DecisionV5`, and a `-1024.png` for Main, Positions and Settings. `Settings-390-save.png` shows the phone's unsaved-changes bar opened. |
+| `screenshots/` | One PNG per screen at 1440 px (drawers at 560 px, `AskStates` at 2000 px, `States` is a reference sheet), a `-390.png` at phone width for every app screen and for `Decision` and `DecisionV5`, and a `-1024.png` for Main, Positions and Settings. `Settings-390-save.png` shows the phone's unsaved-changes bar opened; `Settings-schedule.png` and `Settings-stored.png` show the Schedule section and the saved-values block in History (101). |
 | `CHANGES.md` | Design change log, newest first. |
 
 ## How to read the screen files
