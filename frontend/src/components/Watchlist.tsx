@@ -28,7 +28,7 @@ import {
 const GRID = '90px 110px 90px 98px minmax(200px, 1.3fr) minmax(150px, 1fr) 90px';
 // Screened mode adds a leading rank column (docs/SPEC.md: the rank shows
 // on the Universe screen and the dashboard).
-const GRID_RANKED = `48px ${GRID}`;
+const GRID_RANKED = `44px ${GRID}`;
 
 function Tab({
   label,
@@ -51,7 +51,7 @@ function Tab({
         padding: '0 var(--sa-space-3)',
         border: 0,
         borderRadius: 'var(--sa-radius-sm)',
-        background: active ? 'var(--sa-subtle)' : 'transparent',
+        background: active ? 'var(--sa-border-strong)' : 'transparent',
         color: active ? 'var(--sa-text)' : 'var(--sa-text-muted)',
         fontSize: 'var(--sa-text-md)',
         fontWeight: 600,
@@ -117,11 +117,16 @@ export function Watchlist({
   return (
     <Card
       label="Watchlist"
+      ariaLabel="Watchlist"
       busy={res.loading}
       refreshing={res.refreshing}
+      style={{ gap: '14px' }}
       right={
         <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {rows.length} symbols · <Link to="/universe">Universe</Link> · click a row
+          {screened
+            ? `screened pool · ${rows.length} eligible · `
+            : `${rows.length} symbols · `}
+          <Link to="/universe">Universe</Link> · click a row
           to chart it
         </span>
       }
@@ -153,8 +158,8 @@ export function Watchlist({
         }
       >
         {() => (
-          <>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-3)', alignItems: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
         <div
           role="group"
           aria-label="Filter watchlist"
@@ -197,12 +202,6 @@ export function Watchlist({
           }}
         />
         <span style={{ flex: 1 }} />
-        {screened && (
-          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
-            Sorted by rank · {Math.min(watchlistRows, visible.length)} of {visible.length} eligible shown · held symbols always listed
-            <span className="sa-phone-inline"> · turn the phone sideways for sector, last action and earnings</span>
-          </span>
-        )}
       </div>
       <div style={{ overflowX: 'auto', minWidth: 0 }}>
         {/* Item 073: on a phone the whole header hides and each row is two
@@ -223,24 +222,27 @@ export function Watchlist({
           >
             {screened && (
               <span
-                title="Liquidity-screen rank: 20-session return minus SPY's."
+                role="columnheader"
+                title="Place in today's liquidity screen: return over 20 sessions minus SPY's. Model calls go in rank order."
                 style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
               >
                 Rank
               </span>
             )}
-            <span>Symbol</span>
-            <span style={{ textAlign: 'right' }}>Price</span>
-            <span style={{ textAlign: 'right' }}>Day</span>
+            <span role="columnheader">Symbol</span>
+            <span role="columnheader" style={{ textAlign: 'right' }}>Price</span>
+            <span role="columnheader" style={{ textAlign: 'right' }}>Day</span>
             <span
+              role="columnheader"
               title="The symbol's sector ETF and that sector's rank of 11 by strength vs SPY at the last cycle (item 068). Index funds have none."
-              style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
+              style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help', paddingLeft: '14px' }}
             >
               Sector
             </span>
-            <span>Rules</span>
-            <span>Last action</span>
+            <span role="columnheader">Rules</span>
+            <span role="columnheader">Last action</span>
             <span
+              role="columnheader"
               title={`Next earnings date. No new entries within ${earningsBlackoutDays} trading days.`}
               style={{ textDecoration: 'underline dotted', textUnderlineOffset: '3px', cursor: 'help' }}
             >
@@ -330,7 +332,7 @@ export function Watchlist({
                       }}
                     >
                       {' '}· {row.last_action.replace(/_/g, ' ').toUpperCase()}
-                      {row.last_action_time ? ` ${formatAmsTime(row.last_action_time)}` : ''}
+                      {row.last_action_time ? ` · ${formatAmsTime(row.last_action_time)}` : ''}
                     </span>
                   )}
                 </span>
@@ -360,45 +362,66 @@ export function Watchlist({
           })}
         </div>
       </div>
-      {truncated && (
-        <button
-          type="button"
-          onClick={() => setShowAll(true)}
+      {(screened || truncated || (screened && showAll && visible.length > watchlistRows)) && (
+        <div
           style={{
-            height: '34px',
-            padding: '0 var(--sa-space-3)',
-            borderRadius: 'var(--sa-radius-sm)',
-            border: '1px solid var(--sa-border)',
-            background: 'var(--sa-raised)',
-            color: 'var(--sa-text-2)',
-            fontSize: 'var(--sa-text-md)',
-            fontWeight: 600,
-            cursor: 'pointer',
+            display: 'flex',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '8px',
+            paddingTop: '10px',
           }}
         >
-          Show all {visible.length}
-        </button>
+          {screened && (
+            <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+              Sorted by rank · {Math.min(watchlistRows, visible.length)} of {visible.length} eligible shown · held symbols always listed
+              <span className="sa-phone-inline"> · turn the phone sideways for sector, last action and earnings</span>
+            </span>
+          )}
+          <span style={{ display: 'flex', gap: '8px' }}>
+            {truncated && (
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                style={{
+                  height: '36px',
+                  padding: '0 14px',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  border: '1px solid var(--sa-border-strong)',
+                  background: 'var(--sa-raised)',
+                  color: 'var(--sa-text)',
+                  fontSize: 'var(--sa-text-md)',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Show all {visible.length}
+              </button>
+            )}
+            {screened && showAll && visible.length > watchlistRows && (
+              <button
+                type="button"
+                onClick={() => setShowAll(false)}
+                style={{
+                  height: '36px',
+                  padding: '0 14px',
+                  borderRadius: 'var(--sa-radius-sm)',
+                  border: '1px solid var(--sa-border-strong)',
+                  background: 'var(--sa-raised)',
+                  color: 'var(--sa-text)',
+                  fontSize: 'var(--sa-text-md)',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                }}
+              >
+                Show fewer
+              </button>
+            )}
+          </span>
+        </div>
       )}
-      {screened && showAll && visible.length > watchlistRows && (
-        <button
-          type="button"
-          onClick={() => setShowAll(false)}
-          style={{
-            height: '34px',
-            padding: '0 var(--sa-space-3)',
-            borderRadius: 'var(--sa-radius-sm)',
-            border: '1px solid var(--sa-border)',
-            background: 'var(--sa-raised)',
-            color: 'var(--sa-text-2)',
-            fontSize: 'var(--sa-text-md)',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
-          Show fewer
-        </button>
-      )}
-          </>
+          </div>
         )}
       </CardBody>
     </Card>

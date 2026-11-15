@@ -91,11 +91,13 @@ export function checkLabel(c: CycleCounter): string | null {
   return `Position check ${when} · ${nyTime(c.next_check)} NY`;
 }
 
-/** Hover text for one session segment. */
-export function segmentTitle(s: CycleCounterSegment): string {
-  const state =
-    s.status === 'done' ? 'done' : s.status === 'next' ? 'next up' : 'later';
-  return `${displayTime(s.time)} Amsterdam · ${nyTime(s.time)} New York — ${state}`;
+/** Hover text for one session segment: "Cycle 4 · 13:46 New York · next"
+ * (design/screens/Main.dc.html). */
+export function segmentTitle(
+  s: CycleCounterSegment,
+  index: number,
+): string {
+  return `Cycle ${index} · ${nyTime(s.time)} New York · ${s.status}`;
 }
 
 /** The next-release line (item 067): "CPI tomorrow 14:30 · 08:30 NY",

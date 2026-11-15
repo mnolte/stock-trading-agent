@@ -12,10 +12,16 @@ import {
   segmentTitle,
 } from './cycleCounterFormat';
 
-function Segment({ segment }: { segment: CycleCounterSegment }) {
+function Segment({
+  segment,
+  index,
+}: {
+  segment: CycleCounterSegment;
+  index: number;
+}) {
   return (
     <span
-      title={segmentTitle(segment)}
+      title={segmentTitle(segment, index)}
       style={{
         flex: '1 1 0',
         height: '8px',
@@ -78,8 +84,6 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
 
   return (
     <div
-      role="timer"
-      aria-label="Cycle counter"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -114,7 +118,7 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
           <span
             style={{
               fontFamily: 'var(--sa-font-mono)',
-              fontSize: 'var(--sa-text-base)',
+              fontSize: 15,
               color: 'var(--sa-text)',
             }}
           >
@@ -124,8 +128,8 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
       </div>
       {counter.segments.length > 0 && (
         <div aria-hidden="true" style={{ display: 'flex', gap: '4px' }}>
-          {counter.segments.map((s) => (
-            <Segment key={s.time} segment={s} />
+          {counter.segments.map((s, i) => (
+            <Segment key={s.time} segment={s} index={i + 1} />
           ))}
         </div>
       )}
@@ -146,14 +150,14 @@ export function CycleCounter({ counter }: { counter: CycleCounterData }) {
       )}
       {release && (
         <div
-          title="Economic release within 2 sessions (item 067). No rule for 08:30 releases: entries and positions held into it are tagged release_next_morning."
+          title="Economic release within 2 sessions (item 067). Entries and positions held into an 08:30 release are tagged release_next_morning; no rule blocks them."
           style={{
             display: 'flex',
             flexWrap: 'wrap',
             alignItems: 'center',
             gap: '8px',
             paddingTop: '8px',
-            borderTop: '1px solid var(--sa-border)',
+            borderTop: '1px solid var(--sa-subtle)',
             fontSize: 'var(--sa-text-sm)',
             color: 'var(--sa-text-2)',
           }}
