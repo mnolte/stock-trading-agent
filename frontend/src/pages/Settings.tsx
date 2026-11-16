@@ -2969,6 +2969,21 @@ export default function Settings() {
                 />
               ),
             })}
+            {row('gui.log_watch_min_count', {
+              id: 'logwatch',
+              label: 'Recurring warning counts as “watch” from',
+              help: 'Logs → Recurring problems marks a warning “watch” when it was counted this often in the chosen period. · default 5 times',
+              children: (
+                <NumBox
+                  id="logwatch"
+                  value={s.gui?.log_watch_min_count ?? 5}
+                  unit="times"
+                  accent={'gui.log_watch_min_count' in changed}
+                  invalid={!!fieldErrors['gui.log_watch_min_count']}
+                  onChange={(v) => patch('gui', 'log_watch_min_count', v)}
+                />
+              ),
+            })}
             {row('inspector.slow_call_seconds', {
               id: 'slowcall',
               label: 'Slow call',

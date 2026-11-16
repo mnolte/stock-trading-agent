@@ -77,6 +77,7 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
     },
     "gui": {
         "near_stop_atr": ("number", 0, 20),
+        "log_watch_min_count": ("int", 1, 1000),
     },
     "inspector": {
         "slow_call_seconds": ("int", 0, 3600),
@@ -243,6 +244,7 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "v5.price_vs_signal_adverse_atr"): "v5 adverse price move",
     ("decision", "v6.sideways_max_target_atr"): "v6 sideways high-volatility target",
     ("gui", "near_stop_atr"): "Near-stop warning",
+    ("gui", "log_watch_min_count"): "Recurring warning watch count",
     ("inspector", "slow_call_seconds"): "Slow call",
     ("api", "broker_timeout_seconds"): "Broker answer timeout",
     ("execution", "quote_max_age_seconds"): "Quote max age",

@@ -81,6 +81,7 @@ schedule:
 
 gui:
   near_stop_atr: 1.5          # positions closer to their stop than this turn amber (PR 35)
+  log_watch_min_count: 5      # item 100: a recurring warning counted this often in the Logs period shows as "watch"
 
 concurrency:                     # item 078, docs/SPEC.md — Concurrent requests
   max_requests: 20               # most requests one batch keeps in flight (1-50); also sizes the HTTP pools; restart to change

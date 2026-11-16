@@ -10,30 +10,25 @@ import {
 import { Card } from '../components/Card';
 import { CardBoundary } from '../components/CardBoundary';
 import { Chip } from '../components/Chip';
-import type { ChipVariant } from '../components/Chip';
 import { DialogButton, Modal } from '../components/Modal';
 import { StatCard } from '../components/StatCard';
 import { SkeletonList, SkeletonTiles } from '../components/skeletons';
 import { displayDayTime } from '../format';
+import {
+  BUILDING_UP,
+  criterionSub,
+  statusText,
+  statusVariant,
+} from './readinessFormat';
 import type {
   ReadinessCriterion,
   ReadinessResponse,
-  ReadinessStatus,
 } from '../types/api';
 
 const mono: React.CSSProperties = { fontFamily: 'var(--sa-font-mono)' };
 const muted = 'var(--sa-text-muted)';
 
-const STATUS_VARIANT: Record<ReadinessStatus, ChipVariant> = {
-  pass: 'positive',
-  not_yet: 'negative',
-  waiting: 'warning',
-};
-const STATUS_TEXT: Record<ReadinessStatus, string> = {
-  pass: 'pass',
-  not_yet: 'not yet',
-  waiting: 'waiting for data',
-};
+/** Counts that grow by themselves read "building up" (item 100). */
 
 const GROUP_SUB: Record<string, string> = {
   Evidence: 'From this run, after slippage. Ratios need enough closed trades before they can pass.',
@@ -50,6 +45,144 @@ function shortDay(iso: string | null | undefined): string {
     month: 'short',
     timeZone: 'Europe/Amsterdam',
   });
+}
+
+/** "What moves this forward" — item 100, written by code from the
+ * snapshot rows (docs/SPEC.md → Readiness). */
+function ForwardCard({ data }: { data: ReadinessResponse | null }) {
+  const forward = data?.forward;
+  if (!forward) return null;
+  const hasAct = forward.act.length > 0;
+  const hasTime = forward.time.length > 0;
+  const hasManual = forward.manual_open > 0;
+  if (!hasAct && !hasTime && !hasManual) return null;
+
+  const sectionLabel: React.CSSProperties = {
+    margin: 0,
+    fontSize: 'var(--sa-text-sm)',
+    fontWeight: 600,
+    color: 'var(--sa-text-2)',
+    textTransform: 'uppercase',
+    letterSpacing: 'var(--sa-label-tracking)',
+  };
+
+  return (
+    <Card
+      label="What moves this forward"
+      right={
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
+          written by code from the criteria below
+        </span>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
+        <div>
+          <h3 style={sectionLabel}>
+            You can act on these now · {forward.act.length}
+          </h3>
+          {hasAct ? (
+            forward.act.map((item) => (
+              <div
+                key={item.key}
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '8px 16px',
+                  alignItems: 'center',
+                  padding: '12px 0',
+                  borderBottom: '1px solid var(--sa-border)',
+                }}
+              >
+                <div style={{ flex: '1.4 1 240px', minWidth: 0 }}>
+                  <div style={{ fontSize: 'var(--sa-text-md)' }}>{item.name}</div>
+                  <div style={{ fontSize: 'var(--sa-text-sm)', color: muted, marginTop: 2 }}>
+                    {item.value_text}
+                  </div>
+                </div>
+                <div style={{ flex: '2 1 300px', minWidth: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+                  {item.sentence}
+                </div>
+                <Link
+                  to={item.href}
+                  style={{
+                    flex: '0 0 auto',
+                    height: 32,
+                    boxSizing: 'border-box',
+                    padding: '0 12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    borderRadius: 'var(--sa-radius-sm)',
+                    border: '1px solid var(--sa-border-strong)',
+                    background: 'var(--sa-raised)',
+                    color: 'var(--sa-text)',
+                    fontSize: 'var(--sa-text-md)',
+                    fontWeight: 600,
+                    textDecoration: 'none',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {item.button}
+                </Link>
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '12px 0', fontSize: 'var(--sa-text-md)', color: muted }}>
+              Nothing to act on now.
+            </div>
+          )}
+        </div>
+
+        {hasTime && (
+          <div>
+            <h3 style={sectionLabel}>
+              Only time fixes these · {forward.time_count}
+            </h3>
+            <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {forward.time
+                .filter((t) => t.kind === 'count')
+                .map((t) => (
+                  <div key={t.key} style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+                    <span style={{ fontWeight: 600 }}>{t.name}</span>
+                    <span style={{ color: muted }}> {t.text}</span>
+                  </div>
+                ))}
+              {forward.time.some((t) => t.kind === 'needs') && (
+                <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+                  <span style={{ fontWeight: 600 }}>Needs data</span>
+                  <span style={{ color: muted }}>
+                    {' '}
+                    {forward.time
+                      .filter((t) => t.kind === 'needs')
+                      .map((t) => t.text)
+                      .join('; ')}
+                    .
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {hasManual && (
+          <div>
+            <h3 style={sectionLabel}>
+              Yours to do whenever you choose · {forward.manual_open}
+            </h3>
+            <div style={{ padding: '10px 0', display: 'flex', flexWrap: 'wrap', gap: '8px 16px', alignItems: 'center', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>
+              <span>
+                The {forward.manual_open} manual{' '}
+                {forward.manual_open === 1 ? 'item' : 'items'} at the end
+                of this page.
+              </span>
+              <a href="#manual-items" style={{ color: 'var(--sa-accent)' }}>
+                Go to Manual items
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 function CriterionRow({ criterion }: { criterion: ReadinessCriterion }) {
@@ -78,9 +211,9 @@ function CriterionRow({ criterion }: { criterion: ReadinessCriterion }) {
         >
           {criterion.label}
         </div>
-        {criterion.sub && (
+        {criterionSub(criterion) && (
           <div style={{ fontSize: 'var(--sa-text-sm)', color: muted, marginTop: '4px' }}>
-            {criterion.sub}
+            {criterionSub(criterion)}
           </div>
         )}
       </div>
@@ -125,8 +258,8 @@ function CriterionRow({ criterion }: { criterion: ReadinessCriterion }) {
           justifyContent: 'flex-end',
         }}
       >
-        <Chip variant={STATUS_VARIANT[criterion.status]}>
-          {STATUS_TEXT[criterion.status]}
+        <Chip variant={statusVariant(criterion)}>
+          {statusText(criterion)}
         </Chip>
       </div>
     </div>
@@ -191,6 +324,10 @@ export default function Readiness() {
     criteria.length > 0 &&
     data.summary.pass === data.summary.total &&
     data.summary.manual_done === data.summary.manual_total;
+  const buildingUp = criteria.filter(
+    (c) => c.status === 'not_yet' && BUILDING_UP.has(c.key),
+  ).length;
+  const belowTarget = (data?.summary.not_yet ?? 0) - buildingUp;
 
   if (!data && !error) {
     return (
@@ -224,13 +361,13 @@ export default function Readiness() {
           alignItems: 'center',
           gap: '12px 20px',
           padding: '16px 20px',
-          border: `1px solid ${ready ? 'var(--sa-positive-border)' : 'var(--sa-negative-border)'}`,
-          background: ready ? 'var(--sa-positive-bg)' : 'var(--sa-negative-bg)',
+          border: `1px solid ${ready ? 'var(--sa-positive-border)' : 'var(--sa-border)'}`,
+          background: ready ? 'var(--sa-positive-bg)' : 'var(--sa-panel)',
           borderRadius: 'var(--sa-radius-lg)',
         }}
       >
         <CardBoundary name="Readiness verdict">
-        <span style={{ color: ready ? 'var(--sa-positive)' : 'var(--sa-negative-text)' }}>
+        <span style={{ color: ready ? 'var(--sa-positive)' : 'var(--sa-text-2)' }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />
             <polyline points="9 12 11 14 15 10" />
@@ -241,15 +378,20 @@ export default function Readiness() {
             style={{
               fontSize: 'var(--sa-text-lg)',
               fontWeight: 600,
-              color: ready ? 'var(--sa-positive)' : 'var(--sa-negative-text)',
+              color: ready ? 'var(--sa-positive)' : 'var(--sa-text)',
             }}
           >
             {ready
               ? 'Every criterion passes and every manual item is done'
-              : 'Not ready for live trading'}
+              : `Not ready for live trading · ${data?.summary.pass ?? 0} of ${data?.summary.total ?? 0} criteria pass`}
           </span>
           <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
-            Live trading isn’t built. This page shows when the paper evidence is
+            {!ready &&
+            data?.summary.sessions != null &&
+            data.summary.sessions < data.summary.min_sessions
+              ? `That is expected ${data.summary.sessions} sessions into a run. `
+              : ''}
+            Live trading isn’t built: this page shows when the paper evidence is
             strong enough to start the live spec. Every criterion must pass and
             every manual item must be done; nothing unlocks automatically.
           </span>
@@ -266,8 +408,9 @@ export default function Readiness() {
       <section aria-label="Readiness summary" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
         <CardBoundary name="Readiness summary">
         <StatCard label="Pass" value={String(data?.summary.pass ?? 0)} valueColor="var(--sa-positive)" sub={`of ${data?.summary.total ?? 15} criteria`} />
-        <StatCard label="Not yet" value={String(data?.summary.not_yet ?? 0)} valueColor="var(--sa-negative-text)" sub="below target" />
-        <StatCard label="Waiting for data" value={String(data?.summary.waiting ?? 0)} valueColor="var(--sa-warning-text)" sub="samples too small" />
+        <StatCard label="Below target" value={String(belowTarget)} valueColor="var(--sa-negative-text)" sub="need a change" />
+        <StatCard label="Building up" value={String(buildingUp)} valueColor="var(--sa-info)" sub="need more sessions" />
+        <StatCard label="Needs data" value={String(data?.summary.waiting ?? 0)} sub="samples too small" />
         <StatCard label="Manual items" value={`${data?.summary.manual_done ?? 0} of ${data?.summary.manual_total ?? 5}`} sub="done" />
         <StatCard
           label="Earliest possible"
@@ -276,6 +419,8 @@ export default function Readiness() {
         />
         </CardBoundary>
       </section>
+
+      <ForwardCard data={data} />
 
       {groups.map((group) => (
         <Card
@@ -351,6 +496,7 @@ export default function Readiness() {
         </Card>
       )}
 
+      <div id="manual-items" style={{ scrollMarginTop: 24 }}>
       <Card
         label="Manual items"
         right={
@@ -413,6 +559,7 @@ export default function Readiness() {
           Ticking an item asks for a short note; it is stored with the date and shown in History.
         </div>
       </Card>
+      </div>
 
       <Card
         label="History"

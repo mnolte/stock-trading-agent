@@ -30,6 +30,7 @@
   "decision.v5.price_vs_signal_adverse_atr": "gates",
   "decision.v6.sideways_max_target_atr": "gates",
   "gui.near_stop_atr": "display",
+  "gui.log_watch_min_count": "display",
   "inspector.slow_call_seconds": "display",
   "selection.mode": "entry-selection",
   "selection.confidence_weight": "entry-selection",

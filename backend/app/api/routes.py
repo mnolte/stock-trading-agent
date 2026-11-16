@@ -1256,7 +1256,10 @@ def readiness(request: Request) -> dict[str, object]:
 
     with get_session_maker()() as session:
         return payload(
-            session, config=get_config(), clock=_clock(request)
+            session,
+            config=get_config(),
+            clock=_clock(request),
+            calendar=_calendar(request),
         )
 
 
@@ -2949,6 +2952,9 @@ def _settings_form(config: object) -> dict[str, object]:
         },
         "gui": {
             "near_stop_atr": get("gui", "near_stop_atr", default=1.5),
+            "log_watch_min_count": get(
+                "gui", "log_watch_min_count", default=5
+            ),
         },
         "inspector": {
             "slow_call_seconds": get(
@@ -6634,10 +6640,28 @@ def api_logs(request: Request) -> dict[str, object]:
 
 @router.get("/logs/summary")
 def api_logs_summary(request: Request) -> dict[str, object]:
-    """Warnings/errors per day + recurring problems by fingerprint."""
+    """Warnings/errors per day + recurring problems by fingerprint.
+
+    Item 100: problems cover WARNING and up inside the requested
+    ``from``/``to`` period, carry an ``attention`` level (act / watch /
+    none) and are sorted by it; the response holds the three counts.
+    """
     conn = _log_db(request)
     if conn is None:
         return {"days": [], "problems": [], "index_available": False}
+    from_ts = str(request.query_params.get("from") or "")[:40]
+    to_ts = str(request.query_params.get("to") or "")[:40]
+    where = ""
+    args: list[str] = []
+    if from_ts:
+        where += " AND ts >= ?"
+        args.append(from_ts)
+    if to_ts:
+        where += " AND ts <= ?"
+        args.append(to_ts)
+    watch_min = int(
+        get_config().get("gui", "log_watch_min_count", default=5)
+    )
     with contextlib.closing(conn), conn:
         days = conn.execute(
             "SELECT substr(ts,1,10) day, level, count(*) FROM log_lines "
@@ -6648,10 +6672,12 @@ def api_logs_summary(request: Request) -> dict[str, object]:
             "SELECT level, count(*) FROM log_lines GROUP BY level"
         ).fetchall()
         problems = conn.execute(
-            "SELECT fingerprint, level, min(ts) first_ts, max(ts) last_ts, "
+            "SELECT fingerprint, level, min(ts) first_ts, max(ts) last_ts, "  # noqa: S608 - fixed fragments, values bound
             "count(*) n, substr(message,1,160) sample FROM log_lines "
-            "WHERE level IN ('ERROR','CRITICAL') "
-            "GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50"
+            "WHERE level IN ('WARNING','ERROR','CRITICAL') "
+            + where
+            + " GROUP BY fingerprint ORDER BY last_ts DESC LIMIT 50",
+            args,
         ).fetchall()
         # Review state for each fingerprint (step 8: log_reviews), plus
         # the set Readiness counts as unreviewed: a "fixed" problem that
@@ -6689,22 +6715,48 @@ def api_logs_summary(request: Request) -> dict[str, object]:
         except Exception:  # noqa: BLE001 - table may predate the migration
             logging.getLogger("app.api").debug("log_reviews not available yet")
             unreviewed_fps = None
-    return {
-        "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
-        "level_counts": dict(level_counts),
-        "problems": [
+    attention_rank = {"act": 0, "watch": 1, "none": 2}
+    out: list[dict[str, Any]] = []
+    for fp, lv, fts, ts, n, smp in problems:
+        unreviewed = (
+            fp not in reviews
+            if unreviewed_fps is None
+            else fp in unreviewed_fps
+        )
+        # One attention rule for Needs you, Readiness and this list
+        # (item 100): CRITICAL, or ERROR unreviewed_error_fingerprints
+        # counts → act; a WARNING counted watch_min times → watch.
+        if lv == "CRITICAL" or (lv == "ERROR" and unreviewed):
+            attention = "act"
+        elif lv == "WARNING" and int(n) >= watch_min:
+            attention = "watch"
+        else:
+            attention = "none"
+        out.append(
             {
                 "fingerprint": fp, "level": lv, "first_ts": fts,
                 "last_ts": ts, "count": n,
                 "sample": smp, "review": reviews.get(fp),
-                "unreviewed": (
-                    fp not in reviews
-                    if unreviewed_fps is None
-                    else fp in unreviewed_fps
-                ),
+                "unreviewed": unreviewed,
+                "attention": attention,
             }
-            for fp, lv, fts, ts, n, smp in problems
-        ],
+        )
+    # Stable sorts: last seen newest first, then attention, then count.
+    out.sort(key=lambda p: str(p["last_ts"]), reverse=True)
+    out.sort(
+        key=lambda p: (
+            attention_rank[str(p["attention"])],
+            -int(p["count"]),
+        )
+    )
+    return {
+        "days": [{"day": d, "level": lv, "count": c} for d, lv, c in days],
+        "level_counts": dict(level_counts),
+        "problems": out,
+        "attention_counts": {
+            level: sum(1 for p in out if p["attention"] == level)
+            for level in ("act", "watch", "none")
+        },
         "index_available": True,
     }
 

@@ -574,3 +574,39 @@ button:not([disabled]):hover {
     order: 3;
   }
 }
+
+/* ---- Logs (item 100, design/screens/Logs.dc.html): below 760 px a
+ * log line is two rows (time + level, then the message full width) and
+ * each recurring problem is a stacked row. ---- */
+@media (max-width: 760px) {
+  .log-row {
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    align-items: center !important;
+  }
+  .log-row > .log-msg {
+    grid-column: 1 / -1;
+  }
+  .rp-table {
+    min-width: 0 !important;
+    display: block;
+  }
+  .rp-table thead {
+    display: none;
+  }
+  .rp-table tbody {
+    display: block;
+  }
+  .rp-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    border-bottom: 1px solid var(--sa-border);
+    padding: 4px 0;
+  }
+  .rp-table td {
+    border-bottom: 0 !important;
+    padding: 6px 0 !important;
+  }
+  .rp-table td:first-child {
+    grid-column: 1 / -1;
+  }
+}
