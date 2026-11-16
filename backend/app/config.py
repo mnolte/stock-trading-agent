@@ -208,6 +208,7 @@ class AppConfig:
         self._active: dict[str, Any] = self._yaml
         # Saved-but-not-yet-promoted settings (YAML + pending version).
         self._pending: dict[str, Any] | None = None
+        self.saved_without_control: list[dict[str, Any]] = []
         self.active_version: int | None = None
         self.pending_version: int | None = None
         # Set by the API when saved settings move cycle times.

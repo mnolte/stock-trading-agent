@@ -161,7 +161,7 @@ So: a file in `docs/kickoffs/` is work not yet started; anything in `archive/` i
 | 098 | fix | Last-cycle entries setting | `archive/098-fix-last-cycle-entries-setting.md` | — | #294 | building |
 | 099 | fix | Dashboard page matches Main.dc.html | — | — | #295 | building |
 | 100 | feat | UX pass on the remaining screens (issue #296) | `archive/100-feat-ux-pass-remaining-screens.md` | #297 | #300 | building |
-| 101 | feat | A switch for last-cycle entries; saved values without a control (issue #298) | `101-feat-last-cycle-switch-and-saved-values.md` | #299 | — | planned |
+| 101 | feat | A switch for last-cycle entries; saved values without a control (issue #298) | `archive/101-feat-last-cycle-switch-and-saved-values.md` | #299 | #301 | building |
 
 Status is one of `planned` (spec PR open), `ready` (spec merged, not started), `building` (build PR open or more PRs to come; kickoff in `archive/`), `merged` (kickoff in `archive/`), or `dropped` (with the reason in the row; kickoff in `archive/`).
 

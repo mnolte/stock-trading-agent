@@ -972,7 +972,19 @@ export interface SettingsHistoryRow {
   reason: string;
 }
 
+export interface SavedWithoutControl {
+  key: string;
+  label: string;
+  saved: unknown;
+  config: unknown;
+  since_version: number;
+  since_at: string;
+  direction: string;
+}
+
 export interface SettingsResponse {
+  saved_without_control?: SavedWithoutControl[];
+  entry_cutoff?: string;
   settings: SettingsForm;
   active_version: number;
   pending_version: number | null;
