@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { changeDirection, diffDirections, diffMap, diffSettings } from './settingsDiff';
+import { changeDirection, changeVerb, diffDirections, diffMap, diffSettings } from './settingsDiff';
 import type { SettingsForm } from '../types/api';
 
 function base(): SettingsForm {
@@ -329,6 +329,26 @@ describe('changeDirection (item 069, map from the API since 082)', () => {
     expect(dirs['risk.risk_per_trade_pct']).toBe('looser');
     expect(dirs['decision.v5.trend_gate']).toBe('looser');
     expect(dirs['performance.slippage_pct_per_side']).toBeUndefined();
+  });
+
+  it('shows the inverted last-cycle switch and its loosening direction', () => {
+    const current = base();
+    current.schedule.last_cycle_no_entries = true;
+    const edited = base();
+    expect(diffSettings(current, edited)).toEqual([{
+      label: 'New entries in the last cycle', from: 'off', to: 'on',
+    }]);
+    expect(diffMap(current, edited)['schedule.last_cycle_no_entries']).toBe('off');
+    expect(changeVerb('schedule.last_cycle_no_entries', true, false, {
+      'schedule.last_cycle_no_entries': 'off',
+    })).toBe('Turns on');
+    expect(changeVerb('schedule.last_cycle_no_entries', false, true, {
+      'schedule.last_cycle_no_entries': 'off',
+    })).toBe('Turns off');
+    expect(diffDirections(current, edited, { 'schedule.last_cycle_no_entries': 'off' }))
+      .toEqual({ 'schedule.last_cycle_no_entries': 'looser' });
+    expect(diffDirections(edited, current, { 'schedule.last_cycle_no_entries': 'off' }))
+      .toEqual({ 'schedule.last_cycle_no_entries': 'tighter' });
   });
 
   it('diffMap reports decision.v6 leaves', () => {

@@ -28,6 +28,7 @@ export function SectionNav({
   onChangedOnly,
   sectionChanges,
   activeVersion,
+  savedCount = 0,
 }: {
   narrow: boolean;
   groups: NavGroup[];
@@ -39,6 +40,7 @@ export function SectionNav({
   onChangedOnly: (value: boolean) => void;
   sectionChanges: (id: string) => number;
   activeVersion: number | null;
+  savedCount?: number;
 }) {
   const paramOf = new Map(groups.flatMap((g) => g.items.map((s) => [s.id, s.param])));
   return (
@@ -89,7 +91,7 @@ export function SectionNav({
                   const count = sectionChanges(section.id);
                   return (
                     <option key={section.id} value={section.id}>
-                      {section.label}
+                      {section.label}{section.id === 'history' && savedCount > 0 ? ` · ${savedCount}` : ''}
                       {count > 0 ? ` · ${count} changed` : ''}
                     </option>
                   );
@@ -137,7 +139,7 @@ export function SectionNav({
                     boxShadow: active ? 'inset 2px 0 0 var(--sa-accent)' : 'none',
                   }}
                 >
-                  {section.label}
+                  {section.label}{section.id === 'history' && savedCount > 0 ? ` · ${savedCount}` : ''}
                   {count > 0 && (
                     <span
                       title={`${count} unsaved change${count === 1 ? '' : 's'}`}

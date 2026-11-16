@@ -880,12 +880,18 @@ def schedule_cycle_jobs(
 def load_saved_settings(config: AppConfig) -> None:
     """Apply the newest settings_versions row over the YAML defaults."""
     from app.db.base import get_session_maker
-    from app.settings_service import latest_version
+    from app.settings_service import latest_version, refresh_saved_without_control
 
     with get_session_maker()() as session:
         row = latest_version(session)
         if row is not None:
             config.apply_saved(dict(row.settings), row.version)
+        refresh_saved_without_control(config, session)
+    if config.saved_without_control:
+        logger.warning(
+            "saved values differ from config: %s",
+            ", ".join(item["key"] for item in config.saved_without_control),
+        )
 
 
 def ensure_run_row(broker: Broker, clock: Clock, config: AppConfig) -> None:
