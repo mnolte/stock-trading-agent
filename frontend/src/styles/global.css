@@ -485,3 +485,92 @@ button:not([disabled]):hover {
     gap: 2px 0;
   }
 }
+
+/* ---- Strategies (item 100, design/screens/Strategies.dc.html) ---- */
+/* The selected strategy's label–value grid: stacks below 760 px. */
+.sa-kv2 {
+  display: grid;
+  grid-template-columns: minmax(96px, 160px) minmax(0, 1fr);
+  gap: 10px 16px;
+  font-size: var(--sa-text-md);
+  line-height: 1.5;
+}
+@media (max-width: 760px) {
+  .sa-kv2 {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px 0;
+  }
+}
+/* A disagreement row: symbol+date | both actions | result | better | links.
+ * Below 760 px the row stacks: symbol and the better chip on the first
+ * line, then actions, result and links at full width. */
+.dis-row {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1.1fr) minmax(0, 1fr) 108px auto;
+  gap: 6px 16px;
+  align-items: center;
+  padding: 0;
+  border-bottom: 1px solid var(--sa-border);
+  font-size: var(--sa-text-md);
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.dis-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.dis-links {
+  display: flex;
+  gap: 14px;
+  font-size: var(--sa-text-md);
+  white-space: nowrap;
+}
+.dis-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+@media (max-width: 760px) {
+  .dis-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 10px 0 0;
+  }
+  .dis-sym {
+    grid-column: 1;
+  }
+  .dis-better {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .dis-acts,
+  .dis-res,
+  .dis-links {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---- Backtest (item 100, design/screens/Backtest.dc.html): below
+ * 820 px the order is runs, results, form — the left column's children
+ * join the shared order via display: contents. ---- */
+@media (max-width: 820px) {
+  .bt-cols {
+    flex-direction: column;
+    flex-wrap: nowrap !important;
+    align-items: stretch !important;
+  }
+  .bt-left {
+    display: contents !important;
+  }
+  .bt-runs {
+    order: 1;
+  }
+  .bt-right {
+    order: 2;
+    flex: 0 0 auto !important;
+  }
+  .bt-form {
+    order: 3;
+  }
+}

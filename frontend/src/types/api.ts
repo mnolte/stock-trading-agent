@@ -1864,7 +1864,12 @@ export interface StrategyDisagreement {
   shadow_action: string;
   shadow_label: string;
   live_decision_id: number;
+  shadow_decision_id: number | null;
   result: string;
+  /** The result in words (item 100): "B’s trade: −1.0R at the stop". */
+  result_text: string;
+  /** Who was better, decided by code: only where exactly one side entered. */
+  better: 'shadow' | 'live' | null;
   tone: 'positive' | 'negative' | 'neutral';
 }
 
@@ -1897,10 +1902,19 @@ export interface StrategyRow {
   overrides?: Record<string, number>;
   calls?: number;
   missed?: number;
+  /** Filled entries and how many of them used a synthetic price (item 100). */
+  entries?: number;
+  synthetic_entries?: number;
   open_positions?: { symbol: string; qty: number }[];
   differences?: { differs: StrategyDifference[]; same: StrategyDifference[] };
   promote?: { allowed: boolean; closed: number; needed: number; reason: string | null };
-  disagreements?: { total: number; sessions: number; items: StrategyDisagreement[] };
+  disagreements?: {
+    total: number;
+    sessions: number;
+    /** Over every disagreement of the run, before the row limit (item 100). */
+    counts: { shadow_better: number; live_better: number; undecided: number };
+    items: StrategyDisagreement[];
+  };
 }
 
 export interface StrategyOverrideOption {
@@ -2013,7 +2027,12 @@ export interface BacktestRun {
   process_id: number | null;
   size_bytes: number | null;
   warnings: string[] | null;
-  summary: Record<string, BacktestStrategySummary> | null;
+  summary:
+    | (Record<string, BacktestStrategySummary> & {
+        /** The code-written answer sentence, stored with the run (item 100). */
+        answer?: string;
+      })
+    | null;
   refuse_reason: string | null;
   created_at: string | null;
   finished_at: string | null;

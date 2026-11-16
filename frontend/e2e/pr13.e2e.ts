@@ -72,16 +72,19 @@ test('strategies: New shadow dialog, compare table, promote disabled under 20 tr
   await expect(table.locator('tbody tr').first()).toContainText('Live');
   await expect(table.getByText('baseline', { exact: true })).toBeVisible();
   await expect(page.getByTestId('shadow-cost')).toContainText('3 of 3 slots');
-  await expect(page.getByRole('button', { name: 'New shadow…' })).toBeDisabled();
-  await expect(page.getByText('far too few to tell strategies apart')).toBeVisible();
+  // Item 100: unavailable controls stay focusable (aria-disabled) and say why.
+  const newShadow = page.getByRole('button', { name: 'New shadow…' });
+  await expect(newShadow).toHaveAttribute('aria-disabled', 'true');
+  await expect(page.getByText('All 3 slots in use · archive a shadow to add one')).toBeVisible();
+  await expect(page.getByText('Too early to tell these strategies apart.')).toBeVisible();
 
-  // Select B: what differs from live, and Promote disabled under 20 trades.
+  // Select B: what differs from live, and Promote aria-disabled under 20 trades.
   await table.locator('tbody tr', { hasText: 'B · Bigger model' }).click();
   const card = page.locator('section', { has: page.getByRole('heading', { name: 'B · Bigger model' }) });
   await expect(card).toContainText(`model ${liveModel} → gpt-6.1-sol`);
   const promote = card.getByRole('button', { name: 'Promote to live…' });
-  await expect(promote).toBeDisabled();
-  await expect(promote).toHaveAttribute('title', 'Needs at least 20 closed trades (has 0)');
+  await expect(promote).toHaveAttribute('aria-disabled', 'true');
+  await expect(card.getByText('Promote needs 20 closed trades · B has 0.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Where B and live disagreed' })).toBeVisible();
 
   await page.screenshot({ path: shot('strategies', testInfo.project.name), fullPage: true });
