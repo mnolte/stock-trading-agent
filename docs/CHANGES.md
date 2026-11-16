@@ -1,4 +1,4 @@
-# Spec changes
+# Spec changes (up to item 101 — later items: one file each in docs/changes/)
 
 Newest first.
 

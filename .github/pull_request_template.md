@@ -22,7 +22,8 @@ Closes #
 
 <!-- "Spec files changed: none" or a list with the reason for each.
      Anything matching .github/spec-paths.txt needs the "spec change"
-     label, and SPEC/design changes need their CHANGES.md entry. -->
+     label, and SPEC/design changes need a section in the item's file in
+     docs/changes/ or design/changes/ (docs/changes/README.md). -->
 
 Spec files changed: none
 
@@ -32,7 +33,7 @@ Spec files changed: none
 
 - [ ] CI is green on the last push (all checks; the suites run there, not locally: AGENTS.md → Commands)
 - [ ] Locally: only the tests for the changed files (name them)
-- [ ] Row in `docs/work-items.md` updated (build PR, status); the kickoff this PR builds moved unchanged to `docs/kickoffs/archive/` in this PR (unless an earlier PR of the item already moved it)
+- [ ] The item's file `docs/changes/NNN-type-slug.md` updated (build_prs, status, a dated section for behaviour changes; the row in `docs/work-items.md` for items up to 101); the kickoff this PR builds moved unchanged to `docs/kickoffs/archive/` in this PR (unless an earlier PR of the item already moved it)
 
 ## Not tested
 

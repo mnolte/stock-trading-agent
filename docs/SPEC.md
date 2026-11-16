@@ -662,6 +662,8 @@ These go into `AGENTS.md` at the repo root so Devin follows them on every PR.
 
 ## Build plan
 
+The list ends at item 58 (work item 101). Later work items are not added here; each has its own file in `docs/changes/`, and `python3 scripts/work_items.py` lists them (item 102).
+
 Ten PRs for v0.1, each reviewable on its own; v0.2 continues with PR 11 to 14. Paper orders are first sent in PR 5; everything before runs on fakes and read-only data.
 
 1. **Skeleton.** Repo layout, FastAPI app, React shell with header and empty screens, config loading, SQLite and migrations, `AGENTS.md`, CI running tests with sockets blocked. *Done when:* app starts, header shows PAPER and a fake clock.
