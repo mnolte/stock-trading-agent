@@ -1890,3 +1890,56 @@ async def test_cancel_kills_a_stubborn_child_by_pid(
         assert row is not None
         assert row.status == "cancelled"
     assert (run_dir / "rules-only.db").exists()
+
+
+def test_answer_sentence_stored_once_for_done_runs_only(client: Any) -> None:
+    """Runs finished before the answer existed get it on first read;
+    an interrupted run keeps 'results so far' and no sentence."""
+    with get_session_maker()() as session:
+        done = Backtest(
+            name="done",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[{"ref": "live", "name": "Live", "kind": "llm", "slug": "live"}],
+            starting_equity=Decimal(10000),
+            slippage_pct=Decimal(0),
+            status="done",
+            run_dir="",
+            summary={
+                "live": {
+                    "return_pct": 18.6,
+                    "spy_return_pct": 39.9,
+                    "max_drawdown_pct": -5.2,
+                    "time_in_market": 0.24,
+                    "spy_curve": [{"date": "2024-06-03", "equity": 10000}],
+                }
+            },
+            created_at=_naive_utc(datetime(2024, 6, 3, 14, 0)),
+        )
+        interrupted = Backtest(
+            name="cut",
+            start_date=D0,
+            end_date=D0,
+            universe_mode="fixed",
+            strategies=[{"ref": "live", "name": "Live", "kind": "llm", "slug": "live"}],
+            starting_equity=Decimal(10000),
+            slippage_pct=Decimal(0),
+            status="interrupted",
+            run_dir="",
+            summary=done.summary,
+            created_at=_naive_utc(datetime(2024, 6, 3, 15, 0)),
+        )
+        session.add_all([done, interrupted])
+        session.commit()
+        done_id, interrupted_id = done.id, interrupted.id
+    runs = {r["id"]: r for r in client.get("/api/backtests").json()["runs"]}
+    assert runs[done_id]["summary"]["answer"].startswith(
+        "Live made +18.6% where buying and holding SPY made +39.9%:"
+    )
+    assert "answer" not in runs[interrupted_id]["summary"]
+    # The sentence is stored, not recomputed per request.
+    with get_session_maker()() as session:
+        stored = session.get(Backtest, done_id)
+        assert stored is not None and stored.summary is not None
+        assert stored.summary["answer"] == runs[done_id]["summary"]["answer"]
