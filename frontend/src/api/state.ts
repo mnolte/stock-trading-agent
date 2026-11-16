@@ -80,6 +80,10 @@ export function getBanners(signal?: AbortSignal): Promise<BannersResponse> {
   return get<BannersResponse>('/api/banners', signal);
 }
 
+export function postUseConfig(key: string, reason: string): Promise<SaveSettingsResult> {
+  return post<SaveSettingsResult>('/api/settings/use-config', { key, reason });
+}
+
 export function getAttention(signal?: AbortSignal): Promise<AttentionResponse> {
   return get<AttentionResponse>('/api/attention', signal);
 }

@@ -4,6 +4,7 @@ import type { StrategyRow } from '../types/api';
 import {
   differsLine,
   disagreementFooter,
+  disagreementTally,
   drawdown,
   openPositionsLine,
   rowColours,
@@ -48,12 +49,25 @@ describe('strategiesFormat', () => {
 
   it('writes the small-sample warning in the design wording', () => {
     const rows = [row({ closed: 3 }), row({ closed: 2 }), row({ closed: 9 })];
-    expect(sampleWarning(9, rows, 20)).toBe(
-      '9 sessions and 2 to 9 closed trades per strategy: far too few to tell strategies apart. ' +
-        'Promoting to live needs at least 20 closed trades; read the differences as hints, not results.',
+    expect(sampleWarning(9, rows, 20)).toEqual({
+      lead: 'Too early to tell these strategies apart.',
+      body:
+        '9 sessions and 2 to 9 closed trades each. A difference starts to mean ' +
+        'something from 20 closed trades per strategy, which is also what ' +
+        'Promote needs. Until then, read the numbers as hints.',
+    });
+    expect(sampleWarning(1, [row({ closed: 0 })], 20)?.body).toContain(
+      '1 session and 0 closed trades each',
     );
-    expect(sampleWarning(1, [row({ closed: 0 })], 20)).toContain('1 session and 0 closed trades per strategy');
     expect(sampleWarning(30, [row({ closed: 20 }), row({ closed: 25 })], 20)).toBeNull();
+  });
+
+  it('writes the disagreement tally sentence', () => {
+    expect(
+      disagreementTally(14, 9, { shadow_better: 3, live_better: 2, undecided: 9 }, 'B'),
+    ).toBe(
+      '14 disagreements in 9 sessions. B’s choice ended better in 3, live’s in 2, and 9 are not decided yet.',
+    );
   });
 
   it('colours live, shadows and the baseline from the tokens', () => {

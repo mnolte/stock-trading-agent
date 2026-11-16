@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 
 import { errorMessages } from '../api/client';
@@ -33,6 +33,8 @@ import type {
 } from '../types/api';
 import { dayParts, displayDateTime, fmtDayYear, fmtMonthYear, parseDayInput } from '../format';
 import { ACTIONS, EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
+import { estimateVerdicts } from './backtestEstimate';
+import type { Verdict } from './backtestEstimate';
 
 // Strategy colours in picker order (design: Backtest).
 const PALETTE = ['#F2B94B', '#9FB4CC', '#7FB8FF', '#C792EA'];
@@ -185,12 +187,6 @@ function cutoffWarning(
   return `Knowledge cutoff ${month}: needs a later start`;
 }
 
-function cutoffOkLine(estimate: BacktestEstimate): string | null {
-  if (!estimate.cutoff || !estimate.cutoff_label) return null;
-  const month = fmtMonthYear(estimate.cutoff);
-  return `Period starts after ${estimate.cutoff_label}'s knowledge cutoff (${month})`;
-}
-
 function compactK(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
 }
@@ -274,32 +270,75 @@ export default function Backtest() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
       {error && <Banner variant="negative">Action failed: {error}</Banner>}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 320px', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)', minWidth: 0 }}>
-          <NewBacktestCard
-            data={data}
-            onCreated={(id, refused) => {
-              refresh();
-              if (refused) setSelectedId(id);
+      {/* Phone only (item 100, design/screens/Backtest): jump links. */}
+      <nav
+        aria-label="On this page"
+        className="sa-phone-only"
+        style={{ gap: '8px', overflowX: 'auto', paddingBottom: 2, alignItems: 'center' }}
+      >
+        <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', whiteSpace: 'nowrap' }}>
+          On this page
+        </span>
+        {(
+          [
+            ['Runs', '#bt-runs'],
+            ['Results', '#bt-result'],
+            ['New backtest', '#new-backtest'],
+          ] as const
+        ).map(([label, href]) => (
+          <a
+            key={href}
+            href={href}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              height: '36px',
+              padding: '0 var(--sa-space-3)',
+              borderRadius: '18px',
+              border: '1px solid var(--sa-border)',
+              background: 'var(--sa-raised)',
+              color: 'var(--sa-text-2)',
+              fontSize: 'var(--sa-text-md)',
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
             }}
-            onError={setError}
-          />
-          <RunsCard
-            data={data}
-            selectedId={selected?.id ?? null}
-            onSelect={setSelectedId}
-            onCancel={(id) => {
-              postBacktestCancel(id).then(refresh).catch((e) => setError(errorMessages(e)[0]));
-            }}
-            onClear={() => {
-              postClearBarStore().then(refresh).catch((e) => setError(errorMessages(e)[0]));
-            }}
-            onDelete={(id) => {
-              deleteBacktest(id).then(refresh).catch((e) => setError(errorMessages(e)[0]));
-            }}
-          />
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+      <div className="bt-cols" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-4)', alignItems: 'flex-start' }}>
+        {/* On a phone this column's children join the shared order through
+         * display: contents: Runs (1), Results (2), the form (3). */}
+        <div className="bt-left" style={{ flex: '1 1 320px', maxWidth: 400, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)', minWidth: 0 }}>
+          <div id="bt-runs" className="bt-runs" style={{ minWidth: 0 }}>
+            <RunsCard
+              data={data}
+              selectedId={selected?.id ?? null}
+              onSelect={setSelectedId}
+              onCancel={(id) => {
+                postBacktestCancel(id).then(refresh).catch((e) => setError(errorMessages(e)[0]));
+              }}
+              onClear={() => {
+                postClearBarStore().then(refresh).catch((e) => setError(errorMessages(e)[0]));
+              }}
+              onDelete={(id) => {
+                deleteBacktest(id).then(refresh).catch((e) => setError(errorMessages(e)[0]));
+              }}
+            />
+          </div>
+          <div id="new-backtest" className="bt-form" style={{ minWidth: 0 }}>
+            <NewBacktestCard
+              data={data}
+              onCreated={(id, refused) => {
+                refresh();
+                if (refused) setSelectedId(id);
+              }}
+              onError={setError}
+            />
+          </div>
         </div>
-        <div style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
+        <div id="bt-result" className="bt-right" style={{ flex: '999 1 560px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-4)' }}>
           {selected ? (
             <RunDetail
               run={selected}
@@ -310,7 +349,7 @@ export default function Backtest() {
           ) : (
             <Card label="Results">
               <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-md)' }}>
-                No backtests yet. Pick a period and strategies on the left, then
+                No backtests yet. Pick a period and strategies, then
                 Run backtest.
               </span>
             </Card>
@@ -661,37 +700,47 @@ function NewBacktestCard({
               border: '1px solid var(--sa-border)',
               background: 'var(--sa-raised)',
               borderRadius: 'var(--sa-radius-md)',
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '10px 12px',
               fontSize: 'var(--sa-text-md)',
             }}
           >
-            <EstimateCell label="Sessions" value={String(estimate.sessions)} />
-            <EstimateCell
+            <div
+              style={{
+                fontSize: 'var(--sa-text-sm)',
+                fontWeight: 600,
+                color: 'var(--sa-text-muted)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              Before you run
+            </div>
+            {(() => {
+              const v = estimateVerdicts(estimate, start);
+              return (
+                <>
+                  {v.budget && <EstimateVerdict verdict={v.budget} />}
+                  {v.cutoff && <EstimateVerdict verdict={v.cutoff} />}
+                  {v.stopEarly && <EstimateVerdict verdict={v.stopEarly} />}
+                </>
+              );
+            })()}
+            {/* A refusal already shows inside the verdicts above. */}
+            <EstimateRow label="Sessions" value={estimate.sessions.toLocaleString()} />
+            <EstimateRow
               label="Bars to download"
-              value={`${compactK(estimate.bars_to_download)} · ≈ ${estimate.download_minutes} min`}
+              value={compactK(estimate.bars_to_download)}
+              sub={estimate.download_minutes > 0 ? `about ${estimate.download_minutes} min` : 'already stored'}
             />
-            <EstimateCell
-              label="Model calls (estimate)"
-              value={`${estimate.calls.toLocaleString()}`}
-              sub={`· ${estimate.cache_hits.toLocaleString()} cached (estimate)`}
+            <EstimateRow
+              label="Model calls"
+              value={`≈ ${estimate.calls.toLocaleString()}`}
+              sub={`${estimate.cache_hits.toLocaleString()} of them from the cache`}
             />
-            <EstimateCell
-              label="Model cost (estimate)"
-              value={`≈ ${money(estimate.cost_usd)} of ${money(estimate.cap_remaining_usd)} left`}
-              sub={`up to ${money(estimate.cap_cost_usd)} at the 10-call cap`}
+            <EstimateRow
+              label="Model cost"
+              value={`≈ ${money(estimate.cost_usd)}`}
+              sub={`up to ${money(estimate.cap_cost_usd)} at the call cap`}
             />
-            {estimate.disabled_reason ? (
-              <EstimateNote variant="negative">{estimate.disabled_reason}</EstimateNote>
-            ) : cutoffOkLine(estimate) ? (
-              <EstimateNote variant="positive">{cutoffOkLine(estimate)}</EstimateNote>
-            ) : null}
-            {estimate.may_stop_early && !estimate.disabled_reason && (
-              <EstimateNote variant="warning">
-                May stop early at this month's ${'$'}20 cap.
-              </EstimateNote>
-            )}
           </div>
         )}
         <button
@@ -742,39 +791,57 @@ function NewBacktestCard({
   );
 }
 
-function EstimateCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
+/** One numeric estimate on its own line (item 100, design/screens/
+ * Backtest.dc.html): label left, value right, note under the value. */
+function EstimateRow({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div>
-      <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>{label}</div>
-      <div style={{ fontFamily: 'var(--sa-font-mono)' }}>
-        {value}
-        {sub && <span style={{ color: 'var(--sa-text-muted)', fontSize: 'var(--sa-text-sm)' }}> {sub}</span>}
-      </div>
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '12px',
+        alignItems: 'baseline',
+        padding: '7px 0',
+        borderTop: '1px solid var(--sa-border)',
+      }}
+    >
+      <span style={{ color: 'var(--sa-text-muted)', whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ textAlign: 'right' }}>
+        <span style={{ fontFamily: 'var(--sa-font-mono)', whiteSpace: 'nowrap' }}>{value}</span>
+        {sub && (
+          <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', textAlign: 'right' }}>
+            {sub}
+          </div>
+        )}
+      </span>
     </div>
   );
 }
 
-function EstimateNote({ variant, children }: { variant: 'positive' | 'negative' | 'warning'; children: ReactNode }) {
-  const colour =
-    variant === 'positive'
-      ? 'var(--sa-positive)'
-      : variant === 'negative'
-        ? 'var(--sa-negative-text)'
-        : 'var(--sa-warning-text)';
+function EstimateVerdict({ verdict }: { verdict: Verdict }) {
   return (
-    <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '6px', alignItems: 'flex-start', color: colour, fontSize: 'var(--sa-text-sm)' }}>
-      {variant !== 'negative' ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px' }}>
+    <div
+      style={{
+        display: 'flex',
+        gap: '6px',
+        alignItems: 'flex-start',
+        color: verdict.ok ? 'var(--sa-positive)' : 'var(--sa-negative-text)',
+        padding: '8px 0 4px',
+        lineHeight: 1.45,
+      }}
+    >
+      {verdict.ok ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px', marginTop: '3px' }}>
           <polyline points="5 12 10 17 19 7" />
         </svg>
       ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px' }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 14px', marginTop: '3px' }}>
           <circle cx="12" cy="12" r="9" />
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12" y2="16" />
         </svg>
       )}
-      <span>{children}</span>
+      <span>{verdict.text}</span>
     </div>
   );
 }
@@ -961,16 +1028,56 @@ function RunDetail({
 
   return (
     <>
-      <section style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '6px 16px' }}>
-        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
-          #{run.id} · {run.name}
-        </h2>
-        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
-          {run.start} – {run.end} · {run.universe_mode} list · $
-          {Number(run.starting_equity).toLocaleString()}
-          {run.finished_at ? ` · finished ${displayDateTime(run.finished_at)}` : ''}
-          {run.cost_usd > 0 ? ` · ${money(run.cost_usd)}` : ''}
-        </span>
+      <section style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '10px 16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', minWidth: 0, flex: '1 1 420px' }}>
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 600 }}>
+              #{run.id} · {run.name}
+            </h2>
+            <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+              {run.start} – {run.end} · {run.universe_mode} list · $
+              {Number(run.starting_equity).toLocaleString()}
+              {run.finished_at ? ` · finished ${displayDateTime(run.finished_at)}` : ''}
+              {run.cost_usd > 0 ? ` · ${money(run.cost_usd)}` : ''}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            <button
+              type="button"
+              style={panel === 'trades' ? actionButton : ghostButton}
+              onClick={() => onPanel(panel === 'trades' ? null : 'trades')}
+            >
+              View {totalTrades} {totalTrades === 1 ? 'trade' : 'trades'}
+            </button>
+            <button
+              type="button"
+              style={panel === 'decisions' ? actionButton : ghostButton}
+              onClick={() => onPanel(panel === 'decisions' ? null : 'decisions')}
+            >
+              View decisions
+            </button>
+            <button
+              type="button"
+              style={panel === 'csv' ? actionButton : ghostButton}
+              onClick={() => onPanel(panel === 'csv' ? null : 'csv')}
+            >
+              Download CSV
+            </button>
+          </div>
+        </div>
+        {/* The answer sentence is written by code when the run finishes
+         * (app/backtests/answers.py, item 100) and stored with the run. */}
+        {run.summary?.answer && (
+          <p style={{ margin: 0, fontSize: '15px', color: 'var(--sa-text)', lineHeight: 1.55, maxWidth: '900px' }}>
+            {run.summary.answer}
+          </p>
+        )}
+        {run.status === 'done' && (
+          <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
+            This is evidence about the past, never a forecast. Read with care
+            lists what the run had to assume.
+          </p>
+        )}
       </section>
       {summaries.length > 0 && (
         <Card label="Results">
@@ -991,29 +1098,6 @@ function RunDetail({
           <ReadWithCare run={run} summaries={summaries} />
         </div>
       )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-        <button
-          type="button"
-          style={panel === 'trades' ? actionButton : ghostButton}
-          onClick={() => onPanel(panel === 'trades' ? null : 'trades')}
-        >
-          Open trades{summaries.length ? ` (${totalTrades})` : ''}
-        </button>
-        <button
-          type="button"
-          style={panel === 'decisions' ? actionButton : ghostButton}
-          onClick={() => onPanel(panel === 'decisions' ? null : 'decisions')}
-        >
-          Open decisions
-        </button>
-        <button
-          type="button"
-          style={panel === 'csv' ? actionButton : ghostButton}
-          onClick={() => onPanel(panel === 'csv' ? null : 'csv')}
-        >
-          Download CSV
-        </button>
-      </div>
       {panel === 'trades' && <TradesPanel run={run} />}
       {panel === 'decisions' && <DecisionsPanel run={run} location={location} />}
       {panel === 'csv' && <CsvPanel run={run} />}
@@ -1334,7 +1418,9 @@ function StrategyTrades({ run, ref_ }: { run: BacktestRun; ref_: BacktestStrateg
         </table>
       </div>
       {trades !== null && trades.length === 0 && (
-        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>No trades.</span>
+        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          No closed trades — {ref_.name} stayed out for the whole period.
+        </span>
       )}
     </Card>
   );
@@ -1409,7 +1495,9 @@ function StrategyDecisions({
         </table>
       </div>
       {rows !== null && rows.length === 0 && (
-        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>No decisions.</span>
+        <span style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>
+          No decisions were stored for {ref_.name} in this run.
+        </span>
       )}
     </Card>
   );
