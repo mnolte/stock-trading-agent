@@ -205,6 +205,23 @@ def strategy_row(
             ShadowDecision.strategy_id == strategy.id, ShadowDecision.missed.is_(True)
         )
     ).scalar_one()
+    entries = session.execute(
+        select(func.count(ShadowPosition.id)).where(
+            ShadowPosition.strategy_id == strategy.id,
+            ShadowPosition.run_id == run.id,
+            ShadowPosition.entry.is_not(None),
+        )
+    ).scalar_one()
+    synthetic_entries = session.execute(
+        select(func.count(ShadowPosition.id))
+        .join(ShadowDecision, ShadowPosition.entry_decision_id == ShadowDecision.id)
+        .where(
+            ShadowPosition.strategy_id == strategy.id,
+            ShadowPosition.run_id == run.id,
+            ShadowPosition.entry.is_not(None),
+            func.json_extract(ShadowDecision.gates_result, "$.quote.synthetic") == 1,
+        )
+    ).scalar_one()
     min_trades = config.get_int("shadows", "promote_min_closed_trades", default=20)
     promotable = (
         strategy.kind == "llm" and strategy.status != "archived" and len(closed) >= min_trades
@@ -235,6 +252,8 @@ def strategy_row(
         "same_as_live_count": sal.counted,
         "calls": int(calls),
         "missed": int(missed),
+        "entries": int(entries),
+        "synthetic_entries": int(synthetic_entries),
         "open_positions": [{"symbol": p.symbol, "qty": p.qty} for p in opened],
         "differences": differences(config, strategy),
         "promote": {
@@ -361,37 +380,101 @@ def _live_trade_r(session: Session, live: Decision) -> tuple[Position | None, De
     return position, r
 
 
+MINUS = "−"  # U+2212, the design's minus sign
+
+
+def _signed_r(r: Decimal) -> str:
+    """"+2.1R" / "−1.0R" / "0.0R" — the sign is a word-safe U+2212."""
+    if r > 0:
+        return f"+{r:.1f}R"
+    if r < 0:
+        return f"{MINUS}{abs(r):.1f}R"
+    return "0.0R"
+
+
+def _signed_pct(pct: Decimal) -> str:
+    if pct > 0:
+        return f"+{pct:.1f}%"
+    if pct < 0:
+        return f"{MINUS}{abs(pct):.1f}%"
+    return "0.0%"
+
+
+def _entered(action: str) -> bool:
+    return _norm(action) == "enter"
+
+
 def disagreements(
     session: Session, strategy: Strategy, run: Run, *, short: str, limit: int = 50
 ) -> dict[str, Any]:
     """Symbol-cycles where the shadow and live chose differently, newest
-    first, with the trade result or the 5-session outcome."""
+    first, with the trade result or the 5-session outcome.
+
+    ``better`` is "shadow", "live" or null, decided by code only where
+    exactly one side entered (docs/SPEC.md, Strategies, Who was better):
+    the side that entered is better when its trade closed above 0R, the
+    side that stayed out when it closed below. ``counts`` covers every
+    disagreement of the run, before ``limit`` trims the rows.
+    """
+    from app.engine.performance import _EXIT_LABELS
+
     start = aware(strategy_start(strategy, run.started_at))
     items: list[dict[str, Any]] = []
     sessions: set[date] = set()
+    counts = {"shadow_better": 0, "live_better": 0, "undecided": 0}
     for row, live, cycle in _paired(session, strategy.id, start):
         if not counted_pair(row, live) or _norm(row.final_action) == _norm(live.final_action):
             continue
         when = aware(cycle.scheduled_time)
         sessions.add(ny_date(when))
-        result, tone = None, "neutral"
+        result, result_text, tone = None, None, "neutral"
         trade = _shadow_trade(session, row)
+        position, live_r = _live_trade_r(session, live)
+        # Who was better: only where exactly one side entered.
+        better: str | None = None
+        if _entered(row.final_action) and not _entered(live.final_action):
+            if trade is not None and trade.status == "closed" and trade.r is not None:
+                better = (
+                    "shadow" if trade.r > 0 else "live" if trade.r < 0 else None
+                )
+        elif (
+            _entered(live.final_action)
+            and not _entered(row.final_action)
+            and position is not None
+            and position.closed_at is not None
+            and live_r is not None
+        ):
+            better = "live" if live_r > 0 else "shadow" if live_r < 0 else None
+        counts[
+            "shadow_better"
+            if better == "shadow"
+            else "live_better"
+            if better == "live"
+            else "undecided"
+        ] += 1
         if trade is not None:
             if trade.status == "closed" and trade.r is not None:
+                label = _EXIT_LABELS.get(trade.exit_reason or "", trade.exit_reason or "")
                 result = f"{short} {trade.r:+.1f}R {trade.exit_reason}"
+                result_text = f"{short}’s trade: {_signed_r(trade.r)} at the {label}"
                 tone = "positive" if trade.r > 0 else "negative"
             elif trade.status in ("open", "pending"):
                 result = f"{short} open"
+                result_text = f"{short}’s trade is open"
             else:
                 result = f"{short} not filled"
-        if result is None:
-            position, r = _live_trade_r(session, live)
-            if position is not None:
-                if position.closed_at is None:
-                    result = "live open"
-                elif r is not None:
-                    result = f"live {r:+.1f}R {position.exit_reason or ''}".rstrip()
-                    tone = "positive" if r > 0 else "negative"
+                result_text = f"{short}’s entry wasn’t filled"
+        if result is None and position is not None:
+            if position.closed_at is None:
+                result = "live open"
+                result_text = "Live’s trade is open"
+            elif live_r is not None:
+                label = _EXIT_LABELS.get(
+                    position.exit_reason or "", position.exit_reason or ""
+                )
+                result = f"live {live_r:+.1f}R {position.exit_reason or ''}".rstrip()
+                result_text = f"Live’s trade: {_signed_r(live_r)} at the {label}"
+                tone = "positive" if live_r > 0 else "negative"
         if result is None:
             outcome = session.execute(
                 select(Outcome).where(Outcome.decision_id == live.id)
@@ -405,9 +488,11 @@ def disagreements(
             ):
                 pct = (outcome.price_5sessions - Decimal(str(price))) / Decimal(str(price)) * 100
                 result = f"{pct:+.1f}% after 5 sessions"
+                result_text = f"{_signed_pct(pct)} after 5 sessions"
                 tone = "positive" if pct > 0 else "negative" if pct < 0 else "neutral"
             else:
                 result = "waiting for 5 sessions"
+                result_text = "Waiting for 5 sessions"
         items.append(
             {
                 "time": when.isoformat(),
@@ -418,12 +503,20 @@ def disagreements(
                 "shadow_action": row.final_action,
                 "shadow_label": _action_label(row.final_action, row.model_output),
                 "live_decision_id": live.id,
+                "shadow_decision_id": row.id,
                 "result": result,
+                "result_text": result_text,
+                "better": better,
                 "tone": tone,
             }
         )
     items.reverse()
-    return {"total": len(items), "sessions": len(sessions), "items": items[:limit]}
+    return {
+        "total": len(items),
+        "sessions": len(sessions),
+        "counts": counts,
+        "items": items[:limit],
+    }
 
 
 def compare(

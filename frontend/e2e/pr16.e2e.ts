@@ -49,10 +49,10 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
     page.getByText('Pass', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('Not yet', { exact: true }),
+    page.getByText('Below target', { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText('Waiting for data', { exact: true }),
+    page.getByText('Needs data', { exact: true }).first(),
   ).toBeVisible();
   await expect(
     page
@@ -63,39 +63,54 @@ test('readiness: verdict, criteria groups, manual items and history', async ({
 
   // All 15 criteria across the three groups, each with value, target,
   // bar and a status chip. The first snapshot lands on the first
-  // readiness tick (once a minute), so give the first row room.
-  await expect(page.getByText('Closed trades', { exact: true })).toBeVisible({
-    timeout: 90_000,
-  });
+  // readiness tick (once a minute), so give the first row room. The
+  // "What moves this forward" card names the same criteria, so the
+  // label checks are scoped to the criterion's own group card.
+  const groupCard = (name: string) =>
+    page.locator('section').filter({
+      has: page.getByRole('heading', { name, exact: true }),
+    });
+  await expect(
+    groupCard('Evidence').getByText('Closed trades', { exact: true }),
+  ).toBeVisible({ timeout: 90_000 });
   for (const group of ['Evidence', 'Model', 'Operations']) {
     await expect(
       page.getByText(group, { exact: true }).first(),
     ).toBeVisible();
   }
-  for (const label of [
-    'Paper sessions in this run',
-    'Return vs SPY (adjusted)',
-    'Max drawdown',
-    'Average R (adjusted)',
-    'Profit factor',
-    'Beats rules-only',
-    'Entry proposals that pass code checks',
-    'Confidence calibration',
-    'Cycles completed',
-    'Positions without a stop',
-    'Kill switch events',
-    'Unresolved errors',
-    'Price data quality',
-    'Reconciliation',
-  ]) {
-    await expect(
-      page.getByText(label, { exact: true }),
-    ).toBeVisible();
+  const labelsByGroup: Record<string, string[]> = {
+    Evidence: [
+      'Paper sessions in this run',
+      'Return vs SPY (adjusted)',
+      'Max drawdown',
+      'Average R (adjusted)',
+      'Profit factor',
+      'Beats rules-only',
+    ],
+    Model: [
+      'Entry proposals that pass code checks',
+      'Confidence calibration',
+    ],
+    Operations: [
+      'Cycles completed',
+      'Positions without a stop',
+      'Kill switch events',
+      'Unresolved errors',
+      'Price data quality',
+      'Reconciliation',
+    ],
+  };
+  for (const [group, labels] of Object.entries(labelsByGroup)) {
+    for (const label of labels) {
+      await expect(
+        groupCard(group).getByText(label, { exact: true }),
+      ).toBeVisible();
+    }
   }
 
-  // The seeded run is a week old: count criteria miss their target and the
-  // sample-bound criteria wait for data — all three chips show.
-  await expect(page.getByText('waiting for data').first()).toBeVisible();
+  // The seeded run is a week old: count criteria are building up and the
+  // sample-bound criteria need data — the item-100 chips show.
+  await expect(page.getByText('needs data').first()).toBeVisible();
 
   // Manual items: tick needs a note, lands in History.
   await expect(page.getByText('0 of 5 done')).toBeVisible();

@@ -29,6 +29,8 @@ interface LogLine {
   fingerprint: string;
 }
 
+type Attention = 'act' | 'watch' | 'none';
+
 interface Problem {
   fingerprint: string;
   level: string;
@@ -38,12 +40,15 @@ interface Problem {
   sample: string;
   review: string | null;
   unreviewed: boolean;
+  /** Item 100: act = needs you, watch, none = nothing to do. */
+  attention: Attention;
 }
 
 interface Summary {
   days: { day: string; level: string; count: number }[];
   level_counts: Record<string, number>;
   problems: Problem[];
+  attention_counts: { act: number; watch: number; none: number };
   index_available: boolean;
 }
 
@@ -58,6 +63,26 @@ const LEVEL_COLOR: Record<string, string> = {
   WARNING: 'var(--sa-accent)',
   ERROR: 'var(--sa-negative)',
   CRITICAL: '#FF3B5C',
+};
+
+const ATTENTION_CHIP: Record<Attention, 'negative' | 'warning' | 'neutral'> = {
+  act: 'negative',
+  watch: 'warning',
+  none: 'neutral',
+};
+const ATTENTION_TEXT: Record<Attention, string> = {
+  act: 'needs you',
+  watch: 'watch',
+  none: 'nothing to do',
+};
+
+/** The period's own words, after the count ("9 times in 7 days"). */
+const PERIOD_WORDS: Record<string, string> = {
+  'Last hour': 'in the last hour',
+  Today: 'today',
+  '7 days': 'in 7 days',
+  '30 days': 'in 30 days',
+  Custom: 'in the period',
 };
 
 const LEVEL_CHIP: Record<string, 'neutral' | 'info' | 'warning' | 'negative'> = {
@@ -119,7 +144,7 @@ function LogRow({
   return (
     <button
       type="button"
-      className="sa-row"
+      className="sa-row log-row"
       aria-expanded={expanded}
       onClick={onToggle}
       style={{
@@ -147,7 +172,7 @@ function LogRow({
       <span>
         <LevelChip level={line.level} />
       </span>
-      <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span className="log-msg" style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <span style={{ lineHeight: 1.45, overflowWrap: 'anywhere' }}>
           {line.message.split('\n')[0]}
         </span>
@@ -390,9 +415,11 @@ const FIELD: React.CSSProperties = {
 export default function Logs() {
   const [params, setParams] = useSearchParams();
   const levels = useMemo(() => parseLevels(params.get('levels')), [params]);
-  const [period, setPeriod] = useState('7 days');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const [period, setPeriod] = useState(() =>
+    params.get('from') || params.get('to') ? 'Custom' : '7 days',
+  );
+  const [customFrom, setCustomFrom] = useState(() => params.get('from') ?? '');
+  const [customTo, setCustomTo] = useState(() => params.get('to') ?? '');
   const [search, setSearch] = useState(params.get('search') ?? '');
   const [loggerFilter, setLoggerFilter] = useState('');
   const [symbolFilter, setSymbolFilter] = useState(params.get('symbol') ?? '');
@@ -457,7 +484,11 @@ export default function Logs() {
       }>(`/api/logs?${buildQuery()}`);
       setLines(data.lines);
       setCursor(data.next_cursor);
-      const s = await get<Summary>(`/api/logs/summary`);
+      const { from, to } = periodFrom(period, customFrom, customTo);
+      const sq = new URLSearchParams();
+      if (from) sq.set('from', from);
+      if (to) sq.set('to', to);
+      const s = await get<Summary>(`/api/logs/summary?${sq}`);
       setSummary(s);
       setLoadError(null);
     } catch (e: unknown) {
@@ -465,7 +496,7 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  }, [buildQuery]);
+  }, [buildQuery, period, customFrom, customTo]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 0);
@@ -712,14 +743,34 @@ export default function Logs() {
           </Card>
         )}
 
-        {/* Recurring problems (design: a table with a review column). */}
+        {/* Recurring problems (item 100: Does it need you?). */}
         {(summary?.problems.length ?? 0) > 0 && (
-          <Card label="Recurring problems" right={`errors · ${unreviewed} unreviewed`} style={{ flex: '2 1 520px' }} ariaLabel="Recurring problems">
+          <Card
+            label="Recurring problems"
+            right={`warning and up · ${period}`}
+            style={{ flex: '2 1 520px' }}
+            ariaLabel="Recurring problems"
+          >
+            <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-2)', marginTop: '-4px' }}>
+              Of {summary!.problems.length}{' '}
+              {summary!.problems.length === 1 ? 'problem' : 'problems'}:{' '}
+              {summary?.attention_counts ? (
+                <>
+                  <b style={{ color: 'var(--sa-negative-text)' }}>{summary.attention_counts.act} need you</b>
+                  {' · '}
+                  <b style={{ color: 'var(--sa-warning-text)' }}>{summary.attention_counts.watch} to watch</b>
+                  {' · '}
+                  <span>{summary.attention_counts.none} nothing to do</span>
+                </>
+              ) : (
+                `${unreviewed} unreviewed`
+              )}
+            </div>
             <div style={{ overflowX: 'auto', minWidth: 0 }}>
-              <table style={{ width: '100%', minWidth: 560 }}>
+              <table className="rp-table" style={{ width: '100%', minWidth: 560 }}>
                 <thead>
                   <tr>
-                    {['Level', 'Problem', 'Count', 'First seen', 'Review'].map((h, i) => (
+                    {['Problem', 'Does it need you?', 'Count', 'First seen', 'Review'].map((h, i) => (
                       <th key={h} scope="col" style={{ textAlign: i === 2 ? 'right' : 'left', padding: '8px 10px', fontSize: 'var(--sa-text-sm)', fontWeight: 500, color: 'var(--sa-text-muted)', borderBottom: '1px solid var(--sa-border)', whiteSpace: 'nowrap' }}>
                         {h}
                       </th>
@@ -744,10 +795,21 @@ export default function Logs() {
                       style={{ cursor: 'pointer' }}
                     >
                       <td style={{ padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top' }}>
-                        <LevelChip level={p.level} />
-                      </td>
-                      <td style={{ padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top' }}>
+                        <div style={{ marginBottom: 4 }}>
+                          <LevelChip level={p.level} />
+                        </div>
                         {p.sample}
+                      </td>
+                      <td style={{ padding: 10, borderBottom: '1px solid var(--sa-border)', verticalAlign: 'top' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                          <Chip variant={ATTENTION_CHIP[p.attention] ?? 'neutral'}>
+                            {ATTENTION_TEXT[p.attention] ?? 'nothing to do'}
+                          </Chip>
+                          <span style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)' }}>
+                            {p.count === 1 ? 'once' : `${p.count} times`} {PERIOD_WORDS[period] ?? 'in the period'}
+                            {p.unreviewed ? ' · not reviewed' : ''}
+                          </span>
+                        </div>
                       </td>
                       <td style={{ padding: 10, borderBottom: '1px solid var(--sa-border)', ...mono, textAlign: 'right', verticalAlign: 'top' }}>
                         {p.count}
@@ -789,7 +851,8 @@ export default function Logs() {
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5 }}>
               Lines with the same component and event are grouped, with numbers and
               symbols ignored. Click a row to filter the log on it. Errors need a
-              review (expected or fixed) for Readiness.
+              review (expected or fixed) for Readiness. Sorted by what needs you,
+              then by count.
             </div>
           </Card>
         )}
