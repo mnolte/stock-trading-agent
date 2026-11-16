@@ -69,6 +69,11 @@ import {
   settingLeaf,
 } from './settingsDiff';
 import { validateForm } from './settingsValidation';
+import CONTROL_SECTIONS from '../../public/settings-controls.json';
+import { DialogButton, Modal } from '../components/Modal';
+import { postUseConfig } from '../api/state';
+import { SavedValues } from '../components/settings/SavedValues';
+import type { SavedWithoutControl } from '../types/api';
 
 // ---------------------------------------------------------------------------
 // design tokens (design/screens/Settings.dc.html)
@@ -157,82 +162,7 @@ const UNITS: Record<string, string> = {
 };
 
 // field path -> section id, for the section-list change badges
-const SECTION_OF: Record<string, string> = {
-  'execution.mode': 'trading',
-  'execution.quote_max_age_seconds': 'trading',
-  'execution.quote_max_deviation_pct': 'trading',
-  'execution.tighten_quote_max_age_seconds': 'trading',
-  'execution.fill_settle_seconds': 'trading',
-  'api.broker_timeout_seconds': 'trading',
-  'selection.mode': 'entry-selection',
-  'selection.confidence_weight': 'entry-selection',
-  'selection.last_slot_min_ev_r': 'entry-selection',
-  'decision.entry_gate': 'gates',
-  'decision.min_ev_r': 'gates',
-  'decision.v3.min_room_atr': 'gates',
-  'decision.v3.min_edge': 'gates',
-  'decision.v4.near_level_atr': 'gates',
-  'decision.v5.trend_gate': 'gates',
-  'decision.v5.trend_gate_regimes': 'gates',
-  'decision.v5.max_rr': 'gates',
-  'decision.v5.base_rate_sessions': 'gates',
-  'decision.v5.price_vs_signal_adverse_atr': 'gates',
-  'decision.v6.sideways_max_target_atr': 'gates',
-  'gui.near_stop_atr': 'display',
-  'inspector.slow_call_seconds': 'display',
-  'performance.slippage_pct_per_side': 'trading',
-  'risk.risk_per_trade_pct': 'risk',
-  'risk.max_position_pct': 'risk',
-  'risk.max_order_pct': 'risk',
-  'risk.max_open_risk_pct': 'risk',
-  'risk.max_open_positions': 'risk',
-  'risk.max_per_sector': 'risk',
-  'risk.daily_loss_limit_pct': 'risk',
-  'risk.losing_streak': 'risk',
-  'risk.shock_brake_1h_pct': 'risk',
-  'risk.shock_brake_session_pct': 'risk',
-  'risk.drawdown_kill_pct': 'risk',
-  'risk.max_orders_per_cycle': 'risk',
-  'rules.rsi_min': 'rules',
-  'rules.rsi_max': 'rules',
-  'decision.min_confidence_enter': 'rules',
-  'decision.stop_atr_min': 'rules',
-  'decision.stop_atr_max': 'rules',
-  'decision.min_reward_risk': 'rules',
-  'execution.max_spread_pct': 'rules',
-  'execution.entry_limit_offset_pct': 'rules',
-  'execution.entry_timeout_minutes': 'rules',
-  'events.fomc.enabled': 'rules',
-  'events.fomc.block_minutes_before': 'rules',
-  'events.fomc.block_minutes_after': 'rules',
-  'risk.earnings_blackout_days': 'earnings',
-  'risk.hold_through_earnings': 'earnings',
-  'decision.model': 'model',
-  'decision.prompt': 'model',
-  'decision.temperature': 'model',
-  'decision.max_calls_per_cycle': 'model',
-  'reviews.briefing_enabled': 'model',
-  'reviews.monthly_cost_cap_usd': 'model',
-  'reviews.models.weekly': 'model',
-  'reviews.models.briefing': 'model',
-  'reviews.models.verdict': 'model',
-  'ask.enabled': 'ask',
-  'ask.model': 'ask',
-  'ask.monthly_cost_cap_usd': 'ask',
-  'ask.max_cost_per_answer_usd': 'ask',
-  'ask.keep_days': 'ask',
-  'ask.instructions': 'ask',
-  'readiness.min_closed_trades': 'ready',
-  'auth.idle_hours': 'access',
-  'readiness.min_sessions': 'ready',
-  'readiness.max_drawdown_pct': 'ready',
-  'readiness.min_avg_r': 'ready',
-  'readiness.min_profit_factor': 'ready',
-  'readiness.min_proposal_pass_pct': 'ready',
-  'readiness.max_calibration_gap_pts': 'ready',
-  'readiness.min_cycles_completed_pct': 'ready',
-  'readiness.max_price_blocked_pct': 'ready',
-};
+const SECTION_OF: Record<string, string> = CONTROL_SECTIONS;
 
 // Route name -> section id (docs/kickoffs 056: /settings/<section>).
 const PARAM_TO_ID: Record<string, string> = {
@@ -831,7 +761,7 @@ function EventChannelTable({
                   const critical = ev.severity === 'critical';
                   const rowChanged = `notifications.events.${ev.key}` in changed;
                   return (
-                    <tr key={ev.key}>
+                    <tr key={ev.key} data-setting="notifications.events.*">
                       <td style={{ ...cell, fontSize: 'var(--sa-text-md)' }}>
                         {ev.label}
                         {ev.description && (
@@ -1045,7 +975,7 @@ function SmtpCard({
   };
 
   return (
-    <div style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div data-setting="notifications.email.smtp_host notifications.email.smtp_port notifications.email.username notifications.email.from notifications.email.to" style={{ padding: 14, border: '1px solid var(--sa-border)', borderRadius: 'var(--sa-radius-md)', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
         <b style={{ fontWeight: 600, fontSize: 'var(--sa-text-base)' }}>Email (SMTP)</b>
         <span style={chip(status.tone)}>{status.text}</span>
@@ -1203,6 +1133,21 @@ export default function Settings() {
   const [resetStep2, setResetStep2] = useState<string | null>(null);
   const [resetBusy, setResetBusy] = useState(false);
   const [advOpen, setAdvOpen] = useState(false);
+  const [takeConfig, setTakeConfig] = useState<SavedWithoutControl | null>(null);
+  const [configReason, setConfigReason] = useState('');
+  const [configBusy, setConfigBusy] = useState(false);
+  const useConfig = () => {
+    if (!takeConfig || !configReason.trim()) return;
+    setConfigBusy(true);
+    postUseConfig(takeConfig.key, configReason.trim())
+      .then((res) => {
+        setTakeConfig(null);
+        setNotice(`Saved as v${res.version} · ${res.effective_from}.`);
+        refresh();
+      })
+      .catch((e) => setErrors(errorMessages(e)))
+      .finally(() => setConfigBusy(false));
+  };
 
   const [universe, setUniverse] = useState<UniverseResponse | null>(null);
   // Promote to live (docs/SPEC.md, Strategies and shadows): the shadow's
@@ -1713,6 +1658,7 @@ export default function Settings() {
     },
   ) => (
     <Row
+      paths={path}
       key={path}
       id={props.id}
       label={props.label}
@@ -1797,6 +1743,7 @@ export default function Settings() {
             onChangedOnly={setChangedOnly}
             sectionChanges={sectionChanges}
             activeVersion={data.active_version}
+            savedCount={data.saved_without_control?.length ?? 0}
           />
 
         <div style={{ flex: '999 1 560px', minWidth: 0, maxWidth: 920, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-5)' }}>
@@ -1877,12 +1824,12 @@ export default function Settings() {
                             <input
                               type="checkbox"
                               aria-label={item.label}
-                              checked={Boolean(current)}
+                              checked={item.path === 'schedule.last_cycle_no_entries' ? !current : Boolean(current)}
                               onChange={(e) =>
                                 patch(
                                   parts[0] as keyof SettingsForm,
                                   parts[1],
-                                  e.target.checked,
+                                  item.path === 'schedule.last_cycle_no_entries' ? !e.target.checked : e.target.checked,
                                 )
                               }
                             />
@@ -1945,6 +1892,7 @@ export default function Settings() {
           {currentId === 'trading' && (<>
           <Section id="trading" title="Trading" blurb="How orders are sent and which symbols are watched.">
             <Row
+              paths="execution.mode"
               id="mode"
               label="Execution mode"
               help={
@@ -1986,6 +1934,7 @@ export default function Settings() {
             </Row>
 
             <Row
+              paths="universe.mode"
               id="umode"
               label="Universe"
               help={
@@ -2126,7 +2075,7 @@ export default function Settings() {
                 <option>Return vs SPY, 20 sessions</option>
               </select>
             </Row>
-            <div style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div data-setting="universe.symbols" style={{ padding: '14px 0', borderBottom: '1px solid var(--sa-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <span style={{ fontSize: 'var(--sa-text-base)' }}>Fixed list</span>
@@ -2417,6 +2366,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="risk.shock_brake_1h_pct risk.shock_brake_session_pct"
               label="Shock brake"
               help="No new entries this session when SPY drops this much in the last 1h bar or since the open."
               changed={'risk.shock_brake_1h_pct' in changed || 'risk.shock_brake_session_pct' in changed}
@@ -2481,6 +2431,7 @@ export default function Settings() {
           <Section id="rules" title="Entry rules and checks" blurb="The pre-filter before a model call, and the checks on what the model proposes.">
             <h3 style={subHead}>Before the model is asked</h3>
             <Row
+              paths="rules.rsi_min rules.rsi_max"
               label="RSI range (1h)"
               help={
                 <>
@@ -2519,6 +2470,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="decision.stop_atr_min decision.stop_atr_max"
               label="Stop distance"
               help={
                 <>
@@ -2611,6 +2563,7 @@ export default function Settings() {
               return (
                 <>
                   <Row
+                    paths="events.fomc.enabled"
                     id="fomc"
                     label="FOMC window"
                     help="No new entries in a cycle that starts from 30 minutes before to 45 minutes after a 14:00 FOMC decision: the 13:46 cycle. Holds and exits are not affected. Strategy-overridable."
@@ -2627,6 +2580,7 @@ export default function Settings() {
                     />
                   </Row>
                   <Row
+                    paths="events.fomc.block_minutes_before events.fomc.block_minutes_after"
                     id="fomcmin"
                     label="FOMC window minutes"
                     help="Around the 14:00 New York decision."
@@ -3015,6 +2969,21 @@ export default function Settings() {
                 />
               ),
             })}
+            {row('gui.log_watch_min_count', {
+              id: 'logwatch',
+              label: 'Recurring warning counts as “watch” from',
+              help: 'Logs → Recurring problems marks a warning “watch” when it was counted this often in the chosen period. · default 5 times',
+              children: (
+                <NumBox
+                  id="logwatch"
+                  value={s.gui?.log_watch_min_count ?? 5}
+                  unit="times"
+                  accent={'gui.log_watch_min_count' in changed}
+                  invalid={!!fieldErrors['gui.log_watch_min_count']}
+                  onChange={(v) => patch('gui', 'log_watch_min_count', v)}
+                />
+              ),
+            })}
             {row('inspector.slow_call_seconds', {
               id: 'slowcall',
               label: 'Slow call',
@@ -3303,6 +3272,7 @@ export default function Settings() {
               ),
             })}
             <Row
+              paths="ask.instructions"
               label="Standing instructions"
               help="How the agent answers — never what it may do. At most 1,000 characters."
               changed={'ask.instructions' in changed}
@@ -3387,6 +3357,7 @@ export default function Settings() {
             })}
 
             <Row
+              paths="notifications.quiet_hours.start notifications.quiet_hours.end"
               label="Quiet hours (Amsterdam)"
               help="Only critical alerts are sent in this window; the rest wait until it ends."
               changed={
@@ -3530,7 +3501,7 @@ export default function Settings() {
             id="schedule"
             title="Schedule"
             right={`${data.schedule.cycles_per_session} cycles per session`}
-            blurb="Cycle times follow the New York exchange clock and are fixed by the spec."
+            blurb="Cycle times follow the New York exchange clock and are fixed by the spec. One thing can be changed here: whether the last cycle may open positions."
           >
             <div style={{ padding: '8px 0 4px' }}>
               <div style={{ overflowX: 'auto', minWidth: 0 }}>
@@ -3553,8 +3524,9 @@ export default function Settings() {
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top', fontFamily: 'var(--sa-font-mono)', color: 'var(--sa-text-muted)' }}>{scheduleRow.amsterdam_shifted ?? '—'}</td>
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top', fontFamily: 'var(--sa-font-mono)' }}>{scheduleRow.bar_used}</td>
                         <td style={{ textAlign: 'left', padding: 10, borderBottom: '1px solid var(--sa-border)', fontSize: 'var(--sa-text-md)', verticalAlign: 'top' }}>
-                          {scheduleRow.entries}
-                          {scheduleRow.entries === 'no' && <span style={{ color: 'var(--sa-text-muted)' }}> · exits and earnings exits only</span>}
+                          {scheduleRow.index === data.schedule.rows[data.schedule.rows.length - 1]?.index
+                            ? s.schedule.last_cycle_no_entries ? 'no' : `yes, sent by ${data.entry_cutoff}`
+                            : scheduleRow.entries}
                         </td>
                       </tr>
                     ))}
@@ -3562,6 +3534,13 @@ export default function Settings() {
                 </table>
               </div>
             </div>
+            {row('schedule.last_cycle_no_entries', {
+              id: 'lastentries',
+              label: 'New entries in the last cycle',
+              help: 'On: the 15:46 cycle may open positions; the order is sent by 15:50 New York and cancelled after 10 minutes if unfilled. Off: the last cycle only holds, tightens and exits. Turning it on is a looser setting and asks you to confirm.',
+              defaultText: 'On',
+              children: <Switch id="lastentries" on={!s.schedule.last_cycle_no_entries} onChange={(v) => patch('schedule', 'last_cycle_no_entries', !v)} />,
+            })}
             <div style={{ fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.5, paddingBottom: 14 }}>
               Position checks run at :01, :16 and :31 between cycles. From 26 to 30 October Amsterdam
               times are an hour earlier (the EU changes clocks a week before the US). Early-close days
@@ -3578,6 +3557,7 @@ export default function Settings() {
           >
             {authStatus && authStatus.required && (
               <Row
+                paths="auth.idle_hours"
                 id="idle-hours"
                 label="Sign out after inactivity"
                 help="A device that is kept signed in still signs out after 30 days."
@@ -3629,6 +3609,10 @@ export default function Settings() {
             right={data.active_version === null ? 'no saved versions' : `current: v${data.active_version}`}
             blurb="Every saved change is a version with its reason. Decisions record the version they ran under."
           >
+            <SavedValues items={data.saved_without_control ?? []} onUse={(item) => {
+              setTakeConfig(item);
+              setConfigReason(`Take over the config value of ${item.key}`);
+            }} />
             <div style={{ padding: '8px 0 14px' }}>
               <div style={{ overflowX: 'auto', minWidth: 0 }}>
                 <table style={{ width: '100%', minWidth: 520, borderCollapse: 'collapse' }}>
@@ -3731,6 +3715,13 @@ export default function Settings() {
         </div>
       </div>
 
+      <Modal open={takeConfig !== null} title="Use the config value" onClose={() => { if (!configBusy) setTakeConfig(null); }} footer={<>
+        <DialogButton variant="cancel" disabled={configBusy} onClick={() => setTakeConfig(null)}>Cancel</DialogButton>
+        <DialogButton variant="accent" disabled={configBusy || !configReason.trim()} onClick={useConfig}>Use the config value</DialogButton>
+      </>}>
+        <p>{takeConfig?.key}: {JSON.stringify(takeConfig?.saved)} → {JSON.stringify(takeConfig?.config)}</p>
+        <label>Reason<input aria-label="Reason for taking over config" value={configReason} onChange={(e) => setConfigReason(e.target.value)} style={textInput()} /></label>
+      </Modal>
       <ResetAccountDialog
         open={resetOpen}
         busy={resetBusy}
@@ -3743,6 +3734,7 @@ export default function Settings() {
 
 // label (as produced by diffSettings) -> path, for unit suffixes in the bar
 const LABEL_OF: Record<string, string> = {
+  ...FIELD_LABELS,
   'performance.slippage_pct_per_side': 'Assumed slippage',
   'execution.mode': 'Execution mode',
   'execution.entry_limit_offset_pct': 'Entry limit above ask',

@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-11-15 — [100] UX pass on Readiness and Logs (build, PR 2 of 3)
+
+Second build PR for item 100 (#296). The stored readiness statuses are unchanged; the screen words them by what is needed and adds the "What moves this forward" card, written by code from the stored snapshot. Logs recurring problems carry "Does it need you?" (act / watch / nothing to do) from the same unreviewed-error rule Readiness uses, sorted by it and counted above the list; the summary honours the chosen period.
+
+- **Config:** new `gui.log_watch_min_count` (5, 1–1000) — the count from which a recurring warning shows "watch". In `backend/config.example.yaml`, the README table and Settings → Display.
+
+## 2026-11-15 — [101] Last-cycle switch and saved-values recovery (build)
+
+Settings → Schedule now offers the last-cycle entry switch, including unsaved preview and loosening confirmation. Settings → History lists saved settings without controls that differ from the YAML layers and can save the config value with a reason and confirmation. Needs you and the History section show the count. The frontend and backend share the control-key manifest; API-only cycle times and the two unrendered Readiness thresholds leave the ordinary edit allowlist. Saved values never change automatically. No spec or design files changed.
+
 ## 2026-11-14 — [101] A switch for last-cycle entries; saved values without a control (spec)
 
 Follows item 098. Marc decided on 14 Nov: the last-cycle rule gets a button on the Settings screen, and saved values keep winning over the config file but must be visible. Kickoff `101-feat-last-cycle-switch-and-saved-values.md`, issue #298. No change to what the rule does.

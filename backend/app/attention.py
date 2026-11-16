@@ -743,6 +743,21 @@ def build_attention(request: Request) -> dict[str, Any]:
                 )
             )
 
+        if config.saved_without_control:
+            count = len(config.saved_without_control)
+            items.append(
+                _item(
+                    "saved_without_control",
+                    "warning",
+                    f"{count} saved value{'s' if count != 1 else ''} differ"
+                    f"{'s' if count == 1 else ''} from the config file",
+                    "Saved settings without a control keep winning over the config file.",
+                    "Open Settings",
+                    "/settings/history",
+                    None,
+                )
+            )
+
         # 8b. FOMC dates running out (item 067): from 60 days before the
         #     last configured date, Needs you asks for the Fed's next
         #     year. The item leaves when the config list grows.
