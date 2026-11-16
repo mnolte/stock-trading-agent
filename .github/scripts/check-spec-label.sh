@@ -18,9 +18,11 @@
 #   2. The label on a PR that touches nothing spec-owned is stale —
 #      warning, not an error: it doesn't block, but should be removed.
 #   3. Changes to SPEC.md, the agent rules, prompts, config examples or
-#      .env.example need an entry in docs/CHANGES.md; changes to design
-#      files need one in design/CHANGES.md. Other spec-owned files
-#      (README, kickoff, analysis, this gate itself) need the label only.
+#      .env.example need a change entry: a changed item file in
+#      docs/changes/ (from item 102) or docs/CHANGES.md (items up to 101).
+#      Changes to design files need one in design/changes/ or
+#      design/CHANGES.md. Other spec-owned files (README, kickoff,
+#      analysis, this gate itself) need the label only.
 #   4. Archiving a finished kickoff is not a spec change: an unchanged
 #      move of docs/kickoffs/<name>.md to docs/kickoffs/archive/<name>.md
 #      (docs/work-items.md) needs no label. Any edit in the same move, a
@@ -59,6 +61,17 @@ matches() {  # file, then patterns
 # Exact (not glob) membership in the changed-file list — used for the
 # changelog files themselves.
 changed_has() { printf '%s\n' "${changed[@]}" | grep -qxF "$1"; }
+# A changed item file in a per-item change folder (item 102):
+# <folder>/NNN-<type>-<slug>.md, not the folder's README.
+changed_item_file() {
+  local f
+  for f in "${changed[@]}"; do
+    [[ $f =~ ^$1/[0-9]{3}-(feat|fix|analysis|ops|spec)-[a-z0-9-]+\.md$ ]] && return 0
+  done
+  return 1
+}
+has_spec_entry() { changed_has docs/CHANGES.md || changed_item_file docs/changes; }
+has_design_entry() { changed_has design/CHANGES.md || changed_item_file design/changes; }
 
 # Spec-owned files this PR actually touches.
 spec_files=()
@@ -95,12 +108,12 @@ fi
 needs_spec_log=(docs/SPEC.md AGENTS.md 'backend/prompts/*.md' backend/config.example.yaml .env.example)
 needs_design_log=('design/screens/*' design/DESIGN.md design/tokens.css)
 for f in "${spec_files[@]}"; do
-  if matches "$f" "${needs_spec_log[@]}" && ! changed_has docs/CHANGES.md; then
-    echo "::error file=$f::Spec change without an entry in docs/CHANGES.md"
+  if matches "$f" "${needs_spec_log[@]}" && ! has_spec_entry; then
+    echo "::error file=$f::Spec change without a change entry: add the item's file in docs/changes/ (docs/changes/README.md)"
     errors=1
   fi
-  if matches "$f" "${needs_design_log[@]}" && ! changed_has design/CHANGES.md; then
-    echo "::error file=$f::Design change without an entry in design/CHANGES.md"
+  if matches "$f" "${needs_design_log[@]}" && ! has_design_entry; then
+    echo "::error file=$f::Design change without a design entry: add the item's file in design/changes/ (docs/changes/README.md)"
     errors=1
   fi
 done

@@ -2,8 +2,9 @@ name: Workflow
 
 # Enforces the repo's spec and changelog discipline on every PR.
 # AGENTS.md requires that a behaviour change updates docs/SPEC.md (when
-# asked) and always adds a dated entry to docs/CHANGES.md, newest first;
-# CLAUDE.md does the same for design files and design/CHANGES.md. A PR
+# asked) and always adds a change entry: the item's file in docs/changes/
+# (from item 102; docs/CHANGES.md before); CLAUDE.md does the same for
+# design files and design/changes/. A PR
 # that touches spec-owned files must carry the "spec change" label so
 # the change is visible as spec work, not just code.
 #

@@ -18,15 +18,15 @@ Read `AGENTS.md` first: its rules apply to Claude Code in full. This file only a
 
 ## When changing docs
 
-- Every piece of work with a kickoff is a work item `NNN-type-slug` (`docs/work-items.md`): take the next free number and add its row (status `planned`) in the spec PR.
+- Every piece of work with a kickoff is a work item `NNN-type-slug` (`docs/work-items.md`). Claim the number first by opening its issue `[NNN] Title` (the highest `[NNN]` in any issue or PR title, plus one), then branch. The spec PR creates the item's file `docs/changes/NNN-type-slug.md` with `status: ready`, and `design/changes/NNN-type-slug.md` for design changes (decided 15 Nov, item 102; format in `docs/changes/README.md`). Never add to `docs/CHANGES.md`, `design/CHANGES.md`, the register table in `docs/work-items.md` or the build plan in `docs/SPEC.md`; they end at item 101.
 - Issues close themselves (decided 11 Nov): every kickoff for an item with an issue tells Devin to put `Closes #<issue>` in the (last) build PR; the spec PR says `Refs #<issue>`. Issues I open for planned work name their kickoff and say how they close.
 - A PR closes only issues it resolves (decided 12 Nov): before I call a PR of mine done, I read every issue it would close and check each point against the PR, list them in the PR under "Issues closed", and change `Closes` to `Part of` with a comment on the issue when something is left. An issue lists what must be true to close it, so that this check is possible.
 - Work on a `spec/NNN-slug` branch from the latest `main` and open a pull request titled `[NNN] spec: Title` with the label `spec change`. Never push to `main` and never merge; Marc does.
 - A pull request is done only when it is ready to merge: every CI check has passed (wait for the running ones) and GitHub reports no conflicts with `main`. If a check fails, fix it on the branch; if `main` moved and conflicts, merge the latest `main` into the branch and resolve. Say in the reply that CI passed and the PR merges cleanly (decided 9 Nov).
 - Never edit the root `README.md`; Devin owns it.
 - Write each new kickoff as `docs/kickoffs/NNN-type-slug.md` with the first line `# NNN · type · Title`, and refer to items as `NNN` or `[NNN]`, GitHub PRs as `#n`. `docs/kickoffs/` holds only work not yet started: a kickoff moves unchanged to `docs/kickoffs/archive/` in the build PR itself (the first one, if the item takes several; for a spec-only item, my spec PR). Kickoffs refer to themselves by name, not by folder, so they read right in either place. Older kickoffs keep their names there (`pr-<n>.md`, `fix-…`); `archive/DEVIN_KICKOFF.md` holds items 001–028.
-- Spec changes go to `docs/SPEC.md` only when Marc asks, plus a dated entry in `docs/CHANGES.md`.
-- Design changes go to `design/screens/` and `design/screenshots/`, plus an entry in `design/CHANGES.md`.
+- Spec changes go to `docs/SPEC.md` only when Marc asks, plus a dated section in the item's file in `docs/changes/`.
+- Design changes go to `design/screens/` and `design/screenshots/`, plus a dated section in the item's file in `design/changes/`.
 - Keep the defaults in `backend/config.example.yaml` in step with the spec, but `main` must boot from it at every commit (`docs/README.md` rule 7). A block whose code doesn't exist yet goes in the kickoff, unless the app is known to ignore it.
 
 ## Tests
