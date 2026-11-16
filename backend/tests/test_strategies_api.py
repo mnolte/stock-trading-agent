@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from app.api.main import check_model_prices_at_startup, run_migrations
@@ -70,7 +71,13 @@ def test_synthetic_quote_entry_count_is_for_filled_positions_in_current_run(
         session.flush()
         position.entry_decision_id = decision.id
         session.commit()
-    assert client.get("/api/strategies").json()["synthetic_quote_entries"] == 1
+    data = client.get("/api/strategies").json()
+    assert data["synthetic_quote_entries"] == 1
+    row = next(r for r in data["rows"] if r["id"] == sid)
+    assert row["entries"] == 1
+    assert row["synthetic_entries"] == 1
+    # Live's row carries no synthetic counts.
+    assert next(r for r in data["rows"] if r["id"] is None).get("entries") is None
 
 
 def test_new_shadow_validation(client: TestClient) -> None:
@@ -219,3 +226,237 @@ def test_weekly_facts_include_the_comparison(client: TestClient) -> None:
     names = [row["name"] for row in facts["strategies"]]
     assert names == ["Live", "B · Bigger model"]
     assert "same_as_live_pct" in facts["strategies"][1]
+
+
+# --- Disagreements: who was better (item 100) -------------------------------
+
+
+def _pair(
+    strategy_id: int,
+    symbol: str,
+    shadow_action: str,
+    live_action: str,
+    *,
+    days: int = 1,
+    shadow_trade: dict[str, object] | None = None,
+    live_position: dict[str, object] | None = None,
+) -> None:
+    """One counted symbol-cycle where the shadow and live chose
+    differently, optionally with a trade on either side."""
+    from app.db.models import Decision, Position
+
+    with get_session_maker()() as session:
+        run = session.execute(select(Run).order_by(Run.id.desc())).scalar_one()
+        t = run.started_at + timedelta(days=days)
+        cycle = Cycle(kind="cycle", status="done", scheduled_time=t)
+        session.add(cycle)
+        session.flush()
+        live = Decision(
+            cycle_id=cycle.id,
+            symbol=symbol,
+            context="candidate",
+            final_action=live_action,
+            prompt_version="decision.v1",
+            prompt_hash="x",
+            model="none",
+        )
+        session.add(live)
+        session.flush()
+        shadow = ShadowDecision(
+            strategy_id=strategy_id,
+            cycle_id=cycle.id,
+            symbol=symbol,
+            context="candidate",
+            final_action=shadow_action,
+            live_decision_id=live.id,
+            created_at=t,
+        )
+        session.add(shadow)
+        session.flush()
+        if shadow_trade is not None:
+            session.add(
+                ShadowPosition(
+                    strategy_id=strategy_id,
+                    run_id=run.id,
+                    symbol=symbol,
+                    qty=1,
+                    entry=Decimal("100"),
+                    initial_stop=Decimal("98"),
+                    stop=Decimal("98"),
+                    created_at=t,
+                    expires_at=t,
+                    opened_at=t,
+                    entry_decision_id=shadow.id,
+                    **shadow_trade,
+                )
+            )
+        if live_position is not None:
+            session.add(
+                Position(
+                    symbol=symbol,
+                    entry_decision_id=live.id,
+                    qty=1,
+                    avg_entry_price=Decimal("100"),
+                    initial_stop=Decimal("98"),
+                    opened_at=t,
+                    **live_position,
+                )
+            )
+        session.commit()
+
+
+def _items(client: TestClient, sid: int) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    rows = client.get("/api/strategies").json()["rows"]
+    shadow = next(r for r in rows if r["id"] == sid)
+    d = cast(dict[str, Any], shadow["disagreements"])
+    return d, cast(list[dict[str, Any]], d["items"])
+
+
+def test_disagreement_shadow_entered_and_won(client: TestClient) -> None:
+    sid = _new(client)
+    _pair(
+        sid,
+        "AMZN",
+        "enter",
+        "skip",
+        shadow_trade={
+            "status": "closed", "r": Decimal("2.1"), "pnl": Decimal("4"),
+            "exit_reason": "target", "closed_at": datetime(2026, 10, 8),
+        },
+    )
+    d, items = _items(client, sid)
+    assert items[0]["better"] == "shadow"
+    assert items[0]["result_text"] == "B’s trade: +2.1R at the target"
+    assert items[0]["shadow_decision_id"] is not None
+    assert d["counts"] == {"shadow_better": 1, "live_better": 0, "undecided": 0}
+
+
+def test_disagreement_shadow_entered_and_lost(client: TestClient) -> None:
+    sid = _new(client)
+    _pair(
+        sid,
+        "GOOGL",
+        "enter",
+        "skip",
+        shadow_trade={
+            "status": "closed", "r": Decimal("-1"), "pnl": Decimal("-2"),
+            "exit_reason": "stop", "closed_at": datetime(2026, 10, 8),
+        },
+    )
+    d, items = _items(client, sid)
+    assert items[0]["better"] == "live"
+    assert items[0]["result_text"] == "B’s trade: −1.0R at the stop"
+    assert d["counts"]["live_better"] == 1
+
+
+def test_disagreement_zero_r_open_and_unfilled_are_undecided(
+    client: TestClient,
+) -> None:
+    sid = _new(client)
+    _pair(
+        sid,
+        "A",
+        "enter",
+        "skip",
+        shadow_trade={
+            "status": "closed", "r": Decimal("0"), "pnl": Decimal("0"),
+            "exit_reason": "agent exit", "closed_at": datetime(2026, 10, 8),
+        },
+    )
+    _pair(sid, "B", "enter", "skip", days=2, shadow_trade={"status": "open"})
+    _pair(sid, "C", "enter", "skip", days=3, shadow_trade={"status": "not_filled"})
+    d, items = _items(client, sid)
+    assert [i["better"] for i in items] == [None, None, None]
+    texts = {i["symbol"]: i["result_text"] for i in items}
+    assert texts["A"] == "B’s trade: 0.0R at the agent exit"
+    assert texts["B"] == "B’s trade is open"
+    assert texts["C"] == "B’s entry wasn’t filled"
+    assert d["counts"]["undecided"] == 3
+
+
+def test_disagreement_live_entered_and_won_or_lost(client: TestClient) -> None:
+    sid = _new(client)
+    _pair(
+        sid,
+        "XOM",
+        "skip",
+        "enter",
+        live_position={
+            "closed_at": datetime(2026, 10, 8),
+            "realized_pnl_raw": Decimal("1.6"),
+            "exit_reason": "target",
+        },
+    )
+    _pair(
+        sid,
+        "CAT",
+        "skip",
+        "enter",
+        days=2,
+        live_position={
+            "closed_at": datetime(2026, 10, 9),
+            "realized_pnl_raw": Decimal("-2"),
+            "exit_reason": "stop",
+        },
+    )
+    d, items = _items(client, sid)
+    by_symbol = {i["symbol"]: i for i in items}
+    assert by_symbol["XOM"]["better"] == "live"
+    assert by_symbol["XOM"]["result_text"] == "Live’s trade: +0.8R at the target"
+    assert by_symbol["CAT"]["better"] == "shadow"
+    assert by_symbol["CAT"]["result_text"] == "Live’s trade: −1.0R at the stop"
+    assert d["counts"] == {"shadow_better": 1, "live_better": 1, "undecided": 0}
+
+
+def test_disagreement_neither_or_both_entered_is_undecided(
+    client: TestClient,
+) -> None:
+    sid = _new(client)
+    _pair(sid, "A", "skip", "hold")
+    _pair(sid, "B", "enter", "enter", days=2)
+    _pair(
+        sid,
+        "C",
+        "enter",
+        "tighten_stop",
+        days=3,
+        live_position={
+            "closed_at": datetime(2026, 10, 9),
+            "realized_pnl_raw": Decimal("2"),
+            "exit_reason": "stop",
+        },
+    )
+    d, items = _items(client, sid)
+    # enter == enter is no disagreement at all; enter vs tighten_stop is
+    # one, but live already held, so neither side "entered" here.
+    assert [i["symbol"] for i in items] == ["C", "A"]
+    assert [i["better"] for i in items] == [None, None]
+    assert d["counts"]["undecided"] == 2
+
+
+def test_disagreement_counts_cover_the_run_before_the_limit(
+    client: TestClient,
+) -> None:
+    sid = _new(client)
+    for i in range(3):
+        _pair(
+            sid,
+            f"S{i}",
+            "enter",
+            "skip",
+            days=i + 1,
+            shadow_trade={
+                "status": "closed", "r": Decimal("1"), "pnl": Decimal("2"),
+                "exit_reason": "target", "closed_at": datetime(2026, 10, 8),
+            },
+        )
+    with get_session_maker()() as session:
+        run = session.execute(select(Run).order_by(Run.id.desc())).scalar_one()
+        strategy = session.get(Strategy, sid)
+        assert strategy is not None
+        from app.shadows.compare import disagreements
+
+        d = disagreements(session, strategy, run, short="B", limit=2)
+    assert len(d["items"]) == 2
+    assert d["counts"] == {"shadow_better": 3, "live_better": 0, "undecided": 0}
+    assert d["total"] == 3

@@ -970,7 +970,7 @@ def _finish(
     if row is None:
         return
     run_dir = run_dir_for(config, run_id)
-    summary = {}
+    summary: dict[str, Any] = {}
     for spec in bundles_hint.strategies:
         db = run_dir / f"{spec['slug']}.db"
         if db.exists():
@@ -978,6 +978,14 @@ def _finish(
             summary[spec["slug"]] = summarise(
                 sf, config=config, equity=bundles_hint.starting_equity
             )
+    if status == "done":
+        from app.backtests.answers import answer_sentence
+
+        answer = answer_sentence(
+            bundles_hint.strategies, summary, bundles_hint.starting_equity
+        )
+        if answer is not None:
+            summary["answer"] = answer
     row.summary = summary
     row.warnings = (row.warnings or []) + warnings + _read_with_care(
         bundles_hint,

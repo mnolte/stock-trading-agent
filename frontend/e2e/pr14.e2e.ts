@@ -47,7 +47,7 @@ test('backtest: results panels from the seeded finished run', async ({
   await expect(page.getByText('up · normal').first()).toBeVisible();
 
   // Read-with-care notes.
-  await expect(page.getByText('Read with care')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Read with care' })).toBeVisible();
   await expect(
     page.getByText(/came from the cache of earlier runs/),
   ).toBeVisible();
@@ -55,7 +55,7 @@ test('backtest: results panels from the seeded finished run', async ({
   await page.screenshot({ path: shot('backtest-results', testInfo.project.name) });
 
   // Trades panel — both strategies, real rows.
-  await page.getByRole('button', { name: /Open trades/ }).click();
+  await page.getByRole('button', { name: /View \d+ trades/ }).click();
   await expect(page.getByText('Trades · Live settings')).toBeVisible();
   await expect(page.getByText('Trades · Rules only')).toBeVisible();
   await expect(
@@ -66,7 +66,7 @@ test('backtest: results panels from the seeded finished run', async ({
   ).toBeVisible();
 
   // Decisions panel — skip row and a cache source tag.
-  await page.getByRole('button', { name: 'Open decisions' }).click();
+  await page.getByRole('button', { name: 'View decisions' }).click();
   await expect(page.getByText('Decisions · Live settings')).toBeVisible();
   await expect(
     page.getByRole('cell', { name: 'DDD' }).first(),
@@ -118,10 +118,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   }
 
   await page.goto('/backtest');
-  await expect(page.getByText('New backtest', { exact: true })).toBeVisible({
+  await expect(page.getByRole('heading', { name: 'New backtest' })).toBeVisible({
     timeout: 60_000,
   });
-  await expect(page.getByText('Runs', { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Runs' })).toBeVisible();
   await expect(page.getByText('Strategies to compare')).toBeVisible();
 
   // Wait for the agent-clock default to land before typing: the To field
@@ -132,7 +132,10 @@ test('backtest: form with estimate and cutoff refusal, runs list', async ({
   // sessions, bars, calls, cache hits and cost.
   await page.getByLabel('From').fill('2024-07-01');
   await page.getByLabel('To').fill('2024-09-30');
-  await expect(page.getByText('Model calls (estimate)')).toBeVisible({ timeout: 30_000 });
+  // Item 100: the estimate reads as "Before you run" — verdicts, then one
+  // row per number.
+  await expect(page.getByText('Before you run')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText('Model calls', { exact: true })).toBeVisible();
   await expect(page.getByText('Sessions', { exact: true })).toBeVisible();
   await expect(
     page.getByRole('button', { name: 'Run backtest' }),

@@ -121,6 +121,9 @@ def test_save_quiet_hours_rejects_bad_time(client: TestClient) -> None:
 # sends them together), so it is covered by the symbols save below.
 READ_ONLY_FORM_KEYS = {
     ("performance", "starting_equity"),
+    ("schedule", "cycles"),
+    ("readiness", "ratio_min_trades"),
+    ("readiness", "error_auto_resolve_minutes"),
     ("universe", "allowed_sectors"),
     ("universe", "sectors"),
 }

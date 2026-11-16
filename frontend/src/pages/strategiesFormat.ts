@@ -67,13 +67,14 @@ export function startedLine(startedAt: string, equity: string): string {
   return `${shortDate(startedAt)} ${time} · virtual $${money}`;
 }
 
-/** The small-sample warning, with the design's wording. Null once every
- * strategy has enough closed trades to promote. */
+/** The small-sample banner, with the design's wording (item 100): a bold
+ * lead, then the numbers. Null once every strategy has enough closed
+ * trades to promote. */
 export function sampleWarning(
   sessions: number | null,
   rows: StrategyRow[],
   needed: number,
-): string | null {
+): { lead: string; body: string } | null {
   if (rows.length === 0) return null;
   const counts = rows.map((r) => r.closed);
   const low = Math.min(...counts);
@@ -85,9 +86,28 @@ export function sampleWarning(
     low === high
       ? `${low} closed ${low === 1 ? 'trade' : 'trades'}`
       : `${low} to ${high} closed trades`;
+  return {
+    lead: 'Too early to tell these strategies apart.',
+    body:
+      `${sessionText}${tradeText} each. A difference starts to mean ` +
+      `something from ${needed} closed trades per strategy, which is also ` +
+      `what Promote needs. Until then, read the numbers as hints.`,
+  };
+}
+
+/** "14 disagreements in 9 sessions. B’s choice ended better in 3, live’s
+ * in 2, and 9 are not decided yet." — the tally sentence (item 100). */
+export function disagreementTally(
+  total: number,
+  sessions: number,
+  counts: { shadow_better: number; live_better: number; undecided: number },
+  short: string,
+): string {
   return (
-    `${sessionText}${tradeText} per strategy: far too few to tell strategies apart. ` +
-    `Promoting to live needs at least ${needed} closed trades; read the differences as hints, not results.`
+    `${total} ${total === 1 ? 'disagreement' : 'disagreements'} in ${sessions} ` +
+    `${sessions === 1 ? 'session' : 'sessions'}. ${short}’s choice ended better ` +
+    `in ${counts.shadow_better}, live’s in ${counts.live_better}, and ` +
+    `${counts.undecided} are not decided yet.`
   );
 }
 

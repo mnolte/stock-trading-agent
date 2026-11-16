@@ -62,7 +62,7 @@ default is commented in `backend/config.example.yaml`. Blocks:
 | `app.timezone` | Display timezone |
 | `schedule.*` | Cycle times, position checks, calendar and history loading |
 | `api.*` | GUI-facing behaviour: `api.broker_timeout_seconds` bounds a broker read before a card answers stale |
-| `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop |
+| `gui.*` | GUI thresholds: `gui.near_stop_atr` marks a position whose stop is within that distance as near its stop; `gui.log_watch_min_count` is the count from which a recurring warning on Logs shows as "watch" |
 | `concurrency.*` | `concurrency.max_requests` (20, 1–50): most requests one batch keeps in flight; also sizes the HTTP pools; restart to change |
 | `execution.*` | Order shape: limit offset, timeouts, spread and quote guards |
 | `rules.*` | Pre-filter thresholds (RSI, moving averages) |

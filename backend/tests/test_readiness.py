@@ -1380,6 +1380,7 @@ def test_readiness_api_shape(client: Any) -> None:
         "manual",
         "errors",
         "history",
+        "forward",
     }
     assert len(data["manual"]) == 5
     assert data["summary"]["manual_total"] == 5

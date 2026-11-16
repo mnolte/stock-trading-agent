@@ -359,6 +359,8 @@ def list_runs(request: Request) -> dict[str, Any]:
         rows = session.execute(
             select(Backtest).order_by(Backtest.id.desc())
         ).scalars().all()
+        for r in rows:
+            _ensure_answer(session, r)
         items = [_row_json(r) for r in rows]
         strategies = session.execute(
             select(Strategy).where(Strategy.status != "archived")
@@ -411,6 +413,23 @@ def list_runs(request: Request) -> dict[str, Any]:
     }
 
 
+def _ensure_answer(session: Session, row: Backtest) -> None:
+    """Backfill the stored answer sentence for runs that finished before
+    it existed: computed once on first read, then stored."""
+    if row.status != "done" or not row.summary or row.summary.get("answer"):
+        return
+    from app.backtests.answers import answer_sentence
+
+    answer = answer_sentence(
+        row.strategies,
+        {k: v for k, v in row.summary.items() if k != "answer"},
+        row.starting_equity,
+    )
+    if answer is not None:
+        row.summary = {**row.summary, "answer": answer}
+        session.commit()
+
+
 def _row_json(row: Backtest) -> dict[str, Any]:
     return {
         "id": row.id,
@@ -442,6 +461,7 @@ def run_detail(request: Request, run_id: int) -> dict[str, Any]:
         row = session.get(Backtest, run_id)
         if row is None:
             raise HTTPException(404, "run not found")
+        _ensure_answer(session, row)
         payload = _row_json(row)
     _manager(request).tick()
     return payload
