@@ -1,4 +1,4 @@
-# Design changes
+# Design changes (up to item 101 — later items: one file each in design/changes/)
 
 Newest first. Each entry names the screens it touches.
 
