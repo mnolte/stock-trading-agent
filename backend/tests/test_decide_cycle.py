@@ -1092,6 +1092,49 @@ async def test_price_failure_does_not_consume_call_slot(
     assert decisions["XOM"].no_call_reason == "call_cap"
 
 
+async def test_ep_mode_quote_aging_mid_cycle_stores_one_decision(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """expected_profit: a quote that crosses the staleness limit while the
+    model wave runs must not get a second no_call — the price-blocked
+    backfill covers only the candidates the pre-score skipped, never a
+    symbol that already has a decision this cycle."""
+    clock = FakeClock(NOW_13H)
+
+    class AdvancingClient(FakeDecisionClient):
+        async def complete(self, **kwargs: Any) -> Any:
+            clock.advance(timedelta(seconds=90))
+            return await super().complete(**kwargs)
+
+    class Quotes:
+        async def fetch_quotes(
+            self, symbols: list[str]
+        ) -> DataResult[dict[str, Quote]]:
+            return DataResult(data={"MSFT": _quote()})
+
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass")),
+        sources=_sources(quotes=Quotes()),
+        universe=["MSFT"],
+        client=AdvancingClient(),
+        clock=clock,
+        with_executor=True,
+    )
+    runner.config.yaml["selection"]["mode"] = "expected_profit"
+
+    report = await runner.run(CYCLE_1246)
+
+    assert report.status == "done"
+    decisions = [
+        d
+        for d in _decisions(session_factory)
+        if d.symbol == "MSFT" and d.context == "candidate"
+    ]
+    assert len(decisions) == 1
+    assert decisions[0].no_call_reason is None
+
+
 async def test_run_due_respects_early_close(
     session_factory: sessionmaker[Session],
 ) -> None:

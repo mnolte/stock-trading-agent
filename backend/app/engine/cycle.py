@@ -2038,9 +2038,11 @@ class CycleRunner:
         )
         assert self.executor is not None  # noqa: S101 - ep mode requires it
         prepared: list[dict[str, Any]] = []
+        price_blocked: list[SymbolEval] = []
         for item in cand_items:
             quote = quotes.get(item.symbol)
             if quote is None or self._price_reason(item.symbol, quote) is not None:
+                price_blocked.append(item)
                 continue
             if not self.decide.spec.uses_options:
                 prepared.append({"item": item, "quote": quote, "pre": None})
@@ -2217,10 +2219,11 @@ class CycleRunner:
             session.commit()
             report.decisions.append(decision.id)
         # Price-blocked candidates get their stored no_call too — the
-        # same rows the rank path records.
-        for item in cand_items:
-            if self._price_reason(item.symbol, quotes.get(item.symbol)) is None:
-                continue
+        # same rows the rank path records. Only the items the pre-score
+        # skipped qualify: re-checking the quote here would add a second
+        # row to a candidate whose trade merely aged past the limit
+        # during the wave.
+        for item in price_blocked:
             plan = self._prepare_item(
                 session,
                 cycle_id,
