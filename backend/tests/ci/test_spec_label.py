@@ -119,13 +119,65 @@ def test_spec_change_with_label_and_changelog_passes(tmp_path: Path) -> None:
 def test_spec_change_with_label_but_no_changelog_fails(tmp_path: Path) -> None:
     r = run_gate(tmp_path, {"docs/SPEC.md": "spec\n"}, label=True)
     assert r.returncode == 1
-    assert "docs/CHANGES.md" in r.stdout
+    assert "docs/changes/" in r.stdout
 
 
 def test_design_screen_without_design_changelog_fails(tmp_path: Path) -> None:
     r = run_gate(tmp_path, {"design/screens/Main.dc.html": "<html/>\n"}, label=True)
     assert r.returncode == 1
-    assert "design/CHANGES.md" in r.stdout
+    assert "design/changes/" in r.stdout
+
+
+# Item 102: one file per work item. An item file in docs/changes/ or
+# design/changes/ is the change entry; the old files still count.
+def test_spec_change_with_item_file_passes(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {"docs/SPEC.md": "spec\n", "docs/changes/123-feat-new-thing.md": "entry\n"},
+        label=True,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_design_change_with_design_item_file_passes(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {
+            "design/screens/Main.dc.html": "<html/>\n",
+            "design/changes/123-feat-new-thing.md": "entry\n",
+        },
+        label=True,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_changes_readme_is_not_an_entry(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {"docs/SPEC.md": "spec\n", "docs/changes/README.md": "format\n"},
+        label=True,
+    )
+    assert r.returncode == 1
+    assert "docs/changes/" in r.stdout
+
+
+def test_spec_item_file_does_not_count_for_design(tmp_path: Path) -> None:
+    r = run_gate(
+        tmp_path,
+        {
+            "design/screens/Main.dc.html": "<html/>\n",
+            "docs/changes/123-feat-new-thing.md": "entry\n",
+        },
+        label=True,
+    )
+    assert r.returncode == 1
+    assert "design/changes/" in r.stdout
+
+
+def test_item_file_alone_needs_no_label(tmp_path: Path) -> None:
+    # A build PR that only updates its item's status is not spec work.
+    r = run_gate(tmp_path, {"docs/changes/123-feat-new-thing.md": "entry\n"}, label=False)
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 def test_new_prompt_with_label_and_changelog_passes(tmp_path: Path) -> None:
