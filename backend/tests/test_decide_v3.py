@@ -562,6 +562,69 @@ def test_locks_in_claim_unsupported() -> None:
     assert result.final_action == "hold"  # the decision stands
 
 
+def test_locks_in_negated_is_not_a_claim() -> None:
+    """Live false positives (PG decision.v4, COST decision.v6): "do not
+    lock in profit yet" is the opposite of a locks-in claim."""
+    snap = _claim_snapshot()  # locked_r = -1
+    for thesis in (
+        "the stop options do not lock in profit yet",
+        "the stop does not lock in gains",
+        "there is no lock in of profit at this stop",
+        "the stop never locks in profit",
+        "the stop can't lock in profit from here",
+        "the stop is not locking in profit yet",
+    ):
+        result = validate_model_output_v3(
+            _v3_held("hold", thesis),
+            symbol="ACN",
+            context="held",
+            snapshot=snap,
+            atr_1h=Decimal("3.0"),
+            current_stop=Decimal("237.91"),
+            config=AppConfig(),
+        )
+        assert result.claims is not None and result.claims.passed, thesis
+
+
+def test_locks_in_negation_scoped_to_its_clause() -> None:
+    """A negation before the claim word does not cover a later clause:
+    "does not lock in profit, but it locks in the gain" still claims."""
+    snap = _claim_snapshot()
+    result = validate_model_output_v3(
+        _v3_held(
+            "hold",
+            "the stop does not lock in profit yet, "
+            "but it locks in the current gain",
+        ),
+        symbol="ACN",
+        context="held",
+        snapshot=snap,
+        atr_1h=Decimal("3.0"),
+        current_stop=Decimal("237.91"),
+        config=AppConfig(),
+    )
+    assert result.claims is not None and not result.claims.passed
+
+
+def test_locks_in_claim_covers_locking_forms() -> None:
+    """"locking in"/"locked in" are the same claim as "locks in"."""
+    snap = _claim_snapshot()
+    for thesis in (
+        "the stop is locking in profit",
+        "the stop locked in the gain",
+    ):
+        result = validate_model_output_v3(
+            _v3_held("hold", thesis),
+            symbol="ACN",
+            context="held",
+            snapshot=snap,
+            atr_1h=Decimal("3.0"),
+            current_stop=Decimal("237.91"),
+            config=AppConfig(),
+        )
+        assert result.claims is not None and not result.claims.passed, thesis
+
+
 def test_level_claim_wrong_and_right() -> None:
     snap = _claim_snapshot()
     wrong = validate_model_output_v3(
