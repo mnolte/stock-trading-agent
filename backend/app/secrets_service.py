@@ -117,11 +117,15 @@ def masked_account(number: str) -> str:
 
 
 def scrub(text: str, secrets: list[str]) -> str:
-    """Strip every known secret value out of a message."""
-    for value in secrets:
-        if value and len(value) >= 8:
-            text = text.replace(value, "••••")
-    return text
+    """Strip secret values and key-shaped strings out of a message.
+
+    Delegates to the shared scrubber (item 105): every registered secret
+    provider value, ``secrets`` and the log pipeline's key patterns —
+    the same text a log line gets, with ``[redacted]`` markers.
+    """
+    from app.logging_config import scrub_text
+
+    return scrub_text(text, secrets)
 
 
 def _backup_credential_scrub_values(raw: str | None) -> list[str]:

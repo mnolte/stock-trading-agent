@@ -513,7 +513,14 @@ async def answer(
     with session_factory() as session:
         msg = session.get(AskMessage, message_id)
         if msg is not None:
-            msg.text = display
+            # Second line for the answer text itself (item 105): the
+            # model never sees a key, but a stored row gets the same
+            # scrub as every other persisted string.
+            msg.text = (
+                scrub(display, scrub_values() if scrub_values else [])
+                if display
+                else display
+            )
             msg.steps = steps
             msg.references = used_refs
             msg.unverified_numbers = unverified or None

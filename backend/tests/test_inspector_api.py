@@ -616,7 +616,7 @@ class TestErrorRowsWrittenByCalls:
             ).scalar_one()
             assert call.error_message is not None
             assert "sk-fake-abcd1234" not in call.error_message
-            assert "••••" in call.error_message
+            assert "[redacted]" in call.error_message
 
 
 @pytest.mark.perf

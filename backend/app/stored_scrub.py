@@ -1,19 +1,20 @@
-"""One-time scrub of stored rows (item 081, spec → Audit of 11 November).
+"""Stored-row scrub (item 081, spec → Audit of 11 November; item 105).
 
 Before the fix, exception text carrying a key could be persisted in
 ``cycles.data_source_health``, ``notifications.subject``/``body``,
-``events.details`` and the Ask message columns. This runs once at
+``events.details`` and the Ask message columns. This runs at every
 startup — after migrations and after the secret providers are
 registered, so ``_all_secrets()`` sees every stored key — and rewrites
 those columns through the same patterns and values the log scrubber
-uses. The ``stored_text_scrub`` event row is the flag: its presence
-means the scrub already ran.
+uses. An error-level ``stored_text_scrub`` event is recorded whenever a
+run changes rows: it feeds the Needs you item "A key appeared in stored
+error text. Replace the FRED and Finnhub keys" (docs/SPEC.md, Needs
+you), so a leak that slips past the write-time scrubbers re-flags on
+the next boot instead of sitting in the database.
 
 Transactions stay short (hard rule 13): rows are read in batches of
 500 and committed per batch; there is no session-hours restriction —
-these are writes on old rows only. When any row changed, an error-level
-flag event feeds the Needs you item "A key appeared in stored error
-text. Replace the FRED and Finnhub keys" (docs/SPEC.md, Needs you).
+these are writes on old rows only.
 """
 
 from __future__ import annotations
@@ -78,21 +79,17 @@ def _scrub_batches(
 def run(
     session_factory: sessionmaker[Session], clock: Clock
 ) -> dict[str, int]:
-    """Scrub the stored rows once; returns changed-row counts per table.
+    """Scrub the stored rows; returns changed-row counts per table.
 
-    Empty dict means the flag row already exists — nothing to do.
+    Runs at every startup (item 105): rows are idempotent, so a clean
+    pass changes nothing and records no event. Only a pass that changed
+    rows writes the error-level flag event — that is what re-arms the
+    Needs you item.
     """
     from app.engine.state import record_event
 
     counts: dict[str, int] = {}
     with session_factory() as session:
-        flag = session.execute(
-            select(Event.id)
-            .where(Event.event_type == EVENT_TYPE)
-            .limit(1)
-        ).first()
-        if flag is not None:
-            return {}
         counts["cycles"] = _scrub_batches(
             session, Cycle, ["data_source_health"]
         )
@@ -114,15 +111,17 @@ def run(
             ],
         )
         total = sum(counts.values())
-        record_event(
-            session,
-            clock,
-            level="error" if total else "info",
-            event_type=EVENT_TYPE,
-            details={"tables": counts},
-        )
-        session.commit()
-    logger.info("stored text scrub changed rows: %s", counts)
+        if total:
+            record_event(
+                session,
+                clock,
+                level="error",
+                event_type=EVENT_TYPE,
+                details={"tables": counts},
+            )
+            session.commit()
+    if total:
+        logger.info("stored text scrub changed rows: %s", counts)
     return counts
 
 

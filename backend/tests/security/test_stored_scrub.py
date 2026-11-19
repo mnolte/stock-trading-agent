@@ -1,10 +1,11 @@
-"""Item 081 step 4 — the one-time stored-row scrub and its Needs you item.
+"""Item 081 step 4 + item 105 — the stored-row scrub and its Needs you item.
 
 Planted rows carrying key-shaped and stored-secret text are rewritten
-through the same scrubber the log pipeline uses; the flag event makes
-the run happen exactly once; the Needs you item appears only when rows
-changed and leaves when both keys were replaced after the scrub or the
-event is dismissed with a note.
+through the same scrubber the log pipeline uses; the scrub runs at
+every startup so a row written by a missed path is cleaned on the next
+boot; an error flag event — and the Needs you item — appears only when
+a run changed rows, and leaves when both keys were replaced after the
+scrub or the event is dismissed with a note.
 """
 
 from __future__ import annotations
@@ -114,7 +115,7 @@ def _provider_values() -> list[str]:
     return [STORED_SECRET]
 
 
-def test_stored_scrub_rewrites_rows_once(
+def test_stored_scrub_rewrites_rows_every_start(
     session_factory: SessionFactory,
     clock: FakeClock,
 ) -> None:
@@ -155,21 +156,58 @@ def test_stored_scrub_rewrites_rows_once(
             ).scalar_one()
             assert flag.level == "error"
             assert flag.affects == "none"
-        # Second run is a no-op: the flag row guards it.
-        assert run_stored_scrub(session_factory, clock) == {}
+        # A clean second run changes nothing and records no new flag —
+        # the earlier error event still stands on its own.
+        assert run_stored_scrub(session_factory, clock) == {
+            "cycles": 0,
+            "notifications": 0,
+            "events": 0,
+            "ask_messages": 0,
+        }
         with session_factory() as session:
             flags = session.execute(
                 select(Event).where(Event.event_type == EVENT_TYPE)
             ).scalars().all()
             assert len(flags) == 1
+        # A row written after the first scrub is caught on the next run
+        # and re-arms the flag (item 105).
+        with session_factory() as session:
+            session.add(
+                Notification(
+                    time=datetime(2026, 10, 15, 15, 0),
+                    event="source_failing",
+                    severity="warning",
+                    subject=f"late leak: {FAKE_KEY}",
+                    channels=["app"],
+                    channel_status={"app": "sent"},
+                )
+            )
+            session.commit()
+        counts = run_stored_scrub(session_factory, clock)
+        assert counts["notifications"] == 1
+        with session_factory() as session:
+            flags = session.execute(
+                select(Event)
+                .where(Event.event_type == EVENT_TYPE)
+                .order_by(Event.id)
+            ).scalars().all()
+            assert len(flags) == 2
+            assert flags[-1].level == "error"
+            late = session.execute(
+                select(Notification).order_by(Notification.id.desc())
+            ).scalars().first()
+            assert late is not None and FAKE_KEY not in late.subject
     finally:
         lc.unregister_secret_provider(_provider_values)
         lc._secrets_cache.clear()
 
 
-def test_stored_scrub_clean_db_records_info_flag(
+def test_stored_scrub_clean_db_records_no_flag(
     session_factory: SessionFactory, clock: FakeClock
 ) -> None:
+    """A clean pass changes nothing and writes no event — an info flag
+    every boot would push the Needs you item's latest event forward and
+    hide an unresolved error flag (item 105)."""
     counts = run_stored_scrub(session_factory, clock)
     assert counts == {
         "cycles": 0,
@@ -178,10 +216,10 @@ def test_stored_scrub_clean_db_records_info_flag(
         "ask_messages": 0,
     }
     with session_factory() as session:
-        flag = session.execute(
+        flags = session.execute(
             select(Event).where(Event.event_type == EVENT_TYPE)
-        ).scalar_one()
-        assert flag.level == "info"
+        ).scalars().all()
+        assert flags == []
 
 
 def _attention(client: TestClient) -> dict[str, Any]:

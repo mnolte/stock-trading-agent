@@ -112,6 +112,21 @@ _SCRUB_CALLS = {
 }
 _LOG_ATTRS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
 _LOG_NAMES = {"ev"}
+# Traceback renderers: their output is multi-line exception text — fine
+# inside a scrub/logging call, a leak anywhere else (item 105).
+_TRACEBACK_ATTRS = {
+    "format_exception",
+    "format_exc",
+    "format_tb",
+    "print_exception",
+    "print_exc",
+}
+_NESTED_SCOPES = (
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.Lambda,
+    ast.ClassDef,
+)
 
 # (path suffix, statement substring) -> why raw text is acceptable there.
 ALLOWLIST = {
@@ -120,6 +135,29 @@ ALLOWLIST = {
         "log index write failed",
     ): "index-failure fallback: reports an already-scrubbed record; "
     "the exception is a sqlite error, never a provider response",
+    (
+        "log_index.py",
+        "unformattable record",
+    ): "only the exception's class name is stored, never its text",
+    (
+        "data/service.py",
+        "type(exc).__name__",
+    ): "only the exception's class name is stored, never its text",
+    (
+        "decide/output.py",
+        "exc.msg",
+    ): "pydantic/JSONDecodeError .msg is a fixed validation sentence, "
+    "never exception text",
+    (
+        "decide/output.py",
+        "exc.errors()",
+    ): "pydantic ValidationError .msg entries are fixed validation "
+    "sentences, never exception text",
+    (
+        "ask/tools.py",
+        "exc.errors()",
+    ): "pydantic ValidationError .msg entries are fixed validation "
+    "sentences, never exception text",
 }
 
 
@@ -135,6 +173,23 @@ def _call_name(func: ast.AST) -> str | None:
     return None
 
 
+def _is_scrub_call(node: ast.AST) -> bool:
+    """A call whose result is scrubbed or logged — safe to wrap raw
+    exception text (``safe_error(exc)``, ``scrub_text(...)``,
+    ``logger.warning(...)``)."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = _call_name(node.func)
+    return (
+        name in _SCRUB_CALLS
+        or name in _LOG_NAMES
+        or (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _LOG_ATTRS
+        )
+    )
+
+
 def _inside_allowed_call(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
     """True when the node sits inside a logging call, the structured
     ``ev`` helper, or a scrub call — the places raw exception text is
@@ -142,43 +197,143 @@ def _inside_allowed_call(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool
     current = node
     while current in parents:
         current = parents[current]
-        if isinstance(current, ast.Call):
-            name = _call_name(current.func)
-            if name in _SCRUB_CALLS or name in _LOG_NAMES:
-                return True
-            if (
-                isinstance(current.func, ast.Attribute)
-                and current.func.attr in _LOG_ATTRS
-            ):
-                return True
+        if _is_scrub_call(current):
+            return True
     return False
 
 
-def _raw_exc_nodes(tree: ast.AST) -> list[ast.AST]:
-    """``str(exc)``/``repr(exc)`` calls and f-string ``{exc}`` values."""
-    found: list[ast.AST] = []
+def _names_in(node: ast.AST) -> set[str]:
+    """Every ``Name`` id inside an expression subtree."""
+    return {
+        child.id for child in ast.walk(node) if isinstance(child, ast.Name)
+    }
+
+
+def _except_bound_names(scope: ast.AST) -> set[str]:
+    """Names bound by ``except ... as X`` in ``scope``.
+
+    Nested functions, lambdas and classes bind their own names — they
+    get their own pass, so this walk does not descend into them. The
+    usage scan still covers the whole scope, so a nested function that
+    closes over an outer ``except`` name is checked against the outer
+    set too.
+    """
+    names: set[str] = set()
+    stack = [scope]
+    while stack:
+        node = stack.pop()
+        for child in ast.iter_child_nodes(node):
+            if child is not scope and isinstance(child, _NESTED_SCOPES):
+                continue
+            if isinstance(child, ast.ExceptHandler) and child.name:
+                names.add(child.name)
+            stack.append(child)
+    return names
+
+
+def _raw_exc_nodes(
+    tree: ast.AST, bound: set[str]
+) -> dict[int, tuple[ast.AST, str]]:
+    """Nodes that can carry raw exception text outside logging/scrub.
+
+    Two families (item 105 widened the second):
+
+    - bare ``*exc`` names anywhere — ``str(exc)``, ``repr(exc)``,
+      ``{exc}`` — the original gate (``legacy``);
+    - anything built on an ``except``-bound name — ``str(exc.args)``,
+      ``{exc.__cause__}``, ``"…".format(exc)``, ``"… %s" % exc`` — plus
+      traceback renderers, which are flagged in every scope.
+
+    The value is ``(node, kind)``: ``bound`` candidates get one more
+    check — every bound name inside a scrub/logging call (``{safe_error(exc)}``)
+    is covered — while ``traceback`` candidates are always reported.
+    """
+    found: dict[int, tuple[ast.AST, str]] = {}
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id in {"str", "repr"}
-            and len(node.args) == 1
+            and node.args
             and not node.keywords
-            and _is_exc_name(node.args[0])
         ):
-            found.append(node)
+            if _is_exc_name(node.args[0]):
+                found[id(node)] = (node, "legacy")
+            elif bound and any(_names_in(a) & bound for a in node.args):
+                found[id(node)] = (node, "bound")
         elif isinstance(node, ast.JoinedStr):
             for value in node.values:
-                if (
-                    isinstance(value, ast.FormattedValue)
-                    and _is_exc_name(value.value)
-                ):
-                    found.append(value)
+                if not isinstance(value, ast.FormattedValue):
+                    continue
+                if id(value) in found:
+                    continue
+                if _is_exc_name(value.value):
+                    found[id(value)] = (value, "legacy")
+                elif bound and _names_in(value.value) & bound:
+                    found[id(value)] = (value, "bound")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "format"
+            and bound
+            and any(_names_in(a) & bound for a in node.args)
+        ) or (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, ast.Mod)
+            and bound
+            and (
+                isinstance(node.left, ast.Constant)
+                and isinstance(node.left.value, str)
+                or isinstance(node.left, ast.JoinedStr)
+            )
+            and _names_in(node.right) & bound
+        ):
+            found[id(node)] = (node, "bound")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _TRACEBACK_ATTRS
+        ):
+            found[id(node)] = (node, "traceback")
     return found
 
 
+def _bound_covered(
+    node: ast.AST, bound: set[str], parents: dict[ast.AST, ast.AST]
+) -> bool:
+    """True when every ``except``-bound name inside ``node`` sits inside
+    a scrub or logging call — ``{safe_error(exc)}`` is covered, ``{exc}``
+    and ``{exc.msg}`` are not."""
+    for child in ast.walk(node):
+        if not (isinstance(child, ast.Name) and child.id in bound):
+            continue
+        current: ast.AST = child
+        covered = False
+        while current is not node and current in parents:
+            current = parents[current]
+            if _is_scrub_call(current):
+                covered = True
+                break
+        if not covered:
+            return False
+    return True
+
+
+def _scopes(tree: ast.AST) -> list[ast.AST]:
+    """The module plus every function/lambda — each gets its own
+    ``except``-bound names (a nested function also sees the outer set
+    through the outer scope's usage scan)."""
+    scopes: list[ast.AST] = [tree]
+    scopes.extend(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, _NESTED_SCOPES)
+    )
+    return scopes
+
+
 def test_no_raw_exception_text_outside_logging_and_scrub() -> None:
-    """Every ``str(exc)``/``{exc}`` in ``app/`` must sit inside a logging
+    """Exception-derived text in ``app/`` must sit inside a logging
     call, ``ev`` or a scrub call — anything else can reach a stored row,
     an API answer, an email or a model (hard rule 9)."""
     violations: list[str] = []
@@ -190,8 +345,23 @@ def test_no_raw_exception_text_outside_logging_and_scrub() -> None:
             for child in ast.iter_child_nodes(node):
                 parents[child] = node
         rel = f"app/{path.relative_to(APP_DIR).as_posix()}"
-        for node in _raw_exc_nodes(tree):
+        candidates: dict[int, tuple[ast.AST, str]] = {}
+        file_bound: set[str] = set()
+        for scope in _scopes(tree):
+            bound = _except_bound_names(scope)
+            file_bound |= bound
+            for node_id, found in _raw_exc_nodes(scope, bound).items():
+                # A node found by several scopes keeps the strictest
+                # kind: legacy < bound < traceback.
+                rank = {"legacy": 0, "bound": 1, "traceback": 2}
+                if node_id not in candidates or rank[found[1]] > rank[
+                    candidates[node_id][1]
+                ]:
+                    candidates[node_id] = found
+        for node, kind in candidates.values():
             if _inside_allowed_call(node, parents):
+                continue
+            if kind == "bound" and _bound_covered(node, file_bound, parents):
                 continue
             # The allowlist matches on the enclosing statement's text.
             stmt = node

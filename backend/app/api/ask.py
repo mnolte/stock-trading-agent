@@ -45,6 +45,20 @@ def _clock(request: Request) -> Any:
     return getattr(request.app.state, "clock", None) or make_clock()
 
 
+def _scrub_ask(request: Request, value: Any) -> Any:
+    """Second-line scrub for anything Ask stores or sends to the model
+    (item 105): stored keys and key-shaped strings never reach an
+    ``ask_*`` row, a thread title or a prompt — a user pasting a key
+    gets ``[redacted]`` instead of a stored secret."""
+    from app.logging_config import scrub_text, scrub_value
+
+    store = getattr(request.app.state, "secrets_store", None)
+    secrets = store.scrub_values() if store is not None else ()
+    if isinstance(value, str):
+        return scrub_text(value, secrets)
+    return scrub_value(value, secrets)
+
+
 def _deps(request: Request) -> AskDeps:
     return AskDeps(
         config=get_config(),
@@ -176,7 +190,7 @@ def create_thread(request: Request, body: ThreadBody) -> dict[str, Any]:
     with get_session_maker()() as session:
         row = AskThread(
             title="New chat",
-            context=body.context,
+            context=_scrub_ask(request, body.context),
             created_at=_naive_utc(clock.now()),
             updated_at=_naive_utc(clock.now()),
         )
@@ -258,6 +272,10 @@ class MessageBody(BaseModel):
 async def post_message(request: Request, thread_id: int, body: MessageBody) -> StreamingResponse:
     config = get_config()
     status = _enabled(request)
+    # Scrub once up front: the stored user row, the thread title and the
+    # prompt all come from this text (item 105).
+    question = _scrub_ask(request, body.text)
+    context = _scrub_ask(request, body.context)
     if not status["enabled"]:
         # cap reached → a stored cap message, no model call.
         with get_session_maker()() as session:
@@ -276,7 +294,7 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
                 user = AskMessage(
                     thread_id=thread_id,
                     role="user",
-                    text=body.text,
+                    text=question,
                     created_at=_naive_utc(clock.now()),
                 )
                 session.add_all([user, msg])
@@ -298,13 +316,13 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
         user = AskMessage(
             thread_id=thread_id,
             role="user",
-            text=body.text,
-            context=body.context,
+            text=question,
+            context=context,
             created_at=_naive_utc(clock.now()),
         )
         session.add(user)
         if thread.title in ("New chat", ""):
-            thread.title = body.text[:60]
+            thread.title = question[:60]
         message = AskMessage(
             thread_id=thread_id,
             role="assistant",
@@ -329,8 +347,8 @@ async def post_message(request: Request, thread_id: int, body: MessageBody) -> S
                 session_factory=get_session_maker(),
                 thread_id=thread_id,
                 message_id=message_id,
-                question=body.text,
-                context=body.context,
+                question=question,
+                context=context,
             ):
                 yield f"event: {ev['event']}\ndata: {json.dumps(ev['data'])}\n\n"
         except (asyncio.CancelledError, GeneratorExit):
@@ -458,7 +476,7 @@ def create_note(request: Request, body: NoteBody) -> dict[str, Any]:
                 422, ErrorCode.INVALID, fields=[{"name": "text", "message": "A note needs text."}]
             )
         note = AskNote(
-            text=text.strip()[:_NOTE_MAX],
+            text=_scrub_ask(request, text).strip()[:_NOTE_MAX],
             references=refs,
             source_thread_id=thread_id,
             source_message_id=msg_id,
@@ -483,7 +501,7 @@ def update_note(request: Request, note_id: int, body: NoteEdit) -> dict[str, Any
         note = session.get(AskNote, note_id)
         if note is None:
             raise HTTPException(404)
-        note.text = body.text.strip()[:_NOTE_MAX]
+        note.text = _scrub_ask(request, body.text).strip()[:_NOTE_MAX]
         note.updated_at = _naive_utc(_clock(request).now())
         session.commit()
         trow = session.get(AskThread, note.source_thread_id) if note.source_thread_id else None
