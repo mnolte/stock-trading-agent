@@ -6,12 +6,12 @@ status: merged
 issue: 314
 kickoff: —
 spec_prs: []
-build_prs: []
+build_prs: [317]
 ---
 
 # 106 · fix · Live data audit
 
-## 2026-11-19 · build PR #n
+## 2026-11-19 · build PR #317
 
 Found analysing the live data of 19 November 2026:
 
