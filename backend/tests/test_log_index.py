@@ -133,6 +133,78 @@ def test_index_available_and_prune(tmp_path: Path) -> None:
     assert index_available(db)
 
 
+def test_handler_prunes_daily_with_keep_days(tmp_path: Path) -> None:
+    """Item 106: the index follows the files' retention — rows older
+    than keep_days are dropped by the handler's own daily prune."""
+    db = tmp_path / "logs.db"
+    handler = LogIndexHandler(db, keep_days=30)
+    handler.emit(_rec("keep me"))
+    handler.flush()
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "INSERT INTO log_lines(ts,level,logger,message,context,cycle,"
+            "symbol,process,pid,error_id,exception_type,exception_message,"
+            "traceback,fingerprint) VALUES ('2000-01-01T00:00:00.000Z',"
+            "'INFO','t','stale','{}',NULL,NULL,'app',1,NULL,NULL,NULL,NULL,'x')"
+        )
+        conn.commit()
+    handler._prune_worker(30)
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT message FROM log_lines").fetchall()
+    assert rows == [("keep me",)]
+
+
+def test_maybe_prune_runs_once_per_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.log_index as log_index
+
+    calls: list[int] = []
+
+    def fake_prune(db_path: Path, keep_days: int) -> int:
+        calls.append(keep_days)
+        return 0
+
+    monkeypatch.setattr(log_index, "prune_index", fake_prune)
+    handler = LogIndexHandler(tmp_path / "logs.db", keep_days=30)
+    handler._maybe_prune()
+    deadline = time.monotonic() + 5
+    while handler._pruning and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert calls == [30]
+    handler._maybe_prune()
+    handler.flush()
+    time.sleep(0.05)
+    assert calls == [30]
+    handler._pruning = False
+
+
+def test_flush_requeues_batch_while_index_locked(tmp_path: Path) -> None:
+    """A writer holding the lock (the daily prune, a backup) must not
+    cost indexed rows: the batch is kept and retried, not dropped."""
+    db = tmp_path / "logs.db"
+    handler = LogIndexHandler(db, keep_days=None)
+    handler.emit(_rec("during lock"))
+    handler._connect().execute("PRAGMA busy_timeout=50")
+    blocker = sqlite3.connect(db, timeout=5)
+    blocker.execute("PRAGMA journal_mode=WAL")
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        handler.flush()
+        # Requeued, not dropped, and no failure was reported.
+        assert len(handler._buffer) == 1
+        assert handler._lock_streak == 1
+    finally:
+        blocker.rollback()
+        blocker.close()
+    handler.flush()
+    assert handler._buffer == []
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT message FROM log_lines"
+        ).fetchall() == [("during lock",)]
+
+
 def test_reindex_rebuilds_from_files(tmp_path: Path) -> None:
     log_dir = tmp_path / "logs"
     log_dir.mkdir()

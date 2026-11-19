@@ -2807,6 +2807,51 @@ async def test_exit_stream_closes_before_reconcile(
     await asyncio.wait_for(executor.on_trade_update(update), timeout=5)
 
 
+async def test_trade_update_reconciles_coalesce_per_burst(
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 106: a burst of trade updates (stream reconnect replay)
+    queues one reconcile, not one per event — the serialized queue used
+    to starve every scheduler job for minutes."""
+    from app.broker.models import TradeUpdateInfo
+
+    broker = FakeBroker(FakeClock(NOW), prices={"SBUX": Decimal("103.15")})
+    executor = _executor(session_factory, broker)
+    calls = 0
+    release_first = asyncio.Event()
+
+    async def slow_reconcile() -> object:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await release_first.wait()
+        return None
+
+    monkeypatch.setattr(executor, "reconcile", slow_reconcile)
+    update = TradeUpdateInfo(
+        event="fill", order=BrokerOrder(
+            id="burst-1", client_order_id="sa-x-1", symbol="SBUX",
+            side="sell", order_type="market", order_class="simple",
+            status="filled", qty=1, filled_qty=1,
+            filled_avg_price=Decimal("103.15"), filled_at=NOW,
+            limit_price=None, stop_price=None, created_at=NOW,
+            updated_at=NOW,
+        ), timestamp=NOW, position_qty=0, qty=1,
+        price=Decimal("103.15"),
+    )
+    tasks = [
+        asyncio.create_task(executor.on_trade_update(update))
+        for _ in range(5)
+    ]
+    # Let every update mark pending while the first reconcile runs.
+    await asyncio.sleep(0.2)
+    release_first.set()
+    await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+    # First pass + at most one trailing pass for the whole burst.
+    assert calls <= 2
+
+
 async def test_reconcile_closes_position_from_offline_fill(
     session_factory: sessionmaker[Session],
 ) -> None:

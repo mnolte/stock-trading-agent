@@ -199,6 +199,12 @@ class Executor:
         # later steps must not ask Alpaca for the same 404 again.
         self._flat_symbols: set[str] = set()
         self._reconcile_lock = asyncio.Lock()
+        # Trade updates each ask for a full reconcile; a burst (stream
+        # reconnect replay) would otherwise queue one reconcile per
+        # event and starve the scheduler for minutes. Requests coalesce
+        # into at most one trailing pass (item 106).
+        self._stream_reconcile_lock = asyncio.Lock()
+        self._stream_reconcile_pending = False
         # Approval ids with an approve() call in flight: the pending
         # check and the order send are many awaits apart, so a second
         # request for the same approval is refused instead of double
@@ -1633,7 +1639,23 @@ class Executor:
                 automatic=True,
             )
         self._notify({"positions", "orders", "header"})
-        await self.reconcile()
+        await self._reconcile_from_stream()
+
+    async def _reconcile_from_stream(self) -> None:
+        """One reconcile per burst of trade updates (item 106).
+
+        ``_record_trade_update`` already stores the fill and closes the
+        position; the reconcile after it confirms broker state. Updates
+        arrive in bursts after a stream reconnect — each used to queue a
+        full reconcile, and during a network wobble the serialized queue
+        starved every scheduler job for minutes. Requests coalesce: the
+        first runs, later ones fold into one trailing pass.
+        """
+        self._stream_reconcile_pending = True
+        async with self._stream_reconcile_lock:
+            while self._stream_reconcile_pending:
+                self._stream_reconcile_pending = False
+                await self.reconcile()
 
     def _record_trade_update(self, update: TradeUpdateInfo) -> str | None:
         """Store stream bookkeeping while the caller holds the reconcile lock."""
