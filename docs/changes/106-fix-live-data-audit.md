@@ -9,7 +9,7 @@ spec_prs: []
 build_prs: [317]
 ---
 
-# 106 · fix · Live data audit
+# 106 · fix · Live data audit — log index pruning, position entry link, scheduler starvation
 
 ## 2026-11-19 · build PR #317
 
