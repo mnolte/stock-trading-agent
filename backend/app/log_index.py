@@ -99,6 +99,16 @@ _ABS_PATH = re.compile(r"(?<![\w.])/(?:[\w.@~+\-]+/)+[\w.@~+\-]+\.\w+\b")
 _WS = re.compile(r"\s+")
 SUMMARY_LIMIT = 120
 
+# Lock/busy retries before a batch is dropped as unwritable: the daily
+# prune holds the write lock for seconds, so ~300 retries covers any
+# realistic stall while still surfacing a genuinely stuck index.
+_MAX_LOCK_RETRIES = 300
+
+
+def _is_lock_error(exc: sqlite3.Error) -> bool:
+    msg = str(exc).lower()
+    return "locked" in msg or "busy" in msg
+
 
 def error_summary(message: str, *, limit: int = SUMMARY_LIMIT) -> str:
     """One-line error text for Needs you and notifications.
@@ -172,11 +182,13 @@ class LogIndexHandler(logging.Handler):
         *,
         file_fallback: logging.Handler | None = None,
         on_warning_or_above: Any = None,
+        keep_days: int | None = None,
     ) -> None:
         super().__init__(level=logging.DEBUG)
         self.db_path = db_path
         self._fallback = file_fallback
         self._on_warning = on_warning_or_above
+        self._keep_days = keep_days
         self._buffer: list[dict[str, Any]] = []
         self._last_flush = time.monotonic()
         self._conn: sqlite3.Connection | None = None
@@ -184,6 +196,14 @@ class LogIndexHandler(logging.Handler):
         # shutdown): serialize buffer swaps and the shared connection.
         self._write_lock = threading.Lock()
         self._broken = False
+        # Daily prune state (item 106): the index follows the log files'
+        # retention — once per UTC day, off the listener thread.
+        self._prune_day: str | None = None
+        self._pruning = False
+        # Consecutive lock/busy failures: the daily prune holds the
+        # write lock for seconds; batches wait and retry, they are not
+        # dropped. Past the cap the index is genuinely stuck.
+        self._lock_streak = 0
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -242,6 +262,7 @@ class LogIndexHandler(logging.Handler):
             self.flush()
 
     def flush(self) -> None:
+        self._maybe_prune()
         with self._write_lock:
             if not self._buffer:
                 return
@@ -259,17 +280,74 @@ class LogIndexHandler(logging.Handler):
                     batch,
                 )
                 conn.commit()
+                self._lock_streak = 0
+            except sqlite3.OperationalError as exc:
+                if _is_lock_error(exc) and self._lock_streak < _MAX_LOCK_RETRIES:
+                    # Another writer (the daily prune, a backup, a reindex)
+                    # holds the lock: keep the batch — dropping it would
+                    # lose indexed rows. The next flush retries.
+                    self._lock_streak += 1
+                    self._buffer = batch + self._buffer
+                    return
+                self._drop_batch(batch, exc)
             except sqlite3.Error as exc:
-                self._report_failure(
-                    logging.LogRecord("log_index", logging.ERROR, "", 0,
-                                      f"{len(batch)} rows", (), None),
-                    exc,
+                self._drop_batch(batch, exc)
+
+    def _drop_batch(self, batch: list[dict[str, Any]], exc: sqlite3.Error) -> None:
+        """Report and drop a batch that can never be written."""
+        self._report_failure(
+            logging.LogRecord("log_index", logging.ERROR, "", 0,
+                              f"{len(batch)} rows", (), None),
+            exc,
+        )
+        # The connection may be half-open; reopen next time.
+        with contextlib.suppress(sqlite3.Error):
+            if self._conn is not None:
+                self._conn.close()
+            self._conn = None
+
+    def _maybe_prune(self) -> None:
+        """Once per UTC day, prune rows older than ``keep_days`` — the
+        index follows the log files' retention (docs/SPEC.md, Logging).
+        The DELETE + FTS rebuild runs on its own thread so the listener
+        never waits on it."""
+        keep_days = self._keep_days
+        if keep_days is None or self._pruning:
+            return
+        from datetime import UTC, datetime
+
+        today = datetime.now(tz=UTC).date().isoformat()
+        if today == self._prune_day:
+            return
+        self._prune_day = today
+        self._pruning = True
+        threading.Thread(
+            target=self._prune_worker,
+            args=(keep_days,),
+            daemon=True,
+            name="log-index-prune",
+        ).start()
+
+    def _prune_worker(self, keep_days: int) -> None:
+        logger = logging.getLogger(__name__)
+        try:
+            removed = prune_index(self.db_path, keep_days)
+            if removed:
+                logger.info(
+                    "log index pruned: %d rows older than %d days",
+                    removed, keep_days,
                 )
-                # The connection may be half-open; reopen next time.
-                with contextlib.suppress(sqlite3.Error):
-                    if self._conn is not None:
-                        self._conn.close()
-                self._conn = None
+        except Exception as exc:  # noqa: BLE001 - never kill the worker silently
+            logger.exception("log index prune failed")
+            self._report_failure(
+                logging.LogRecord(
+                    "log_index", logging.ERROR, "", 0,
+                    "log index prune failed", (), None,
+                ),
+                exc,
+            )
+        finally:
+            self._pruning = False
 
     def close(self) -> None:
         try:
@@ -293,11 +371,12 @@ def prune_index(db_path: Path, keep_days: int) -> int:
     cutoff = (
         datetime.now(tz=ZoneInfo("UTC")) - timedelta(days=keep_days)
     ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=30) as conn:
         cur = conn.execute("DELETE FROM log_lines WHERE ts < ?", (cutoff,))
-        # External-content FTS rows don't cascade — the deleted rowids
-        # dangle and the index grows forever. Rebuild it.
-        conn.execute("INSERT INTO log_lines_fts(log_lines_fts) VALUES('rebuild')")
+        if cur.rowcount:
+            # External-content FTS rows don't cascade — the deleted
+            # rowids dangle and the index grows forever. Rebuild it.
+            conn.execute("INSERT INTO log_lines_fts(log_lines_fts) VALUES('rebuild')")
         conn.commit()
         return cur.rowcount
 
@@ -335,6 +414,7 @@ def make_index_handler(
         index_path(config),
         file_fallback=file_fallback,
         on_warning_or_above=on_warning_or_above,
+        keep_days=int(config.get("logging", "keep_days", default=30)),
     )
 
 

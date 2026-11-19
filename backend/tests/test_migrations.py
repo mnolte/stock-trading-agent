@@ -126,3 +126,46 @@ def test_readiness_migration_backfills_affects(
         ("universe_screen_failed", "none"),
     ]
     engine.dispose()
+
+
+def test_entry_order_relink_migration_uses_decision_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 106: a position whose opened_at precedes its entry fill kept
+    entry_order_id NULL — the decision link still resolves it, and rows
+    without a matching entry order stay NULL."""
+    db = tmp_path / "relink.db"
+    _upgrade(db, "z1a2b3c4d5e6", monkeypatch)
+    engine = create_engine(f"sqlite:///{db}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO orders (id, alpaca_order_id, side, order_type, "
+                "leg, qty, status, created_at, symbol, decision_id) VALUES "
+                "(27, 'oa-27', 'buy', 'limit', 'entry', 12, 'canceled', "
+                "'2026-10-30 17:40:00', 'PG', 2835), "
+                "(28, 'oa-28', 'buy', 'limit', 'entry', 12, 'filled', "
+                "'2026-10-30 17:46:53', 'PG', 2835), "
+                "(29, 'oa-29', 'sell', 'limit', 'target', 12, 'canceled', "
+                "'2026-10-30 17:46:53', 'PG', 2835), "
+                "(99, 'oa-99', 'buy', 'limit', 'entry', 5, 'filled', "
+                "'2026-11-01 15:00:00', 'ZZZ', 9999)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO positions (id, symbol, entry_decision_id, qty, "
+                "avg_entry_price, opened_at, origin) VALUES "
+                "(8, 'PG', 2835, 12, 160.0, '2026-10-30 17:46:53', 'agent'), "
+                "(20, 'ZZZ', 9999, 5, 10.0, '2026-11-01 15:00:00', 'agent'), "
+                "(21, 'ORPH', 7777, 3, 5.0, '2026-11-01 15:00:00', 'agent'), "
+                "(22, 'ADV', NULL, 4, 7.0, '2026-11-01 15:00:00', 'adopted')"
+            )
+        )
+    _upgrade(db, "head", monkeypatch)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT id, entry_order_id FROM positions ORDER BY id")
+        ).all()
+    assert rows == [(8, 28), (20, 99), (21, None), (22, None)]
+    engine.dispose()
