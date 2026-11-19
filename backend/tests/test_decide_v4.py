@@ -426,6 +426,34 @@ def test_path_claim_passes_beyond_1_atr() -> None:
     assert v.claims is not None and v.claims.passed
 
 
+def test_path_claim_negated_is_not_a_claim() -> None:
+    """"the path is not clear" states the opposite of a path claim —
+    same false-positive class as the negated locks-in wording."""
+    snap = _snapshot(levels_in_way=[{"id": "L9", "distance_atr": 0.6}])
+    for thesis in (
+        "The path to the target is not clear.",
+        "There is no clear path to the target.",
+        "The way forward is not easy.",
+    ):
+        v = _validate(
+            _v4(action="enter", option_id="A", best_option_id="A",
+                thesis=thesis),
+            snap,
+        )
+        assert v.claims is not None and v.claims.passed, thesis
+
+
+def test_path_claim_negation_scoped_to_its_clause() -> None:
+    snap = _snapshot(levels_in_way=[{"id": "L9", "distance_atr": 0.6}])
+    v = _validate(
+        _v4(action="enter", option_id="A", best_option_id="A",
+            thesis="The path is not clear, but the way is open."),
+        snap,
+    )
+    assert v.claims is not None and not v.claims.passed
+    assert "path" in (v.claims.kinds or [])
+
+
 def test_levels_in_way_sentence_not_a_claim() -> None:
     # B1: naming levels "in the way" is not an unsupported stop/target
     # claim.

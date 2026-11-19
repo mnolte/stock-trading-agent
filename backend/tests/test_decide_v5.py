@@ -614,6 +614,32 @@ def test_v5_path_claim_wider_wording() -> None:
         assert "path" in (v.claims.kinds or []), wording
 
 
+def test_v5_path_claim_negated_is_not_a_claim() -> None:
+    """Negated wider wording ("no room to run") is not a path claim."""
+    near = {"id": "L8", "distance_atr": 0.26}
+    snap = _snapshot(
+        context="held",
+        position={
+            "entry": 100.0, "qty": 10, "initial_stop": 97.0,
+            "current_stop": 99.5, "target": 103.0,
+            "neutral_probability": 0.12,
+            "levels_to_target": [near],
+            "stop_distance_atr": 0.5,
+        },
+    )
+    for wording in (
+        "There is no room to run to the target.",
+        "There isn't room to run to the target.",
+        "The path is not easy.",
+        "Not a free run from here.",
+    ):
+        v = _validate_v5(
+            _v5(action="hold", confidence=0.5, thesis=wording), snap
+        )
+        assert v.claims is not None
+        assert "path" not in (v.claims.kinds or []), wording
+
+
 def test_v4_path_claim_old_wording_still_only() -> None:
     """"has room" alone is not a v4 claim — the wider wording is v5-only."""
     near = {"id": "L8", "distance_atr": 0.26}
