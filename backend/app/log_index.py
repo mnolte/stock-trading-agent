@@ -106,8 +106,13 @@ _MAX_LOCK_RETRIES = 300
 
 
 def _is_lock_error(exc: sqlite3.Error) -> bool:
-    msg = str(exc).lower()
-    return "locked" in msg or "busy" in msg
+    # sqlite_errorcode is set on real sqlite3 errors (Python 3.11+);
+    # the low byte is the primary code — extended busy/locked variants
+    # share it. The exception text is never inspected (hard rule 9).
+    code = getattr(exc, "sqlite_errorcode", None)
+    if code is None:
+        return False
+    return code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
 def error_summary(message: str, *, limit: int = SUMMARY_LIMIT) -> str:
