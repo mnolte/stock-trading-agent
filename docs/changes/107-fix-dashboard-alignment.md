@@ -5,7 +5,7 @@ title: Dashboard cards line up
 status: ready
 issue: 315
 kickoff: 107-fix-dashboard-alignment.md
-spec_prs: [PRNUM]
+spec_prs: [316]
 build_prs: []
 ---
 
