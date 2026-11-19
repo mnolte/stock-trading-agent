@@ -1086,9 +1086,28 @@ def validate_model_output_v2(
     )
 
 
-_LOCKS_IN_RE = re.compile(r"\blocks?\s+in\b", re.IGNORECASE)
+_LOCKS_IN_RE = re.compile(r"\block(?:s|ed|ing)?\s+in\b", re.IGNORECASE)
 _LEVEL_ID_RE = re.compile(r"\bL\d+\b")
 _SENTENCE_RE = re.compile(r"[^.!?\n]+")
+# A negation in the same clause before the claim word ("do not lock in",
+# "no clear path", "can't lock in") or a quantifier right after it
+# ("locks in no profit") states the opposite of the claim.
+_NEGATION_RE = re.compile(
+    r"\b(?:not|never|no|without|cannot)\b|n['’]t\b", re.IGNORECASE
+)
+_NEGATION_AFTER_RE = re.compile(r"\s+(?:no|nothing|zero)\b", re.IGNORECASE)
+_CLAUSE_BREAK_RE = re.compile(
+    r"[,;:—–()]|\b(?:but|however|though|although|yet|while|whereas)\b",
+    re.IGNORECASE,
+)
+
+
+def _negated_claim(sentence: str, match: re.Match[str]) -> bool:
+    """True when ``match`` is negated inside its own clause."""
+    clause = _CLAUSE_BREAK_RE.split(sentence[: match.start()])[-1]
+    if _NEGATION_RE.search(clause):
+        return True
+    return _NEGATION_AFTER_RE.match(sentence[match.end() :]) is not None
 
 
 def _code_written(
@@ -1156,7 +1175,8 @@ def _claim_checks(
     A thesis or conflict that says the stop "locks in" profit fails when
     the relevant stop's locked R is 0 or less; a sentence naming the stop
     or the target together with a level id other than that level's own id
-    fails too. Like the explanation check, it never changes the decision.
+    fails too. Negated wording ("does not lock in profit") is not a
+    claim. Like the explanation check, it never changes the decision.
     """
     position = snapshot.get("position") or {}
     stop_level: str | None = None
@@ -1194,6 +1214,11 @@ def _claim_checks(
     for part in text_parts:
         for match in _SENTENCE_RE.finditer(part):
             sentence = match.group(0)
+            if locked_r is not None and locked_r <= 0 and any(
+                not _negated_claim(sentence, m)
+                for m in _LOCKS_IN_RE.finditer(sentence)
+            ):
+                bad.append("locks-in claim")
             ids = set(_LEVEL_ID_RE.findall(sentence))
             if not ids:
                 continue
@@ -1209,8 +1234,6 @@ def _claim_checks(
             if "target" in low and target_level is not None:
                 allowed.add(target_level)
             bad.extend(sorted(ids - allowed))
-        if _LOCKS_IN_RE.search(part) and locked_r is not None and locked_r <= 0:
-            bad.append("locks-in claim")
     return ExplanationCheck(passed=not bad, bad_ids=sorted(set(bad)))
 
 
@@ -1615,7 +1638,8 @@ def _claim_checks_v4(
     sentence calling the path "clear", "open", "easy" or "manageable"
     fails while the chosen option (held: ``levels_to_target``) has a
     level within 1 ATR. decision.v5 widens the claim to "has room",
-    "room to run", "plenty of room" and "free run". Never changes the
+    "room to run", "plenty of room" and "free run". Negated wording
+    ("the path is not clear") is not a claim. Never changes the
     decision.
     """
     base = _claim_checks(
@@ -1651,10 +1675,15 @@ def _claim_checks_v4(
         for part in _v4_text_parts(output):
             for match in _SENTENCE_RE.finditer(part):
                 sentence = match.group(0)
-                if (
-                    _PATH_WORD_RE.search(sentence)
-                    and _PATH_NOUN_RE.search(sentence)
-                ) or (v5 and _PATH_V5_RE.search(sentence)):
+                word_hit = any(
+                    not _negated_claim(sentence, m)
+                    for m in _PATH_WORD_RE.finditer(sentence)
+                )
+                v5_hit = v5 and any(
+                    not _negated_claim(sentence, m)
+                    for m in _PATH_V5_RE.finditer(sentence)
+                )
+                if (word_hit and _PATH_NOUN_RE.search(sentence)) or v5_hit:
                     bad.append("path claim")
                     kinds.append("path")
     seen: set[str] = set()
