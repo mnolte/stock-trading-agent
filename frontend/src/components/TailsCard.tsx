@@ -138,13 +138,15 @@ function Row({ trade }: { trade: TailsTradeRow }) {
   );
 }
 
-export function TailsCard({ res }: { res: Resource<PerformanceTailsResponse> }) {
+export function TailsCard({ res, id }: { res: Resource<PerformanceTailsResponse>; id?: string }) {
   return (
     <Card
+      id={id}
       label="Winners and tails"
       right="current run · adjusted · closed trades"
       busy={res.loading}
       refreshing={res.refreshing}
+      style={{ scrollMarginTop: 16 }}
     >
       <CardBody
         res={res}

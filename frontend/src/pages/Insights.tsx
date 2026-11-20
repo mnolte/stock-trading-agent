@@ -525,23 +525,29 @@ function Question({
   answer?: string;
 }) {
   return (
-    <>
-      <span id={id} style={{ display: 'block', height: 0, scrollMarginTop: 16 }} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 'var(--sa-space-3)' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px 12px' }}>
-          <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>
-            <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginRight: 8 }}>{n}</span>
-            {title}
-          </h2>
-          {meta}
-        </div>
-        {answer && (
-          <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', lineHeight: 1.55, color: 'var(--sa-text-2)', maxWidth: 900 }}>
-            {answer}
-          </p>
-        )}
+    <div
+      id={id}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        paddingTop: 'var(--sa-space-3)',
+        scrollMarginTop: 16,
+      }}
+    >
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: '6px 12px' }}>
+        <h2 style={{ margin: 0, fontSize: 'var(--sa-text-xl)', fontWeight: 600 }}>
+          <span style={{ fontFamily: 'var(--sa-font-mono)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', marginRight: 8 }}>{n}</span>
+          {title}
+        </h2>
+        {meta}
       </div>
-    </>
+      {answer && (
+        <p style={{ margin: 0, fontSize: 'var(--sa-text-md)', lineHeight: 1.55, color: 'var(--sa-text-2)', maxWidth: 900 }}>
+          {answer}
+        </p>
+      )}
+    </div>
   );
 }
 
