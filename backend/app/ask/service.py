@@ -42,6 +42,7 @@ from app.llm.base import (
     ModelClient,
     ModelResponse,
     converse_cost,
+    response_cache_saving,
 )
 from app.secrets_service import scrub
 
@@ -435,6 +436,7 @@ async def answer(
                 prompt_version=prompt.version,
                 prompt_hash=prompt.sha256,
                 cost=call_cost,
+                cache_saved=response_cache_saving(shim, config),
                 scrub_values=scrub_values,
             )
             row.ask_message_id = message_id

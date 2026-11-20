@@ -2,11 +2,11 @@
 item: 109
 type: feat
 title: UX pass: model costs, model settings, Ask drawer, spacing
-status: ready
+status: building
 issue: 321
 kickoff: 109-feat-ux-pass-costs-settings-ask.md
 spec_prs: [322]
-build_prs: []
+build_prs: [327]
 ---
 
 # 109 · feat · UX pass: model costs, model settings, Ask drawer, spacing
@@ -37,3 +37,11 @@ Assumptions:
 Answered by Marc on 20 Nov:
 1. Model prices editable in Settings later? No: they stay in config, read-only in Settings.
 2. A monthly price check? Yes. It is a scheduled task, not app code: on the 2nd of each month it compares the `models` block with the providers' price pages and opens an issue only when a price or cutoff differs.
+
+## 2026-11-21 · build PR #327 (PR A — backend)
+
+- `llm_calls` gained `tokens_cached_in`, `tokens_cache_write_in` and `cache_saved` (migration `e9f0a1b2c3d4`); all four call writers record the cache split and the USD saved, computed at write time from the stored prices. Pre-109 rows keep NULL and count as uncached.
+- Inspector JSON and `export.csv` carry the three fields; backtest summaries store `summary.model_usage` (per-model calls, tokens, cost, `cache_saved`, `answers_reused`) for every terminal status.
+- New `GET /api/insights/model-costs?period=` computes the Model costs payload on request: purposes in spec order, by-model rows with prices, cost per session without backtests, monthly-cap usage and the answer sentence.
+- Settings: every model-related key is editable — `decision.call_timeout_seconds`, `decision.max_output_tokens`, `reviews.temperature`, `reviews.max_words.*`, the seven `ask` limits, `shadows.monthly_cost_cap_usd`, `backtest.monthly_cost_cap_usd` — with directions, labels, confirm-on-raise for the model sections and matching controls (`settings-controls.json` plus the Settings rows the e2e control check requires). New read-only `GET /api/settings/models` returns the model catalog.
+- Kickoff moved to `docs/kickoffs/archive/`. Frontend (Insights card, Settings models table and new controls, Ask drawer, spacing) follows in PR B.

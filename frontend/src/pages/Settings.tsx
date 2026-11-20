@@ -91,6 +91,8 @@ const DEFAULTS: Record<string, string> = {
   'decision.min_confidence_enter': '0.55',
   'decision.min_reward_risk': '1.5',
   'decision.max_calls_per_cycle': '10',
+  'decision.call_timeout_seconds': '30 s',
+  'decision.max_output_tokens': '2048',
   'risk.risk_per_trade_pct': '0.5%',
   'risk.max_position_pct': '20%',
   'risk.max_order_pct': '25%',
@@ -106,6 +108,19 @@ const DEFAULTS: Record<string, string> = {
   'performance.slippage_pct_per_side': '0.05%',
   'reviews.briefing_enabled': 'On',
   'reviews.monthly_cost_cap_usd': '$2',
+  'reviews.temperature': '0.2',
+  'reviews.max_words.weekly_summary': '120',
+  'reviews.max_words.weekly_story': '350',
+  'reviews.max_words.briefing': '220',
+  'shadows.monthly_cost_cap_usd': '$5',
+  'backtest.monthly_cost_cap_usd': '$20',
+  'ask.max_context_tokens': '60000',
+  'ask.max_tool_rounds': '8',
+  'ask.max_tool_result_tokens': '6000',
+  'ask.answer_timeout_seconds': '90 s',
+  'ask.max_questions_per_minute': '10 / min',
+  'ask.max_notes': '100',
+  'ask.max_output_tokens': '4096',
   'universe.mode': 'Fixed list',
   'selection.mode': 'Rank order',
   'selection.confidence_weight': '0.5',
@@ -143,6 +158,20 @@ const UNITS: Record<string, string> = {
   'risk.earnings_blackout_days': ' trading days',
   'performance.slippage_pct_per_side': '%',
   'reviews.monthly_cost_cap_usd': '',
+  'shadows.monthly_cost_cap_usd': '',
+  'backtest.monthly_cost_cap_usd': '',
+  'decision.call_timeout_seconds': ' s',
+  'decision.max_output_tokens': ' tokens',
+  'reviews.max_words.weekly_summary': ' words',
+  'reviews.max_words.weekly_story': ' words',
+  'reviews.max_words.briefing': ' words',
+  'ask.max_context_tokens': ' tokens',
+  'ask.max_tool_rounds': ' rounds',
+  'ask.max_tool_result_tokens': ' tokens',
+  'ask.answer_timeout_seconds': ' s',
+  'ask.max_questions_per_minute': ' / min',
+  'ask.max_notes': ' notes',
+  'ask.max_output_tokens': ' tokens',
   'notifications.repeat_limit_minutes': ' min',
   'events.fomc.block_minutes_before': ' min',
   'events.fomc.block_minutes_after': ' min',
@@ -1295,6 +1324,30 @@ export default function Settings() {
     setNotice(null);
   };
 
+  const patchReviewWords = (
+    task: 'weekly_summary' | 'weekly_story' | 'briefing',
+    value: number,
+  ) => {
+    setForm((f) =>
+      f
+        ? {
+            ...f,
+            reviews: {
+              ...f.reviews,
+              max_words: {
+                weekly_summary: 120,
+                weekly_story: 350,
+                briefing: 220,
+                ...f.reviews.max_words,
+                [task]: value,
+              },
+            },
+          }
+        : f,
+    );
+    setNotice(null);
+  };
+
   const patchReviewModel = (
     task: 'weekly' | 'briefing' | 'verdict',
     value: string,
@@ -1681,6 +1734,23 @@ export default function Settings() {
         const parts = path.split('.');
         if (parts.length === 3 && parts[0] === 'universe') {
           resetScreen(parts[2]);
+          return;
+        }
+        if (
+          parts.length === 3 &&
+          parts[0] === 'reviews' &&
+          parts[1] === 'max_words'
+        ) {
+          const saved = (
+            data.settings.reviews?.max_words as
+              | Record<string, number | undefined>
+              | undefined
+          )?.[parts[2]];
+          if (saved === undefined) return;
+          patchReviewWords(
+            parts[2] as 'weekly_summary' | 'weekly_story' | 'briefing',
+            saved,
+          );
           return;
         }
         if (
@@ -3099,6 +3169,22 @@ export default function Settings() {
                 <NumBox id="calls" value={s.decision.max_calls_per_cycle} unit="calls" accent={'decision.max_calls_per_cycle' in changed} invalid={!!fieldErrors['decision.max_calls_per_cycle']} onChange={(v) => patch('decision', 'max_calls_per_cycle', v)} />
               ),
             })}
+            {row('decision.call_timeout_seconds', {
+              id: 'calltimeout',
+              label: 'Model call timeout',
+              help: 'A call slower than this fails and the cycle moves on.',
+              children: (
+                <NumBox id="calltimeout" value={s.decision.call_timeout_seconds ?? 30} unit="s" width={60} accent={'decision.call_timeout_seconds' in changed} invalid={!!fieldErrors['decision.call_timeout_seconds']} onChange={(v) => patch('decision', 'call_timeout_seconds', v)} />
+              ),
+            })}
+            {row('decision.max_output_tokens', {
+              id: 'maxout',
+              label: 'Max answer length',
+              help: 'Output tokens one decision call may write.',
+              children: (
+                <NumBox id="maxout" value={s.decision.max_output_tokens ?? 2048} unit="tokens" width={70} accent={'decision.max_output_tokens' in changed} invalid={!!fieldErrors['decision.max_output_tokens']} onChange={(v) => patch('decision', 'max_output_tokens', v)} />
+              ),
+            })}
 
             <h3 style={subHead}>Reviews</h3>
             {(['weekly', 'briefing', 'verdict'] as const).map((task) => {
@@ -3189,12 +3275,54 @@ export default function Settings() {
                 <Switch id="brief" on={s.reviews.briefing_enabled} onChange={(v) => patch('reviews', 'briefing_enabled', v)} />
               ),
             })}
+            {row('reviews.temperature', {
+              id: 'rtemp',
+              label: 'Review temperature',
+              help: 'OpenAI models only; Claude models use their effort setting.',
+              children: (
+                <NumBox id="rtemp" value={s.reviews.temperature ?? 0.2} width={60} accent={'reviews.temperature' in changed} invalid={!!fieldErrors['reviews.temperature']} onChange={(v) => patch('reviews', 'temperature', v)} />
+              ),
+            })}
+            {([
+              ['weekly_summary', 'Weekly summary words', 120],
+              ['weekly_story', 'Weekly story words', 350],
+              ['briefing', 'Briefing words', 220],
+            ] as const).map(([task, label, fallback]) => (
+              <div key={task}>
+                {row(`reviews.max_words.${task}`, {
+                  id: `rwords-${task}`,
+                  label,
+                  help: 'The longest the review text may run.',
+                  children: (
+                    <NumBox id={`rwords-${task}`} value={s.reviews.max_words?.[task] ?? fallback} unit="words" width={70} accent={`reviews.max_words.${task}` in changed} invalid={!!fieldErrors[`reviews.max_words.${task}`]} onChange={(v) => patchReviewWords(task, v)} />
+                  ),
+                })}
+              </div>
+            ))}
             {row('reviews.monthly_cost_cap_usd', {
               id: 'rcap',
               label: 'Review cost cap',
               help: `Separate from decisions.${data.reviews_spend_usd ? ` This month: $${Number(data.reviews_spend_usd).toFixed(2)} of $${s.reviews.monthly_cost_cap_usd}.` : ''} Over the cap, reviews use the plain template.`,
               children: (
                 <NumBox id="rcap" value={s.reviews.monthly_cost_cap_usd} unit="$ / month" width={60} accent={'reviews.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['reviews.monthly_cost_cap_usd']} onChange={(v) => patch('reviews', 'monthly_cost_cap_usd', v)} />
+              ),
+            })}
+
+            <h3 style={subHead}>Other model spend</h3>
+            {row('shadows.monthly_cost_cap_usd', {
+              id: 'shcap',
+              label: 'Shadow cost cap',
+              help: 'Shadow strategies stop calling the model for the month over this.',
+              children: (
+                <NumBox id="shcap" value={s.shadows?.monthly_cost_cap_usd ?? 5} unit="$ / month" width={60} accent={'shadows.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['shadows.monthly_cost_cap_usd']} onChange={(v) => patch('shadows', 'monthly_cost_cap_usd', v)} />
+              ),
+            })}
+            {row('backtest.monthly_cost_cap_usd', {
+              id: 'btcap',
+              label: 'Backtest cost cap',
+              help: 'A run stops at this spend; the month’s runs share the cap.',
+              children: (
+                <NumBox id="btcap" value={s.backtest?.monthly_cost_cap_usd ?? 20} unit="$ / month" width={60} accent={'backtest.monthly_cost_cap_usd' in changed} invalid={!!fieldErrors['backtest.monthly_cost_cap_usd']} onChange={(v) => patch('backtest', 'monthly_cost_cap_usd', v)} />
               ),
             })}
           </Section>
@@ -3269,6 +3397,62 @@ export default function Settings() {
               help: 'Older chats are deleted after the daily backup; notes keep their text.',
               children: (
                 <NumBox id="ask-keep" value={s.ask?.keep_days ?? 90} unit="days" width={60} accent={'ask.keep_days' in changed} invalid={!!fieldErrors['ask.keep_days']} onChange={(v) => patch('ask', 'keep_days', v)} />
+              ),
+            })}
+            {row('ask.max_context_tokens', {
+              id: 'ask-ctx',
+              label: 'Context tokens',
+              help: 'Old tool results drop first, then old turns.',
+              children: (
+                <NumBox id="ask-ctx" value={s.ask?.max_context_tokens ?? 60000} unit="tokens" width={70} accent={'ask.max_context_tokens' in changed} invalid={!!fieldErrors['ask.max_context_tokens']} onChange={(v) => patch('ask', 'max_context_tokens', v)} />
+              ),
+            })}
+            {row('ask.max_tool_rounds', {
+              id: 'ask-rounds',
+              label: 'Tool rounds',
+              help: 'How many times one answer may look something up.',
+              children: (
+                <NumBox id="ask-rounds" value={s.ask?.max_tool_rounds ?? 8} unit="rounds" width={60} accent={'ask.max_tool_rounds' in changed} invalid={!!fieldErrors['ask.max_tool_rounds']} onChange={(v) => patch('ask', 'max_tool_rounds', v)} />
+              ),
+            })}
+            {row('ask.max_tool_result_tokens', {
+              id: 'ask-tooltok',
+              label: 'Tool result tokens',
+              help: 'One tool result is cut to this many tokens.',
+              children: (
+                <NumBox id="ask-tooltok" value={s.ask?.max_tool_result_tokens ?? 6000} unit="tokens" width={70} accent={'ask.max_tool_result_tokens' in changed} invalid={!!fieldErrors['ask.max_tool_result_tokens']} onChange={(v) => patch('ask', 'max_tool_result_tokens', v)} />
+              ),
+            })}
+            {row('ask.answer_timeout_seconds', {
+              id: 'ask-timeout',
+              label: 'Answer timeout',
+              help: 'A slower answer is cut off and marked failed.',
+              children: (
+                <NumBox id="ask-timeout" value={s.ask?.answer_timeout_seconds ?? 90} unit="s" width={60} accent={'ask.answer_timeout_seconds' in changed} invalid={!!fieldErrors['ask.answer_timeout_seconds']} onChange={(v) => patch('ask', 'answer_timeout_seconds', v)} />
+              ),
+            })}
+            {row('ask.max_questions_per_minute', {
+              id: 'ask-rate',
+              label: 'Questions per minute',
+              help: 'Over the rate, the composer waits a minute.',
+              children: (
+                <NumBox id="ask-rate" value={s.ask?.max_questions_per_minute ?? 10} unit="/ min" width={60} accent={'ask.max_questions_per_minute' in changed} invalid={!!fieldErrors['ask.max_questions_per_minute']} onChange={(v) => patch('ask', 'max_questions_per_minute', v)} />
+              ),
+            })}
+            {row('ask.max_notes', {
+              id: 'ask-notes',
+              label: 'Notes kept',
+              help: 'The newest notes an answer may carry.',
+              children: (
+                <NumBox id="ask-notes" value={s.ask?.max_notes ?? 100} unit="notes" width={60} accent={'ask.max_notes' in changed} invalid={!!fieldErrors['ask.max_notes']} onChange={(v) => patch('ask', 'max_notes', v)} />
+              ),
+            })}
+            {row('ask.max_output_tokens', {
+              id: 'ask-maxout',
+              label: 'Max answer length',
+              help: 'Output tokens one answer may write.',
+              children: (
+                <NumBox id="ask-maxout" value={s.ask?.max_output_tokens ?? 4096} unit="tokens" width={70} accent={'ask.max_output_tokens' in changed} invalid={!!fieldErrors['ask.max_output_tokens']} onChange={(v) => patch('ask', 'max_output_tokens', v)} />
               ),
             })}
             <Row

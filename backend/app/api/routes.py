@@ -2990,6 +2990,12 @@ def _settings_form(config: object) -> dict[str, object]:
             "max_calls_per_cycle": get(
                 "decision", "max_calls_per_cycle", default=10
             ),
+            "call_timeout_seconds": get(
+                "decision", "call_timeout_seconds", default=30
+            ),
+            "max_output_tokens": get(
+                "decision", "max_output_tokens", default=2048
+            ),
             "entry_gate": get("decision", "entry_gate", default="floor"),
             "min_ev_r": get("decision", "min_ev_r", default=0.25),
             # Only the editable sub-keys are echoed — other v3/v4/v5
@@ -3146,6 +3152,18 @@ def _settings_form(config: object) -> dict[str, object]:
                 )
                 for task in REVIEW_TASKS
             },
+            "temperature": get("reviews", "temperature", default=0.2),
+            "max_words": {
+                "weekly_summary": get(
+                    "reviews", "max_words", "weekly_summary", default=120
+                ),
+                "weekly_story": get(
+                    "reviews", "max_words", "weekly_story", default=350
+                ),
+                "briefing": get(
+                    "reviews", "max_words", "briefing", default=220
+                ),
+            },
         },
         "ask": {
             "enabled": get("ask", "enabled", default=True),
@@ -3158,6 +3176,31 @@ def _settings_form(config: object) -> dict[str, object]:
             ),
             "keep_days": get("ask", "keep_days", default=90),
             "instructions": get("ask", "instructions", default=""),
+            "max_context_tokens": get(
+                "ask", "max_context_tokens", default=60000
+            ),
+            "max_tool_rounds": get("ask", "max_tool_rounds", default=8),
+            "max_tool_result_tokens": get(
+                "ask", "max_tool_result_tokens", default=6000
+            ),
+            "answer_timeout_seconds": get(
+                "ask", "answer_timeout_seconds", default=90
+            ),
+            "max_questions_per_minute": get(
+                "ask", "max_questions_per_minute", default=10
+            ),
+            "max_notes": get("ask", "max_notes", default=100),
+            "max_output_tokens": get("ask", "max_output_tokens", default=4096),
+        },
+        "shadows": {
+            "monthly_cost_cap_usd": get(
+                "shadows", "monthly_cost_cap_usd", default=5
+            ),
+        },
+        "backtest": {
+            "monthly_cost_cap_usd": get(
+                "backtest", "monthly_cost_cap_usd", default=20
+            ),
         },
         "universe": {
             "mode": get("universe", "mode", default="fixed"),
@@ -3515,6 +3558,51 @@ def settings(request: Request) -> dict[str, object]:
             else None
         ),
     }
+
+
+@router.get("/settings/models")
+def settings_models(request: Request) -> dict[str, object]:
+    """The read-only model catalog (item 109, docs/SPEC.md → Model
+    providers): every field of the ``models`` block — prices included —
+    plus who uses each model and whether its provider key passes.
+    Config-only by design: there is no write route."""
+    from app.llm.models import (
+        model_provider,
+        model_timeout_seconds,
+        models_table,
+        named_models,
+    )
+
+    config = get_config()
+    store = _secrets(request)
+    simulated = config.env.mode == "simulated"
+    table = models_table(config)
+    with get_session_maker()() as session:
+        used: dict[str, list[str]] = {}
+        for what, model in named_models(config, session):
+            used.setdefault(model, []).append(what)
+    out = []
+    for model_id, entry in table.items():
+        provider = model_provider(config, model_id)
+        out.append(
+            {
+                "id": model_id,
+                "provider": provider,
+                "input": entry.get("input"),
+                "cached_input": entry.get("cached_input"),
+                "cache_write": entry.get("cache_write"),
+                "output": entry.get("output"),
+                "cutoff": entry.get("cutoff"),
+                "effort": entry.get("effort"),
+                "supports_temperature": entry.get("supports_temperature"),
+                "api": entry.get("api"),
+                "timeout_seconds": model_timeout_seconds(config, model_id),
+                "key_ok": simulated
+                or (store is not None and store.provider_ok(provider)),
+                "used_by": used.get(model_id, []),
+            }
+        )
+    return {"models": out}
 
 
 @router.post("/settings/use-config")

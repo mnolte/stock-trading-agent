@@ -47,7 +47,12 @@ from app.db.models import (
     ShadowPosition,
     Strategy,
 )
-from app.decide.client import DecisionClient, ModelResponse, token_cost
+from app.decide.client import (
+    DecisionClient,
+    ModelResponse,
+    response_cache_saving,
+    token_cost,
+)
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     decision_trade_prices,
@@ -956,6 +961,9 @@ class ShadowRunner:
                     prompt_version=prompt.version,
                     prompt_hash=prompt.sha256,
                     cost=row.cost,
+                    cache_saved=response_cache_saving(
+                        response, self.config, model=str(strategy.model)
+                    ),
                     slow_ms=int(
                         float(
                             self.config.get(

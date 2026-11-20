@@ -23,7 +23,12 @@ from app.config import AppConfig
 from app.data.cache import _naive_utc
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome
-from app.decide.client import DecisionClient, ModelResponse, token_cost
+from app.decide.client import (
+    DecisionClient,
+    ModelResponse,
+    response_cache_saving,
+    token_cost,
+)
 from app.decide.llm_cache import LLMCacheStore
 from app.decide.output import (
     NO_CALL_REASONS,
@@ -702,6 +707,13 @@ class DecisionService:
                     prompt_hash=self._prompt.sha256,
                     cost=decision.cost,
                     cost_source=decision.cost_source,
+                    cache_saved=response_cache_saving(
+                        response,
+                        self.config,
+                        model=str(
+                            self.config.get("decision", "model", default="")
+                        ),
+                    ),
                     slow_ms=self._slow_ms(),
                     scrub_values=self._secrets,
                     batch_id=batch_id,

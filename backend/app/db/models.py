@@ -747,6 +747,12 @@ class LlmCall(Base):
     prompt_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tokens_in: Mapped[int | None] = mapped_column(nullable=True)
     tokens_out: Mapped[int | None] = mapped_column(nullable=True)
+    # Item 109: the prompt-cache split and what it saved at this call's
+    # prices. NULL on rows written before the columns existed — they
+    # count as uncached, never rewritten.
+    tokens_cached_in: Mapped[int | None] = mapped_column(nullable=True)
+    tokens_cache_write_in: Mapped[int | None] = mapped_column(nullable=True)
+    cache_saved: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
     cost_source: Mapped[str] = mapped_column(String(16), nullable=False, default="priced")
     latency_ms: Mapped[int | None] = mapped_column(nullable=True)

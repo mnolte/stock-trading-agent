@@ -861,6 +861,8 @@ export interface SettingsForm {
     stop_atr_max: number;
     min_reward_risk: number;
     max_calls_per_cycle: number;
+    call_timeout_seconds?: number;
+    max_output_tokens?: number;
     entry_gate?: string;
     min_ev_r?: number;
     v3?: { min_room_atr?: number; min_edge?: number };
@@ -896,6 +898,12 @@ export interface SettingsForm {
     monthly_cost_cap_usd: number;
     models?: { weekly: string; briefing: string; verdict: string };
     prompts?: { weekly: string; briefing: string; verdict: string };
+    temperature?: number;
+    max_words?: {
+      weekly_summary?: number;
+      weekly_story?: number;
+      briefing?: number;
+    };
   };
   ask: {
     enabled: boolean;
@@ -904,7 +912,16 @@ export interface SettingsForm {
     max_cost_per_answer_usd: number;
     keep_days: number;
     instructions: string;
+    max_context_tokens?: number;
+    max_tool_rounds?: number;
+    max_tool_result_tokens?: number;
+    answer_timeout_seconds?: number;
+    max_questions_per_minute?: number;
+    max_notes?: number;
+    max_output_tokens?: number;
   };
+  shadows?: { monthly_cost_cap_usd?: number };
+  backtest?: { monthly_cost_cap_usd?: number };
   readiness: {
     min_closed_trades: number;
     min_sessions: number;
