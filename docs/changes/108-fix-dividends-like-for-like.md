@@ -5,7 +5,7 @@ title: Dividends counted like for like
 status: ready
 issue: 319
 kickoff: 108-fix-dividends-like-for-like.md
-spec_prs: [PRNUM]
+spec_prs: [320]
 build_prs: []
 ---
 
