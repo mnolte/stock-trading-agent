@@ -88,8 +88,27 @@ async function collectViolations(
       return wordCount(el) >= 7;
     };
 
+    // A list/table row with its own vertical padding (FactRows, settings
+    // Rows, feed rows, bordered stat rows) is exempt from the check — its
+    // padding already spaces the text (design/DESIGN.md → Spacing).
+    const rowLike = (el: HTMLElement): boolean => {
+      const cs = getComputedStyle(el);
+      const pt = parseFloat(cs.paddingTop) || 0;
+      const pb = parseFloat(cs.paddingBottom) || 0;
+      if (pt < 4 || pb < 4) return false;
+      const bw = (side: string) => {
+        const w = parseFloat(cs.getPropertyValue(`border-${side}-width`)) || 0;
+        const s = cs.getPropertyValue(`border-${side}-style`);
+        return w > 0 && s !== 'none' && s !== 'hidden' ? w : 0;
+      };
+      // Only a bottom hairline is allowed; side/top borders make it a box.
+      return bw('top') === 0 && bw('left') === 0 && bw('right') === 0;
+    };
+
     // A bordered or filled box sibling.
     const isBox = (el: Element): el is HTMLElement => {
+      if (!visible(el)) return false;
+      if (rowLike(el)) return false;
       if (!visible(el)) return false;
       const cs = getComputedStyle(el);
       if (cs.position === 'absolute' || cs.position === 'fixed') return false;
@@ -165,14 +184,17 @@ async function collectViolations(
         if (s.top >= t.bottom) gap = s.top - t.bottom;
         else if (t.top >= s.bottom) gap = t.top - s.bottom;
         else gap = -Math.min(t.bottom - s.top, s.bottom - t.top);
-        // Text-to-text: rows with their own padding (list rows, FactRows,
-        // watchlist rows) are exempt — measure between the text, not the
-        // row boxes. Text-to-box keeps the raw gap: the box edge counts.
-        if (isText && el instanceof HTMLElement && sib instanceof HTMLElement) {
+        // The rule measures between text and box edges. The candidate's
+        // own padding/border always counts (its text sits inside them);
+        // a text sibling's facing padding counts too (rows with their
+        // own padding are exempt), while a box sibling's edge is the box.
+        if (el instanceof HTMLElement) {
           if (s.top >= t.bottom) {
-            gap += padY(el, 'bottom') + padY(sib as HTMLElement, 'top');
+            gap += padY(el, 'bottom');
+            if (isText && sib instanceof HTMLElement) gap += padY(sib, 'top');
           } else if (t.top >= s.bottom) {
-            gap += padY(el, 'top') + padY(sib as HTMLElement, 'bottom');
+            gap += padY(el, 'top');
+            if (isText && sib instanceof HTMLElement) gap += padY(sib, 'bottom');
           }
         }
         if (gap < 8) {
@@ -301,6 +323,7 @@ test('spacing: ask drawer with an answer', async ({ page }) => {
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();
   await page.keyboard.type('How is the week going?');
+  await drawer.getByLabel('Your question').click();
   await page.keyboard.press('Enter');
   await expect(drawer.getByText(/weekly review flags/)).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(300);

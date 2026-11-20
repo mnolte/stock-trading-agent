@@ -251,7 +251,7 @@ function Tails({ data }: { data: PerformanceTailsResponse }) {
   return (
     <>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ flex: '1 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-3)' }}>
           <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>
             Closed trades by result in R (adjusted). Each bar runs from its label
             up to the next

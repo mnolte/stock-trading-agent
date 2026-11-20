@@ -1345,7 +1345,7 @@ function ReadWithCare({
   const calls = summaries.reduce((n, [, s]) => n + s.calls, 0);
   return (
     <Card label="Read with care">
-      <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+      <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
         <li>
           No historical quotes on the free data plan: spreads assumed at{' '}
           {Number(run.slippage_pct)}%, so the spread check never blocked an
@@ -1506,7 +1506,7 @@ function StrategyDecisions({
 function CsvPanel({ run }: { run: BacktestRun }) {
   return (
     <Card label="Download CSV">
-      <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: 'var(--sa-text-md)' }}>
+      <ul style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', fontSize: 'var(--sa-text-md)' }}>
         {run.strategies.map((ref) => (
           <li key={ref.slug}>
             {ref.name}:{' '}

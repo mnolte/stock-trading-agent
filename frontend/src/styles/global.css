@@ -655,6 +655,13 @@ details.sa-adv summary::-webkit-details-marker {
   }
 }
 
+/* Card bodies (item 109, design/DESIGN.md → Spacing): sibling blocks inside
+ * a card body keep the 12 px paragraph-to-box step; rows with their own
+ * padding carry their own rhythm and are unaffected. */
+.sa-cardbody > * + * {
+  margin-top: var(--sa-space-3);
+}
+
 /* ---- Reading prose (item 109, design/DESIGN.md → Spacing): paragraphs
  * in answers, reviews, briefings and explained warnings share one rhythm —
  * no child margins, 12 px between blocks, 1.55–1.6 line height. ---- */

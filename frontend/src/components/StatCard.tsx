@@ -22,7 +22,7 @@ export function StatCard({ label, value, valueColor, sub, bar, footer, style }: 
         borderRadius: 'var(--sa-radius-lg)',
         display: 'flex',
         flexDirection: 'column',
-        gap: '6px',
+        gap: 'var(--sa-space-2)',
         minWidth: 0,
         ...style,
       }}

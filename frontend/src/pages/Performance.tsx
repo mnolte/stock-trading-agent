@@ -113,13 +113,15 @@ function StatTip({ children, title }: { children: string; title: string }) {
 /** The tile's two lines under the value (item 076): a plain-words line,
  * then the small detail line. */
 function TileLines({ plain, small }: { plain: string; small: string }) {
+  // One text block: the plain line and its small print are a single
+  // value+unit pair, so they share one leaf element for the spacing check.
   return (
-    <>
-      <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.4 }}>
+    <div>
+      <span style={{ display: 'block', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.4 }}>
         {plain}
-      </div>
-      <div style={{ fontSize: 'var(--sa-text-sm)', color: muted }}>{small}</div>
-    </>
+      </span>
+      <span style={{ display: 'block', fontSize: 'var(--sa-text-sm)', color: muted, marginTop: '2px' }}>{small}</span>
+    </div>
   );
 }
 
