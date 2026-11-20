@@ -15,7 +15,7 @@ v0.1 is done when:
 - The agent runs unattended through full US sessions for 4 consecutive weeks without crashes or unreconciled positions.
 - Every decision (trade or no-trade) is stored with its inputs, prompt version, model output and outcome.
 - Every open position has a broker-side stop order at Alpaca at all times.
-- Performance is shown against a SPY buy-and-hold benchmark started on the same day.
+- Performance is shown against a SPY buy-and-hold benchmark started on the same day, with SPY's dividends.
 - No code path can place an order against a live (real-money) Alpaca endpoint.
 
 Name: **Stock Trading Agent** (shown in the GUI, page titles, emails and error pages). Technical names stay `stock-agent`: the repo, the database file, log files and containers. Prompt files already used (`decision.v1.md`, `decision.v2.md`) keep the old name because used prompts are never edited; the next prompt version uses the new one.
@@ -40,7 +40,7 @@ These defaults are set so Devin can start. Items marked **(review)** are Marc's 
 | Execution mode **(review)** | Automatic. Supervised mode is built together with its screen in PR 6; until then the app refuses to start when the mode is set to supervised | Same as Trading Agent |
 | Earnings data | Finnhub free earnings calendar | Alpaca has no earnings calendar |
 | News | Alpaca News API | Included with the Alpaca account |
-| Benchmark | SPY buy-and-hold from day one | Honest comparison against doing nothing |
+| Benchmark | SPY buy-and-hold from day one, with its dividends | Honest comparison against doing nothing |
 | Hosting | Local during development; production on a VPS (Docker Compose, Caddy, sign-in with password and authenticator) | See VPS deployment |
 
 ## Architecture and stack
@@ -222,6 +222,15 @@ FINRA replaced the pattern day trader rule and its $25,000 minimum with intraday
 **Paper realism**
 
 Alpaca paper fills ignore slippage, market impact, regulatory fees and dividends. The performance screen shows both the raw paper P&L and an adjusted P&L with 0.05% slippage per side (configurable). Dividends on held positions are recorded from corporate actions and added to the adjusted figure.
+
+**Dividends, like for like** (item 108, decided 20 November). Alpaca paper pays no dividends, but the price still drops on each ex-date, so the raw paper P&L loses every dividend.
+
+- **Entitlement.** A position is credited a dividend whose ex-date falls after the day it was bought and on or before the day it was sold (or today, while it is open). One function does this everywhere: Performance, shadows, backtests and Insights.
+- **Cash dividends** add their amount per share × the quantity. **Stock dividends** (Alpaca's `stock_dividends`, where `rate` is new shares per share) add their value: quantity × rate × the close of the session before the ex-date ÷ (1 + rate). They are stored as their own type, `stock_dividend`, never as cash; a cash and a stock dividend on the same ex-date are two rows.
+- **SPY gets its dividends too.** SPY's return over a span counts each SPY dividend with its ex-date in the span (after the start, on or before the end), per share and not reinvested: (price at the end + those dividends − price at the start) ÷ price at the start. One function computes it, at read time from the stored corporate actions; the benchmark line, every "vs SPY" and Insights' edge over SPY use it. The stored `equity_snapshots` benchmark value stays SPY's price only, so older snapshots need no rewrite.
+- **Like for like.** Every comparison with SPY sets the agent's adjusted return (slippage and dividends) against SPY with dividends: Performance's summary and tile, the equity curve, Strategies, Readiness (Return vs SPY), the weekly review's facts and backtest results. The raw paper return is compared with SPY's price only, and shows on hover.
+- **Complete.** A corporate-action fetch returns every action in its window, whatever the count, for live syncs and backtests alike; a fetch that stops short is a failed fetch, not a short list.
+- **After-exit values** ignore dividends, as before (Outcome tracking → Computing the after-exit values).
 
 **Rate limits**
 
@@ -795,7 +804,7 @@ The model writes a weekly review, a daily briefing and a draft verdict on each d
 - **Summary sentence.** One or two sentences at the top, written by code from the same numbers as the tiles (no model): "In 24 sessions the agent closed 12 trades and won 9. After costs it is down $22.38 (−0.22%), level with SPY over the same days. 12 trades is too few to judge the strategy; 20 is the first useful mark."
 - **Tiles say what they mean.** Each tile has a second line in words, next to its definition on hover. Average R: "a winner earned about 2 times what it risked; a loser lost about 1 time". Max drawdown: "the deepest fall from a high · the kill switch turns on at −8%". Adjusted P&L: "after the assumed slippage and dividends". Win rate: "9 of 12 closed trades".
 - **API.** The performance response gains `summary` (the sentence), `exits` (date, symbol, R, won) and `drawdown` (peak date, low date, %), from the same functions as the tiles.
-- **Equity curve.** Each trade's exit is a dot on the curve (green won, red lost) with the symbol and result on hover; the deepest drawdown is shaded from its peak to its low.
+- **Equity curve.** Each trade's exit is a dot on the curve (green won, red lost) with the symbol and result on hover; the deepest drawdown is shaded from its peak to its low. The two lines are adjusted equity (raw equity minus slippage on the fills so far plus dividends with their ex-date so far) and SPY with its dividends; hovering a point also shows raw equity (item 108).
 - **Labels, not codes.** Exit reasons and actions go through the label map (target, stop, agent exit, earnings exit, Stop & flatten), here and in every table.
 - **Empty rows fold.** By regime lists only regimes with closed trades and adds one line: "No closed trades yet in: up · high vol, sideways, down." A regime that blocks entries (down · high vol) says so in that line.
 - **After the exit.** While every row is pending, the table is one line: "12 trades are inside their 5-session window; the first result arrives Thu 22 Oct." Once some are done, pending rows sit at the bottom, grouped into one row.
@@ -1352,7 +1361,7 @@ An Insights screen in the Learn group shows where the results come from, sliced 
 | Number | Definition | Why it matters for stocks |
 | --- | --- | --- |
 | Expectancy | Average R per closed trade, with a 90% range (± 1.64 standard errors) | Whether there is an edge at all, and how sure we are |
-| Edge over SPY at the same exposure | Run return − SPY return over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
+| Edge over SPY at the same exposure | Run return − SPY return (with its dividends, item 108) over the same sessions × the average share of equity invested | The agent is mostly in cash; comparing with SPY fully invested is unfair to it, comparing with nothing flatters it |
 | Beta to SPY | Slope and correlation of daily equity returns against SPY's, from 20 sessions | Whether the result is just the market going up |
 | Overnight vs in session | P&L of held positions from the previous close to the open, versus from the open to the close or exit | Stops at Alpaca can't protect against overnight gaps; the edge should come from the session |
 | Gaps through the stop | Count of stop exits that filled more than 0.1R below the stop, and the extra R lost beyond −1R | The real risk per trade is larger than 1R when gaps are frequent |
