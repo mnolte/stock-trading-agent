@@ -8,6 +8,7 @@ were parsed.
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from typing import Any, cast
 
 import pytest
 from app.config import AppConfig
@@ -16,6 +17,7 @@ from app.data.corporate_repair import (
     REPAIR_EVENT,
     repair_corporate_actions_once,
 )
+from app.data.factory import DataSources
 from app.data.fake import (
     FakeBarSource,
     FakeCalendarSource,
@@ -102,9 +104,11 @@ async def test_fetch_corporate_actions_requests_all_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = AlpacaDataClient("test-key", "test-secret")
-    captured: dict[str, object] = {}
+    captured: dict[str, Any] = {}
 
-    async def fake_run_read(fn: object, *args: object, **kwargs: object):
+    async def fake_run_read(
+        fn: object, *args: object, **kwargs: object
+    ) -> dict[str, Any]:
         captured["request"] = args[0]
         return {
             "cash_dividends": [
@@ -118,7 +122,7 @@ async def test_fetch_corporate_actions_requests_all_pages(
     )
     assert result.error is None
     request = captured["request"]
-    assert request.limit is None  # type: ignore[union-attr]
+    assert request.limit is None
 
 
 async def test_fetch_corporate_actions_truncated_fails(
@@ -128,7 +132,9 @@ async def test_fetch_corporate_actions_truncated_fails(
     list — refresh must not prune rows it never saw."""
     client = AlpacaDataClient("test-key", "test-secret")
 
-    async def fake_run_read(fn: object, *args: object, **kwargs: object):
+    async def fake_run_read(
+        fn: object, *args: object, **kwargs: object
+    ) -> dict[str, Any]:
         return {
             "cash_dividends": [
                 {"symbol": "AAPL", "ex_date": "2026-11-10", "rate": 0.25}
@@ -188,9 +194,7 @@ async def test_refresh_stores_two_pages_of_actions(
     assert count == 1200
 
 
-def _sources(corporate_actions: FakeCorporateActionSource):
-    from app.data.factory import DataSources
-
+def _sources(corporate_actions: FakeCorporateActionSource) -> DataSources:
     calendar = FakeCalendarSource()
     return DataSources(
         bars=FakeBarSource(calendar),
@@ -436,7 +440,9 @@ async def test_repair_keeps_flag_unset_on_fetch_error(
         session.commit()
 
     class FailingSource(FakeCorporateActionSource):
-        async def fetch_corporate_actions(self, symbols, start, end):
+        async def fetch_corporate_actions(
+            self, symbols: list[str], start: date, end: date
+        ) -> DataResult[list[CorporateActionEvent]]:
             return DataResult(data=[], error="boom", source="fake")
 
     market_data = _market_data(session_factory, [])
@@ -598,8 +604,8 @@ async def test_performance_and_backtest_agree_on_dividends(
             calendar=FakeCalendarSource(),
             clock=clock,
         )
-        summary = perf["summary"]  # type: ignore[index]
-        curve = perf["curve"]["points"]  # type: ignore[index]
+        summary = cast(dict[str, Any], perf["summary"])
+        curve = cast(dict[str, Any], perf["curve"])["points"]
 
         bt = summarise(
             session_factory,
@@ -611,18 +617,18 @@ async def test_performance_and_backtest_agree_on_dividends(
     # SPY total return Oct 1 → Oct 20: (510 + 1 − 500) / 500 = 2.2%.
     # Both surfaces report it; the price-only figure would be 2.0% —
     # the difference is exactly the dividend's share.
-    assert float(summary["spy_return_pct"]) == pytest.approx(2.2)  # type: ignore[index]
+    assert float(summary["spy_return_pct"]) == pytest.approx(2.2)
     assert bt["spy_return_pct"] == pytest.approx(2.2)
-    assert float(summary["spy_return_pct"]) - 2.0 == pytest.approx(0.2)  # type: ignore[index]
+    assert float(summary["spy_return_pct"]) - 2.0 == pytest.approx(0.2)
 
     # The agent side: adjusted = raw − slippage + dividends.
     # return 100 − slip 0.5 (10×100×0.05%) + div 5 (10×0.50) = 104.5 → 1.045%.
-    assert Decimal(summary["adjusted_usd"]) == Decimal("104.50")  # type: ignore[index]
+    assert Decimal(summary["adjusted_usd"]) == Decimal("104.50")
     assert bt["return_pct"] == pytest.approx(1.045)
-    assert float(summary["adjusted_pct"]) == pytest.approx(1.045, abs=0.01)  # type: ignore[index]
+    assert float(summary["adjusted_pct"]) == pytest.approx(1.045, abs=0.01)
     # vs SPY uses the same adjusted return against the same total return.
     assert float(summary["vs_spy_pct"]) == pytest.approx(
-        float(summary["adjusted_pct"]) - 2.2  # type: ignore[index]
+        float(summary["adjusted_pct"]) - 2.2
     )
     assert bt["vs_spy_pts"] == pytest.approx(
         bt["return_pct"] - bt["spy_return_pct"]
