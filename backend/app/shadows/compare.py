@@ -37,6 +37,7 @@ from app.db.models import (
     ShadowPosition,
     Strategy,
 )
+from app.engine.benchmark import spy_return as spy_total_return
 from app.market.clock import NY_TZ
 from app.shadows.portfolio import aware, ny_date
 from app.shadows.strategy import NON_ARCHIVED, describe, differences, strategy_start
@@ -119,12 +120,15 @@ def _max_drawdown(values: Sequence[Decimal]) -> Decimal:
     return worst
 
 
-def _spy_return(session: Session, since: datetime) -> Decimal | None:
-    """SPY buy-and-hold return since ``since`` from the benchmark column."""
+def _spy_return(
+    session: Session, run: Run, since: datetime, symbol: str
+) -> Decimal | None:
+    """SPY's total return since ``since`` — price plus its dividends
+    (item 108), the same figure Performance reports."""
     rows = [
-        v
-        for (v,) in session.execute(
-            select(EquitySnapshot.spy_benchmark_value)
+        (t, v)
+        for t, v in session.execute(
+            select(EquitySnapshot.time, EquitySnapshot.spy_benchmark_value)
             .where(
                 EquitySnapshot.time >= since.replace(tzinfo=None),
                 EquitySnapshot.spy_benchmark_value.is_not(None),
@@ -133,9 +137,28 @@ def _spy_return(session: Session, since: datetime) -> Decimal | None:
         ).all()
         if v is not None
     ]
-    if not rows or rows[0] == 0:
+    if (
+        not rows
+        or not run.spy_close
+        or not run.starting_equity
+    ):
         return None
-    return (rows[-1] - rows[0]) / rows[0] * 100
+    # spy_benchmark_value = starting_equity × spy ÷ run.spy_close, so the
+    # stored value converts back to the SPY price at that snapshot.
+    factor = run.spy_close / run.starting_equity
+    first_value = rows[0][1]
+    last_value = rows[-1][1]
+    assert first_value is not None and last_value is not None  # noqa: S101
+    price_start = first_value * factor
+    price_end = last_value * factor
+    return spy_total_return(
+        session,
+        ny_date(aware(rows[0][0])),
+        ny_date(aware(rows[-1][0])),
+        price_start,
+        price_end,
+        symbol,
+    )
 
 
 def _cost(session: Session, strategy_id: int, since: datetime) -> Decimal:
@@ -189,7 +212,12 @@ def strategy_row(
     ]
     equity_now = eq[-1][1] if eq else run.starting_equity
     ret = (equity_now - run.starting_equity) / run.starting_equity * 100
-    spy = _spy_return(session, start)
+    spy = _spy_return(
+        session,
+        run,
+        start,
+        str(config.get("performance", "benchmark", default="SPY")),
+    )
     sal = same_as_live(session, strategy.id, start)
     calls = session.execute(
         select(func.count(ShadowDecision.id))
@@ -275,9 +303,10 @@ def strategy_row(
 def live_adjusted_curve(
     session: Session, run: Run, perf: dict[str, Any], config: AppConfig
 ) -> list[dict[str, str]]:
-    """Live's curve as adjusted % of starting equity: each session's raw
-    equity minus the slippage on fills up to that day; the last point is
-    Performance's adjusted total exactly (it also includes dividends)."""
+    """Live's curve as adjusted % of starting equity: each point's
+    adjusted equity from Performance (slippage and dividends up to that
+    day, item 108); the last point is Performance's adjusted total
+    exactly."""
     curve = perf.get("curve") or {}
     points = curve.get("points") or []
     slip = config.get_decimal("performance", "slippage_pct_per_side", default=0.05)
@@ -288,8 +317,11 @@ def live_adjusted_curve(
     out: list[dict[str, str]] = []
     for point in points:
         day = date.fromisoformat(point["date"])
-        cum = sum((q * p * slip / 100 for t, q, p in fills if ny_date(t) <= day), Decimal(0))
-        value = Decimal(point["equity"]) - cum
+        if point.get("adjusted") is not None:
+            value = Decimal(point["adjusted"])
+        else:
+            cum = sum((q * p * slip / 100 for t, q, p in fills if ny_date(t) <= day), Decimal(0))
+            value = Decimal(point["equity"]) - cum
         out.append(
             {"date": point["date"], "pct": str(((value - start) / start * 100).quantize(Q2))}
         )

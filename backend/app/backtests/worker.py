@@ -976,7 +976,10 @@ def _finish(
         if db.exists():
             sf = session_maker_for(db, config)
             summary[spec["slug"]] = summarise(
-                sf, config=config, equity=bundles_hint.starting_equity
+                sf,
+                config=config,
+                equity=bundles_hint.starting_equity,
+                slippage_pct=bundles_hint.slippage_pct,
             )
     if status == "done":
         from app.backtests.answers import answer_sentence

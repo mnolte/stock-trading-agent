@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.data.cache import _naive_utc
 from app.data.models import Bar5m
 from app.db.models import CorporateAction, Position, ShadowEquity, ShadowPosition
-from app.engine.trades import _dividends
+from app.engine.trades import _dividends, close_lookup
 from app.market.clock import NY_TZ, UTC
 from app.risk.gates import GateContext
 from app.risk.math import WorkingEntry, session_pnl_pct
@@ -101,14 +101,21 @@ def _dividends_for(session: Session, sp: ShadowPosition, closed_at: datetime) ->
         session.execute(
             select(CorporateAction).where(
                 CorporateAction.symbol == sp.symbol,
-                CorporateAction.action_type == "dividend",
+                CorporateAction.action_type.in_(("dividend", "stock_dividend")),
             )
         )
         .scalars()
         .all()
     )
     assert sp.opened_at is not None  # noqa: S101 - shadow position invariant
-    return _dividends(actions, sp.symbol, ny_date(sp.opened_at), ny_date(closed_at), sp.qty)
+    return _dividends(
+        actions,
+        sp.symbol,
+        ny_date(sp.opened_at),
+        ny_date(closed_at),
+        sp.qty,
+        close_before=close_lookup(session),
+    )
 
 
 def close_position(

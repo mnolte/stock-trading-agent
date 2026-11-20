@@ -1343,6 +1343,7 @@ def compute_insights(
     *,
     equity_daily: Sequence[EquityDay],
     spy_daily: Sequence[DailyBar],
+    spy_dividends: Sequence[tuple[date, Decimal]] = (),
     daily_bars_for: Callable[[str], list[DailyBar]],
     bars_5m_for: Callable[[str, datetime, datetime], list[Bar5m]],
     session_dates: Sequence[date],
@@ -1392,8 +1393,15 @@ def compute_insights(
         if days:
             first, last = min(days), max(days)
             if spy_close[first]:
+                # SPY's total return over the same span (item 108):
+                # price plus the dividends with ex-date after the
+                # first day and on or before the last.
+                divs = sum(
+                    (amt for ex, amt in spy_dividends if first < ex <= last),
+                    Decimal(0),
+                )
                 spy_return_pct = (
-                    (spy_close[last] - spy_close[first])
+                    (spy_close[last] + divs - spy_close[first])
                     / spy_close[first]
                     * 100
                 )

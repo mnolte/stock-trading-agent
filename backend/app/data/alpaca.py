@@ -224,7 +224,7 @@ def parse_clock(raw: dict[str, Any]) -> MarketClock:
     )
 
 
-_DIVIDEND_KEYS = ("cash_dividends", "stock_dividends")
+_DIVIDEND_KEYS = {"cash_dividends": "dividend", "stock_dividends": "stock_dividend"}
 _SPLIT_KEYS = ("forward_splits", "reverse_splits", "unit_splits")
 
 
@@ -236,7 +236,7 @@ def parse_corporate_actions(
     grouped = raw.get("corporate_actions", {})
     for key, rows in grouped.items():
         if key in _DIVIDEND_KEYS:
-            action_type = "dividend"
+            action_type = _DIVIDEND_KEYS[key]
         elif key in _SPLIT_KEYS:
             action_type = "split"
         else:
@@ -247,7 +247,7 @@ def parse_corporate_actions(
                 ex_date = date.fromisoformat(ex_date)
             if ex_date is None:
                 continue
-            amount = row.get("rate") if action_type == "dividend" else row.get("ratio")
+            amount = row.get("rate") if action_type != "split" else row.get("ratio")
             actions.append(
                 CorporateActionEvent(
                     symbol=str(row.get("symbol", "")),
@@ -465,11 +465,24 @@ class AlpacaDataClient:
         self, symbols: list[str], start: date, end: date
     ) -> DataResult[list[CorporateActionEvent]]:
         try:
+            # limit=None makes the SDK page until next_page_token is
+            # empty — the default 1000 stops at 1,000 actions in total
+            # (item 108). Paging happens inside this one limiter slot.
             raw = await self.limiter.run_read(
                 self.corporate_actions.get_corporate_actions,
-                CorporateActionsRequest(symbols=symbols, start=start, end=end),
+                CorporateActionsRequest(
+                    symbols=symbols, start=start, end=end, limit=None
+                ),
             )
             ca_raw = dict(raw) if isinstance(raw, dict) else {}
+            if ca_raw.get("next_page_token"):
+                # A short list would make refresh_corporate_actions
+                # prune real rows it never saw — fail instead.
+                return DataResult(
+                    data=[],
+                    error="corporate actions truncated",
+                    source="alpaca",
+                )
             return DataResult(
                 data=parse_corporate_actions(ca_raw, self.clock.now()),
                 source="alpaca",

@@ -376,13 +376,15 @@ class Earning(Base):
 
 
 class CorporateAction(Base):
-    """Split or dividend."""
+    """Split, cash dividend or stock dividend."""
 
     __tablename__ = "corporate_actions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    action_type: Mapped[str] = mapped_column(String(16), nullable=False)  # split | dividend
+    action_type: Mapped[str] = mapped_column(
+        String(16), nullable=False
+    )  # split | dividend | stock_dividend
     date: Mapped[datetime] = mapped_column(nullable=False)
     ratio_or_amount: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
 

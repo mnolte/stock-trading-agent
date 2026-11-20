@@ -37,7 +37,8 @@ from app.db.models import (
     Run,
 )
 from app.decide.output import decision_trade_prices
-from app.engine.trades import _dividends, _trade_r
+from app.engine.benchmark import spy_benchmark_with_dividends
+from app.engine.trades import _dividends, _trade_r, close_lookup
 from app.market.calendar import CalendarProvider
 from app.market.clock import NY_TZ, UTC, Clock
 
@@ -499,8 +500,11 @@ def compute_performance(
     }
 
     actions = session.execute(
-        select(CorporateAction).where(CorporateAction.action_type == "dividend")
+        select(CorporateAction).where(
+            CorporateAction.action_type.in_(("dividend", "stock_dividend"))
+        )
     ).scalars().all()
+    close_before = close_lookup(session)
 
     trades: list[dict[str, Any]] = []
     agent_trades: list[tuple[Position, Decimal | None, str | None]] = []
@@ -522,6 +526,7 @@ def compute_performance(
             _aware(p.opened_at).astimezone(NY_TZ).date(),
             _aware(p.closed_at).astimezone(NY_TZ).date(),  # type: ignore[arg-type]
             qty,
+            close_before=close_before,
         )
         adjusted = (
             p.realized_pnl_adjusted + div
@@ -723,24 +728,8 @@ def compute_performance(
     return_usd = equity_now - run.starting_equity
     return_pct = _pct_change(equity_now, run.starting_equity)
 
-    benchmark_last = (
-        Decimal(points[-1]["benchmark"])
-        if points and points[-1]["benchmark"] is not None
-        else None
-    )
-    spy_return = (
-        _pct_change(benchmark_last, run.starting_equity)
-        if benchmark_last is not None
-        else None
-    )
-    vs_spy = (
-        return_pct - spy_return
-        if return_pct is not None and spy_return is not None
-        else None
-    )
-
     fill_rows = session.execute(
-        select(Fill.qty, Fill.price)
+        select(Fill.filled_at, Fill.qty, Fill.price)
         .join(Order, Fill.order_id == Order.id)
         .where(
             Fill.filled_at >= run.started_at,
@@ -752,7 +741,7 @@ def compute_performance(
         )
     ).all()
     slippage_total = sum(
-        (qty * price * slip_pct / 100 for qty, price in fill_rows), Decimal(0)
+        (qty * price * slip_pct / 100 for _t, qty, price in fill_rows), Decimal(0)
     )
 
     dividends_total = Decimal(0)
@@ -763,6 +752,7 @@ def compute_performance(
             _aware(p.opened_at).astimezone(NY_TZ).date(),
             _aware(p.closed_at).astimezone(NY_TZ).date(),  # type: ignore[arg-type]
             p.qty,
+            close_before=close_before,
         )
     open_positions = session.execute(
         select(Position).where(
@@ -778,8 +768,82 @@ def compute_performance(
             _aware(p.opened_at).astimezone(NY_TZ).date(),
             today_ny,
             p.qty,
+            close_before=close_before,
         )
     adjusted_total = return_usd - slippage_total + dividends_total
+
+    # ---- curve: adjusted equity and SPY with dividends (item 108) -------
+    # Each point's adjusted equity is raw equity minus the slippage on
+    # fills up to that day plus dividends with their ex-date up to that
+    # day — the same functions adjusted_total uses. The benchmark line
+    # grows the stored price-only value by SPY's dividends since the run
+    # started; the raw equity stays on the point for the hover.
+    curve_positions = list(closed_positions) + list(open_positions)
+    snaps_by_day = {p["date"]: p for p in points}
+    benchmark_last_price_only: Decimal | None = None
+    for snap in session.execute(snap_query).scalars():
+        day = _aware(snap.time).astimezone(NY_TZ).date()
+        point = snaps_by_day.get(day.isoformat())
+        if point is None:
+            continue
+        cum_slip = sum(
+            (
+                qty * price * slip_pct / 100
+                for t, qty, price in fill_rows
+                if _aware(t).astimezone(NY_TZ).date() <= day
+            ),
+            Decimal(0),
+        )
+        cum_div = Decimal(0)
+        for p in curve_positions:
+            opened = _aware(p.opened_at).astimezone(NY_TZ).date()
+            hold_end = (
+                _aware(p.closed_at).astimezone(NY_TZ).date()
+                if p.closed_at is not None
+                else today_ny
+            )
+            cum_div += _dividends(
+                actions,
+                p.symbol,
+                opened,
+                min(hold_end, day),
+                p.qty,
+                close_before=close_before,
+            )
+        point["adjusted"] = str(
+            (Decimal(point["equity"]) - cum_slip + cum_div).quantize(
+                Decimal("0.01")
+            )
+        )
+        if point is points[-1] and point["benchmark"] is not None:
+            benchmark_last_price_only = Decimal(point["benchmark"])
+        point["benchmark"] = (
+            str(with_divs)
+            if (
+                with_divs := spy_benchmark_with_dividends(session, run, snap)
+            )
+            is not None
+            else None
+        )
+
+    # ``points[-1].benchmark`` is now the dividend-aware value (item 108),
+    # so ``spy_return`` is SPY's total return — the like-for-like figure
+    # every "vs SPY" compares the adjusted return against.
+    benchmark_last = (
+        Decimal(points[-1]["benchmark"])
+        if points and points[-1]["benchmark"] is not None
+        else None
+    )
+    spy_return = (
+        _pct_change(benchmark_last, run.starting_equity)
+        if benchmark_last is not None
+        else None
+    )
+    spy_return_price_only = (
+        _pct_change(benchmark_last_price_only, run.starting_equity)
+        if benchmark_last_price_only is not None
+        else None
+    )
 
     wins = sum(
         1
@@ -831,13 +895,26 @@ def compute_performance(
         if run.starting_equity
         else None
     )
+    # Like for like (item 108): the adjusted return against SPY with its
+    # dividends; the raw paper return keeps the price-only comparison,
+    # shown on the vs SPY tile's hover.
+    vs_spy = (
+        adjusted_pct_dec - spy_return
+        if adjusted_pct_dec is not None and spy_return is not None
+        else None
+    )
+    vs_spy_raw = (
+        return_pct - spy_return_price_only
+        if return_pct is not None and spy_return_price_only is not None
+        else None
+    )
     sentence = summary_sentence(
         sessions=sessions,
         closed=len(scored),
         wins=wins,
         adjusted_usd=adjusted_total,
         adjusted_pct=adjusted_pct_dec,
-        return_pct=return_pct,
+        return_pct=adjusted_pct_dec,
         spy_return_pct=spy_return,
         open_count=len(open_positions),
         open_symbols=open_symbols,
@@ -885,6 +962,11 @@ def compute_performance(
             ),
             "vs_spy_pct": (
                 str(vs_spy.quantize(Decimal("0.01"))) if vs_spy is not None else None
+            ),
+            "vs_spy_raw_pct": (
+                str(vs_spy_raw.quantize(Decimal("0.01")))
+                if vs_spy_raw is not None
+                else None
             ),
             "adjusted_usd": str(adjusted_total.quantize(Decimal("0.01"))),
             "adjusted_pct": (
@@ -1287,8 +1369,11 @@ def tails_trades(
         select(CorporateAction).where(CorporateAction.action_type == "split")
     ).scalars().all()
     dividends_rows = session.execute(
-        select(CorporateAction).where(CorporateAction.action_type == "dividend")
+        select(CorporateAction).where(
+            CorporateAction.action_type.in_(("dividend", "stock_dividend"))
+        )
     ).scalars().all()
+    close_before = close_lookup(session)
 
     out: list[TailTrade] = []
     for p in positions:
@@ -1311,6 +1396,7 @@ def tails_trades(
                 _aware(p.opened_at).astimezone(NY_TZ).date(),
                 closed_ny,
                 p.qty,
+                close_before=close_before,
             )
         outcome = (
             outcomes.get(p.entry_decision_id)
