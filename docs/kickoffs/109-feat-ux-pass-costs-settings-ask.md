@@ -201,11 +201,10 @@ Marc, 20 November: "On the insights page I am missing a section where all the mo
 
 ## Assumptions
 
-- The model list stays config-only; Settings shows it read-only.
+- The model list stays config-only; Settings shows it read-only (decided by Marc on 20 Nov: prices are not editable in Settings).
 - Model costs are read on request from `llm_calls` and `backtests`, not from the nightly Insights snapshot.
 - Raising a cost cap or a model limit counts as looser, like raising a risk limit: it can only cost more.
 
 ## Open questions
 
-1. Model prices editable in Settings later? Not in this item.
-2. If a reader of one of the new settings caches its value at start, should a change need a restart (shown as "applies after a restart", as Server settings do) instead of a rewrite? The kickoff asks for reading at use; Devin reports which readers needed a change.
+1. If a reader of one of the new settings caches its value at start, should a change need a restart (shown as "applies after a restart", as Server settings do) instead of a rewrite? The kickoff asks for reading at use; Devin reports which readers needed a change.

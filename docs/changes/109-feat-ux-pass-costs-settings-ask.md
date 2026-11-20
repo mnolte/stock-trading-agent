@@ -31,9 +31,9 @@ Spec changes (`docs/SPEC.md`):
 No trading behaviour changes. No new config keys: every key the screens show is already in `backend/config.example.yaml`.
 
 Assumptions:
-- The model list stays config-only and read-only in Settings (prices change rarely; a GUI editor would need its own validation and history). Open question 1.
+- The model list stays config-only and read-only in Settings (prices change rarely; a GUI editor would need its own validation and history). Decided by Marc on 20 Nov.
 - Model costs are computed on request, not in the nightly Insights snapshot, because they cover the whole app and must match the caps live.
 
-Open questions for Marc:
-1. Should model prices become editable in Settings later? This item shows them read-only.
-2. A per-model price check against the providers' price pages is not part of this item. Want one as a monthly reminder?
+Answered by Marc on 20 Nov:
+1. Model prices editable in Settings later? No: they stay in config, read-only in Settings.
+2. A monthly price check? Yes. It is a scheduled task, not app code: on the 2nd of each month it compares the `models` block with the providers' price pages and opens an issue only when a price or cutoff differs.
