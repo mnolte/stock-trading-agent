@@ -17,7 +17,7 @@ function shotPath(name: string, project: string, suffix?: string) {
 test('insights: model costs, this month and all time', async ({ page }, testInfo) => {
   await page.goto('/insights');
   const section = page.locator('#q6');
-  await expect(section.getByText('Model costs')).toBeVisible({
+  await expect(section.getByText('What do the models cost?')).toBeVisible({
     timeout: 60_000,
   });
   await page.screenshot({
@@ -37,10 +37,11 @@ test('settings: the model page with both folds open', async ({
 }, testInfo) => {
   await page.goto('/settings/model');
   await expect(
-    page.getByRole('heading', { name: 'Model & reviews' }),
+    page.getByRole('heading', { name: 'Model and reviews' }),
   ).toBeVisible({ timeout: 60_000 });
-  await page.getByText('Word limits', { exact: true }).first().click();
-  await page.getByText('Limits per answer', { exact: true }).first().click();
+  const wordLimits = page.locator('summary', { hasText: 'Word limits' });
+  await wordLimits.click();
+  await wordLimits.scrollIntoViewIfNeeded();
   await page.screenshot({
     path: shotPath('settings-model', testInfo.project.name),
     fullPage: false,
@@ -51,7 +52,17 @@ test('settings: the model page with both folds open', async ({
       path: shotPath('settings-model', testInfo.project.name, '1024'),
       fullPage: false,
     });
+    await page.setViewportSize({ width: 1440, height: 900 });
   }
+  // The Ask limits fold lives on the Ask settings page.
+  await page.goto('/settings/ask');
+  const askLimits = page.locator('summary', { hasText: 'Limits per answer' });
+  await askLimits.click();
+  await askLimits.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: shotPath('settings-ask', testInfo.project.name),
+    fullPage: false,
+  });
 });
 
 test('reviews and readiness', async ({ page }, testInfo) => {
@@ -76,7 +87,7 @@ test('reviews and readiness', async ({ page }, testInfo) => {
 test('backtests', async ({ page }, testInfo) => {
   await page.goto('/backtests');
   await expect(
-    page.getByRole('heading', { name: 'Backtests' }),
+    page.getByRole('heading', { name: 'Backtest' }),
   ).toBeVisible({ timeout: 60_000 });
   await page.screenshot({
     path: shotPath('backtest', testInfo.project.name),
@@ -180,13 +191,18 @@ test('ask drawer: thread, notes, mid-answer and at the cap', async ({
 }, testInfo) => {
   await mockAsk(page);
   await page.goto('/');
-  await page
-    .getByRole('button', { name: /Ask about this page/ })
-    .first()
-    .click();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible({
+    timeout: 60_000,
+  });
+  await page.keyboard.press('Control+j');
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible({ timeout: 60_000 });
+  await page.screenshot({
+    path: shotPath('ask-first-open', testInfo.project.name),
+    fullPage: false,
+  });
 
+  await page.getByRole('button', { name: 'Earlier chats' }).click();
   await page.getByRole('tab', { name: /Notes/ }).click();
   await page.screenshot({
     path: shotPath('ask-notes', testInfo.project.name),
@@ -194,7 +210,7 @@ test('ask drawer: thread, notes, mid-answer and at the cap', async ({
   });
 
   await page.getByRole('tab', { name: /Chats/ }).click();
-  await page.getByRole('button', { name: ASK_THREAD.title }).click();
+  await page.locator('button.ask-thread-open', { hasText: ASK_THREAD.title }).click();
   await expect(drawer.getByText('What did the decision cost?')).toBeVisible();
   await page.screenshot({
     path: shotPath('ask-thread', testInfo.project.name),
@@ -213,10 +229,10 @@ test('ask drawer: thread, notes, mid-answer and at the cap', async ({
 test('ask drawer: at the monthly cap', async ({ page }, testInfo) => {
   await mockAsk(page, true);
   await page.goto('/');
-  await page
-    .getByRole('button', { name: /Ask about this page/ })
-    .first()
-    .click();
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible({
+    timeout: 60_000,
+  });
+  await page.keyboard.press('Control+j');
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible({ timeout: 60_000 });
   await expect(drawer.getByText(/monthly cost cap/i)).toBeVisible();
