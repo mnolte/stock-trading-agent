@@ -137,7 +137,7 @@ function ForwardCard({ data }: { data: ReadinessResponse | null }) {
             <h3 style={sectionLabel}>
               Only time fixes these · {forward.time_count}
             </h3>
-            <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ padding: '10px 0', display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)' }}>
               {forward.time
                 .filter((t) => t.kind === 'count')
                 .map((t) => (

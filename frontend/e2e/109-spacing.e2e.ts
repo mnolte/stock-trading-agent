@@ -117,9 +117,10 @@ async function collectViolations(
         const s = cs.getPropertyValue(`border-${side}-style`);
         return w > 0 && s !== 'none' && s !== 'hidden' ? w : 0;
       };
+      const interactive = el.tagName === 'BUTTON' || el.tagName === 'A';
       return (
         r.height >= 28 &&
-        bw('bottom') > 0 &&
+        (bw('bottom') > 0 || interactive) &&
         bw('top') === 0 &&
         bw('left') === 0 &&
         bw('right') === 0
@@ -183,7 +184,7 @@ async function collectViolations(
     const candidates = new Set<HTMLElement>();
     root.querySelectorAll('*').forEach((el) => {
       if (!(el instanceof HTMLElement) || !isTextBlock(el)) return;
-      if (insideRow(el)) return;
+      if (rowLike(el) || tallRow(el) || insideRow(el)) return;
       candidates.add(el);
     });
     // Keep only the outermost candidate: a text block inside another text
@@ -203,6 +204,7 @@ async function collectViolations(
         while (
           sib &&
           (!visible(sib) ||
+            sib.closest('[aria-hidden="true"]') ||
             (sib instanceof HTMLElement && inOverlay(sib)))
         )
           sib = sib[dir] as Element | null;
@@ -362,8 +364,9 @@ test('spacing: ask drawer with an answer', async ({ page }) => {
   await page.keyboard.press('Control+j');
   const drawer = page.getByRole('complementary', { name: 'Ask the agent' });
   await expect(drawer).toBeVisible();
+  const composer = drawer.getByLabel('Your question');
+  await composer.click();
   await page.keyboard.type('How is the week going?');
-  await drawer.getByLabel('Your question').click();
   await page.keyboard.press('Enter');
   await expect(drawer.getByText(/weekly review flags/)).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(300);
