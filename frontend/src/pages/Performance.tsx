@@ -310,12 +310,6 @@ function ClosedTradesTable({
   );
 }
 
-const ANCHOR: React.CSSProperties = {
-  display: 'block',
-  height: 0,
-  scrollMarginTop: 16,
-};
-
 export default function Performance() {
   const [runId, setRunId] = useState<number | undefined>(undefined);
   const [currency, setCurrency] = useState<'USD' | 'EUR'>('USD');
@@ -757,10 +751,11 @@ export default function Performance() {
 
           {curve && chartPoints.length > 0 && (
             <>
-              <span id="curve" style={ANCHOR} />
               <Card
+                id="curve"
                 label={`Equity vs ${curve.benchmark} buy-and-hold`}
                 refreshing={res.refreshing}
+                style={{ scrollMarginTop: 16 }}
                 right={
                   <SegmentedControl
                     label="Currency"
@@ -840,8 +835,7 @@ export default function Performance() {
             </>
           )}
 
-          <span id="by" style={ANCHOR} />
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)' }}>
+          <div id="by" style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--sa-space-5)', scrollMarginTop: 16 }}>
             <div style={{ flex: '1 1 440px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <Card label="By regime" refreshing={res.refreshing}>
                 <AggTable rows={data.by_regime ?? []} stale={res.refreshing} />
@@ -871,11 +865,9 @@ export default function Performance() {
             </div>
           </div>
 
-          <span id="tails" style={ANCHOR} />
-          <TailsCard res={tails} />
+          <TailsCard res={tails} id="tails" />
 
-          <span id="decisions" style={ANCHOR} />
-          <Card label="Decisions and outcomes" refreshing={res.refreshing}>
+          <Card id="decisions" label="Decisions and outcomes" refreshing={res.refreshing} style={{ scrollMarginTop: 16 }}>
             <div className={res.refreshing ? 'sa-stale-rows' : undefined} style={{ overflowX: 'auto', minWidth: 0 }}>
               <table style={{ width: '100%', minWidth: '560px' }}>
                 <thead>
@@ -937,8 +929,7 @@ export default function Performance() {
             </div>
           </Card>
 
-          <span id="trades" style={ANCHOR} />
-          <Card label="Closed trades" right={closedRight} refreshing={res.refreshing}>
+          <Card id="trades" label="Closed trades" right={closedRight} refreshing={res.refreshing} style={{ scrollMarginTop: 16 }}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
               <input
                 type="search"

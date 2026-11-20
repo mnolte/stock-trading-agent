@@ -8,6 +8,8 @@ export interface CardProps {
   right?: ReactNode;
   children?: ReactNode;
   style?: CSSProperties;
+  /** Anchor id for the "On this page" jump links (item 107). */
+  id?: string;
   /** Sets aria-busy while the first load is in flight and announces
    * "Loading <label>" to screen readers (design/DESIGN.md → Loading). */
   busy?: boolean;
@@ -17,12 +19,13 @@ export interface CardProps {
   ariaLabel?: string;
 }
 
-export function Card({ label, right, children, style, busy, refreshing, ariaLabel }: CardProps) {
+export function Card({ label, right, children, style, busy, refreshing, ariaLabel, id }: CardProps) {
   // The boundary's dedupe name: the card's own label, else a stable id.
   const fallbackName = useId();
   const boundaryName = label ?? ariaLabel ?? `card ${fallbackName}`;
   return (
     <section
+      id={id}
       aria-label={ariaLabel}
       aria-busy={busy || refreshing || undefined}
       style={{
