@@ -1215,6 +1215,8 @@ export interface PerformanceRun extends PerformanceRunInfo {
 export interface PerformanceCurvePoint {
   date: string;
   equity: string;
+  /** Adjusted equity (slippage out, dividends in) — the drawn line. */
+  adjusted?: string | null;
   benchmark: string | null;
   eur_usd: string | null;
 }
@@ -1225,6 +1227,8 @@ export interface PerformanceSummary {
   return_eur: string | null;
   spy_return_pct: string | null;
   vs_spy_pct: string | null;
+  /** Price-only comparison, kept for the tile's hover (item 108). */
+  vs_spy_raw_pct?: string | null;
   adjusted_usd: string;
   adjusted_pct?: string | null;
   slippage_pct: string;

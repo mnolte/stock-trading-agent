@@ -44,7 +44,7 @@ from app.db.models import (
     Strategy,
 )
 from app.engine.performance import _regime_label
-from app.engine.trades import _dividends
+from app.engine.trades import _dividends, close_lookup
 from app.insights.compute import (
     Bar5m as IBar5m,
 )
@@ -139,6 +139,25 @@ def _daily_bars(session: Session, symbol: str) -> list[DailyBar]:
             select(Bar1d).where(Bar1d.symbol == symbol).order_by(Bar1d.date)
         ).scalars()
     ]
+
+
+def _spy_dividends(
+    session: Session, config: AppConfig
+) -> list[tuple[date, Decimal]]:
+    """The benchmark's cash dividends as (ex-date, amount per share) —
+    compute_insights adds the ones inside its span (item 108)."""
+    symbol = str(config.get("performance", "benchmark", default="SPY"))
+    rows = session.execute(
+        select(CorporateAction).where(
+            CorporateAction.symbol == symbol,
+            CorporateAction.action_type == "dividend",
+        )
+    ).scalars().all()
+    return sorted(
+        (r.date.date(), r.ratio_or_amount)
+        for r in rows
+        if r.ratio_or_amount is not None
+    )
 
 
 def _bars_5m(
@@ -587,8 +606,11 @@ def _live_inputs(
         ).scalars()
     }
     dividends_rows = session.execute(
-        select(CorporateAction).where(CorporateAction.action_type == "dividend")
+        select(CorporateAction).where(
+            CorporateAction.action_type.in_(("dividend", "stock_dividend"))
+        )
     ).scalars().all()
+    close_before = close_lookup(session)
 
     # Exit legs per position: the orders that closed it.
     orders = session.execute(
@@ -628,7 +650,14 @@ def _live_inputs(
         )
         opened_ny = _aware(p.opened_at).astimezone(NY_TZ).date()
         closed_ny = _aware(p.closed_at).astimezone(NY_TZ).date()  # type: ignore[arg-type]
-        div = _dividends(dividends_rows, p.symbol, opened_ny, closed_ny, p.qty)
+        div = _dividends(
+            dividends_rows,
+            p.symbol,
+            opened_ny,
+            closed_ny,
+            p.qty,
+            close_before=close_before,
+        )
         if div:
             dividend_positions += 1
             dividends_usd += div
@@ -987,6 +1016,7 @@ def _live_inputs(
         "filter_removed": filter_removed,
         "equity_daily": list(by_day.values()),
         "spy_daily": spy_daily_cache,
+        "spy_dividends": _spy_dividends(session, config),
         "return_pct": return_pct,
         "model_cost": Decimal(model_cost),
         "dividends_usd": dividends_usd,
@@ -1094,8 +1124,11 @@ def _shadow_inputs(
     }
 
     dividends_rows = session.execute(
-        select(CorporateAction).where(CorporateAction.action_type == "dividend")
+        select(CorporateAction).where(
+            CorporateAction.action_type.in_(("dividend", "stock_dividend"))
+        )
     ).scalars().all()
+    close_before = close_lookup(session)
     spy_daily_cache = _daily_bars(session, "SPY")
 
     trades: list[InsightsTrade] = []
@@ -1104,7 +1137,14 @@ def _shadow_inputs(
     for p in positions:
         opened_ny = _aware(p.opened_at).astimezone(NY_TZ).date()  # type: ignore[arg-type]
         closed_ny = _aware(p.closed_at).astimezone(NY_TZ).date()  # type: ignore[arg-type]
-        div = _dividends(dividends_rows, p.symbol, opened_ny, closed_ny, p.qty)
+        div = _dividends(
+            dividends_rows,
+            p.symbol,
+            opened_ny,
+            closed_ny,
+            p.qty,
+            close_before=close_before,
+        )
         if div:
             dividend_positions += 1
             dividends_usd += div
@@ -1368,8 +1408,12 @@ def _shadow_inputs(
     start_equity = run.starting_equity
     return_pct = None
     if equity_days and start_equity:
+        # Price return plus the dividends the positions earned, so the
+        # edge-over-SPY comparison is like for like (item 108).
         return_pct = (
-            (equity_days[-1].equity - start_equity) / start_equity * 100
+            (equity_days[-1].equity - start_equity + dividends_usd)
+            / start_equity
+            * 100
         )
 
     open_positions = session.execute(
@@ -1394,6 +1438,7 @@ def _shadow_inputs(
         "filter_removed": filter_removed,
         "equity_daily": equity_days,
         "spy_daily": spy_daily_cache,
+        "spy_dividends": _spy_dividends(session, config),
         "return_pct": return_pct,
         "model_cost": Decimal(model_cost),
         "dividends_usd": dividends_usd,
@@ -1465,6 +1510,7 @@ def compute_snapshot(
         filter_removed=inputs.get("filter_removed") or (),
         equity_daily=inputs["equity_daily"],
         spy_daily=inputs["spy_daily"],
+        spy_dividends=inputs["spy_dividends"],
         daily_bars_for=lambda s: _daily_bars(session, s),
         bars_5m_for=lambda s, a, b: _bars_5m(session, s, a, b),
         session_dates=_session_dates(session, calendar),
