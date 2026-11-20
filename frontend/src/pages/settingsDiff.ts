@@ -15,6 +15,8 @@ export const FIELD_LABELS: Record<string, string> = {
   'decision.stop_atr_max': 'Stop distance to',
   'decision.min_reward_risk': 'Min reward to risk',
   'decision.max_calls_per_cycle': 'Max model calls per cycle',
+  'decision.call_timeout_seconds': 'Model call timeout',
+  'decision.max_output_tokens': 'Max answer length',
   'decision.entry_gate': 'Entry gate',
   'decision.min_ev_r': 'Min expected R (ev gate)',
   'decision.v3.min_room_atr': 'v3 room to first level',
@@ -49,12 +51,25 @@ export const FIELD_LABELS: Record<string, string> = {
   'reviews.prompts.weekly': 'Weekly review prompt',
   'reviews.prompts.briefing': 'Daily briefing prompt',
   'reviews.prompts.verdict': 'Verdict prompt',
+  'reviews.temperature': 'Review temperature',
+  'reviews.max_words.weekly_summary': 'Weekly summary words',
+  'reviews.max_words.weekly_story': 'Weekly story words',
+  'reviews.max_words.briefing': 'Briefing words',
+  'shadows.monthly_cost_cap_usd': 'Shadow cost cap',
+  'backtest.monthly_cost_cap_usd': 'Backtest cost cap',
   'ask.enabled': 'Ask the agent',
   'ask.model': 'Ask model',
   'ask.monthly_cost_cap_usd': 'Ask monthly cap',
   'ask.max_cost_per_answer_usd': 'Ask max cost per answer',
   'ask.keep_days': 'Ask chats kept for',
   'ask.instructions': 'Ask standing instructions',
+  'ask.max_context_tokens': 'Ask context tokens',
+  'ask.max_tool_rounds': 'Ask tool rounds',
+  'ask.max_tool_result_tokens': 'Ask tool result tokens',
+  'ask.answer_timeout_seconds': 'Ask answer timeout',
+  'ask.max_questions_per_minute': 'Ask questions per minute',
+  'ask.max_notes': 'Ask notes kept',
+  'ask.max_output_tokens': 'Ask max answer length',
   'schedule.cycles': 'Cycle times',
   'schedule.last_cycle_no_entries': 'New entries in the last cycle',
   'notifications.repeat_limit_minutes': 'Repeat limit',
@@ -260,6 +275,18 @@ function reviewPromptLeafRows(
     map, rows);
 }
 
+/** Nested leaves of `reviews.max_words`, as `reviews.max_words.<task>` paths. */
+function reviewWordsLeafRows(
+  current: SettingsForm,
+  edited: SettingsForm,
+  map: Record<string, string> | null,
+  rows: DiffRow[] | null,
+): void {
+  dictLeafRows('reviews', 'max_words', current, edited, fmtVal,
+    (sub) => FIELD_LABELS[`reviews.max_words.${sub}`] ?? `Review words ${sub}`,
+    map, rows);
+}
+
 /** Client-side diff between the saved settings and the edited form. */
 export function diffSettings(
   current: SettingsForm,
@@ -308,6 +335,10 @@ export function diffSettings(
       }
       if (path === 'reviews.prompts') {
         reviewPromptLeafRows(current, edited, null, rows);
+        continue;
+      }
+      if (path === 'reviews.max_words') {
+        reviewWordsLeafRows(current, edited, null, rows);
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;
@@ -363,6 +394,10 @@ export function diffMap(
       }
       if (path === 'reviews.prompts') {
         reviewPromptLeafRows(current, edited, map, null);
+        continue;
+      }
+      if (path === 'reviews.max_words') {
+        reviewWordsLeafRows(current, edited, map, null);
         continue;
       }
       if (path === 'universe.allowed_sectors') continue;
