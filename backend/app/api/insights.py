@@ -18,7 +18,10 @@ from sqlalchemy import select
 
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Position, ShadowPosition, Strategy
+from app.insights.model_costs import PERIODS as COST_PERIODS
+from app.insights.model_costs import model_costs
 from app.insights.service import latest_snapshot
+from app.market.clock import NY_TZ, make_clock
 from app.shadows.strategy import NON_ARCHIVED
 
 router = APIRouter()
@@ -134,6 +137,27 @@ def insights(request: Request, strategy: str | None = None, period: str = "run")
                 else None
             ),
         }
+
+
+@router.get("/insights/model-costs")
+def insights_model_costs(
+    request: Request, period: str = "this_month"
+) -> dict[str, Any]:
+    """What every model call cost and how often each model is called
+    (item 109, docs/SPEC.md → Model costs). Computed on request from
+    ``llm_calls`` and ``backtests`` — its own period, not the snapshot's.
+    """
+    if period not in COST_PERIODS:
+        raise HTTPException(
+            status_code=422,
+            detail=["period: this_month | last_month | 3_months | all"],
+        )
+    from app.config import get_config
+
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    today = clock.now().astimezone(NY_TZ).date()
+    with get_session_maker()() as session:
+        return model_costs(get_config(), session, period, today=today)
 
 
 @router.get("/insights/trades")

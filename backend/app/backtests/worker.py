@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.backtests.bundle import StrategyBundle, build_bundle
@@ -57,6 +57,7 @@ from app.db.models import (
     CorporateAction,
     Decision,
     Earning,
+    LlmCall,
     Run,
     Strategy,
     UniversePoolRow,
@@ -989,6 +990,10 @@ def _finish(
         )
         if answer is not None:
             summary["answer"] = answer
+    # Item 109: per-model use for Insights → Model costs. Written for
+    # every terminal state (done, stopped at the cap, cancelled, failed)
+    # so the cost card never misses a paid run.
+    summary["model_usage"] = _model_usage(run_dir, config, bundles_hint)
     row.summary = summary
     row.warnings = (row.warnings or []) + warnings + _read_with_care(
         bundles_hint,
@@ -997,6 +1002,102 @@ def _finish(
     row.size_bytes = dir_size(run_dir)
     row.status = status
     row.finished_at = _naive_utc(wall.now())
+
+
+def _model_usage(
+    run_dir: Any, config: AppConfig, run: RunParams
+) -> list[dict[str, Any]]:
+    """Per-model calls, tokens, cost, cache saving and answer-cache
+    reuse for the run (``summary.model_usage``, item 109).
+
+    Reads each strategy database's ``llm_calls`` (the calls it really
+    sent) plus the ``cached`` decisions (answers reused from the answer
+    cache — they made no call and cost nothing). Rows with no recorded
+    model group under ``"unknown"``; a model without a price contributes
+    its calls and tokens but ``cost`` stays null, never recomputed.
+    """
+    usage: dict[str, dict[str, Any]] = {}
+    def _entry(key: str) -> dict[str, Any]:
+        return usage.setdefault(
+            key,
+            {
+                "model": key,
+                "calls": 0,
+                "tokens_in": 0,
+                "tokens_cached_in": 0,
+                "tokens_cache_write_in": 0,
+                "tokens_out": 0,
+                "cost": Decimal(0),
+                "cache_saved": Decimal(0),
+                "cost_unknown": False,
+                "answers_reused": 0,
+            },
+        )
+
+    for spec in run.strategies:
+        db = run_dir / f"{spec['slug']}.db"
+        if not db.exists():
+            continue
+        sf = session_maker_for(db, config)
+        with sf() as session:
+            for (
+                model,
+                calls,
+                tokens_in,
+                tokens_cached,
+                tokens_write,
+                tokens_out,
+                cost,
+                cache_saved,
+                null_costs,
+            ) in session.execute(
+                select(
+                    LlmCall.model,
+                    func.count(LlmCall.id),
+                    func.coalesce(func.sum(LlmCall.tokens_in), 0),
+                    func.coalesce(func.sum(LlmCall.tokens_cached_in), 0),
+                    func.coalesce(func.sum(LlmCall.tokens_cache_write_in), 0),
+                    func.coalesce(func.sum(LlmCall.tokens_out), 0),
+                    func.coalesce(func.sum(LlmCall.cost), Decimal(0)),
+                    func.coalesce(func.sum(LlmCall.cache_saved), Decimal(0)),
+                    func.sum(case((LlmCall.cost.is_(None), 1), else_=0)),
+                ).group_by(LlmCall.model)
+            ):
+                entry = _entry(model or "unknown")
+                entry["calls"] += int(calls)
+                entry["tokens_in"] += int(tokens_in or 0)
+                entry["tokens_cached_in"] += int(tokens_cached or 0)
+                entry["tokens_cache_write_in"] += int(tokens_write or 0)
+                entry["tokens_out"] += int(tokens_out or 0)
+                entry["cost_unknown"] = entry["cost_unknown"] or bool(null_costs)
+                entry["cost"] += Decimal(str(cost or 0))
+                entry["cache_saved"] += Decimal(str(cache_saved or 0))
+            for model, reused in session.execute(
+                select(Decision.model, func.count(Decision.id))
+                .where(Decision.cached.is_(True))
+                .group_by(Decision.model)
+            ):
+                _entry(model or "unknown")["answers_reused"] += int(reused)
+    out = []
+    for entry in usage.values():
+        out.append(
+            {
+                "model": entry["model"],
+                "calls": entry["calls"],
+                "tokens_in": entry["tokens_in"],
+                "tokens_cached_in": entry["tokens_cached_in"],
+                "tokens_cache_write_in": entry["tokens_cache_write_in"],
+                "tokens_out": entry["tokens_out"],
+                "cost": None if entry["cost_unknown"] else str(entry["cost"]),
+                "cache_saved": str(entry["cache_saved"]),
+                "answers_reused": entry["answers_reused"],
+            }
+        )
+    out.sort(
+        key=lambda e: Decimal(e["cost"]) if e["cost"] is not None else Decimal(-1),
+        reverse=True,
+    )
+    return out
 
 
 def _read_with_care(run: RunParams, same_bar: str = "stop") -> list[str]:

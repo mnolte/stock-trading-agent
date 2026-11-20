@@ -280,6 +280,9 @@ def _row_json(call: LlmCall, strategy_names: dict[int, str]) -> dict[str, Any]:
         "prompt_hash": call.prompt_hash,
         "tokens_in": call.tokens_in,
         "tokens_out": call.tokens_out,
+        "tokens_cached_in": call.tokens_cached_in,
+        "tokens_cache_write_in": call.tokens_cache_write_in,
+        "cache_saved": _num(call.cache_saved),
         "cost": _num(call.cost),
         "cost_source": call.cost_source,
         "latency_ms": call.latency_ms,
@@ -340,8 +343,9 @@ def export_calls(request: Request) -> StreamingResponse:
             [
                 "time", "session_date", "source", "strategy", "kind",
                 "symbol", "context", "action", "outcome", "reasons",
-                "model", "prompt", "tokens_in", "tokens_out", "cost",
-                "latency_ms",
+                "model", "prompt", "tokens_in", "tokens_out",
+                "tokens_cached_in", "tokens_cache_write_in",
+                "cache_saved", "cost", "latency_ms",
             ]
         )
         yield buf.getvalue()
@@ -368,6 +372,21 @@ def export_calls(request: Request) -> StreamingResponse:
                     call.prompt_version or "",
                     call.tokens_in if call.tokens_in is not None else "",
                     call.tokens_out if call.tokens_out is not None else "",
+                    (
+                        call.tokens_cached_in
+                        if call.tokens_cached_in is not None
+                        else ""
+                    ),
+                    (
+                        call.tokens_cache_write_in
+                        if call.tokens_cache_write_in is not None
+                        else ""
+                    ),
+                    (
+                        str(call.cache_saved)
+                        if call.cache_saved is not None
+                        else ""
+                    ),
                     str(call.cost) if call.cost is not None else "",
                     call.latency_ms if call.latency_ms is not None else "",
                 ]

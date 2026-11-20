@@ -67,6 +67,10 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "stop_atr_max": ("number", 0, 20),
         "min_reward_risk": ("number", 0, 20),
         "max_calls_per_cycle": ("int", 1, 100),
+        # Item 109: every model setting has a control (docs/SPEC.md,
+        # Settings screen → Every model setting has a control).
+        "call_timeout_seconds": ("int", 5, 120),
+        "max_output_tokens": ("int", 256, 16384),
         # Decision gates (docs/SPEC.md, GUI — Settings → Decision gates).
         "entry_gate": ("entry_gate", None, None),
         "min_ev_r": ("number", 0, 20),
@@ -114,6 +118,8 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "monthly_cost_cap_usd": ("number", 0, 100),
         "models": ("review_models", None, None),
         "prompts": ("review_prompts", None, None),
+        "temperature": ("number", 0, 2),
+        "max_words": ("submap", None, None),
     },
     "schedule": {
         # Each entry "HH:MM" New York; the list itself is validated below.
@@ -143,6 +149,20 @@ EDITABLE: dict[str, dict[str, tuple[str, float | None, float | None]]] = {
         "max_cost_per_answer_usd": ("number", 0, 100),
         "keep_days": ("int", 1, 3650),
         "instructions": ("instructions", None, None),
+        # Item 109: the per-answer limits (docs/SPEC.md, Settings screen).
+        "max_context_tokens": ("int", 8000, 200000),
+        "max_tool_rounds": ("int", 1, 20),
+        "max_tool_result_tokens": ("int", 500, 20000),
+        "answer_timeout_seconds": ("int", 15, 300),
+        "max_questions_per_minute": ("int", 1, 60),
+        "max_notes": ("int", 10, 1000),
+        "max_output_tokens": ("int", 256, 16384),
+    },
+    "shadows": {
+        "monthly_cost_cap_usd": ("number", 0, 100),
+    },
+    "backtest": {
+        "monthly_cost_cap_usd": ("number", 0, 500),
     },
     "readiness": {
         # Thresholds only: the zero-tolerance criteria and the manual
@@ -183,6 +203,12 @@ SUBSPECS: dict[tuple[str, str], dict[str, tuple[str, float | None, float | None]
         "enabled": ("bool", None, None),
         "block_minutes_before": ("int", 0, 240),
         "block_minutes_after": ("int", 0, 240),
+    },
+    # Item 109: the review word caps (docs/SPEC.md, Settings screen).
+    ("reviews", "max_words"): {
+        "weekly_summary": ("int", 40, 400),
+        "weekly_story": ("int", 100, 1000),
+        "briefing": ("int", 60, 600),
     },
 }
 
@@ -232,6 +258,8 @@ LABELS: dict[tuple[str, str], str] = {
     ("decision", "stop_atr_max"): "Stop distance to",
     ("decision", "min_reward_risk"): "Min reward to risk",
     ("decision", "max_calls_per_cycle"): "Max model calls per cycle",
+    ("decision", "call_timeout_seconds"): "Model call timeout",
+    ("decision", "max_output_tokens"): "Max answer length",
     ("decision", "entry_gate"): "Entry gate",
     ("decision", "min_ev_r"): "Min expected R (ev gate)",
     ("decision", "v3.min_room_atr"): "v3 room to first level",
@@ -276,6 +304,10 @@ LABELS: dict[tuple[str, str], str] = {
     ("reviews", "prompts.weekly"): "Weekly review prompt",
     ("reviews", "prompts.briefing"): "Daily briefing prompt",
     ("reviews", "prompts.verdict"): "Verdict prompt",
+    ("reviews", "temperature"): "Review temperature",
+    ("reviews", "max_words.weekly_summary"): "Weekly summary words",
+    ("reviews", "max_words.weekly_story"): "Weekly story words",
+    ("reviews", "max_words.briefing"): "Briefing words",
     ("reviews", "monthly_cost_cap_usd"): "Review cost cap",
     ("schedule", "cycles"): "Cycle times",
     ("schedule", "last_cycle_no_entries"): "No new entries in the last cycle",
@@ -296,6 +328,15 @@ LABELS: dict[tuple[str, str], str] = {
     ("ask", "max_cost_per_answer_usd"): "Ask max cost per answer",
     ("ask", "keep_days"): "Ask chats kept for",
     ("ask", "instructions"): "Ask standing instructions",
+    ("ask", "max_context_tokens"): "Ask context tokens",
+    ("ask", "max_tool_rounds"): "Ask tool rounds",
+    ("ask", "max_tool_result_tokens"): "Ask tool result tokens",
+    ("ask", "answer_timeout_seconds"): "Ask answer timeout",
+    ("ask", "max_questions_per_minute"): "Ask questions per minute",
+    ("ask", "max_notes"): "Ask notes kept",
+    ("ask", "max_output_tokens"): "Ask max answer length",
+    ("shadows", "monthly_cost_cap_usd"): "Shadow cost cap",
+    ("backtest", "monthly_cost_cap_usd"): "Backtest cost cap",
     ("readiness", "min_closed_trades"): "Readiness closed trades",
     ("readiness", "min_sessions"): "Readiness paper sessions",
     ("readiness", "max_drawdown_pct"): "Readiness max drawdown",
@@ -340,6 +381,12 @@ DIRECTION_SECTIONS = (
     "selection",
     "schedule",
     "universe",
+    # Item 109: raising a model limit or a cost cap can only cost more —
+    # the model sections ask "Confirm it is you" on a raise too.
+    "reviews",
+    "ask",
+    "shadows",
+    "backtest",
 )
 
 DIRECTIONS: dict[str, Direction] = {
@@ -416,8 +463,8 @@ DIRECTIONS: dict[str, Direction] = {
     "decision.tighten_min_atr_below_price": "neutral",  # stop-placement floor, both ways arguable
     "decision.breakeven_min_r": "up",  # break-even comes later = wider stops longer
     "decision.max_calls_per_cycle": "neutral",  # cost cap, not a risk dial
-    "decision.call_timeout_seconds": "neutral",
-    "decision.max_output_tokens": "neutral",
+    "decision.call_timeout_seconds": "up",
+    "decision.max_output_tokens": "up",
     "decision.options.swing_strength": "neutral",
     "decision.options.swing_lookback_bars_1h": "neutral",
     "decision.options.swing_lookback_sessions": "neutral",
@@ -492,6 +539,58 @@ DIRECTIONS: dict[str, Direction] = {
     "universe.rank_by": "neutral",
     "universe.watchlist_rows": "neutral",
     "universe.allowed_sectors": "longer",
+    # reviews — the cost cap and the spend switches are the looser side;
+    # models, prompts, word caps and cadence knobs don't move money.
+    "reviews.weekly_day": "neutral",
+    "reviews.weekly_time": "neutral",
+    "reviews.briefing_enabled": "on",
+    "reviews.briefing_time_ny": "neutral",
+    "reviews.verdict_after_sessions": "neutral",
+    "reviews.skip_flat_pct": "neutral",
+    "reviews.models.weekly": "neutral",
+    "reviews.models.briefing": "neutral",
+    "reviews.models.verdict": "neutral",
+    "reviews.temperature": "neutral",
+    "reviews.prompts.weekly": "neutral",
+    "reviews.prompts.briefing": "neutral",
+    "reviews.prompts.verdict": "neutral",
+    "reviews.min_closed_trades_for_suggestion": "neutral",
+    "reviews.max_words.weekly_summary": "neutral",
+    "reviews.max_words.weekly_story": "neutral",
+    "reviews.max_words.briefing": "neutral",
+    "reviews.monthly_cost_cap_usd": "up",
+    # ask — every per-answer limit and both caps: raising spends more.
+    "ask.enabled": "on",
+    "ask.model": "neutral",
+    "ask.monthly_cost_cap_usd": "up",
+    "ask.max_cost_per_answer_usd": "up",
+    "ask.keep_days": "neutral",
+    "ask.max_context_tokens": "up",
+    "ask.max_tool_rounds": "up",
+    "ask.max_tool_result_tokens": "up",
+    "ask.answer_timeout_seconds": "up",
+    "ask.max_questions_per_minute": "up",
+    "ask.max_notes": "up",
+    "ask.max_output_tokens": "up",
+    "ask.instructions": "neutral",
+    # shadows — more shadows or a higher cap spends more; a higher
+    # promotion bar is tighter; the rules-only params move no money.
+    "shadows.max_active": "up",
+    "shadows.monthly_cost_cap_usd": "up",
+    "shadows.promote_min_closed_trades": "down",
+    "shadows.rules_only.stop_atr": "neutral",
+    "shadows.rules_only.target_r": "neutral",
+    # backtest — the cap and the range length spend more; the rest are
+    # run mechanics that move no money.
+    "backtest.monthly_cost_cap_usd": "up",
+    "backtest.max_range_years": "up",
+    "backtest.alpaca_calls_per_minute": "neutral",
+    "backtest.assumed_spread_pct": "neutral",
+    "backtest.same_bar_stop_and_target": "neutral",
+    "backtest.data_dir": "neutral",
+    "backtest.bar_store": "neutral",
+    "backtest.cancel_grace_seconds": "neutral",
+    "backtest.process_nice": "neutral",
 }
 
 

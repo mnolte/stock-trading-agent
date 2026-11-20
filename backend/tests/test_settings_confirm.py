@@ -151,11 +151,11 @@ def test_classify_unmapped_key_fails_closed() -> None:
 
 
 def test_classify_ignores_uncovered_sections() -> None:
-    """Sections outside the trading list never produce a change —
-    reviews, ask, readiness and friends don't ask."""
+    """Sections outside the covered list never produce a change —
+    readiness, performance and friends don't ask."""
     changes = classify(
-        _set({}, "reviews.monthly_cost_cap_usd", 2),
-        _set({}, "reviews.monthly_cost_cap_usd", 50),
+        _set({}, "readiness.min_sessions", 60),
+        _set({}, "readiness.min_sessions", 90),
     )
     assert changes == []
 

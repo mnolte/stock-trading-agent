@@ -33,7 +33,11 @@ from app.data.cache import _naive_utc
 from app.data.service import MarketDataService
 from app.db.base import get_session_maker
 from app.db.models import Cycle, Decision, Outcome, Review, Run, Verdict
-from app.decide.client import ModelResponse, token_cost
+from app.decide.client import (
+    ModelResponse,
+    response_cache_saving,
+    token_cost,
+)
 from app.decide.prompt import Prompt, cached_prompt
 from app.engine.state import ExecutionState, record_event
 from app.inspector.attention import attention_for_call
@@ -677,6 +681,9 @@ class ReviewService:
                 prompt_version=composed.prompt_version,
                 prompt_hash=composed.prompt_hash,
                 cost=composed.cost,
+                cache_saved=response_cache_saving(
+                    response, self.config, model=response.model
+                ),
                 slow_ms=int(
                     float(
                         self.config.get(
