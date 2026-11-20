@@ -181,7 +181,7 @@ def test_api_only_keys_are_no_longer_editable(client: TestClient, path: str) -> 
     [
         ("execution.entry_cutoff", "15:55", 200),
         ("execution.entry_cutoff", "15:40", 403),
-        ("reviews.max_words.briefing", 80, 403),
+        ("shadows.max_active", 1, 403),
     ],
 )
 def test_use_config_confirmation(
