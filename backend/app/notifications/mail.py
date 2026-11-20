@@ -68,14 +68,26 @@ class SmtpMailer:
 
 
 class FakeMailer:
-    """Records every send; ``fail_with`` raises on demand. No sockets."""
+    """Records every send; ``fail_with`` raises on demand. No sockets.
 
-    def __init__(self, fail_with: Exception | None = None) -> None:
+    ``fail_times`` limits the failures: with it set, ``fail_with`` raises
+    that many times and sends then succeed; unset, it raises every time.
+    It counts down, so read it as "failures left", not "failures made".
+    """
+
+    def __init__(
+        self, fail_with: Exception | None = None, fail_times: int | None = None
+    ) -> None:
         self.sent: list[SmtpMessage] = []
         self.fail_with = fail_with
+        self.fail_times = fail_times
 
     def send(self, config: SmtpConfig, message: SmtpMessage) -> None:
-        if self.fail_with is not None:
+        if self.fail_with is not None and (
+            self.fail_times is None or self.fail_times > 0
+        ):
+            if self.fail_times is not None:
+                self.fail_times -= 1
             raise self.fail_with
         self.sent.append(message)
 

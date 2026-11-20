@@ -70,6 +70,11 @@ STATUS_QUEUED = "queued"
 
 EMAIL_FAILURE_BANNER_AT = 3
 
+# One retry covers a transient SMTP timeout without turning a dead
+# server into a minute of retries; sending is already off the cycle's
+# path, so the extra wait blocks nothing (docs/SPEC.md, Notifications).
+EMAIL_RETRY_DELAY_SECONDS = 10
+
 # Deliverable (non-app) channels, used by the quiet-hours summary union
 # and the test notification.
 _EXTERNAL = ("browser", "email")
@@ -135,6 +140,7 @@ class NotificationService:
         publish: Callable[[set[str]], None] | None = None,
         session_factory: sessionmaker[Session] | None = None,
         resolver: object = None,
+        email_retry_delay: float = EMAIL_RETRY_DELAY_SECONDS,
     ) -> None:
         self.config = config
         self.clock = clock
@@ -147,6 +153,7 @@ class NotificationService:
         self._held: deque[int] = deque()  # notification ids held by quiet hours
         self._last_sent: dict[str, datetime] = {}  # subject → last send
         self._email_failures = 0
+        self._email_retry_delay = email_retry_delay
         self._loop: asyncio.AbstractEventLoop | None = None
         self._worker: asyncio.Task[None] | None = None
         self._wake: asyncio.Event | None = None
@@ -605,16 +612,23 @@ class NotificationService:
             except UrlRejected:
                 error = "address refused"
             else:
-                try:
-                    await asyncio.to_thread(
-                        self._mailer.send,
-                        config,
-                        SmtpMessage(
-                            to_addr=config.to_addr, subject=subject, body=body
-                        ),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    error = safe_error(exc, extra=self._scrub_values())
+                message = SmtpMessage(
+                    to_addr=config.to_addr, subject=subject, body=body
+                )
+                failure: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        await asyncio.to_thread(
+                            self._mailer.send, config, message
+                        )
+                        failure = None
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        failure = exc
+                        if attempt == 0:
+                            await asyncio.sleep(self._email_retry_delay)
+                if failure is not None:
+                    error = safe_error(failure, extra=self._scrub_values())
         status = STATUS_FAILED if error else STATUS_SENT
         try:
             with self._session_factory() as session:

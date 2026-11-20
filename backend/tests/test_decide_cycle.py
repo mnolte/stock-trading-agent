@@ -243,6 +243,52 @@ async def test_cycle_stores_decisions_for_candidates_and_held(
     assert cycles[0].scheduled_time == CYCLE_1246.astimezone(UTC).replace(tzinfo=None)
 
 
+async def test_shadow_only_snapshot_carries_fetched_news(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """A symbol only a shadow holds gets real headlines in its stored
+    snapshot — the news fetch runs for it like for every model call,
+    so news_status is never a default "failed" (item 111)."""
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass")),
+        universe=["MSFT"],
+    )
+    runner.shadow_symbols = lambda: ["CAT"]
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    cat = report.shadow_snapshots["CAT"]
+    assert cat["news_status"] == "complete"
+    assert cat["headlines"] != "unavailable"
+    assert cat["headlines"]
+
+
+async def test_shadow_only_snapshot_marks_news_failed_on_source_error(
+    session_factory: sessionmaker[Session],
+) -> None:
+    """When the news fetch itself fails the snapshot still says
+    ``failed`` — the fix removes the false default, not the real one."""
+
+    class _FailingNews:
+        async def fetch_news(
+            self, symbols: list[str], start: datetime, end: datetime
+        ) -> DataResult[list[NewsItem]]:
+            return DataResult(data=[], error="alpaca news down", source="fake")
+
+    runner = _runner(
+        session_factory,
+        _evaluation(_item("MSFT", "pass")),
+        sources=_sources(news=_FailingNews()),
+        universe=["MSFT"],
+    )
+    runner.shadow_symbols = lambda: ["CAT"]
+    report = await runner.run(CYCLE_1246)
+    assert report.status == "done"
+    cat = report.shadow_snapshots["CAT"]
+    assert cat["news_status"] == "failed"
+    assert cat["headlines"] == "unavailable"
+
+
 async def test_held_snapshot_uses_initial_risk_and_full_provenance(
     session_factory: sessionmaker[Session],
 ) -> None:
