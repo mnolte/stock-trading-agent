@@ -10,6 +10,8 @@ import { screenshotDir, test } from './shots';
 const outDir = screenshotDir('108');
 
 test('performance: curve with hover tooltip', async ({ page }, testInfo) => {
+  // Crosshair hover is a mouse interaction; the 108 shot is the 1440 one.
+  test.skip(testInfo.project.name === 'mobile', 'desktop hover only');
   await page.goto('/performance');
   await expect(
     page.getByRole('heading', { name: 'Performance', level: 1 }),
