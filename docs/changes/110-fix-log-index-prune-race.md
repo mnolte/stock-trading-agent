@@ -5,7 +5,7 @@ title: Log-index prune race
 status: ready
 issue: 324
 kickoff: 110-fix-log-index-prune-race.md
-spec_prs: [999]
+spec_prs: [325]
 build_prs: []
 ---
 
