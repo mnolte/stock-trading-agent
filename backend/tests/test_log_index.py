@@ -8,6 +8,7 @@ import queue
 import sqlite3
 import time
 from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -19,6 +20,7 @@ from app.log_index import (
     prune_index,
     reindex,
 )
+from app.market.clock import FakeClock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -121,16 +123,33 @@ def test_index_available_and_prune(tmp_path: Path) -> None:
     db = tmp_path / "logs.db"
     assert not index_available(db)
     handler = LogIndexHandler(db)
-    old = _rec("ancient")
-    # Backdate: insert directly with an old ts.
-    handler.emit(old)
+    handler.emit(_rec("ancient"))
+    handler.emit(_rec("recent"))
     handler.flush()
     assert index_available(db)
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE log_lines SET ts = '2000-01-01T00:00:00.000Z'")
+        conn.execute(
+            "UPDATE log_lines SET ts = '2000-01-01T00:00:00.000Z' "
+            "WHERE message = 'ancient'"
+        )
         conn.commit()
-    assert prune_index(db, keep_days=30) == 1
+    clock = FakeClock(datetime(2026, 11, 20, 12, 0, tzinfo=UTC))
+    assert prune_index(db, keep_days=30, now=clock.now()) == 1
+    with sqlite3.connect(db) as conn:
+        assert conn.execute(
+            "SELECT message FROM log_lines"
+        ).fetchall() == [("recent",)]
     assert index_available(db)
+
+
+def test_prune_index_without_log_lines_returns_zero(tmp_path: Path) -> None:
+    """A logs.db whose schema was never written has nothing to prune —
+    and a missing file is the same (item 110)."""
+    now = FakeClock(datetime(2026, 11, 20, 12, 0, tzinfo=UTC)).now()
+    assert prune_index(tmp_path / "missing.db", keep_days=30, now=now) == 0
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(empty).close()
+    assert prune_index(empty, keep_days=30, now=now) == 0
 
 
 def test_handler_prunes_daily_with_keep_days(tmp_path: Path) -> None:
@@ -148,7 +167,8 @@ def test_handler_prunes_daily_with_keep_days(tmp_path: Path) -> None:
             "'INFO','t','stale','{}',NULL,NULL,'app',1,NULL,NULL,NULL,NULL,'x')"
         )
         conn.commit()
-    handler._prune_worker(30)
+    clock = FakeClock(datetime(2026, 11, 20, 12, 0, tzinfo=UTC))
+    handler._prune_worker(30, clock.now())
     with sqlite3.connect(db) as conn:
         rows = conn.execute("SELECT message FROM log_lines").fetchall()
     assert rows == [("keep me",)]
@@ -161,7 +181,9 @@ def test_maybe_prune_runs_once_per_day(
 
     calls: list[int] = []
 
-    def fake_prune(db_path: Path, keep_days: int) -> int:
+    def fake_prune(
+        db_path: Path, keep_days: int, now: datetime
+    ) -> int:
         calls.append(keep_days)
         return 0
 
@@ -177,6 +199,149 @@ def test_maybe_prune_runs_once_per_day(
     time.sleep(0.05)
     assert calls == [30]
     handler._pruning = False
+
+
+def _wait_prune(handler: LogIndexHandler) -> None:
+    deadline = time.monotonic() + 5
+    while handler._pruning and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not handler._pruning
+
+
+def test_first_flush_on_fresh_database_never_reports_prune_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Item 110: the daily prune starts only after the schema exists —
+    50 fresh databases, the race must not appear once."""
+    fallback_lines: list[logging.LogRecord] = []
+    fallback = logging.StreamHandler()
+    fallback.emit = fallback_lines.append  # type: ignore[method-assign, assignment]
+    for i in range(50):
+        handler = LogIndexHandler(
+            tmp_path / f"logs-{i}.db", keep_days=30, file_fallback=fallback
+        )
+        handler.emit(_rec("info line"))
+        handler.emit(_rec("error line", logging.ERROR))
+        handler.flush()
+        _wait_prune(handler)
+        handler.close()
+    assert fallback_lines == []
+    assert "log index write failed" not in capsys.readouterr().err
+
+
+def test_prune_failure_reports_to_fallback_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A prune that fails for another reason goes to the file fallback
+    and stderr at ERROR — never back through the index."""
+    import app.log_index as log_index
+
+    def boom(db_path: Path, keep_days: int, now: datetime) -> int:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(log_index, "prune_index", boom)
+    fallback_lines: list[logging.LogRecord] = []
+    fallback = logging.StreamHandler()
+    fallback.emit = fallback_lines.append  # type: ignore[method-assign, assignment]
+    handler = LogIndexHandler(
+        tmp_path / "logs.db", keep_days=None, file_fallback=fallback
+    )
+    handler.emit(_rec("still indexed", logging.WARNING))
+    handler.flush()
+    handler._prune_worker(30, FakeClock(
+        datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+    ).now())
+    assert len(fallback_lines) == 1
+    assert fallback_lines[0].levelno == logging.ERROR
+    assert fallback_lines[0].event == "log_index.failed"  # type: ignore[attr-defined]
+    assert "OperationalError: disk I/O error" in fallback_lines[0].getMessage()
+    assert "log index prune failed" in fallback_lines[0].getMessage()
+    assert "log index write failed" in capsys.readouterr().err
+    # The index got no line from the failure.
+    with sqlite3.connect(handler.db_path) as conn:
+        rows = conn.execute("SELECT message FROM log_lines").fetchall()
+    assert rows == [("still indexed",)]
+    handler.close()
+
+
+async def test_prune_failure_creates_no_new_error_notification(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fallback report must not become a 'New error' notification."""
+    from typing import Any
+
+    import app.log_index as log_index
+    from app.db.base import get_session_maker
+    from app.db.models import Notification
+    from fastapi import FastAPI
+    from sqlalchemy import select
+
+    def boom(db_path: Path, keep_days: int, now: datetime) -> int:
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(log_index, "prune_index", boom)
+    handler = cast(FastAPI, client.app).state.log_index_handler
+    service = cast(Any, client.app).state.notification_service
+    assert handler is not None
+    handler._prune_worker(
+        30, FakeClock(datetime(2026, 11, 20, 12, 0, tzinfo=UTC)).now()
+    )
+    await service.drain()
+    with get_session_maker()() as session:
+        rows = (
+            session.execute(
+                select(Notification).where(Notification.event == "new_error")
+            )
+            .scalars()
+            .all()
+        )
+    assert rows == []
+
+
+def test_maybe_prune_once_per_utc_day_with_fake_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two flushes on the same UTC day start one prune; past 00:00 UTC
+    a second one; keep_days=None starts none."""
+    import app.log_index as log_index
+
+    calls: list[datetime] = []
+
+    def fake_prune(
+        db_path: Path, keep_days: int, now: datetime
+    ) -> int:
+        calls.append(now)
+        return 0
+
+    monkeypatch.setattr(log_index, "prune_index", fake_prune)
+    clock = FakeClock(datetime(2026, 11, 20, 10, 0, tzinfo=UTC))
+    handler = LogIndexHandler(
+        tmp_path / "logs.db", keep_days=30, clock=clock
+    )
+    handler.emit(_rec("one"))
+    handler.flush()
+    _wait_prune(handler)
+    handler.emit(_rec("two"))
+    handler.flush()
+    _wait_prune(handler)
+    assert len(calls) == 1
+    clock.advance(timedelta(hours=15))  # 2026-11-21 01:00 UTC
+    handler.emit(_rec("three"))
+    handler.flush()
+    _wait_prune(handler)
+    assert len(calls) == 2
+
+    disabled = LogIndexHandler(
+        tmp_path / "none.db", keep_days=None, clock=clock
+    )
+    disabled.emit(_rec("never"))
+    disabled.flush()
+    time.sleep(0.05)
+    assert len(calls) == 2
+    handler.close()
+    disabled.close()
 
 
 def test_flush_requeues_batch_while_index_locked(tmp_path: Path) -> None:

@@ -24,11 +24,13 @@ import sqlite3
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.config import AppConfig
+    from app.market.clock import Clock
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS log_lines(
@@ -188,12 +190,16 @@ class LogIndexHandler(logging.Handler):
         file_fallback: logging.Handler | None = None,
         on_warning_or_above: Any = None,
         keep_days: int | None = None,
+        clock: Clock | None = None,
     ) -> None:
         super().__init__(level=logging.DEBUG)
+        from app.market.clock import RealClock
+
         self.db_path = db_path
         self._fallback = file_fallback
         self._on_warning = on_warning_or_above
         self._keep_days = keep_days
+        self._clock = clock or RealClock()
         self._buffer: list[dict[str, Any]] = []
         self._last_flush = time.monotonic()
         self._conn: sqlite3.Connection | None = None
@@ -229,7 +235,10 @@ class LogIndexHandler(logging.Handler):
             message = record.getMessage()[:200]
         except Exception as message_exc:  # noqa: BLE001 - malformed log arguments
             message = f"<unformattable record: {type(message_exc).__name__}>"
-        line = f"log index write failed: {exc} (line: {message})"
+        line = (
+            f"log index write failed: {type(exc).__name__}: {exc} "
+            f"(line: {message})"
+        )
         print(line, file=sys.stderr)
         if self._fallback is not None:
             try:
@@ -267,7 +276,6 @@ class LogIndexHandler(logging.Handler):
             self.flush()
 
     def flush(self) -> None:
-        self._maybe_prune()
         with self._write_lock:
             if not self._buffer:
                 return
@@ -297,6 +305,9 @@ class LogIndexHandler(logging.Handler):
                 self._drop_batch(batch, exc)
             except sqlite3.Error as exc:
                 self._drop_batch(batch, exc)
+        # After the write: _connect() has run the schema, so the prune
+        # thread can never open a logs.db without log_lines.
+        self._maybe_prune()
 
     def _drop_batch(self, batch: list[dict[str, Any]], exc: sqlite3.Error) -> None:
         """Report and drop a batch that can never be written."""
@@ -319,31 +330,30 @@ class LogIndexHandler(logging.Handler):
         keep_days = self._keep_days
         if keep_days is None or self._pruning:
             return
-        from datetime import UTC, datetime
-
-        today = datetime.now(tz=UTC).date().isoformat()
+        today = self._clock.now().astimezone(UTC).date().isoformat()
         if today == self._prune_day:
             return
         self._prune_day = today
         self._pruning = True
         threading.Thread(
             target=self._prune_worker,
-            args=(keep_days,),
+            args=(keep_days, self._clock.now()),
             daemon=True,
             name="log-index-prune",
         ).start()
 
-    def _prune_worker(self, keep_days: int) -> None:
+    def _prune_worker(self, keep_days: int, now: datetime) -> None:
         logger = logging.getLogger(__name__)
         try:
-            removed = prune_index(self.db_path, keep_days)
+            removed = prune_index(self.db_path, keep_days, now)
             if removed:
                 logger.info(
                     "log index pruned: %d rows older than %d days",
                     removed, keep_days,
                 )
         except Exception as exc:  # noqa: BLE001 - never kill the worker silently
-            logger.exception("log index prune failed")
+            # Index failures go to the file fallback and stderr only —
+            # never back through the index (docs/SPEC.md, Index failures).
             self._report_failure(
                 logging.LogRecord(
                     "log_index", logging.ERROR, "", 0,
@@ -366,17 +376,21 @@ class LogIndexHandler(logging.Handler):
             super().close()
 
 
-def prune_index(db_path: Path, keep_days: int) -> int:
+def prune_index(db_path: Path, keep_days: int, now: datetime) -> int:
     """Drop index rows older than the files' retention window."""
     if not db_path.exists():
         return 0
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-
-    cutoff = (
-        datetime.now(tz=ZoneInfo("UTC")) - timedelta(days=keep_days)
-    ).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     with sqlite3.connect(db_path, timeout=30) as conn:
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'log_lines'"
+        ).fetchone()
+        if has_table is None:
+            # A logs.db whose schema was never written has nothing to prune.
+            return 0
+        cutoff = (now - timedelta(days=keep_days)).isoformat(
+            timespec="milliseconds"
+        ).replace("+00:00", "Z")
         cur = conn.execute("DELETE FROM log_lines WHERE ts < ?", (cutoff,))
         if cur.rowcount:
             # External-content FTS rows don't cascade — the deleted
@@ -411,6 +425,7 @@ def make_index_handler(
     *,
     file_fallback: logging.Handler | None = None,
     on_warning_or_above: Any = None,
+    clock: Clock | None = None,
 ) -> LogIndexHandler | None:
     """Attach the index to the listener, or None when disabled by config."""
     if not bool(config.get("logging", "index", default=True)):
@@ -420,6 +435,7 @@ def make_index_handler(
         file_fallback=file_fallback,
         on_warning_or_above=on_warning_or_above,
         keep_days=int(config.get("logging", "keep_days", default=30)),
+        clock=clock,
     )
 
 
