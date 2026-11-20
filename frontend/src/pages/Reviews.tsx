@@ -399,7 +399,7 @@ export function WeeklyView({ review }: { review: ReviewDetail }) {
               flex: '1 1 480px',
               display: 'flex',
               flexDirection: 'column',
-              gap: '4px',
+              gap: 'var(--sa-space-2)',
             }}
           >
             <div

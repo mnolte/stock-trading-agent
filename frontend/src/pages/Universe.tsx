@@ -1029,7 +1029,7 @@ export default function Universe() {
                   ▸ How the screen works
                 </summary>
                 <div style={{ marginTop: 8 }}>
-                  <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)', lineHeight: 1.5 }}>
                     <li>
                       A symbol drops out only after failing the screen on {data.thresholds.drop_after_failed_screens} trading days in a row. Until then it shows “eligible · 1 fail” or “2 fails”.
                     </li>

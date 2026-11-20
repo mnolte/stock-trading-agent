@@ -22,6 +22,7 @@ import {
 } from '../format';
 import { EXIT_REASONS, REASON_CODES, labelFor } from '../labels';
 import { ghostButton } from '../components/errorPageStyles';
+import { ModelCostsSection } from './modelCosts';
 
 /** One insights snapshot as the API serves it (docs/SPEC.md, Insights).
  * `needs`/`have` are the sample states item 075 adds: a number that
@@ -473,7 +474,7 @@ function InsightTile({
   def: string;
   value: string;
   valueColor?: string;
-  sub?: string;
+  sub?: React.ReactNode;
   sample: string | null;
 }) {
   if (sample) {
@@ -487,7 +488,7 @@ function InsightTile({
           borderRadius: 'var(--sa-radius-lg)',
           display: 'flex',
           flexDirection: 'column',
-          gap: '6px',
+          gap: 'var(--sa-space-2)',
           minWidth: 0,
         }}
       >
@@ -581,6 +582,7 @@ const ON_THIS_PAGE: [string, string][] = [
   ['q3', '3 Trades lost'],
   ['q4', '4 Conditions'],
   ['q5', '5 Costs'],
+  ['q6', '6 Model costs'],
 ];
 
 export default function Insights() {
@@ -614,7 +616,14 @@ export default function Insights() {
     tradeSlice !== null,
   );
   const setDimension = (key: string) =>
-    setSearchParams({ dim: key }, { replace: true });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('dim', key);
+        return next;
+      },
+      { replace: true },
+    );
   const showTrades = (dim: string, slice: string) => {
     setDimension(dim);
     setTradeSlice(slice);
@@ -764,7 +773,19 @@ export default function Insights() {
               label="Model cost per trade"
               def={DEFS.cost}
               value={fmtUsd(snap.headline.model_cost.per_trade_usd)}
-              sub={snap.headline.model_cost.pct_gross_profit != null ? `${snap.headline.model_cost.pct_gross_profit}% of gross profit · ${fmtUsd(snap.headline.model_cost.total_usd)} total` : fmtUsd(snap.headline.model_cost.total_usd)}
+              sub={
+                snap.headline.model_cost.pct_gross_profit != null ? (
+                  <>
+                    {snap.headline.model_cost.pct_gross_profit}% of gross profit · {fmtUsd(snap.headline.model_cost.total_usd)} total ·{' '}
+                    <a href="#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>all model costs</a>
+                  </>
+                ) : (
+                  <>
+                    {fmtUsd(snap.headline.model_cost.total_usd)} total ·{' '}
+                    <a href="#q6" style={{ color: 'var(--sa-text-2)', textDecoration: 'underline', textUnderlineOffset: 3 }}>all model costs</a>
+                  </>
+                )
+              }
               sample={snap.headline.model_cost.per_trade_usd == null ? sampleLine(snap.headline.model_cost, 'closed trades') : null}
             />
           </section>
@@ -822,7 +843,7 @@ export default function Insights() {
                   return (
                     <div key={s.key} className="sa-funnel">
                       <span className="sa-funnel-name" style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>{FUNNEL_LABELS[s.key] ?? s.key}</span>
-                      <div className="sa-funnel-bar" style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                      <div className="sa-funnel-bar" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', minWidth: 0 }}>
                         <div style={{ height: 8, borderRadius: 4, background: 'var(--sa-raised)' }}>
                           <div style={{ width: `${width}%`, height: 8, borderRadius: 4, background: s.key === 'closed' ? 'var(--sa-accent)' : 'var(--sa-info)' }} />
                         </div>
@@ -1185,6 +1206,9 @@ export default function Insights() {
           </div>
         </>
       )}
+
+      {/* 6 · What do the models cost? — whole app, own endpoint (109) */}
+      <ModelCostsSection />
 
       {res.loading && !snap && (
         <div className="sa-loading" aria-hidden="true">

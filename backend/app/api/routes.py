@@ -3439,6 +3439,25 @@ def _reviews_spend(request: Request) -> str | None:
         return str(service.monthly_spend(session))
 
 
+def _shadows_spend(request: Request) -> str | None:
+    """This month's LLM-shadow spend for the cost-cap row (None without
+    a shadow runner — e.g. a bare test app)."""
+    runner = getattr(request.app.state, "shadow_runner", None)
+    if runner is None:
+        return None
+    with get_session_maker()() as session:
+        return str(runner.monthly_spend(session))
+
+
+def _backtest_spend(request: Request) -> str | None:
+    """This month's backtest spend for the cost-cap row — the same
+    ``spent_this_month`` the cap itself is checked against (item 109)."""
+    from app.backtests.estimate import spent_this_month
+
+    clock = getattr(request.app.state, "clock", None) or make_clock()
+    return str(spent_this_month(get_session_maker(), clock.now().astimezone(UTC).date()))
+
+
 def _flatten_overrides(
     node: dict[str, Any], prefix: tuple[str, ...] = ()
 ) -> list[tuple[str, Any]]:
@@ -3522,6 +3541,8 @@ def settings(request: Request) -> dict[str, object]:
         "saved_without_control": config.saved_without_control,
         "entry_cutoff": config.get("execution", "entry_cutoff"),
         "reviews_spend_usd": _reviews_spend(request),
+        "shadows_spend_usd": _shadows_spend(request),
+        "backtest_spend_usd": _backtest_spend(request),
         "notification_events": [
             {
                 "key": d.key,

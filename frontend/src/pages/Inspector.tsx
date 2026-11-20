@@ -1067,7 +1067,7 @@ function CallDetails({
             )}
           </div>
           {(detail.explanation ?? (detail.outcome === 'success' ? 'No warnings.' : null)) && (
-            <div style={{ color: 'var(--sa-text-2)', marginTop: '6px' }}>
+            <div className="sa-prose" style={{ color: 'var(--sa-text-2)', marginTop: '6px' }}>
               {detail.explanation ?? 'No warnings.'}
             </div>
           )}

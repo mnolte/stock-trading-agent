@@ -128,16 +128,7 @@ export function StoryText({
     [text],
   );
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        maxWidth: '780px',
-        lineHeight: 1.65,
-        color: 'var(--sa-text-2)',
-      }}
-    >
+    <div className="sa-prose" style={{ maxWidth: '780px' }}>
       {paragraphs.map((para, pi) => {
         const matches = paragraphMatches(para, terms);
         const nodes: React.ReactNode[] = [];
@@ -156,11 +147,7 @@ export function StoryText({
           cursor = m.end;
         });
         if (cursor < para.length) nodes.push(para.slice(cursor));
-        return (
-          <p key={pi} style={{ margin: 0 }}>
-            {nodes}
-          </p>
-        );
+        return <p key={pi}>{nodes}</p>;
       })}
     </div>
   );

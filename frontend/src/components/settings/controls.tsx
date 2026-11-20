@@ -50,7 +50,7 @@ export function Section({
         {right && <div style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)' }}>{right}</div>}
       </div>
       {blurb && (
-        <p style={{ margin: '4px 0 6px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
+        <p style={{ margin: '4px 0 12px', fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-muted)', lineHeight: 1.5, maxWidth: 640 }}>
           {blurb}
         </p>
       )}

@@ -22,7 +22,7 @@ export function AskMarkdown({
   onNoteRef?: (ref: string) => void;
 }) {
   return (
-    <div className="ask-md">
+    <div className="ask-md sa-prose">
       {renderBlocks(text, unverified, onNoteRef)}
     </div>
   );

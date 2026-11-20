@@ -1028,6 +1028,8 @@ export interface SettingsResponse {
   connections: ConnectionRow[];
   history: SettingsHistoryRow[];
   reviews_spend_usd?: string | null;
+  shadows_spend_usd?: string | null;
+  backtest_spend_usd?: string | null;
   /** Event rows for the Notifications section, spec order. */
   notification_events: NotificationEventMeta[];
   /** SMTP card state; null when the notification service is absent. */
