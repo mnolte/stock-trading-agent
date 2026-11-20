@@ -1,0 +1,39 @@
+---
+item: 109
+type: feat
+title: UX pass: model costs, model settings, Ask drawer, spacing
+status: ready
+issue: 321
+kickoff: 109-feat-ux-pass-costs-settings-ask.md
+spec_prs: [999]
+build_prs: []
+---
+
+# 109 · feat · UX pass: model costs, model settings, Ask drawer, spacing
+
+## 2026-11-20 · spec PR
+
+Marc asked on 20 Nov for a UX and UI pass over every page, with four points: a section on Insights with every model cost (cached prompts included) and how often each model is called; every model setting present in Settings; paragraphs that no longer look cramped; and a better Ask drawer. No regressions against 073–079, 100, 101 and 107.
+
+What the pass found:
+- **Costs are scattered.** Each cap shows its own month in Settings, the inspector sums cost per source, Backtest shows its runs. Nothing shows all of it, per model, or how often each model is called. `llm_calls` stores the cost of a cached call but not the cached and cache-write tokens, so the saving can't be shown.
+- **Settings misses 15 model settings that exist in config:** `decision.call_timeout_seconds`, `decision.max_output_tokens`, `reviews.temperature`, the three `reviews.max_words`, seven `ask` limits, `shadows.monthly_cost_cap_usd`, `backtest.monthly_cost_cap_usd`; the `models` block (prices, cached and cache-write prices, cutoff, effort, API) is shown nowhere. The pickers miss `gpt-4o-mini`; the weekly review's default showed `claude-sonnet-5-5` (config: `gpt-4o-mini`); the prompt selects missed `weekly.v3`, `briefing.v3` and `decision.v6`, and the prompt hashes were made up.
+- **Spacing.** A check over every screen at 1440 px found text 0–6 px from its neighbour in about 20 places that are not table rows: section headings and their answer sentence (4 px), Settings labels and help (3 px), finding cards (6 px to the buttons), the suggestion's note, Readiness' verdict, two bullet lists. There was no written rule.
+- **Ask drawer.** In the states board the title wrapped to two lines and the subtitle cut off; the context chip wrapped inside its pill; the composer put the hint in two cramped columns; answer actions were three loose links on two lines; Edit and Delete on notes were links that wrapped alone; the "number not found" line started a line with "·". The board's frames were 258 px, narrower than any real drawer.
+
+Spec changes (`docs/SPEC.md`):
+- **Insights → GUI:** question 6 and a new **Model costs** part: scope, period toggle, by purpose (with calls per session and the cap bars), cache saved, by model with prices, cost per session, the answer sentence, older calls, links, the API with its 300 ms budget.
+- **LLM call history → Storage:** `tokens_cached_in`, `tokens_cache_write_in`, `cache_saved`; shown in call details and the CSV.
+- **Model providers:** the `api` field of a model; the Models table in Settings; Costs points to Insights; backtests store `summary.model_usage`.
+- **GUI → Settings screen:** "Every model setting has a control": the five groups with every new key, its default and range, tighter and looser, and the cap links.
+- **Ask the agent → GUI and Under each answer:** the 109 layout (one-line header with icon buttons, one-line chip, one composer box with the budget, 12 px between answer blocks, footer buttons, note buttons, Jump to latest).
+
+No trading behaviour changes. No new config keys: every key the screens show is already in `backend/config.example.yaml`.
+
+Assumptions:
+- The model list stays config-only and read-only in Settings (prices change rarely; a GUI editor would need its own validation and history). Open question 1.
+- Model costs are computed on request, not in the nightly Insights snapshot, because they cover the whole app and must match the caps live.
+
+Open questions for Marc:
+1. Should model prices become editable in Settings later? This item shows them read-only.
+2. A per-model price check against the providers' price pages is not part of this item. Want one as a monthly reminder?
