@@ -147,11 +147,7 @@ export function StoryText({
           cursor = m.end;
         });
         if (cursor < para.length) nodes.push(para.slice(cursor));
-        return (
-          <p key={pi} style={{ margin: 0 }}>
-            {nodes}
-          </p>
-        );
+        return <p key={pi}>{nodes}</p>;
       })}
     </div>
   );

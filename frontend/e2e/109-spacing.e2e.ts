@@ -21,8 +21,12 @@ const EXCEPTIONS: { match: string; reason: string }[] = [
   // Filled in as the check finds real exceptions; each needs its reason.
 ];
 
-async function collectViolations(page: Page): Promise<SpacingViolation[]> {
-  const raw = await page.evaluate(() => {
+async function collectViolations(
+  page: Page,
+  rootSelector?: string,
+): Promise<SpacingViolation[]> {
+  const raw = await page.evaluate((sel) => {
+    const root: ParentNode = sel ? document.querySelector(sel) ?? document.body : document.body;
     const BLOCK = new Set([
       'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DETAILS', 'DIALOG',
       'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER',
@@ -46,12 +50,36 @@ async function collectViolations(page: Page): Promise<SpacingViolation[]> {
       return r.width > 0 && r.height > 0;
     };
 
+    // Overlays (toasts, the Ask drawer, dialogs) float above the page; they
+    // are checked on their own screens, not as neighbours of page content.
+    // An element is overlay content when a fixed/absolute ancestor sits
+    // between it and the scan root.
+    const inOverlay = (el: HTMLElement): boolean => {
+      let p = el.parentElement;
+      while (p && p !== root) {
+        const pos = getComputedStyle(p).position;
+        if (pos === 'fixed' || pos === 'absolute') return true;
+        p = p.parentElement;
+      }
+      return false;
+    };
+
+    const padY = (el: HTMLElement, side: 'top' | 'bottom') => {
+      const cs = getComputedStyle(el);
+      const pad = parseFloat(cs.getPropertyValue(`padding-${side}`)) || 0;
+      const bw = parseFloat(cs.getPropertyValue(`border-${side}-width`)) || 0;
+      const bs = cs.getPropertyValue(`border-${side}-style`);
+      const border = bw > 0 && bs !== 'none' && bs !== 'hidden' ? bw : 0;
+      return pad + border;
+    };
+
     const wordCount = (el: Element) =>
       (el.textContent ?? '').trim().split(/\s+/).filter(Boolean).length;
 
     // A leaf text block: no block-level element children, 7+ words.
     const isTextBlock = (el: Element): el is HTMLElement => {
       if (!visible(el)) return false;
+      if (inOverlay(el)) return false;
       if (el.closest(SKIP_ANCESTOR)) return false;
       if (isChip(el) || el.closest('[class*="chip"]')) return false;
       for (const child of Array.from(el.children)) {
@@ -103,8 +131,8 @@ async function collectViolations(page: Page): Promise<SpacingViolation[]> {
     }[] = [];
 
     const candidates = new Set<HTMLElement>();
-    document.querySelectorAll('*').forEach((el) => {
-      if (isTextBlock(el)) candidates.add(el);
+    root.querySelectorAll('*').forEach((el) => {
+      if (el instanceof HTMLElement && isTextBlock(el)) candidates.add(el);
     });
     // Keep only the outermost candidate: a text block inside another text
     // block is the same words counted twice.
@@ -118,8 +146,14 @@ async function collectViolations(page: Page): Promise<SpacingViolation[]> {
       const tText = (el.textContent ?? '').trim().replace(/\s+/g, ' ');
       for (const dir of ['previousElementSibling', 'nextElementSibling'] as const) {
         let sib = el[dir] as Element | null;
-        // Skip invisible siblings (collapsed spacers, hidden nodes).
-        while (sib && !visible(sib)) sib = sib[dir] as Element | null;
+        // Skip invisible siblings (collapsed spacers, hidden nodes) and
+        // overlay content (toasts, drawers) floating above the page.
+        while (
+          sib &&
+          (!visible(sib) ||
+            (sib instanceof HTMLElement && inOverlay(sib)))
+        )
+          sib = sib[dir] as Element | null;
         if (!sib) continue;
         const s = sib.getBoundingClientRect();
         const overlapX = Math.min(t.right, s.right) - Math.max(t.left, s.left);
@@ -131,6 +165,16 @@ async function collectViolations(page: Page): Promise<SpacingViolation[]> {
         if (s.top >= t.bottom) gap = s.top - t.bottom;
         else if (t.top >= s.bottom) gap = t.top - s.bottom;
         else gap = -Math.min(t.bottom - s.top, s.bottom - t.top);
+        // Text-to-text: rows with their own padding (list rows, FactRows,
+        // watchlist rows) are exempt — measure between the text, not the
+        // row boxes. Text-to-box keeps the raw gap: the box edge counts.
+        if (isText && el instanceof HTMLElement && sib instanceof HTMLElement) {
+          if (s.top >= t.bottom) {
+            gap += padY(el, 'bottom') + padY(sib as HTMLElement, 'top');
+          } else if (t.top >= s.bottom) {
+            gap += padY(el, 'top') + padY(sib as HTMLElement, 'bottom');
+          }
+        }
         if (gap < 8) {
           out.push({
             cls: cls(el),
@@ -142,7 +186,7 @@ async function collectViolations(page: Page): Promise<SpacingViolation[]> {
       }
     });
     return out;
-  });
+  }, rootSelector);
   return raw;
 }
 
@@ -260,7 +304,10 @@ test('spacing: ask drawer with an answer', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(drawer.getByText(/weekly review flags/)).toBeVisible({ timeout: 15_000 });
   await page.waitForTimeout(300);
-  const failures = report('ask-drawer', await collectViolations(page));
+  const failures = report(
+    'ask-drawer',
+    await collectViolations(page, 'aside.ask-drawer'),
+  ).map((v) => `${v.cls} "${v.text}" ↔ ${v.sibling} gap ${v.gap}px`);
   expect(failures, failures.join('\n')).toEqual([]);
 });
 
@@ -269,6 +316,11 @@ test('spacing: decision drawer', async ({ page, request }) => {
   test.skip(!list.items?.length, 'no decisions in the seeded database');
   await page.goto(`/decisions/${list.items[0].id}`);
   await settle(page);
-  const failures = report('decision-drawer', await collectViolations(page));
+  const dialog = page.getByRole('dialog').first();
+  const rootSel = (await dialog.count()) > 0 ? '[role="dialog"]' : undefined;
+  const failures = report(
+    'decision-drawer',
+    await collectViolations(page, rootSel),
+  ).map((v) => `${v.cls} "${v.text}" ↔ ${v.sibling} gap ${v.gap}px`);
   expect(failures, failures.join('\n')).toEqual([]);
 });
