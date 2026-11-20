@@ -843,7 +843,7 @@ export default function Insights() {
                   return (
                     <div key={s.key} className="sa-funnel">
                       <span className="sa-funnel-name" style={{ fontSize: 'var(--sa-text-md)', color: 'var(--sa-text-2)' }}>{FUNNEL_LABELS[s.key] ?? s.key}</span>
-                      <div className="sa-funnel-bar" style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                      <div className="sa-funnel-bar" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sa-space-2)', minWidth: 0 }}>
                         <div style={{ height: 8, borderRadius: 4, background: 'var(--sa-raised)' }}>
                           <div style={{ width: `${width}%`, height: 8, borderRadius: 4, background: s.key === 'closed' ? 'var(--sa-accent)' : 'var(--sa-info)' }} />
                         </div>

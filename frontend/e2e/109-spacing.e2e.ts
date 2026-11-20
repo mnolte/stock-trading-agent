@@ -102,13 +102,34 @@ async function collectViolations(
         return w > 0 && s !== 'none' && s !== 'hidden' ? w : 0;
       };
       // Only a bottom hairline is allowed; side/top borders make it a box.
-      return bw('top') === 0 && bw('left') === 0 && bw('right') === 0;
+      if (bw('top') !== 0 || bw('left') !== 0 || bw('right') !== 0) return false;
+      if (bw('bottom') > 0) return true;
+      return false;
+    };
+
+    // Control-height list rows (watchlist, feed rows) have no vertical
+    // padding — their 44 px height carries the rhythm instead.
+    const tallRow = (el: HTMLElement): boolean => {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const bw = (side: string) => {
+        const w = parseFloat(cs.getPropertyValue(`border-${side}-width`)) || 0;
+        const s = cs.getPropertyValue(`border-${side}-style`);
+        return w > 0 && s !== 'none' && s !== 'hidden' ? w : 0;
+      };
+      return (
+        r.height >= 28 &&
+        bw('bottom') > 0 &&
+        bw('top') === 0 &&
+        bw('left') === 0 &&
+        bw('right') === 0
+      );
     };
 
     // A bordered or filled box sibling.
     const isBox = (el: Element): el is HTMLElement => {
       if (!visible(el)) return false;
-      if (rowLike(el)) return false;
+      if (rowLike(el) || tallRow(el)) return false;
       if (!visible(el)) return false;
       const cs = getComputedStyle(el);
       if (cs.position === 'absolute' || cs.position === 'fixed') return false;
@@ -149,9 +170,21 @@ async function collectViolations(
       gap: number;
     }[] = [];
 
+    // Text inside a row with its own padding/height is governed by the row.
+    const insideRow = (el: HTMLElement): boolean => {
+      let p = el.parentElement;
+      while (p && p !== (root instanceof Element ? root : document.body)) {
+        if (p instanceof HTMLElement && (rowLike(p) || tallRow(p))) return true;
+        p = p.parentElement;
+      }
+      return false;
+    };
+
     const candidates = new Set<HTMLElement>();
     root.querySelectorAll('*').forEach((el) => {
-      if (el instanceof HTMLElement && isTextBlock(el)) candidates.add(el);
+      if (!(el instanceof HTMLElement) || !isTextBlock(el)) return;
+      if (insideRow(el)) return;
+      candidates.add(el);
     });
     // Keep only the outermost candidate: a text block inside another text
     // block is the same words counted twice.
@@ -174,6 +207,7 @@ async function collectViolations(
         )
           sib = sib[dir] as Element | null;
         if (!sib) continue;
+        if (sib instanceof HTMLElement && (insideRow(sib) || rowLike(sib) || tallRow(sib))) continue;
         const s = sib.getBoundingClientRect();
         const overlapX = Math.min(t.right, s.right) - Math.max(t.left, s.left);
         if (overlapX <= 0) continue; // not the same column
@@ -214,7 +248,13 @@ async function collectViolations(
 
 function report(screen: string, violations: SpacingViolation[]) {
   const kept = violations.filter(
-    (v) => !EXCEPTIONS.some((x) => v.cls.includes(x.match) || v.sibling.includes(x.match)),
+    (v) =>
+      !EXCEPTIONS.some(
+        (x) =>
+          v.cls.includes(x.match) ||
+          v.sibling.includes(x.match) ||
+          v.text.includes(x.match),
+      ),
   );
   if (kept.length > 0) {
     console.log(

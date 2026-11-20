@@ -452,7 +452,7 @@ export function ModelCostsSection() {
               </table>
             </div>
             <p style={{ margin: 0, fontSize: 'var(--sa-text-sm)', color: 'var(--sa-text-muted)', lineHeight: 1.55 }}>
-              Each call stores its cost at the prices of the day it ran, so a price change never rewrites this table. Cached input is read from the provider's prompt cache at the model's cached price; a cache write is Anthropic storing the prompt for later reads, at its write price. Calls stored before the cache split was recorded (item 109) count as uncached and say so in the inspector. Click a purpose to see its calls in the LLM inspector.
+              Each call stores its cost at the prices of the day it ran, so a price change never rewrites this table. Cached input is read from the provider's prompt cache at the model's cached price; a cache write is Anthropic storing the prompt for later reads, at its write price. Calls stored before the cache split was recorded count as uncached and say so in the inspector. Click a purpose to see its calls in the LLM inspector.
             </p>
           </Card>
 
